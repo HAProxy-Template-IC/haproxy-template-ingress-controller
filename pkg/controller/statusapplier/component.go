@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -458,11 +459,11 @@ func (r *RestMapperResolver) Resolve(apiVersion, kind string) (schema.GroupVersi
 
 // pluralize returns the standard Kubernetes plural form of a kind.
 func pluralize(kind string) string {
-	lower := toLower(kind)
+	lower := strings.ToLower(kind)
 	switch {
-	case hasSuffix(lower, "s"):
+	case strings.HasSuffix(lower, "s"):
 		return lower + "es" // e.g., Ingress → ingresses
-	case hasSuffix(lower, "y") && len(lower) >= 2 && isConsonant(lower[len(lower)-2]):
+	case strings.HasSuffix(lower, "y") && len(lower) >= 2 && isConsonant(lower[len(lower)-2]):
 		return lower[:len(lower)-1] + "ies" // e.g., Policy → policies
 	default:
 		return lower + "s" // e.g., Gateway → gateways, HTTPRoute → httproutes
@@ -477,23 +478,4 @@ func isConsonant(c byte) bool {
 	default:
 		return c >= 'a' && c <= 'z'
 	}
-}
-
-// toLower converts a string to lowercase (avoids importing strings for a single use).
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := range s {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			b[i] = c + 32
-		} else {
-			b[i] = c
-		}
-	}
-	return string(b)
-}
-
-// hasSuffix checks if s ends with suffix.
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }

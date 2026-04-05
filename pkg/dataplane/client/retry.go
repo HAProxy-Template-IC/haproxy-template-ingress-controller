@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -128,20 +129,8 @@ func IsConnectionError() RetryCondition {
 // containsAny checks if the string s contains any of the substrings.
 func containsAny(s string, substrings ...string) bool {
 	for _, substr := range substrings {
-		if len(s) >= len(substr) {
-			// Simple substring search
-			for i := 0; i <= len(s)-len(substr); i++ {
-				match := true
-				for j := 0; j < len(substr); j++ {
-					if s[i+j] != substr[j] {
-						match = false
-						break
-					}
-				}
-				if match {
-					return true
-				}
-			}
+		if strings.Contains(s, substr) {
+			return true
 		}
 	}
 	return false
