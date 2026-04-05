@@ -42,7 +42,6 @@ var (
 	validateConfigFile      string
 	validateTestName        string
 	validateOutputFormat    string
-	validateHAProxyBinary   string
 	validateVerbose         bool
 	validateDumpRendered    bool
 	validateTraceTemplates  bool
@@ -77,8 +76,8 @@ Example usage:
   # Output results as JSON
   controller validate -f config.yaml --output json
 
-  # Use custom HAProxy binary location
-  controller validate -f config.yaml --haproxy-binary /usr/local/bin/haproxy`,
+  # Show include timing statistics
+  controller validate -f config.yaml --profile-includes`,
 	RunE: runValidate,
 }
 
@@ -86,7 +85,6 @@ func init() {
 	validateCmd.Flags().StringVarP(&validateConfigFile, "file", "f", "", "Path to HAProxyTemplateConfig YAML file (required)")
 	validateCmd.Flags().StringVar(&validateTestName, "test", "", "Run specific test by name (optional)")
 	validateCmd.Flags().StringVarP(&validateOutputFormat, "output", "o", "summary", "Output format: summary, json, yaml")
-	validateCmd.Flags().StringVar(&validateHAProxyBinary, "haproxy-binary", "haproxy", "Path to HAProxy binary for validation")
 	validateCmd.Flags().BoolVar(&validateVerbose, "verbose", false, "Show rendered content preview for failed assertions")
 	validateCmd.Flags().BoolVar(&validateDumpRendered, "dump-rendered", false, "Dump all rendered content (haproxy.cfg, maps, files)")
 	validateCmd.Flags().BoolVar(&validateTraceTemplates, "trace-templates", false, "Show template execution trace (top-level only; use with --profile-includes for full call tree)")
