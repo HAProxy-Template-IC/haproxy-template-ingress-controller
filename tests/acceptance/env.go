@@ -499,23 +499,23 @@ func WaitForControllerReadyWithMetrics(ctx context.Context, client klient.Client
 				return false, fmt.Errorf("pod exists but not ready")
 			}
 
-			// Step 2: Check metrics indicate reconciliation completed
-			reconciliationValue, err := metricsClient.GetMetricValue(ctx, "haptic_reconciliation_total")
+			// Step 2: Check metrics indicate reconciliation and validation completed.
+			// Fetch both metrics in a single request to guarantee they come from the same pod.
+			// With multiple replicas behind a ClusterIP service, separate requests can route
+			// to different pods — only the leader has these counters > 0.
+			values, err := metricsClient.GetMetricValues(ctx, []string{
+				"haptic_reconciliation_total",
+				"haptic_validation_total",
+			})
 			if err != nil {
 				return false, fmt.Errorf("metrics not accessible: %w", err)
 			}
 
-			if reconciliationValue == 0 {
+			if values["haptic_reconciliation_total"] == 0 {
 				return false, fmt.Errorf("reconciliation_total is 0, controller still initializing")
 			}
 
-			// Step 3: Check validation has also completed (happens after reconciliation)
-			validationValue, err := metricsClient.GetMetricValue(ctx, "haptic_validation_total")
-			if err != nil {
-				return false, fmt.Errorf("validation metrics not accessible: %w", err)
-			}
-
-			if validationValue == 0 {
+			if values["haptic_validation_total"] == 0 {
 				return false, fmt.Errorf("validation_total is 0, validation not yet complete")
 			}
 
@@ -1106,14 +1106,9 @@ func (mc *MetricsClient) GetMetrics(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("failed to fetch metrics after %d retries: %w", maxRetries, lastErr)
 }
 
-// GetMetricValue fetches a single metric value from the controller's metrics endpoint.
-func (mc *MetricsClient) GetMetricValue(ctx context.Context, metricName string) (float64, error) {
-	metricsBody, err := mc.GetMetrics(ctx)
-	if err != nil {
-		return 0, err
-	}
-
-	// Parse the specific metric
+// parseMetricValue extracts a single metric value from a raw Prometheus metrics body.
+// Returns 0 if the metric is not found.
+func parseMetricValue(metricsBody, metricName string) float64 {
 	scanner := bufio.NewScanner(strings.NewReader(metricsBody))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -1130,12 +1125,38 @@ func (mc *MetricsClient) GetMetricValue(ctx context.Context, metricName string) 
 				if err != nil {
 					continue
 				}
-				return value, nil
+				return value
 			}
 		}
 	}
 
-	return 0, nil // Metric not found, return 0
+	return 0
+}
+
+// GetMetricValue fetches a single metric value from the controller's metrics endpoint.
+func (mc *MetricsClient) GetMetricValue(ctx context.Context, metricName string) (float64, error) {
+	metricsBody, err := mc.GetMetrics(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	return parseMetricValue(metricsBody, metricName), nil
+}
+
+// GetMetricValues fetches metrics once and extracts multiple metric values from the same response.
+// This guarantees all returned values come from the same pod, avoiding service routing
+// inconsistencies when multiple replicas exist behind a ClusterIP service.
+func (mc *MetricsClient) GetMetricValues(ctx context.Context, metricNames []string) (map[string]float64, error) {
+	metricsBody, err := mc.GetMetrics(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	values := make(map[string]float64, len(metricNames))
+	for _, name := range metricNames {
+		values[name] = parseMetricValue(metricsBody, name)
+	}
+	return values, nil
 }
 
 // GetLeaderPod parses metrics to find which pod is the leader.
