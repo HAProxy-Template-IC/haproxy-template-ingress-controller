@@ -70,21 +70,13 @@ type ParseError struct {
 	// ConfigSnippet contains the first 200 characters of the problematic config
 	ConfigSnippet string
 
-	// Line indicates the approximate line number where parsing failed (if available)
-	Line int
-
 	// Cause is the underlying parsing error
 	Cause error
 }
 
 // Error implements the error interface.
 func (e *ParseError) Error() string {
-	msg := fmt.Sprintf("parsing %s configuration", e.ConfigType)
-	if e.Line > 0 {
-		msg += fmt.Sprintf(" near line %d", e.Line)
-	}
-	msg += fmt.Sprintf(": %v", e.Cause)
-	return msg
+	return fmt.Sprintf("parsing %s configuration: %v", e.ConfigType, e.Cause)
 }
 
 // Unwrap returns the underlying cause for error unwrapping.
