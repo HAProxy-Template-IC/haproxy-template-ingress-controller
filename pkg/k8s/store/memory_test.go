@@ -549,9 +549,11 @@ func TestMemoryStore_UpdateWithNonUniqueKeys(t *testing.T) {
 
 	if foundSlice1 == nil {
 		t.Fatal("slice1 not found after update")
+		return
 	}
 	if foundSlice2 == nil {
 		t.Fatal("slice2 not found after update")
+		return
 	}
 
 	// Verify slice1 was updated

@@ -328,6 +328,7 @@ func TestCachedStore_UpdateWithNonUniqueKeys(t *testing.T) {
 
 	if foundSlice1 == nil {
 		t.Fatal("slice1 not found after update")
+		return
 	}
 
 	if foundSlice1.Object["version"] != "v2" {

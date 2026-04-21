@@ -15,6 +15,7 @@ func TestNew(t *testing.T) {
 	}
 	if p == nil {
 		t.Fatal("New() returned nil parser")
+		return
 	}
 	if p.parser == nil {
 		t.Fatal("New() returned parser with nil internal parser")
