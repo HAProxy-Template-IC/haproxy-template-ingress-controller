@@ -132,8 +132,8 @@ func TestValidatorSet_Hash(t *testing.T) {
 	assert.NotEqual(t, uint64(0), vs.HashServer(server1))
 }
 
-func TestValidationError(t *testing.T) {
-	err := &ValidationError{
+func TestFieldError(t *testing.T) {
+	err := &FieldError{
 		Field:   "maxconn",
 		Message: "must be >= 1",
 	}

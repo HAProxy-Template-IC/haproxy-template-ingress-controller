@@ -136,12 +136,12 @@ func generateRequiredCheck(buf *bytes.Buffer, goField, jsonField string, prop *P
 		} else {
 			fmt.Fprintf(buf, "\tif m.%s == \"\" {\n", goField)
 		}
-		fmt.Fprintf(buf, "\t\treturn &ValidationError{Field: %q, Message: \"required\"}\n", jsonField)
+		fmt.Fprintf(buf, "\t\treturn &FieldError{Field: %q, Message: \"required\"}\n", jsonField)
 		buf.WriteString("\t}\n\n")
 	case schemaTypeInteger, schemaTypeNumber:
 		if prop.IsPointer {
 			fmt.Fprintf(buf, "\tif m.%s == nil {\n", goField)
-			fmt.Fprintf(buf, "\t\treturn &ValidationError{Field: %q, Message: \"required\"}\n", jsonField)
+			fmt.Fprintf(buf, "\t\treturn &FieldError{Field: %q, Message: \"required\"}\n", jsonField)
 			buf.WriteString("\t}\n\n")
 		}
 		// Non-pointer integers are always present (zero value is valid)
@@ -168,7 +168,7 @@ func generatePatternCheck(buf *bytes.Buffer, goField, jsonField string, prop *Pr
 		fmt.Fprintf(buf, "\tif m.%s != \"\" && !%s.MatchString(m.%s) {\n",
 			goField, varName, goField)
 	}
-	fmt.Fprintf(buf, "\t\treturn &ValidationError{Field: %q, Message: \"invalid format\"}\n", jsonField)
+	fmt.Fprintf(buf, "\t\treturn &FieldError{Field: %q, Message: \"invalid format\"}\n", jsonField)
 	buf.WriteString("\t}\n\n")
 }
 
@@ -194,7 +194,7 @@ func generateEnumCheck(buf *bytes.Buffer, goField, jsonField string, prop *Prope
 	fmt.Fprintf(buf, "\t\tcase %s:\n", strings.Join(enumValues, ", "))
 	buf.WriteString("\t\t\t// valid\n")
 	buf.WriteString("\t\tdefault:\n")
-	fmt.Fprintf(buf, "\t\t\treturn &ValidationError{Field: %q, Message: \"must be one of: %s\"}\n",
+	fmt.Fprintf(buf, "\t\t\treturn &FieldError{Field: %q, Message: \"must be one of: %s\"}\n",
 		jsonField, strings.Join(enumDisplay, ", "))
 	buf.WriteString("\t\t}\n")
 	buf.WriteString("\t}\n\n")
@@ -223,15 +223,15 @@ func generateRangeCheckPointer(buf *bytes.Buffer, goField, jsonField string, pro
 	if hasMin && hasMax {
 		fmt.Fprintf(buf, "\t\tif *m.%s < %d || *m.%s > %d {\n",
 			goField, int64(*prop.Minimum), goField, int64(*prop.Maximum))
-		fmt.Fprintf(buf, "\t\t\treturn &ValidationError{Field: %q, Message: \"must be between %d and %d\"}\n",
+		fmt.Fprintf(buf, "\t\t\treturn &FieldError{Field: %q, Message: \"must be between %d and %d\"}\n",
 			jsonField, int64(*prop.Minimum), int64(*prop.Maximum))
 	} else if hasMin {
 		fmt.Fprintf(buf, "\t\tif *m.%s < %d {\n", goField, int64(*prop.Minimum))
-		fmt.Fprintf(buf, "\t\t\treturn &ValidationError{Field: %q, Message: \"must be >= %d\"}\n",
+		fmt.Fprintf(buf, "\t\t\treturn &FieldError{Field: %q, Message: \"must be >= %d\"}\n",
 			jsonField, int64(*prop.Minimum))
 	} else {
 		fmt.Fprintf(buf, "\t\tif *m.%s > %d {\n", goField, int64(*prop.Maximum))
-		fmt.Fprintf(buf, "\t\t\treturn &ValidationError{Field: %q, Message: \"must be <= %d\"}\n",
+		fmt.Fprintf(buf, "\t\t\treturn &FieldError{Field: %q, Message: \"must be <= %d\"}\n",
 			jsonField, int64(*prop.Maximum))
 	}
 	buf.WriteString("\t\t}\n\t}\n\n")
@@ -245,15 +245,15 @@ func generateRangeCheckValue(buf *bytes.Buffer, goField, jsonField string, prop 
 	if hasMin && hasMax {
 		fmt.Fprintf(buf, "\tif m.%s != 0 && (m.%s < %d || m.%s > %d) {\n",
 			goField, goField, int64(*prop.Minimum), goField, int64(*prop.Maximum))
-		fmt.Fprintf(buf, "\t\treturn &ValidationError{Field: %q, Message: \"must be between %d and %d\"}\n",
+		fmt.Fprintf(buf, "\t\treturn &FieldError{Field: %q, Message: \"must be between %d and %d\"}\n",
 			jsonField, int64(*prop.Minimum), int64(*prop.Maximum))
 	} else if hasMin {
 		fmt.Fprintf(buf, "\tif m.%s != 0 && m.%s < %d {\n", goField, goField, int64(*prop.Minimum))
-		fmt.Fprintf(buf, "\t\treturn &ValidationError{Field: %q, Message: \"must be >= %d\"}\n",
+		fmt.Fprintf(buf, "\t\treturn &FieldError{Field: %q, Message: \"must be >= %d\"}\n",
 			jsonField, int64(*prop.Minimum))
 	} else {
 		fmt.Fprintf(buf, "\tif m.%s != 0 && m.%s > %d {\n", goField, goField, int64(*prop.Maximum))
-		fmt.Fprintf(buf, "\t\treturn &ValidationError{Field: %q, Message: \"must be <= %d\"}\n",
+		fmt.Fprintf(buf, "\t\treturn &FieldError{Field: %q, Message: \"must be <= %d\"}\n",
 			jsonField, int64(*prop.Maximum))
 	}
 	buf.WriteString("\t}\n\n")
