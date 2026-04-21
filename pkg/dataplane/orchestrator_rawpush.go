@@ -28,24 +28,25 @@ import (
 // Parameters:
 //   - version: The current config version for optimistic locking. Version is incremented after push.
 //   - mode: The SyncMode to record (SyncModeRawInitial, SyncModeRawThreshold, or SyncModeRawFallback)
-//   - auxFilesAlreadySynced: If true, Phase 1 is skipped because aux files were already synced
+//   - auxFilesAlreadySynced: If true, PhasePreConfig is skipped because aux files were already synced
 //
 // Uses the same auxiliary file sync and reload verification as the fine-grained path.
 func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string, diff *comparator.ConfigDiff, auxDiffs *auxiliaryFileDiffs, opts *SyncOptions, startTime time.Time, version int64, mode SyncMode, auxFilesAlreadySynced bool) (*SyncResult, error) {
 	// Log at debug level - raw pushes are normal operational behavior
 	o.logger.Debug("Executing raw configuration push", "mode", mode)
 
-	// Phase 1: Sync auxiliary files BEFORE pushing raw config (same as fine-grained sync)
-	// Files must exist before HAProxy validates the configuration.
-	// Skip if aux files were already synced in the failed fine-grained sync attempt.
+	// PhasePreConfig: sync auxiliary files BEFORE pushing raw config (same as
+	// fine-grained sync). Files must exist before HAProxy validates the
+	// configuration. Skip if aux files were already synced in the failed
+	// fine-grained sync attempt.
 	if !auxFilesAlreadySynced {
 		auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff)
 		if err != nil {
 			return nil, err
 		}
 
-		// Phase 1.5: Verify auxiliary file reloads completed BEFORE raw config push
-		// This prevents the race condition where config operations reference files before their reloads complete.
+		// Verify aux file reloads completed BEFORE PhaseConfig raw push.
+		// Prevents config from referencing files whose reloads are still pending.
 		if err := o.verifyAuxiliaryReloads(ctx, auxReloadIDs, opts, "before raw config push"); err != nil {
 			return nil, err
 		}
@@ -53,7 +54,9 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 		o.logger.Info("Skipping aux file sync in fallback - already synced in fine-grained attempt")
 	}
 
-	// Phase 2: Push raw configuration (now that auxiliary files exist and reloads verified)
+	// PhaseConfig: push the raw configuration now that auxiliary files exist
+	// and their reloads are verified. Raw push does not have a PhasePostConfig
+	// delete step — the push itself replaces the full config.
 	reloadID, err := o.client.PushRawConfiguration(ctx, desiredConfig, version)
 	if err != nil {
 		return nil, &SyncError{

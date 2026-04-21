@@ -28,11 +28,14 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/synchronizer"
 )
 
-// attemptFineGrainedSyncWithDiffs attempts fine-grained sync with pre-computed auxiliary file diffs.
-// This version accepts pre-computed diffs to avoid redundant comparison when diffs are already known.
-// Returns (result, auxFilesSynced, error) where auxFilesSynced indicates if Phase 1 completed successfully.
-// This is used to avoid re-syncing aux files in fallback if they were already synced.
-func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
+// executeFineGrainedSync runs a fine-grained sync using pre-computed diffs.
+// Accepts pre-computed diffs to avoid redundant comparison when they are
+// already known. Returns (result, auxFilesSynced, error); the auxFilesSynced
+// flag lets the caller's raw-push fallback skip redundant aux file work.
+//
+// Runs the three phases defined in phases.go in order (PhasePreConfig,
+// PhaseConfig, PhasePostConfig) and finally verifies the triggered reload.
+func (o *orchestrator) executeFineGrainedSync(
 	ctx context.Context,
 	diff *comparator.ConfigDiff,
 	opts *SyncOptions,
@@ -43,28 +46,25 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 	crtlistDiff *auxiliaryfiles.CRTListDiff,
 	startTime time.Time,
 ) (*SyncResult, bool, error) {
-	// Phase 1: Sync auxiliary files (pre-config) using pre-computed diffs
+	// PhasePreConfig: sync auxiliary files and verify any reloads they
+	// trigger, so PhaseConfig doesn't race against pending file reloads.
 	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
 	if err != nil {
 		return nil, false, err
 	}
-
-	// Phase 1.5: Verify auxiliary file reloads completed BEFORE config operations
-	// This prevents the race condition where config operations reference files before their reloads complete.
 	if err := o.verifyAuxiliaryReloads(ctx, auxReloadIDs, opts, "before config sync"); err != nil {
 		return nil, false, err
 	}
-
-	// At this point, aux files are synced successfully (Phase 1 complete)
 	auxFilesSynced := true
 
-	// Phase 2: Execute configuration sync with retry logic
+	// PhaseConfig: apply the HAProxy configuration change.
 	appliedOps, reloadTriggered, reloadID, retries, err := o.executeConfigOperations(ctx, diff, opts)
 	if err != nil {
 		return nil, auxFilesSynced, err
 	}
 
-	// Phase 3: Delete obsolete files AFTER successful config sync
+	// PhasePostConfig: delete auxiliary files the new config no longer
+	// references. Only safe after PhaseConfig succeeded.
 	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
 
 	// Build result
@@ -94,9 +94,10 @@ func (o *orchestrator) attemptFineGrainedSyncWithDiffs(
 		Message:           fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
 	}
 
-	// Phase 4: Verify reload if triggered and verification enabled.
-	// When reloadID is empty (synchronous forceReload), the reload already succeeded —
-	// mark as verified without polling.
+	// Verify reload (post-PhasePostConfig) if one was triggered and
+	// verification is enabled. When reloadID is empty (synchronous
+	// forceReload), the reload already succeeded — mark as verified without
+	// polling.
 	if reloadTriggered && reloadID == "" {
 		result.ReloadVerified = true
 	} else if reloadTriggered && opts.VerifyReload {

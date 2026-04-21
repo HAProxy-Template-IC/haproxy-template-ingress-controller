@@ -150,8 +150,8 @@ func (o *orchestrator) scheduleAuxiliarySync(
 	})
 }
 
-// syncAuxiliaryFilesPreConfig syncs all auxiliary files before config sync (Phase 1).
-// Only creates and updates are synced; deletions are deferred until post-config phase.
+// syncAuxiliaryFilesPreConfig syncs all auxiliary files during PhasePreConfig.
+// Only creates and updates are synced; deletions are deferred until PhasePostConfig.
 // Returns reload IDs from create/update operations that triggered reloads.
 //
 // IMPORTANT: SSL certificates and CA files are synced FIRST (synchronously) before other aux files.
