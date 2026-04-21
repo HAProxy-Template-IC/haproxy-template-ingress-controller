@@ -35,13 +35,17 @@ package validators
 
 import "fmt"
 
-// ValidationError represents a validation failure for a specific field.
-type ValidationError struct {
+// FieldError represents an OpenAPI validation failure for a specific field.
+//
+// Named to distinguish it from dataplane.ValidationError (which represents
+// HAProxy-level semantic validation failures). Both error types can surface
+// during a sync, but they describe different validation phases.
+type FieldError struct {
 	Field   string
 	Message string
 }
 
 // Error implements the error interface.
-func (e *ValidationError) Error() string {
+func (e *FieldError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }

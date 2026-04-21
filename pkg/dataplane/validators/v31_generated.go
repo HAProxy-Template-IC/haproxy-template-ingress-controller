@@ -33,19 +33,19 @@ func ValidateAclV31(m *models.ACL) error {
 	}
 
 	if m.ACLName == "" {
-		return &ValidationError{Field: "acl_name", Message: "required"}
+		return &FieldError{Field: "acl_name", Message: "required"}
 	}
 
 	if m.Criterion == "" {
-		return &ValidationError{Field: "criterion", Message: "required"}
+		return &FieldError{Field: "criterion", Message: "required"}
 	}
 
 	if m.ACLName != "" && !patternNoWhitespace.MatchString(m.ACLName) {
-		return &ValidationError{Field: "acl_name", Message: "invalid format"}
+		return &FieldError{Field: "acl_name", Message: "invalid format"}
 	}
 
 	if m.Criterion != "" && !patternNoWhitespace.MatchString(m.Criterion) {
-		return &ValidationError{Field: "criterion", Message: "invalid format"}
+		return &FieldError{Field: "criterion", Message: "invalid format"}
 	}
 
 	return nil
@@ -72,7 +72,7 @@ func ValidateBackendSwitchingRuleV31(m *models.BackendSwitchingRule) error {
 	}
 
 	if m.Name == "" {
-		return &ValidationError{Field: "name", Message: "required"}
+		return &FieldError{Field: "name", Message: "required"}
 	}
 
 	if m.Cond != "" {
@@ -80,12 +80,12 @@ func ValidateBackendSwitchingRuleV31(m *models.BackendSwitchingRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
 	if m.Name != "" && !patternNoWhitespace.MatchString(m.Name) {
-		return &ValidationError{Field: "name", Message: "invalid format"}
+		return &FieldError{Field: "name", Message: "invalid format"}
 	}
 
 	return nil
@@ -112,15 +112,15 @@ func ValidateBindV31(m *models.Bind) error {
 	}
 
 	if m.Address != "" && !patternNoWhitespace.MatchString(m.Address) {
-		return &ValidationError{Field: "address", Message: "invalid format"}
+		return &FieldError{Field: "address", Message: "invalid format"}
 	}
 
 	if m.Alpn != "" && !patternNoWhitespace.MatchString(m.Alpn) {
-		return &ValidationError{Field: "alpn", Message: "invalid format"}
+		return &FieldError{Field: "alpn", Message: "invalid format"}
 	}
 
 	if m.GUIDPrefix != "" && !patternGUID.MatchString(m.GUIDPrefix) {
-		return &ValidationError{Field: "guid_prefix", Message: "invalid format"}
+		return &FieldError{Field: "guid_prefix", Message: "invalid format"}
 	}
 
 	if m.Level != "" {
@@ -128,23 +128,23 @@ func ValidateBindV31(m *models.Bind) error {
 		case "user", "operator", "admin":
 			// valid
 		default:
-			return &ValidationError{Field: "level", Message: "must be one of: user, operator, admin"}
+			return &FieldError{Field: "level", Message: "must be one of: user, operator, admin"}
 		}
 	}
 
 	if m.Name != "" && !patternNoWhitespace.MatchString(m.Name) {
-		return &ValidationError{Field: "name", Message: "invalid format"}
+		return &FieldError{Field: "name", Message: "invalid format"}
 	}
 
 	if m.Port != nil {
 		if *m.Port < 1 || *m.Port > 65535 {
-			return &ValidationError{Field: "port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.PortRangeEnd != nil {
 		if *m.PortRangeEnd < 1 || *m.PortRangeEnd > 65535 {
-			return &ValidationError{Field: "port-range-end", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "port-range-end", Message: "must be between 1 and 65535"}
 		}
 	}
 
@@ -153,7 +153,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "cubic", "newreno", "bbr", "nocc":
 			// valid
 		default:
-			return &ValidationError{Field: "quic-cc-algo", Message: "must be one of: cubic, newreno, bbr, nocc"}
+			return &FieldError{Field: "quic-cc-algo", Message: "must be one of: cubic, newreno, bbr, nocc"}
 		}
 	}
 
@@ -162,19 +162,19 @@ func ValidateBindV31(m *models.Bind) error {
 		case "connection", "listener":
 			// valid
 		default:
-			return &ValidationError{Field: "quic-socket", Message: "must be one of: connection, listener"}
+			return &FieldError{Field: "quic-socket", Message: "must be one of: connection, listener"}
 		}
 	}
 
 	if m.QuicCcAlgoBurstSize != nil {
 		if *m.QuicCcAlgoBurstSize > 1024 {
-			return &ValidationError{Field: "quic_cc_algo_burst_size", Message: "must be <= 1024"}
+			return &FieldError{Field: "quic_cc_algo_burst_size", Message: "must be <= 1024"}
 		}
 	}
 
 	if m.QuicCcAlgoMaxWindow != nil {
 		if *m.QuicCcAlgoMaxWindow < 10 || *m.QuicCcAlgoMaxWindow > 4194304 {
-			return &ValidationError{Field: "quic_cc_algo_max_window", Message: "must be between 10 and 4194304"}
+			return &FieldError{Field: "quic_cc_algo_max_window", Message: "must be between 10 and 4194304"}
 		}
 	}
 
@@ -183,16 +183,16 @@ func ValidateBindV31(m *models.Bind) error {
 		case "none", "number", "string":
 			// valid
 		default:
-			return &ValidationError{Field: "severity_output", Message: "must be one of: none, number, string"}
+			return &FieldError{Field: "severity_output", Message: "must be one of: none, number, string"}
 		}
 	}
 
 	if m.SslCafile != "" && !patternNoWhitespace.MatchString(m.SslCafile) {
-		return &ValidationError{Field: "ssl_cafile", Message: "invalid format"}
+		return &FieldError{Field: "ssl_cafile", Message: "invalid format"}
 	}
 
 	if m.SslCertificate != "" && !patternNoWhitespace.MatchString(m.SslCertificate) {
-		return &ValidationError{Field: "ssl_certificate", Message: "invalid format"}
+		return &FieldError{Field: "ssl_certificate", Message: "invalid format"}
 	}
 
 	if m.SslMaxVer != "" {
@@ -200,7 +200,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "SSLv3", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_max_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
+			return &FieldError{Field: "ssl_max_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
 		}
 	}
 
@@ -209,7 +209,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "SSLv3", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_min_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
+			return &FieldError{Field: "ssl_min_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
 		}
 	}
 
@@ -218,7 +218,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -227,7 +227,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -236,7 +236,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -245,7 +245,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -254,7 +254,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -263,7 +263,7 @@ func ValidateBindV31(m *models.Bind) error {
 		case "none", "optional", "required":
 			// valid
 		default:
-			return &ValidationError{Field: "verify", Message: "must be one of: none, optional, required"}
+			return &FieldError{Field: "verify", Message: "must be one of: none, optional, required"}
 		}
 	}
 
@@ -482,7 +482,7 @@ func ValidateCaptureV31(m *models.Capture) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.Type != "" {
@@ -490,7 +490,7 @@ func ValidateCaptureV31(m *models.Capture) error {
 		case "request", "response":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: request, response"}
+			return &FieldError{Field: "type", Message: "must be one of: request, response"}
 		}
 	}
 
@@ -517,31 +517,31 @@ func ValidateFilterV31(m *models.Filter) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.AppName != "" && !patternNoWhitespace.MatchString(m.AppName) {
-		return &ValidationError{Field: "app_name", Message: "invalid format"}
+		return &FieldError{Field: "app_name", Message: "invalid format"}
 	}
 
 	if m.BandwidthLimitName != "" && !patternNoWhitespace.MatchString(m.BandwidthLimitName) {
-		return &ValidationError{Field: "bandwidth_limit_name", Message: "invalid format"}
+		return &FieldError{Field: "bandwidth_limit_name", Message: "invalid format"}
 	}
 
 	if m.CacheName != "" && !patternNoWhitespace.MatchString(m.CacheName) {
-		return &ValidationError{Field: "cache_name", Message: "invalid format"}
+		return &FieldError{Field: "cache_name", Message: "invalid format"}
 	}
 
 	if m.SpoeConfig != "" && !patternNoWhitespace.MatchString(m.SpoeConfig) {
-		return &ValidationError{Field: "spoe_config", Message: "invalid format"}
+		return &FieldError{Field: "spoe_config", Message: "invalid format"}
 	}
 
 	if m.SpoeEngine != "" && !patternNoWhitespace.MatchString(m.SpoeEngine) {
-		return &ValidationError{Field: "spoe_engine", Message: "invalid format"}
+		return &FieldError{Field: "spoe_engine", Message: "invalid format"}
 	}
 
 	if m.TraceName != "" && !patternNoWhitespace.MatchString(m.TraceName) {
-		return &ValidationError{Field: "trace_name", Message: "invalid format"}
+		return &FieldError{Field: "trace_name", Message: "invalid format"}
 	}
 
 	if m.Type != "" {
@@ -549,7 +549,7 @@ func ValidateFilterV31(m *models.Filter) error {
 		case "bwlim-in", "bwlim-out", "cache", "compression", "fcgi-app", "spoe", "trace":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: bwlim-in, bwlim-out, cache, compression, fcgi-app, spoe, trace"}
+			return &FieldError{Field: "type", Message: "must be one of: bwlim-in, bwlim-out, cache, compression, fcgi-app, spoe, trace"}
 		}
 	}
 
@@ -602,19 +602,19 @@ func ValidateHttpAfterResponseRuleV31(m *models.HTTPAfterResponseRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.ACLFile != "" && !patternNoWhitespace.MatchString(m.ACLFile) {
-		return &ValidationError{Field: "acl_file", Message: "invalid format"}
+		return &FieldError{Field: "acl_file", Message: "invalid format"}
 	}
 
 	if m.ACLKeyfmt != "" && !patternNoWhitespace.MatchString(m.ACLKeyfmt) {
-		return &ValidationError{Field: "acl_keyfmt", Message: "invalid format"}
+		return &FieldError{Field: "acl_keyfmt", Message: "invalid format"}
 	}
 
 	if m.CaptureSample != "" && !patternCaptureSample.MatchString(m.CaptureSample) {
-		return &ValidationError{Field: "capture_sample", Message: "invalid format"}
+		return &FieldError{Field: "capture_sample", Message: "invalid format"}
 	}
 
 	if m.Cond != "" {
@@ -622,7 +622,7 @@ func ValidateHttpAfterResponseRuleV31(m *models.HTTPAfterResponseRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
@@ -631,24 +631,24 @@ func ValidateHttpAfterResponseRuleV31(m *models.HTTPAfterResponseRule) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug", "silent":
 			// valid
 		default:
-			return &ValidationError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
+			return &FieldError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
 		}
 	}
 
 	if m.MapFile != "" && !patternNoWhitespace.MatchString(m.MapFile) {
-		return &ValidationError{Field: "map_file", Message: "invalid format"}
+		return &FieldError{Field: "map_file", Message: "invalid format"}
 	}
 
 	if m.MapKeyfmt != "" && !patternNoWhitespace.MatchString(m.MapKeyfmt) {
-		return &ValidationError{Field: "map_keyfmt", Message: "invalid format"}
+		return &FieldError{Field: "map_keyfmt", Message: "invalid format"}
 	}
 
 	if m.MapValuefmt != "" && !patternNoWhitespace.MatchString(m.MapValuefmt) {
-		return &ValidationError{Field: "map_valuefmt", Message: "invalid format"}
+		return &FieldError{Field: "map_valuefmt", Message: "invalid format"}
 	}
 
 	if m.Status != 0 && (m.Status < 100 || m.Status > 999) {
-		return &ValidationError{Field: "status", Message: "must be between 100 and 999"}
+		return &FieldError{Field: "status", Message: "must be between 100 and 999"}
 	}
 
 	if m.StrictMode != "" {
@@ -656,7 +656,7 @@ func ValidateHttpAfterResponseRuleV31(m *models.HTTPAfterResponseRule) error {
 		case "on", "off":
 			// valid
 		default:
-			return &ValidationError{Field: "strict_mode", Message: "must be one of: on, off"}
+			return &FieldError{Field: "strict_mode", Message: "must be one of: on, off"}
 		}
 	}
 
@@ -665,16 +665,16 @@ func ValidateHttpAfterResponseRuleV31(m *models.HTTPAfterResponseRule) error {
 		case "add-header", "allow", "capture", "del-acl", "del-header", "del-map", "replace-header", "replace-value", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "set-header", "set-log-level", "set-map", "set-status", "set-var", "set-var-fmt", "strict-mode", "unset-var", "do-log":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: add-header, allow, capture, del-acl, del-header, del-map, replace-header, replace-value, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, set-header, set-log-level, set-map, set-status, set-var, set-var-fmt, strict-mode, unset-var, do-log"}
+			return &FieldError{Field: "type", Message: "must be one of: add-header, allow, capture, del-acl, del-header, del-map, replace-header, replace-value, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, set-header, set-log-level, set-map, set-status, set-var, set-var-fmt, strict-mode, unset-var, do-log"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
@@ -729,15 +729,15 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.Addr != "" && !patternNoWhitespace.MatchString(m.Addr) {
-		return &ValidationError{Field: "addr", Message: "invalid format"}
+		return &FieldError{Field: "addr", Message: "invalid format"}
 	}
 
 	if m.Alpn != "" && !patternNoWhitespace.MatchString(m.Alpn) {
-		return &ValidationError{Field: "alpn", Message: "invalid format"}
+		return &FieldError{Field: "alpn", Message: "invalid format"}
 	}
 
 	if m.ErrorStatus != "" {
@@ -745,12 +745,12 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 		case "L7OKC", "L7RSP", "L7STS", "L6RSP", "L4CON":
 			// valid
 		default:
-			return &ValidationError{Field: "error_status", Message: "must be one of: L7OKC, L7RSP, L7STS, L6RSP, L4CON"}
+			return &FieldError{Field: "error_status", Message: "must be one of: L7OKC, L7RSP, L7STS, L6RSP, L4CON"}
 		}
 	}
 
 	if m.Match != "" && !patternNoWhitespace.MatchString(m.Match) {
-		return &ValidationError{Field: "match", Message: "invalid format"}
+		return &FieldError{Field: "match", Message: "invalid format"}
 	}
 
 	if m.Match != "" {
@@ -758,7 +758,7 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 		case "status", "rstatus", "hdr", "fhdr", "string", "rstring":
 			// valid
 		default:
-			return &ValidationError{Field: "match", Message: "must be one of: status, rstatus, hdr, fhdr, string, rstring"}
+			return &FieldError{Field: "match", Message: "must be one of: status, rstatus, hdr, fhdr, string, rstring"}
 		}
 	}
 
@@ -767,7 +767,7 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 		case "HEAD", "PUT", "POST", "GET", "TRACE", "PATCH", "DELETE", "CONNECT", "OPTIONS":
 			// valid
 		default:
-			return &ValidationError{Field: "method", Message: "must be one of: HEAD, PUT, POST, GET, TRACE, PATCH, DELETE, CONNECT, OPTIONS"}
+			return &FieldError{Field: "method", Message: "must be one of: HEAD, PUT, POST, GET, TRACE, PATCH, DELETE, CONNECT, OPTIONS"}
 		}
 	}
 
@@ -776,13 +776,13 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 		case "L7OK", "L7OKC", "L6OK", "L4OK":
 			// valid
 		default:
-			return &ValidationError{Field: "ok_status", Message: "must be one of: L7OK, L7OKC, L6OK, L4OK"}
+			return &FieldError{Field: "ok_status", Message: "must be one of: L7OK, L7OKC, L6OK, L4OK"}
 		}
 	}
 
 	if m.Port != nil {
 		if *m.Port < 1 || *m.Port > 65535 {
-			return &ValidationError{Field: "port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "port", Message: "must be between 1 and 65535"}
 		}
 	}
 
@@ -791,7 +791,7 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 		case "L7TOUT", "L6TOUT", "L4TOUT":
 			// valid
 		default:
-			return &ValidationError{Field: "tout_status", Message: "must be one of: L7TOUT, L6TOUT, L4TOUT"}
+			return &FieldError{Field: "tout_status", Message: "must be one of: L7TOUT, L6TOUT, L4TOUT"}
 		}
 	}
 
@@ -800,16 +800,16 @@ func ValidateHttpCheckV31(m *models.HTTPCheck) error {
 		case "comment", "connect", "disable-on-404", "expect", "send", "send-state", "set-var", "set-var-fmt", "unset-var":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: comment, connect, disable-on-404, expect, send, send-state, set-var, set-var-fmt, unset-var"}
+			return &FieldError{Field: "type", Message: "must be one of: comment, connect, disable-on-404, expect, send, send-state, set-var, set-var-fmt, unset-var"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
@@ -894,7 +894,7 @@ func ValidateHttpErrorRuleV31(m *models.HTTPErrorRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.ReturnContentFormat != "" {
@@ -902,7 +902,7 @@ func ValidateHttpErrorRuleV31(m *models.HTTPErrorRule) error {
 		case "default-errorfiles", "errorfile", "errorfiles", "file", "lf-file", "string", "lf-string":
 			// valid
 		default:
-			return &ValidationError{Field: "return_content_format", Message: "must be one of: default-errorfiles, errorfile, errorfiles, file, lf-file, string, lf-string"}
+			return &FieldError{Field: "return_content_format", Message: "must be one of: default-errorfiles, errorfile, errorfiles, file, lf-file, string, lf-string"}
 		}
 	}
 
@@ -911,7 +911,7 @@ func ValidateHttpErrorRuleV31(m *models.HTTPErrorRule) error {
 		case "status":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: status"}
+			return &FieldError{Field: "type", Message: "must be one of: status"}
 		}
 	}
 
@@ -943,27 +943,27 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.ACLFile != "" && !patternNoWhitespace.MatchString(m.ACLFile) {
-		return &ValidationError{Field: "acl_file", Message: "invalid format"}
+		return &FieldError{Field: "acl_file", Message: "invalid format"}
 	}
 
 	if m.ACLKeyfmt != "" && !patternNoWhitespace.MatchString(m.ACLKeyfmt) {
-		return &ValidationError{Field: "acl_keyfmt", Message: "invalid format"}
+		return &FieldError{Field: "acl_keyfmt", Message: "invalid format"}
 	}
 
 	if m.AuthRealm != "" && !patternNoWhitespace.MatchString(m.AuthRealm) {
-		return &ValidationError{Field: "auth_realm", Message: "invalid format"}
+		return &FieldError{Field: "auth_realm", Message: "invalid format"}
 	}
 
 	if m.CacheName != "" && !patternNoWhitespace.MatchString(m.CacheName) {
-		return &ValidationError{Field: "cache_name", Message: "invalid format"}
+		return &FieldError{Field: "cache_name", Message: "invalid format"}
 	}
 
 	if m.CaptureSample != "" && !patternCaptureSample.MatchString(m.CaptureSample) {
-		return &ValidationError{Field: "capture_sample", Message: "invalid format"}
+		return &FieldError{Field: "capture_sample", Message: "invalid format"}
 	}
 
 	if m.Cond != "" {
@@ -971,22 +971,22 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
 	if m.DenyStatus != nil {
 		if *m.DenyStatus < 200 || *m.DenyStatus > 599 {
-			return &ValidationError{Field: "deny_status", Message: "must be between 200 and 599"}
+			return &FieldError{Field: "deny_status", Message: "must be between 200 and 599"}
 		}
 	}
 
 	if m.HintFormat != "" && !patternNoWhitespace.MatchString(m.HintFormat) {
-		return &ValidationError{Field: "hint_format", Message: "invalid format"}
+		return &FieldError{Field: "hint_format", Message: "invalid format"}
 	}
 
 	if m.HintName != "" && !patternNoWhitespace.MatchString(m.HintName) {
-		return &ValidationError{Field: "hint_name", Message: "invalid format"}
+		return &FieldError{Field: "hint_name", Message: "invalid format"}
 	}
 
 	if m.LogLevel != "" {
@@ -994,36 +994,36 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug", "silent":
 			// valid
 		default:
-			return &ValidationError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
+			return &FieldError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
 		}
 	}
 
 	if m.LuaAction != "" && !patternNoWhitespace.MatchString(m.LuaAction) {
-		return &ValidationError{Field: "lua_action", Message: "invalid format"}
+		return &FieldError{Field: "lua_action", Message: "invalid format"}
 	}
 
 	if m.MapFile != "" && !patternNoWhitespace.MatchString(m.MapFile) {
-		return &ValidationError{Field: "map_file", Message: "invalid format"}
+		return &FieldError{Field: "map_file", Message: "invalid format"}
 	}
 
 	if m.MapKeyfmt != "" && !patternNoWhitespace.MatchString(m.MapKeyfmt) {
-		return &ValidationError{Field: "map_keyfmt", Message: "invalid format"}
+		return &FieldError{Field: "map_keyfmt", Message: "invalid format"}
 	}
 
 	if m.MapValuefmt != "" && !patternNoWhitespace.MatchString(m.MapValuefmt) {
-		return &ValidationError{Field: "map_valuefmt", Message: "invalid format"}
+		return &FieldError{Field: "map_valuefmt", Message: "invalid format"}
 	}
 
 	if m.MarkValue != "" && !pattern_48e2.MatchString(m.MarkValue) {
-		return &ValidationError{Field: "mark_value", Message: "invalid format"}
+		return &FieldError{Field: "mark_value", Message: "invalid format"}
 	}
 
 	if m.MethodFmt != "" && !patternNoWhitespace.MatchString(m.MethodFmt) {
-		return &ValidationError{Field: "method_fmt", Message: "invalid format"}
+		return &FieldError{Field: "method_fmt", Message: "invalid format"}
 	}
 
 	if m.NiceValue != 0 && (m.NiceValue < -1024 || m.NiceValue > 1024) {
-		return &ValidationError{Field: "nice_value", Message: "must be between -1024 and 1024"}
+		return &FieldError{Field: "nice_value", Message: "must be between -1024 and 1024"}
 	}
 
 	if m.Normalizer != "" {
@@ -1031,16 +1031,16 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "fragment-encode", "fragment-strip", "path-merge-slashes", "path-strip-dot", "path-strip-dotdot", "percent-decode-unreserved", "percent-to-uppercase", "query-sort-by-name":
 			// valid
 		default:
-			return &ValidationError{Field: "normalizer", Message: "must be one of: fragment-encode, fragment-strip, path-merge-slashes, path-strip-dot, path-strip-dotdot, percent-decode-unreserved, percent-to-uppercase, query-sort-by-name"}
+			return &FieldError{Field: "normalizer", Message: "must be one of: fragment-encode, fragment-strip, path-merge-slashes, path-strip-dot, path-strip-dotdot, percent-decode-unreserved, percent-to-uppercase, query-sort-by-name"}
 		}
 	}
 
 	if m.PathFmt != "" && !patternNoWhitespace.MatchString(m.PathFmt) {
-		return &ValidationError{Field: "path_fmt", Message: "invalid format"}
+		return &FieldError{Field: "path_fmt", Message: "invalid format"}
 	}
 
 	if m.PathMatch != "" && !patternNoWhitespace.MatchString(m.PathMatch) {
-		return &ValidationError{Field: "path_match", Message: "invalid format"}
+		return &FieldError{Field: "path_match", Message: "invalid format"}
 	}
 
 	if m.Protocol != "" {
@@ -1048,7 +1048,7 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "ipv4", "ipv6":
 			// valid
 		default:
-			return &ValidationError{Field: "protocol", Message: "must be one of: ipv4, ipv6"}
+			return &FieldError{Field: "protocol", Message: "must be one of: ipv4, ipv6"}
 		}
 	}
 
@@ -1057,12 +1057,12 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "location", "prefix", "scheme":
 			// valid
 		default:
-			return &ValidationError{Field: "redir_type", Message: "must be one of: location, prefix, scheme"}
+			return &FieldError{Field: "redir_type", Message: "must be one of: location, prefix, scheme"}
 		}
 	}
 
 	if m.RedirValue != "" && !patternNoWhitespace.MatchString(m.RedirValue) {
-		return &ValidationError{Field: "redir_value", Message: "invalid format"}
+		return &FieldError{Field: "redir_value", Message: "invalid format"}
 	}
 
 	if m.ReturnContentFormat != "" {
@@ -1070,22 +1070,22 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "default-errorfiles", "errorfile", "errorfiles", "file", "lf-file", "string", "lf-string":
 			// valid
 		default:
-			return &ValidationError{Field: "return_content_format", Message: "must be one of: default-errorfiles, errorfile, errorfiles, file, lf-file, string, lf-string"}
+			return &FieldError{Field: "return_content_format", Message: "must be one of: default-errorfiles, errorfile, errorfiles, file, lf-file, string, lf-string"}
 		}
 	}
 
 	if m.ReturnStatusCode != nil {
 		if *m.ReturnStatusCode < 200 || *m.ReturnStatusCode > 599 {
-			return &ValidationError{Field: "return_status_code", Message: "must be between 200 and 599"}
+			return &FieldError{Field: "return_status_code", Message: "must be between 200 and 599"}
 		}
 	}
 
 	if m.SpoeEngine != "" && !patternNoWhitespace.MatchString(m.SpoeEngine) {
-		return &ValidationError{Field: "spoe_engine", Message: "invalid format"}
+		return &FieldError{Field: "spoe_engine", Message: "invalid format"}
 	}
 
 	if m.SpoeGroup != "" && !patternNoWhitespace.MatchString(m.SpoeGroup) {
-		return &ValidationError{Field: "spoe_group", Message: "invalid format"}
+		return &FieldError{Field: "spoe_group", Message: "invalid format"}
 	}
 
 	if m.StrictMode != "" {
@@ -1093,7 +1093,7 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "on", "off":
 			// valid
 		default:
-			return &ValidationError{Field: "strict_mode", Message: "must be one of: on, off"}
+			return &FieldError{Field: "strict_mode", Message: "must be one of: on, off"}
 		}
 	}
 
@@ -1102,20 +1102,20 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "server", "tunnel", "client":
 			// valid
 		default:
-			return &ValidationError{Field: "timeout_type", Message: "must be one of: server, tunnel, client"}
+			return &FieldError{Field: "timeout_type", Message: "must be one of: server, tunnel, client"}
 		}
 	}
 
 	if m.TosValue != "" && !pattern_48e2.MatchString(m.TosValue) {
-		return &ValidationError{Field: "tos_value", Message: "invalid format"}
+		return &FieldError{Field: "tos_value", Message: "invalid format"}
 	}
 
 	if m.TrackScKey != "" && !patternNoWhitespace.MatchString(m.TrackScKey) {
-		return &ValidationError{Field: "track_sc_key", Message: "invalid format"}
+		return &FieldError{Field: "track_sc_key", Message: "invalid format"}
 	}
 
 	if m.TrackScTable != "" && !patternNoWhitespace.MatchString(m.TrackScTable) {
-		return &ValidationError{Field: "track_sc_table", Message: "invalid format"}
+		return &FieldError{Field: "track_sc_table", Message: "invalid format"}
 	}
 
 	if m.Type != "" {
@@ -1123,16 +1123,16 @@ func ValidateHttpRequestRuleV31(m *models.HTTPRequestRule) error {
 		case "add-acl", "add-header", "allow", "auth", "cache-use", "capture", "del-acl", "del-header", "del-map", "deny", "disable-l7-retry", "do-resolve", "early-hint", "lua", "normalize-uri", "redirect", "reject", "replace-header", "replace-path", "replace-pathq", "replace-uri", "replace-value", "return", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bc-mark", "set-bc-tos", "set-dst", "set-dst-port", "set-fc-mark", "set-fc-tos", "set-header", "set-log-level", "set-map", "set-mark", "set-method", "set-nice", "set-path", "set-pathq", "set-priority-class", "set-priority-offset", "set-query", "set-src", "set-src-port", "set-timeout", "set-tos", "set-uri", "set-var", "set-var-fmt", "silent-drop", "strict-mode", "tarpit", "track-sc", "unset-var", "use-service", "wait-for-body", "wait-for-handshake", "set-bandwidth-limit", "set-retries", "do-log":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: add-acl, add-header, allow, auth, cache-use, capture, del-acl, del-header, del-map, deny, disable-l7-retry, do-resolve, early-hint, lua, normalize-uri, redirect, reject, replace-header, replace-path, replace-pathq, replace-uri, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bc-mark, set-bc-tos, set-dst, set-dst-port, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-method, set-nice, set-path, set-pathq, set-priority-class, set-priority-offset, set-query, set-src, set-src-port, set-timeout, set-tos, set-uri, set-var, set-var-fmt, silent-drop, strict-mode, tarpit, track-sc, unset-var, use-service, wait-for-body, wait-for-handshake, set-bandwidth-limit, set-retries, do-log"}
+			return &FieldError{Field: "type", Message: "must be one of: add-acl, add-header, allow, auth, cache-use, capture, del-acl, del-header, del-map, deny, disable-l7-retry, do-resolve, early-hint, lua, normalize-uri, redirect, reject, replace-header, replace-path, replace-pathq, replace-uri, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bc-mark, set-bc-tos, set-dst, set-dst-port, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-method, set-nice, set-path, set-pathq, set-priority-class, set-priority-offset, set-query, set-src, set-src-port, set-timeout, set-tos, set-uri, set-var, set-var-fmt, silent-drop, strict-mode, tarpit, track-sc, unset-var, use-service, wait-for-body, wait-for-handshake, set-bandwidth-limit, set-retries, do-log"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
@@ -1251,23 +1251,23 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.ACLFile != "" && !patternNoWhitespace.MatchString(m.ACLFile) {
-		return &ValidationError{Field: "acl_file", Message: "invalid format"}
+		return &FieldError{Field: "acl_file", Message: "invalid format"}
 	}
 
 	if m.ACLKeyfmt != "" && !patternNoWhitespace.MatchString(m.ACLKeyfmt) {
-		return &ValidationError{Field: "acl_keyfmt", Message: "invalid format"}
+		return &FieldError{Field: "acl_keyfmt", Message: "invalid format"}
 	}
 
 	if m.CacheName != "" && !patternNoWhitespace.MatchString(m.CacheName) {
-		return &ValidationError{Field: "cache_name", Message: "invalid format"}
+		return &FieldError{Field: "cache_name", Message: "invalid format"}
 	}
 
 	if m.CaptureSample != "" && !patternNoWhitespace.MatchString(m.CaptureSample) {
-		return &ValidationError{Field: "capture_sample", Message: "invalid format"}
+		return &FieldError{Field: "capture_sample", Message: "invalid format"}
 	}
 
 	if m.Cond != "" {
@@ -1275,13 +1275,13 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
 	if m.DenyStatus != nil {
 		if *m.DenyStatus < 200 || *m.DenyStatus > 599 {
-			return &ValidationError{Field: "deny_status", Message: "must be between 200 and 599"}
+			return &FieldError{Field: "deny_status", Message: "must be between 200 and 599"}
 		}
 	}
 
@@ -1290,32 +1290,32 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug", "silent":
 			// valid
 		default:
-			return &ValidationError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
+			return &FieldError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
 		}
 	}
 
 	if m.LuaAction != "" && !patternNoWhitespace.MatchString(m.LuaAction) {
-		return &ValidationError{Field: "lua_action", Message: "invalid format"}
+		return &FieldError{Field: "lua_action", Message: "invalid format"}
 	}
 
 	if m.MapFile != "" && !patternNoWhitespace.MatchString(m.MapFile) {
-		return &ValidationError{Field: "map_file", Message: "invalid format"}
+		return &FieldError{Field: "map_file", Message: "invalid format"}
 	}
 
 	if m.MapKeyfmt != "" && !patternNoWhitespace.MatchString(m.MapKeyfmt) {
-		return &ValidationError{Field: "map_keyfmt", Message: "invalid format"}
+		return &FieldError{Field: "map_keyfmt", Message: "invalid format"}
 	}
 
 	if m.MapValuefmt != "" && !patternNoWhitespace.MatchString(m.MapValuefmt) {
-		return &ValidationError{Field: "map_valuefmt", Message: "invalid format"}
+		return &FieldError{Field: "map_valuefmt", Message: "invalid format"}
 	}
 
 	if m.MarkValue != "" && !pattern_48e2.MatchString(m.MarkValue) {
-		return &ValidationError{Field: "mark_value", Message: "invalid format"}
+		return &FieldError{Field: "mark_value", Message: "invalid format"}
 	}
 
 	if m.NiceValue != 0 && (m.NiceValue < -1024 || m.NiceValue > 1024) {
-		return &ValidationError{Field: "nice_value", Message: "must be between -1024 and 1024"}
+		return &FieldError{Field: "nice_value", Message: "must be between -1024 and 1024"}
 	}
 
 	if m.RedirType != "" {
@@ -1323,12 +1323,12 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "location", "prefix", "scheme":
 			// valid
 		default:
-			return &ValidationError{Field: "redir_type", Message: "must be one of: location, prefix, scheme"}
+			return &FieldError{Field: "redir_type", Message: "must be one of: location, prefix, scheme"}
 		}
 	}
 
 	if m.RedirValue != "" && !patternNoWhitespace.MatchString(m.RedirValue) {
-		return &ValidationError{Field: "redir_value", Message: "invalid format"}
+		return &FieldError{Field: "redir_value", Message: "invalid format"}
 	}
 
 	if m.ReturnContentFormat != "" {
@@ -1336,26 +1336,26 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "default-errorfiles", "errorfile", "errorfiles", "file", "lf-file", "string", "lf-string":
 			// valid
 		default:
-			return &ValidationError{Field: "return_content_format", Message: "must be one of: default-errorfiles, errorfile, errorfiles, file, lf-file, string, lf-string"}
+			return &FieldError{Field: "return_content_format", Message: "must be one of: default-errorfiles, errorfile, errorfiles, file, lf-file, string, lf-string"}
 		}
 	}
 
 	if m.ReturnStatusCode != nil {
 		if *m.ReturnStatusCode < 200 || *m.ReturnStatusCode > 599 {
-			return &ValidationError{Field: "return_status_code", Message: "must be between 200 and 599"}
+			return &FieldError{Field: "return_status_code", Message: "must be between 200 and 599"}
 		}
 	}
 
 	if m.SpoeEngine != "" && !patternNoWhitespace.MatchString(m.SpoeEngine) {
-		return &ValidationError{Field: "spoe_engine", Message: "invalid format"}
+		return &FieldError{Field: "spoe_engine", Message: "invalid format"}
 	}
 
 	if m.SpoeGroup != "" && !patternNoWhitespace.MatchString(m.SpoeGroup) {
-		return &ValidationError{Field: "spoe_group", Message: "invalid format"}
+		return &FieldError{Field: "spoe_group", Message: "invalid format"}
 	}
 
 	if m.Status != 0 && (m.Status < 100 || m.Status > 999) {
-		return &ValidationError{Field: "status", Message: "must be between 100 and 999"}
+		return &FieldError{Field: "status", Message: "must be between 100 and 999"}
 	}
 
 	if m.StrictMode != "" {
@@ -1363,7 +1363,7 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "on", "off":
 			// valid
 		default:
-			return &ValidationError{Field: "strict_mode", Message: "must be one of: on, off"}
+			return &FieldError{Field: "strict_mode", Message: "must be one of: on, off"}
 		}
 	}
 
@@ -1372,20 +1372,20 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "server", "tunnel", "client":
 			// valid
 		default:
-			return &ValidationError{Field: "timeout_type", Message: "must be one of: server, tunnel, client"}
+			return &FieldError{Field: "timeout_type", Message: "must be one of: server, tunnel, client"}
 		}
 	}
 
 	if m.TosValue != "" && !pattern_48e2.MatchString(m.TosValue) {
-		return &ValidationError{Field: "tos_value", Message: "invalid format"}
+		return &FieldError{Field: "tos_value", Message: "invalid format"}
 	}
 
 	if m.TrackScKey != "" && !patternNoWhitespace.MatchString(m.TrackScKey) {
-		return &ValidationError{Field: "track_sc_key", Message: "invalid format"}
+		return &FieldError{Field: "track_sc_key", Message: "invalid format"}
 	}
 
 	if m.TrackScTable != "" && !patternNoWhitespace.MatchString(m.TrackScTable) {
-		return &ValidationError{Field: "track_sc_table", Message: "invalid format"}
+		return &FieldError{Field: "track_sc_table", Message: "invalid format"}
 	}
 
 	if m.Type != "" {
@@ -1393,16 +1393,16 @@ func ValidateHttpResponseRuleV31(m *models.HTTPResponseRule) error {
 		case "add-acl", "add-header", "allow", "cache-store", "capture", "del-acl", "del-header", "del-map", "deny", "lua", "redirect", "replace-header", "replace-value", "return", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-fc-mark", "set-fc-tos", "set-header", "set-log-level", "set-map", "set-mark", "set-nice", "set-status", "set-timeout", "set-tos", "set-var", "set-var-fmt", "silent-drop", "strict-mode", "track-sc", "unset-var", "wait-for-body", "set-bandwidth-limit", "do-log":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: add-acl, add-header, allow, cache-store, capture, del-acl, del-header, del-map, deny, lua, redirect, replace-header, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-nice, set-status, set-timeout, set-tos, set-var, set-var-fmt, silent-drop, strict-mode, track-sc, unset-var, wait-for-body, set-bandwidth-limit, do-log"}
+			return &FieldError{Field: "type", Message: "must be one of: add-acl, add-header, allow, cache-store, capture, del-acl, del-header, del-map, deny, lua, redirect, replace-header, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-nice, set-status, set-timeout, set-tos, set-var, set-var-fmt, silent-drop, strict-mode, track-sc, unset-var, wait-for-body, set-bandwidth-limit, do-log"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
@@ -1499,7 +1499,7 @@ func ValidateLogTargetV31(m *models.LogTarget) error {
 	}
 
 	if m.Address != "" && !patternNoWhitespace.MatchString(m.Address) {
-		return &ValidationError{Field: "address", Message: "invalid format"}
+		return &FieldError{Field: "address", Message: "invalid format"}
 	}
 
 	if m.Facility != "" {
@@ -1507,7 +1507,7 @@ func ValidateLogTargetV31(m *models.LogTarget) error {
 		case "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "auth2", "ftp", "ntp", "audit", "alert", "cron2", "local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7":
 			// valid
 		default:
-			return &ValidationError{Field: "facility", Message: "must be one of: kern, user, mail, daemon, auth, syslog, lpr, news, uucp, cron, auth2, ftp, ntp, audit, alert, cron2, local0, local1, local2, local3, local4, local5, local6, local7"}
+			return &FieldError{Field: "facility", Message: "must be one of: kern, user, mail, daemon, auth, syslog, lpr, news, uucp, cron, auth2, ftp, ntp, audit, alert, cron2, local0, local1, local2, local3, local4, local5, local6, local7"}
 		}
 	}
 
@@ -1516,7 +1516,7 @@ func ValidateLogTargetV31(m *models.LogTarget) error {
 		case "local", "rfc3164", "rfc5424", "priority", "short", "timed", "iso", "raw":
 			// valid
 		default:
-			return &ValidationError{Field: "format", Message: "must be one of: local, rfc3164, rfc5424, priority, short, timed, iso, raw"}
+			return &FieldError{Field: "format", Message: "must be one of: local, rfc3164, rfc5424, priority, short, timed, iso, raw"}
 		}
 	}
 
@@ -1525,7 +1525,7 @@ func ValidateLogTargetV31(m *models.LogTarget) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug":
 			// valid
 		default:
-			return &ValidationError{Field: "level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug"}
+			return &FieldError{Field: "level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug"}
 		}
 	}
 
@@ -1534,7 +1534,7 @@ func ValidateLogTargetV31(m *models.LogTarget) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug":
 			// valid
 		default:
-			return &ValidationError{Field: "minlevel", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug"}
+			return &FieldError{Field: "minlevel", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug"}
 		}
 	}
 
@@ -1578,19 +1578,19 @@ func ValidateServerV31(m *models.Server) error {
 	}
 
 	if m.Name == "" {
-		return &ValidationError{Field: "name", Message: "required"}
+		return &FieldError{Field: "name", Message: "required"}
 	}
 
 	if m.Address == "" {
-		return &ValidationError{Field: "address", Message: "required"}
+		return &FieldError{Field: "address", Message: "required"}
 	}
 
 	if m.Address != "" && !patternNoWhitespace.MatchString(m.Address) {
-		return &ValidationError{Field: "address", Message: "invalid format"}
+		return &FieldError{Field: "address", Message: "invalid format"}
 	}
 
 	if m.AgentAddr != "" && !patternNoWhitespace.MatchString(m.AgentAddr) {
-		return &ValidationError{Field: "agent-addr", Message: "invalid format"}
+		return &FieldError{Field: "agent-addr", Message: "invalid format"}
 	}
 
 	if m.AgentCheck != "" {
@@ -1598,18 +1598,18 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "agent-check", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "agent-check", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.AgentPort != nil {
 		if *m.AgentPort < 1 || *m.AgentPort > 65535 {
-			return &ValidationError{Field: "agent-port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "agent-port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.Alpn != "" && !patternNoWhitespace.MatchString(m.Alpn) {
-		return &ValidationError{Field: "alpn", Message: "invalid format"}
+		return &FieldError{Field: "alpn", Message: "invalid format"}
 	}
 
 	if m.Backup != "" {
@@ -1617,7 +1617,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "backup", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "backup", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1626,7 +1626,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1635,12 +1635,12 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check-send-proxy", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check-send-proxy", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.CheckSni != "" && !patternNoWhitespace.MatchString(m.CheckSni) {
-		return &ValidationError{Field: "check-sni", Message: "invalid format"}
+		return &FieldError{Field: "check-sni", Message: "invalid format"}
 	}
 
 	if m.CheckSsl != "" {
@@ -1648,16 +1648,16 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check-ssl", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check-ssl", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.CheckAlpn != "" && !patternNoWhitespace.MatchString(m.CheckAlpn) {
-		return &ValidationError{Field: "check_alpn", Message: "invalid format"}
+		return &FieldError{Field: "check_alpn", Message: "invalid format"}
 	}
 
 	if m.CheckProto != "" && !patternNoWhitespace.MatchString(m.CheckProto) {
-		return &ValidationError{Field: "check_proto", Message: "invalid format"}
+		return &FieldError{Field: "check_proto", Message: "invalid format"}
 	}
 
 	if m.CheckViaSocks4 != "" {
@@ -1665,12 +1665,12 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check_via_socks4", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check_via_socks4", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.Cookie != "" && !patternNoWhitespace.MatchString(m.Cookie) {
-		return &ValidationError{Field: "cookie", Message: "invalid format"}
+		return &FieldError{Field: "cookie", Message: "invalid format"}
 	}
 
 	if m.ForceSslv3 != "" {
@@ -1678,7 +1678,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1687,7 +1687,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1696,7 +1696,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1705,7 +1705,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1714,30 +1714,30 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.GUID != "" && !patternGUID.MatchString(m.GUID) {
-		return &ValidationError{Field: "guid", Message: "invalid format"}
+		return &FieldError{Field: "guid", Message: "invalid format"}
 	}
 
 	if m.HashKey != "" && !patternNoWhitespace.MatchString(m.HashKey) {
-		return &ValidationError{Field: "hash_key", Message: "invalid format"}
+		return &FieldError{Field: "hash_key", Message: "invalid format"}
 	}
 
 	if m.HealthCheckAddress != "" && !patternNoWhitespace.MatchString(m.HealthCheckAddress) {
-		return &ValidationError{Field: "health_check_address", Message: "invalid format"}
+		return &FieldError{Field: "health_check_address", Message: "invalid format"}
 	}
 
 	if m.HealthCheckPort != nil {
 		if *m.HealthCheckPort < 1 || *m.HealthCheckPort > 65535 {
-			return &ValidationError{Field: "health_check_port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "health_check_port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.InitAddr != nil && *m.InitAddr != "" && !patternNoWhitespace.MatchString(*m.InitAddr) {
-		return &ValidationError{Field: "init-addr", Message: "invalid format"}
+		return &FieldError{Field: "init-addr", Message: "invalid format"}
 	}
 
 	if m.InitState != "" {
@@ -1745,7 +1745,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "fully-up", "up", "down", "fully-down":
 			// valid
 		default:
-			return &ValidationError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
+			return &FieldError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
 		}
 	}
 
@@ -1754,7 +1754,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "legacy", "octet-count":
 			// valid
 		default:
-			return &ValidationError{Field: "log_proto", Message: "must be one of: legacy, octet-count"}
+			return &FieldError{Field: "log_proto", Message: "must be one of: legacy, octet-count"}
 		}
 	}
 
@@ -1763,12 +1763,12 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "maintenance", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "maintenance", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.Name != "" && !patternNoWhitespace.MatchString(m.Name) {
-		return &ValidationError{Field: "name", Message: "invalid format"}
+		return &FieldError{Field: "name", Message: "invalid format"}
 	}
 
 	if m.NoSslv3 != "" {
@@ -1776,7 +1776,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1785,7 +1785,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1794,7 +1794,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1803,7 +1803,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1812,7 +1812,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1821,7 +1821,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_verifyhost", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_verifyhost", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1830,7 +1830,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "layer4", "layer7":
 			// valid
 		default:
-			return &ValidationError{Field: "observe", Message: "must be one of: layer4, layer7"}
+			return &FieldError{Field: "observe", Message: "must be one of: layer4, layer7"}
 		}
 	}
 
@@ -1839,7 +1839,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "fastinter", "fail-check", "sudden-death", "mark-down":
 			// valid
 		default:
-			return &ValidationError{Field: "on-error", Message: "must be one of: fastinter, fail-check, sudden-death, mark-down"}
+			return &FieldError{Field: "on-error", Message: "must be one of: fastinter, fail-check, sudden-death, mark-down"}
 		}
 	}
 
@@ -1848,7 +1848,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "shutdown-sessions":
 			// valid
 		default:
-			return &ValidationError{Field: "on-marked-down", Message: "must be one of: shutdown-sessions"}
+			return &FieldError{Field: "on-marked-down", Message: "must be one of: shutdown-sessions"}
 		}
 	}
 
@@ -1857,26 +1857,26 @@ func ValidateServerV31(m *models.Server) error {
 		case "shutdown-backup-sessions":
 			// valid
 		default:
-			return &ValidationError{Field: "on-marked-up", Message: "must be one of: shutdown-backup-sessions"}
+			return &FieldError{Field: "on-marked-up", Message: "must be one of: shutdown-backup-sessions"}
 		}
 	}
 
 	if m.PoolConnName != "" && !patternNoWhitespace.MatchString(m.PoolConnName) {
-		return &ValidationError{Field: "pool_conn_name", Message: "invalid format"}
+		return &FieldError{Field: "pool_conn_name", Message: "invalid format"}
 	}
 
 	if m.Port != nil {
 		if *m.Port < 1 || *m.Port > 65535 {
-			return &ValidationError{Field: "port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.Proto != "" && !patternNoWhitespace.MatchString(m.Proto) {
-		return &ValidationError{Field: "proto", Message: "invalid format"}
+		return &FieldError{Field: "proto", Message: "invalid format"}
 	}
 
 	if m.ResolveNet != "" && !patternResolveNet.MatchString(m.ResolveNet) {
-		return &ValidationError{Field: "resolve-net", Message: "invalid format"}
+		return &FieldError{Field: "resolve-net", Message: "invalid format"}
 	}
 
 	if m.ResolvePrefer != "" {
@@ -1884,16 +1884,16 @@ func ValidateServerV31(m *models.Server) error {
 		case "ipv4", "ipv6":
 			// valid
 		default:
-			return &ValidationError{Field: "resolve-prefer", Message: "must be one of: ipv4, ipv6"}
+			return &FieldError{Field: "resolve-prefer", Message: "must be one of: ipv4, ipv6"}
 		}
 	}
 
 	if m.ResolveOpts != "" && !patternResolveOpts.MatchString(m.ResolveOpts) {
-		return &ValidationError{Field: "resolve_opts", Message: "invalid format"}
+		return &FieldError{Field: "resolve_opts", Message: "invalid format"}
 	}
 
 	if m.Resolvers != "" && !patternNoWhitespace.MatchString(m.Resolvers) {
-		return &ValidationError{Field: "resolvers", Message: "invalid format"}
+		return &FieldError{Field: "resolvers", Message: "invalid format"}
 	}
 
 	if m.SendProxy != "" {
@@ -1901,7 +1901,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send-proxy", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send-proxy", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1910,7 +1910,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send-proxy-v2", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send-proxy-v2", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1919,7 +1919,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send_proxy_v2_ssl", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send_proxy_v2_ssl", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1928,16 +1928,16 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send_proxy_v2_ssl_cn", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send_proxy_v2_ssl_cn", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.Sni != "" && !patternNoWhitespace.MatchString(m.Sni) {
-		return &ValidationError{Field: "sni", Message: "invalid format"}
+		return &FieldError{Field: "sni", Message: "invalid format"}
 	}
 
 	if m.Socks4 != "" && !patternNoWhitespace.MatchString(m.Socks4) {
-		return &ValidationError{Field: "socks4", Message: "invalid format"}
+		return &FieldError{Field: "socks4", Message: "invalid format"}
 	}
 
 	if m.Ssl != "" {
@@ -1945,16 +1945,16 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "ssl", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.SslCafile != "" && !patternNoWhitespace.MatchString(m.SslCafile) {
-		return &ValidationError{Field: "ssl_cafile", Message: "invalid format"}
+		return &FieldError{Field: "ssl_cafile", Message: "invalid format"}
 	}
 
 	if m.SslCertificate != "" && !patternNoWhitespace.MatchString(m.SslCertificate) {
-		return &ValidationError{Field: "ssl_certificate", Message: "invalid format"}
+		return &FieldError{Field: "ssl_certificate", Message: "invalid format"}
 	}
 
 	if m.SslMaxVer != "" {
@@ -1962,7 +1962,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "SSLv3", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_max_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
+			return &FieldError{Field: "ssl_max_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
 		}
 	}
 
@@ -1971,7 +1971,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "SSLv3", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_min_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
+			return &FieldError{Field: "ssl_min_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
 		}
 	}
 
@@ -1980,7 +1980,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_reuse", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "ssl_reuse", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1989,7 +1989,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -1998,7 +1998,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "stick", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "stick", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2007,7 +2007,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tfo", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tfo", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2016,7 +2016,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tls_tickets", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tls_tickets", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2025,7 +2025,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2034,7 +2034,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2043,7 +2043,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2052,7 +2052,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2061,7 +2061,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "none", "required":
 			// valid
 		default:
-			return &ValidationError{Field: "verify", Message: "must be one of: none, required"}
+			return &FieldError{Field: "verify", Message: "must be one of: none, required"}
 		}
 	}
 
@@ -2070,7 +2070,7 @@ func ValidateServerV31(m *models.Server) error {
 		case "auto", "h1", "h2":
 			// valid
 		default:
-			return &ValidationError{Field: "ws", Message: "must be one of: auto, h1, h2"}
+			return &FieldError{Field: "ws", Message: "must be one of: auto, h1, h2"}
 		}
 	}
 
@@ -2244,7 +2244,7 @@ func ValidateServerSwitchingRuleV31(m *models.ServerSwitchingRule) error {
 	}
 
 	if m.TargetServer == "" {
-		return &ValidationError{Field: "target_server", Message: "required"}
+		return &FieldError{Field: "target_server", Message: "required"}
 	}
 
 	if m.Cond != "" {
@@ -2252,12 +2252,12 @@ func ValidateServerSwitchingRuleV31(m *models.ServerSwitchingRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
 	if m.TargetServer != "" && !patternNoWhitespace.MatchString(m.TargetServer) {
-		return &ValidationError{Field: "target_server", Message: "invalid format"}
+		return &FieldError{Field: "target_server", Message: "invalid format"}
 	}
 
 	return nil
@@ -2284,19 +2284,19 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 	}
 
 	if m.Prefix == "" {
-		return &ValidationError{Field: "prefix", Message: "required"}
+		return &FieldError{Field: "prefix", Message: "required"}
 	}
 
 	if m.NumOrRange == "" {
-		return &ValidationError{Field: "num_or_range", Message: "required"}
+		return &FieldError{Field: "num_or_range", Message: "required"}
 	}
 
 	if m.Fqdn == "" {
-		return &ValidationError{Field: "fqdn", Message: "required"}
+		return &FieldError{Field: "fqdn", Message: "required"}
 	}
 
 	if m.AgentAddr != "" && !patternNoWhitespace.MatchString(m.AgentAddr) {
-		return &ValidationError{Field: "agent-addr", Message: "invalid format"}
+		return &FieldError{Field: "agent-addr", Message: "invalid format"}
 	}
 
 	if m.AgentCheck != "" {
@@ -2304,18 +2304,18 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "agent-check", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "agent-check", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.AgentPort != nil {
 		if *m.AgentPort < 1 || *m.AgentPort > 65535 {
-			return &ValidationError{Field: "agent-port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "agent-port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.Alpn != "" && !patternNoWhitespace.MatchString(m.Alpn) {
-		return &ValidationError{Field: "alpn", Message: "invalid format"}
+		return &FieldError{Field: "alpn", Message: "invalid format"}
 	}
 
 	if m.Backup != "" {
@@ -2323,7 +2323,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "backup", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "backup", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2332,7 +2332,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2341,12 +2341,12 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check-send-proxy", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check-send-proxy", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.CheckSni != "" && !patternNoWhitespace.MatchString(m.CheckSni) {
-		return &ValidationError{Field: "check-sni", Message: "invalid format"}
+		return &FieldError{Field: "check-sni", Message: "invalid format"}
 	}
 
 	if m.CheckSsl != "" {
@@ -2354,16 +2354,16 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check-ssl", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check-ssl", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.CheckAlpn != "" && !patternNoWhitespace.MatchString(m.CheckAlpn) {
-		return &ValidationError{Field: "check_alpn", Message: "invalid format"}
+		return &FieldError{Field: "check_alpn", Message: "invalid format"}
 	}
 
 	if m.CheckProto != "" && !patternNoWhitespace.MatchString(m.CheckProto) {
-		return &ValidationError{Field: "check_proto", Message: "invalid format"}
+		return &FieldError{Field: "check_proto", Message: "invalid format"}
 	}
 
 	if m.CheckViaSocks4 != "" {
@@ -2371,12 +2371,12 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "check_via_socks4", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "check_via_socks4", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.Cookie != "" && !patternNoWhitespace.MatchString(m.Cookie) {
-		return &ValidationError{Field: "cookie", Message: "invalid format"}
+		return &FieldError{Field: "cookie", Message: "invalid format"}
 	}
 
 	if m.ForceSslv3 != "" {
@@ -2384,7 +2384,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2393,7 +2393,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2402,7 +2402,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2411,7 +2411,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2420,30 +2420,30 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "force_tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "force_tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.GUID != "" && !patternGUID.MatchString(m.GUID) {
-		return &ValidationError{Field: "guid", Message: "invalid format"}
+		return &FieldError{Field: "guid", Message: "invalid format"}
 	}
 
 	if m.HashKey != "" && !patternNoWhitespace.MatchString(m.HashKey) {
-		return &ValidationError{Field: "hash_key", Message: "invalid format"}
+		return &FieldError{Field: "hash_key", Message: "invalid format"}
 	}
 
 	if m.HealthCheckAddress != "" && !patternNoWhitespace.MatchString(m.HealthCheckAddress) {
-		return &ValidationError{Field: "health_check_address", Message: "invalid format"}
+		return &FieldError{Field: "health_check_address", Message: "invalid format"}
 	}
 
 	if m.HealthCheckPort != nil {
 		if *m.HealthCheckPort < 1 || *m.HealthCheckPort > 65535 {
-			return &ValidationError{Field: "health_check_port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "health_check_port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.InitAddr != nil && *m.InitAddr != "" && !patternNoWhitespace.MatchString(*m.InitAddr) {
-		return &ValidationError{Field: "init-addr", Message: "invalid format"}
+		return &FieldError{Field: "init-addr", Message: "invalid format"}
 	}
 
 	if m.InitState != "" {
@@ -2451,7 +2451,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "fully-up", "up", "down", "fully-down":
 			// valid
 		default:
-			return &ValidationError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
+			return &FieldError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
 		}
 	}
 
@@ -2460,7 +2460,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "legacy", "octet-count":
 			// valid
 		default:
-			return &ValidationError{Field: "log_proto", Message: "must be one of: legacy, octet-count"}
+			return &FieldError{Field: "log_proto", Message: "must be one of: legacy, octet-count"}
 		}
 	}
 
@@ -2469,7 +2469,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "maintenance", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "maintenance", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2478,7 +2478,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2487,7 +2487,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2496,7 +2496,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2505,7 +2505,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2514,7 +2514,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2523,7 +2523,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "no_verifyhost", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "no_verifyhost", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2532,7 +2532,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "layer4", "layer7":
 			// valid
 		default:
-			return &ValidationError{Field: "observe", Message: "must be one of: layer4, layer7"}
+			return &FieldError{Field: "observe", Message: "must be one of: layer4, layer7"}
 		}
 	}
 
@@ -2541,7 +2541,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "fastinter", "fail-check", "sudden-death", "mark-down":
 			// valid
 		default:
-			return &ValidationError{Field: "on-error", Message: "must be one of: fastinter, fail-check, sudden-death, mark-down"}
+			return &FieldError{Field: "on-error", Message: "must be one of: fastinter, fail-check, sudden-death, mark-down"}
 		}
 	}
 
@@ -2550,7 +2550,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "shutdown-sessions":
 			// valid
 		default:
-			return &ValidationError{Field: "on-marked-down", Message: "must be one of: shutdown-sessions"}
+			return &FieldError{Field: "on-marked-down", Message: "must be one of: shutdown-sessions"}
 		}
 	}
 
@@ -2559,30 +2559,30 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "shutdown-backup-sessions":
 			// valid
 		default:
-			return &ValidationError{Field: "on-marked-up", Message: "must be one of: shutdown-backup-sessions"}
+			return &FieldError{Field: "on-marked-up", Message: "must be one of: shutdown-backup-sessions"}
 		}
 	}
 
 	if m.PoolConnName != "" && !patternNoWhitespace.MatchString(m.PoolConnName) {
-		return &ValidationError{Field: "pool_conn_name", Message: "invalid format"}
+		return &FieldError{Field: "pool_conn_name", Message: "invalid format"}
 	}
 
 	if m.Port != nil {
 		if *m.Port < 1 || *m.Port > 65535 {
-			return &ValidationError{Field: "port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "port", Message: "must be between 1 and 65535"}
 		}
 	}
 
 	if m.Prefix != "" && !patternNoWhitespace.MatchString(m.Prefix) {
-		return &ValidationError{Field: "prefix", Message: "invalid format"}
+		return &FieldError{Field: "prefix", Message: "invalid format"}
 	}
 
 	if m.Proto != "" && !patternNoWhitespace.MatchString(m.Proto) {
-		return &ValidationError{Field: "proto", Message: "invalid format"}
+		return &FieldError{Field: "proto", Message: "invalid format"}
 	}
 
 	if m.ResolveNet != "" && !patternResolveNet.MatchString(m.ResolveNet) {
-		return &ValidationError{Field: "resolve-net", Message: "invalid format"}
+		return &FieldError{Field: "resolve-net", Message: "invalid format"}
 	}
 
 	if m.ResolvePrefer != "" {
@@ -2590,16 +2590,16 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "ipv4", "ipv6":
 			// valid
 		default:
-			return &ValidationError{Field: "resolve-prefer", Message: "must be one of: ipv4, ipv6"}
+			return &FieldError{Field: "resolve-prefer", Message: "must be one of: ipv4, ipv6"}
 		}
 	}
 
 	if m.ResolveOpts != "" && !patternResolveOpts.MatchString(m.ResolveOpts) {
-		return &ValidationError{Field: "resolve_opts", Message: "invalid format"}
+		return &FieldError{Field: "resolve_opts", Message: "invalid format"}
 	}
 
 	if m.Resolvers != "" && !patternNoWhitespace.MatchString(m.Resolvers) {
-		return &ValidationError{Field: "resolvers", Message: "invalid format"}
+		return &FieldError{Field: "resolvers", Message: "invalid format"}
 	}
 
 	if m.SendProxy != "" {
@@ -2607,7 +2607,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send-proxy", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send-proxy", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2616,7 +2616,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send-proxy-v2", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send-proxy-v2", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2625,7 +2625,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send_proxy_v2_ssl", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send_proxy_v2_ssl", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2634,16 +2634,16 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "send_proxy_v2_ssl_cn", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "send_proxy_v2_ssl_cn", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.Sni != "" && !patternNoWhitespace.MatchString(m.Sni) {
-		return &ValidationError{Field: "sni", Message: "invalid format"}
+		return &FieldError{Field: "sni", Message: "invalid format"}
 	}
 
 	if m.Socks4 != "" && !patternNoWhitespace.MatchString(m.Socks4) {
-		return &ValidationError{Field: "socks4", Message: "invalid format"}
+		return &FieldError{Field: "socks4", Message: "invalid format"}
 	}
 
 	if m.Ssl != "" {
@@ -2651,16 +2651,16 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "ssl", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
 	if m.SslCafile != "" && !patternNoWhitespace.MatchString(m.SslCafile) {
-		return &ValidationError{Field: "ssl_cafile", Message: "invalid format"}
+		return &FieldError{Field: "ssl_cafile", Message: "invalid format"}
 	}
 
 	if m.SslCertificate != "" && !patternNoWhitespace.MatchString(m.SslCertificate) {
-		return &ValidationError{Field: "ssl_certificate", Message: "invalid format"}
+		return &FieldError{Field: "ssl_certificate", Message: "invalid format"}
 	}
 
 	if m.SslMaxVer != "" {
@@ -2668,7 +2668,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "SSLv3", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_max_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
+			return &FieldError{Field: "ssl_max_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
 		}
 	}
 
@@ -2677,7 +2677,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "SSLv3", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_min_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
+			return &FieldError{Field: "ssl_min_ver", Message: "must be one of: SSLv3, TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3"}
 		}
 	}
 
@@ -2686,7 +2686,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "ssl_reuse", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "ssl_reuse", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2695,7 +2695,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2704,7 +2704,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "stick", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "stick", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2713,7 +2713,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tfo", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tfo", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2722,7 +2722,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tls_tickets", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tls_tickets", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2731,7 +2731,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2740,7 +2740,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2749,7 +2749,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2758,7 +2758,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "enabled", "disabled":
 			// valid
 		default:
-			return &ValidationError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
+			return &FieldError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
 		}
 	}
 
@@ -2767,7 +2767,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "none", "required":
 			// valid
 		default:
-			return &ValidationError{Field: "verify", Message: "must be one of: none, required"}
+			return &FieldError{Field: "verify", Message: "must be one of: none, required"}
 		}
 	}
 
@@ -2776,7 +2776,7 @@ func ValidateServerTemplateV31(m *models.ServerTemplate) error {
 		case "auto", "h1", "h2":
 			// valid
 		default:
-			return &ValidationError{Field: "ws", Message: "must be one of: auto, h1, h2"}
+			return &FieldError{Field: "ws", Message: "must be one of: auto, h1, h2"}
 		}
 	}
 
@@ -2951,11 +2951,11 @@ func ValidateStickRuleV31(m *models.StickRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.Pattern == "" {
-		return &ValidationError{Field: "pattern", Message: "required"}
+		return &FieldError{Field: "pattern", Message: "required"}
 	}
 
 	if m.Cond != "" {
@@ -2963,16 +2963,16 @@ func ValidateStickRuleV31(m *models.StickRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
 	if m.Pattern != "" && !patternNoWhitespace.MatchString(m.Pattern) {
-		return &ValidationError{Field: "pattern", Message: "invalid format"}
+		return &FieldError{Field: "pattern", Message: "invalid format"}
 	}
 
 	if m.Table != "" && !patternNoWhitespace.MatchString(m.Table) {
-		return &ValidationError{Field: "table", Message: "invalid format"}
+		return &FieldError{Field: "table", Message: "invalid format"}
 	}
 
 	if m.Type != "" {
@@ -2980,7 +2980,7 @@ func ValidateStickRuleV31(m *models.StickRule) error {
 		case "match", "on", "store-request", "store-response":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: match, on, store-request, store-response"}
+			return &FieldError{Field: "type", Message: "must be one of: match, on, store-request, store-response"}
 		}
 	}
 
@@ -3010,7 +3010,7 @@ func ValidateTcpCheckV31(m *models.TCPCheck) error {
 	}
 
 	if m.Action == "" {
-		return &ValidationError{Field: "action", Message: "required"}
+		return &FieldError{Field: "action", Message: "required"}
 	}
 
 	if m.Action != "" {
@@ -3018,16 +3018,16 @@ func ValidateTcpCheckV31(m *models.TCPCheck) error {
 		case "comment", "connect", "expect", "send", "send-lf", "send-binary", "send-binary-lf", "set-var", "set-var-fmt", "unset-var":
 			// valid
 		default:
-			return &ValidationError{Field: "action", Message: "must be one of: comment, connect, expect, send, send-lf, send-binary, send-binary-lf, set-var, set-var-fmt, unset-var"}
+			return &FieldError{Field: "action", Message: "must be one of: comment, connect, expect, send, send-lf, send-binary, send-binary-lf, set-var, set-var-fmt, unset-var"}
 		}
 	}
 
 	if m.Addr != "" && !patternNoWhitespace.MatchString(m.Addr) {
-		return &ValidationError{Field: "addr", Message: "invalid format"}
+		return &FieldError{Field: "addr", Message: "invalid format"}
 	}
 
 	if m.Alpn != "" && !patternNoWhitespace.MatchString(m.Alpn) {
-		return &ValidationError{Field: "alpn", Message: "invalid format"}
+		return &FieldError{Field: "alpn", Message: "invalid format"}
 	}
 
 	if m.ErrorStatus != "" {
@@ -3035,12 +3035,12 @@ func ValidateTcpCheckV31(m *models.TCPCheck) error {
 		case "L7OKC", "L7RSP", "L7STS", "L6RSP", "L4CON":
 			// valid
 		default:
-			return &ValidationError{Field: "error_status", Message: "must be one of: L7OKC, L7RSP, L7STS, L6RSP, L4CON"}
+			return &FieldError{Field: "error_status", Message: "must be one of: L7OKC, L7RSP, L7STS, L6RSP, L4CON"}
 		}
 	}
 
 	if m.Match != "" && !patternNoWhitespace.MatchString(m.Match) {
-		return &ValidationError{Field: "match", Message: "invalid format"}
+		return &FieldError{Field: "match", Message: "invalid format"}
 	}
 
 	if m.Match != "" {
@@ -3048,7 +3048,7 @@ func ValidateTcpCheckV31(m *models.TCPCheck) error {
 		case "string", "rstring", "string-lf", "binary", "rbinary", "binary-lf":
 			// valid
 		default:
-			return &ValidationError{Field: "match", Message: "must be one of: string, rstring, string-lf, binary, rbinary, binary-lf"}
+			return &FieldError{Field: "match", Message: "must be one of: string, rstring, string-lf, binary, rbinary, binary-lf"}
 		}
 	}
 
@@ -3057,13 +3057,13 @@ func ValidateTcpCheckV31(m *models.TCPCheck) error {
 		case "L7OK", "L7OKC", "L6OK", "L4OK":
 			// valid
 		default:
-			return &ValidationError{Field: "ok_status", Message: "must be one of: L7OK, L7OKC, L6OK, L4OK"}
+			return &FieldError{Field: "ok_status", Message: "must be one of: L7OK, L7OKC, L6OK, L4OK"}
 		}
 	}
 
 	if m.Port != nil {
 		if *m.Port < 1 || *m.Port > 65535 {
-			return &ValidationError{Field: "port", Message: "must be between 1 and 65535"}
+			return &FieldError{Field: "port", Message: "must be between 1 and 65535"}
 		}
 	}
 
@@ -3072,16 +3072,16 @@ func ValidateTcpCheckV31(m *models.TCPCheck) error {
 		case "L7TOUT", "L6TOUT", "L4TOUT":
 			// valid
 		default:
-			return &ValidationError{Field: "tout_status", Message: "must be one of: L7TOUT, L6TOUT, L4TOUT"}
+			return &FieldError{Field: "tout_status", Message: "must be one of: L7TOUT, L6TOUT, L4TOUT"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
@@ -3162,7 +3162,7 @@ func ValidateTcpRequestRuleV31(m *models.TCPRequestRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.Action != "" {
@@ -3170,12 +3170,12 @@ func ValidateTcpRequestRuleV31(m *models.TCPRequestRule) error {
 		case "accept", "attach-srv", "capture", "do-resolve", "expect-netscaler-cip", "expect-proxy", "lua", "reject", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bandwidth-limit", "set-bc-mark", "set-bc-tos", "set-dst-port", "set-dst", "set-fc-mark", "set-fc-tos", "set-log-level", "set-mark", "set-nice", "set-priority-class", "set-priority-offset", "set-src", "set-src-port", "set-tos", "set-var", "set-var-fmt", "silent-drop", "switch-mode", "track-sc", "unset-var", "use-service", "set-retries", "do-log":
 			// valid
 		default:
-			return &ValidationError{Field: "action", Message: "must be one of: accept, attach-srv, capture, do-resolve, expect-netscaler-cip, expect-proxy, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-bc-mark, set-bc-tos, set-dst-port, set-dst, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-priority-class, set-priority-offset, set-src, set-src-port, set-tos, set-var, set-var-fmt, silent-drop, switch-mode, track-sc, unset-var, use-service, set-retries, do-log"}
+			return &FieldError{Field: "action", Message: "must be one of: accept, attach-srv, capture, do-resolve, expect-netscaler-cip, expect-proxy, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-bc-mark, set-bc-tos, set-dst-port, set-dst, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-priority-class, set-priority-offset, set-src, set-src-port, set-tos, set-var, set-var-fmt, silent-drop, switch-mode, track-sc, unset-var, use-service, set-retries, do-log"}
 		}
 	}
 
 	if m.CaptureSample != "" && !patternCaptureSample.MatchString(m.CaptureSample) {
-		return &ValidationError{Field: "capture_sample", Message: "invalid format"}
+		return &FieldError{Field: "capture_sample", Message: "invalid format"}
 	}
 
 	if m.Cond != "" {
@@ -3183,7 +3183,7 @@ func ValidateTcpRequestRuleV31(m *models.TCPRequestRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
@@ -3192,20 +3192,20 @@ func ValidateTcpRequestRuleV31(m *models.TCPRequestRule) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug", "silent":
 			// valid
 		default:
-			return &ValidationError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
+			return &FieldError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
 		}
 	}
 
 	if m.LuaAction != "" && !patternNoWhitespace.MatchString(m.LuaAction) {
-		return &ValidationError{Field: "lua_action", Message: "invalid format"}
+		return &FieldError{Field: "lua_action", Message: "invalid format"}
 	}
 
 	if m.MarkValue != "" && !pattern_48e2.MatchString(m.MarkValue) {
-		return &ValidationError{Field: "mark_value", Message: "invalid format"}
+		return &FieldError{Field: "mark_value", Message: "invalid format"}
 	}
 
 	if m.NiceValue != 0 && (m.NiceValue < -1024 || m.NiceValue > 1024) {
-		return &ValidationError{Field: "nice_value", Message: "must be between -1024 and 1024"}
+		return &FieldError{Field: "nice_value", Message: "must be between -1024 and 1024"}
 	}
 
 	if m.ResolveProtocol != "" {
@@ -3213,12 +3213,12 @@ func ValidateTcpRequestRuleV31(m *models.TCPRequestRule) error {
 		case "ipv4", "ipv6":
 			// valid
 		default:
-			return &ValidationError{Field: "resolve_protocol", Message: "must be one of: ipv4, ipv6"}
+			return &FieldError{Field: "resolve_protocol", Message: "must be one of: ipv4, ipv6"}
 		}
 	}
 
 	if m.TosValue != "" && !pattern_48e2.MatchString(m.TosValue) {
-		return &ValidationError{Field: "tos_value", Message: "invalid format"}
+		return &FieldError{Field: "tos_value", Message: "invalid format"}
 	}
 
 	if m.Type != "" {
@@ -3226,16 +3226,16 @@ func ValidateTcpRequestRuleV31(m *models.TCPRequestRule) error {
 		case "connection", "content", "inspect-delay", "session":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: connection, content, inspect-delay, session"}
+			return &FieldError{Field: "type", Message: "must be one of: connection, content, inspect-delay, session"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
@@ -3301,7 +3301,7 @@ func ValidateTcpResponseRuleV31(m *models.TCPResponseRule) error {
 	}
 
 	if m.Type == "" {
-		return &ValidationError{Field: "type", Message: "required"}
+		return &FieldError{Field: "type", Message: "required"}
 	}
 
 	if m.Action != "" {
@@ -3309,7 +3309,7 @@ func ValidateTcpResponseRuleV31(m *models.TCPResponseRule) error {
 		case "accept", "close", "lua", "reject", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bandwidth-limit", "set-fc-mark", "set-fc-tos", "set-log-level", "set-mark", "set-nice", "set-tos", "set-var", "set-var-fmt", "silent-drop", "unset-var", "do-log":
 			// valid
 		default:
-			return &ValidationError{Field: "action", Message: "must be one of: accept, close, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-tos, set-var, set-var-fmt, silent-drop, unset-var, do-log"}
+			return &FieldError{Field: "action", Message: "must be one of: accept, close, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-tos, set-var, set-var-fmt, silent-drop, unset-var, do-log"}
 		}
 	}
 
@@ -3318,7 +3318,7 @@ func ValidateTcpResponseRuleV31(m *models.TCPResponseRule) error {
 		case "if", "unless":
 			// valid
 		default:
-			return &ValidationError{Field: "cond", Message: "must be one of: if, unless"}
+			return &FieldError{Field: "cond", Message: "must be one of: if, unless"}
 		}
 	}
 
@@ -3327,32 +3327,32 @@ func ValidateTcpResponseRuleV31(m *models.TCPResponseRule) error {
 		case "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug", "silent":
 			// valid
 		default:
-			return &ValidationError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
+			return &FieldError{Field: "log_level", Message: "must be one of: emerg, alert, crit, err, warning, notice, info, debug, silent"}
 		}
 	}
 
 	if m.LuaAction != "" && !patternNoWhitespace.MatchString(m.LuaAction) {
-		return &ValidationError{Field: "lua_action", Message: "invalid format"}
+		return &FieldError{Field: "lua_action", Message: "invalid format"}
 	}
 
 	if m.MarkValue != "" && !pattern_48e2.MatchString(m.MarkValue) {
-		return &ValidationError{Field: "mark_value", Message: "invalid format"}
+		return &FieldError{Field: "mark_value", Message: "invalid format"}
 	}
 
 	if m.NiceValue != 0 && (m.NiceValue < -1024 || m.NiceValue > 1024) {
-		return &ValidationError{Field: "nice_value", Message: "must be between -1024 and 1024"}
+		return &FieldError{Field: "nice_value", Message: "must be between -1024 and 1024"}
 	}
 
 	if m.SpoeEngine != "" && !patternNoWhitespace.MatchString(m.SpoeEngine) {
-		return &ValidationError{Field: "spoe_engine", Message: "invalid format"}
+		return &FieldError{Field: "spoe_engine", Message: "invalid format"}
 	}
 
 	if m.SpoeGroup != "" && !patternNoWhitespace.MatchString(m.SpoeGroup) {
-		return &ValidationError{Field: "spoe_group", Message: "invalid format"}
+		return &FieldError{Field: "spoe_group", Message: "invalid format"}
 	}
 
 	if m.TosValue != "" && !pattern_48e2.MatchString(m.TosValue) {
-		return &ValidationError{Field: "tos_value", Message: "invalid format"}
+		return &FieldError{Field: "tos_value", Message: "invalid format"}
 	}
 
 	if m.Type != "" {
@@ -3360,16 +3360,16 @@ func ValidateTcpResponseRuleV31(m *models.TCPResponseRule) error {
 		case "content", "inspect-delay":
 			// valid
 		default:
-			return &ValidationError{Field: "type", Message: "must be one of: content, inspect-delay"}
+			return &FieldError{Field: "type", Message: "must be one of: content, inspect-delay"}
 		}
 	}
 
 	if m.VarName != "" && !patternNoWhitespace.MatchString(m.VarName) {
-		return &ValidationError{Field: "var_name", Message: "invalid format"}
+		return &FieldError{Field: "var_name", Message: "invalid format"}
 	}
 
 	if m.VarScope != "" && !patternNoWhitespace.MatchString(m.VarScope) {
-		return &ValidationError{Field: "var_scope", Message: "invalid format"}
+		return &FieldError{Field: "var_scope", Message: "invalid format"}
 	}
 
 	return nil
