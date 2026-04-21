@@ -78,17 +78,16 @@ func TestParseError(t *testing.T) {
 		contains []string
 	}{
 		{
-			name: "with line number",
+			name: "with snippet",
 			err: &ParseError{
 				ConfigType:    "current",
 				ConfigSnippet: "frontend http\n  bind :80",
-				Line:          42,
 				Cause:         errors.New("unexpected token"),
 			},
-			contains: []string{"parsing current configuration", "near line 42", "unexpected token"},
+			contains: []string{"parsing current configuration", "unexpected token"},
 		},
 		{
-			name: "without line number",
+			name: "without snippet",
 			err: &ParseError{
 				ConfigType: "desired",
 				Cause:      errors.New("invalid directive"),
