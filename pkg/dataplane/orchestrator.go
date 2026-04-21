@@ -119,8 +119,8 @@ func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeou
 }
 
 // verifyAuxiliaryReloads verifies that all auxiliary file reloads completed successfully.
-// This is called after syncing auxiliary files (Phase 1) and before config operations (Phase 2)
-// to prevent race conditions where config operations reference files before their reloads complete.
+// Called after PhasePreConfig aux file sync and before PhaseConfig operations to prevent
+// race conditions where config operations reference files before their reloads complete.
 //
 // Parameters:
 //   - ctx: Context for cancellation
@@ -244,9 +244,10 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return result, nil
 	}
 
-	// Step 9: Attempt fine-grained sync with retry logic (pass pre-computed diffs)
-	// The function returns whether Phase 1 (aux files) completed successfully
-	result, auxFilesSynced, err := o.attemptFineGrainedSyncWithDiffs(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
+	// Step 9: Run a fine-grained sync (pass pre-computed diffs).
+	// Returns whether PhasePreConfig (aux files) completed, so the fallback
+	// below can skip re-syncing them if the failure happened later.
+	result, auxFilesSynced, err := o.executeFineGrainedSync(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
 
 	// Step 9: If fine-grained sync failed and fallback is enabled, try raw config push
 	if err != nil && opts.FallbackToRaw {

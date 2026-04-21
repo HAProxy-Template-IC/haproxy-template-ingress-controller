@@ -49,10 +49,10 @@ func (e *Endpoint) Redacted() map[string]string {
 	}
 }
 
-// AuxiliaryFiles contains files to synchronize before configuration changes.
-// These files are synced in two phases:
-//   - Phase 1 (pre-config): Creates and updates are applied before config sync
-//   - Phase 2 (post-config): Deletes are applied after successful config sync
+// AuxiliaryFiles contains files to synchronize alongside configuration changes.
+// Diffs are applied in two of the three sync phases (see SyncPhase in phases.go):
+//   - PhasePreConfig:  creates and updates (files must exist before config references them)
+//   - PhasePostConfig: deletes (safe to remove only after config stops referencing them)
 type AuxiliaryFiles struct {
 	// GeneralFiles contains general-purpose files (error pages, custom response files, etc.)
 	GeneralFiles []auxiliaryfiles.GeneralFile
