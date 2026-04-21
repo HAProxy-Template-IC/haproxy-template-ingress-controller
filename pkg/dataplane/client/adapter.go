@@ -67,6 +67,60 @@ func NewVersionAdapter(client *DataplaneClient, maxRetries int) *VersionAdapter 
 // If the function returns an error, the transaction will be aborted.
 type TransactionFunc func(ctx context.Context, tx *Transaction) error
 
+// versionResolver returns the config version to use for a given attempt of the
+// retry loop. attempt is 0 on the first try and increments on each retry.
+type versionResolver func(ctx context.Context, attempt int) (int64, error)
+
+// executeTransactionWithRetry runs the retry loop shared by ExecuteTransaction
+// and ExecuteTransactionWithVersion:
+//  1. Resolve the version for this attempt
+//  2. Create a transaction at that version
+//  3. Run fn within the transaction
+//  4. Commit
+//
+// 409 conflicts at steps 2 or 4 retry the whole loop up to a.maxRetries times.
+// Any other error aborts the transaction and returns. Returns the CommitResult
+// from the successful commit.
+func (a *VersionAdapter) executeTransactionWithRetry(ctx context.Context, resolve versionResolver, fn TransactionFunc) (*CommitResult, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= a.maxRetries; attempt++ {
+		version, err := resolve(ctx, attempt)
+		if err != nil {
+			return nil, err
+		}
+
+		tx, err := a.client.CreateTransaction(ctx, version)
+		if err != nil {
+			if _, ok := errors.AsType[*VersionConflictError](err); ok {
+				lastErr = err
+				continue
+			}
+			return nil, fmt.Errorf("creating transaction: %w", err)
+		}
+
+		if err := fn(ctx, tx); err != nil {
+			abortTransaction(tx)
+			return nil, fmt.Errorf("transaction operation failed: %w", err)
+		}
+
+		commitResult, err := tx.Commit(ctx)
+		if err != nil {
+			if _, ok := errors.AsType[*VersionConflictError](err); ok {
+				lastErr = err
+				abortTransaction(tx)
+				continue
+			}
+			abortTransaction(tx)
+			return nil, fmt.Errorf("committing transaction: %w", err)
+		}
+
+		return commitResult, nil
+	}
+
+	return nil, fmt.Errorf("transaction failed after %d retries: %w", a.maxRetries, lastErr)
+}
+
 // ExecuteTransaction executes a transactional operation with automatic 409 retry.
 //
 // This method:
@@ -91,52 +145,13 @@ type TransactionFunc func(ctx context.Context, tx *Transaction) error
 //	    return err
 //	})
 func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionFunc) (*CommitResult, error) {
-	var lastErr error
-
-	for attempt := 0; attempt <= a.maxRetries; attempt++ {
-		// Get current version
+	return a.executeTransactionWithRetry(ctx, func(ctx context.Context, _ int) (int64, error) {
 		version, err := a.client.GetVersion(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("getting version: %w", err)
+			return 0, fmt.Errorf("getting version: %w", err)
 		}
-
-		// Create transaction
-		tx, err := a.client.CreateTransaction(ctx, version)
-		if err != nil {
-			if _, ok := errors.AsType[*VersionConflictError](err); ok {
-				// Version conflict on transaction creation - retry with new version
-				lastErr = err
-				continue
-			}
-			return nil, fmt.Errorf("creating transaction: %w", err)
-		}
-
-		// Execute operations within transaction
-		err = fn(ctx, tx)
-		if err != nil {
-			abortTransaction(tx)
-			return nil, fmt.Errorf("transaction operation failed: %w", err)
-		}
-
-		// Commit transaction
-		commitResult, err := tx.Commit(ctx)
-		if err != nil {
-			if _, ok := errors.AsType[*VersionConflictError](err); ok {
-				// Version conflict on commit - retry with new version
-				lastErr = err
-				abortTransaction(tx)
-				continue
-			}
-			abortTransaction(tx)
-			return nil, fmt.Errorf("committing transaction: %w", err)
-		}
-
-		// Success - return commit result
-		return commitResult, nil
-	}
-
-	// Max retries exceeded
-	return nil, fmt.Errorf("transaction failed after %d retries: %w", a.maxRetries, lastErr)
+		return version, nil
+	}, fn)
 }
 
 // ExecuteTransactionWithVersion executes a transactional operation with a specific version.
@@ -146,58 +161,22 @@ func (a *VersionAdapter) ExecuteTransaction(ctx context.Context, fn TransactionF
 //
 // Parameters:
 //   - ctx: Context for the operation
-//   - version: The configuration version to use
+//   - version: The configuration version to use on the first attempt
 //   - fn: The function to execute within the transaction
 //
-// Returns an error if the operation fails or max retries are exceeded.
+// On 409 conflicts, the version is re-fetched for each retry.
 func (a *VersionAdapter) ExecuteTransactionWithVersion(ctx context.Context, version int64, fn TransactionFunc) error {
-	var lastErr error
-
-	for attempt := 0; attempt <= a.maxRetries; attempt++ {
-		currentVersion := version
-
-		// If we're retrying, fetch the new version
-		if attempt > 0 {
-			var err error
-			currentVersion, err = a.client.GetVersion(ctx)
-			if err != nil {
-				return fmt.Errorf("getting version on retry: %w", err)
-			}
+	_, err := a.executeTransactionWithRetry(ctx, func(ctx context.Context, attempt int) (int64, error) {
+		if attempt == 0 {
+			return version, nil
 		}
-
-		// Create transaction
-		tx, err := a.client.CreateTransaction(ctx, currentVersion)
+		v, err := a.client.GetVersion(ctx)
 		if err != nil {
-			if _, ok := errors.AsType[*VersionConflictError](err); ok {
-				lastErr = err
-				continue
-			}
-			return fmt.Errorf("creating transaction: %w", err)
+			return 0, fmt.Errorf("getting version on retry: %w", err)
 		}
-
-		// Execute operations within transaction
-		err = fn(ctx, tx)
-		if err != nil {
-			abortTransaction(tx)
-			return fmt.Errorf("transaction operation failed: %w", err)
-		}
-
-		// Commit transaction
-		_, err = tx.Commit(ctx)
-		if err != nil {
-			if _, ok := errors.AsType[*VersionConflictError](err); ok {
-				lastErr = err
-				abortTransaction(tx)
-				continue
-			}
-			abortTransaction(tx)
-			return fmt.Errorf("committing transaction: %w", err)
-		}
-
-		return nil
-	}
-
-	return fmt.Errorf("transaction failed after %d retries: %w", a.maxRetries, lastErr)
+		return v, nil
+	}, fn)
+	return err
 }
 
 // ParseVersionFromHeader extracts the version number from a Configuration-Version header.
