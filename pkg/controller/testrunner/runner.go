@@ -446,8 +446,8 @@ func (r *Runner) shouldSkipTest(test *config.ValidationTest) string {
 
 	minVersion, err := dataplane.ParseVersionString(test.MinHAProxyVersion)
 	if err != nil {
-		r.logger.Warn("Invalid minHAProxyVersion, running test anyway",
-			"minHAProxyVersion", test.MinHAProxyVersion,
+		r.logger.Warn("Invalid min_haproxy_version, running test anyway",
+			"min_haproxy_version", test.MinHAProxyVersion,
 			"error", err)
 		return ""
 	}

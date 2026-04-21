@@ -136,10 +136,10 @@ func (s *sortableItems) comparePrecomputedKeys(a, b sortKey, criterion string) i
 		result := compareValues(a.value, b.value)
 		slog.Info("SORT comparison",
 			"criterion", criterion,
-			"valA", a.value,
-			"valA_type", fmt.Sprintf("%T", a.value),
-			"valB", b.value,
-			"valB_type", fmt.Sprintf("%T", b.value),
+			"val_a", a.value,
+			"val_a_type", fmt.Sprintf("%T", a.value),
+			"val_b", b.value,
+			"val_b_type", fmt.Sprintf("%T", b.value),
 			"result", result,
 		)
 		return result

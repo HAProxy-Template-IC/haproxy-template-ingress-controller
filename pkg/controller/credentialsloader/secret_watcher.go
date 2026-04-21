@@ -146,7 +146,7 @@ func (w *SecretWatcher) onAdd(obj any) {
 	w.logger.Info("Secret added",
 		"namespace", secret.Namespace,
 		"name", secret.Name,
-		"resourceVersion", secret.ResourceVersion)
+		"resource_version", secret.ResourceVersion)
 
 	// Convert to unstructured for compatibility with CredentialsLoader
 	unstructuredSecret, err := w.toUnstructured(secret)
@@ -179,16 +179,16 @@ func (w *SecretWatcher) onUpdate(oldObj, newObj any) {
 
 	// Skip if resource version hasn't changed
 	if oldSecret.ResourceVersion == newSecret.ResourceVersion {
-		w.logger.Debug("Skipping update with same resourceVersion",
-			"resourceVersion", newSecret.ResourceVersion)
+		w.logger.Debug("Skipping update with same resource_version",
+			"resource_version", newSecret.ResourceVersion)
 		return
 	}
 
 	w.logger.Info("Secret updated",
 		"namespace", newSecret.Namespace,
 		"name", newSecret.Name,
-		"oldResourceVersion", oldSecret.ResourceVersion,
-		"newResourceVersion", newSecret.ResourceVersion)
+		"old_resource_version", oldSecret.ResourceVersion,
+		"new_resource_version", newSecret.ResourceVersion)
 
 	// Convert to unstructured for compatibility with CredentialsLoader
 	unstructuredSecret, err := w.toUnstructured(newSecret)

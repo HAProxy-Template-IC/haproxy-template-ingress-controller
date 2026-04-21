@@ -341,7 +341,7 @@ func (d *Discovery) evaluatePod(
 		if logger != nil {
 			logger.Log(context.Background(), logging.LevelTrace, "Skipping terminating pod",
 				"pod", pod.GetName(),
-				"deletionTimestamp", pod.GetDeletionTimestamp())
+				"deletion_timestamp", pod.GetDeletionTimestamp())
 		}
 		return zero, false, nil
 	}
@@ -371,7 +371,7 @@ func (d *Discovery) evaluatePod(
 		if logger != nil {
 			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - dataplane container not ready",
 				"pod", pod.GetName(),
-				"podIP", podIP,
+				"pod_ip", podIP,
 				"phase", phase)
 		}
 		return zero, false, nil
@@ -380,7 +380,7 @@ func (d *Discovery) evaluatePod(
 	if logger != nil {
 		logger.Log(context.Background(), logging.LevelTrace, "Including pod - dataplane container is ready",
 			"pod", pod.GetName(),
-			"podIP", podIP,
+			"pod_ip", podIP,
 			"phase", phase)
 	}
 

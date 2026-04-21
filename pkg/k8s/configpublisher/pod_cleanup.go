@@ -254,7 +254,7 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 	for _, mapFileRef := range auxFiles.MapFiles {
 		if err := p.cleanupMapFilePodReference(ctx, mapFileRef.Namespace, mapFileRef.Name, *cleanup); err != nil {
 			p.logger.Warn("failed to cleanup map file pod reference",
-				"mapFile", mapFileRef.Name,
+				"map_file", mapFileRef.Name,
 				"error", err,
 			)
 			// Non-blocking - continue
@@ -264,7 +264,7 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 	for _, generalFileRef := range auxFiles.GeneralFiles {
 		if err := p.cleanupGeneralFilePodReference(ctx, generalFileRef.Namespace, generalFileRef.Name, *cleanup); err != nil {
 			p.logger.Warn("failed to cleanup general file pod reference",
-				"generalFile", generalFileRef.Name,
+				"general_file", generalFileRef.Name,
 				"error", err,
 			)
 			// Non-blocking - continue
@@ -274,7 +274,7 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 	for _, crtListFileRef := range auxFiles.CRTListFiles {
 		if err := p.cleanupCRTListFilePodReference(ctx, crtListFileRef.Namespace, crtListFileRef.Name, *cleanup); err != nil {
 			p.logger.Warn("failed to cleanup crt-list file pod reference",
-				"crtListFile", crtListFileRef.Name,
+				"crt_list_file", crtListFileRef.Name,
 				"error", err,
 			)
 			// Non-blocking - continue
