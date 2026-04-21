@@ -72,6 +72,16 @@ go run k8s.io/code-generator/cmd/informer-gen \
 echo "  Preserving API group name..."
 # No-op since haptic has no hyphens that could cause identifier issues
 
+# Strip upstream boilerplate TODO that k8s.io/code-generator emits in
+# externalversions/generic.go. It's a comment about a hypothetical future
+# "client pool" feature that isn't actionable in this repo and just adds
+# noise to every diff.
+GENERIC_INFORMER="${SCRIPT_ROOT}/pkg/generated/informers/externalversions/generic.go"
+if [ -f "${GENERIC_INFORMER}" ]; then
+  echo "  Stripping upstream TODO from generic.go..."
+  sed -i '/^\/\/ TODO extend this to unknown resources with a client pool$/d' "${GENERIC_INFORMER}"
+fi
+
 # Format the fixed files
 echo "  Formatting generated code..."
 gofmt -w "${SCRIPT_ROOT}/pkg/generated"
