@@ -7,7 +7,9 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// TestNew verifies parser creation.
+// TestNew verifies parser creation. Uses New() directly (not newTestParser)
+// because this test specifically verifies the success path of New(), including
+// the internal state of the returned Parser.
 func TestNew(t *testing.T) {
 	p, err := New()
 	if err != nil {
@@ -24,12 +26,9 @@ func TestNew(t *testing.T) {
 
 // TestParseFromString_EmptyConfig verifies empty config rejection.
 func TestParseFromString_EmptyConfig(t *testing.T) {
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
-	_, err = p.ParseFromString("")
+	_, err := p.ParseFromString("")
 	if err == nil {
 		t.Fatal("ParseFromString(\"\") should return error")
 	}
@@ -52,10 +51,7 @@ defaults
     timeout server 50000ms
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -132,10 +128,7 @@ http-errors custom-errors
     errorfile 400 /etc/haproxy/errors/400.http
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -195,10 +188,7 @@ backend web
     server s1 127.0.0.1:8080
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -266,10 +256,7 @@ backend web-servers
     http-request set-header X-Backend web if is_slow
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -342,10 +329,7 @@ peers mycluster
     peer peer3 192.168.1.3:1024
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -394,10 +378,7 @@ resolvers mydns
     timeout retry 1s
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -441,10 +422,7 @@ mailers mymailers
     timeout mail 10s
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -488,10 +466,7 @@ global
 cache mycache
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -523,10 +498,7 @@ ring myring
     timeout server 10s
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -560,10 +532,7 @@ http-errors myerrors
     errorfile 500 /etc/haproxy/errors/500.http
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -607,10 +576,7 @@ frontend tcp-fe
     bind *:3306
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -649,12 +615,9 @@ just random text
 !!!###$$$
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
-	_, err = p.ParseFromString(config)
+	_, err := p.ParseFromString(config)
 	// May or may not fail depending on parser lenience
 	// Just verify the method doesn't panic
 	_ = err
@@ -672,10 +635,7 @@ defaults
     log 127.0.0.3 local2 debug
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -706,10 +666,7 @@ userlist myusers
     user user1 password $6$userpasswordhash
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -770,10 +727,7 @@ program myprogram
     group nogroup
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -807,10 +761,7 @@ log-forward mylogforward
     log global
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -840,10 +791,7 @@ fcgi-app php
     path-info ^(/.+\.php)(/.*)?$
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -871,10 +819,7 @@ crt-store mystore
     crt-base /etc/haproxy/certs
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -901,10 +846,7 @@ global
 userlist emptylist
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -957,10 +899,7 @@ crt-store ssl
     crt-base /etc/haproxy/certs
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -1015,10 +954,7 @@ crt-store store2
     crt-base /etc/certs2
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -1056,10 +992,7 @@ ring ring2
     size 65528
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -1087,10 +1020,7 @@ http-errors errors2
     errorfile 500 /etc/haproxy/errors2/500.http
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -1117,10 +1047,7 @@ log-forward forward2
     log global
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	conf, err := p.ParseFromString(config)
 	if err != nil {
@@ -1208,10 +1135,7 @@ backend web2
     server s2 127.0.0.1:8081
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	// First config
 	conf1, err := p.ParseFromString(config1)
@@ -1255,10 +1179,7 @@ backend web2
     server s2 127.0.0.1:8081
 `
 
-	p, err := New()
-	if err != nil {
-		t.Fatalf("New() failed: %v", err)
-	}
+	p := newTestParser(t)
 
 	// Get initial cache stats
 	hitsBefore, _ := CacheStats()

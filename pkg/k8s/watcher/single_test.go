@@ -143,17 +143,7 @@ func TestNewSingle(t *testing.T) {
 
 // TestSingleWatcher_IsSynced verifies sync status tracking.
 func TestSingleWatcher_IsSynced(t *testing.T) {
-	// Create scheme and register ConfigMap
-	scheme := runtime.NewScheme()
-	// Create fake clients with registered GVK
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	cfg := types.SingleWatcherConfig{
 		GVR: schema.GroupVersionResource{
@@ -367,15 +357,7 @@ func TestSingleWatcherConfig_SetDefaults(t *testing.T) {
 
 // TestSingleWatcher_NoAddCallbacksDuringSync verifies Add events don't trigger callbacks during sync.
 func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
-	scheme := runtime.NewScheme()
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
@@ -427,15 +409,7 @@ func TestSingleWatcher_NoAddCallbacksDuringSync(t *testing.T) {
 
 // TestSingleWatcher_NoUpdateCallbacksDuringSync verifies Update events don't trigger callbacks during sync.
 func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
-	scheme := runtime.NewScheme()
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
@@ -482,15 +456,7 @@ func TestSingleWatcher_NoUpdateCallbacksDuringSync(t *testing.T) {
 
 // TestSingleWatcher_NoDeleteCallbacksDuringSync verifies Delete events don't trigger callbacks during sync.
 func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
-	scheme := runtime.NewScheme()
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	callbackCount := 0
 	cfg := types.SingleWatcherConfig{
@@ -648,15 +614,7 @@ func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
 
 // TestSingleWatcher_StartIdempotency verifies Start() can be called multiple times safely.
 func TestSingleWatcher_StartIdempotency(t *testing.T) {
-	scheme := runtime.NewScheme()
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	cfg := types.SingleWatcherConfig{
 		GVR: schema.GroupVersionResource{
@@ -883,6 +841,22 @@ func createFakeClientForSingleWatcher() *client.Client {
 	return client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
 }
 
+// createFakeClientForConfigMapListing creates a fake Kubernetes client that knows how
+// to list ConfigMaps (required by tests that actually run the informer). Mirrors the
+// upstream SingleWatcher use case where informer list calls need the GVK-to-ListKind
+// mapping registered on the dynamic fake client.
+func createFakeClientForConfigMapListing() *client.Client {
+	scheme := runtime.NewScheme()
+	fakeClientset := kubefake.NewClientset()
+	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
+		scheme,
+		map[schema.GroupVersionResource]string{
+			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
+		},
+	)
+	return client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+}
+
 // validSingleWatcherConfig returns a valid SingleWatcherConfig for testing.
 func validSingleWatcherConfig() *types.SingleWatcherConfig {
 	return &types.SingleWatcherConfig{
@@ -1045,15 +1019,7 @@ func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {
 // TestSingleWatcher_OnSyncComplete_CalledAfterSync verifies that OnSyncComplete is called
 // after initial sync completes, delivering the current resource from the cache.
 func TestSingleWatcher_OnSyncComplete_CalledAfterSync(t *testing.T) {
-	scheme := runtime.NewScheme()
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	var onChangeCount int
 	var onSyncCompleteCount int
@@ -1206,15 +1172,7 @@ func TestSingleWatcher_OnSyncComplete_ReceivesCurrentResource(t *testing.T) {
 // TestSingleWatcher_OnSyncComplete_Optional verifies that OnSyncComplete is optional
 // and watcher works correctly when it's not provided.
 func TestSingleWatcher_OnSyncComplete_Optional(t *testing.T) {
-	scheme := runtime.NewScheme()
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		scheme,
-		map[schema.GroupVersionResource]string{
-			{Version: "v1", Resource: "configmaps"}: "ConfigMapList",
-		},
-	)
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForConfigMapListing()
 
 	cfg := types.SingleWatcherConfig{
 		GVR: schema.GroupVersionResource{
