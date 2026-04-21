@@ -736,27 +736,25 @@ See `pkg/dataplane/transform/README.md` for complete API reference and `pkg/data
 
 ### synchronizer/ - Operation Execution
 
-Executes operations with transaction management:
+Executes a list of comparator operations inside an already-open Dataplane API
+transaction. Operations are grouped by priority and run in parallel within each
+priority group; groups execute sequentially. Stops at the first error.
 
 ```go
-// Execute operations in transaction
-result, err := synchronizer.Execute(ctx, operations, endpoints)
-
-if err != nil {
-    // Common errors:
-    // - Transaction conflict (version mismatch)
-    // - API timeout
-    // - Network error
-    // - Validation error from HAProxy
-}
-
-// Result contains per-endpoint status
-for endpoint, status := range result.EndpointResults {
-    if status.Error != nil {
-        log.Error("sync failed", "endpoint", endpoint, "error", status.Error)
-    }
-}
+// Callers open the transaction (via VersionAdapter) and call SyncOperations
+// from within the transaction callback.
+adapter := client.NewVersionAdapter(dpClient, 3)
+err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
+    _, err := synchronizer.SyncOperations(ctx, dpClient, diff.Operations, tx, maxParallel)
+    return err
+})
 ```
+
+Common errors surfaced from `SyncOperations`:
+
+- Operation-level failures from the Dataplane API (validation, not found, etc.)
+- Context cancellation
+- Transaction conflict (version mismatch) — usually handled by the VersionAdapter retry loop
 
 **Transaction retry logic:**
 
