@@ -78,7 +78,7 @@ func NewWithListers(k8sClient kubernetes.Interface, crdClient versioned.Interfac
 // Returns PublishResult containing the names of created/updated resources.
 func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*PublishResult, error) {
 	p.logger.Debug("publishing runtime config",
-		"templateConfig", req.TemplateConfigName,
+		"template_config", req.TemplateConfigName,
 		"namespace", req.TemplateConfigNamespace,
 	)
 
@@ -113,11 +113,11 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 	}
 
 	p.logger.Debug("published runtime config",
-		"runtimeConfig", runtimeConfig.Name,
-		"mapFiles", len(result.MapFileNames),
+		"runtime_config", runtimeConfig.Name,
+		"map_files", len(result.MapFileNames),
 		"secrets", len(result.SecretNames),
-		"generalFiles", len(result.GeneralFileNames),
-		"crtListFiles", len(result.CRTListFileNames),
+		"general_files", len(result.GeneralFileNames),
+		"crt_list_files", len(result.CRTListFileNames),
 	)
 
 	return result, nil

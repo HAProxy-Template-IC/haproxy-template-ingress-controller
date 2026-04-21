@@ -40,7 +40,7 @@ import (
 // is needed, avoiding unnecessary API GETs in most cases.
 func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *DeploymentStatusUpdate) error {
 	p.logger.Debug("updating deployment status",
-		"runtimeConfig", update.RuntimeConfigName,
+		"runtime_config", update.RuntimeConfigName,
 		"pod", update.PodName,
 	)
 

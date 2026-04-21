@@ -79,14 +79,14 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	kind := resource.GetKind()
 
 	c.Logger().Debug("Processing config resource change",
-		"apiVersion", apiVersion,
+		"api_version", apiVersion,
 		"kind", kind,
 		"version", version)
 
 	// Validate resource type
 	if apiVersion != "haproxy-haptic.org/v1alpha1" || kind != "HAProxyTemplateConfig" {
 		c.Logger().Error("Unsupported resource type for config",
-			"apiVersion", apiVersion,
+			"api_version", apiVersion,
 			"kind", kind,
 			"version", version)
 		return
@@ -98,14 +98,14 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 	if err != nil {
 		c.Logger().Error("Failed to process config resource",
 			"error", err,
-			"apiVersion", apiVersion,
+			"api_version", apiVersion,
 			"kind", kind,
 			"version", version)
 		return
 	}
 
 	c.Logger().Info("Configuration processed successfully",
-		"apiVersion", apiVersion,
+		"api_version", apiVersion,
 		"kind", kind,
 		"version", version)
 
