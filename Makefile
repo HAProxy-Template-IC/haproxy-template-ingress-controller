@@ -432,7 +432,7 @@ generate-dataplaneapi-all: generate-dataplaneapi-v30 generate-dataplaneapi-v31 g
 generate-validators: ## Generate zero-allocation OpenAPI validators
 	@echo "Generating zero-allocation validators..."
 	go run ./cmd/gen-validators
-	@echo "✓ Validators generated in pkg/dataplane/validators/"
+	@echo "✓ Validators generated in pkg/generated/validators/"
 
 ## Cleanup
 

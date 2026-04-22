@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validators
+package genvalidators
 
 import (
 	"encoding/binary"
@@ -23,11 +23,11 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// Version-specific validators for v30.
+// Version-specific validators for v33.
 // These functions validate client-native models directly without JSON conversion.
 
-// ValidateAclV30 validates a acl model.
-func ValidateAclV30(m *models.ACL) error {
+// ValidateAclV33 validates a acl model.
+func ValidateAclV33(m *models.ACL) error {
 	if m == nil {
 		return nil
 	}
@@ -51,8 +51,8 @@ func ValidateAclV30(m *models.ACL) error {
 	return nil
 }
 
-// HashAclV30 computes a content hash for cache lookup.
-func HashAclV30(m *models.ACL) uint64 {
+// HashAclV33 computes a content hash for cache lookup.
+func HashAclV33(m *models.ACL) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -65,8 +65,8 @@ func HashAclV30(m *models.ACL) uint64 {
 	return h.Sum64()
 }
 
-// ValidateBackendSwitchingRuleV30 validates a backend_switching_rule model.
-func ValidateBackendSwitchingRuleV30(m *models.BackendSwitchingRule) error {
+// ValidateBackendSwitchingRuleV33 validates a backend_switching_rule model.
+func ValidateBackendSwitchingRuleV33(m *models.BackendSwitchingRule) error {
 	if m == nil {
 		return nil
 	}
@@ -91,8 +91,8 @@ func ValidateBackendSwitchingRuleV30(m *models.BackendSwitchingRule) error {
 	return nil
 }
 
-// HashBackendSwitchingRuleV30 computes a content hash for cache lookup.
-func HashBackendSwitchingRuleV30(m *models.BackendSwitchingRule) uint64 {
+// HashBackendSwitchingRuleV33 computes a content hash for cache lookup.
+func HashBackendSwitchingRuleV33(m *models.BackendSwitchingRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -105,10 +105,14 @@ func HashBackendSwitchingRuleV30(m *models.BackendSwitchingRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateBindV30 validates a bind model.
-func ValidateBindV30(m *models.Bind) error {
+// ValidateBindV33 validates a bind model.
+func ValidateBindV33(m *models.Bind) error {
 	if m == nil {
 		return nil
+	}
+
+	if m.Name == "" {
+		return &FieldError{Field: "name", Message: "required"}
 	}
 
 	if m.Address != "" && !patternNoWhitespace.MatchString(m.Address) {
@@ -119,8 +123,26 @@ func ValidateBindV30(m *models.Bind) error {
 		return &FieldError{Field: "alpn", Message: "invalid format"}
 	}
 
+	if m.ForceStrictSni != "" {
+		switch m.ForceStrictSni {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "force_strict_sni", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.GUIDPrefix != "" && !patternGUID.MatchString(m.GUIDPrefix) {
 		return &FieldError{Field: "guid_prefix", Message: "invalid format"}
+	}
+
+	if m.Ktls != "" {
+		switch m.Ktls {
+		case "on", "off":
+			// valid
+		default:
+			return &FieldError{Field: "ktls", Message: "must be one of: on, off"}
+		}
 	}
 
 	if m.Level != "" {
@@ -150,10 +172,10 @@ func ValidateBindV30(m *models.Bind) error {
 
 	if m.QuicCcAlgo != "" {
 		switch m.QuicCcAlgo {
-		case "cubic", "newreno":
+		case "cubic", "newreno", "bbr", "nocc":
 			// valid
 		default:
-			return &FieldError{Field: "quic-cc-algo", Message: "must be one of: cubic, newreno"}
+			return &FieldError{Field: "quic-cc-algo", Message: "must be one of: cubic, newreno, bbr, nocc"}
 		}
 	}
 
@@ -163,6 +185,18 @@ func ValidateBindV30(m *models.Bind) error {
 			// valid
 		default:
 			return &FieldError{Field: "quic-socket", Message: "must be one of: connection, listener"}
+		}
+	}
+
+	if m.QuicCcAlgoBurstSize != nil {
+		if *m.QuicCcAlgoBurstSize > 1024 {
+			return &FieldError{Field: "quic_cc_algo_burst_size", Message: "must be <= 1024"}
+		}
+	}
+
+	if m.QuicCcAlgoMaxWindow != nil {
+		if *m.QuicCcAlgoMaxWindow < 10 || *m.QuicCcAlgoMaxWindow > 4194304 {
+			return &FieldError{Field: "quic_cc_algo_max_window", Message: "must be between 10 and 4194304"}
 		}
 	}
 
@@ -201,6 +235,60 @@ func ValidateBindV30(m *models.Bind) error {
 		}
 	}
 
+	if m.Sslv3 != "" {
+		switch m.Sslv3 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.TLSTickets != "" {
+		switch m.TLSTickets {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tls_tickets", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv10 != "" {
+		switch m.Tlsv10 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv11 != "" {
+		switch m.Tlsv11 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv12 != "" {
+		switch m.Tlsv12 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv13 != "" {
+		switch m.Tlsv13 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Verify != "" {
 		switch m.Verify {
 		case "none", "optional", "required":
@@ -213,8 +301,8 @@ func ValidateBindV30(m *models.Bind) error {
 	return nil
 }
 
-// HashBindV30 computes a content hash for cache lookup.
-func HashBindV30(m *models.Bind) uint64 {
+// HashBindV33 computes a content hash for cache lookup.
+func HashBindV33(m *models.Bind) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -239,6 +327,7 @@ func HashBindV30(m *models.Bind) uint64 {
 	_, _ = h.WriteString(m.CaSignFile)
 	_, _ = h.WriteString(m.CaSignPass)
 	_, _ = h.WriteString(m.CaVerifyFile)
+	_, _ = h.WriteString(m.Cc)
 	_, _ = h.WriteString(m.Ciphers)
 	_, _ = h.WriteString(m.Ciphersuites)
 	_, _ = h.WriteString(m.ClientSigalgs)
@@ -262,6 +351,7 @@ func HashBindV30(m *models.Bind) uint64 {
 	} else {
 		_, _ = h.Write([]byte{0})
 	}
+	_, _ = h.WriteString(m.ForceStrictSni)
 	if m.ForceTlsv10 {
 		_, _ = h.Write([]byte{1})
 	} else {
@@ -291,7 +381,12 @@ func HashBindV30(m *models.Bind) uint64 {
 	_, _ = h.WriteString(m.Group)
 	_, _ = h.WriteString(m.GUIDPrefix)
 	_, _ = h.WriteString(m.ID)
+	if m.IdlePing != nil {
+		_ = binary.Write(h, binary.LittleEndian, *m.IdlePing)
+	}
 	_, _ = h.WriteString(m.Interface)
+	_, _ = h.WriteString(m.Ktls)
+	_, _ = h.WriteString(m.Label)
 	_, _ = h.WriteString(m.Level)
 	_ = binary.Write(h, binary.LittleEndian, m.Maxconn)
 	_, _ = h.WriteString(m.Mode)
@@ -311,6 +406,11 @@ func HashBindV30(m *models.Bind) uint64 {
 		_, _ = h.Write([]byte{0})
 	}
 	if m.NoSslv3 {
+		_, _ = h.Write([]byte{1})
+	} else {
+		_, _ = h.Write([]byte{0})
+	}
+	if m.NoStrictSni {
 		_, _ = h.Write([]byte{1})
 	} else {
 		_, _ = h.Write([]byte{0})
@@ -360,6 +460,12 @@ func HashBindV30(m *models.Bind) uint64 {
 		_, _ = h.Write([]byte{0})
 	}
 	_, _ = h.WriteString(m.QuicSocket)
+	if m.QuicCcAlgoBurstSize != nil {
+		_ = binary.Write(h, binary.LittleEndian, *m.QuicCcAlgoBurstSize)
+	}
+	if m.QuicCcAlgoMaxWindow != nil {
+		_ = binary.Write(h, binary.LittleEndian, *m.QuicCcAlgoMaxWindow)
+	}
 	_, _ = h.WriteString(m.SeverityOutput)
 	_, _ = h.WriteString(m.Sigalgs)
 	if m.Ssl {
@@ -371,6 +477,7 @@ func HashBindV30(m *models.Bind) uint64 {
 	_, _ = h.WriteString(m.SslCertificate)
 	_, _ = h.WriteString(m.SslMaxVer)
 	_, _ = h.WriteString(m.SslMinVer)
+	_, _ = h.WriteString(m.Sslv3)
 	if m.StrictSni {
 		_, _ = h.Write([]byte{1})
 	} else {
@@ -386,6 +493,11 @@ func HashBindV30(m *models.Bind) uint64 {
 	}
 	_, _ = h.WriteString(m.Thread)
 	_, _ = h.WriteString(m.TLSTicketKeys)
+	_, _ = h.WriteString(m.TLSTickets)
+	_, _ = h.WriteString(m.Tlsv10)
+	_, _ = h.WriteString(m.Tlsv11)
+	_, _ = h.WriteString(m.Tlsv12)
+	_, _ = h.WriteString(m.Tlsv13)
 	if m.Transparent {
 		_, _ = h.Write([]byte{1})
 	} else {
@@ -407,8 +519,8 @@ func HashBindV30(m *models.Bind) uint64 {
 	return h.Sum64()
 }
 
-// ValidateCaptureV30 validates a capture model.
-func ValidateCaptureV30(m *models.Capture) error {
+// ValidateCaptureV33 validates a capture model.
+func ValidateCaptureV33(m *models.Capture) error {
 	if m == nil {
 		return nil
 	}
@@ -429,8 +541,8 @@ func ValidateCaptureV30(m *models.Capture) error {
 	return nil
 }
 
-// HashCaptureV30 computes a content hash for cache lookup.
-func HashCaptureV30(m *models.Capture) uint64 {
+// HashCaptureV33 computes a content hash for cache lookup.
+func HashCaptureV33(m *models.Capture) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -442,8 +554,8 @@ func HashCaptureV30(m *models.Capture) uint64 {
 	return h.Sum64()
 }
 
-// ValidateFilterV30 validates a filter model.
-func ValidateFilterV30(m *models.Filter) error {
+// ValidateFilterV33 validates a filter model.
+func ValidateFilterV33(m *models.Filter) error {
 	if m == nil {
 		return nil
 	}
@@ -488,8 +600,8 @@ func ValidateFilterV30(m *models.Filter) error {
 	return nil
 }
 
-// HashFilterV30 computes a content hash for cache lookup.
-func HashFilterV30(m *models.Filter) uint64 {
+// HashFilterV33 computes a content hash for cache lookup.
+func HashFilterV33(m *models.Filter) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -527,8 +639,8 @@ func HashFilterV30(m *models.Filter) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpAfterResponseRuleV30 validates a http_after_response_rule model.
-func ValidateHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) error {
+// ValidateHttpAfterResponseRuleV33 validates a http_after_response_rule model.
+func ValidateHttpAfterResponseRuleV33(m *models.HTTPAfterResponseRule) error {
 	if m == nil {
 		return nil
 	}
@@ -594,10 +706,10 @@ func ValidateHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) error {
 
 	if m.Type != "" {
 		switch m.Type {
-		case "add-header", "allow", "capture", "del-acl", "del-header", "del-map", "replace-header", "replace-value", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "set-header", "set-log-level", "set-map", "set-status", "set-var", "set-var-fmt", "strict-mode", "unset-var":
+		case "add-header", "allow", "capture", "del-acl", "del-header", "del-map", "replace-header", "replace-value", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "set-header", "set-log-level", "set-map", "set-status", "set-var", "set-var-fmt", "strict-mode", "unset-var", "do-log":
 			// valid
 		default:
-			return &FieldError{Field: "type", Message: "must be one of: add-header, allow, capture, del-acl, del-header, del-map, replace-header, replace-value, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, set-header, set-log-level, set-map, set-status, set-var, set-var-fmt, strict-mode, unset-var"}
+			return &FieldError{Field: "type", Message: "must be one of: add-header, allow, capture, del-acl, del-header, del-map, replace-header, replace-value, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, set-header, set-log-level, set-map, set-status, set-var, set-var-fmt, strict-mode, unset-var, do-log"}
 		}
 	}
 
@@ -612,8 +724,8 @@ func ValidateHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) error {
 	return nil
 }
 
-// HashHttpAfterResponseRuleV30 computes a content hash for cache lookup.
-func HashHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) uint64 {
+// HashHttpAfterResponseRuleV33 computes a content hash for cache lookup.
+func HashHttpAfterResponseRuleV33(m *models.HTTPAfterResponseRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -654,8 +766,8 @@ func HashHttpAfterResponseRuleV30(m *models.HTTPAfterResponseRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpCheckV30 validates a http_check model.
-func ValidateHttpCheckV30(m *models.HTTPCheck) error {
+// ValidateHttpCheckV33 validates a http_check model.
+func ValidateHttpCheckV33(m *models.HTTPCheck) error {
 	if m == nil {
 		return nil
 	}
@@ -747,8 +859,8 @@ func ValidateHttpCheckV30(m *models.HTTPCheck) error {
 	return nil
 }
 
-// HashHttpCheckV30 computes a content hash for cache lookup.
-func HashHttpCheckV30(m *models.HTTPCheck) uint64 {
+// HashHttpCheckV33 computes a content hash for cache lookup.
+func HashHttpCheckV33(m *models.HTTPCheck) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -819,8 +931,8 @@ func HashHttpCheckV30(m *models.HTTPCheck) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpErrorRuleV30 validates a http_error_rule model.
-func ValidateHttpErrorRuleV30(m *models.HTTPErrorRule) error {
+// ValidateHttpErrorRuleV33 validates a http_error_rule model.
+func ValidateHttpErrorRuleV33(m *models.HTTPErrorRule) error {
 	if m == nil {
 		return nil
 	}
@@ -850,8 +962,8 @@ func ValidateHttpErrorRuleV30(m *models.HTTPErrorRule) error {
 	return nil
 }
 
-// HashHttpErrorRuleV30 computes a content hash for cache lookup.
-func HashHttpErrorRuleV30(m *models.HTTPErrorRule) uint64 {
+// HashHttpErrorRuleV33 computes a content hash for cache lookup.
+func HashHttpErrorRuleV33(m *models.HTTPErrorRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -868,8 +980,8 @@ func HashHttpErrorRuleV30(m *models.HTTPErrorRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpRequestRuleV30 validates a http_request_rule model.
-func ValidateHttpRequestRuleV30(m *models.HTTPRequestRule) error {
+// ValidateHttpRequestRuleV33 validates a http_request_rule model.
+func ValidateHttpRequestRuleV33(m *models.HTTPRequestRule) error {
 	if m == nil {
 		return nil
 	}
@@ -1052,10 +1164,10 @@ func ValidateHttpRequestRuleV30(m *models.HTTPRequestRule) error {
 
 	if m.Type != "" {
 		switch m.Type {
-		case "add-acl", "add-header", "allow", "auth", "cache-use", "capture", "del-acl", "del-header", "del-map", "deny", "disable-l7-retry", "do-resolve", "early-hint", "lua", "normalize-uri", "redirect", "reject", "replace-header", "replace-path", "replace-pathq", "replace-uri", "replace-value", "return", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bc-mark", "set-bc-tos", "set-dst", "set-dst-port", "set-fc-mark", "set-fc-tos", "set-header", "set-log-level", "set-map", "set-mark", "set-method", "set-nice", "set-path", "set-pathq", "set-priority-class", "set-priority-offset", "set-query", "set-src", "set-src-port", "set-timeout", "set-tos", "set-uri", "set-var", "set-var-fmt", "silent-drop", "strict-mode", "tarpit", "track-sc", "unset-var", "use-service", "wait-for-body", "wait-for-handshake", "set-bandwidth-limit":
+		case "add-acl", "add-header", "allow", "auth", "cache-use", "capture", "del-acl", "del-header", "del-map", "deny", "disable-l7-retry", "do-resolve", "early-hint", "lua", "normalize-uri", "pause", "redirect", "reject", "replace-header", "replace-path", "replace-pathq", "replace-uri", "replace-value", "return", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bc-mark", "set-bc-tos", "set-dst", "set-dst-port", "set-fc-mark", "set-fc-tos", "set-header", "set-log-level", "set-map", "set-mark", "set-method", "set-nice", "set-path", "set-pathq", "set-priority-class", "set-priority-offset", "set-query", "set-src", "set-src-port", "set-timeout", "set-tos", "set-uri", "set-var", "set-var-fmt", "silent-drop", "strict-mode", "tarpit", "track-sc", "unset-var", "use-service", "wait-for-body", "wait-for-handshake", "set-bandwidth-limit", "set-retries", "do-log":
 			// valid
 		default:
-			return &FieldError{Field: "type", Message: "must be one of: add-acl, add-header, allow, auth, cache-use, capture, del-acl, del-header, del-map, deny, disable-l7-retry, do-resolve, early-hint, lua, normalize-uri, redirect, reject, replace-header, replace-path, replace-pathq, replace-uri, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bc-mark, set-bc-tos, set-dst, set-dst-port, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-method, set-nice, set-path, set-pathq, set-priority-class, set-priority-offset, set-query, set-src, set-src-port, set-timeout, set-tos, set-uri, set-var, set-var-fmt, silent-drop, strict-mode, tarpit, track-sc, unset-var, use-service, wait-for-body, wait-for-handshake, set-bandwidth-limit"}
+			return &FieldError{Field: "type", Message: "must be one of: add-acl, add-header, allow, auth, cache-use, capture, del-acl, del-header, del-map, deny, disable-l7-retry, do-resolve, early-hint, lua, normalize-uri, pause, redirect, reject, replace-header, replace-path, replace-pathq, replace-uri, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bc-mark, set-bc-tos, set-dst, set-dst-port, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-method, set-nice, set-path, set-pathq, set-priority-class, set-priority-offset, set-query, set-src, set-src-port, set-timeout, set-tos, set-uri, set-var, set-var-fmt, silent-drop, strict-mode, tarpit, track-sc, unset-var, use-service, wait-for-body, wait-for-handshake, set-bandwidth-limit, set-retries, do-log"}
 		}
 	}
 
@@ -1070,8 +1182,8 @@ func ValidateHttpRequestRuleV30(m *models.HTTPRequestRule) error {
 	return nil
 }
 
-// HashHttpRequestRuleV30 computes a content hash for cache lookup.
-func HashHttpRequestRuleV30(m *models.HTTPRequestRule) uint64 {
+// HashHttpRequestRuleV33 computes a content hash for cache lookup.
+func HashHttpRequestRuleV33(m *models.HTTPRequestRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1176,8 +1288,8 @@ func HashHttpRequestRuleV30(m *models.HTTPRequestRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpResponseRuleV30 validates a http_response_rule model.
-func ValidateHttpResponseRuleV30(m *models.HTTPResponseRule) error {
+// ValidateHttpResponseRuleV33 validates a http_response_rule model.
+func ValidateHttpResponseRuleV33(m *models.HTTPResponseRule) error {
 	if m == nil {
 		return nil
 	}
@@ -1322,10 +1434,10 @@ func ValidateHttpResponseRuleV30(m *models.HTTPResponseRule) error {
 
 	if m.Type != "" {
 		switch m.Type {
-		case "add-acl", "add-header", "allow", "cache-store", "capture", "del-acl", "del-header", "del-map", "deny", "lua", "redirect", "replace-header", "replace-value", "return", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-fc-mark", "set-fc-tos", "set-header", "set-log-level", "set-map", "set-mark", "set-nice", "set-status", "set-timeout", "set-tos", "set-var", "set-var-fmt", "silent-drop", "strict-mode", "track-sc", "unset-var", "wait-for-body", "set-bandwidth-limit":
+		case "add-acl", "add-header", "allow", "cache-store", "capture", "del-acl", "del-header", "del-map", "deny", "lua", "pause", "redirect", "replace-header", "replace-value", "return", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-fc-mark", "set-fc-tos", "set-header", "set-log-level", "set-map", "set-mark", "set-nice", "set-status", "set-timeout", "set-tos", "set-var", "set-var-fmt", "silent-drop", "strict-mode", "track-sc", "unset-var", "wait-for-body", "set-bandwidth-limit", "do-log":
 			// valid
 		default:
-			return &FieldError{Field: "type", Message: "must be one of: add-acl, add-header, allow, cache-store, capture, del-acl, del-header, del-map, deny, lua, redirect, replace-header, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-nice, set-status, set-timeout, set-tos, set-var, set-var-fmt, silent-drop, strict-mode, track-sc, unset-var, wait-for-body, set-bandwidth-limit"}
+			return &FieldError{Field: "type", Message: "must be one of: add-acl, add-header, allow, cache-store, capture, del-acl, del-header, del-map, deny, lua, pause, redirect, replace-header, replace-value, return, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-fc-mark, set-fc-tos, set-header, set-log-level, set-map, set-mark, set-nice, set-status, set-timeout, set-tos, set-var, set-var-fmt, silent-drop, strict-mode, track-sc, unset-var, wait-for-body, set-bandwidth-limit, do-log"}
 		}
 	}
 
@@ -1340,8 +1452,8 @@ func ValidateHttpResponseRuleV30(m *models.HTTPResponseRule) error {
 	return nil
 }
 
-// HashHttpResponseRuleV30 computes a content hash for cache lookup.
-func HashHttpResponseRuleV30(m *models.HTTPResponseRule) uint64 {
+// HashHttpResponseRuleV33 computes a content hash for cache lookup.
+func HashHttpResponseRuleV33(m *models.HTTPResponseRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1424,8 +1536,8 @@ func HashHttpResponseRuleV30(m *models.HTTPResponseRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateLogTargetV30 validates a log_target model.
-func ValidateLogTargetV30(m *models.LogTarget) error {
+// ValidateLogTargetV33 validates a log_target model.
+func ValidateLogTargetV33(m *models.LogTarget) error {
 	if m == nil {
 		return nil
 	}
@@ -1473,8 +1585,8 @@ func ValidateLogTargetV30(m *models.LogTarget) error {
 	return nil
 }
 
-// HashLogTargetV30 computes a content hash for cache lookup.
-func HashLogTargetV30(m *models.LogTarget) uint64 {
+// HashLogTargetV33 computes a content hash for cache lookup.
+func HashLogTargetV33(m *models.LogTarget) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1497,13 +1609,14 @@ func HashLogTargetV30(m *models.LogTarget) uint64 {
 	} else {
 		_, _ = h.Write([]byte{0})
 	}
+	_, _ = h.WriteString(m.Profile)
 	_, _ = h.WriteString(m.SampleRange)
 	_ = binary.Write(h, binary.LittleEndian, m.SampleSize)
 	return h.Sum64()
 }
 
-// ValidateServerV30 validates a server model.
-func ValidateServerV30(m *models.Server) error {
+// ValidateServerV33 validates a server model.
+func ValidateServerV33(m *models.Server) error {
 	if m == nil {
 		return nil
 	}
@@ -1561,6 +1674,19 @@ func ValidateServerV30(m *models.Server) error {
 		}
 	}
 
+	if m.CheckPoolConnName != "" && !patternNoWhitespace.MatchString(m.CheckPoolConnName) {
+		return &FieldError{Field: "check-pool-conn-name", Message: "invalid format"}
+	}
+
+	if m.CheckReusePool != "" {
+		switch m.CheckReusePool {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "check-reuse-pool", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.CheckSendProxy != "" {
 		switch m.CheckSendProxy {
 		case "enabled", "disabled":
@@ -1589,6 +1715,15 @@ func ValidateServerV30(m *models.Server) error {
 
 	if m.CheckProto != "" && !patternNoWhitespace.MatchString(m.CheckProto) {
 		return &FieldError{Field: "check_proto", Message: "invalid format"}
+	}
+
+	if m.CheckSniAuto != "" {
+		switch m.CheckSniAuto {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "check_sni_auto", Message: "must be one of: enabled, disabled"}
+		}
 	}
 
 	if m.CheckViaSocks4 != "" {
@@ -1669,6 +1804,24 @@ func ValidateServerV30(m *models.Server) error {
 
 	if m.InitAddr != nil && *m.InitAddr != "" && !patternNoWhitespace.MatchString(*m.InitAddr) {
 		return &FieldError{Field: "init-addr", Message: "invalid format"}
+	}
+
+	if m.InitState != "" {
+		switch m.InitState {
+		case "fully-up", "up", "down", "fully-down":
+			// valid
+		default:
+			return &FieldError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
+		}
+	}
+
+	if m.Ktls != "" {
+		switch m.Ktls {
+		case "on", "off":
+			// valid
+		default:
+			return &FieldError{Field: "ktls", Message: "must be one of: on, off"}
+		}
 	}
 
 	if m.LogProto != "" {
@@ -1797,6 +1950,15 @@ func ValidateServerV30(m *models.Server) error {
 		return &FieldError{Field: "proto", Message: "invalid format"}
 	}
 
+	if m.Renegotiate != "" {
+		switch m.Renegotiate {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "renegotiate", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.ResolveNet != "" && !patternResolveNet.MatchString(m.ResolveNet) {
 		return &FieldError{Field: "resolve-net", Message: "invalid format"}
 	}
@@ -1858,6 +2020,15 @@ func ValidateServerV30(m *models.Server) error {
 		return &FieldError{Field: "sni", Message: "invalid format"}
 	}
 
+	if m.SniAuto != "" {
+		switch m.SniAuto {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "sni_auto", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Socks4 != "" && !patternNoWhitespace.MatchString(m.Socks4) {
 		return &FieldError{Field: "socks4", Message: "invalid format"}
 	}
@@ -1906,6 +2077,15 @@ func ValidateServerV30(m *models.Server) error {
 		}
 	}
 
+	if m.Sslv3 != "" {
+		switch m.Sslv3 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Stick != "" {
 		switch m.Stick {
 		case "enabled", "disabled":
@@ -1933,6 +2113,42 @@ func ValidateServerV30(m *models.Server) error {
 		}
 	}
 
+	if m.Tlsv10 != "" {
+		switch m.Tlsv10 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv11 != "" {
+		switch m.Tlsv11 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv12 != "" {
+		switch m.Tlsv12 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv13 != "" {
+		switch m.Tlsv13 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Verify != "" {
 		switch m.Verify {
 		case "none", "required":
@@ -1954,8 +2170,8 @@ func ValidateServerV30(m *models.Server) error {
 	return nil
 }
 
-// HashServerV30 computes a content hash for cache lookup.
-func HashServerV30(m *models.Server) uint64 {
+// HashServerV33 computes a content hash for cache lookup.
+func HashServerV33(m *models.Server) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1979,12 +2195,16 @@ func HashServerV30(m *models.Server) uint64 {
 	}
 	_, _ = h.WriteString(m.Alpn)
 	_, _ = h.WriteString(m.Backup)
+	_, _ = h.WriteString(m.Cc)
 	_, _ = h.WriteString(m.Check)
+	_, _ = h.WriteString(m.CheckPoolConnName)
+	_, _ = h.WriteString(m.CheckReusePool)
 	_, _ = h.WriteString(m.CheckSendProxy)
 	_, _ = h.WriteString(m.CheckSni)
 	_, _ = h.WriteString(m.CheckSsl)
 	_, _ = h.WriteString(m.CheckAlpn)
 	_, _ = h.WriteString(m.CheckProto)
+	_, _ = h.WriteString(m.CheckSniAuto)
 	_, _ = h.WriteString(m.CheckViaSocks4)
 	_, _ = h.WriteString(m.Ciphers)
 	_, _ = h.WriteString(m.Ciphersuites)
@@ -2016,12 +2236,17 @@ func HashServerV30(m *models.Server) uint64 {
 	if m.ID != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.ID)
 	}
+	if m.IdlePing != nil {
+		_ = binary.Write(h, binary.LittleEndian, *m.IdlePing)
+	}
 	if m.InitAddr != nil {
 		_, _ = h.WriteString(*m.InitAddr)
 	}
+	_, _ = h.WriteString(m.InitState)
 	if m.Inter != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.Inter)
 	}
+	_, _ = h.WriteString(m.Ktls)
 	if m.LogBufsize != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.LogBufsize)
 	}
@@ -2067,6 +2292,7 @@ func HashServerV30(m *models.Server) uint64 {
 	}
 	_, _ = h.WriteString(m.Proto)
 	_, _ = h.WriteString(m.Redir)
+	_, _ = h.WriteString(m.Renegotiate)
 	_, _ = h.WriteString(m.ResolveNet)
 	_, _ = h.WriteString(m.ResolvePrefer)
 	_, _ = h.WriteString(m.ResolveOpts)
@@ -2084,6 +2310,7 @@ func HashServerV30(m *models.Server) uint64 {
 		_ = binary.Write(h, binary.LittleEndian, *m.Slowstart)
 	}
 	_, _ = h.WriteString(m.Sni)
+	_, _ = h.WriteString(m.SniAuto)
 	_, _ = h.WriteString(m.Socks4)
 	_, _ = h.WriteString(m.Source)
 	_, _ = h.WriteString(m.Ssl)
@@ -2092,12 +2319,22 @@ func HashServerV30(m *models.Server) uint64 {
 	_, _ = h.WriteString(m.SslMaxVer)
 	_, _ = h.WriteString(m.SslMinVer)
 	_, _ = h.WriteString(m.SslReuse)
+	_, _ = h.WriteString(m.Sslv3)
 	_, _ = h.WriteString(m.Stick)
+	if m.StrictMaxconn {
+		_, _ = h.Write([]byte{1})
+	} else {
+		_, _ = h.Write([]byte{0})
+	}
 	if m.TCPUt != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.TCPUt)
 	}
 	_, _ = h.WriteString(m.Tfo)
 	_, _ = h.WriteString(m.TLSTickets)
+	_, _ = h.WriteString(m.Tlsv10)
+	_, _ = h.WriteString(m.Tlsv11)
+	_, _ = h.WriteString(m.Tlsv12)
+	_, _ = h.WriteString(m.Tlsv13)
 	_, _ = h.WriteString(m.Track)
 	_, _ = h.WriteString(m.Verify)
 	_, _ = h.WriteString(m.Verifyhost)
@@ -2108,8 +2345,8 @@ func HashServerV30(m *models.Server) uint64 {
 	return h.Sum64()
 }
 
-// ValidateServerSwitchingRuleV30 validates a server_switching_rule model.
-func ValidateServerSwitchingRuleV30(m *models.ServerSwitchingRule) error {
+// ValidateServerSwitchingRuleV33 validates a server_switching_rule model.
+func ValidateServerSwitchingRuleV33(m *models.ServerSwitchingRule) error {
 	if m == nil {
 		return nil
 	}
@@ -2134,8 +2371,8 @@ func ValidateServerSwitchingRuleV30(m *models.ServerSwitchingRule) error {
 	return nil
 }
 
-// HashServerSwitchingRuleV30 computes a content hash for cache lookup.
-func HashServerSwitchingRuleV30(m *models.ServerSwitchingRule) uint64 {
+// HashServerSwitchingRuleV33 computes a content hash for cache lookup.
+func HashServerSwitchingRuleV33(m *models.ServerSwitchingRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2148,8 +2385,8 @@ func HashServerSwitchingRuleV30(m *models.ServerSwitchingRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateServerTemplateV30 validates a server_template model.
-func ValidateServerTemplateV30(m *models.ServerTemplate) error {
+// ValidateServerTemplateV33 validates a server_template model.
+func ValidateServerTemplateV33(m *models.ServerTemplate) error {
 	if m == nil {
 		return nil
 	}
@@ -2207,6 +2444,19 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 		}
 	}
 
+	if m.CheckPoolConnName != "" && !patternNoWhitespace.MatchString(m.CheckPoolConnName) {
+		return &FieldError{Field: "check-pool-conn-name", Message: "invalid format"}
+	}
+
+	if m.CheckReusePool != "" {
+		switch m.CheckReusePool {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "check-reuse-pool", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.CheckSendProxy != "" {
 		switch m.CheckSendProxy {
 		case "enabled", "disabled":
@@ -2235,6 +2485,15 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 
 	if m.CheckProto != "" && !patternNoWhitespace.MatchString(m.CheckProto) {
 		return &FieldError{Field: "check_proto", Message: "invalid format"}
+	}
+
+	if m.CheckSniAuto != "" {
+		switch m.CheckSniAuto {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "check_sni_auto", Message: "must be one of: enabled, disabled"}
+		}
 	}
 
 	if m.CheckViaSocks4 != "" {
@@ -2315,6 +2574,24 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 
 	if m.InitAddr != nil && *m.InitAddr != "" && !patternNoWhitespace.MatchString(*m.InitAddr) {
 		return &FieldError{Field: "init-addr", Message: "invalid format"}
+	}
+
+	if m.InitState != "" {
+		switch m.InitState {
+		case "fully-up", "up", "down", "fully-down":
+			// valid
+		default:
+			return &FieldError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
+		}
+	}
+
+	if m.Ktls != "" {
+		switch m.Ktls {
+		case "on", "off":
+			// valid
+		default:
+			return &FieldError{Field: "ktls", Message: "must be one of: on, off"}
+		}
 	}
 
 	if m.LogProto != "" {
@@ -2443,6 +2720,15 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 		return &FieldError{Field: "proto", Message: "invalid format"}
 	}
 
+	if m.Renegotiate != "" {
+		switch m.Renegotiate {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "renegotiate", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.ResolveNet != "" && !patternResolveNet.MatchString(m.ResolveNet) {
 		return &FieldError{Field: "resolve-net", Message: "invalid format"}
 	}
@@ -2504,6 +2790,15 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 		return &FieldError{Field: "sni", Message: "invalid format"}
 	}
 
+	if m.SniAuto != "" {
+		switch m.SniAuto {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "sni_auto", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Socks4 != "" && !patternNoWhitespace.MatchString(m.Socks4) {
 		return &FieldError{Field: "socks4", Message: "invalid format"}
 	}
@@ -2552,6 +2847,15 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 		}
 	}
 
+	if m.Sslv3 != "" {
+		switch m.Sslv3 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "sslv3", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Stick != "" {
 		switch m.Stick {
 		case "enabled", "disabled":
@@ -2579,6 +2883,42 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 		}
 	}
 
+	if m.Tlsv10 != "" {
+		switch m.Tlsv10 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv10", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv11 != "" {
+		switch m.Tlsv11 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv11", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv12 != "" {
+		switch m.Tlsv12 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv12", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
+	if m.Tlsv13 != "" {
+		switch m.Tlsv13 {
+		case "enabled", "disabled":
+			// valid
+		default:
+			return &FieldError{Field: "tlsv13", Message: "must be one of: enabled, disabled"}
+		}
+	}
+
 	if m.Verify != "" {
 		switch m.Verify {
 		case "none", "required":
@@ -2600,8 +2940,8 @@ func ValidateServerTemplateV30(m *models.ServerTemplate) error {
 	return nil
 }
 
-// HashServerTemplateV30 computes a content hash for cache lookup.
-func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
+// HashServerTemplateV33 computes a content hash for cache lookup.
+func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2624,12 +2964,16 @@ func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
 	}
 	_, _ = h.WriteString(m.Alpn)
 	_, _ = h.WriteString(m.Backup)
+	_, _ = h.WriteString(m.Cc)
 	_, _ = h.WriteString(m.Check)
+	_, _ = h.WriteString(m.CheckPoolConnName)
+	_, _ = h.WriteString(m.CheckReusePool)
 	_, _ = h.WriteString(m.CheckSendProxy)
 	_, _ = h.WriteString(m.CheckSni)
 	_, _ = h.WriteString(m.CheckSsl)
 	_, _ = h.WriteString(m.CheckAlpn)
 	_, _ = h.WriteString(m.CheckProto)
+	_, _ = h.WriteString(m.CheckSniAuto)
 	_, _ = h.WriteString(m.CheckViaSocks4)
 	_, _ = h.WriteString(m.Ciphers)
 	_, _ = h.WriteString(m.Ciphersuites)
@@ -2662,12 +3006,17 @@ func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
 	if m.ID != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.ID)
 	}
+	if m.IdlePing != nil {
+		_ = binary.Write(h, binary.LittleEndian, *m.IdlePing)
+	}
 	if m.InitAddr != nil {
 		_, _ = h.WriteString(*m.InitAddr)
 	}
+	_, _ = h.WriteString(m.InitState)
 	if m.Inter != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.Inter)
 	}
+	_, _ = h.WriteString(m.Ktls)
 	if m.LogBufsize != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.LogBufsize)
 	}
@@ -2714,6 +3063,7 @@ func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
 	_, _ = h.WriteString(m.Prefix)
 	_, _ = h.WriteString(m.Proto)
 	_, _ = h.WriteString(m.Redir)
+	_, _ = h.WriteString(m.Renegotiate)
 	_, _ = h.WriteString(m.ResolveNet)
 	_, _ = h.WriteString(m.ResolvePrefer)
 	_, _ = h.WriteString(m.ResolveOpts)
@@ -2731,6 +3081,7 @@ func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
 		_ = binary.Write(h, binary.LittleEndian, *m.Slowstart)
 	}
 	_, _ = h.WriteString(m.Sni)
+	_, _ = h.WriteString(m.SniAuto)
 	_, _ = h.WriteString(m.Socks4)
 	_, _ = h.WriteString(m.Source)
 	_, _ = h.WriteString(m.Ssl)
@@ -2739,12 +3090,22 @@ func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
 	_, _ = h.WriteString(m.SslMaxVer)
 	_, _ = h.WriteString(m.SslMinVer)
 	_, _ = h.WriteString(m.SslReuse)
+	_, _ = h.WriteString(m.Sslv3)
 	_, _ = h.WriteString(m.Stick)
+	if m.StrictMaxconn {
+		_, _ = h.Write([]byte{1})
+	} else {
+		_, _ = h.Write([]byte{0})
+	}
 	if m.TCPUt != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.TCPUt)
 	}
 	_, _ = h.WriteString(m.Tfo)
 	_, _ = h.WriteString(m.TLSTickets)
+	_, _ = h.WriteString(m.Tlsv10)
+	_, _ = h.WriteString(m.Tlsv11)
+	_, _ = h.WriteString(m.Tlsv12)
+	_, _ = h.WriteString(m.Tlsv13)
 	_, _ = h.WriteString(m.Track)
 	_, _ = h.WriteString(m.Verify)
 	_, _ = h.WriteString(m.Verifyhost)
@@ -2755,8 +3116,8 @@ func HashServerTemplateV30(m *models.ServerTemplate) uint64 {
 	return h.Sum64()
 }
 
-// ValidateStickRuleV30 validates a stick_rule model.
-func ValidateStickRuleV30(m *models.StickRule) error {
+// ValidateStickRuleV33 validates a stick_rule model.
+func ValidateStickRuleV33(m *models.StickRule) error {
 	if m == nil {
 		return nil
 	}
@@ -2798,8 +3159,8 @@ func ValidateStickRuleV30(m *models.StickRule) error {
 	return nil
 }
 
-// HashStickRuleV30 computes a content hash for cache lookup.
-func HashStickRuleV30(m *models.StickRule) uint64 {
+// HashStickRuleV33 computes a content hash for cache lookup.
+func HashStickRuleV33(m *models.StickRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2814,8 +3175,8 @@ func HashStickRuleV30(m *models.StickRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateTcpCheckV30 validates a tcp_check model.
-func ValidateTcpCheckV30(m *models.TCPCheck) error {
+// ValidateTcpCheckV33 validates a tcp_check model.
+func ValidateTcpCheckV33(m *models.TCPCheck) error {
 	if m == nil {
 		return nil
 	}
@@ -2898,8 +3259,8 @@ func ValidateTcpCheckV30(m *models.TCPCheck) error {
 	return nil
 }
 
-// HashTcpCheckV30 computes a content hash for cache lookup.
-func HashTcpCheckV30(m *models.TCPCheck) uint64 {
+// HashTcpCheckV33 computes a content hash for cache lookup.
+func HashTcpCheckV33(m *models.TCPCheck) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2966,8 +3327,8 @@ func HashTcpCheckV30(m *models.TCPCheck) uint64 {
 	return h.Sum64()
 }
 
-// ValidateTcpRequestRuleV30 validates a tcp_request_rule model.
-func ValidateTcpRequestRuleV30(m *models.TCPRequestRule) error {
+// ValidateTcpRequestRuleV33 validates a tcp_request_rule model.
+func ValidateTcpRequestRuleV33(m *models.TCPRequestRule) error {
 	if m == nil {
 		return nil
 	}
@@ -2978,10 +3339,10 @@ func ValidateTcpRequestRuleV30(m *models.TCPRequestRule) error {
 
 	if m.Action != "" {
 		switch m.Action {
-		case "accept", "attach-srv", "capture", "do-resolve", "expect-netscaler-cip", "expect-proxy", "lua", "reject", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bandwidth-limit", "set-bc-mark", "set-bc-tos", "set-dst-port", "set-dst", "set-fc-mark", "set-fc-tos", "set-log-level", "set-mark", "set-nice", "set-priority-class", "set-priority-offset", "set-src", "set-src-port", "set-tos", "set-var", "set-var-fmt", "silent-drop", "switch-mode", "track-sc", "unset-var", "use-service":
+		case "accept", "attach-srv", "capture", "do-resolve", "expect-netscaler-cip", "expect-proxy", "lua", "reject", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bandwidth-limit", "set-bc-mark", "set-bc-tos", "set-dst-port", "set-dst", "set-fc-mark", "set-fc-tos", "set-log-level", "set-mark", "set-nice", "set-priority-class", "set-priority-offset", "set-src", "set-src-port", "set-tos", "set-var", "set-var-fmt", "silent-drop", "switch-mode", "track-sc", "unset-var", "use-service", "set-retries", "do-log":
 			// valid
 		default:
-			return &FieldError{Field: "action", Message: "must be one of: accept, attach-srv, capture, do-resolve, expect-netscaler-cip, expect-proxy, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-bc-mark, set-bc-tos, set-dst-port, set-dst, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-priority-class, set-priority-offset, set-src, set-src-port, set-tos, set-var, set-var-fmt, silent-drop, switch-mode, track-sc, unset-var, use-service"}
+			return &FieldError{Field: "action", Message: "must be one of: accept, attach-srv, capture, do-resolve, expect-netscaler-cip, expect-proxy, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-bc-mark, set-bc-tos, set-dst-port, set-dst, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-priority-class, set-priority-offset, set-src, set-src-port, set-tos, set-var, set-var-fmt, silent-drop, switch-mode, track-sc, unset-var, use-service, set-retries, do-log"}
 		}
 	}
 
@@ -3052,8 +3413,8 @@ func ValidateTcpRequestRuleV30(m *models.TCPRequestRule) error {
 	return nil
 }
 
-// HashTcpRequestRuleV30 computes a content hash for cache lookup.
-func HashTcpRequestRuleV30(m *models.TCPRequestRule) uint64 {
+// HashTcpRequestRuleV33 computes a content hash for cache lookup.
+func HashTcpRequestRuleV33(m *models.TCPRequestRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -3105,8 +3466,8 @@ func HashTcpRequestRuleV30(m *models.TCPRequestRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateTcpResponseRuleV30 validates a tcp_response_rule model.
-func ValidateTcpResponseRuleV30(m *models.TCPResponseRule) error {
+// ValidateTcpResponseRuleV33 validates a tcp_response_rule model.
+func ValidateTcpResponseRuleV33(m *models.TCPResponseRule) error {
 	if m == nil {
 		return nil
 	}
@@ -3117,10 +3478,10 @@ func ValidateTcpResponseRuleV30(m *models.TCPResponseRule) error {
 
 	if m.Action != "" {
 		switch m.Action {
-		case "accept", "close", "lua", "reject", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bandwidth-limit", "set-fc-mark", "set-fc-tos", "set-log-level", "set-mark", "set-nice", "set-tos", "set-var", "set-var-fmt", "silent-drop", "unset-var":
+		case "accept", "close", "lua", "reject", "sc-add-gpc", "sc-inc-gpc", "sc-inc-gpc0", "sc-inc-gpc1", "sc-set-gpt", "sc-set-gpt0", "send-spoe-group", "set-bandwidth-limit", "set-fc-mark", "set-fc-tos", "set-log-level", "set-mark", "set-nice", "set-tos", "set-var", "set-var-fmt", "silent-drop", "unset-var", "do-log":
 			// valid
 		default:
-			return &FieldError{Field: "action", Message: "must be one of: accept, close, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-tos, set-var, set-var-fmt, silent-drop, unset-var"}
+			return &FieldError{Field: "action", Message: "must be one of: accept, close, lua, reject, sc-add-gpc, sc-inc-gpc, sc-inc-gpc0, sc-inc-gpc1, sc-set-gpt, sc-set-gpt0, send-spoe-group, set-bandwidth-limit, set-fc-mark, set-fc-tos, set-log-level, set-mark, set-nice, set-tos, set-var, set-var-fmt, silent-drop, unset-var, do-log"}
 		}
 	}
 
@@ -3186,8 +3547,8 @@ func ValidateTcpResponseRuleV30(m *models.TCPResponseRule) error {
 	return nil
 }
 
-// HashTcpResponseRuleV30 computes a content hash for cache lookup.
-func HashTcpResponseRuleV30(m *models.TCPResponseRule) uint64 {
+// HashTcpResponseRuleV33 computes a content hash for cache lookup.
+func HashTcpResponseRuleV33(m *models.TCPResponseRule) uint64 {
 	if m == nil {
 		return 0
 	}
