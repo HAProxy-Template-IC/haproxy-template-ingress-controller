@@ -65,7 +65,7 @@ func (o *orchestrator) executeFineGrainedSync(
 
 	// PhasePostConfig: delete auxiliary files the new config no longer
 	// references. Only safe after PhaseConfig succeeded.
-	o.deleteObsoleteFilesPostConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
+	o.deleteUnreferencedFilesPostConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
 
 	// Build result
 	auxDiffs := &auxiliaryFileDiffs{

@@ -60,6 +60,14 @@ func newTestClient(t *testing.T, server *httptest.Server) *DataplaneClient {
 	return c
 }
 
+// newTestClientWithHandler spins up an httptest.Server with the given handler
+// and returns a client connected to it plus a cleanup function.
+func newTestClientWithHandler(t *testing.T, handler http.HandlerFunc) (client *DataplaneClient, cleanup func()) {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	return newTestClient(t, server), server.Close
+}
+
 func jsonResponse(body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

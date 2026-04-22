@@ -56,8 +56,8 @@ func (c *DataplaneClient) GetCRTListEntries(ctx context.Context, crtListName str
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get crt-list entries failed with status %d", resp.StatusCode)
+	if err := CheckResponse(resp, "get crt-list entries"); err != nil {
+		return nil, err
 	}
 
 	// The response contains entries in the crt-list format
@@ -136,11 +136,7 @@ func (c *DataplaneClient) AddCRTListEntry(ctx context.Context, crtListName strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("add crt-list entry failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "add crt-list entry")
 }
 
 // DeleteCRTListEntry deletes an entry from a CRT-list file by certificate name and line number.
@@ -188,9 +184,5 @@ func (c *DataplaneClient) DeleteCRTListEntry(ctx context.Context, crtListName, c
 		return nil
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete crt-list entry failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "delete crt-list entry")
 }

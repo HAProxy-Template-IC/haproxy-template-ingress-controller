@@ -117,8 +117,8 @@ func (c *DataplaneClient) GetAllCrtLoads(ctx context.Context, crtStoreName strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get crt-loads failed with status %d", resp.StatusCode)
+	if err := CheckResponse(resp, "get crt-loads"); err != nil {
+		return nil, err
 	}
 
 	var apiLoads []crtLoadAPIResponse
@@ -166,8 +166,8 @@ func (c *DataplaneClient) GetCrtLoad(ctx context.Context, crtStoreName, certific
 		return nil, fmt.Errorf("crt-load '%s' not found in crt-store '%s'", certificate, crtStoreName)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get crt-load failed with status %d", resp.StatusCode)
+	if err := CheckResponse(resp, "get crt-load"); err != nil {
+		return nil, err
 	}
 
 	var load CrtLoad
@@ -226,11 +226,7 @@ func (c *DataplaneClient) CreateCrtLoad(ctx context.Context, crtStoreName string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create crt-load failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "create crt-load")
 }
 
 // ReplaceCrtLoad replaces an existing crt-load entry in a crt-store.
@@ -277,11 +273,7 @@ func (c *DataplaneClient) ReplaceCrtLoad(ctx context.Context, crtStoreName, cert
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace crt-load failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "replace crt-load")
 }
 
 // DeleteCrtLoad deletes a crt-load entry from a crt-store.
@@ -326,9 +318,5 @@ func (c *DataplaneClient) DeleteCrtLoad(ctx context.Context, crtStoreName, certi
 		return nil
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete crt-load failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "delete crt-load")
 }

@@ -97,8 +97,8 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 		return "", fmt.Errorf("SSL certificate '%s' not found", name)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("get SSL certificate '%s' failed with status %d", name, resp.StatusCode)
+	if err := CheckResponse(resp, fmt.Sprintf("get SSL certificate '%s'", name)); err != nil {
+		return "", err
 	}
 
 	// Read entire response body first to handle empty responses

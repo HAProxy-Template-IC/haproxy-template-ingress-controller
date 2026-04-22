@@ -49,19 +49,6 @@ func makeTransactionHandler(path, method string, statusCode int, headers map[str
 	}
 }
 
-// createTestClientWithServer creates a test client and server for transaction tests.
-func createTestClientWithServer(t *testing.T, handler http.HandlerFunc) (client *DataplaneClient, cleanup func()) {
-	t.Helper()
-	server := httptest.NewServer(handler)
-	client, err := New(context.Background(), &Config{
-		BaseURL:  server.URL,
-		Username: "admin",
-		Password: "password",
-	})
-	require.NoError(t, err)
-	return client, server.Close
-}
-
 // assertTransactionCreateResult validates transaction creation test results.
 func assertTransactionCreateResult(t *testing.T, tx *Transaction, err error, expectErr bool, errType string, expectedVersion int64) {
 	t.Helper()
@@ -133,7 +120,7 @@ func TestCreateTransaction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := makeTransactionHandler("/services/haproxy/transactions", "POST", tt.statusCode, tt.headers, tt.body)
-			client, cleanup := createTestClientWithServer(t, handler)
+			client, cleanup := newTestClientWithHandler(t, handler)
 			defer cleanup()
 
 			tx, err := client.CreateTransaction(context.Background(), tt.version)
@@ -208,7 +195,7 @@ func TestTransaction_Commit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := makeTransactionHandler("/services/haproxy/transactions/tx-123", "PUT", tt.statusCode, tt.headers, "")
-			client, cleanup := createTestClientWithServer(t, handler)
+			client, cleanup := newTestClientWithHandler(t, handler)
 			defer cleanup()
 
 			tx := &Transaction{

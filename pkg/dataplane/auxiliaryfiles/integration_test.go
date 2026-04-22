@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client/testutil"
 )
 
 // mockStorage simulates HAProxy storage for testing.
@@ -181,25 +181,12 @@ func handleStorageDelete(w http.ResponseWriter, storage *mockStorage, name strin
 	}
 }
 
-// createTestClient creates a DataplaneClient connected to the test server.
-func createTestClient(t *testing.T, serverURL string) *client.DataplaneClient {
-	t.Helper()
-
-	c, err := client.New(context.Background(), &client.Config{
-		BaseURL:  serverURL,
-		Username: "admin",
-		Password: "password",
-	})
-	require.NoError(t, err)
-	return c
-}
-
 func TestCompareGeneralFiles_Integration(t *testing.T) {
 	generalFiles := newMockStorage()
 	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
-	c := createTestClient(t, server.URL)
+	c := testutil.NewTestClient(t, server)
 	ctx := context.Background()
 
 	// Start with empty storage
@@ -258,7 +245,7 @@ func TestSyncGeneralFiles_Integration(t *testing.T) {
 	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
-	c := createTestClient(t, server.URL)
+	c := testutil.NewTestClient(t, server)
 	ctx := context.Background()
 
 	t.Run("sync nil diff", func(t *testing.T) {
@@ -286,7 +273,7 @@ func TestCompareMapFiles_Integration(t *testing.T) {
 	server := createTestServer(nil, mapFiles)
 	defer server.Close()
 
-	c := createTestClient(t, server.URL)
+	c := testutil.NewTestClient(t, server)
 	ctx := context.Background()
 
 	t.Run("compare with empty storage", func(t *testing.T) {
@@ -326,7 +313,7 @@ func TestSyncMapFiles_Integration(t *testing.T) {
 	server := createTestServer(nil, mapFiles)
 	defer server.Close()
 
-	c := createTestClient(t, server.URL)
+	c := testutil.NewTestClient(t, server)
 	ctx := context.Background()
 
 	t.Run("sync nil diff", func(t *testing.T) {
@@ -361,7 +348,7 @@ func TestCompareCRTLists_Integration(t *testing.T) {
 	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
-	c := createTestClient(t, server.URL)
+	c := testutil.NewTestClient(t, server)
 	ctx := context.Background()
 
 	t.Run("compare with empty storage", func(t *testing.T) {
@@ -402,7 +389,7 @@ func TestSyncCRTLists_Integration(t *testing.T) {
 	server := createTestServer(generalFiles, nil)
 	defer server.Close()
 
-	c := createTestClient(t, server.URL)
+	c := testutil.NewTestClient(t, server)
 	ctx := context.Background()
 
 	t.Run("sync nil diff", func(t *testing.T) {

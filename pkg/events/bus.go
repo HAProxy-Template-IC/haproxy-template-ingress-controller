@@ -378,19 +378,6 @@ func (b *EventBus) DroppedEventsObservability() uint64 {
 	return atomic.LoadUint64(&b.droppedEventsObservability)
 }
 
-// DroppedEvents returns the total number of events that have been dropped
-// due to full subscriber buffers since the EventBus was created.
-//
-// This is the sum of DroppedEventsCritical() + DroppedEventsObservability()
-// and is kept for backwards compatibility.
-//
-// For more actionable monitoring, use the separate counters:
-//   - DroppedEventsCritical() - Alert if > 0 (indicates a problem)
-//   - DroppedEventsObservability() - Expected during high load (no action needed)
-func (b *EventBus) DroppedEvents() uint64 {
-	return b.DroppedEventsCritical() + b.DroppedEventsObservability()
-}
-
 // SubscriberCount returns the number of active subscriptions (universal + typed).
 // All subscriptions are created before Start(), so this is safe to call from any goroutine.
 func (b *EventBus) SubscriberCount() int {
