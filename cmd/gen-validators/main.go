@@ -122,8 +122,13 @@ func main() {
 		versionSchemas[version] = schemas
 	}
 
-	// Generate output files
-	outputDir := filepath.Join(projectRoot, "pkg", "dataplane", "validators")
+	// Generate output files.
+	// Generated validators live under pkg/generated/validators (package genvalidators),
+	// separate from pkg/dataplane/validators which holds the hand-written ValidatorSet
+	// and Cache. This keeps the generated code out of the coverage denominator
+	// (pkg/generated/... is excluded from COVERAGE_PACKAGES) and mirrors the layout
+	// of the other generated packages (pkg/generated/clientset, pkg/generated/dataplaneapi).
+	outputDir := filepath.Join(projectRoot, "pkg", "generated", "validators")
 
 	// Generate patterns.go with pre-compiled regexes
 	if err := generatePatternsFile(outputDir, allPatterns); err != nil {

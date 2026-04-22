@@ -27,7 +27,7 @@ func generatePatternsFile(outputDir string, patterns map[string]bool) error {
 	var buf bytes.Buffer
 
 	buf.WriteString(generatedHeader)
-	buf.WriteString(`package validators
+	buf.WriteString(`package genvalidators
 
 import "regexp"
 
@@ -61,7 +61,7 @@ func generateVersionFile(outputDir, version string, schemas map[string]*Resolved
 	var buf bytes.Buffer
 
 	buf.WriteString(generatedHeader)
-	fmt.Fprintf(&buf, `package validators
+	fmt.Fprintf(&buf, `package genvalidators
 
 import (
 	"encoding/binary"

@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package validators
+package genvalidators
 
 import (
 	"encoding/binary"
@@ -23,11 +23,11 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// Version-specific validators for v33.
+// Version-specific validators for v32.
 // These functions validate client-native models directly without JSON conversion.
 
-// ValidateAclV33 validates a acl model.
-func ValidateAclV33(m *models.ACL) error {
+// ValidateAclV32 validates a acl model.
+func ValidateAclV32(m *models.ACL) error {
 	if m == nil {
 		return nil
 	}
@@ -51,8 +51,8 @@ func ValidateAclV33(m *models.ACL) error {
 	return nil
 }
 
-// HashAclV33 computes a content hash for cache lookup.
-func HashAclV33(m *models.ACL) uint64 {
+// HashAclV32 computes a content hash for cache lookup.
+func HashAclV32(m *models.ACL) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -65,8 +65,8 @@ func HashAclV33(m *models.ACL) uint64 {
 	return h.Sum64()
 }
 
-// ValidateBackendSwitchingRuleV33 validates a backend_switching_rule model.
-func ValidateBackendSwitchingRuleV33(m *models.BackendSwitchingRule) error {
+// ValidateBackendSwitchingRuleV32 validates a backend_switching_rule model.
+func ValidateBackendSwitchingRuleV32(m *models.BackendSwitchingRule) error {
 	if m == nil {
 		return nil
 	}
@@ -91,8 +91,8 @@ func ValidateBackendSwitchingRuleV33(m *models.BackendSwitchingRule) error {
 	return nil
 }
 
-// HashBackendSwitchingRuleV33 computes a content hash for cache lookup.
-func HashBackendSwitchingRuleV33(m *models.BackendSwitchingRule) uint64 {
+// HashBackendSwitchingRuleV32 computes a content hash for cache lookup.
+func HashBackendSwitchingRuleV32(m *models.BackendSwitchingRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -105,14 +105,10 @@ func HashBackendSwitchingRuleV33(m *models.BackendSwitchingRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateBindV33 validates a bind model.
-func ValidateBindV33(m *models.Bind) error {
+// ValidateBindV32 validates a bind model.
+func ValidateBindV32(m *models.Bind) error {
 	if m == nil {
 		return nil
-	}
-
-	if m.Name == "" {
-		return &FieldError{Field: "name", Message: "required"}
 	}
 
 	if m.Address != "" && !patternNoWhitespace.MatchString(m.Address) {
@@ -134,15 +130,6 @@ func ValidateBindV33(m *models.Bind) error {
 
 	if m.GUIDPrefix != "" && !patternGUID.MatchString(m.GUIDPrefix) {
 		return &FieldError{Field: "guid_prefix", Message: "invalid format"}
-	}
-
-	if m.Ktls != "" {
-		switch m.Ktls {
-		case "on", "off":
-			// valid
-		default:
-			return &FieldError{Field: "ktls", Message: "must be one of: on, off"}
-		}
 	}
 
 	if m.Level != "" {
@@ -301,8 +288,8 @@ func ValidateBindV33(m *models.Bind) error {
 	return nil
 }
 
-// HashBindV33 computes a content hash for cache lookup.
-func HashBindV33(m *models.Bind) uint64 {
+// HashBindV32 computes a content hash for cache lookup.
+func HashBindV32(m *models.Bind) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -327,7 +314,6 @@ func HashBindV33(m *models.Bind) uint64 {
 	_, _ = h.WriteString(m.CaSignFile)
 	_, _ = h.WriteString(m.CaSignPass)
 	_, _ = h.WriteString(m.CaVerifyFile)
-	_, _ = h.WriteString(m.Cc)
 	_, _ = h.WriteString(m.Ciphers)
 	_, _ = h.WriteString(m.Ciphersuites)
 	_, _ = h.WriteString(m.ClientSigalgs)
@@ -385,8 +371,6 @@ func HashBindV33(m *models.Bind) uint64 {
 		_ = binary.Write(h, binary.LittleEndian, *m.IdlePing)
 	}
 	_, _ = h.WriteString(m.Interface)
-	_, _ = h.WriteString(m.Ktls)
-	_, _ = h.WriteString(m.Label)
 	_, _ = h.WriteString(m.Level)
 	_ = binary.Write(h, binary.LittleEndian, m.Maxconn)
 	_, _ = h.WriteString(m.Mode)
@@ -519,8 +503,8 @@ func HashBindV33(m *models.Bind) uint64 {
 	return h.Sum64()
 }
 
-// ValidateCaptureV33 validates a capture model.
-func ValidateCaptureV33(m *models.Capture) error {
+// ValidateCaptureV32 validates a capture model.
+func ValidateCaptureV32(m *models.Capture) error {
 	if m == nil {
 		return nil
 	}
@@ -541,8 +525,8 @@ func ValidateCaptureV33(m *models.Capture) error {
 	return nil
 }
 
-// HashCaptureV33 computes a content hash for cache lookup.
-func HashCaptureV33(m *models.Capture) uint64 {
+// HashCaptureV32 computes a content hash for cache lookup.
+func HashCaptureV32(m *models.Capture) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -554,8 +538,8 @@ func HashCaptureV33(m *models.Capture) uint64 {
 	return h.Sum64()
 }
 
-// ValidateFilterV33 validates a filter model.
-func ValidateFilterV33(m *models.Filter) error {
+// ValidateFilterV32 validates a filter model.
+func ValidateFilterV32(m *models.Filter) error {
 	if m == nil {
 		return nil
 	}
@@ -600,8 +584,8 @@ func ValidateFilterV33(m *models.Filter) error {
 	return nil
 }
 
-// HashFilterV33 computes a content hash for cache lookup.
-func HashFilterV33(m *models.Filter) uint64 {
+// HashFilterV32 computes a content hash for cache lookup.
+func HashFilterV32(m *models.Filter) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -639,8 +623,8 @@ func HashFilterV33(m *models.Filter) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpAfterResponseRuleV33 validates a http_after_response_rule model.
-func ValidateHttpAfterResponseRuleV33(m *models.HTTPAfterResponseRule) error {
+// ValidateHttpAfterResponseRuleV32 validates a http_after_response_rule model.
+func ValidateHttpAfterResponseRuleV32(m *models.HTTPAfterResponseRule) error {
 	if m == nil {
 		return nil
 	}
@@ -724,8 +708,8 @@ func ValidateHttpAfterResponseRuleV33(m *models.HTTPAfterResponseRule) error {
 	return nil
 }
 
-// HashHttpAfterResponseRuleV33 computes a content hash for cache lookup.
-func HashHttpAfterResponseRuleV33(m *models.HTTPAfterResponseRule) uint64 {
+// HashHttpAfterResponseRuleV32 computes a content hash for cache lookup.
+func HashHttpAfterResponseRuleV32(m *models.HTTPAfterResponseRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -766,8 +750,8 @@ func HashHttpAfterResponseRuleV33(m *models.HTTPAfterResponseRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpCheckV33 validates a http_check model.
-func ValidateHttpCheckV33(m *models.HTTPCheck) error {
+// ValidateHttpCheckV32 validates a http_check model.
+func ValidateHttpCheckV32(m *models.HTTPCheck) error {
 	if m == nil {
 		return nil
 	}
@@ -859,8 +843,8 @@ func ValidateHttpCheckV33(m *models.HTTPCheck) error {
 	return nil
 }
 
-// HashHttpCheckV33 computes a content hash for cache lookup.
-func HashHttpCheckV33(m *models.HTTPCheck) uint64 {
+// HashHttpCheckV32 computes a content hash for cache lookup.
+func HashHttpCheckV32(m *models.HTTPCheck) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -931,8 +915,8 @@ func HashHttpCheckV33(m *models.HTTPCheck) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpErrorRuleV33 validates a http_error_rule model.
-func ValidateHttpErrorRuleV33(m *models.HTTPErrorRule) error {
+// ValidateHttpErrorRuleV32 validates a http_error_rule model.
+func ValidateHttpErrorRuleV32(m *models.HTTPErrorRule) error {
 	if m == nil {
 		return nil
 	}
@@ -962,8 +946,8 @@ func ValidateHttpErrorRuleV33(m *models.HTTPErrorRule) error {
 	return nil
 }
 
-// HashHttpErrorRuleV33 computes a content hash for cache lookup.
-func HashHttpErrorRuleV33(m *models.HTTPErrorRule) uint64 {
+// HashHttpErrorRuleV32 computes a content hash for cache lookup.
+func HashHttpErrorRuleV32(m *models.HTTPErrorRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -980,8 +964,8 @@ func HashHttpErrorRuleV33(m *models.HTTPErrorRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpRequestRuleV33 validates a http_request_rule model.
-func ValidateHttpRequestRuleV33(m *models.HTTPRequestRule) error {
+// ValidateHttpRequestRuleV32 validates a http_request_rule model.
+func ValidateHttpRequestRuleV32(m *models.HTTPRequestRule) error {
 	if m == nil {
 		return nil
 	}
@@ -1182,8 +1166,8 @@ func ValidateHttpRequestRuleV33(m *models.HTTPRequestRule) error {
 	return nil
 }
 
-// HashHttpRequestRuleV33 computes a content hash for cache lookup.
-func HashHttpRequestRuleV33(m *models.HTTPRequestRule) uint64 {
+// HashHttpRequestRuleV32 computes a content hash for cache lookup.
+func HashHttpRequestRuleV32(m *models.HTTPRequestRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1288,8 +1272,8 @@ func HashHttpRequestRuleV33(m *models.HTTPRequestRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateHttpResponseRuleV33 validates a http_response_rule model.
-func ValidateHttpResponseRuleV33(m *models.HTTPResponseRule) error {
+// ValidateHttpResponseRuleV32 validates a http_response_rule model.
+func ValidateHttpResponseRuleV32(m *models.HTTPResponseRule) error {
 	if m == nil {
 		return nil
 	}
@@ -1452,8 +1436,8 @@ func ValidateHttpResponseRuleV33(m *models.HTTPResponseRule) error {
 	return nil
 }
 
-// HashHttpResponseRuleV33 computes a content hash for cache lookup.
-func HashHttpResponseRuleV33(m *models.HTTPResponseRule) uint64 {
+// HashHttpResponseRuleV32 computes a content hash for cache lookup.
+func HashHttpResponseRuleV32(m *models.HTTPResponseRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1536,8 +1520,8 @@ func HashHttpResponseRuleV33(m *models.HTTPResponseRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateLogTargetV33 validates a log_target model.
-func ValidateLogTargetV33(m *models.LogTarget) error {
+// ValidateLogTargetV32 validates a log_target model.
+func ValidateLogTargetV32(m *models.LogTarget) error {
 	if m == nil {
 		return nil
 	}
@@ -1585,8 +1569,8 @@ func ValidateLogTargetV33(m *models.LogTarget) error {
 	return nil
 }
 
-// HashLogTargetV33 computes a content hash for cache lookup.
-func HashLogTargetV33(m *models.LogTarget) uint64 {
+// HashLogTargetV32 computes a content hash for cache lookup.
+func HashLogTargetV32(m *models.LogTarget) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -1615,8 +1599,8 @@ func HashLogTargetV33(m *models.LogTarget) uint64 {
 	return h.Sum64()
 }
 
-// ValidateServerV33 validates a server model.
-func ValidateServerV33(m *models.Server) error {
+// ValidateServerV32 validates a server model.
+func ValidateServerV32(m *models.Server) error {
 	if m == nil {
 		return nil
 	}
@@ -1717,15 +1701,6 @@ func ValidateServerV33(m *models.Server) error {
 		return &FieldError{Field: "check_proto", Message: "invalid format"}
 	}
 
-	if m.CheckSniAuto != "" {
-		switch m.CheckSniAuto {
-		case "enabled", "disabled":
-			// valid
-		default:
-			return &FieldError{Field: "check_sni_auto", Message: "must be one of: enabled, disabled"}
-		}
-	}
-
 	if m.CheckViaSocks4 != "" {
 		switch m.CheckViaSocks4 {
 		case "enabled", "disabled":
@@ -1812,15 +1787,6 @@ func ValidateServerV33(m *models.Server) error {
 			// valid
 		default:
 			return &FieldError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
-		}
-	}
-
-	if m.Ktls != "" {
-		switch m.Ktls {
-		case "on", "off":
-			// valid
-		default:
-			return &FieldError{Field: "ktls", Message: "must be one of: on, off"}
 		}
 	}
 
@@ -1950,15 +1916,6 @@ func ValidateServerV33(m *models.Server) error {
 		return &FieldError{Field: "proto", Message: "invalid format"}
 	}
 
-	if m.Renegotiate != "" {
-		switch m.Renegotiate {
-		case "enabled", "disabled":
-			// valid
-		default:
-			return &FieldError{Field: "renegotiate", Message: "must be one of: enabled, disabled"}
-		}
-	}
-
 	if m.ResolveNet != "" && !patternResolveNet.MatchString(m.ResolveNet) {
 		return &FieldError{Field: "resolve-net", Message: "invalid format"}
 	}
@@ -2018,15 +1975,6 @@ func ValidateServerV33(m *models.Server) error {
 
 	if m.Sni != "" && !patternNoWhitespace.MatchString(m.Sni) {
 		return &FieldError{Field: "sni", Message: "invalid format"}
-	}
-
-	if m.SniAuto != "" {
-		switch m.SniAuto {
-		case "enabled", "disabled":
-			// valid
-		default:
-			return &FieldError{Field: "sni_auto", Message: "must be one of: enabled, disabled"}
-		}
 	}
 
 	if m.Socks4 != "" && !patternNoWhitespace.MatchString(m.Socks4) {
@@ -2170,8 +2118,8 @@ func ValidateServerV33(m *models.Server) error {
 	return nil
 }
 
-// HashServerV33 computes a content hash for cache lookup.
-func HashServerV33(m *models.Server) uint64 {
+// HashServerV32 computes a content hash for cache lookup.
+func HashServerV32(m *models.Server) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2195,7 +2143,6 @@ func HashServerV33(m *models.Server) uint64 {
 	}
 	_, _ = h.WriteString(m.Alpn)
 	_, _ = h.WriteString(m.Backup)
-	_, _ = h.WriteString(m.Cc)
 	_, _ = h.WriteString(m.Check)
 	_, _ = h.WriteString(m.CheckPoolConnName)
 	_, _ = h.WriteString(m.CheckReusePool)
@@ -2204,7 +2151,6 @@ func HashServerV33(m *models.Server) uint64 {
 	_, _ = h.WriteString(m.CheckSsl)
 	_, _ = h.WriteString(m.CheckAlpn)
 	_, _ = h.WriteString(m.CheckProto)
-	_, _ = h.WriteString(m.CheckSniAuto)
 	_, _ = h.WriteString(m.CheckViaSocks4)
 	_, _ = h.WriteString(m.Ciphers)
 	_, _ = h.WriteString(m.Ciphersuites)
@@ -2246,7 +2192,6 @@ func HashServerV33(m *models.Server) uint64 {
 	if m.Inter != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.Inter)
 	}
-	_, _ = h.WriteString(m.Ktls)
 	if m.LogBufsize != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.LogBufsize)
 	}
@@ -2292,7 +2237,6 @@ func HashServerV33(m *models.Server) uint64 {
 	}
 	_, _ = h.WriteString(m.Proto)
 	_, _ = h.WriteString(m.Redir)
-	_, _ = h.WriteString(m.Renegotiate)
 	_, _ = h.WriteString(m.ResolveNet)
 	_, _ = h.WriteString(m.ResolvePrefer)
 	_, _ = h.WriteString(m.ResolveOpts)
@@ -2310,7 +2254,6 @@ func HashServerV33(m *models.Server) uint64 {
 		_ = binary.Write(h, binary.LittleEndian, *m.Slowstart)
 	}
 	_, _ = h.WriteString(m.Sni)
-	_, _ = h.WriteString(m.SniAuto)
 	_, _ = h.WriteString(m.Socks4)
 	_, _ = h.WriteString(m.Source)
 	_, _ = h.WriteString(m.Ssl)
@@ -2345,8 +2288,8 @@ func HashServerV33(m *models.Server) uint64 {
 	return h.Sum64()
 }
 
-// ValidateServerSwitchingRuleV33 validates a server_switching_rule model.
-func ValidateServerSwitchingRuleV33(m *models.ServerSwitchingRule) error {
+// ValidateServerSwitchingRuleV32 validates a server_switching_rule model.
+func ValidateServerSwitchingRuleV32(m *models.ServerSwitchingRule) error {
 	if m == nil {
 		return nil
 	}
@@ -2371,8 +2314,8 @@ func ValidateServerSwitchingRuleV33(m *models.ServerSwitchingRule) error {
 	return nil
 }
 
-// HashServerSwitchingRuleV33 computes a content hash for cache lookup.
-func HashServerSwitchingRuleV33(m *models.ServerSwitchingRule) uint64 {
+// HashServerSwitchingRuleV32 computes a content hash for cache lookup.
+func HashServerSwitchingRuleV32(m *models.ServerSwitchingRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2385,8 +2328,8 @@ func HashServerSwitchingRuleV33(m *models.ServerSwitchingRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateServerTemplateV33 validates a server_template model.
-func ValidateServerTemplateV33(m *models.ServerTemplate) error {
+// ValidateServerTemplateV32 validates a server_template model.
+func ValidateServerTemplateV32(m *models.ServerTemplate) error {
 	if m == nil {
 		return nil
 	}
@@ -2487,15 +2430,6 @@ func ValidateServerTemplateV33(m *models.ServerTemplate) error {
 		return &FieldError{Field: "check_proto", Message: "invalid format"}
 	}
 
-	if m.CheckSniAuto != "" {
-		switch m.CheckSniAuto {
-		case "enabled", "disabled":
-			// valid
-		default:
-			return &FieldError{Field: "check_sni_auto", Message: "must be one of: enabled, disabled"}
-		}
-	}
-
 	if m.CheckViaSocks4 != "" {
 		switch m.CheckViaSocks4 {
 		case "enabled", "disabled":
@@ -2582,15 +2516,6 @@ func ValidateServerTemplateV33(m *models.ServerTemplate) error {
 			// valid
 		default:
 			return &FieldError{Field: "init-state", Message: "must be one of: fully-up, up, down, fully-down"}
-		}
-	}
-
-	if m.Ktls != "" {
-		switch m.Ktls {
-		case "on", "off":
-			// valid
-		default:
-			return &FieldError{Field: "ktls", Message: "must be one of: on, off"}
 		}
 	}
 
@@ -2720,15 +2645,6 @@ func ValidateServerTemplateV33(m *models.ServerTemplate) error {
 		return &FieldError{Field: "proto", Message: "invalid format"}
 	}
 
-	if m.Renegotiate != "" {
-		switch m.Renegotiate {
-		case "enabled", "disabled":
-			// valid
-		default:
-			return &FieldError{Field: "renegotiate", Message: "must be one of: enabled, disabled"}
-		}
-	}
-
 	if m.ResolveNet != "" && !patternResolveNet.MatchString(m.ResolveNet) {
 		return &FieldError{Field: "resolve-net", Message: "invalid format"}
 	}
@@ -2788,15 +2704,6 @@ func ValidateServerTemplateV33(m *models.ServerTemplate) error {
 
 	if m.Sni != "" && !patternNoWhitespace.MatchString(m.Sni) {
 		return &FieldError{Field: "sni", Message: "invalid format"}
-	}
-
-	if m.SniAuto != "" {
-		switch m.SniAuto {
-		case "enabled", "disabled":
-			// valid
-		default:
-			return &FieldError{Field: "sni_auto", Message: "must be one of: enabled, disabled"}
-		}
 	}
 
 	if m.Socks4 != "" && !patternNoWhitespace.MatchString(m.Socks4) {
@@ -2940,8 +2847,8 @@ func ValidateServerTemplateV33(m *models.ServerTemplate) error {
 	return nil
 }
 
-// HashServerTemplateV33 computes a content hash for cache lookup.
-func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
+// HashServerTemplateV32 computes a content hash for cache lookup.
+func HashServerTemplateV32(m *models.ServerTemplate) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -2964,7 +2871,6 @@ func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 	}
 	_, _ = h.WriteString(m.Alpn)
 	_, _ = h.WriteString(m.Backup)
-	_, _ = h.WriteString(m.Cc)
 	_, _ = h.WriteString(m.Check)
 	_, _ = h.WriteString(m.CheckPoolConnName)
 	_, _ = h.WriteString(m.CheckReusePool)
@@ -2973,7 +2879,6 @@ func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 	_, _ = h.WriteString(m.CheckSsl)
 	_, _ = h.WriteString(m.CheckAlpn)
 	_, _ = h.WriteString(m.CheckProto)
-	_, _ = h.WriteString(m.CheckSniAuto)
 	_, _ = h.WriteString(m.CheckViaSocks4)
 	_, _ = h.WriteString(m.Ciphers)
 	_, _ = h.WriteString(m.Ciphersuites)
@@ -3016,7 +2921,6 @@ func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 	if m.Inter != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.Inter)
 	}
-	_, _ = h.WriteString(m.Ktls)
 	if m.LogBufsize != nil {
 		_ = binary.Write(h, binary.LittleEndian, *m.LogBufsize)
 	}
@@ -3063,7 +2967,6 @@ func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 	_, _ = h.WriteString(m.Prefix)
 	_, _ = h.WriteString(m.Proto)
 	_, _ = h.WriteString(m.Redir)
-	_, _ = h.WriteString(m.Renegotiate)
 	_, _ = h.WriteString(m.ResolveNet)
 	_, _ = h.WriteString(m.ResolvePrefer)
 	_, _ = h.WriteString(m.ResolveOpts)
@@ -3081,7 +2984,6 @@ func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 		_ = binary.Write(h, binary.LittleEndian, *m.Slowstart)
 	}
 	_, _ = h.WriteString(m.Sni)
-	_, _ = h.WriteString(m.SniAuto)
 	_, _ = h.WriteString(m.Socks4)
 	_, _ = h.WriteString(m.Source)
 	_, _ = h.WriteString(m.Ssl)
@@ -3116,8 +3018,8 @@ func HashServerTemplateV33(m *models.ServerTemplate) uint64 {
 	return h.Sum64()
 }
 
-// ValidateStickRuleV33 validates a stick_rule model.
-func ValidateStickRuleV33(m *models.StickRule) error {
+// ValidateStickRuleV32 validates a stick_rule model.
+func ValidateStickRuleV32(m *models.StickRule) error {
 	if m == nil {
 		return nil
 	}
@@ -3159,8 +3061,8 @@ func ValidateStickRuleV33(m *models.StickRule) error {
 	return nil
 }
 
-// HashStickRuleV33 computes a content hash for cache lookup.
-func HashStickRuleV33(m *models.StickRule) uint64 {
+// HashStickRuleV32 computes a content hash for cache lookup.
+func HashStickRuleV32(m *models.StickRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -3175,8 +3077,8 @@ func HashStickRuleV33(m *models.StickRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateTcpCheckV33 validates a tcp_check model.
-func ValidateTcpCheckV33(m *models.TCPCheck) error {
+// ValidateTcpCheckV32 validates a tcp_check model.
+func ValidateTcpCheckV32(m *models.TCPCheck) error {
 	if m == nil {
 		return nil
 	}
@@ -3259,8 +3161,8 @@ func ValidateTcpCheckV33(m *models.TCPCheck) error {
 	return nil
 }
 
-// HashTcpCheckV33 computes a content hash for cache lookup.
-func HashTcpCheckV33(m *models.TCPCheck) uint64 {
+// HashTcpCheckV32 computes a content hash for cache lookup.
+func HashTcpCheckV32(m *models.TCPCheck) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -3327,8 +3229,8 @@ func HashTcpCheckV33(m *models.TCPCheck) uint64 {
 	return h.Sum64()
 }
 
-// ValidateTcpRequestRuleV33 validates a tcp_request_rule model.
-func ValidateTcpRequestRuleV33(m *models.TCPRequestRule) error {
+// ValidateTcpRequestRuleV32 validates a tcp_request_rule model.
+func ValidateTcpRequestRuleV32(m *models.TCPRequestRule) error {
 	if m == nil {
 		return nil
 	}
@@ -3413,8 +3315,8 @@ func ValidateTcpRequestRuleV33(m *models.TCPRequestRule) error {
 	return nil
 }
 
-// HashTcpRequestRuleV33 computes a content hash for cache lookup.
-func HashTcpRequestRuleV33(m *models.TCPRequestRule) uint64 {
+// HashTcpRequestRuleV32 computes a content hash for cache lookup.
+func HashTcpRequestRuleV32(m *models.TCPRequestRule) uint64 {
 	if m == nil {
 		return 0
 	}
@@ -3466,8 +3368,8 @@ func HashTcpRequestRuleV33(m *models.TCPRequestRule) uint64 {
 	return h.Sum64()
 }
 
-// ValidateTcpResponseRuleV33 validates a tcp_response_rule model.
-func ValidateTcpResponseRuleV33(m *models.TCPResponseRule) error {
+// ValidateTcpResponseRuleV32 validates a tcp_response_rule model.
+func ValidateTcpResponseRuleV32(m *models.TCPResponseRule) error {
 	if m == nil {
 		return nil
 	}
@@ -3547,8 +3449,8 @@ func ValidateTcpResponseRuleV33(m *models.TCPResponseRule) error {
 	return nil
 }
 
-// HashTcpResponseRuleV33 computes a content hash for cache lookup.
-func HashTcpResponseRuleV33(m *models.TCPResponseRule) uint64 {
+// HashTcpResponseRuleV32 computes a content hash for cache lookup.
+func HashTcpResponseRuleV32(m *models.TCPResponseRule) uint64 {
 	if m == nil {
 		return 0
 	}

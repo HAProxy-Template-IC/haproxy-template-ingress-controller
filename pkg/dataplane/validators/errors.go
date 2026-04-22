@@ -19,7 +19,9 @@
 // that occurs when using the generic kin-openapi validator.
 //
 // The validators are generated from OpenAPI specs in pkg/generated/dataplaneapi/
-// and support HAProxy versions 3.0, 3.1, and 3.2.
+// and support HAProxy versions 3.0, 3.1, 3.2, 3.3 (and enterprise variants).
+// The generated code itself lives in pkg/generated/validators; this package
+// wraps it with a version-dispatching ValidatorSet and a caching layer.
 //
 // Usage:
 //
@@ -33,19 +35,13 @@
 //	err := validatorSet.ValidateServer(server)
 package validators
 
-import "fmt"
+import (
+	genvalidators "gitlab.com/haproxy-haptic/haptic/pkg/generated/validators"
+)
 
 // FieldError represents an OpenAPI validation failure for a specific field.
 //
-// Named to distinguish it from dataplane.ValidationError (which represents
-// HAProxy-level semantic validation failures). Both error types can surface
-// during a sync, but they describe different validation phases.
-type FieldError struct {
-	Field   string
-	Message string
-}
-
-// Error implements the error interface.
-func (e *FieldError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Field, e.Message)
-}
+// Aliased from pkg/generated/validators so the public API of this package stays
+// unchanged after the generated code was split into its own subpackage. Callers
+// that construct or type-assert *validators.FieldError continue to work.
+type FieldError = genvalidators.FieldError

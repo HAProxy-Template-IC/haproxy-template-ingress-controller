@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package validators provides zero-allocation OpenAPI validation for HAProxy models.
-package validators
+package genvalidators
 
 //go:generate go run ../../../cmd/gen-validators
