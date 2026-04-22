@@ -51,8 +51,8 @@ func (k *KeepalivedOperations) StartTransaction(ctx context.Context) (string, er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("start Keepalived transaction failed with status %d", resp.StatusCode)
+	if err := checkResponseStatus(resp, "failed to start Keepalived transaction"); err != nil {
+		return "", err
 	}
 
 	var result KeepalivedTransaction

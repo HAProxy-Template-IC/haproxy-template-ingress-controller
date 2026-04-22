@@ -165,8 +165,8 @@ func (w *WAFOperations) GetRulesetFile(ctx context.Context, rulesetName, fileNam
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, ErrNotFound
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("getting WAF file '%s' from ruleset '%s': unexpected status %d", fileName, rulesetName, resp.StatusCode)
+	if err := checkResponseStatus(resp, fmt.Sprintf("getting WAF file '%s' from ruleset '%s'", fileName, rulesetName)); err != nil {
+		return nil, err
 	}
 
 	return io.ReadAll(resp.Body)

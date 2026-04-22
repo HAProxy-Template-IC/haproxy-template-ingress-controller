@@ -67,8 +67,8 @@ func (c *DataplaneClient) GetTraces(ctx context.Context) (*Traces, error) {
 		return &Traces{}, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get traces failed with status %d", resp.StatusCode)
+	if err := CheckResponse(resp, "get traces"); err != nil {
+		return nil, err
 	}
 
 	var traces Traces
@@ -122,11 +122,7 @@ func (c *DataplaneClient) CreateTraces(ctx context.Context, traces *Traces, tran
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create traces failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "create traces")
 }
 
 // ReplaceTraces replaces the traces configuration.
@@ -168,11 +164,7 @@ func (c *DataplaneClient) ReplaceTraces(ctx context.Context, traces *Traces, tra
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("replace traces failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "replace traces")
 }
 
 // DeleteTraces deletes the traces configuration.
@@ -211,9 +203,5 @@ func (c *DataplaneClient) DeleteTraces(ctx context.Context, transactionID string
 		return nil
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete traces failed with status %d", resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, "delete traces")
 }

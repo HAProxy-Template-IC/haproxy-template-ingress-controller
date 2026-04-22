@@ -89,8 +89,8 @@ func (c *DataplaneClient) GetLogProfile(ctx context.Context, name string) (*LogP
 		return nil, fmt.Errorf("log profile '%s' not found", name)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get log profile '%s' failed with status %d", name, resp.StatusCode)
+	if err := CheckResponse(resp, fmt.Sprintf("get log profile '%s'", name)); err != nil {
+		return nil, err
 	}
 
 	var profile LogProfile
@@ -143,11 +143,7 @@ func (c *DataplaneClient) CreateLogProfile(ctx context.Context, profile *LogProf
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("create log profile '%s' failed with status %d", profile.Name, resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, fmt.Sprintf("create log profile '%s'", profile.Name))
 }
 
 // UpdateLogProfile updates an existing log profile.
@@ -188,11 +184,7 @@ func (c *DataplaneClient) UpdateLogProfile(ctx context.Context, name string, pro
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("update log profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, fmt.Sprintf("update log profile '%s'", name))
 }
 
 // DeleteLogProfile deletes a log profile by name.
@@ -231,9 +223,5 @@ func (c *DataplaneClient) DeleteLogProfile(ctx context.Context, name, transactio
 		return nil
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("delete log profile '%s' failed with status %d", name, resp.StatusCode)
-	}
-
-	return nil
+	return CheckResponse(resp, fmt.Sprintf("delete log profile '%s'", name))
 }

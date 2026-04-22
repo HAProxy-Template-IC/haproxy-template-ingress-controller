@@ -231,7 +231,7 @@ func Sync[T FileItem](
 		}
 	}
 
-	// Delete obsolete files
+	// Delete unreferenced files
 	for _, id := range diff.ToDelete {
 		if err := ops.Delete(ctx, id); err != nil {
 			return nil, fmt.Errorf("deleting file '%s': %w", id, err)

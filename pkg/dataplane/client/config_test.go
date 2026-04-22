@@ -18,29 +18,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// createTestClient creates a test client with a mock server.
-// Returns the client and a cleanup function.
-func createTestClient(t *testing.T, handler http.HandlerFunc) (client *DataplaneClient, cleanup func()) {
-	t.Helper()
-
-	server := httptest.NewServer(handler)
-
-	client, err := New(context.Background(), &Config{
-		BaseURL:  server.URL,
-		Username: "admin",
-		Password: "password",
-	})
-	require.NoError(t, err)
-
-	return client, server.Close
-}
 
 func TestGetVersion(t *testing.T) {
 	tests := []struct {
@@ -87,7 +69,7 @@ func TestGetVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, cleanup := createTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			client, cleanup := newTestClientWithHandler(t, func(w http.ResponseWriter, r *http.Request) {
 				// Handle version detection for client initialization
 				if r.URL.Path == "/v3/info" {
 					w.WriteHeader(http.StatusOK)
@@ -155,7 +137,7 @@ frontend http
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, cleanup := createTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			client, cleanup := newTestClientWithHandler(t, func(w http.ResponseWriter, r *http.Request) {
 				// Handle version detection
 				if r.URL.Path == "/v3/info" {
 					w.WriteHeader(http.StatusOK)
@@ -263,7 +245,7 @@ func TestPushRawConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, cleanup := createTestClient(t, makePushConfigHandler(tt.statusCode, tt.reloadID, true))
+			client, cleanup := newTestClientWithHandler(t, makePushConfigHandler(tt.statusCode, tt.reloadID, true))
 			defer cleanup()
 
 			reloadID, err := client.PushRawConfiguration(context.Background(), "global\n  daemon\n", 1)
@@ -395,7 +377,7 @@ func TestGetReloadStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, cleanup := createTestClient(t, makeReloadStatusHandler(tt.reloadID, tt.statusCode, tt.responseBody))
+			client, cleanup := newTestClientWithHandler(t, makeReloadStatusHandler(tt.reloadID, tt.statusCode, tt.responseBody))
 			defer cleanup()
 
 			info, err := client.GetReloadStatus(context.Background(), tt.reloadID)

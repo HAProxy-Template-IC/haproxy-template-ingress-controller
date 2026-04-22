@@ -23,66 +23,67 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
-// deleteObsoleteFilesPostConfig deletes obsolete auxiliary files AFTER successful config sync.
+// deleteUnreferencedFilesPostConfig deletes auxiliary files no longer referenced by the
+// rendered HAProxy config, AFTER the new config has been applied successfully.
 // Errors are logged as warnings but do not fail the sync since config is already applied.
-func (o *orchestrator) deleteObsoleteFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, caFileDiff *auxiliaryfiles.SSLCaFileDiff, mapDiff *auxiliaryfiles.MapFileDiff) {
+func (o *orchestrator) deleteUnreferencedFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, caFileDiff *auxiliaryfiles.SSLCaFileDiff, mapDiff *auxiliaryfiles.MapFileDiff) {
 	// Delete general files
 	if fileDiff != nil && len(fileDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting obsolete general files", "count", len(fileDiff.ToDelete))
+		o.logger.Info("Deleting unreferenced general files", "count", len(fileDiff.ToDelete))
 
 		postConfigDiff := &auxiliaryfiles.FileDiff{
 			ToDelete: fileDiff.ToDelete,
 		}
 
 		if _, err := auxiliaryfiles.SyncGeneralFiles(ctx, o.client, postConfigDiff); err != nil {
-			o.logger.Warn("Failed to delete obsolete general files", "error", err, "files", fileDiff.ToDelete)
+			o.logger.Warn("Failed to delete unreferenced general files", "error", err, "files", fileDiff.ToDelete)
 		} else {
-			o.logger.Info("Obsolete general files deleted successfully")
+			o.logger.Info("Unreferenced general files deleted successfully")
 		}
 	}
 
 	// Delete SSL certificates
 	if sslDiff != nil && len(sslDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting obsolete SSL certificates", "count", len(sslDiff.ToDelete))
+		o.logger.Info("Deleting unreferenced SSL certificates", "count", len(sslDiff.ToDelete))
 
 		postConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
 			ToDelete: sslDiff.ToDelete,
 		}
 
 		if _, err := auxiliaryfiles.SyncSSLCertificates(ctx, o.client, postConfigSSL); err != nil {
-			o.logger.Warn("Failed to delete obsolete SSL certificates", "error", err, "certificates", sslDiff.ToDelete)
+			o.logger.Warn("Failed to delete unreferenced SSL certificates", "error", err, "certificates", sslDiff.ToDelete)
 		} else {
-			o.logger.Info("Obsolete SSL certificates deleted successfully")
+			o.logger.Info("Unreferenced SSL certificates deleted successfully")
 		}
 	}
 
 	// Delete SSL CA files
 	if caFileDiff != nil && len(caFileDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting obsolete SSL CA files", "count", len(caFileDiff.ToDelete))
+		o.logger.Info("Deleting unreferenced SSL CA files", "count", len(caFileDiff.ToDelete))
 
 		postConfigCA := &auxiliaryfiles.SSLCaFileDiff{
 			ToDelete: caFileDiff.ToDelete,
 		}
 
 		if _, err := auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, postConfigCA); err != nil {
-			o.logger.Warn("Failed to delete obsolete SSL CA files", "error", err, "ca_files", caFileDiff.ToDelete)
+			o.logger.Warn("Failed to delete unreferenced SSL CA files", "error", err, "ca_files", caFileDiff.ToDelete)
 		} else {
-			o.logger.Info("Obsolete SSL CA files deleted successfully")
+			o.logger.Info("Unreferenced SSL CA files deleted successfully")
 		}
 	}
 
 	// Delete map files
 	if mapDiff != nil && len(mapDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting obsolete map files", "count", len(mapDiff.ToDelete))
+		o.logger.Info("Deleting unreferenced map files", "count", len(mapDiff.ToDelete))
 
 		postConfigMap := &auxiliaryfiles.MapFileDiff{
 			ToDelete: mapDiff.ToDelete,
 		}
 
 		if _, err := auxiliaryfiles.SyncMapFiles(ctx, o.client, postConfigMap); err != nil {
-			o.logger.Warn("Failed to delete obsolete map files", "error", err, "maps", mapDiff.ToDelete)
+			o.logger.Warn("Failed to delete unreferenced map files", "error", err, "maps", mapDiff.ToDelete)
 		} else {
-			o.logger.Info("Obsolete map files deleted successfully")
+			o.logger.Info("Unreferenced map files deleted successfully")
 		}
 	}
 

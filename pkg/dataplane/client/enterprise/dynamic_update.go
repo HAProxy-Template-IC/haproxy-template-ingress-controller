@@ -46,10 +46,7 @@ func (d *DynamicUpdateOperations) GetSection(ctx context.Context, txID string) e
 	if resp.StatusCode == http.StatusNotFound {
 		return ErrNotFound
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("get dynamic update section failed with status %d", resp.StatusCode)
-	}
-	return nil
+	return checkResponseStatus(resp, "failed to get dynamic update section")
 }
 
 // CreateSection creates the dynamic update section.
@@ -129,8 +126,8 @@ func (d *DynamicUpdateOperations) GetAllRules(ctx context.Context, txID string) 
 		return []DynamicUpdateRule{}, nil
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("get dynamic update rules failed with status %d", resp.StatusCode)
+	if err := checkResponseStatus(resp, "failed to get dynamic update rules"); err != nil {
+		return nil, err
 	}
 
 	var result []DynamicUpdateRule

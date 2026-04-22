@@ -1324,32 +1324,6 @@ func TestEventBus_SubscribeTypes_CriticalDrop(t *testing.T) {
 	<-criticalTypedSub
 }
 
-func TestEventBus_DroppedEvents_CombinedTotal(t *testing.T) {
-	t.Parallel()
-	bus := NewEventBus(100)
-
-	// Create one lossy and one critical subscriber, both with tiny buffers
-	_ = bus.SubscribeLossy("test-lossy", 1)
-	_ = bus.Subscribe("test-sub", 1)
-
-	// Start the bus
-	bus.Start()
-
-	// Cause drops on both
-	for i := range 10 {
-		bus.Publish(testEvent{message: fmt.Sprintf("event-%d", i)})
-	}
-
-	// Verify combined total equals sum of both counters
-	criticalDrops := bus.DroppedEventsCritical()
-	observabilityDrops := bus.DroppedEventsObservability()
-	totalDrops := bus.DroppedEvents()
-
-	assert.Equal(t, criticalDrops+observabilityDrops, totalDrops, "total should equal sum of both")
-	assert.Greater(t, criticalDrops, uint64(0), "expected critical drops")
-	assert.Greater(t, observabilityDrops, uint64(0), "expected observability drops")
-}
-
 func TestEventBus_MixedSubscribers_DropCounters(t *testing.T) {
 	t.Parallel()
 	bus := NewEventBus(100)
