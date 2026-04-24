@@ -10,50 +10,15 @@ import (
 // QUIC initial rules are compared by position since they don't have unique identifiers.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func (c *Comparator) compareQUICInitialRules(parentType, parentName string, currentRules, desiredRules models.QUICInitialRules) []Operation {
-	var operations []Operation
-
-	// Compare QUIC initial rules by position
-	maxLen := max(len(desiredRules), len(currentRules))
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentRule := i < len(currentRules)
-		hasDesiredRule := i < len(desiredRules)
-
-		if !hasCurrentRule && hasDesiredRule {
-			ops := c.createQUICInitialRuleOperation(parentType, parentName, desiredRules[i], i)
-			operations = append(operations, ops...)
-		} else if hasCurrentRule && !hasDesiredRule {
-			ops := c.deleteQUICInitialRuleOperation(parentType, parentName, currentRules[i], i)
-			operations = append(operations, ops...)
-		} else if hasCurrentRule && hasDesiredRule {
-			ops := c.updateQUICInitialRuleOperation(parentType, parentName, currentRules[i], desiredRules[i], i)
-			operations = append(operations, ops...)
-		}
-	}
-
-	return operations
-}
-
-func (c *Comparator) createQUICInitialRuleOperation(parentType, parentName string, rule *models.QUICInitialRule, index int) []Operation {
+	create, remove, update := sections.NewQUICInitialRuleDefaultsCreate, sections.NewQUICInitialRuleDefaultsDelete, sections.NewQUICInitialRuleDefaultsUpdate
 	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewQUICInitialRuleFrontendCreate(parentName, rule, index)}
+		create, remove, update = sections.NewQUICInitialRuleFrontendCreate, sections.NewQUICInitialRuleFrontendDelete, sections.NewQUICInitialRuleFrontendUpdate
 	}
-	return []Operation{sections.NewQUICInitialRuleDefaultsCreate(parentName, rule, index)}
-}
-
-func (c *Comparator) deleteQUICInitialRuleOperation(parentType, parentName string, rule *models.QUICInitialRule, index int) []Operation {
-	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewQUICInitialRuleFrontendDelete(parentName, rule, index)}
-	}
-	return []Operation{sections.NewQUICInitialRuleDefaultsDelete(parentName, rule, index)}
-}
-
-func (c *Comparator) updateQUICInitialRuleOperation(parentType, parentName string, currentRule, desiredRule *models.QUICInitialRule, index int) []Operation {
-	if !currentRule.Equal(*desiredRule) {
-		if parentType == parentTypeFrontend {
-			return []Operation{sections.NewQUICInitialRuleFrontendUpdate(parentName, desiredRule, index)}
-		}
-		return []Operation{sections.NewQUICInitialRuleDefaultsUpdate(parentName, desiredRule, index)}
-	}
-	return nil
+	return compareIndexedItems(
+		currentRules, desiredRules,
+		func(a, b *models.QUICInitialRule) bool { return a.Equal(*b) },
+		func(r *models.QUICInitialRule, i int) Operation { return create(parentName, r, i) },
+		func(r *models.QUICInitialRule, i int) Operation { return remove(parentName, r, i) },
+		func(r *models.QUICInitialRule, i int) Operation { return update(parentName, r, i) },
+	)
 }
