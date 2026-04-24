@@ -125,25 +125,6 @@ func reflectValueToString(v reflect.Value) string {
 	}
 }
 
-// unwrapUnstructured extracts the underlying data map from unstructured.Unstructured.
-//
-// The k8s.io/client-go/util/jsonpath library expects to work with plain maps,
-// not the Unstructured wrapper. This function extracts the Object field which
-// contains the actual Kubernetes resource data.
-func unwrapUnstructured(resource any) any {
-	// Type assert to *unstructured.Unstructured
-	type unstructuredInterface interface {
-		UnstructuredContent() map[string]any
-	}
-
-	if u, ok := resource.(unstructuredInterface); ok {
-		return u.UnstructuredContent()
-	}
-
-	// Not an unstructured object, return as-is
-	return resource
-}
-
 // JSONPathError represents an error during JSONPath evaluation.
 type JSONPathError struct {
 	Expression string

@@ -15,8 +15,6 @@
 package events
 
 import (
-	"time"
-
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -64,7 +62,7 @@ type TemplateRenderedEvent struct {
 	// event of the same type is available. Propagated from ReconciliationTriggeredEvent.
 	coalescible bool
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -100,13 +98,12 @@ func NewTemplateRenderedEvent(
 		DurationMs:         durationMs,
 		TriggerReason:      triggerReason,
 		coalescible:        coalescible,
-		timestamp:          time.Now(),
+		timestamped:        newTimestamped(),
 		Correlation:        NewCorrelation(opts...),
 	}
 }
 
-func (e *TemplateRenderedEvent) EventType() string    { return EventTypeTemplateRendered }
-func (e *TemplateRenderedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *TemplateRenderedEvent) EventType() string { return EventTypeTemplateRendered }
 
 // Coalescible returns true if this event can be safely skipped when a newer
 // event of the same type is available. This implements the CoalescibleEvent interface.
@@ -125,7 +122,7 @@ type TemplateRenderFailedEvent struct {
 	// StackTrace provides additional debugging context.
 	StackTrace string
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -142,10 +139,9 @@ func NewTemplateRenderFailedEvent(templateName, err, stackTrace string, opts ...
 		TemplateName: templateName,
 		Error:        err,
 		StackTrace:   stackTrace,
-		timestamp:    time.Now(),
+		timestamped:  newTimestamped(),
 		Correlation:  NewCorrelation(opts...),
 	}
 }
 
-func (e *TemplateRenderFailedEvent) EventType() string    { return EventTypeTemplateRenderFailed }
-func (e *TemplateRenderFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *TemplateRenderFailedEvent) EventType() string { return EventTypeTemplateRenderFailed }

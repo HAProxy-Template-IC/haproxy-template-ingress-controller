@@ -47,9 +47,6 @@ const (
 
 	// DefaultWebhookPath is the default URL path for validation requests.
 	DefaultWebhookPath = "/validate"
-
-	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = 50
 )
 
 // Component is the webhook adapter component that manages webhook lifecycle.
@@ -139,12 +136,6 @@ func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metric
 		metrics:         metrics,
 		dryRunValidator: config.DryRunValidator,
 	}
-}
-
-// Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
-func (c *Component) Name() string {
-	return ComponentName
 }
 
 // Start starts the webhook component.

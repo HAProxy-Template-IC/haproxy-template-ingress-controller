@@ -55,7 +55,7 @@ const (
 	// EventBufferSize is the size of the event subscription buffer.
 	// Moderate volume: receives template rendered, reconciliation completed/failed,
 	// and leadership events.
-	EventBufferSize = 50
+	EventBufferSize = busevents.StandardSubscriberBuffer
 
 	// fieldManager is the SSA field manager name used for status patches.
 	fieldManager = "haptic"

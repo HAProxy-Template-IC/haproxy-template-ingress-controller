@@ -15,8 +15,6 @@
 package events
 
 import (
-	"time"
-
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
@@ -27,28 +25,20 @@ type HAProxyPodsDiscoveredEvent struct {
 	// Endpoints is the list of discovered HAProxy Dataplane API endpoints.
 	Endpoints []dataplane.Endpoint
 	Count     int
-	timestamp time.Time
+	timestamped
 }
 
 // NewHAProxyPodsDiscoveredEvent creates a new HAProxyPodsDiscoveredEvent.
 // Performs defensive copy of the endpoints slice.
 func NewHAProxyPodsDiscoveredEvent(endpoints []dataplane.Endpoint, count int) *HAProxyPodsDiscoveredEvent {
-	// Defensive copy of slice
-	var endpointsCopy []dataplane.Endpoint
-	if len(endpoints) > 0 {
-		endpointsCopy = make([]dataplane.Endpoint, len(endpoints))
-		copy(endpointsCopy, endpoints)
-	}
-
 	return &HAProxyPodsDiscoveredEvent{
-		Endpoints: endpointsCopy,
-		Count:     count,
-		timestamp: time.Now(),
+		Endpoints:   copySlice(endpoints),
+		Count:       count,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *HAProxyPodsDiscoveredEvent) EventType() string    { return EventTypeHAProxyPodsDiscovered }
-func (e *HAProxyPodsDiscoveredEvent) Timestamp() time.Time { return e.timestamp }
+func (e *HAProxyPodsDiscoveredEvent) EventType() string { return EventTypeHAProxyPodsDiscovered }
 
 // Coalescible returns true because endpoint discovery events represent state
 // where only the latest set of endpoints matters. Older discoveries can be
@@ -61,7 +51,7 @@ func (e *HAProxyPodsDiscoveredEvent) Coalescible() bool { return true }
 type HAProxyPodTerminatedEvent struct {
 	PodName      string
 	PodNamespace string
-	timestamp    time.Time
+	timestamped
 }
 
 // NewHAProxyPodTerminatedEvent creates a new HAProxyPodTerminatedEvent.
@@ -69,9 +59,8 @@ func NewHAProxyPodTerminatedEvent(podName, podNamespace string) *HAProxyPodTermi
 	return &HAProxyPodTerminatedEvent{
 		PodName:      podName,
 		PodNamespace: podNamespace,
-		timestamp:    time.Now(),
+		timestamped:  newTimestamped(),
 	}
 }
 
-func (e *HAProxyPodTerminatedEvent) EventType() string    { return EventTypeHAProxyPodTerminated }
-func (e *HAProxyPodTerminatedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *HAProxyPodTerminatedEvent) EventType() string { return EventTypeHAProxyPodTerminated }

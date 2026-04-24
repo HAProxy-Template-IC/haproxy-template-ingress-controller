@@ -37,9 +37,9 @@ const (
 	ComponentName = "httpstore"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	// Size 50: Low-volume component handling validation events (~1-2 per reconciliation).
+	// Low-volume component handling validation events (~1-2 per reconciliation);
 	// HTTP refresh operations are timer-driven, not event-driven.
-	EventBufferSize = 50
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // Component wraps HTTPStore with event coordination.

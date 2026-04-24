@@ -36,9 +36,8 @@ const (
 	ComponentName = "deployer"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	// Size 50: Low-volume component (~1-2 deployment events per reconciliation cycle).
-	// Larger buffers reduce event drops during bursts but consume more memory.
-	EventBufferSize = 50
+	// Low-volume component (~1-2 deployment events per reconciliation cycle).
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // Component implements the deployer component.

@@ -14,8 +14,6 @@
 
 package events
 
-import "time"
-
 // WebhookValidationRequestEvent is published when an admission request is received.
 type WebhookValidationRequestEvent struct {
 	RequestUID string
@@ -23,25 +21,24 @@ type WebhookValidationRequestEvent struct {
 	Name       string
 	Namespace  string
 	Operation  string
-	timestamp  time.Time
+	timestamped
 }
 
 // NewWebhookValidationRequestEvent creates a new WebhookValidationRequestEvent.
 func NewWebhookValidationRequestEvent(requestUID, kind, name, namespace, operation string) *WebhookValidationRequestEvent {
 	return &WebhookValidationRequestEvent{
-		RequestUID: requestUID,
-		Kind:       kind,
-		Name:       name,
-		Namespace:  namespace,
-		Operation:  operation,
-		timestamp:  time.Now(),
+		RequestUID:  requestUID,
+		Kind:        kind,
+		Name:        name,
+		Namespace:   namespace,
+		Operation:   operation,
+		timestamped: newTimestamped(),
 	}
 }
 
 func (e *WebhookValidationRequestEvent) EventType() string {
 	return EventTypeWebhookValidationRequest
 }
-func (e *WebhookValidationRequestEvent) Timestamp() time.Time { return e.timestamp }
 
 // WebhookValidationAllowedEvent is published when a resource is admitted.
 type WebhookValidationAllowedEvent struct {
@@ -49,24 +46,23 @@ type WebhookValidationAllowedEvent struct {
 	Kind       string
 	Name       string
 	Namespace  string
-	timestamp  time.Time
+	timestamped
 }
 
 // NewWebhookValidationAllowedEvent creates a new WebhookValidationAllowedEvent.
 func NewWebhookValidationAllowedEvent(requestUID, kind, name, namespace string) *WebhookValidationAllowedEvent {
 	return &WebhookValidationAllowedEvent{
-		RequestUID: requestUID,
-		Kind:       kind,
-		Name:       name,
-		Namespace:  namespace,
-		timestamp:  time.Now(),
+		RequestUID:  requestUID,
+		Kind:        kind,
+		Name:        name,
+		Namespace:   namespace,
+		timestamped: newTimestamped(),
 	}
 }
 
 func (e *WebhookValidationAllowedEvent) EventType() string {
 	return EventTypeWebhookValidationAllowed
 }
-func (e *WebhookValidationAllowedEvent) Timestamp() time.Time { return e.timestamp }
 
 // WebhookValidationDeniedEvent is published when a resource is denied.
 type WebhookValidationDeniedEvent struct {
@@ -75,43 +71,41 @@ type WebhookValidationDeniedEvent struct {
 	Name       string
 	Namespace  string
 	Reason     string
-	timestamp  time.Time
+	timestamped
 }
 
 // NewWebhookValidationDeniedEvent creates a new WebhookValidationDeniedEvent.
 func NewWebhookValidationDeniedEvent(requestUID, kind, name, namespace, reason string) *WebhookValidationDeniedEvent {
 	return &WebhookValidationDeniedEvent{
-		RequestUID: requestUID,
-		Kind:       kind,
-		Name:       name,
-		Namespace:  namespace,
-		Reason:     reason,
-		timestamp:  time.Now(),
+		RequestUID:  requestUID,
+		Kind:        kind,
+		Name:        name,
+		Namespace:   namespace,
+		Reason:      reason,
+		timestamped: newTimestamped(),
 	}
 }
 
 func (e *WebhookValidationDeniedEvent) EventType() string {
 	return EventTypeWebhookValidationDenied
 }
-func (e *WebhookValidationDeniedEvent) Timestamp() time.Time { return e.timestamp }
 
 // WebhookValidationErrorEvent is published when validation encounters an error.
 type WebhookValidationErrorEvent struct {
 	RequestUID string
 	Kind       string
 	Error      string
-	timestamp  time.Time
+	timestamped
 }
 
 // NewWebhookValidationErrorEvent creates a new WebhookValidationErrorEvent.
 func NewWebhookValidationErrorEvent(requestUID, kind, errorMsg string) *WebhookValidationErrorEvent {
 	return &WebhookValidationErrorEvent{
-		RequestUID: requestUID,
-		Kind:       kind,
-		Error:      errorMsg,
-		timestamp:  time.Now(),
+		RequestUID:  requestUID,
+		Kind:        kind,
+		Error:       errorMsg,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *WebhookValidationErrorEvent) EventType() string    { return EventTypeWebhookValidationError }
-func (e *WebhookValidationErrorEvent) Timestamp() time.Time { return e.timestamp }
+func (e *WebhookValidationErrorEvent) EventType() string { return EventTypeWebhookValidationError }

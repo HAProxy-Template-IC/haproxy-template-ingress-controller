@@ -16,7 +16,6 @@ package events
 
 import (
 	"maps"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -59,18 +58,12 @@ type ProposalValidationRequestedEvent struct {
 	// For webhook: resource GVK and namespace/name
 	SourceContext string
 
-	// timestamp when the request was created.
-	timestamp time.Time
+	timestamped
 }
 
 // EventType implements the Event interface.
 func (e *ProposalValidationRequestedEvent) EventType() string {
 	return EventTypeProposalValidationRequested
-}
-
-// Timestamp implements the Event interface.
-func (e *ProposalValidationRequestedEvent) Timestamp() time.Time {
-	return e.timestamp
 }
 
 // RequestID returns the unique request identifier for correlation.
@@ -99,7 +92,7 @@ func NewProposalValidationRequestedEvent(overlays map[string]*stores.StoreOverla
 		HTTPOverlay:   httpOverlay,
 		Source:        source,
 		SourceContext: sourceContext,
-		timestamp:     time.Now(),
+		timestamped:   newTimestamped(),
 	}
 }
 
@@ -129,18 +122,12 @@ type ProposalValidationCompletedEvent struct {
 	// DurationMs is the total validation duration in milliseconds.
 	DurationMs int64
 
-	// timestamp when the validation completed.
-	timestamp time.Time
+	timestamped
 }
 
 // EventType implements the Event interface.
 func (e *ProposalValidationCompletedEvent) EventType() string {
 	return EventTypeProposalValidationCompleted
-}
-
-// Timestamp implements the Event interface.
-func (e *ProposalValidationCompletedEvent) Timestamp() time.Time {
-	return e.timestamp
 }
 
 // NewProposalValidationCompletedEvent creates a successful validation completion event.
@@ -153,10 +140,10 @@ func (e *ProposalValidationCompletedEvent) Timestamp() time.Time {
 //   - Immutable ProposalValidationCompletedEvent indicating success.
 func NewProposalValidationCompletedEvent(requestID string, durationMs int64) *ProposalValidationCompletedEvent {
 	return &ProposalValidationCompletedEvent{
-		RequestID:  requestID,
-		Valid:      true,
-		DurationMs: durationMs,
-		timestamp:  time.Now(),
+		RequestID:   requestID,
+		Valid:       true,
+		DurationMs:  durationMs,
+		timestamped: newTimestamped(),
 	}
 }
 
@@ -177,11 +164,11 @@ func NewProposalValidationFailedEvent(requestID, phase string, err error, durati
 	}
 
 	return &ProposalValidationCompletedEvent{
-		RequestID:  requestID,
-		Valid:      false,
-		Phase:      phase,
-		Error:      errMsg,
-		DurationMs: durationMs,
-		timestamp:  time.Now(),
+		RequestID:   requestID,
+		Valid:       false,
+		Phase:       phase,
+		Error:       errMsg,
+		DurationMs:  durationMs,
+		timestamped: newTimestamped(),
 	}
 }

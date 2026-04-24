@@ -277,11 +277,6 @@ func NewCrtStoreDelete(crtStore *models.CrtStore) Operation { return crtStoreOps
 // NewUserlistCreate creates an operation to create a userlist section.
 func NewUserlistCreate(userlist *models.Userlist) Operation { return userlistOps.Create(userlist) }
 
-// NewUserlistUpdate creates an operation to update a userlist section.
-// Note: This operation will fail at execution time as the HAProxy Dataplane API
-// does not support updating userlist sections directly.
-func NewUserlistUpdate(userlist *models.Userlist) Operation { return userlistOps.Update(userlist) }
-
 // NewUserlistDelete creates an operation to delete a userlist section.
 func NewUserlistDelete(userlist *models.Userlist) Operation { return userlistOps.Delete(userlist) }
 

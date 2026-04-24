@@ -33,7 +33,7 @@ const (
 	ComponentName = "proposalvalidator"
 
 	// EventBufferSize is the buffer size for event channel.
-	EventBufferSize = 50
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // Component validates hypothetical configuration changes without deploying.

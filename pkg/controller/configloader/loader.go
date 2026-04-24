@@ -17,8 +17,8 @@ const (
 	ComponentName = "configloader"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	// Size 50: Low-volume component (~1 event per config change).
-	EventBufferSize = 50
+	// Low-volume component (~1 event per config change).
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // ConfigLoaderComponent subscribes to ConfigResourceChangedEvent and parses config data.

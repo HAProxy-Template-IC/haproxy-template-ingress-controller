@@ -24,7 +24,7 @@ type ConfigPublishedEvent struct {
 	RuntimeConfigNamespace string
 	MapFileCount           int
 	SecretCount            int
-	timestamp              time.Time
+	timestamped
 }
 
 // NewConfigPublishedEvent creates a new ConfigPublishedEvent.
@@ -34,19 +34,18 @@ func NewConfigPublishedEvent(runtimeConfigName, runtimeConfigNamespace string, m
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		MapFileCount:           mapFileCount,
 		SecretCount:            secretCount,
-		timestamp:              time.Now(),
+		timestamped:            newTimestamped(),
 	}
 }
 
-func (e *ConfigPublishedEvent) EventType() string    { return EventTypeConfigPublished }
-func (e *ConfigPublishedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigPublishedEvent) EventType() string { return EventTypeConfigPublished }
 
 // ConfigPublishFailedEvent is published when runtime configuration publishing fails.
 //
 // This is logged but does not affect controller operation.
 type ConfigPublishFailedEvent struct {
-	Error     string
-	timestamp time.Time
+	Error string
+	timestamped
 }
 
 // NewConfigPublishFailedEvent creates a new ConfigPublishFailedEvent.
@@ -57,13 +56,12 @@ func NewConfigPublishFailedEvent(err error) *ConfigPublishFailedEvent {
 	}
 
 	return &ConfigPublishFailedEvent{
-		Error:     errStr,
-		timestamp: time.Now(),
+		Error:       errStr,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *ConfigPublishFailedEvent) EventType() string    { return EventTypeConfigPublishFailed }
-func (e *ConfigPublishFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigPublishFailedEvent) EventType() string { return EventTypeConfigPublishFailed }
 
 // ConfigAppliedToPodEvent is published after configuration is successfully applied to an HAProxy pod.
 //
@@ -86,7 +84,7 @@ type ConfigAppliedToPodEvent struct {
 	// Only populated for actual syncs (IsDriftCheck=false).
 	SyncMetadata *SyncMetadata
 
-	timestamp time.Time
+	timestamped
 }
 
 // SyncMetadata contains detailed information about a sync operation.
@@ -155,9 +153,8 @@ func NewConfigAppliedToPodEvent(runtimeConfigName, runtimeConfigNamespace, podNa
 		Checksum:               checksum,
 		IsDriftCheck:           isDriftCheck,
 		SyncMetadata:           syncMetadata,
-		timestamp:              time.Now(),
+		timestamped:            newTimestamped(),
 	}
 }
 
-func (e *ConfigAppliedToPodEvent) EventType() string    { return EventTypeConfigAppliedToPod }
-func (e *ConfigAppliedToPodEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigAppliedToPodEvent) EventType() string { return EventTypeConfigAppliedToPod }

@@ -31,8 +31,8 @@ const (
 	ComponentName = "certloader"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	// Size 50: Low-volume component (~1 event per certificate change).
-	EventBufferSize = 50
+	// Low-volume component (~1 event per certificate change).
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // CertLoaderComponent subscribes to CertResourceChangedEvent and extracts TLS certificate data.

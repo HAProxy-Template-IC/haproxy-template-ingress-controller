@@ -27,7 +27,7 @@ import (
 // This event propagates the correlation ID from DeploymentScheduledEvent.
 type DeploymentStartedEvent struct {
 	Endpoints []dataplane.Endpoint
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -41,22 +41,14 @@ type DeploymentStartedEvent struct {
 //	event := events.NewDeploymentStartedEvent(endpoints,
 //	    events.PropagateCorrelation(scheduledEvent))
 func NewDeploymentStartedEvent(endpoints []dataplane.Endpoint, opts ...CorrelationOption) *DeploymentStartedEvent {
-	// Defensive copy of slice
-	var endpointsCopy []dataplane.Endpoint
-	if len(endpoints) > 0 {
-		endpointsCopy = make([]dataplane.Endpoint, len(endpoints))
-		copy(endpointsCopy, endpoints)
-	}
-
 	return &DeploymentStartedEvent{
-		Endpoints:   endpointsCopy,
-		timestamp:   time.Now(),
+		Endpoints:   copySlice(endpoints),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *DeploymentStartedEvent) EventType() string    { return EventTypeDeploymentStarted }
-func (e *DeploymentStartedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *DeploymentStartedEvent) EventType() string { return EventTypeDeploymentStarted }
 
 // InstanceDeployedEvent is published when deployment to a single HAProxy instance succeeds.
 //
@@ -65,7 +57,7 @@ type InstanceDeployedEvent struct {
 	Endpoint       any // The HAProxy endpoint that was deployed to
 	DurationMs     int64
 	ReloadRequired bool // Whether this deployment required an HAProxy reload
-	timestamp      time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -82,13 +74,12 @@ func NewInstanceDeployedEvent(endpoint any, durationMs int64, reloadRequired boo
 		Endpoint:       endpoint,
 		DurationMs:     durationMs,
 		ReloadRequired: reloadRequired,
-		timestamp:      time.Now(),
+		timestamped:    newTimestamped(),
 		Correlation:    NewCorrelation(opts...),
 	}
 }
 
-func (e *InstanceDeployedEvent) EventType() string    { return EventTypeInstanceDeployed }
-func (e *InstanceDeployedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *InstanceDeployedEvent) EventType() string { return EventTypeInstanceDeployed }
 
 // InstanceDeploymentFailedEvent is published when deployment to a single HAProxy instance fails.
 //
@@ -97,7 +88,7 @@ type InstanceDeploymentFailedEvent struct {
 	Endpoint  any
 	Error     string
 	Retryable bool // Whether this failure is retryable
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -114,13 +105,12 @@ func NewInstanceDeploymentFailedEvent(endpoint any, err string, retryable bool, 
 		Endpoint:    endpoint,
 		Error:       err,
 		Retryable:   retryable,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *InstanceDeploymentFailedEvent) EventType() string    { return EventTypeInstanceDeploymentFailed }
-func (e *InstanceDeploymentFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *InstanceDeploymentFailedEvent) EventType() string { return EventTypeInstanceDeploymentFailed }
 
 // DeploymentCompletedEvent is published when deployment to all HAProxy instances completes.
 //
@@ -132,7 +122,7 @@ type DeploymentCompletedEvent struct {
 	DurationMs         int64 // Total deployment duration in milliseconds
 	ReloadsTriggered   int   // Count of instances that triggered HAProxy reload
 	TotalAPIOperations int   // Sum of API operations across all instances
-	timestamp          time.Time
+	timestamped
 
 	// OperationBreakdown provides a generic breakdown of operations performed.
 	// Keys are formatted as "section_type" (e.g., "backend_create", "server_update", "global_update").
@@ -199,13 +189,12 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 		TotalAPIOperations: result.TotalAPIOperations,
 		OperationBreakdown: breakdownCopy,
 		BackendDiffFields:  result.BackendDiffFields,
-		timestamp:          time.Now(),
+		timestamped:        newTimestamped(),
 		Correlation:        NewCorrelation(opts...),
 	}
 }
 
-func (e *DeploymentCompletedEvent) EventType() string    { return EventTypeDeploymentCompleted }
-func (e *DeploymentCompletedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *DeploymentCompletedEvent) EventType() string { return EventTypeDeploymentCompleted }
 
 // DeploymentScheduledEvent is published when the deployment scheduler has decided.
 // to execute a deployment. This event contains all necessary data for the deployer
@@ -255,7 +244,7 @@ type DeploymentScheduledEvent struct {
 	// event of the same type is available. Propagated from ValidationCompletedEvent.
 	coalescible bool
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -279,30 +268,22 @@ type DeploymentScheduledEvent struct {
 //	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
 func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
-	// Defensive copy of endpoints slice
-	var endpointsCopy []dataplane.Endpoint
-	if len(endpoints) > 0 {
-		endpointsCopy = make([]dataplane.Endpoint, len(endpoints))
-		copy(endpointsCopy, endpoints)
-	}
-
 	return &DeploymentScheduledEvent{
 		Config:                 config,
 		AuxiliaryFiles:         auxFiles,
 		ParsedConfig:           parsedConfig,
-		Endpoints:              endpointsCopy,
+		Endpoints:              copySlice(endpoints),
 		RuntimeConfigName:      runtimeConfigName,
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		ContentChecksum:        contentChecksum,
 		Reason:                 reason,
 		coalescible:            coalescible,
-		timestamp:              time.Now(),
+		timestamped:            newTimestamped(),
 		Correlation:            NewCorrelation(opts...),
 	}
 }
 
-func (e *DeploymentScheduledEvent) EventType() string    { return EventTypeDeploymentScheduled }
-func (e *DeploymentScheduledEvent) Timestamp() time.Time { return e.timestamp }
+func (e *DeploymentScheduledEvent) EventType() string { return EventTypeDeploymentScheduled }
 
 // Coalescible returns true if this event can be safely skipped when a newer
 // event of the same type is available. This implements the CoalescibleEvent interface.
@@ -319,7 +300,7 @@ type DeploymentCancelRequestEvent struct {
 	// Reason describes why the deployment is being cancelled.
 	Reason string
 
-	timestamp time.Time
+	timestamped
 	Correlation
 }
 
@@ -327,13 +308,12 @@ type DeploymentCancelRequestEvent struct {
 func NewDeploymentCancelRequestEvent(reason string, opts ...CorrelationOption) *DeploymentCancelRequestEvent {
 	return &DeploymentCancelRequestEvent{
 		Reason:      reason,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *DeploymentCancelRequestEvent) EventType() string    { return EventTypeDeploymentCancelRequest }
-func (e *DeploymentCancelRequestEvent) Timestamp() time.Time { return e.timestamp }
+func (e *DeploymentCancelRequestEvent) EventType() string { return EventTypeDeploymentCancelRequest }
 
 // DriftPreventionTriggeredEvent is published when the drift prevention monitor.
 // detects that no deployment has occurred within the configured interval and
@@ -345,16 +325,15 @@ type DriftPreventionTriggeredEvent struct {
 	// TimeSinceLastDeployment is the duration since the last deployment completed.
 	TimeSinceLastDeployment time.Duration
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewDriftPreventionTriggeredEvent creates a new DriftPreventionTriggeredEvent.
 func NewDriftPreventionTriggeredEvent(timeSinceLast time.Duration) *DriftPreventionTriggeredEvent {
 	return &DriftPreventionTriggeredEvent{
 		TimeSinceLastDeployment: timeSinceLast,
-		timestamp:               time.Now(),
+		timestamped:             newTimestamped(),
 	}
 }
 
-func (e *DriftPreventionTriggeredEvent) EventType() string    { return EventTypeDriftPreventionTriggered }
-func (e *DriftPreventionTriggeredEvent) Timestamp() time.Time { return e.timestamp }
+func (e *DriftPreventionTriggeredEvent) EventType() string { return EventTypeDriftPreventionTriggered }

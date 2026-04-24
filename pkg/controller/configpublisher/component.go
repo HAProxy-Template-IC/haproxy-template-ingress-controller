@@ -33,10 +33,10 @@ const (
 	ComponentName = "config-publisher"
 
 	// EventBufferSize is the buffer size for the event subscription channel.
-	// Large buffer (200) to handle burst traffic during startup.
-	// ConfigPublisher makes synchronous k8s API calls, so it processes events slowly
-	// compared to the rate at which all-replica components publish them.
-	EventBufferSize = 200
+	// Large buffer to handle burst traffic during startup: ConfigPublisher makes
+	// synchronous k8s API calls, so it processes events slowly compared to the
+	// rate at which all-replica components publish them.
+	EventBufferSize = busevents.PublishingSubscriberBuffer
 
 	// publishWorkChannelSize is the buffer size for the publish work channel.
 	// A size of 1 provides natural coalescing - if new work arrives while
