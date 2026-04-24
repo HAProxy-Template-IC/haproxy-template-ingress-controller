@@ -225,26 +225,10 @@ func (s *CachedStore) Add(resource any, keys []string) error {
 		}
 	}
 
-	// Extract namespace and name from resource
 	ns, name := extractNamespaceName(resource)
-
-	// Create resource reference
-	ref := resourceRef{
-		namespace: ns,
-		name:      name,
-		indexKeys: keys,
-	}
-
 	keyStr := makeKeyString(keys)
-	s.refs[keyStr] = append(s.refs[keyStr], ref)
-
-	// Cache the resource using namespace/name as cache key
-	cacheKey := ns + "/" + name
-	s.cache.Add(cacheKey, &cacheEntry{
-		resource:  resource,
-		expiresAt: time.Now().Add(s.cacheTTL),
-	})
-
+	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
+	s.cacheResource(ns, name, resource)
 	s.modCount++
 
 	return nil
@@ -263,50 +247,25 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 		}
 	}
 
-	// Extract namespace and name from resource
 	ns, name := extractNamespaceName(resource)
-
 	keyStr := makeKeyString(keys)
-	refs, ok := s.refs[keyStr]
-	if !ok {
-		// No resources with these keys - add new
-		ref := resourceRef{
-			namespace: ns,
-			name:      name,
-			indexKeys: keys,
-		}
-		s.refs[keyStr] = []resourceRef{ref}
-	} else {
-		// Try to find existing resource by namespace+name
-		found := false
-		for i, existingRef := range refs {
-			if existingRef.namespace == ns && existingRef.name == name {
-				// Update index keys (in case they changed)
-				refs[i].indexKeys = keys
-				s.refs[keyStr] = refs
-				found = true
-				break
-			}
-		}
+	refs := s.refs[keyStr]
 
-		if !found {
-			// Resource not found - append
-			ref := resourceRef{
-				namespace: ns,
-				name:      name,
-				indexKeys: keys,
-			}
-			s.refs[keyStr] = append(refs, ref)
+	updated := false
+	for i, existingRef := range refs {
+		if existingRef.namespace == ns && existingRef.name == name {
+			// Update index keys in case they changed
+			refs[i].indexKeys = keys
+			updated = true
+			break
 		}
 	}
+	if !updated {
+		refs = append(refs, resourceRef{namespace: ns, name: name, indexKeys: keys})
+	}
+	s.refs[keyStr] = refs
 
-	// Update cache using namespace/name as cache key
-	cacheKey := ns + "/" + name
-	s.cache.Add(cacheKey, &cacheEntry{
-		resource:  resource,
-		expiresAt: time.Now().Add(s.cacheTTL),
-	})
-
+	s.cacheResource(ns, name, resource)
 	s.modCount++
 
 	return nil
@@ -371,10 +330,7 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 		s.mu.RUnlock()
 		// Reset TTL by re-adding with new expiration (Get promotes, but we also need new TTL)
 		s.mu.Lock()
-		s.cache.Add(cacheKey, &cacheEntry{
-			resource:  resource,
-			expiresAt: time.Now().Add(s.cacheTTL),
-		})
+		s.cacheResource(ref.namespace, ref.name, resource)
 		s.mu.Unlock()
 		return resource, nil
 	}
@@ -431,13 +387,19 @@ func (s *CachedStore) fetchResourceByRef(ref resourceRef) (any, error) {
 
 	// Update cache with converted resource
 	s.mu.Lock()
-	s.cache.Add(cacheKey, &cacheEntry{
-		resource:  result.ConvertedResource,
-		expiresAt: time.Now().Add(s.cacheTTL),
-	})
+	s.cacheResource(ref.namespace, ref.name, result.ConvertedResource)
 	s.mu.Unlock()
 
 	return result.ConvertedResource, nil
+}
+
+// cacheResource stores a resource in the LRU cache keyed by namespace/name with a fresh TTL.
+// The caller must hold s.mu (for write).
+func (s *CachedStore) cacheResource(namespace, name string, resource any) {
+	s.cache.Add(namespace+"/"+name, &cacheEntry{
+		resource:  resource,
+		expiresAt: time.Now().Add(s.cacheTTL),
+	})
 }
 
 // Size returns the number of tracked resources in the store.
