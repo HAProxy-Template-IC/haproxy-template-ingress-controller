@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -106,6 +107,8 @@ type scheduledDeployment struct {
 //
 // The component publishes DeploymentScheduledEvent when a deployment should execute.
 type DeploymentScheduler struct {
+	*component.ReadySignal
+
 	eventBus              *busevents.EventBus
 	eventChan             <-chan busevents.Event // Event subscription channel (subscribed in Start())
 	logger                *slog.Logger
@@ -141,10 +144,6 @@ type DeploymentScheduler struct {
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
-
-	// subscriptionReady is closed when the component has subscribed to events.
-	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
-	subscriptionReady chan struct{}
 }
 
 // computePodSetHash computes a hash of the current pod endpoints.
@@ -181,12 +180,12 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	return &DeploymentScheduler{
+		ReadySignal:           component.NewReadySignal(),
 		eventBus:              eventBus,
 		logger:                logger.With("component", SchedulerComponentName),
 		minDeploymentInterval: minDeploymentInterval,
 		deploymentTimeout:     deploymentTimeout,
 		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
-		subscriptionReady:     make(chan struct{}),
 	}
 }
 
@@ -194,12 +193,6 @@ func NewDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 // Implements the lifecycle.Component interface.
 func (s *DeploymentScheduler) Name() string {
 	return SchedulerComponentName
-}
-
-// SubscriptionReady returns a channel that is closed when the component has
-// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
-func (s *DeploymentScheduler) SubscriptionReady() <-chan struct{} {
-	return s.subscriptionReady
 }
 
 // Start begins the deployment scheduler's event loop.
@@ -231,7 +224,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
-	close(s.subscriptionReady)
+	s.MarkReady()
 
 	s.logger.Debug("deployment scheduler starting",
 		"min_deployment_interval_ms", s.minDeploymentInterval.Milliseconds(),

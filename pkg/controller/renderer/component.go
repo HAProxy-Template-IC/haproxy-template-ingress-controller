@@ -33,6 +33,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
@@ -70,6 +71,8 @@ const (
 // CRT-list file paths are resolved to the general files directory instead of the SSL
 // directory, ensuring the generated configuration matches where files are actually stored.
 type Component struct {
+	*component.ReadySignal
+
 	eventBus           *busevents.EventBus
 	eventChan          <-chan busevents.Event // Subscribed in Start() for leader-only pattern
 	engine             templating.Engine
@@ -88,10 +91,6 @@ type Component struct {
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
-
-	// subscriptionReady is closed when the component has subscribed to events.
-	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
-	subscriptionReady chan struct{}
 
 	// lastRenderedChecksum tracks the checksum of the last successfully rendered config.
 	// Used to skip redundant TemplateRenderedEvents when content hasn't changed.
@@ -158,6 +157,7 @@ func New(
 
 	return &Component{
 		eventBus:           eventBus,
+		ReadySignal:        component.NewReadySignal(),
 		engine:             engine,
 		config:             cfg,
 		stores:             storeMap,
@@ -166,7 +166,6 @@ func New(
 		logger:             logger.With("component", ComponentName),
 		capabilities:       capabilities,
 		healthTracker:      lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
-		subscriptionReady:  make(chan struct{}),
 	}, nil
 }
 
@@ -180,16 +179,6 @@ func (c *Component) SetHTTPStoreComponent(httpStoreComponent *httpstore.Componen
 // Implements the lifecycle.Component interface.
 func (c *Component) Name() string {
 	return ComponentName
-}
-
-// SubscriptionReady returns a channel that is closed when the component has
-// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
-//
-// For leader-only components like the Renderer, subscription happens in Start()
-// rather than in the constructor. This method allows the lifecycle registry to
-// wait for subscription before signaling that the component is ready.
-func (c *Component) SubscriptionReady() <-chan struct{} {
-	return c.subscriptionReady
 }
 
 // Start begins the renderer's event loop.
@@ -218,7 +207,7 @@ func (c *Component) Start(ctx context.Context) error {
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	// This allows the registry to know we're ready to receive events before
 	// EventBus.Start() replays buffered events.
-	close(c.subscriptionReady)
+	c.MarkReady()
 
 	c.logger.Debug("renderer starting")
 

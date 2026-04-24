@@ -23,6 +23,7 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
@@ -96,6 +97,8 @@ type statusWorkItem struct {
 // the event loop. This ensures new events are processed promptly even when
 // K8S API calls are slow.
 type Component struct {
+	*component.ReadySignal
+
 	publisher *configpublisher.Publisher
 	eventBus  *busevents.EventBus
 	logger    *slog.Logger
@@ -112,10 +115,6 @@ type Component struct {
 	// This ensures we match the correct TemplateRenderedEvent with its corresponding
 	// ValidationCompletedEvent when events from multiple cycles are interleaved.
 	renderedConfigs map[string]*renderedConfigEntry
-
-	// subscriptionReady is closed when the component has subscribed to events.
-	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
-	subscriptionReady chan struct{}
 
 	// Work channels for async K8S API operations.
 	// Using channels with small buffers provides natural coalescing:
@@ -184,11 +183,11 @@ func New(
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	c := &Component{
+		ReadySignal:           component.NewReadySignal(),
 		publisher:             publisher,
 		eventBus:              eventBus,
 		logger:                logger.With("component", ComponentName),
 		renderedConfigs:       make(map[string]*renderedConfigEntry),
-		subscriptionReady:     make(chan struct{}),
 		publishWork:           make(chan *publishWorkItem, publishWorkChannelSize),
 		validationFailedWork:  make(chan *validationFailedWorkItem, publishWorkChannelSize),
 		statusWorkPending:     make(map[string]*statusWorkItem),
@@ -208,12 +207,6 @@ func New(
 // Implements the lifecycle.Component interface.
 func (c *Component) Name() string {
 	return ComponentName
-}
-
-// SubscriptionReady returns a channel that is closed when the component has
-// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
-func (c *Component) SubscriptionReady() <-chan struct{} {
-	return c.subscriptionReady
 }
 
 // Start begins the config publisher's event loop.
@@ -243,7 +236,7 @@ func (c *Component) Start(ctx context.Context) error {
 	)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
-	close(c.subscriptionReady)
+	c.MarkReady()
 
 	c.logger.Debug("config publisher starting")
 

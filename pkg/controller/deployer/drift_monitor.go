@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -51,6 +52,8 @@ const (
 // The component publishes DriftPreventionTriggeredEvent when drift prevention
 // is needed.
 type DriftPreventionMonitor struct {
+	*component.ReadySignal
+
 	eventBus                *busevents.EventBus
 	eventChan               <-chan busevents.Event // Subscribed in Start() for leader-only pattern
 	logger                  *slog.Logger
@@ -65,10 +68,6 @@ type DriftPreventionMonitor struct {
 
 	// Health check: stall detection for timer-based component
 	healthTracker *lifecycle.HealthTracker
-
-	// subscriptionReady is closed when the component has subscribed to events.
-	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
-	subscriptionReady chan struct{}
 }
 
 // NewDriftPreventionMonitor creates a new DriftPreventionMonitor component.
@@ -92,12 +91,12 @@ func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger
 	)
 
 	return &DriftPreventionMonitor{
-		eventBus: eventBus,
+		ReadySignal: component.NewReadySignal(),
+		eventBus:    eventBus,
 		// eventChan is subscribed in Start() for leader-only pattern
 		logger:                  logger.With("component", DriftMonitorComponentName),
 		driftPreventionInterval: driftPreventionInterval,
 		healthTracker:           healthTracker,
-		subscriptionReady:       make(chan struct{}),
 	}
 }
 
@@ -105,12 +104,6 @@ func NewDriftPreventionMonitor(eventBus *busevents.EventBus, logger *slog.Logger
 // Implements the lifecycle.Component interface.
 func (m *DriftPreventionMonitor) Name() string {
 	return DriftMonitorComponentName
-}
-
-// SubscriptionReady returns a channel that is closed when the component has
-// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
-func (m *DriftPreventionMonitor) SubscriptionReady() <-chan struct{} {
-	return m.subscriptionReady
 }
 
 // Start begins the drift prevention monitor's event loop.
@@ -142,7 +135,7 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 	)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
-	close(m.subscriptionReady)
+	m.MarkReady()
 
 	m.logger.Debug("drift monitor starting",
 		"drift_prevention_interval_ms", m.driftPreventionInterval.Milliseconds())

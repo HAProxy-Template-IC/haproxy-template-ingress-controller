@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -57,6 +58,8 @@ const (
 // The DeploymentScheduler still operates event-driven, receiving TemplateRenderedEvent
 // and ValidationCompletedEvent to schedule deployments.
 type Coordinator struct {
+	*component.ReadySignal
+
 	eventBus      *busevents.EventBus
 	eventChan     <-chan busevents.Event
 	pipeline      PipelineExecutor
@@ -67,10 +70,6 @@ type Coordinator struct {
 	// Used by StatusApplier (via events) to apply failure variants (renderFailed,
 	// deployFailed) when a subsequent pipeline execution fails.
 	lastStatusPatches []templating.StatusPatch
-
-	// subscriptionReady is closed when the component has subscribed to events.
-	// Implements lifecycle.SubscriptionReadySignaler for leader-only components.
-	subscriptionReady chan struct{}
 }
 
 // CoordinatorConfig contains configuration for creating a Coordinator.
@@ -108,23 +107,17 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 	}
 
 	return &Coordinator{
-		eventBus:          cfg.EventBus,
-		pipeline:          cfg.Pipeline,
-		storeProvider:     cfg.StoreProvider,
-		logger:            logger.With("component", CoordinatorComponentName),
-		subscriptionReady: make(chan struct{}),
+		ReadySignal:   component.NewReadySignal(),
+		eventBus:      cfg.EventBus,
+		pipeline:      cfg.Pipeline,
+		storeProvider: cfg.StoreProvider,
+		logger:        logger.With("component", CoordinatorComponentName),
 	}
 }
 
 // Name returns the unique identifier for this component.
 func (c *Coordinator) Name() string {
 	return CoordinatorComponentName
-}
-
-// SubscriptionReady returns a channel that is closed when the component has
-// completed its event subscription. This implements lifecycle.SubscriptionReadySignaler.
-func (c *Coordinator) SubscriptionReady() <-chan struct{} {
-	return c.subscriptionReady
 }
 
 // Start begins the coordinator's event loop.
@@ -141,7 +134,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	)
 
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
-	close(c.subscriptionReady)
+	c.MarkReady()
 
 	c.logger.Debug("reconciliation coordinator starting")
 
