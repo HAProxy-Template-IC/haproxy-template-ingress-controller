@@ -1,8 +1,8 @@
-#### Runtime Introspection and Debugging
+# Runtime Introspection and Debugging
 
 The controller provides comprehensive runtime introspection capabilities through an HTTP debug server, enabling production debugging, operational visibility, and acceptance testing without relying solely on logs.
 
-##### Architecture Overview
+## Architecture Overview
 
 ```mermaid
 graph TB
@@ -55,7 +55,7 @@ graph TB
     style REG fill:#9C27B0
 ```
 
-##### Key Components
+## Key Components
 
 **pkg/introspection** - Generic debug HTTP server infrastructure:
 
@@ -87,7 +87,7 @@ graph TB
 - Implements StateProvider interface for debug endpoints
 - Prevents need to query EventBus for historical state
 
-##### HTTP Endpoints
+## HTTP Endpoints
 
 The debug server exposes controller state via HTTP (port configurable via `--debug-port` flag or `DEBUG_PORT` environment variable, disabled by default):
 
@@ -122,7 +122,7 @@ curl http://localhost:8080/debug/pprof/heap
 curl http://localhost:8080/debug/pprof/goroutine
 ```
 
-##### Event History
+## Event History
 
 Two independent event tracking mechanisms:
 
@@ -142,7 +142,7 @@ Two independent event tracking mechanisms:
 
 This separation allows different buffer sizes, retention policies, and use cases without coupling logging to debugging infrastructure.
 
-##### Integration with Acceptance Testing
+## Integration with Acceptance Testing
 
 The debug endpoints enable powerful acceptance testing:
 
@@ -180,7 +180,7 @@ func TestConfigMapReload(t *testing.T) {
 
 This enables true end-to-end testing without parsing logs or relying on timing heuristics.
 
-##### Security Considerations
+## Security Considerations
 
 Debug variables implement careful filtering:
 
@@ -206,7 +206,7 @@ The debug server should be:
 - Protected by network policies
 - Disabled or restricted in multi-tenant environments
 
-##### Configuration
+## Configuration
 
 Debug server configuration via controller ConfigMap:
 

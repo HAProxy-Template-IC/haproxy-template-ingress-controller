@@ -1,77 +1,30 @@
 # Security Guide
 
-This guide covers security best practices for deploying and operating the HAProxy Template Ingress Controller.
+This page covers the security-relevant knobs the controller actually exposes. Anything that isn't HAPTIC-specific (how to issue certs with cert-manager, how to wire External Secrets Operator, etc.) is left to the upstream project's docs.
 
-## Overview
+## What the Controller Needs
 
-The controller follows security best practices including:
+### RBAC
 
-- Principle of least privilege for RBAC
-- Read-only filesystem for controller containers
-- Secure credential management via Kubernetes Secrets
-- Support for TLS throughout the stack
+The Helm chart provisions a `ServiceAccount` and `ClusterRole` (names derive from the Helm release fullname). The ClusterRole grants:
 
-For a quick overview of required actions, jump to the [Security Checklist](#security-checklist).
+| Resource | Verbs | Why |
+|----------|-------|-----|
+| `pods`, `namespaces` | get, list, watch | Discover HAProxy pods, target namespaces |
+| `ingresses` (networking.k8s.io) | get, list, watch | Default watched resource |
+| `services`, `endpoints`, `endpointslices` | get, list, watch | Resolve backends |
+| `secrets` | get, list, watch | Load TLS certificates referenced from templates and the credentials Secret |
+| `leases` (coordination.k8s.io) | get, create, update | Leader election |
+| `haproxytemplateconfigs.haproxy-haptic.org` | get, list, watch | Primary config CRD |
+| `haproxycfgs.haproxy-haptic.org` | get, list, watch, create, update, patch | Publish rendered config for observability |
 
-## RBAC Configuration
+Anything else referenced from `watchedResources` needs matching RBAC; if you manage RBAC yourself (`rbac.create: false`), keep it in sync.
 
-### Controller Service Account
+Narrow the cluster-wide watch to specific namespaces by pinning `namespace:` or `namespaceSelector:` on each watched-resource entry — see [Watching Resources](../watching-resources.md).
 
-The Helm chart creates a service account with minimal required permissions:
+### Credentials
 
-```yaml
-# Automatically created by Helm
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: haptic
-```
-
-### ClusterRole Permissions
-
-The controller requires these Kubernetes API permissions:
-
-| Resource | Verbs | Purpose |
-|----------|-------|---------|
-| pods, namespaces | get, list, watch | Discover HAProxy pods and namespaces |
-| ingresses | get, list, watch | Watch Ingress resources |
-| services, endpoints, endpointslices | get, list, watch | Discover backend endpoints |
-| secrets | get, list, watch | Load TLS certificates and credentials |
-| leases (coordination.k8s.io) | get, create, update | Leader election for HA deployments |
-| haproxytemplateconfigs | get, list, watch | Watch configuration CRD |
-
-**Customizing RBAC**:
-
-```yaml
-# values.yaml
-rbac:
-  create: true  # Set to false to manage RBAC manually
-```
-
-If you manage RBAC manually, ensure the service account has access to all resources defined in your `watchedResources` configuration.
-
-### Restricting Namespace Access
-
-By default, the controller watches resources cluster-wide. To restrict to specific namespaces:
-
-```yaml
-# HAProxyTemplateConfig CRD
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      namespaceSelector:
-        matchNames:
-          - production
-          - staging
-```
-
-## Credential Management
-
-### DataPlane API Credentials
-
-The controller uses credentials to authenticate with the HAProxy DataPlane API:
+The CRD references a `Secret` via `spec.credentialsSecretRef`. It must contain four keys:
 
 ```yaml
 apiVersion: v1
@@ -81,101 +34,31 @@ metadata:
 type: Opaque
 stringData:
   dataplane_username: admin
-  dataplane_password: <strong-password>
-  # For validation sidecar (optional)
-  validation_username: validator
-  validation_password: <validation-password>
+  dataplane_password: <random>
+  validation_username: validator   # validation endpoint (if used)
+  validation_password: <random>
 ```
 
-**Best practices:**
+The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, SOPS, …); the controller just reads the Secret.
 
-- Use strong, randomly generated passwords
-- Rotate credentials periodically
-- Use different credentials for production and validation sidecars
-- Consider using a secrets manager (Vault, External Secrets Operator)
+Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/vars.go` enforces that. See [Debugging](./debugging.md#enabling-debug-endpoints) for access control if you run with the debug port enabled.
 
-### External Secrets Integration
+## Pod Hardening
 
-Integrate with external secrets managers:
+The chart ships with a restrictive default pod spec. The relevant `controller.securityContext` / `controller.podSecurityContext` defaults:
 
-```yaml
-# External Secrets Operator example
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: haproxy-credentials
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: vault-backend
-    kind: ClusterSecretStore
-  target:
-    name: haproxy-credentials
-  data:
-    - secretKey: dataplane_username
-      remoteRef:
-        key: haproxy/dataplane
-        property: username
-    - secretKey: dataplane_password
-      remoteRef:
-        key: haproxy/dataplane
-        property: password
-```
+| Setting | Default |
+|---------|---------|
+| `runAsNonRoot` | `true` |
+| `runAsUser` / `runAsGroup` / `fsGroup` | `65532` (`nonroot`) |
+| `readOnlyRootFilesystem` | `true` |
+| `allowPrivilegeEscalation` | `false` |
+| `capabilities.drop` | `[ALL]` |
+| `seccompProfile.type` | `RuntimeDefault` |
 
-### Debug Endpoint Security
+The controller writes temporary files (for `haproxy -c` validation) to `/tmp`, which is mounted as an `emptyDir`. Everything else is read-only.
 
-The debug endpoints do NOT expose actual credentials:
-
-```bash
-# /debug/vars/credentials returns only metadata
-curl http://localhost:8080/debug/vars/credentials
-```
-
-Response:
-
-```json
-{
-  "version": "12345",
-  "has_dataplane_creds": true
-}
-```
-
-Actual passwords are never exposed through debug endpoints. To restrict who can reach these endpoints, configure a [network policy](#restricting-debug-endpoint-access) that limits ingress to trusted namespaces.
-
-## Container Security
-
-### Read-Only Filesystem
-
-The controller runs with a read-only root filesystem:
-
-```yaml
-# Enabled by default in Helm chart
-securityContext:
-  readOnlyRootFilesystem: true
-```
-
-Temporary files (for validation) are written to `/tmp` which is mounted as `emptyDir`.
-
-### Security Context
-
-Recommended security context:
-
-```yaml
-# values.yaml
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  runAsGroup: 1000
-  readOnlyRootFilesystem: true
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop:
-      - ALL
-```
-
-### Pod Security Standards
-
-The controller is compatible with Kubernetes Pod Security Standards at the "restricted" level:
+The chart is compatible with the "restricted" Pod Security Standard out of the box:
 
 ```yaml
 apiVersion: v1
@@ -184,275 +67,111 @@ metadata:
   name: haptic
   labels:
     pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
 ```
 
-## Network Policies
+## Network Exposure
 
-### Restricting Controller Traffic
+The controller pod exposes three HTTP ports (all chart defaults):
 
-Limit controller network access:
+| Port | Endpoint | Notes |
+|------|----------|-------|
+| `8080` | `/healthz`, `/debug/vars`, `/debug/pprof/` | Set `controller.debugPort: 0` in production to drop `/debug/*` — `/healthz` is served on the same port, so disabling it also requires moving healthz via `controller.ports.healthz` |
+| `9090` | `/metrics` | Disable by setting `controller.config.controller.metricsPort: 0` |
+| `9443` | Validating webhook | Required when the webhook is enabled |
+
+Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
+
+Example egress-restriction NetworkPolicy:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: haptic
-  namespace: haptic
+  name: haptic-controller
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: haptic
-  policyTypes:
-    - Ingress
-    - Egress
+      app.kubernetes.io/component: controller
+  policyTypes: [Ingress, Egress]
   ingress:
-    # Allow health checks
-    - from: []
-      ports:
-        - port: 8080  # healthz
-        - port: 9090  # metrics
+    - ports:
+        - port: 8080   # /healthz, /debug/*
+        - port: 9090   # /metrics
+        - port: 9443   # webhook
   egress:
-    # Allow Kubernetes API access
     - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              component: kube-apiserver
+        - namespaceSelector: {}   # kube-apiserver is in every cluster, tighten if you know the selector
       ports:
         - port: 443
-    # Allow HAProxy DataPlane API access
     - to:
         - podSelector:
             matchLabels:
-              app: haproxy
+              app.kubernetes.io/component: loadbalancer
       ports:
-        - port: 5555  # DataPlane API
+        - port: 5555   # Dataplane API
 ```
 
-### Restricting Debug Endpoint Access
-
-If you enable the debug port, restrict access:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: haptic-debug
-  namespace: haptic
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: haptic
-  policyTypes:
-    - Ingress
-  ingress:
-    # Only allow debug access from specific namespace
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: monitoring
-      ports:
-        - port: 8080  # debug
-```
-
-## TLS Configuration
-
-### TLS for Ingress Traffic
-
-Configure TLS termination through Ingress resources:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: my-app
-spec:
-  tls:
-    - hosts:
-        - myapp.example.com
-      secretName: myapp-tls
-  rules:
-    - host: myapp.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: my-app
-                port:
-                  number: 80
-```
-
-### TLS Certificates from Secrets
-
-The controller loads TLS certificates from Kubernetes Secrets:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: myapp-tls
-type: kubernetes.io/tls
-data:
-  tls.crt: <base64-encoded-certificate>
-  tls.key: <base64-encoded-private-key>
-```
-
-### Certificate Management with cert-manager
-
-Integrate with cert-manager for automatic certificate management:
-
-```yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: myapp-tls
-spec:
-  secretName: myapp-tls
-  issuerRef:
-    name: letsencrypt-prod
-    kind: ClusterIssuer
-  dnsNames:
-    - myapp.example.com
-```
-
-### HAProxy DataPlane API TLS
-
-For production deployments, enable TLS for the DataPlane API:
-
-```yaml
-# HAProxy sidecar configuration
-dataplane:
-  insecure: false  # Require TLS
-  ssl_certificate: /etc/haproxy/ssl/dataplane.crt
-  ssl_key: /etc/haproxy/ssl/dataplane.key
-```
+If you keep the debug port enabled, pair it with a NetworkPolicy that restricts ingress to your observability namespace.
 
 ## Secrets in Templates
 
-### Secure Handling
-
-When using secrets in templates, follow these practices:
+Templates read watched Secrets like any other resource. Decode with `b64decode` (values in `.data` are base64-encoded by Kubernetes):
 
 ```scriggo
-{#- Load secret data - automatically base64 decoded -#}
-{%- for _, secret := range resources.secrets.List() %}
-{%- if secret.metadata.name == "auth-users" %}
-  {#- Use secret.data fields - they're decoded automatically -#}
-  userlist authenticated_users
-    user admin password {{ secret.data.password_hash }}
-{%- end %}
+{%- var secret = resources.secrets.GetSingle("auth", "basic-auth") %}
+{%- if secret != nil %}
+userlist authenticated_users
+    user admin password {{ secret.data.password_hash | b64decode }}
 {%- end %}
 ```
 
-**Best practices:**
-
-- Never log secret values
-- Use password hashes, not plaintext passwords
-- Limit secret access to specific namespaces
-- Rotate secrets regularly
-
-### Password Hash Format
-
-For HAProxy authentication, store password hashes (not plaintext):
+Store *hashes*, not plaintext. For HAProxy basic auth:
 
 ```bash
-# Generate bcrypt hash (-B = bcrypt, -n = stdout, -b = password on command line)
 htpasswd -nbB admin mypassword | cut -d: -f2
-
-# Store in secret (hash only, not username:hash)
-kubectl create secret generic auth-users \
+kubectl create secret generic basic-auth \
   --from-literal=password_hash='$2y$05$...'
 ```
 
-!!! note
-    Bcrypt is secure but expensive to validate during config parsing. For large user bases, consider SHA-512 (`htpasswd -n -5 admin`) as a faster alternative. See [Password Hash Performance](./performance.md#password-hash-performance) for benchmarks.
+Bcrypt is slow to verify on every request; for large userbases use `htpasswd -n -5` (SHA-512 crypt) and see [Performance](./performance.md#password-hash-performance) for the trade-off.
 
-## Audit Logging
+## Audit Trail
 
-### Controller Logs
-
-The controller logs security-relevant events:
-
-```bash
-# View security-related logs
-kubectl logs -n haptic deployment/haptic-controller | grep -E "auth|credential|secret"
-```
-
-### Kubernetes Audit Policy
-
-Include controller operations in Kubernetes audit policy:
+A minimal audit policy that records who touched `HAProxyTemplateConfig` and which Secrets the controller reads:
 
 ```yaml
 apiVersion: audit.k8s.io/v1
 kind: Policy
 rules:
-  # Audit secret access
+  - level: RequestResponse
+    resources:
+      - group: haproxy-haptic.org
+        resources: ["haproxytemplateconfigs"]
   - level: Metadata
+    users: ["system:serviceaccount:<namespace>:<release>"]
     resources:
       - group: ""
         resources: ["secrets"]
-    users: ["system:serviceaccount:haptic:haptic"]
-
-  # Audit configuration changes
-  - level: RequestResponse
-    resources:
-      - group: "haproxy-haptic.org"
-        resources: ["haproxytemplateconfigs"]
 ```
 
-## Security Checklist
+Replace `<namespace>`/`<release>` with your Helm release; the SA name is `<release>` unless you overrode `serviceAccount.name`.
 
-### Deployment Checklist
+## Checklist
 
-- [ ] **Critical** -- Use strong, unique passwords for DataPlane API credentials
-- [ ] **Critical** -- Enable read-only root filesystem
-- [ ] **Critical** -- Run as non-root user
-- [ ] **Critical** -- Drop all capabilities
-- [ ] **Recommended** -- Enable network policies to restrict traffic
-- [ ] **Recommended** -- Use TLS for all external endpoints
-- [ ] **Recommended** -- Restrict RBAC to required namespaces
-- [ ] **Recommended** -- Enable Kubernetes audit logging
+Before exposing a HAPTIC deployment to production traffic:
 
-### Operational Checklist
-
-- [ ] **Critical** -- Rotate credentials periodically
-- [ ] **Critical** -- Keep controller image updated for security patches
-- [ ] **Recommended** -- Monitor for unauthorized access attempts
-- [ ] **Recommended** -- Review RBAC permissions after configuration changes
-- [ ] **Recommended** -- Use image scanning in CI/CD pipeline
-
-### Production Hardening
-
-For high-security environments:
-
-```yaml
-# values.yaml
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 65534  # nobody
-  runAsGroup: 65534
-  fsGroup: 65534
-  readOnlyRootFilesystem: true
-  allowPrivilegeEscalation: false
-  seccompProfile:
-    type: RuntimeDefault
-  capabilities:
-    drop:
-      - ALL
-
-controller:
-  debugPort: 0  # Disable debug endpoint
-
-rbac:
-  create: true
-```
+- [ ] Random, rotated passwords in `credentialsSecretRef`.
+- [ ] `controller.debugPort: 0` — or a NetworkPolicy that pins ingress to trusted namespaces.
+- [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
+- [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
+- [ ] NetworkPolicy allowing only kube-apiserver + Dataplane-API egress.
+- [ ] Audit policy in place for `HAProxyTemplateConfig` changes.
+- [ ] Image signature verification (`cosign verify …`) wired into your admission policy — see [Releasing](../development/releasing.md#supply-chain-security).
 
 ## See Also
 
-- [Monitoring Guide](./monitoring.md) - Monitor security-related metrics
-- [High Availability](./high-availability.md) - Secure HA deployments
-- [Debugging Guide](./debugging.md) - Secure debugging practices
+- [Monitoring](./monitoring.md) — signals for auth failures, webhook drops, leader flaps
+- [Debugging](./debugging.md) — accessing `/debug/*` safely
+- [High Availability](./high-availability.md) — leader election RBAC and lease ownership

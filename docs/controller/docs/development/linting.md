@@ -1,378 +1,95 @@
 # Linting and Code Quality
 
-This document describes the linting and code quality tools configured for this project.
+Three checkers run against every commit:
 
-## Overview
+| Tool | Config | Invoked by |
+|------|--------|------------|
+| `golangci-lint` | `.golangci.yml` | `make lint` |
+| `arch-go` | `arch-go.yml` | `make lint` (auto-installs if missing) |
+| `govulncheck` | — | `make audit` |
 
-The project uses multiple linters to ensure code quality, security, and architectural consistency:
+`make check-all` runs all three plus the full test suite — the same set of checks CI runs on every MR. `make lint-fix` applies golangci-lint's auto-fixes where possible.
 
-- **golangci-lint**: Primary Go linter with 35+ enabled checks
-- **govulncheck**: Security vulnerability scanner from the Go team
-- **arch-go**: Architecture linter enforcing dependency rules
+## golangci-lint
 
-## Quick Start
+The config is in v2 format (`version: "2"`), so formatters and linters are separated:
 
-```bash
-# Run all checks
-make check-all
+**Formatters** (`gofmt`, `goimports`) auto-format source on `make lint-fix`.
 
-# Run individual tools
-make lint        # golangci-lint + arch-go
-make audit       # govulncheck
+**Linters** (≈30 enabled, grouped below). The authoritative list is `.golangci.yml`; this page just classifies them:
 
-# Auto-fix issues where possible
-make lint-fix
-```
+| Purpose | Linters |
+|---------|---------|
+| Correctness | `errcheck`, `govet`, `staticcheck` (includes gosimple), `ineffassign`, `unused`, `bodyclose`, `errchkjson`, `nilerr`, `nilnil` |
+| Security | `gosec` |
+| Style | `revive`, `gocritic`, `misspell`, `unconvert`, `unparam`, `nakedret`, `whitespace`, `godot`, `importas`, `goprintffuncname` |
+| Complexity | `gocyclo`, `goconst`, `dupl` |
+| Performance | `prealloc`, `copyloopvar` |
+| Hygiene | `godox` (TODO/FIXME/HACK), `asciicheck`, `bidichk`, `dogsled`, `makezero`, `nolintlint` |
+| Tests | `thelper` |
 
-## golangci-lint Configuration
+Plus one project-local analyzer built in `tools/linters/eventimmutability` that enforces pointer receivers on all `events.Event` implementations. The analyzer is compiled and invoked as part of `make lint`.
 
-The `.golangci.yml` configuration enables comprehensive linting tailored for Kubernetes controllers:
+### Project Rules Worth Knowing
 
-### Enabled Linter Categories
+- **`importas`** enforces canonical aliases for Kubernetes and haproxytech packages (`corev1`, `metav1`, `apierrors`, `corev1client`, `haproxy`). Deviations fail CI.
+- **`revive`** caps function length at 50 lines and cognitive complexity at 20. `exported` and `package-comments` rules are off for internal packages.
+- **`gocyclo`** rejects cyclomatic complexity > 20.
+- **`gosec`** allowlists G114 (HTTP timeout — set at infra level) and G404 (non-crypto RNG — not used for secrets). G304 is allowlisted on specific file paths, not globally.
+- Generated code (`zz_generated.*.go`, `codegen/**/*.gen.go`, `pkg/generated/**`) and test files run with relaxed rules; see the per-path overrides at the bottom of `.golangci.yml`.
 
-**Error Detection & Correctness**
-
-- errcheck, govet, staticcheck, ineffassign, unused
-- gosimple, bodyclose, errchkjson, nilerr, nilnil
-
-**Security**
-
-- gosec: Detects security vulnerabilities and hardcoded credentials
-
-**Style & Best Practices**
-
-- revive, gocritic, gofmt, goimports, misspell
-- unconvert, unparam, nakedret, whitespace, godot
-- importas: Enforces Kubernetes package aliases
-- goprintffuncname: Checks printf-like function naming
-
-**Code Complexity**
-
-- gocyclo: Cyclomatic complexity (threshold: 20)
-- goconst: Repeated strings
-- dupl: Code duplication (threshold: 150 lines)
-
-**Performance**
-
-- prealloc: Slice preallocation opportunities
-- copyloopvar: Loop variable reference issues (Go 1.22+)
-
-**Maintenance**
-
-- godox: Detects TODO/FIXME/BUG comments
-- asciicheck: Ensures only ASCII characters
-- bidichk: Detects dangerous Unicode bidirectional characters
-- dogsled: Detects too many blank identifiers
-- makezero: Detects improper slice/map initialization
-- nolintlint: Reports ill-formed or insufficient nolint directives
-
-**Testing**
-
-- thelper: Test helper function checks
-
-### Exclusions
-
-The configuration excludes checks for:
-
-- Generated code in `codegen/**/*.gen.go`
-- Test files (`*_test.go`) have relaxed rules
-- Integration tests (`tests/integration/`) have additional exemptions
-
-### Linter-Specific Settings
-
-**gocritic**: Enabled tags include diagnostic, style, performance, and experimental. Some checks are disabled to reduce noise (dupImport, ifElseChain, octalLiteral, whyNoLint, wrapperFunc).
-
-**govet**: All checks enabled except fieldalignment (too noisy) and shadow (intentional shadowing sometimes used).
-
-**gosec**: Excludes G114 (HTTP server timeouts handled at infrastructure level) and G404 (weak random not used for security).
-
-**godox**: Tracks BUG, FIXME, and HACK keywords in comments.
-
-**revive**: Function length limited to 50 lines, cognitive complexity to 20. Exported and package-comments rules disabled for internal packages.
-
-### Import Aliases
-
-The following import aliases are enforced:
-
-```go
-import (
-    corev1 "k8s.io/api/core/v1"
-    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    apierrors "k8s.io/apimachinery/pkg/api/errors"
-    corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-    haproxy "github.com/haproxytech/client-native/v6"
-)
-```
-
-## govulncheck
-
-Scans for known security vulnerabilities in Go dependencies and standard library.
-
-```bash
-make audit
-```
-
-If vulnerabilities are found:
-
-1. Review the output carefully
-2. Update affected dependencies: `go get -u <package>@latest`
-3. Run `go mod tidy`
-4. Re-run `make audit`
+Never add a global ignore rule to silence findings, and do not suppress them with `nolint` directives on individual lines — fix the code, or add a scoped per-path exclusion in `.golangci.yml` if the rule is genuinely wrong for that file.
 
 ## arch-go
 
-Validates architectural dependency rules defined in `arch-go.yml`.
+The DAG rules in `arch-go.yml` prevent the coordination layer from leaking into pure libraries. The high-level shape:
 
-### Current Architecture Rules
+- **`pkg/controller/**`** may import anything under `pkg/` plus `codegen/`.
+- **`pkg/core/**`** may not import `controller`, `dataplane`, `k8s`, `templating`, `httpstore`, `introspection`, `webhook`.
+- **`pkg/events/**`** must not import any other `pkg/**` package.
+- **`pkg/stores/**`** is isolated from `pkg/k8s/**`; the two declare structurally identical `Store` interfaces and `pkg/stores.TypesStoreAdapter` bridges them.
+- Domain libraries (`pkg/k8s`, `pkg/dataplane`, `pkg/templating`) may not cross-import each other.
 
-1. **controller packages**: Can depend on all other top-level packages (core, dataplane, events, k8s, templating, codegen)
-2. **core packages**: Must not depend on controller, dataplane, k8s, templating
-3. **dataplane packages**: Must not depend on controller, core, events, k8s, templating
-4. **events package**: Must not depend on other top-level packages
-5. **k8s packages**: Must not depend on other top-level packages
-6. **templating package**: Must not depend on other top-level packages
+The exact allow/deny lists evolve with new packages, so consult `arch-go.yml` rather than memorising the rules.
 
-### Integration with golangci-lint
+## govulncheck
 
-The `make lint` target runs both golangci-lint and arch-go together. If arch-go is not installed, it will be automatically installed before running:
-
-```bash
-make lint  # Runs both golangci-lint and arch-go
-```
-
-You can also run arch-go directly:
+`make audit` runs govulncheck against the dependency graph. If it reports a vulnerability:
 
 ```bash
-# Install if not present
-go install github.com/arch-go/arch-go@latest
-
-# Run directly
-arch-go
+go get -u <module>@<fixed-version>
+go mod tidy
+make audit
 ```
 
-## CI/CD Integration
-
-To integrate these linters into your CI/CD pipeline:
-
-```yaml
-# Example GitHub Actions workflow
-name: Lint
-on: [pull_request]
-
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-
-      - name: Run linters
-        run: make lint  # Runs both golangci-lint and arch-go
-
-      - name: Run govulncheck
-        run: make audit
-```
+If the finding is in the standard library, bump the Go toolchain in `.tool-versions` and verify CI images pick up the new version.
 
 ## Pre-commit Hooks
 
-The project supports automatic linting and auditing before each commit using [pre-commit](https://pre-commit.com/).
-
-### Setup
-
-Install the pre-commit framework (one-time):
+`.pre-commit-config.yaml` wires `make lint` and `make audit` to run on every commit via the [pre-commit](https://pre-commit.com/) framework:
 
 ```bash
-# Using pip
-pip install pre-commit
-
-# Using Homebrew (macOS/Linux)
-brew install pre-commit
-
-# Using conda
-conda install -c conda-forge pre-commit
+pip install pre-commit   # or: brew install pre-commit
+pre-commit install       # installs .git/hooks/pre-commit
 ```
 
-Install the git hooks (one-time per repository clone):
+Once installed, they run automatically on `git commit`. To run them against the whole tree outside of a commit:
 
 ```bash
-pre-commit install
-```
-
-### Usage
-
-Once installed, pre-commit automatically runs before each `git commit`:
-
-```bash
-# Hooks run automatically
-git commit -m "Add new feature"
-
-# Output example:
-# make lint........................................Passed
-# make audit.......................................Passed
-# [main abc1234] Add new feature
-```
-
-If any hook fails, the commit is blocked until issues are fixed:
-
-```bash
-# Hooks detect issues
-git commit -m "Add feature with linting issues"
-
-# Output example:
-# make lint........................................Failed
-# - hook id: make-lint
-# - exit code: 1
-#
-# [golangci-lint output showing errors]
-
-# Fix issues, then commit again
-make lint-fix  # Auto-fix where possible
-git add .
-git commit -m "Add feature with linting issues"
-```
-
-### Bypassing Hooks
-
-Sometimes you need to commit without running hooks (e.g., for WIP commits):
-
-```bash
-# Skip all hooks
-git commit --no-verify -m "WIP: work in progress"
-
-# Skip specific hook
-SKIP=make-audit git commit -m "Skip audit for this commit"
-```
-
-### Manual Execution
-
-Run hooks manually without committing:
-
-```bash
-# Run all hooks on all files
 pre-commit run --all-files
-
-# Run specific hook
-pre-commit run make-lint --all-files
-
-# Run on staged files only (default)
-pre-commit run
 ```
 
-### Configuration
+!!! warning
+    Do not bypass the hooks with `git commit --no-verify`. CI runs the same checks, so a bypassed commit just turns into a failed pipeline. If a hook fails spuriously, fix the root cause — see [CLAUDE.md](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/CLAUDE.md) for the project-wide policy.
 
-The pre-commit configuration is defined in `.pre-commit-config.yaml`:
+## Tooling
 
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: make-lint
-        name: make lint
-        entry: make lint
-        language: system
-        pass_filenames: false
-        files: \.go$
-
-      - id: make-audit
-        name: make audit
-        entry: make audit
-        language: system
-        pass_filenames: false
-        always_run: true
-```
-
-The configuration uses local hooks that execute the existing `make lint` and `make audit` targets, ensuring consistency with CI and manual workflows.
-
-### Troubleshooting
-
-**Hook doesn't run on commit**
-
-- Verify installation: `pre-commit --version`
-- Reinstall hooks: `pre-commit install`
-- Check `.git/hooks/pre-commit` exists
-
-**Slow hook execution**
-
-- Use `SKIP=make-audit` to skip security scanning for quick commits
-- Run `make audit` separately or in CI
-- Pre-commit caches results for unchanged files
-
-**Hook fails but manual `make lint` passes**
-
-- Ensure working directory is clean: `git status`
-- Run `pre-commit run --all-files` to see full output
-- Check if pre-commit is using correct Go version
-
-## Common Issues
-
-### Fixing Format Issues
-
-Many formatting issues can be auto-fixed:
-
-```bash
-make lint-fix
-make fmt  # gofmt
-```
-
-### High Complexity Functions
-
-When gocyclo reports high complexity (>20):
-
-1. Consider breaking the function into smaller functions
-2. Extract complex conditional logic into separate functions
-3. Use table-driven approaches for complex switch/if statements
-
-### Hardcoded Credentials
-
-If gosec reports G101 (potential hardcoded credentials):
-
-- Review the code to ensure it's a false positive
-- If it's configuration (like default names), add a comment explaining it
-- For real credentials, use environment variables or Kubernetes Secrets
-
-### Cyclomatic Complexity
-
-Functions with complexity >20 should be refactored. Common patterns:
-
-- Extract helper functions
-- Use early returns to reduce nesting
-- Replace long if-else chains with switch statements or maps
-
-## Customizing Configuration
-
-To adjust linter settings, edit `.golangci.yml`:
-
-```yaml
-linters-settings:
-  gocyclo:
-    min-complexity: 20  # Adjust threshold
-
-  revive:
-    rules:
-      - name: function-length
-        arguments: [50, 0]  # Max 50 lines per function
-```
-
-## Tool Versions
-
-Tools are managed via Go modules (see `go.mod` tool section):
-
-```bash
-# Update tools
-go get github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-go get golang.org/x/vuln/cmd/govulncheck@latest
-go mod tidy
-
-# Or use the helper target
-make install-tools
-```
+Linter versions are pinned via Go's `tool` directive in `go.mod`; `make install-tools` rebuilds the local cache. The Go version is pinned in `.tool-versions` (asdf) — see the top-level `CLAUDE.md` for the `env -u GOROOT` note if you invoke Go commands directly.
 
 ## References
 
-- [golangci-lint documentation](https://golangci-lint.run/)
-- [govulncheck documentation](https://go.dev/blog/vuln)
-- [arch-go documentation](https://github.com/arch-go/arch-go)
-- [Kubernetes controller-runtime linting practices](https://github.com/kubernetes-sigs/controller-runtime/blob/master/.golangci.yml)
+- `.golangci.yml` — authoritative linter config
+- `arch-go.yml` — authoritative dependency rules
+- [golangci-lint v2 docs](https://golangci-lint.run/)
+- [arch-go](https://github.com/arch-go/arch-go)
+- [govulncheck](https://go.dev/blog/vuln)

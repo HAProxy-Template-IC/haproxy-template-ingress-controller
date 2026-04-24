@@ -76,10 +76,10 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 **Solution**:
 
 1. Check template syntax in HAProxyTemplateConfig
-2. Inspect the last rendered output via the debug server (see [Enable Debug Server](#enable-debug-server) below):
+2. Inspect the last rendered output via the debug server (see [Access the Debug Server](#access-the-debug-server) below):
 
    ```bash
-   curl http://localhost:6060/debug/vars/rendered
+   curl http://localhost:8080/debug/vars/rendered
    ```
 
 3. See [Templating Guide](./templating.md)
@@ -267,18 +267,17 @@ watchedResourcesIgnoreFields:
   - metadata.managedFields
   - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
 
-# Use cached store for secrets
+# Use cached store for secrets (fetches on-demand; TTL is auto-derived
+# from driftPreventionInterval, not user-configurable)
 watchedResources:
   secrets:
     store: on-demand
-    cacheTTL: 2m
 
 # Limit watch scope
 watchedResources:
   ingresses:
     namespace: production
-    labelSelector:
-      app: myapp
+    labelSelector: "app=myapp"
 ```
 
 ## Getting Help
@@ -333,19 +332,23 @@ controller:
 !!! note
     TRACE level produces extremely verbose output, including per-resource iteration logs, HTTP fetch retries, and test runner details. Use only when debugging specific issues.
 
-### Enable Debug Server
+### Access the Debug Server
+
+The Helm chart enables the debug server on port `8080` by default (same port as `/healthz`). Port-forward to reach it:
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --reuse-values -n haptic --set controller.debugPort=6060
-kubectl port-forward deployment/haptic-controller 6060:6060 -n haptic
+kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 ```
+
+To disable it in production, set `controller.debugPort: 0`. To move it to a dedicated port, set `controller.debugPort: <port>` (and update the forward accordingly).
 
 **Available endpoints**:
 
-- `/debug/vars` - Internal state
-- `/debug/vars/rendered` - Last rendered config
-- `/debug/pprof/` - Go profiling
+- `/debug/vars` — internal state (config, credentials metadata, rendered output, resources, events, uptime)
+- `/debug/vars/<name>` — a single variable; supports `?field={.jsonpath}` for subselection
+- `/debug/pprof/` — Go profiling
+
+See the [Debugging Guide](./operations/debugging.md) for the full endpoint catalogue.
 
 ## See Also
 

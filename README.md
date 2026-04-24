@@ -79,7 +79,7 @@ The project includes scripts for local development with kind:
 ./scripts/start-dev-env.sh
 
 # Rebuild and restart controller after code changes
-./scripts/start-dev-env.sh --restart
+./scripts/start-dev-env.sh restart
 
 # View controller logs
 ./scripts/start-dev-env.sh logs
@@ -109,17 +109,14 @@ pip install pre-commit
 # Install git hooks (one-time per repository clone)
 pre-commit install
 
-# Hooks now run automatically on git commit
-git commit -m "my changes"  # Runs make lint && make audit
-
-# Skip hooks if needed (for WIP commits)
-git commit --no-verify -m "WIP"
+# Hooks now run automatically on git commit (run `make lint` and `make audit`)
+git commit -m "my changes"
 
 # Run hooks manually on all files
 pre-commit run --all-files
 ```
 
-The hooks run `make lint` and `make audit` before each commit to catch issues early.
+Do not bypass the hooks with `--no-verify`; CI runs the same checks, so skipping them only defers the failure.
 
 ## Contributing
 

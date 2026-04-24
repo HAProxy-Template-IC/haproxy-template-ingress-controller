@@ -16,7 +16,7 @@ This is a pure infrastructure package with no domain dependencies - it can be us
 ## Installation
 
 ```go
-import "haptic/pkg/introspection"
+import "gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 ```
 
 ## Quick Start
@@ -27,7 +27,7 @@ package main
 import (
     "context"
     "time"
-    "haptic/pkg/introspection"
+    "gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 )
 
 func main() {

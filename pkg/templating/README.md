@@ -1,311 +1,165 @@
-# Template Engine Library
+# pkg/templating
 
-## Overview
+Pure template rendering library. Wraps a fork of [Scriggo](https://scriggo.com/) with a pre-compile-then-render lifecycle, HAProxy-specific filters and context helpers, and structured errors. Zero dependencies on other `pkg/` packages — this is a reusable library.
 
-This package provides template rendering using Scriggo, a Go-native template engine.
+Module path: `gitlab.com/haproxy-haptic/haptic`. The source is authoritative (`go doc ./pkg/templating`); this README is a short orientation. `docs/controller/docs/templating.md` covers the template *author's* side (syntax, filters, custom variables) — this page is for Go callers.
 
-**Key features:**
-
-- Pre-compilation at startup (fail-fast, microsecond rendering)
-- Go template syntax
-- Thread-safe concurrent rendering
-- Custom filters for HAProxy use cases
-- Dynamic include support
-
-## Quick Start
+## Minimal Usage
 
 ```go
-package main
-
 import (
     "context"
     "log"
-    "haptic/pkg/templating"
+
+    "gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-func main() {
-    templates := map[string]string{
-        "greeting": "Hello {{ name }}!",
-        "config":   "server {{ host }}:{{ port }}",
-    }
-
-    // EngineTypeScriggo is the default and recommended engine
-    engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-    if err != nil {
-        log.Fatalf("failed to create engine: %v", err)
-    }
-
-    output, err := engine.Render(context.Background(), "greeting", map[string]interface{}{
-        "name": "World",
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Println(output) // Output: Hello World!
+templates := map[string]string{
+    "greeting": "Hello {{ name }}!",
+    "config":   "server {{ host }}:{{ port }}",
 }
-```
 
-## API Reference
-
-### Constructor
-
-```go
-func New(engineType EngineType, templates map[string]string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (Engine, error)
-```
-
-Creates a new engine and compiles all templates. Returns `CompilationError` if any template has syntax errors.
-
-### Rendering
-
-```go
-func (e Engine) Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error)
-```
-
-Executes a template with the provided context. The `ctx` parameter controls cancellation and timeouts.
-
-### Helper Methods
-
-```go
-func (e Engine) HasTemplate(name string) bool      // Check existence
-func (e Engine) TemplateNames() []string           // List templates
-func (e Engine) TemplateCount() int                // Count templates
-func (e Engine) GetRawTemplate(name string) (string, error)  // Get source
-```
-
-### Error Types
-
-| Type | When Returned | Key Fields |
-|------|---------------|------------|
-| `CompilationError` | Template syntax error | `TemplateName`, `TemplateSnippet`, `Cause` |
-| `RenderError` | Runtime rendering failure | `TemplateName`, `Cause` |
-| `RenderTimeoutError` | Context deadline exceeded | `TemplateName`, `Cause` |
-| `TemplateNotFoundError` | Template doesn't exist | `TemplateName`, `AvailableTemplates` |
-| `UnsupportedEngineError` | Invalid engine type | `EngineType` |
-
-```go
-output, err := engine.Render(ctx, "mytemplate", context)
+engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 if err != nil {
-    var renderErr *templating.RenderError
-    if errors.As(err, &renderErr) {
-        log.Printf("Render failed for '%s': %v", renderErr.TemplateName, renderErr.Cause)
-    }
+    log.Fatal(err)   // compilation errors surface here, fail fast
+}
+
+out, err := engine.Render(context.Background(), "greeting",
+    map[string]interface{}{"name": "World"})
+```
+
+The engine is safe for concurrent use — compile once at startup, render concurrently from many goroutines.
+
+## `New` Signature
+
+```go
+func New(
+    engineType EngineType,
+    templates map[string]string,
+    customFilters map[string]FilterFunc,
+    customFunctions map[string]GlobalFunc,
+    postProcessorConfigs map[string][]PostProcessorConfig,
+) (Engine, error)
+```
+
+`EngineTypeScriggo` is the only implemented backend. `customFilters` plug into the pipe syntax (`{{ value | myFilter }}`), `customFunctions` into the call syntax (`{{ myFunc(value) }}`), and `postProcessorConfigs` chain per-template transformations (regex replace, or a Scriggo template whose `input` variable is the previously rendered output). Passing `nil` for any of the three is fine.
+
+## Engine Interface (Highlights)
+
+```go
+type Engine interface {
+    Render(ctx context.Context, name string, context map[string]interface{}) (string, error)
+
+    HasTemplate(name string) bool
+    TemplateNames() []string
+    TemplateCount() int
+    GetRawTemplate(name string) (string, error)
+
+    EnableTracing()
+    DisableTracing()
+    GetTraceOutput() string
+
+    EnableFilterDebug()
+    DisableFilterDebug()
 }
 ```
 
-## Custom Filters
+`ctx` controls rendering timeouts (`RenderTimeoutError` is returned on cancellation). Tracing produces a nested indented trace of every `render` / `render_glob` call; filter debug logs `sort_by` comparisons via `log/slog` at INFO level. Both are off by default and have negligible overhead when disabled — they're wired up to the `--trace-templates` and `--debug-filters` flags on `controller validate`.
 
-### Creating Custom Filters
-
-```go
-filters := map[string]templating.FilterFunc{
-    "to_upper": func(in interface{}, args ...interface{}) (interface{}, error) {
-        str, ok := in.(string)
-        if !ok {
-            return nil, fmt.Errorf("to_upper requires string input")
-        }
-        return strings.ToUpper(str), nil
-    },
-}
-
-engine, err := templating.New(templating.EngineTypeScriggo, templates, filters, nil, nil)
-```
-
-### Built-in Custom Filters
-
-| Filter | Description | Example |
-|--------|-------------|---------|
-| `b64decode` | Decode base64 | `{{ secret.data.password \| b64decode }}` |
-| `glob_match` | Filter by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
-| `group_by` | Group by JSONPath | `{{ items \| group_by("$.namespace") }}` |
-| `indent` | Indent each line by N spaces | `{{ render("snippet") \| indent(4) }}` |
-| `sort_by` | Sort by JSONPath | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
-| `debug` | Dump as JSON comment | `{{ routes \| debug("routes") }}` |
-
-**sort_by modifiers:**
-
-- `:desc` - Descending order
-- `:exists` - Sort by field presence
-- `| length` - Sort by collection/string length
-
-### Built-in Functions
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `fail(msg)` | Stop rendering with error | `{% fail("Missing required field") %}` |
-| `merge(dict, updates)` | Merge two maps | `{% config = merge(config, updates) %}` |
-| `keys(dict)` | Get sorted map keys | `{% for _, k := range keys(config) %}` |
-
-**pathResolver.GetPath()** - Context method for file path resolution:
-
-```jinja2
-{{ pathResolver.GetPath("host.map", "map") }}     {# maps/host.map #}
-{{ pathResolver.GetPath("cert.pem", "cert") }}    {# ssl/cert.pem #}
-{{ pathResolver.GetPath("error.http", "file") }}  {# files/error.http #}
-```
-
-## Template Syntax (Scriggo)
-
-Scriggo uses Go template syntax. See [Scriggo Documentation](https://scriggo.com/templates) for complete reference.
-
-**Variables:**
+## Error Types
 
 ```go
-{{ name }}
-{{ user.name }}
-{{ items[0] }}
+var compErr *templating.CompilationError     // syntax error; has TemplateName + first 200 chars via .TemplateSnippet
+var renderErr *templating.RenderError        // runtime failure during Render
+var timeoutErr *templating.RenderTimeoutError // ctx deadline exceeded
+var notFoundErr *templating.TemplateNotFoundError // unknown name; has .AvailableTemplates
+var engineErr *templating.UnsupportedEngineError  // invalid EngineType
 ```
 
-**Functions (both function call and pipe syntax are supported):**
+Always check with `errors.As`; the wrapped `.Cause` carries the underlying Scriggo diagnostic.
 
-```go
-{{ strip(value) }}
-{{ coalesce(value, "default") }}
-{{ value | fallback("default") }}
-{{ items | join(", ") }}
-```
+## What Ships Inside
 
-**Control Structures:**
+### Filters (pipe syntax, `{{ v | filter(args) }}`)
 
-```go
-{% if condition %}...{% end %}
-{% for _, item := range items %}...{% end %}
-```
+`b64decode`, `glob_match`, `group_by`, `indent`, `sort_by` (supports `:desc`, `:exists`, `| length` modifiers), `debug`, `toJSON`, `strip`/`trim`.
 
-**Variable Declaration:**
+### Functions (call syntax, `{{ fn(args) }}`)
 
-```go
-{% var count = 0 %}
-{% count = count + 1 %}
-```
+Selection: `fallback`, `coalesce`, `fail`, `merge`, `keys`, `sort_strings`, `sanitize_regex`, `semver_gte`, `toLower`, `tostring`, plus Scriggo's standard library.
 
-**Whitespace Control:** Use `{%-` and `-%}` to strip whitespace.
+Canonical reference: `pkg/templating/filter_names.go`.
 
-## Caching Expensive Computations
+### Runtime Context Variables
 
-Use `shared.ComputeIfAbsent()` for compute-once patterns:
+Scriggo needs to know the *type* of each runtime variable at compile time even though values arrive at `Render`. The library declares these with nil-pointer typedefs in `buildScriggoGlobals` — the `(*T)(nil)` pattern — so callers just pass values in the render context:
 
-```go
-{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() interface{} {
-    return analyzeRoutes(resources)
-}) -%}
-```
+| Variable | Type | Purpose |
+|----------|------|---------|
+| `resources` | `*map[string]ResourceStore` | Watched Kubernetes resources (`.List`, `.Fetch`, `.GetSingle`) |
+| `pathResolver` | `*PathResolver` | `pathResolver.GetPath(name, kind)` for map / SSL / file / crt-list paths |
+| `currentConfig` | `*string` | Last deployed HAProxy config, used by slot-preserving templates |
+| `templateSnippets` | `*[]string` | Names of available snippets; useful with `render_glob` |
+| `shared` | `*SharedContext` | Per-render cache; `shared.ComputeIfAbsent(key, fn)` memoises expensive work |
+| `http` | `*HTTPFetcher` | `http.Fetch(url, opts)` for HTTP resources |
+| `extraContext` | `*map[string]interface{}` | User-defined variables from `templatingSettings.extraContext` |
 
-`ComputeIfAbsent` is thread-safe and guarantees exactly-once computation. Use `shared.Get(key)` for read-only access to previously computed values.
-
-## Template Tracing
-
-```go
-engine.EnableTracing()
-output, _ := engine.Render(context.Background(), "template", ctx)
-trace := engine.GetTraceOutput()
-// Rendering: haproxy.cfg
-// Completed: haproxy.cfg (0.007ms)
-engine.DisableTracing()
-```
-
-## Filter Debug Logging
-
-```go
-engine.EnableFilterDebug()
-// Logs sort_by comparisons with values and types
-output, _ := engine.Render(context.Background(), "template", ctx)
-engine.DisableFilterDebug()
-```
+To add a new runtime variable, declare it in `buildScriggoGlobals` with a nil pointer of the right type, then pass the value via the render context map — there's a walkthrough in `pkg/templating/CLAUDE.md`.
 
 ## Post-Processing
 
-Post-processors transform rendered output before it is returned. They run in sequence — each receives the previous processor's output.
-
-**Available types:**
-
-| Type | Description |
-|------|-------------|
-| `regex_replace` | Line-by-line regex find/replace (with fast-path for indentation normalization) |
-| `template` | Scriggo template transformation with access to the rendered output via `input` variable |
-
-**Configuration example:**
+After rendering, a template can pass through a chain of post-processors — useful for fixing up indentation or running a second Scriggo pass with access to the first pass's output:
 
 ```yaml
 postProcessing:
-  - type: template
-    params:
-      source: |
-        {%- if strings_contains(input, "__PLACEHOLDER__") -%}
-        {{ replace(input, "__PLACEHOLDER__", "computed_value") }}
-        {%- else -%}
-        {{ input }}
-        {%- end -%}
   - type: regex_replace
     params:
       pattern: "^[ ]+"
       replace: "  "
+  - type: template
+    params:
+      source: |
+        {%- if strings_contains(input, "__PLACEHOLDER__") -%}
+        {{ replace(input, "__PLACEHOLDER__", "computed") }}
+        {%- else -%}
+        {{ input }}
+        {%- end -%}
 ```
 
-The `template` post-processor compiles its source at engine initialization (fail-fast on syntax errors) and has access to all standard Scriggo builtins (`regexp`, `replace`, `len`, `tostring`, `strings_contains`, etc.).
+The `template` post-processor compiles at engine init (so syntax errors fail fast) and receives the rendered output as `input`.
 
-## Best Practices
+## Design Rule: Resource-Agnostic
 
-**1. Pre-compile at startup:**
+This package intentionally does **not** understand Kubernetes resources. There is no `lookup_service_port`, no `is_ingress`, no Gateway API helpers — those would turn the template engine into a policy layer for specific resource shapes. Users write resource-specific logic as Scriggo macros inside their own template libraries, and the engine stays generic enough to template anything. If you find yourself wanting to add a function that navigates a specific resource's fields, write a macro instead.
 
-```go
-// Good - compile once, reuse
-engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-for _, ctx := range contexts {
-    output, _ := engine.Render(context.Background(), "template", ctx)
-}
+## Scriggo Fork
 
-// Bad - recompiles every time
-for _, ctx := range contexts {
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-    output, _ := engine.Render(context.Background(), "template", ctx)
-}
+The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) via a `replace` directive in `go.mod`. The fork adds:
+
+- A native `{% include "..." %}` statement for compile-time includes.
+- A `callNative` fast path that eliminates `reflect.Value.Call` for the haptic function signatures — the hot render loop is effectively zero-allocation after warm-up.
+- Nil-safety fixes around `reflect.Value.Interface()` for dynamic includes.
+
+Nothing in here expects vanilla Scriggo; don't swap the `replace` out without running the template benchmarks.
+
+## Testing
+
+```bash
+go test ./pkg/templating/...          # unit tests
+go test ./pkg/templating/... -race    # race detector (engine is concurrent-safe)
+go test ./pkg/templating/... -bench=. # benchmarks
 ```
 
-**2. Check compilation errors early:**
+The benchmarks in `benchmark_pool_test.go` and `benchmark_test.go` are the authoritative numbers; don't trust ad-hoc "~X µs per render" claims in prose documentation.
 
-```go
-engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-if err != nil {
-    var compErr *templating.CompilationError
-    if errors.As(err, &compErr) {
-        log.Fatal("compilation failed", "template", compErr.TemplateName)
-    }
-}
-```
+## See Also
 
-**3. Use coalesce for optional values (Scriggo):**
+- `pkg/templating/CLAUDE.md` — runtime-variable pattern, adding new filters, Scriggo fork notes
+- `docs/controller/docs/templating.md` — template-author reference (syntax, filters, context variables)
+- `pkg/controller/rendercontext` — builds the render context from watched stores and HTTP resources
+- `pkg/controller/renderer` — event adapter that wires this engine into the reconciliation pipeline
+- [Scriggo Templates](https://scriggo.com/templates) — base syntax reference
 
-```go
-timeout connect {{ coalesce(timeout_connect, "5s") }}
-```
+## License
 
-**4. Break large templates into pieces:**
-
-```go
-templates := map[string]string{
-    "haproxy.cfg": `{{ render "global" }}{{ render "backends" }}`,
-    "global":      "global\n    daemon",
-    "backends":    "...",
-}
-```
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Compilation error | Check template syntax, verify filter names |
-| Template not found | Verify name spelling, use `HasTemplate()` |
-| Empty output | Check context data, verify conditionals |
-| Slow rendering | Reuse engine instance, simplify loops |
-
-## Performance
-
-- **Compilation:** 1-10ms per template
-- **Rendering:** 10-100µs per typical template
-- **Thread-safe:** Safe for concurrent use from multiple goroutines
-
-## Related Documentation
-
-- [Scriggo Documentation](https://scriggo.com/templates) - Template engine documentation
-- [Templating Guide](../../docs/controller/docs/templating.md) - User documentation
+Apache-2.0 — see root `LICENSE`.

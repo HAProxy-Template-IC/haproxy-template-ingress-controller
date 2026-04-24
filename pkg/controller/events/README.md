@@ -14,7 +14,7 @@ This package defines all event types used by the controller for component coordi
 ## Installation
 
 ```go
-import "haptic/pkg/controller/events"
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 ```
 
 ## Event Categories
@@ -31,7 +31,7 @@ const (
 )
 ```
 
-- **ConfigParsedEvent** - ConfigMap parsed successfully
+- **ConfigParsedEvent** - HAProxyTemplateConfig CRD parsed successfully
 - **ConfigValidationRequest** - Scatter-gather validation request
 - **ConfigValidationResponse** - Validator response
 - **ConfigValidatedEvent** - All validators passed
@@ -126,7 +126,7 @@ const (
 ### Publishing Events
 
 ```go
-import "haptic/pkg/controller/events"
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 
 // Create event using constructor (performs defensive copying)
 event := events.NewConfigParsedEvent(config, "v1")
@@ -254,7 +254,7 @@ func NewMyNewEvent(field string, data []string) *MyNewEvent {
 Most events include:
 
 - **Timestamp** - When the event occurred
-- **Version** - Resource version (for ConfigMap/Secret events)
+- **Version** - Resource version (for CRD/Secret events)
 - **Errors** - Error messages (for failure events)
 
 ## Examples

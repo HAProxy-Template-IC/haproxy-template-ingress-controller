@@ -9,7 +9,7 @@ Provides utilities for initializing and configuring structured logging throughou
 ## Installation
 
 ```go
-import "haptic/pkg/core/logging"
+import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ import "haptic/pkg/core/logging"
 ```go
 import (
     "log/slog"
-    "haptic/pkg/core/logging"
+    "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 )
 
 // Initialize logger

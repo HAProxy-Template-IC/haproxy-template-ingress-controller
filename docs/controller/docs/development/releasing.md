@@ -19,34 +19,21 @@ Both use [Semantic Versioning](https://semver.org/) with support for pre-release
 
 ## CHANGELOG Conventions
 
-A single `CHANGELOG.md` tracks changes for both controller and chart. Use prefixes to indicate scope:
+There are two separate changelog files, one per release artifact:
 
-| Prefix | When to Use |
-|--------|-------------|
-| `[Controller]` | Changes to controller code only |
-| `[Chart]` | Changes to Helm chart only (values, templates) |
-| *(no prefix)* | Changes affecting both controller and chart |
+| File | Covers |
+|------|--------|
+| `CHANGELOG.md` | Controller-facing changes (CLI, metrics, CRD behaviour, controller bug fixes) |
+| `charts/haptic/CHANGELOG.md` | Helm chart changes (values, templates, chart defaults) |
 
-**Example:**
-
-```markdown
-## [0.1.0] - 2025-01-15
-
-### Added
-- [Chart] Default SSL certificate support via Helm values
-- [Controller] Leader election for high availability
-- New CRD field for custom annotations  <!-- affects both -->
-
-### Changed
-- [Chart] Default replica count changed from 1 to 2
-```
+Changes that touch both belong in both files. Each file follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format with an `## [Unreleased]` header at the top; release scripts promote that header to a versioned entry.
 
 ## Prerequisites
 
 Before releasing:
 
 1. **Clean working directory** - All changes committed
-2. **CHANGELOG.md updated** - Release notes documented
+2. **Relevant changelog updated** - `CHANGELOG.md` for controller releases, `charts/haptic/CHANGELOG.md` for chart-only releases
 3. **All tests passing** - CI pipeline green on main branch
 4. **Documentation updated** - Any new features documented
 
@@ -75,15 +62,16 @@ Prepare the changelog for release:
 ### Step 2: Run the Release Script
 
 ```bash
-./scripts/release-controller.sh <version>
+make release-controller VERSION=<version>
+# or directly: ./scripts/release-controller.sh <version>
 ```
 
 The script will:
 
 - Validate version format (SemVer)
-- Check CHANGELOG.md has the version entry
+- Check `CHANGELOG.md` has the version entry
 - Update the `VERSION` file
-- Update `Chart.yaml` appVersion and image annotation
+- Update `Chart.yaml` `appVersion` and image annotation
 - Create a release commit
 
 ### Step 3: Create and Merge Release MR
@@ -150,27 +138,28 @@ When a `v*` tag is pushed, CI will:
 
     Controller releases automatically update the chart's `appVersion`.
 
-### Step 1: Update CHANGELOG.md
+### Step 1: Update the chart CHANGELOG
 
-Add a `## [<version>]` section with chart changes prefixed by `[Chart]`:
+Move `## [Unreleased]` entries into a versioned section in `charts/haptic/CHANGELOG.md`:
 
 ```markdown
 ## [0.2.0] - 2025-01-20
 ### Changed
-- [Chart] Updated default resource limits
+- Updated default resource limits
 ```
 
 ### Step 2: Run the Release Script
 
 ```bash
-./scripts/release-chart.sh <version>
+make release-chart CHART_VERSION=<version>
+# or directly: ./scripts/release-chart.sh <version>
 ```
 
 The script will:
 
 - Validate version format (SemVer)
-- Check CHANGELOG.md has the version entry
-- Update `Chart.yaml` version
+- Check `charts/haptic/CHANGELOG.md` has the version entry
+- Update `Chart.yaml` `version`
 - Create a release commit
 
 ### Step 3: Create and Merge Release MR

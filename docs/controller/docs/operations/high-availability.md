@@ -27,19 +27,22 @@ The controller supports running multiple replicas for high availability using le
 Leader election is **enabled by default** when deploying with 2+ replicas via Helm:
 
 ```yaml
-# values.yaml (defaults)
+# values.yaml (chart defaults)
 replicaCount: 2  # Run 2 replicas for HA
 
 controller:
   config:
     controller:
-      leader_election:
+      leaderElection:
         enabled: true
-        lease_name: haptic-leader
-        lease_duration: 60s    # Failover happens within this time
-        renew_deadline: 15s    # Leader tries to renew for this long
-        retry_period: 5s       # Interval between renewal attempts
+        leaseName: ""         # Defaults to the Helm release fullname
+        leaseDuration: 15s    # Max time followers wait before taking over
+        renewDeadline: 10s    # Leader retries renewal for this long
+        retryPeriod: 2s       # Interval between renewal attempts
 ```
+
+!!! note
+    The chart defaults above are more aggressive than the bare CRD defaults (60s / 15s / 5s) to give faster failover in typical Kubernetes environments.
 
 ### Disable Leader Election
 
@@ -52,7 +55,7 @@ replicaCount: 1
 controller:
   config:
     controller:
-      leader_election:
+      leaderElection:
         enabled: false  # Disabled in single-replica mode
 ```
 
@@ -60,29 +63,29 @@ controller:
 
 The timing parameters control failover speed and tolerance:
 
-| Parameter | Default | Purpose | Recommendations |
-|-----------|---------|---------|-----------------|
-| `lease_duration` | 60s | Max time followers wait before taking over | Increase for flaky networks (120s) |
-| `renew_deadline` | 15s | How long leader retries before giving up | Should be < `lease_duration` (1/4 ratio) |
-| `retry_period` | 5s | Interval between leader renewal attempts | Should be < `renew_deadline` (1/3 ratio) |
+| Parameter | Chart default | Purpose | Recommendations |
+|-----------|---------------|---------|-----------------|
+| `leaseDuration` | 15s | Max time followers wait before taking over | Increase for flaky networks (60s+) |
+| `renewDeadline` | 10s | How long leader retries before giving up | Must be < `leaseDuration` |
+| `retryPeriod` | 2s | Interval between leader renewal attempts | Should be < `renewDeadline` |
 
 **Failover time calculation:**
 
 ```
-Worst-case failover = lease_duration + renew_deadline
-Default failover    = 60s + 15s = 75s (but typically 15-20s)
+Worst-case failover = leaseDuration + renewDeadline
+Chart default       = 15s + 10s = 25s (typically faster)
 ```
 
-When the leader fails, followers must wait for the lease to expire before they can acquire it. During this window, HAProxy continues serving traffic with its last known configuration -- no traffic is dropped, but new resource changes are not processed until a new leader is elected. The typical failover (15-20s) is faster than worst-case because the leader usually fails mid-lease rather than right after renewal.
+When the leader fails, followers must wait for the lease to expire before they can acquire it. During this window, HAProxy continues serving traffic with its last known configuration — no traffic is dropped, but new resource changes are not processed until a new leader is elected.
 
 **Clock skew tolerance:**
 
 ```
-Skew tolerance = lease_duration - renew_deadline
-Default        = 60s - 15s = 45s (handles up to 4x clock differences)
+Skew tolerance = leaseDuration - renewDeadline
+Chart default  = 15s - 10s = 5s
 ```
 
-If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they are leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance.
+If clock skew exceeds this tolerance, brief split-brain may occur where two replicas both believe they are leader. NTP-synchronized nodes typically have sub-second skew, well within the default tolerance. In environments with looser time sync, raise `leaseDuration` (and `renewDeadline` proportionally).
 
 ## Deployment
 
@@ -123,13 +126,18 @@ These are automatically configured in the Helm chart's ClusterRole.
 
 ### Check Current Leader
 
+The Lease resource is named after the Helm release (e.g. `haptic` for `helm install haptic ...`). Override by setting `controller.config.controller.leaderElection.leaseName`.
+
 ```bash
-# View Lease resource
-kubectl get lease -n haptic haptic-leader -o yaml
+# List leases in the release namespace
+kubectl get lease -n haptic
+
+# View Lease resource (replace <release> with your Helm release name)
+kubectl get lease -n haptic <release> -o yaml
 
 # Output shows current leader:
 # spec:
-#   holderIdentity: haptic-7d9f8b4c6d-abc12
+#   holderIdentity: <release>-controller-7d9f8b4c6d-abc12
 ```
 
 ### View Leadership Status in Logs
@@ -139,7 +147,7 @@ kubectl get lease -n haptic haptic-leader -o yaml
 kubectl logs -n haptic deployment/haptic-controller | grep -E "leader|election"
 
 # Example output:
-# level=INFO msg="Leader election started" identity=pod-abc12 lease=haptic-leader
+# level=INFO msg="Leader election started" identity=pod-abc12 lease=<release>
 # level=INFO msg="Became leader: pod-abc12" identity=pod-abc12
 ```
 
@@ -264,7 +272,7 @@ Check these areas in order of likelihood:
    kubectl logs -n haptic <pod-name> | grep "lease renew\|deadline"
    ```
 
-   **Solution:** Increase `lease_duration` and `renew_deadline`
+   **Solution:** Increase `leaseDuration` and `renewDeadline`
 
 3. **Node issues** - Leader pod node experiencing problems:
 
@@ -304,7 +312,7 @@ kubectl logs -n haptic <leader-pod> | grep "Started.*Deployer\|DeploymentSchedul
 
 **Development:**
 
-- 1 replica with `leader_election.enabled: false`
+- 1 replica with `leaderElection.enabled: false`
 
 **Staging:**
 
@@ -395,7 +403,7 @@ To migrate an existing single-replica deployment to HA:
    controller:
      config:
        controller:
-         leader_election:
+         leaderElection:
            enabled: true
    ```
 

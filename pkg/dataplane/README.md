@@ -1,746 +1,169 @@
-# HAProxy Dataplane Sync Library
+# pkg/dataplane
 
-A Go library for synchronizing HAProxy configurations via the Dataplane API. Provide an endpoint and a desired configuration, and it ensures HAProxy matches that configuration.
+Pure library for synchronising HAProxy configurations over the [Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Given a target endpoint and a desired config string (plus optional auxiliary files), the library brings HAProxy into that state using fine-grained operations that avoid reloads whenever possible.
 
-## Features
+Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go doc ./pkg/dataplane`); this README is a short map.
 
-- **Minimal API**: Provide an endpoint and desired config string
-- **Connection Reuse**: Client-based API for connection management
-- **Two-Phase Validation**: Syntax validation (client-native parser) + semantic validation (haproxy binary)
-- **Fine-grained Sync**: Uses granular operations (create/update/delete servers, backends, ACLs, etc.)
-- **Automatic Fallback**: Falls back to raw config push if fine-grained sync fails
-- **Conflict Resolution**: Retries on version conflicts (409 errors)
-- **Structured Results**: Returns information about applied changes
-- **Reload Optimization**: Uses runtime API when possible to avoid HAProxy reloads
-- **Detailed Errors**: Error messages with hints for troubleshooting
+## What the Library Does
 
-## Installation
+1. Parse the desired config with [`haproxytech/client-native`](https://github.com/haproxytech/client-native) (syntax).
+2. Optionally run `haproxy -c` on it (semantics) — see `validator.go`.
+3. Fetch the current config from the Dataplane API, compare section-by-section, and emit a minimal list of create/update/delete operations.
+4. Execute the operations inside a Dataplane API transaction, falling back to a raw config push if fine-grained sync hits a non-recoverable error.
+5. Sync auxiliary files (maps, SSL certs, general files, crt-lists) in three phases — pre-config, config, post-config — so the main config never references a file that doesn't exist yet.
+6. Retry on `409` version conflicts and surface structured errors (`ValidationError`, `ParseError`, `ConflictError`, etc.).
 
-```bash
-go get haptic/pkg/dataplane
-```
-
-## Quick Start
-
-### Simple (One-Off Operations)
-
-For quick scripts or one-off operations, use the convenience functions:
+## Top-level API
 
 ```go
-package main
-
 import (
     "context"
     "log"
 
-    "haptic/pkg/dataplane"
+    "gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
-func main() {
-    endpoint := dataplane.Endpoint{
-        URL:      "http://haproxy:5555/v2",
-        Username: "admin",
-        Password: "secret",
-    }
-
-    desiredConfig := `
-global
-    daemon
-    maxconn 4096
-
-defaults
-    mode http
-    timeout client 30s
-    timeout server 30s
-    timeout connect 5s
-
-backend web
-    balance roundrobin
-    server web1 192.168.1.10:80 check
-    server web2 192.168.1.11:80 check
-`
-
-    // Convenience function - creates client internally
-    result, err := dataplane.Sync(context.Background(), endpoint, desiredConfig, nil, nil)
-    if err != nil {
-        log.Fatalf("sync failed: %v", err)
-    }
-
-    log.Printf("Applied %d operations in %v\n", len(result.AppliedOperations), result.Duration)
+endpoint := &dataplane.Endpoint{
+    URL:      "http://haproxy:5555/v3",
+    Username: "admin",
+    Password: "secret",
 }
+
+// One-shot convenience functions (create client + operation + close).
+result, err := dataplane.Sync(ctx, endpoint, desiredConfig, auxFiles, nil)
+diff,   err := dataplane.DryRun(ctx, endpoint, desiredConfig)
+diff,   err := dataplane.Diff(ctx, endpoint, desiredConfig)
 ```
 
-### Production (Reusable Client)
+`Endpoint` is always passed as a pointer. `auxFiles` and `opts` are both `nil`-safe. `DryRun` and `Diff` are equivalent — both compare without applying.
 
-For production use with multiple operations, create a client explicitly:
-
-```go
-func main() {
-    endpoint := dataplane.Endpoint{
-        URL:      "http://haproxy:5555/v2",
-        Username: "admin",
-        Password: "secret",
-    }
-
-    // Create client once, reuse for multiple operations
-    client, err := dataplane.NewClient(context.Background(), endpoint)
-    if err != nil {
-        log.Fatalf("failed to create client: %v", err)
-    }
-    defer client.Close()
-
-    // Reuse client for multiple sync operations (efficient!)
-    result1, err := client.Sync(ctx, config1, nil, nil)
-    result2, err := client.Sync(ctx, config2, nil, nil)
-    diff, err := client.DryRun(ctx, config3)
-}
-```
-
-## Usage Examples
-
-### Client Management
-
-**Production Pattern (Recommended):**
-
-```go
-// Create client once
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-// Reuse for multiple operations
-result, err := client.Sync(ctx, desiredConfig, nil, nil)
-```
-
-**Simple Pattern (Quick Scripts):**
-
-```go
-// For one-off operations - creates client internally
-result, err := dataplane.Sync(ctx, endpoint, desiredConfig, nil, nil)
-```
-
-### Custom Options
-
-Configure sync behavior with options:
+For anything more than a single call, create a `Client` once and reuse it:
 
 ```go
 client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-opts := &dataplane.SyncOptions{
-    MaxRetries:       5,                 // Retry 409 conflicts up to 5 times
-    Timeout:          3 * time.Minute,   // Overall timeout
-    ContinueOnError:  false,             // Stop on first error
-    FallbackToRaw:    true,              // Fall back to raw push on errors
-    RawPushThreshold: 100,               // Use raw push when changes exceed this count
-}
-
-result, err := client.Sync(ctx, desiredConfig, nil, opts)
-```
-
-**Options explained:**
-
-- `MaxRetries`: How many times to retry on 409 version conflicts (default: 3)
-- `Timeout`: Overall timeout for the sync operation (default: 2 minutes)
-- `ContinueOnError`: Continue applying operations even if some fail (default: false)
-- `FallbackToRaw`: Automatically fall back to raw config push on non-recoverable errors (default: true)
-- `RawPushThreshold`: Trigger raw config push when change count exceeds this value (0 = disabled)
-
-### Dry Run (Preview Changes)
-
-Preview what changes would be applied without actually applying them:
-
-```go
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-diff, err := client.DryRun(ctx, desiredConfig)
 if err != nil {
     log.Fatal(err)
 }
-
-if !diff.HasChanges {
-    fmt.Println("No changes needed")
-    return
-}
-
-fmt.Printf("Would apply %d operations:\n", len(diff.PlannedOperations))
-for _, op := range diff.PlannedOperations {
-    fmt.Printf("  - %s %s '%s'\n", op.Type, op.Section, op.Resource)
-}
-```
-
-### Detailed Diff
-
-Get detailed information about configuration differences:
-
-```go
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
 defer client.Close()
 
-diff, err := client.Diff(ctx, desiredConfig)
-if err != nil {
-    log.Fatal(err)
-}
-
-fmt.Printf("Backends added: %v\n", diff.Details.BackendsAdded)
-fmt.Printf("Backends modified: %v\n", diff.Details.BackendsModified)
-fmt.Printf("Servers deleted: %v\n", diff.Details.ServersDeleted)
+result, err := client.Sync(ctx, desiredConfig, auxFiles, opts)
+diff,   err := client.DryRun(ctx, desiredConfig)
 ```
 
-### Inspecting Results
-
-The sync result contains detailed information:
-
-```go
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-result, err := client.Sync(ctx, desiredConfig, nil, nil)
-if err != nil {
-    log.Fatal(err)
-}
-
-// Check applied operations
-for _, op := range result.AppliedOperations {
-    fmt.Printf("%s %s '%s': %s\n", op.Type, op.Section, op.Resource, op.Description)
-}
-
-// Check reload status
-if result.ReloadTriggered {
-    fmt.Printf("HAProxy reloaded with ID: %s\n", result.ReloadID)
-}
-
-// Check sync mode (fine-grained vs raw push)
-if result.UsedRawPush() {
-    fmt.Printf("Warning: Used raw config push (mode: %s)\n", result.SyncMode)
-}
-```
-
-### Error Handling
-
-The library provides detailed, actionable error messages:
-
-```go
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-result, err := client.Sync(ctx, desiredConfig, nil, nil)
-if err != nil {
-    // Check for specific error types
-    var syncErr *dataplane.SyncError
-    if errors.As(err, &syncErr) {
-        fmt.Printf("Failed at stage: %s\n", syncErr.Stage)
-        fmt.Printf("Error: %s\n", syncErr.Message)
-        fmt.Println("\nTroubleshooting hints:")
-        for _, hint := range syncErr.Hints {
-            fmt.Printf("  • %s\n", hint)
-        }
-    }
-
-    return
-}
-```
-
-### Context and Timeout
-
-Use context for cancellation and timeouts:
-
-```go
-// Timeout via context
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-result, err := client.Sync(ctx, desiredConfig, nil, nil)
-
-// Or timeout via options (overrides context timeout)
-opts := &dataplane.SyncOptions{
-    Timeout: 1 * time.Minute,
-}
-result, err := client.Sync(ctx, desiredConfig, nil, opts)
-```
-
-### Configuration Validation
-
-Validate HAProxy configurations before deployment with two-phase validation:
-
-```go
-import (
-    "haptic/pkg/dataplane"
-)
-
-func main() {
-    // Main HAProxy configuration
-    mainConfig := `
-global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5000ms
-    timeout client 50000ms
-    timeout server 50000ms
-
-frontend http-in
-    bind :80
-    http-request set-header X-Backend %[base,map(maps/hosts.map,default)]
-    default_backend servers
-
-backend servers
-    server s1 127.0.0.1:8080
-`
-
-    // Auxiliary files (maps, certificates, error pages)
-    auxFiles := &dataplane.AuxiliaryFiles{
-        MapFiles: []dataplane.MapFile{
-            {
-                Path:    "maps/hosts.map",
-                Content: "example.com backend1\ntest.com backend2\n",
-            },
-        },
-    }
-
-    // Validate configuration
-    err := dataplane.ValidateConfiguration(mainConfig, auxFiles)
-    if err != nil {
-        var valErr *dataplane.ValidationError
-        if errors.As(err, &valErr) {
-            fmt.Printf("Validation failed in %s phase: %s\n", valErr.Phase, valErr.Message)
-        }
-        return
-    }
-
-    fmt.Println("Configuration is valid!")
-}
-```
-
-**Two-Phase Validation:**
-
-1. **Phase 1 - Syntax Validation**: Uses client-native parser to validate configuration structure and syntax
-2. **Phase 2 - Semantic Validation**: Runs `haproxy -c -f config` to perform full semantic validation
-
-The validator writes auxiliary files to the actual HAProxy directories on disk (with mutex locking to prevent concurrent writes) to validate file references (maps, certificates, error pages) exactly as the Dataplane API does.
-
-**ValidationError Fields:**
-
-- `Phase`: Either "syntax" or "semantic" indicating which phase failed
-- `Message`: Human-readable error description
-- `Err`: Wrapped underlying error for detailed inspection
-
-### Path Requirements for Auxiliary Files
-
-All auxiliary file references in HAProxy configuration **must use absolute paths** matching the configured validation paths.
-
-**Required Configuration:**
-
-Validation paths must match the HAProxy Dataplane API server's resource configuration. These are configured via the `validation` section in the controller ConfigMap:
-
-```yaml
-validation:
-  maps_dir: /etc/haproxy/maps
-  ssl_certs_dir: /etc/haproxy/certs
-  general_storage_dir: /etc/haproxy/general
-  config_file: /etc/haproxy/haproxy.cfg
-```
-
-**Supported Paths:**
-
-✅ `/etc/haproxy/maps/host.map` - absolute path to map file
-✅ `/etc/haproxy/general/503.http` - absolute path to general file
-✅ `/etc/haproxy/certs/server.pem` - absolute path to SSL certificate
-
-**Example:**
-
-```go
-config := `
-frontend http-in
-    bind :80
-    http-request set-header X-Backend %[base,map(/etc/haproxy/maps/host.map,default)]
-    errorfile 503 /etc/haproxy/general/503.http
-`
-
-auxFiles := &AuxiliaryFiles{
-    MapFiles: []auxiliaryfiles.MapFile{
-        {Path: "/etc/haproxy/maps/host.map", Content: "example.com backend1\n"},
-    },
-    GeneralFiles: []auxiliaryfiles.GeneralFile{
-        {Filename: "503.http", Content: "HTTP/1.0 503 Service Unavailable\n"},
-    },
-}
-
-paths := ValidationPaths{
-    MapsDir:           "/etc/haproxy/maps",
-    SSLCertsDir:       "/etc/haproxy/certs",
-    GeneralStorageDir: "/etc/haproxy/general",
-    ConfigFile:        "/etc/haproxy/haproxy.cfg",
-}
-
-err := ValidateConfiguration(config, auxFiles, paths)
-```
-
-**Validation Behavior:**
-
-- Validation writes files directly to the configured paths on disk
-- A mutex ensures only one validation runs at a time to prevent concurrent writes
-- Validation directories are cleared before each validation to ensure clean state
-- This approach matches exactly how the HAProxy Dataplane API validates configurations
-
-### Feature Detection with Capabilities
-
-The library provides capability detection for HAProxy version-specific features:
-
-```go
-import "haptic/pkg/dataplane"
-
-// When using DataPlane API client
-client, err := dataplane.NewClient(ctx, endpoint)
-if client.Clientset().Capabilities().SupportsCrtList {
-    // Use CRT-list storage (v3.2+ only)
-}
-
-// When using local HAProxy binary (e.g., CLI validation)
-localVersion, err := dataplane.GetLocalVersion(ctx)
-if err == nil {
-    caps := dataplane.CapabilitiesFromVersion(localVersion)
-    if caps.SupportsCrtList {
-        // Configure CRT-list based paths
-    }
-}
-```
-
-**Available Capabilities:**
-
-| Capability | Description | HAProxy Version |
-|------------|-------------|-----------------|
-| `SupportsCrtList` | CRT-list file storage | v3.2+ |
-| `SupportsMapStorage` | Map file storage | v3.1+ |
-| `SupportsGeneralStorage` | General file storage | v3.0+ |
-| `SupportsHTTP2` | HTTP/2 protocol | v3.0+ |
-| `SupportsQUIC` | QUIC/HTTP3 protocol | v3.2+ |
-| `SupportsAdvancedACLs` | Advanced ACL features | v3.1+ |
-| `SupportsRuntimeMaps` | Runtime map updates | v3.0+ |
-| `SupportsRuntimeServers` | Runtime server updates | v3.0+ |
-
-## How It Works
-
-The library performs the following steps:
-
-1. **Fetch Current Config**: Retrieves the current HAProxy configuration from the Dataplane API
-2. **Parse Configurations**: Parses both current and desired configs into structured objects
-3. **Compare**: Generates fine-grained operations (create server, delete ACL, update backend, etc.)
-4. **Execute**: Applies operations with automatic retry on version conflicts (409 errors)
-5. **Fallback**: If fine-grained sync fails, automatically falls back to raw config push
-6. **Results**: Returns detailed information about what was changed
-
-### Fine-Grained vs Raw Sync
-
-**Fine-Grained Sync** (default):
-
-- Individual operations for each change
-- Minimal HAProxy reloads
-- Uses runtime API when possible (server weight/status changes)
-- Detailed operation tracking
-
-**Raw Config Push** (fallback):
-
-- Pushes complete configuration
-- Always triggers reload
-- Used when fine-grained sync fails
-- Simple but less efficient
-
-## API Reference
-
-### Main Functions
-
-#### `Sync(ctx, endpoint, desiredConfig, opts) (*SyncResult, error)`
-
-Synchronizes the desired configuration to HAProxy.
-
-**Parameters:**
-
-- `ctx`: Context for cancellation and timeout
-- `endpoint`: Dataplane API connection info
-- `desiredConfig`: Desired HAProxy configuration as string
-- `opts`: Sync options (use `nil` for defaults)
-
-**Returns:**
-
-- `*SyncResult`: Detailed sync results
-- `error`: Error with actionable hints if sync fails
-
-#### `DryRun(ctx, endpoint, desiredConfig) (*DiffResult, error)`
-
-Previews changes without applying them.
-
-**Parameters:**
-
-- `ctx`: Context for cancellation and timeout
-- `endpoint`: Dataplane API connection info
-- `desiredConfig`: Desired HAProxy configuration as string
-
-**Returns:**
-
-- `*DiffResult`: Planned operations and diff details
-- `error`: Error if comparison fails
-
-#### `Diff(ctx, endpoint, desiredConfig) (*DiffResult, error)`
-
-Alias for `DryRun()` - compares configurations and returns differences.
-
-### Types
-
-#### `Endpoint`
-
-```go
-type Endpoint struct {
-    URL      string  // Dataplane API URL (e.g., "http://haproxy:5555/v2")
-    Username string  // Basic auth username
-    Password string  // Basic auth password
-}
-```
-
-#### `SyncOptions`
-
-```go
-type SyncOptions struct {
-    MaxRetries       int           // Retry limit for 409 conflicts (default: 3)
-    Timeout          time.Duration // Overall timeout (default: 2 minutes)
-    ContinueOnError  bool          // Continue on operation failure (default: false)
-    FallbackToRaw    bool          // Auto-fallback to raw push (default: true)
-    RawPushThreshold int           // Raw push when changes exceed threshold (0 = disabled)
-}
-```
-
-#### `SyncResult`
-
-```go
-type SyncResult struct {
-    Success           bool              // Whether sync succeeded
-    AppliedOperations []AppliedOperation // Structured operations applied
-    ReloadTriggered   bool              // Whether reload was triggered
-    ReloadID          string            // Reload ID (if triggered)
-    SyncMode          SyncMode          // Sync strategy used (fine_grained, raw_initial, raw_threshold, raw_fallback)
-    Duration          time.Duration     // Operation duration
-    Retries           int               // Number of retries
-    Details           DiffDetails       // Detailed diff information
-    Message           string            // Summary message
-}
-
-// SyncMode indicates which sync strategy was used
-const (
-    SyncModeFineGrained  SyncMode = "fine_grained"  // Fine-grained API operations
-    SyncModeRawInitial   SyncMode = "raw_initial"   // Raw push for initial config (version=1)
-    SyncModeRawThreshold SyncMode = "raw_threshold" // Raw push because changes exceeded threshold
-    SyncModeRawFallback  SyncMode = "raw_fallback"  // Raw push as fallback after fine-grained failure
-)
-
-// UsedRawPush() returns true if any form of raw config push was used
-func (r *SyncResult) UsedRawPush() bool
-```
-
-#### `DiffResult`
-
-```go
-type DiffResult struct {
-    HasChanges        bool                // Whether any differences exist
-    PlannedOperations []PlannedOperation  // Operations that would be executed
-    Details           DiffDetails         // Detailed diff information
-}
-```
-
-## Best Practices
-
-### 1. Use Client for Multiple Operations
-
-**Production code should reuse clients:**
-
-```go
-// Good - create once, reuse
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-// Efficient - reuses connection
-diff, err := client.DryRun(ctx, newConfig)
-if diff.HasChanges {
-    result, err := client.Sync(ctx, newConfig, nil, nil)
-}
-```
-
-**Avoid recreating clients:**
-
-```go
-// Bad - creates new connection each time
-for _, config := range configs {
-    result, err := dataplane.Sync(ctx, endpoint, config, nil, nil)  // inefficient!
-}
-
-// Good - reuses connection
-client, err := dataplane.NewClient(ctx, endpoint)
-defer client.Close()
-
-for _, config := range configs {
-    result, err := client.Sync(ctx, config, nil, nil)  // efficient!
-}
-```
-
-### 2. Use Dry Run Before Applying
-
-Always preview changes in production:
-
-```go
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-// Preview
-diff, err := client.DryRun(ctx, newConfig)
-if err != nil {
-    return err
-}
-
-if diff.HasChanges {
-    fmt.Printf("About to apply %d changes\n", len(diff.PlannedOperations))
-    // Show to human operator for confirmation
-
-    // Apply
-    result, err := client.Sync(ctx, newConfig, nil, nil)
-}
-```
-
-### 3. Handle Errors Properly
-
-Check for specific error types and provide context:
-
-```go
-client, err := dataplane.NewClient(ctx, endpoint)
-if err != nil {
-    return err
-}
-defer client.Close()
-
-result, err := client.Sync(ctx, config, nil, nil)
-if err != nil {
-    var syncErr *dataplane.SyncError
-    if errors.As(err, &syncErr) {
-        log.Printf("Sync failed at %s stage: %s", syncErr.Stage, syncErr.Message)
-        // Log hints for debugging
-        for _, hint := range syncErr.Hints {
-            log.Printf("Hint: %s", hint)
-        }
-    }
-    return fmt.Errorf("failed to sync HAProxy: %w", err)
-}
-```
-
-### 4. Configure Appropriate Timeouts
-
-Set timeouts based on your environment:
+### `SyncOptions`
 
 ```go
 opts := &dataplane.SyncOptions{
-    Timeout:    5 * time.Minute,  // Longer for large configs
-    MaxRetries: 5,                // More retries in busy environments
+    MaxRetries:       3,                // retries for 409 version conflicts (default 3)
+    Timeout:          2 * time.Minute,  // overall operation deadline (default 2m)
+    ContinueOnError:  false,            // keep going after a failing operation (default false)
+    FallbackToRaw:    true,             // fall back to raw push on non-recoverable failure (default true)
+    RawPushThreshold: 100,              // switch to raw push when > N operations would be applied
 }
-
-client, err := dataplane.NewClient(ctx, endpoint)
-defer client.Close()
-
-result, err := client.Sync(ctx, config, nil, opts)
 ```
 
-### 5. Monitor Raw Push Usage
+Use `DryRunOptions()` if you want a preview-only variant with safe defaults.
 
-Alert on unexpected raw config push:
+### `AuxiliaryFiles`
 
 ```go
-client, err := dataplane.NewClient(ctx, endpoint)
-defer client.Close()
-
-result, err := client.Sync(ctx, config, nil, nil)
-if err == nil && result.UsedRawPush() {
-    log.Warn("Used raw config push",
-        "mode", result.SyncMode,
-        "reason", getRawPushReason(result.SyncMode))
-    // Send alert for fallback mode (indicates fine-grained sync failure)
-    if result.SyncMode == dataplane.SyncModeRawFallback {
-        sendAlert("Fine-grained sync failed, used fallback")
-    }
+aux := &dataplane.AuxiliaryFiles{
+    GeneralFiles:    []auxiliaryfiles.GeneralFile{...},
+    SSLCertificates: []auxiliaryfiles.SSLCertificate{...},
+    SSLCaFiles:      []auxiliaryfiles.SSLCaFile{...},
+    MapFiles:        []auxiliaryfiles.MapFile{...},
+    CRTListFiles:    []auxiliaryfiles.CRTListFile{...},  // v3.2+
 }
 ```
 
-## Troubleshooting
+`CRTListFiles` is only supported on Dataplane API v3.2+; unsupported entries fail fast with a capability error rather than silently.
 
-### Connection Errors
+## Sub-Package Map
 
-**Problem**: Can't connect to Dataplane API
+| Purpose | Package |
+|---------|---------|
+| Public types and entry points (`Sync`, `DryRun`, `Diff`, `Client`, `Endpoint`, `SyncOptions`, `AuxiliaryFiles`) | `pkg/dataplane` (top level) |
+| Three-phase sync workflow (orchestrator, comparison, execution) | `orchestrator_*.go` |
+| HAProxy syntax + `haproxy -c` validator | `validator*.go` |
+| Version detection and capability matrix for DP API v3.0 / v3.1 / v3.2 / v3.3 | `version.go`, `capabilities.go` |
+| Dataplane API client (dispatcher pattern, transactions, retries) | `client/` |
+| Config parsing via client-native | `parser/` |
+| Fine-grained diff engine | `comparator/` + `comparator/sections/` |
+| Operation executor | `synchronizer/` |
+| Auxiliary file sync (maps, SSL, general files, crt-list) | `auxiliaryfiles/` |
+| Endpoint discovery helpers | `discovery/` |
+| Generated per-model OpenAPI validators | `validators/` |
 
-**Solutions**:
+## Versioning and Capabilities
 
-- Verify endpoint URL is correct
-- Check HAProxy is running and accessible
-- Verify credentials
-- Check network connectivity
-- Ensure Dataplane API is enabled in HAProxy config
+The client detects the Dataplane API version by calling `/v3/info` and exposes a `Capabilities` struct that downstream code can query without needing a live connection:
 
-### Parse Errors
+```go
+caps := client.Clientset().Capabilities()
+if caps.SupportsCrtList {
+    // v3.2+ only
+}
+```
 
-**Problem**: Configuration parsing fails
+For local-validation paths (where no Dataplane API is reachable), derive capabilities from a detected HAProxy binary version via `dataplane.CapabilitiesFromVersion(version)`. Passing `nil` returns a conservative all-false capability set — the safe default.
 
-**Solutions**:
+All public client methods route through a single `Dispatch()` dispatcher so adding a new API version only touches `client/dispatcher.go`. `pkg/dataplane/CLAUDE.md` has the full walkthrough (when to use `DispatchWithCapability`, `DispatchGeneric[T]`, how to add a new method).
 
-- Validate config syntax: `haproxy -c -f config.cfg`
-- Check for syntax errors in desired config
-- Verify config is compatible with HAProxy version
+## Error Types
 
-### Version Conflicts
+```go
+var syncErr *dataplane.SyncError
+if errors.As(err, &syncErr) {
+    // transaction-level failure with a hint and phase context
+}
 
-**Problem**: Getting 409 errors even with retries
+var valErr *dataplane.ValidationError
+var parseErr *dataplane.ParseError
+var connErr *dataplane.ConnectionError
+var conflictErr *dataplane.ConflictError
+var opErr *dataplane.OperationError
+var fallbackErr *dataplane.FallbackError
+```
 
-**Solutions**:
+For user-facing surfaces (webhook responses, CLI output), call `dataplane.SimplifyValidationError(err)` / `dataplane.SimplifyRenderingError(err)` to turn verbose library errors into a single readable line. Internal logs and metrics should keep the full chain.
 
-- Increase `MaxRetries` in options
-- Coordinate config updates to avoid concurrent modifications
-- Check for other automation tools modifying HAProxy
+## Common Pitfalls
 
-### Validation Errors
+- **Skipping aux-file pre-sync.** If `haproxy.cfg` references `maps/host.map` and the file hasn't been uploaded yet, HAProxy validation fails. `AuxiliaryFiles` plus the orchestrator handle this automatically; bypassing them is almost always a bug.
+- **Leaking transactions.** If you use the low-level `client` package directly, always pair `StartTransaction` with a deferred `Commit`/`Rollback` — a leaked transaction blocks future writes to the Dataplane API until it times out.
+- **Comparing on 409.** Version conflicts (`409`) mean someone else moved the current config forward. The orchestrator re-fetches and retries up to `MaxRetries`; don't layer your own retry loop on top.
+- **Pushing aux-file deletes before config.** Phase 3 must run *after* the main config is applied so we're not deleting files the live config still references.
+- **Using `List()` patterns at the dataplane layer.** This package operates on parsed config structures, not on Kubernetes stores — the `.List()` / `.Fetch()` semantics from `pkg/k8s` are irrelevant here.
 
-**Problem**: HAProxy rejects the configuration
+`pkg/dataplane/CLAUDE.md` has the longer catalogue (transaction retry, parser error wrapping, per-section comparator examples) plus the multi-version dispatch pattern and the three-phase sync rationale.
 
-**Solutions**:
+## Zero-Reload Rules of Thumb
 
-- Check for references to non-existent backends/servers
-- Verify all directives are compatible with HAProxy version
-- Ensure resource dependencies are satisfied
-- Review validation error messages from HAProxy
+A small set of server-level changes can apply through the runtime API without reloading HAProxy:
+
+- `Weight`, `Address`, `Port`, `Maintenance` (enable/disable/drain)
+- `AgentCheck`, `AgentAddr`, `AgentSend`, `HealthCheckPort`
+- Frontend `Maxconn`
+- Map file content, ACL file content, SSL certificate content (via storage API)
+
+Everything else — creating or deleting a server, changing `check` / `inter` / `ssl` settings, touching bind addresses, frontend/backend structure, rules, filters — triggers a reload. The comparator detects this and the synchronizer picks the cheapest path. To maximise zero-reload updates, templates should keep individual `server` lines to `address:port [enabled|disabled]` and push all other options into `default-server`.
+
+## Testing
+
+```bash
+go test ./pkg/dataplane/...          # unit + comparator tests
+go test ./pkg/dataplane/... -race    # race detector
+```
+
+Integration tests that need a real HAProxy instance live under `tests/integration` and `tests/acceptance`.
+
+## See Also
+
+- `pkg/dataplane/CLAUDE.md` — multi-version dispatch, comparator patterns, parser quirks, testing strategies
+- `pkg/dataplane/transform` — client-native ↔ Dataplane API model conversion (used by every section comparator)
+- `pkg/controller/deployer` — event adapter that wires `Client.Sync` into the controller's reconciliation pipeline
+- `docs/controller/docs/supported-configuration.md` — user-facing view of which HAProxy sections / fields are synced
 
 ## License
 
-This library is part of the HAPTIC project.
+Apache-2.0 — see root `LICENSE`.
