@@ -251,47 +251,13 @@ func (c *Comparator) compareUserlistUsersWithIndex(userlistName string, currentU
 
 // compareCrtStores compares crt-store sections between current and desired configurations.
 func (c *Comparator) compareCrtStores(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.CrtStore)
-	for i := range current.CrtStores {
-		crtStore := current.CrtStores[i]
-		if crtStore.Name != "" {
-			currentMap[crtStore.Name] = crtStore
-		}
-	}
-
-	desiredMap := make(map[string]*models.CrtStore)
-	for i := range desired.CrtStores {
-		crtStore := desired.CrtStores[i]
-		if crtStore.Name != "" {
-			desiredMap[crtStore.Name] = crtStore
-		}
-	}
-
-	// Find added crt-store sections
-	for name, crtStore := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewCrtStoreCreate(crtStore))
-		}
-	}
-
-	// Find deleted crt-store sections
-	for name, crtStore := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewCrtStoreDelete(crtStore))
-		}
-	}
-
-	// Find modified crt-store sections
-	for name, desiredCrtStore := range desiredMap {
-		if currentCrtStore, exists := currentMap[name]; exists {
-			if !currentCrtStore.Equal(*desiredCrtStore) {
-				operations = append(operations, sections.NewCrtStoreUpdate(desiredCrtStore))
-			}
-		}
-	}
-
-	return operations
+	return compareNamedSections(
+		current.CrtStores,
+		desired.CrtStores,
+		func(s *models.CrtStore) string { return s.Name },
+		func(a, b *models.CrtStore) bool { return a.Equal(*b) },
+		sections.NewCrtStoreCreate,
+		sections.NewCrtStoreDelete,
+		sections.NewCrtStoreUpdate,
+	)
 }
