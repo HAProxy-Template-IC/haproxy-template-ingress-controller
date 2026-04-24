@@ -114,268 +114,169 @@ func (c *Comparator) compareModifiedACLs(parentType, parentName string, desiredA
 	return operations
 }
 
-// compareHTTPRequestRules compares HTTP request rule configurations within a frontend or backend.
-// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations
-// instead of cascading UPDATEs caused by index shifts.
-func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, currentRules, desiredRules models.HTTPRequestRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.HTTPRequestRule) bool {
-		return a.Equal(*b)
-	})
+// compareEditedItems runs an LCS-based diff (diffIndexedRules +
+// collapseEdits) over current/desired and emits create/delete/update
+// operations for the resulting edit script. Updates use the new value at the
+// position of the old item, matching what collapseEdits already pairs up.
+func compareEditedItems[T any](
+	current, desired []T,
+	equal func(T, T) bool,
+	create func(item T, index int) Operation,
+	remove func(item T, index int) Operation,
+	update func(item T, index int) Operation,
+) []Operation {
+	diffs := diffIndexedRules(current, desired, equal)
 	edits := collapseEdits(diffs)
 
 	var operations []Operation
 	for _, e := range edits {
 		switch e.Op {
 		case editInsert:
-			ops := c.createHTTPRequestRuleOperation(parentType, parentName, e.New, e.NewIndex)
-			operations = append(operations, ops...)
+			operations = append(operations, create(e.New, e.NewIndex))
 		case editDelete:
-			ops := c.deleteHTTPRequestRuleOperation(parentType, parentName, e.Old, e.OldIndex)
-			operations = append(operations, ops...)
+			operations = append(operations, remove(e.Old, e.OldIndex))
 		case editUpdate:
-			ops := c.updateHTTPRequestRuleOperation(parentType, parentName, e.Old, e.New, e.OldIndex)
-			operations = append(operations, ops...)
+			operations = append(operations, update(e.New, e.OldIndex))
 		}
 	}
-
 	return operations
 }
 
-func (c *Comparator) createHTTPRequestRuleOperation(parentType, parentName string, rule *models.HTTPRequestRule, index int) []Operation {
+// compareHTTPRequestRules compares HTTP request rule configurations within a frontend or backend.
+// Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations
+// instead of cascading UPDATEs caused by index shifts.
+func (c *Comparator) compareHTTPRequestRules(parentType, parentName string, currentRules, desiredRules models.HTTPRequestRules) []Operation {
+	create, remove, update := sections.NewHTTPRequestRuleBackendCreate, sections.NewHTTPRequestRuleBackendDelete, sections.NewHTTPRequestRuleBackendUpdate
 	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewHTTPRequestRuleFrontendCreate(parentName, rule, index)}
+		create, remove, update = sections.NewHTTPRequestRuleFrontendCreate, sections.NewHTTPRequestRuleFrontendDelete, sections.NewHTTPRequestRuleFrontendUpdate
 	}
-	return []Operation{sections.NewHTTPRequestRuleBackendCreate(parentName, rule, index)}
-}
-
-func (c *Comparator) deleteHTTPRequestRuleOperation(parentType, parentName string, rule *models.HTTPRequestRule, index int) []Operation {
-	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewHTTPRequestRuleFrontendDelete(parentName, rule, index)}
-	}
-	return []Operation{sections.NewHTTPRequestRuleBackendDelete(parentName, rule, index)}
-}
-
-func (c *Comparator) updateHTTPRequestRuleOperation(parentType, parentName string, currentRule, desiredRule *models.HTTPRequestRule, index int) []Operation {
-	if !currentRule.Equal(*desiredRule) {
-		if parentType == parentTypeFrontend {
-			return []Operation{sections.NewHTTPRequestRuleFrontendUpdate(parentName, desiredRule, index)}
-		}
-		return []Operation{sections.NewHTTPRequestRuleBackendUpdate(parentName, desiredRule, index)}
-	}
-	return nil
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.HTTPRequestRule) bool { return a.Equal(*b) },
+		func(r *models.HTTPRequestRule, i int) Operation { return create(parentName, r, i) },
+		func(r *models.HTTPRequestRule, i int) Operation { return remove(parentName, r, i) },
+		func(r *models.HTTPRequestRule, i int) Operation { return update(parentName, r, i) },
+	)
 }
 
 // compareHTTPResponseRules compares HTTP response rule configurations within a frontend or backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareHTTPResponseRules(parentType, parentName string, currentRules, desiredRules models.HTTPResponseRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.HTTPResponseRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			ops := c.createHTTPResponseRuleOperation(parentType, parentName, e.New, e.NewIndex)
-			operations = append(operations, ops...)
-		case editDelete:
-			ops := c.deleteHTTPResponseRuleOperation(parentType, parentName, e.Old, e.OldIndex)
-			operations = append(operations, ops...)
-		case editUpdate:
-			ops := c.updateHTTPResponseRuleOperation(parentType, parentName, e.Old, e.New, e.OldIndex)
-			operations = append(operations, ops...)
-		}
-	}
-
-	return operations
-}
-
-func (c *Comparator) createHTTPResponseRuleOperation(parentType, parentName string, rule *models.HTTPResponseRule, index int) []Operation {
+	create, remove, update := sections.NewHTTPResponseRuleBackendCreate, sections.NewHTTPResponseRuleBackendDelete, sections.NewHTTPResponseRuleBackendUpdate
 	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewHTTPResponseRuleFrontendCreate(parentName, rule, index)}
+		create, remove, update = sections.NewHTTPResponseRuleFrontendCreate, sections.NewHTTPResponseRuleFrontendDelete, sections.NewHTTPResponseRuleFrontendUpdate
 	}
-	return []Operation{sections.NewHTTPResponseRuleBackendCreate(parentName, rule, index)}
-}
-
-func (c *Comparator) deleteHTTPResponseRuleOperation(parentType, parentName string, rule *models.HTTPResponseRule, index int) []Operation {
-	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewHTTPResponseRuleFrontendDelete(parentName, rule, index)}
-	}
-	return []Operation{sections.NewHTTPResponseRuleBackendDelete(parentName, rule, index)}
-}
-
-func (c *Comparator) updateHTTPResponseRuleOperation(parentType, parentName string, currentRule, desiredRule *models.HTTPResponseRule, index int) []Operation {
-	if !currentRule.Equal(*desiredRule) {
-		if parentType == parentTypeFrontend {
-			return []Operation{sections.NewHTTPResponseRuleFrontendUpdate(parentName, desiredRule, index)}
-		}
-		return []Operation{sections.NewHTTPResponseRuleBackendUpdate(parentName, desiredRule, index)}
-	}
-	return nil
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.HTTPResponseRule) bool { return a.Equal(*b) },
+		func(r *models.HTTPResponseRule, i int) Operation { return create(parentName, r, i) },
+		func(r *models.HTTPResponseRule, i int) Operation { return remove(parentName, r, i) },
+		func(r *models.HTTPResponseRule, i int) Operation { return update(parentName, r, i) },
+	)
 }
 
 // compareTCPRequestRules compares TCP request rule configurations within a frontend or backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareTCPRequestRules(parentType, parentName string, currentRules, desiredRules models.TCPRequestRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.TCPRequestRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			ops := c.createTCPRequestRuleOperation(parentType, parentName, e.New, e.NewIndex)
-			operations = append(operations, ops...)
-		case editDelete:
-			ops := c.deleteTCPRequestRuleOperation(parentType, parentName, e.Old, e.OldIndex)
-			operations = append(operations, ops...)
-		case editUpdate:
-			ops := c.updateTCPRequestRuleOperation(parentType, parentName, e.Old, e.New, e.OldIndex)
-			operations = append(operations, ops...)
-		}
-	}
-
-	return operations
-}
-
-func (c *Comparator) createTCPRequestRuleOperation(parentType, parentName string, rule *models.TCPRequestRule, index int) []Operation {
+	create, remove, update := sections.NewTCPRequestRuleBackendCreate, sections.NewTCPRequestRuleBackendDelete, sections.NewTCPRequestRuleBackendUpdate
 	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewTCPRequestRuleFrontendCreate(parentName, rule, index)}
+		create, remove, update = sections.NewTCPRequestRuleFrontendCreate, sections.NewTCPRequestRuleFrontendDelete, sections.NewTCPRequestRuleFrontendUpdate
 	}
-	return []Operation{sections.NewTCPRequestRuleBackendCreate(parentName, rule, index)}
-}
-
-func (c *Comparator) deleteTCPRequestRuleOperation(parentType, parentName string, rule *models.TCPRequestRule, index int) []Operation {
-	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewTCPRequestRuleFrontendDelete(parentName, rule, index)}
-	}
-	return []Operation{sections.NewTCPRequestRuleBackendDelete(parentName, rule, index)}
-}
-
-func (c *Comparator) updateTCPRequestRuleOperation(parentType, parentName string, currentRule, desiredRule *models.TCPRequestRule, index int) []Operation {
-	if !currentRule.Equal(*desiredRule) {
-		if parentType == parentTypeFrontend {
-			return []Operation{sections.NewTCPRequestRuleFrontendUpdate(parentName, desiredRule, index)}
-		}
-		return []Operation{sections.NewTCPRequestRuleBackendUpdate(parentName, desiredRule, index)}
-	}
-	return nil
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.TCPRequestRule) bool { return a.Equal(*b) },
+		func(r *models.TCPRequestRule, i int) Operation { return create(parentName, r, i) },
+		func(r *models.TCPRequestRule, i int) Operation { return remove(parentName, r, i) },
+		func(r *models.TCPRequestRule, i int) Operation { return update(parentName, r, i) },
+	)
 }
 
 // compareTCPResponseRules compares TCP response rule configurations within a backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareTCPResponseRules(parentName string, currentRules, desiredRules models.TCPResponseRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.TCPResponseRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			operations = append(operations, sections.NewTCPResponseRuleBackendCreate(parentName, e.New, e.NewIndex))
-		case editDelete:
-			operations = append(operations, sections.NewTCPResponseRuleBackendDelete(parentName, e.Old, e.OldIndex))
-		case editUpdate:
-			operations = append(operations, sections.NewTCPResponseRuleBackendUpdate(parentName, e.New, e.OldIndex))
-		}
-	}
-
-	return operations
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.TCPResponseRule) bool { return a.Equal(*b) },
+		func(r *models.TCPResponseRule, i int) Operation {
+			return sections.NewTCPResponseRuleBackendCreate(parentName, r, i)
+		},
+		func(r *models.TCPResponseRule, i int) Operation {
+			return sections.NewTCPResponseRuleBackendDelete(parentName, r, i)
+		},
+		func(r *models.TCPResponseRule, i int) Operation {
+			return sections.NewTCPResponseRuleBackendUpdate(parentName, r, i)
+		},
+	)
 }
 
 // compareStickRules compares stick rule configurations within a backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareStickRules(backendName string, currentRules, desiredRules models.StickRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.StickRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			operations = append(operations, sections.NewStickRuleBackendCreate(backendName, e.New, e.NewIndex))
-		case editDelete:
-			operations = append(operations, sections.NewStickRuleBackendDelete(backendName, e.Old, e.OldIndex))
-		case editUpdate:
-			operations = append(operations, sections.NewStickRuleBackendUpdate(backendName, e.New, e.OldIndex))
-		}
-	}
-
-	return operations
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.StickRule) bool { return a.Equal(*b) },
+		func(r *models.StickRule, i int) Operation {
+			return sections.NewStickRuleBackendCreate(backendName, r, i)
+		},
+		func(r *models.StickRule, i int) Operation {
+			return sections.NewStickRuleBackendDelete(backendName, r, i)
+		},
+		func(r *models.StickRule, i int) Operation {
+			return sections.NewStickRuleBackendUpdate(backendName, r, i)
+		},
+	)
 }
 
 // compareHTTPAfterResponseRules compares HTTP after response rule configurations within a backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareHTTPAfterResponseRules(backendName string, currentRules, desiredRules models.HTTPAfterResponseRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.HTTPAfterResponseRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendCreate(backendName, e.New, e.NewIndex))
-		case editDelete:
-			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendDelete(backendName, e.Old, e.OldIndex))
-		case editUpdate:
-			operations = append(operations, sections.NewHTTPAfterResponseRuleBackendUpdate(backendName, e.New, e.OldIndex))
-		}
-	}
-
-	return operations
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.HTTPAfterResponseRule) bool { return a.Equal(*b) },
+		func(r *models.HTTPAfterResponseRule, i int) Operation {
+			return sections.NewHTTPAfterResponseRuleBackendCreate(backendName, r, i)
+		},
+		func(r *models.HTTPAfterResponseRule, i int) Operation {
+			return sections.NewHTTPAfterResponseRuleBackendDelete(backendName, r, i)
+		},
+		func(r *models.HTTPAfterResponseRule, i int) Operation {
+			return sections.NewHTTPAfterResponseRuleBackendUpdate(backendName, r, i)
+		},
+	)
 }
 
 // compareBackendSwitchingRules compares backend switching rule configurations within a frontend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareBackendSwitchingRules(frontendName string, currentRules, desiredRules models.BackendSwitchingRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.BackendSwitchingRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendCreate(frontendName, e.New, e.NewIndex))
-		case editDelete:
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendDelete(frontendName, e.Old, e.OldIndex))
-		case editUpdate:
-			operations = append(operations, sections.NewBackendSwitchingRuleFrontendUpdate(frontendName, e.New, e.OldIndex))
-		}
-	}
-
-	return operations
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.BackendSwitchingRule) bool { return a.Equal(*b) },
+		func(r *models.BackendSwitchingRule, i int) Operation {
+			return sections.NewBackendSwitchingRuleFrontendCreate(frontendName, r, i)
+		},
+		func(r *models.BackendSwitchingRule, i int) Operation {
+			return sections.NewBackendSwitchingRuleFrontendDelete(frontendName, r, i)
+		},
+		func(r *models.BackendSwitchingRule, i int) Operation {
+			return sections.NewBackendSwitchingRuleFrontendUpdate(frontendName, r, i)
+		},
+	)
 }
 
 // compareServerSwitchingRules compares server switching rule configurations within a backend.
 // Uses LCS-based content matching to produce minimal INSERT/DELETE/UPDATE operations.
 func (c *Comparator) compareServerSwitchingRules(backendName string, currentRules, desiredRules models.ServerSwitchingRules) []Operation {
-	diffs := diffIndexedRules(currentRules, desiredRules, func(a, b *models.ServerSwitchingRule) bool {
-		return a.Equal(*b)
-	})
-	edits := collapseEdits(diffs)
-
-	var operations []Operation
-	for _, e := range edits {
-		switch e.Op {
-		case editInsert:
-			operations = append(operations, sections.NewServerSwitchingRuleBackendCreate(backendName, e.New, e.NewIndex))
-		case editDelete:
-			operations = append(operations, sections.NewServerSwitchingRuleBackendDelete(backendName, e.Old, e.OldIndex))
-		case editUpdate:
-			operations = append(operations, sections.NewServerSwitchingRuleBackendUpdate(backendName, e.New, e.OldIndex))
-		}
-	}
-
-	return operations
+	return compareEditedItems(
+		currentRules, desiredRules,
+		func(a, b *models.ServerSwitchingRule) bool { return a.Equal(*b) },
+		func(r *models.ServerSwitchingRule, i int) Operation {
+			return sections.NewServerSwitchingRuleBackendCreate(backendName, r, i)
+		},
+		func(r *models.ServerSwitchingRule, i int) Operation {
+			return sections.NewServerSwitchingRuleBackendDelete(backendName, r, i)
+		},
+		func(r *models.ServerSwitchingRule, i int) Operation {
+			return sections.NewServerSwitchingRuleBackendUpdate(backendName, r, i)
+		},
+	)
 }
