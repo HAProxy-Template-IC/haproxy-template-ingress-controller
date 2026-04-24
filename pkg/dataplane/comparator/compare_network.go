@@ -90,39 +90,11 @@ func resolversEqualWithoutNameservers(r1, r2 *models.Resolver) bool {
 
 // compareNameserversWithIndex compares nameserver configurations using pointer indexes.
 func (c *Comparator) compareNameserversWithIndex(resolverSection string, currentNameservers, desiredNameservers map[string]*models.Nameserver) []Operation {
-	if currentNameservers == nil {
-		currentNameservers = make(map[string]*models.Nameserver)
-	}
-	if desiredNameservers == nil {
-		desiredNameservers = make(map[string]*models.Nameserver)
-	}
-
-	var operations []Operation
-
-	// Find added nameservers
-	for name, ns := range desiredNameservers {
-		if _, exists := currentNameservers[name]; !exists {
-			operations = append(operations, sections.NewNameserverCreate(resolverSection, ns))
-		}
-	}
-
-	// Find deleted nameservers
-	for name, ns := range currentNameservers {
-		if _, exists := desiredNameservers[name]; !exists {
-			operations = append(operations, sections.NewNameserverDelete(resolverSection, ns))
-		}
-	}
-
-	// Find modified nameservers
-	for name, desiredNs := range desiredNameservers {
-		currentNs, exists := currentNameservers[name]
-		if !exists {
-			continue
-		}
-		if !currentNs.Equal(*desiredNs) {
-			operations = append(operations, sections.NewNameserverUpdate(resolverSection, desiredNs))
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentNameservers, desiredNameservers,
+		func(a, b *models.Nameserver) bool { return a.Equal(*b) },
+		func(n *models.Nameserver) Operation { return sections.NewNameserverCreate(resolverSection, n) },
+		func(n *models.Nameserver) Operation { return sections.NewNameserverDelete(resolverSection, n) },
+		func(n *models.Nameserver) Operation { return sections.NewNameserverUpdate(resolverSection, n) },
+	)
 }

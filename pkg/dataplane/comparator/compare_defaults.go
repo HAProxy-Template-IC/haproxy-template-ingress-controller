@@ -31,50 +31,17 @@ func (c *Comparator) compareGlobal(current, desired *parser.StructuredConfig, su
 // compareDefaults compares defaults section configurations between current and desired.
 // HAProxy can have multiple defaults sections (identified by name).
 func (c *Comparator) compareDefaults(current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
-	var operations []Operation
-
-	// Build maps for easier comparison
-	currentDefaults := make(map[string]*models.Defaults)
-	for _, defaults := range current.Defaults {
-		if defaults.Name != "" {
-			currentDefaults[defaults.Name] = defaults
-		}
+	ops := compareNamedSections(
+		current.Defaults,
+		desired.Defaults,
+		func(d *models.Defaults) string { return d.Name },
+		func(a, b *models.Defaults) bool { return a.Equal(*b) },
+		sections.NewDefaultsCreate,
+		sections.NewDefaultsDelete,
+		sections.NewDefaultsUpdate,
+	)
+	if len(ops) > 0 {
+		summary.DefaultsChanged = true
 	}
-
-	desiredDefaults := make(map[string]*models.Defaults)
-	for _, defaults := range desired.Defaults {
-		if defaults.Name != "" {
-			desiredDefaults[defaults.Name] = defaults
-		}
-	}
-
-	// Find added defaults sections
-	for name, defaults := range desiredDefaults {
-		if _, exists := currentDefaults[name]; !exists {
-			operations = append(operations, sections.NewDefaultsCreate(defaults))
-			summary.DefaultsChanged = true
-		}
-	}
-
-	// Find deleted defaults sections
-	for name, defaults := range currentDefaults {
-		if _, exists := desiredDefaults[name]; !exists {
-			operations = append(operations, sections.NewDefaultsDelete(defaults))
-			summary.DefaultsChanged = true
-		}
-	}
-
-	// Find modified defaults sections
-	for name, desiredDefaults := range desiredDefaults {
-		if currentDefaults, exists := currentDefaults[name]; exists {
-			// Compare using built-in Equal() method
-			// This automatically compares all defaults attributes (mode, timeouts, options, etc.)
-			if !currentDefaults.Equal(*desiredDefaults) {
-				operations = append(operations, sections.NewDefaultsUpdate(desiredDefaults))
-				summary.DefaultsChanged = true
-			}
-		}
-	}
-
-	return operations
+	return ops
 }
