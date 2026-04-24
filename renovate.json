@@ -14,7 +14,7 @@
     "dependencies"
   ],
   "platformAutomerge": true,
-  "prHourlyLimit": 10,
+  "prHourlyLimit": 0,
   "postUpdateOptions": [
     "gomodTidy"
   ],
