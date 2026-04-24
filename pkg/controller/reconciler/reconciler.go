@@ -33,13 +33,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
-const (
-	// EventBufferSize is the size of the event subscription buffer.
-	// Size 100: Medium-volume component that receives resource change events from
-	// multiple watchers (Ingress, HTTPRoute, Service, Endpoints, Secrets, ConfigMaps).
-	// Higher than deployer to handle bursts when many resources change simultaneously.
-	EventBufferSize = 100
-)
+// EventBufferSize is the size of the event subscription buffer.
+// High-volume component that receives resource change events from
+// multiple watchers (Ingress, HTTPRoute, Service, Endpoints, Secrets, ConfigMaps),
+// sized to handle bursts when many resources change simultaneously.
+const EventBufferSize = busevents.HighVolumeSubscriberBuffer
 
 // ComponentName is the unique identifier for this component.
 const ComponentName = "reconciler"

@@ -36,9 +36,9 @@ const (
 	SchedulerComponentName = "deployment-scheduler"
 
 	// SchedulerEventBufferSize is the size of the event subscription buffer for the scheduler.
-	// Size 50: Moderate-volume component handling template, validation, and discovery events.
-	// Note: Named with "Scheduler" prefix to avoid conflict with EventBufferSize in this package.
-	SchedulerEventBufferSize = 50
+	// Moderate-volume component handling template, validation, and discovery events.
+	// Named with "Scheduler" prefix to avoid conflict with EventBufferSize in this package.
+	SchedulerEventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // deploymentPhase represents the current phase of the deployment scheduler state machine.

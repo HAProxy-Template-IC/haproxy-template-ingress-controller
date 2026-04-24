@@ -14,8 +14,6 @@
 
 package events
 
-import "time"
-
 // SecretResourceChangedEvent is published when the Secret resource is added, updated, or deleted.
 //
 // This is a low-level event published directly by the SingleWatcher callback in the controller package.
@@ -26,19 +24,18 @@ type SecretResourceChangedEvent struct {
 	// Consumers should type-assert to *unstructured.Unstructured or *corev1.Secret.
 	Resource any
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewSecretResourceChangedEvent creates a new SecretResourceChangedEvent.
 func NewSecretResourceChangedEvent(resource any) *SecretResourceChangedEvent {
 	return &SecretResourceChangedEvent{
-		Resource:  resource,
-		timestamp: time.Now(),
+		Resource:    resource,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *SecretResourceChangedEvent) EventType() string    { return EventTypeSecretResourceChanged }
-func (e *SecretResourceChangedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *SecretResourceChangedEvent) EventType() string { return EventTypeSecretResourceChanged }
 
 // CredentialsUpdatedEvent is published when credentials have been successfully.
 // loaded and validated from the Secret.
@@ -51,7 +48,7 @@ type CredentialsUpdatedEvent struct {
 	// SecretVersion is the resourceVersion of the Secret.
 	SecretVersion string
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewCredentialsUpdatedEvent creates a new CredentialsUpdatedEvent.
@@ -59,12 +56,11 @@ func NewCredentialsUpdatedEvent(credentials any, secretVersion string) *Credenti
 	return &CredentialsUpdatedEvent{
 		Credentials:   credentials,
 		SecretVersion: secretVersion,
-		timestamp:     time.Now(),
+		timestamped:   newTimestamped(),
 	}
 }
 
-func (e *CredentialsUpdatedEvent) EventType() string    { return EventTypeCredentialsUpdated }
-func (e *CredentialsUpdatedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *CredentialsUpdatedEvent) EventType() string { return EventTypeCredentialsUpdated }
 
 // CredentialsInvalidEvent is published when credential loading or validation fails.
 //
@@ -74,7 +70,7 @@ type CredentialsInvalidEvent struct {
 	SecretVersion string
 	Error         string
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewCredentialsInvalidEvent creates a new CredentialsInvalidEvent.
@@ -82,9 +78,8 @@ func NewCredentialsInvalidEvent(secretVersion, errMsg string) *CredentialsInvali
 	return &CredentialsInvalidEvent{
 		SecretVersion: secretVersion,
 		Error:         errMsg,
-		timestamp:     time.Now(),
+		timestamped:   newTimestamped(),
 	}
 }
 
-func (e *CredentialsInvalidEvent) EventType() string    { return EventTypeCredentialsInvalid }
-func (e *CredentialsInvalidEvent) Timestamp() time.Time { return e.timestamp }
+func (e *CredentialsInvalidEvent) EventType() string { return EventTypeCredentialsInvalid }

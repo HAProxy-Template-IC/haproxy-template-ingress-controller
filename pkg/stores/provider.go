@@ -171,19 +171,6 @@ type ModCounter interface {
 	ModCount() (uint64, bool)
 }
 
-// GenericStoreGetter is an interface for types that can provide stores by name.
-// It matches the signature of resourcestore.Manager.GetStore().
-type GenericStoreGetter interface {
-	GetStore(name string) (Store, bool)
-}
-
-// StoreProviderFunc is a function type that implements StoreProvider.
-// It allows wrapping a function as a StoreProvider.
-type StoreProviderFunc func(name string) Store
-
-func (f StoreProviderFunc) GetStore(name string) Store { return f(name) }
-func (f StoreProviderFunc) StoreNames() []string       { return nil }
-
 // TypesStoreAdapter wraps any type implementing the Store interface methods.
 //
 // This adapter is needed because k8s/types.Store and stores.Store are identical
@@ -234,35 +221,6 @@ var _ Store = (*TypesStoreAdapter)(nil)
 
 // Verify TypesStoreAdapter implements ModCounter.
 var _ ModCounter = (*TypesStoreAdapter)(nil)
-
-// NewStoreProviderFromGetter creates a StoreProvider from any type that can get stores by name.
-//
-// This is useful for integrating with resourcestore.Manager which returns k8s/types.Store:
-//
-//	manager := resourcestore.NewManager(...)
-//	provider := stores.NewStoreProviderFromGetter(manager, manager.StoreNames())
-func NewStoreProviderFromGetter(getter GenericStoreGetter, storeNames []string) StoreProvider {
-	return &getterStoreProvider{
-		getter:     getter,
-		storeNames: storeNames,
-	}
-}
-
-// getterStoreProvider wraps a GenericStoreGetter as a StoreProvider.
-type getterStoreProvider struct {
-	getter     GenericStoreGetter
-	storeNames []string
-}
-
-func (p *getterStoreProvider) GetStore(name string) Store {
-	store, exists := p.getter.GetStore(name)
-	if !exists || store == nil {
-		return nil
-	}
-	return &TypesStoreAdapter{Inner: store}
-}
-
-func (p *getterStoreProvider) StoreNames() []string { return p.storeNames }
 
 // StoreProvider provides access to stores by name.
 //

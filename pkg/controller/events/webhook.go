@@ -15,8 +15,6 @@
 package events
 
 import (
-	"time"
-
 	"github.com/google/uuid"
 )
 
@@ -64,18 +62,12 @@ type WebhookValidationRequest struct {
 	// Values: "CREATE", "UPDATE", "DELETE"
 	Operation string
 
-	// timestamp when the validation request was created (private for Event interface).
-	timestamp time.Time
+	timestamped
 }
 
 // EventType implements the Event interface.
 func (e *WebhookValidationRequest) EventType() string {
 	return EventTypeWebhookValidationRequestSG
-}
-
-// Timestamp implements the Event interface.
-func (e *WebhookValidationRequest) Timestamp() time.Time {
-	return e.timestamp
 }
 
 // RequestID implements the Request interface for scatter-gather pattern.
@@ -96,13 +88,13 @@ func (e *WebhookValidationRequest) RequestID() string {
 //   - Immutable WebhookValidationRequest with unique ID
 func NewWebhookValidationRequest(gvk, namespace, name string, obj any, operation string) *WebhookValidationRequest {
 	return &WebhookValidationRequest{
-		ID:        uuid.New().String(),
-		GVK:       gvk,
-		Namespace: namespace,
-		Name:      name,
-		Object:    obj, // Note: Object is any, caller responsible for deep copy if needed
-		Operation: operation,
-		timestamp: time.Now(),
+		ID:          uuid.New().String(),
+		GVK:         gvk,
+		Namespace:   namespace,
+		Name:        name,
+		Object:      obj, // Note: Object is any, caller responsible for deep copy if needed
+		Operation:   operation,
+		timestamped: newTimestamped(),
 	}
 }
 
@@ -136,18 +128,12 @@ type WebhookValidationResponse struct {
 	// Must match WebhookValidationRequest.RequestID.
 	requestID string
 
-	// timestamp when the validation response was created (private for Event interface).
-	timestamp time.Time
+	timestamped
 }
 
 // EventType implements the Event interface.
 func (e *WebhookValidationResponse) EventType() string {
 	return EventTypeWebhookValidationResponseSG
-}
-
-// Timestamp implements the Event interface.
-func (e *WebhookValidationResponse) Timestamp() time.Time {
-	return e.timestamp
 }
 
 // RequestID implements the Response interface for scatter-gather pattern.
@@ -176,6 +162,6 @@ func NewWebhookValidationResponse(requestID, validatorID string, allowed bool, r
 		ValidatorID: validatorID,
 		Allowed:     allowed,
 		Reason:      reason,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 	}
 }

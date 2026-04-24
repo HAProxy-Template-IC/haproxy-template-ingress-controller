@@ -34,7 +34,7 @@ const (
 	StatusUpdaterComponentName = "status-updater"
 
 	// StatusUpdaterEventBufferSize is the size of the event subscription buffer.
-	StatusUpdaterEventBufferSize = 50
+	StatusUpdaterEventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // StatusUpdater updates HAProxyTemplateConfig status based on validation results.

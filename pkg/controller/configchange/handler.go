@@ -20,8 +20,8 @@ const (
 	ComponentName = "configchange-handler"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	// Size 50: Moderate-volume component handling config and validation events.
-	EventBufferSize = 50
+	// Moderate-volume component handling config and validation events.
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // DefaultReinitDebounceInterval is the default time to wait after the last config

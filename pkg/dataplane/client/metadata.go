@@ -40,24 +40,6 @@ func ConvertClientMetadataToAPI(clientMetadata map[string]any) map[string]map[st
 	return nested
 }
 
-// convertMetadataForValidation converts client-native flat metadata to API nested format,
-// returning map[string]any to ensure compatibility with schema validation.
-// This differs from ConvertClientMetadataToAPI which returns map[string]map[string]any.
-func convertMetadataForValidation(clientMetadata map[string]any) map[string]any {
-	if len(clientMetadata) == 0 {
-		return nil
-	}
-
-	nested := make(map[string]any)
-	for key, value := range clientMetadata {
-		nested[key] = map[string]any{
-			"value": value,
-		}
-	}
-
-	return nested
-}
-
 // ConvertAPIMetadataToClient converts Dataplane API nested metadata to client-native flat format.
 //
 // This is the reverse operation of ConvertClientMetadataToAPI, used when reading
@@ -114,46 +96,6 @@ func TransformClientMetadataInJSON(jsonData []byte) ([]byte, error) {
 	transformMetadataRecursive(obj)
 
 	return json.Marshal(obj)
-}
-
-// TransformMetadataInPlace transforms metadata within a map from client-native
-// flat format to API nested format, modifying the map in place.
-//
-// This is more efficient than TransformClientMetadataInJSON when you already
-// have a map and don't need JSON output, avoiding an extra marshal step.
-func TransformMetadataInPlace(obj map[string]any) {
-	transformMetadataRecursive(obj)
-}
-
-// TransformMetadataForValidation transforms metadata for schema validation.
-// Unlike TransformMetadataInPlace, this ensures all nested maps are typed as
-// map[string]any (not map[string]map[string]any) for compatibility
-// with openapi3.Schema.VisitJSON().
-func TransformMetadataForValidation(obj map[string]any) {
-	transformMetadataForValidation(obj)
-}
-
-// transformMetadataForValidation walks the JSON object tree and transforms any
-// metadata fields for schema validation, using map[string]any types.
-func transformMetadataForValidation(obj map[string]any) {
-	for key, value := range obj {
-		switch v := value.(type) {
-		case map[string]any:
-			if key == "metadata" {
-				if needsMetadataTransformation(v) {
-					obj[key] = convertMetadataForValidation(v)
-				}
-			} else {
-				transformMetadataForValidation(v)
-			}
-		case []any:
-			for _, elem := range v {
-				if elemMap, ok := elem.(map[string]any); ok {
-					transformMetadataForValidation(elemMap)
-				}
-			}
-		}
-	}
 }
 
 // transformMetadataRecursive walks the JSON object tree and transforms any

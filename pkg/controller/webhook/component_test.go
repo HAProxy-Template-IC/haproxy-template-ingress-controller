@@ -246,7 +246,6 @@ func TestComponent_resolveKind_Error(t *testing.T) {
 func TestConstants(t *testing.T) {
 	assert.Equal(t, 9443, DefaultWebhookPort)
 	assert.Equal(t, "/validate", DefaultWebhookPath)
-	assert.Equal(t, 50, EventBufferSize)
 }
 
 // mockRESTMapper is a minimal mock for testing resolveKind.

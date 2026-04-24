@@ -38,7 +38,7 @@ const (
 	CoordinatorComponentName = "reconciliation-coordinator"
 
 	// CoordinatorEventBufferSize is the size of the event subscription buffer.
-	CoordinatorEventBufferSize = 50
+	CoordinatorEventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // Coordinator orchestrates reconciliation by calling the Pipeline directly.

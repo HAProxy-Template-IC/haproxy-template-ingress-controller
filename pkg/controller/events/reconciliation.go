@@ -14,8 +14,6 @@
 
 package events
 
-import "time"
-
 // ReconciliationTriggeredEvent is published when a reconciliation cycle should start.
 //
 // This event is typically published by the Reconciler after the debounce timer.
@@ -32,8 +30,8 @@ import "time"
 type ReconciliationTriggeredEvent struct {
 	// Reason describes why reconciliation was triggered.
 	// Examples: "debounce_timer", "config_change", "manual_trigger"
-	Reason    string
-	timestamp time.Time
+	Reason string
+	timestamped
 
 	// coalescible indicates if this event can be safely skipped when a newer
 	// event of the same type is available. Set by the emitter (Reconciler).
@@ -57,13 +55,12 @@ func NewReconciliationTriggeredEvent(reason string, coalescible bool, opts ...Co
 	return &ReconciliationTriggeredEvent{
 		Reason:      reason,
 		coalescible: coalescible,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *ReconciliationTriggeredEvent) EventType() string    { return EventTypeReconciliationTriggered }
-func (e *ReconciliationTriggeredEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ReconciliationTriggeredEvent) EventType() string { return EventTypeReconciliationTriggered }
 
 // Coalescible returns true if this event can be safely skipped when a newer
 // event of the same type is available. This implements the CoalescibleEvent interface.
@@ -74,8 +71,8 @@ func (e *ReconciliationTriggeredEvent) Coalescible() bool { return e.coalescible
 // This event propagates the correlation ID from ReconciliationTriggeredEvent.
 type ReconciliationStartedEvent struct {
 	// Trigger describes what triggered this reconciliation.
-	Trigger   string
-	timestamp time.Time
+	Trigger string
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -90,20 +87,19 @@ type ReconciliationStartedEvent struct {
 func NewReconciliationStartedEvent(trigger string, opts ...CorrelationOption) *ReconciliationStartedEvent {
 	return &ReconciliationStartedEvent{
 		Trigger:     trigger,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *ReconciliationStartedEvent) EventType() string    { return EventTypeReconciliationStarted }
-func (e *ReconciliationStartedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ReconciliationStartedEvent) EventType() string { return EventTypeReconciliationStarted }
 
 // ReconciliationCompletedEvent is published when a reconciliation cycle completes successfully.
 //
 // This event propagates the correlation ID from the reconciliation chain.
 type ReconciliationCompletedEvent struct {
 	DurationMs int64
-	timestamp  time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -118,21 +114,20 @@ type ReconciliationCompletedEvent struct {
 func NewReconciliationCompletedEvent(durationMs int64, opts ...CorrelationOption) *ReconciliationCompletedEvent {
 	return &ReconciliationCompletedEvent{
 		DurationMs:  durationMs,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *ReconciliationCompletedEvent) EventType() string    { return EventTypeReconciliationCompleted }
-func (e *ReconciliationCompletedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ReconciliationCompletedEvent) EventType() string { return EventTypeReconciliationCompleted }
 
 // ReconciliationFailedEvent is published when a reconciliation cycle fails.
 //
 // This event propagates the correlation ID from the reconciliation chain.
 type ReconciliationFailedEvent struct {
-	Error     string
-	Phase     string // Which phase failed: "render", "validate", "deploy"
-	timestamp time.Time
+	Error string
+	Phase string // Which phase failed: "render", "validate", "deploy"
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -148,10 +143,9 @@ func NewReconciliationFailedEvent(err, phase string, opts ...CorrelationOption) 
 	return &ReconciliationFailedEvent{
 		Error:       err,
 		Phase:       phase,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *ReconciliationFailedEvent) EventType() string    { return EventTypeReconciliationFailed }
-func (e *ReconciliationFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ReconciliationFailedEvent) EventType() string { return EventTypeReconciliationFailed }

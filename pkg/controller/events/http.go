@@ -14,8 +14,6 @@
 
 package events
 
-import "time"
-
 // HTTPResourceUpdatedEvent is published when HTTP resource content has changed.
 // This triggers a reconciliation cycle with the new content as "pending".
 // The content must pass validation before being promoted to "accepted".
@@ -25,7 +23,7 @@ type HTTPResourceUpdatedEvent struct {
 	URL             string // The URL that was refreshed
 	ContentChecksum string // SHA256 checksum of new content
 	ContentSize     int    // Size of new content in bytes
-	timestamp       time.Time
+	timestamped
 }
 
 // NewHTTPResourceUpdatedEvent creates a new HTTPResourceUpdatedEvent.
@@ -34,12 +32,11 @@ func NewHTTPResourceUpdatedEvent(url, checksum string, size int) *HTTPResourceUp
 		URL:             url,
 		ContentChecksum: checksum,
 		ContentSize:     size,
-		timestamp:       time.Now(),
+		timestamped:     newTimestamped(),
 	}
 }
 
-func (e *HTTPResourceUpdatedEvent) EventType() string    { return EventTypeHTTPResourceUpdated }
-func (e *HTTPResourceUpdatedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *HTTPResourceUpdatedEvent) EventType() string { return EventTypeHTTPResourceUpdated }
 
 // Coalescible returns true because HTTP resource update events represent state
 // where only the latest content matters. If the same URL updates multiple times
@@ -52,7 +49,7 @@ type HTTPResourceAcceptedEvent struct {
 	URL             string // The URL whose content was accepted
 	ContentChecksum string // SHA256 checksum of accepted content
 	ContentSize     int    // Size of accepted content in bytes
-	timestamp       time.Time
+	timestamped
 }
 
 // NewHTTPResourceAcceptedEvent creates a new HTTPResourceAcceptedEvent.
@@ -61,12 +58,11 @@ func NewHTTPResourceAcceptedEvent(url, checksum string, size int) *HTTPResourceA
 		URL:             url,
 		ContentChecksum: checksum,
 		ContentSize:     size,
-		timestamp:       time.Now(),
+		timestamped:     newTimestamped(),
 	}
 }
 
-func (e *HTTPResourceAcceptedEvent) EventType() string    { return EventTypeHTTPResourceAccepted }
-func (e *HTTPResourceAcceptedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *HTTPResourceAcceptedEvent) EventType() string { return EventTypeHTTPResourceAccepted }
 
 // HTTPResourceRejectedEvent is published when pending HTTP content fails validation.
 // The old accepted content remains in use.
@@ -74,7 +70,7 @@ type HTTPResourceRejectedEvent struct {
 	URL             string // The URL whose content was rejected
 	ContentChecksum string // SHA256 checksum of rejected content
 	Reason          string // Why the content was rejected
-	timestamp       time.Time
+	timestamped
 }
 
 // NewHTTPResourceRejectedEvent creates a new HTTPResourceRejectedEvent.
@@ -83,9 +79,8 @@ func NewHTTPResourceRejectedEvent(url, checksum, reason string) *HTTPResourceRej
 		URL:             url,
 		ContentChecksum: checksum,
 		Reason:          reason,
-		timestamp:       time.Now(),
+		timestamped:     newTimestamped(),
 	}
 }
 
-func (e *HTTPResourceRejectedEvent) EventType() string    { return EventTypeHTTPResourceRejected }
-func (e *HTTPResourceRejectedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *HTTPResourceRejectedEvent) EventType() string { return EventTypeHTTPResourceRejected }

@@ -14,14 +14,12 @@
 
 package events
 
-import "time"
-
 // LeaderElectionStartedEvent is published when leader election is initiated.
 type LeaderElectionStartedEvent struct {
 	Identity       string
 	LeaseName      string
 	LeaseNamespace string
-	timestamp      time.Time
+	timestamped
 }
 
 // NewLeaderElectionStartedEvent creates a new LeaderElectionStartedEvent.
@@ -30,54 +28,51 @@ func NewLeaderElectionStartedEvent(identity, leaseName, leaseNamespace string) *
 		Identity:       identity,
 		LeaseName:      leaseName,
 		LeaseNamespace: leaseNamespace,
-		timestamp:      time.Now(),
+		timestamped:    newTimestamped(),
 	}
 }
 
-func (e *LeaderElectionStartedEvent) EventType() string    { return EventTypeLeaderElectionStarted }
-func (e *LeaderElectionStartedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *LeaderElectionStartedEvent) EventType() string { return EventTypeLeaderElectionStarted }
 
 // BecameLeaderEvent is published when this replica becomes the leader.
 type BecameLeaderEvent struct {
-	Identity  string
-	timestamp time.Time
+	Identity string
+	timestamped
 }
 
 // NewBecameLeaderEvent creates a new BecameLeaderEvent.
 func NewBecameLeaderEvent(identity string) *BecameLeaderEvent {
 	return &BecameLeaderEvent{
-		Identity:  identity,
-		timestamp: time.Now(),
+		Identity:    identity,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *BecameLeaderEvent) EventType() string    { return EventTypeBecameLeader }
-func (e *BecameLeaderEvent) Timestamp() time.Time { return e.timestamp }
+func (e *BecameLeaderEvent) EventType() string { return EventTypeBecameLeader }
 
 // LostLeadershipEvent is published when this replica loses leadership.
 type LostLeadershipEvent struct {
-	Identity  string
-	Reason    string // graceful_shutdown, lease_expired, etc.
-	timestamp time.Time
+	Identity string
+	Reason   string // graceful_shutdown, lease_expired, etc.
+	timestamped
 }
 
 // NewLostLeadershipEvent creates a new LostLeadershipEvent.
 func NewLostLeadershipEvent(identity, reason string) *LostLeadershipEvent {
 	return &LostLeadershipEvent{
-		Identity:  identity,
-		Reason:    reason,
-		timestamp: time.Now(),
+		Identity:    identity,
+		Reason:      reason,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *LostLeadershipEvent) EventType() string    { return EventTypeLostLeadership }
-func (e *LostLeadershipEvent) Timestamp() time.Time { return e.timestamp }
+func (e *LostLeadershipEvent) EventType() string { return EventTypeLostLeadership }
 
 // NewLeaderObservedEvent is published when a new leader is observed.
 type NewLeaderObservedEvent struct {
 	NewLeaderIdentity string
 	IsSelf            bool // true if this replica is the new leader
-	timestamp         time.Time
+	timestamped
 }
 
 // NewNewLeaderObservedEvent creates a new NewLeaderObservedEvent.
@@ -85,9 +80,8 @@ func NewNewLeaderObservedEvent(newLeaderIdentity string, isSelf bool) *NewLeader
 	return &NewLeaderObservedEvent{
 		NewLeaderIdentity: newLeaderIdentity,
 		IsSelf:            isSelf,
-		timestamp:         time.Now(),
+		timestamped:       newTimestamped(),
 	}
 }
 
-func (e *NewLeaderObservedEvent) EventType() string    { return EventTypeNewLeaderObserved }
-func (e *NewLeaderObservedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *NewLeaderObservedEvent) EventType() string { return EventTypeNewLeaderObserved }

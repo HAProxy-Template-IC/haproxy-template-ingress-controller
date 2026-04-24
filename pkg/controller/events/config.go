@@ -41,7 +41,7 @@ type ConfigParsedEvent struct {
 	// SecretVersion is the resourceVersion of the credentials Secret.
 	SecretVersion string
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewConfigParsedEvent creates a new ConfigParsedEvent.
@@ -51,12 +51,11 @@ func NewConfigParsedEvent(config, templateConfig any, version, secretVersion str
 		TemplateConfig: templateConfig,
 		Version:        version,
 		SecretVersion:  secretVersion,
-		timestamp:      time.Now(),
+		timestamped:    newTimestamped(),
 	}
 }
 
-func (e *ConfigParsedEvent) EventType() string    { return EventTypeConfigParsed }
-func (e *ConfigParsedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigParsedEvent) EventType() string { return EventTypeConfigParsed }
 
 // ConfigValidationRequest is published to request validation of a parsed config.
 //
@@ -71,22 +70,21 @@ type ConfigValidationRequest struct {
 	// Version is the resourceVersion being validated.
 	Version string
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewConfigValidationRequest creates a new ConfigValidationRequest.
 func NewConfigValidationRequest(config any, version string) *ConfigValidationRequest {
 	return &ConfigValidationRequest{
-		reqID:     fmt.Sprintf("config-validation-%s-%d", version, time.Now().UnixNano()),
-		Config:    config,
-		Version:   version,
-		timestamp: time.Now(),
+		reqID:       fmt.Sprintf("config-validation-%s-%d", version, time.Now().UnixNano()),
+		Config:      config,
+		Version:     version,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *ConfigValidationRequest) EventType() string    { return EventTypeConfigValidationRequest }
-func (e *ConfigValidationRequest) Timestamp() time.Time { return e.timestamp }
-func (e *ConfigValidationRequest) RequestID() string    { return e.reqID }
+func (e *ConfigValidationRequest) EventType() string { return EventTypeConfigValidationRequest }
+func (e *ConfigValidationRequest) RequestID() string { return e.reqID }
 
 // ConfigValidationResponse is sent by validators in response to ConfigValidationRequest.
 //
@@ -105,33 +103,25 @@ type ConfigValidationResponse struct {
 	// Errors contains validation error messages, empty if Valid is true.
 	Errors []string
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewConfigValidationResponse creates a new ConfigValidationResponse.
 // Performs defensive copy of the errors slice.
 func NewConfigValidationResponse(requestID, validatorName string, valid bool, errors []string) *ConfigValidationResponse {
-	// Defensive copy of errors slice
-	var errorsCopy []string
-	if len(errors) > 0 {
-		errorsCopy = make([]string, len(errors))
-		copy(errorsCopy, errors)
-	}
-
 	return &ConfigValidationResponse{
 		reqID:         requestID,
 		responder:     validatorName,
 		ValidatorName: validatorName,
 		Valid:         valid,
-		Errors:        errorsCopy,
-		timestamp:     time.Now(),
+		Errors:        copySlice(errors),
+		timestamped:   newTimestamped(),
 	}
 }
 
-func (e *ConfigValidationResponse) EventType() string    { return EventTypeConfigValidationResponse }
-func (e *ConfigValidationResponse) Timestamp() time.Time { return e.timestamp }
-func (e *ConfigValidationResponse) RequestID() string    { return e.reqID }
-func (e *ConfigValidationResponse) Responder() string    { return e.responder }
+func (e *ConfigValidationResponse) EventType() string { return EventTypeConfigValidationResponse }
+func (e *ConfigValidationResponse) RequestID() string { return e.reqID }
+func (e *ConfigValidationResponse) Responder() string { return e.responder }
 
 // ConfigValidatedEvent is published when all validators have confirmed the config is valid.
 //
@@ -147,7 +137,7 @@ type ConfigValidatedEvent struct {
 
 	Version       string
 	SecretVersion string
-	timestamp     time.Time
+	timestamped
 }
 
 // NewConfigValidatedEvent creates a new ConfigValidatedEvent.
@@ -157,12 +147,11 @@ func NewConfigValidatedEvent(config, templateConfig any, version, secretVersion 
 		TemplateConfig: templateConfig,
 		Version:        version,
 		SecretVersion:  secretVersion,
-		timestamp:      time.Now(),
+		timestamped:    newTimestamped(),
 	}
 }
 
-func (e *ConfigValidatedEvent) EventType() string    { return EventTypeConfigValidated }
-func (e *ConfigValidatedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigValidatedEvent) EventType() string { return EventTypeConfigValidated }
 
 // ConfigInvalidEvent is published when config validation fails.
 //
@@ -179,34 +168,21 @@ type ConfigInvalidEvent struct {
 	// ValidationErrors maps validator names to their error messages.
 	ValidationErrors map[string][]string
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewConfigInvalidEvent creates a new ConfigInvalidEvent.
 // Performs defensive copy of the validation errors map and its slice values.
 func NewConfigInvalidEvent(version string, templateConfig any, validationErrors map[string][]string) *ConfigInvalidEvent {
-	// Defensive copy of map with slice values
-	errorsCopy := make(map[string][]string, len(validationErrors))
-	for k, v := range validationErrors {
-		if len(v) > 0 {
-			vCopy := make([]string, len(v))
-			copy(vCopy, v)
-			errorsCopy[k] = vCopy
-		} else {
-			errorsCopy[k] = nil
-		}
-	}
-
 	return &ConfigInvalidEvent{
 		Version:          version,
 		TemplateConfig:   templateConfig,
-		ValidationErrors: errorsCopy,
-		timestamp:        time.Now(),
+		ValidationErrors: copyStringSlicesMap(validationErrors),
+		timestamped:      newTimestamped(),
 	}
 }
 
-func (e *ConfigInvalidEvent) EventType() string    { return EventTypeConfigInvalid }
-func (e *ConfigInvalidEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigInvalidEvent) EventType() string { return EventTypeConfigInvalid }
 
 // ConfigResourceChangedEvent is published when the ConfigMap resource is added, updated, or deleted.
 //
@@ -218,16 +194,15 @@ type ConfigResourceChangedEvent struct {
 	// Consumers should type-assert to *unstructured.Unstructured or *corev1.ConfigMap.
 	Resource any
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewConfigResourceChangedEvent creates a new ConfigResourceChangedEvent.
 func NewConfigResourceChangedEvent(resource any) *ConfigResourceChangedEvent {
 	return &ConfigResourceChangedEvent{
-		Resource:  resource,
-		timestamp: time.Now(),
+		Resource:    resource,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *ConfigResourceChangedEvent) EventType() string    { return EventTypeConfigResourceChanged }
-func (e *ConfigResourceChangedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ConfigResourceChangedEvent) EventType() string { return EventTypeConfigResourceChanged }

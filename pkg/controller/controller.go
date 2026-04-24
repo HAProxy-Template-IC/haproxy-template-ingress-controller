@@ -58,7 +58,7 @@ const (
 	// ConfigPollInterval is the interval for polling HAProxyTemplateConfig availability.
 	ConfigPollInterval = 5 * time.Second
 	// DebugEventBufferSize is the size of the event buffer for debug/introspection.
-	DebugEventBufferSize = 1000
+	DebugEventBufferSize = busevents.DebugSubscriberBuffer
 	// ShutdownTimeout is the maximum time to wait for goroutines to finish during shutdown.
 	// Set to 25s to allow clean exit before Kubernetes' default 30s terminationGracePeriodSeconds.
 	ShutdownTimeout = 25 * time.Second

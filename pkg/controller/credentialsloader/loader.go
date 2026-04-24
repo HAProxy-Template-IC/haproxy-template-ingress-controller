@@ -17,8 +17,8 @@ const (
 	ComponentName = "credentialsloader"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	// Size 50: Low-volume component (~1 event per secret change).
-	EventBufferSize = 50
+	// Low-volume component (~1 event per secret change).
+	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // CredentialsLoaderComponent subscribes to SecretResourceChangedEvent and parses Secret data.

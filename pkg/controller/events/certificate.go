@@ -14,8 +14,6 @@
 
 package events
 
-import "time"
-
 // CertResourceChangedEvent is published when the webhook certificate Secret changes.
 //
 // This event is published by the resource watcher when the Secret resource
@@ -23,19 +21,18 @@ import "time"
 type CertResourceChangedEvent struct {
 	Resource any // *unstructured.Unstructured
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewCertResourceChangedEvent creates a new CertResourceChangedEvent.
 func NewCertResourceChangedEvent(resource any) *CertResourceChangedEvent {
 	return &CertResourceChangedEvent{
-		Resource:  resource,
-		timestamp: time.Now(),
+		Resource:    resource,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *CertResourceChangedEvent) EventType() string    { return EventTypeCertResourceChanged }
-func (e *CertResourceChangedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *CertResourceChangedEvent) EventType() string { return EventTypeCertResourceChanged }
 
 // CertParsedEvent is published when webhook certificates are successfully extracted and parsed.
 //
@@ -45,25 +42,17 @@ type CertParsedEvent struct {
 	KeyPEM  []byte
 	Version string // Secret resourceVersion
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewCertParsedEvent creates a new CertParsedEvent.
 func NewCertParsedEvent(certPEM, keyPEM []byte, version string) *CertParsedEvent {
-	// Defensive copy of byte slices
-	certCopy := make([]byte, len(certPEM))
-	copy(certCopy, certPEM)
-
-	keyCopy := make([]byte, len(keyPEM))
-	copy(keyCopy, keyPEM)
-
 	return &CertParsedEvent{
-		CertPEM:   certCopy,
-		KeyPEM:    keyCopy,
-		Version:   version,
-		timestamp: time.Now(),
+		CertPEM:     copySlice(certPEM),
+		KeyPEM:      copySlice(keyPEM),
+		Version:     version,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *CertParsedEvent) EventType() string    { return EventTypeCertParsed }
-func (e *CertParsedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *CertParsedEvent) EventType() string { return EventTypeCertParsed }

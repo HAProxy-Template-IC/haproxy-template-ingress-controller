@@ -15,8 +15,6 @@
 package events
 
 import (
-	"time"
-
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
@@ -27,7 +25,7 @@ import (
 //
 // This event propagates the correlation ID from TemplateRenderedEvent.
 type ValidationStartedEvent struct {
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -41,13 +39,12 @@ type ValidationStartedEvent struct {
 //	    events.PropagateCorrelation(renderedEvent))
 func NewValidationStartedEvent(opts ...CorrelationOption) *ValidationStartedEvent {
 	return &ValidationStartedEvent{
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *ValidationStartedEvent) EventType() string    { return EventTypeValidationStarted }
-func (e *ValidationStartedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ValidationStartedEvent) EventType() string { return EventTypeValidationStarted }
 
 // ValidationCompletedEvent is published when local configuration validation succeeds.
 //
@@ -76,7 +73,7 @@ type ValidationCompletedEvent struct {
 	// event of the same type is available. Propagated from TemplateRenderedEvent.
 	coalescible bool
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -96,26 +93,18 @@ type ValidationCompletedEvent struct {
 //	event := events.NewValidationCompletedEvent(warnings, durationMs, triggerReason, parsedConfig, coalescible,
 //	    events.PropagateCorrelation(startedEvent))
 func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerReason string, parsedConfig *parser.StructuredConfig, coalescible bool, opts ...CorrelationOption) *ValidationCompletedEvent {
-	// Defensive copy of warnings slice
-	var warningsCopy []string
-	if len(warnings) > 0 {
-		warningsCopy = make([]string, len(warnings))
-		copy(warningsCopy, warnings)
-	}
-
 	return &ValidationCompletedEvent{
-		Warnings:      warningsCopy,
+		Warnings:      copySlice(warnings),
 		DurationMs:    durationMs,
 		TriggerReason: triggerReason,
 		ParsedConfig:  parsedConfig,
 		coalescible:   coalescible,
-		timestamp:     time.Now(),
+		timestamped:   newTimestamped(),
 		Correlation:   NewCorrelation(opts...),
 	}
 }
 
-func (e *ValidationCompletedEvent) EventType() string    { return EventTypeValidationCompleted }
-func (e *ValidationCompletedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ValidationCompletedEvent) EventType() string { return EventTypeValidationCompleted }
 
 // Coalescible returns true if this event can be safely skipped when a newer
 // event of the same type is available. This implements the CoalescibleEvent interface.
@@ -136,7 +125,7 @@ type ValidationFailedEvent struct {
 	// Used by DeploymentScheduler to determine fallback behavior (deploy cached config on drift prevention).
 	TriggerReason string
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -150,43 +139,34 @@ type ValidationFailedEvent struct {
 //	event := events.NewValidationFailedEvent(errors, durationMs, triggerReason,
 //	    events.PropagateCorrelation(startedEvent))
 func NewValidationFailedEvent(errors []string, durationMs int64, triggerReason string, opts ...CorrelationOption) *ValidationFailedEvent {
-	// Defensive copy of errors slice
-	var errorsCopy []string
-	if len(errors) > 0 {
-		errorsCopy = make([]string, len(errors))
-		copy(errorsCopy, errors)
-	}
-
 	return &ValidationFailedEvent{
-		Errors:        errorsCopy,
+		Errors:        copySlice(errors),
 		DurationMs:    durationMs,
 		TriggerReason: triggerReason,
-		timestamp:     time.Now(),
+		timestamped:   newTimestamped(),
 		Correlation:   NewCorrelation(opts...),
 	}
 }
 
-func (e *ValidationFailedEvent) EventType() string    { return EventTypeValidationFailed }
-func (e *ValidationFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ValidationFailedEvent) EventType() string { return EventTypeValidationFailed }
 
 // ValidationTestsStartedEvent is published when embedded validation tests begin execution.
 //
 // This is used for both CLI validation and webhook validation.
 type ValidationTestsStartedEvent struct {
 	TestCount int // Number of tests to execute
-	timestamp time.Time
+	timestamped
 }
 
 // NewValidationTestsStartedEvent creates a new ValidationTestsStartedEvent.
 func NewValidationTestsStartedEvent(testCount int) *ValidationTestsStartedEvent {
 	return &ValidationTestsStartedEvent{
-		TestCount: testCount,
-		timestamp: time.Now(),
+		TestCount:   testCount,
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *ValidationTestsStartedEvent) EventType() string    { return EventTypeValidationTestsStarted }
-func (e *ValidationTestsStartedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ValidationTestsStartedEvent) EventType() string { return EventTypeValidationTestsStarted }
 
 // ValidationTestsCompletedEvent is published when all validation tests finish execution.
 //
@@ -196,7 +176,7 @@ type ValidationTestsCompletedEvent struct {
 	PassedTests int   // Number of tests that passed
 	FailedTests int   // Number of tests that failed
 	DurationMs  int64 // Time taken to execute all tests
-	timestamp   time.Time
+	timestamped
 }
 
 // NewValidationTestsCompletedEvent creates a new ValidationTestsCompletedEvent.
@@ -206,36 +186,27 @@ func NewValidationTestsCompletedEvent(total, passed, failed int, durationMs int6
 		PassedTests: passed,
 		FailedTests: failed,
 		DurationMs:  durationMs,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *ValidationTestsCompletedEvent) EventType() string    { return EventTypeValidationTestsCompleted }
-func (e *ValidationTestsCompletedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ValidationTestsCompletedEvent) EventType() string { return EventTypeValidationTestsCompleted }
 
 // ValidationTestsFailedEvent is published when validation tests fail during webhook validation.
 //
 // This event is only published during webhook validation when tests fail and admission is denied.
 type ValidationTestsFailedEvent struct {
 	FailedTests []string // Names of tests that failed
-	timestamp   time.Time
+	timestamped
 }
 
 // NewValidationTestsFailedEvent creates a new ValidationTestsFailedEvent.
 // Performs defensive copy of the failed tests slice.
 func NewValidationTestsFailedEvent(failedTests []string) *ValidationTestsFailedEvent {
-	// Defensive copy of slice
-	var failedCopy []string
-	if len(failedTests) > 0 {
-		failedCopy = make([]string, len(failedTests))
-		copy(failedCopy, failedTests)
-	}
-
 	return &ValidationTestsFailedEvent{
-		FailedTests: failedCopy,
-		timestamp:   time.Now(),
+		FailedTests: copySlice(failedTests),
+		timestamped: newTimestamped(),
 	}
 }
 
-func (e *ValidationTestsFailedEvent) EventType() string    { return EventTypeValidationTestsFailed }
-func (e *ValidationTestsFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ValidationTestsFailedEvent) EventType() string { return EventTypeValidationTestsFailed }

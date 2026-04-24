@@ -10,11 +10,9 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-const (
-	// EventBufferSize is the size of the event subscription buffer.
-	// Size 10: Low-volume component (~1 validation request per reconciliation).
-	EventBufferSize = 10
-)
+// EventBufferSize is the size of the event subscription buffer.
+// Low-volume component (~1 validation request per reconciliation).
+const EventBufferSize = busevents.LowVolumeSubscriberBuffer
 
 // ValidationHandler defines the interface for validator-specific validation logic.
 //

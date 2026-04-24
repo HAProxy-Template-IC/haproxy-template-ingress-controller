@@ -16,7 +16,6 @@ package events
 
 import (
 	"maps"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
@@ -31,7 +30,7 @@ type ResourceIndexUpdatedEvent struct {
 	// and whether this event occurred during initial sync.
 	ChangeStats types.ChangeStats
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewResourceIndexUpdatedEvent creates a new ResourceIndexUpdatedEvent.
@@ -40,12 +39,11 @@ func NewResourceIndexUpdatedEvent(resourceTypeName string, changeStats types.Cha
 	return &ResourceIndexUpdatedEvent{
 		ResourceTypeName: resourceTypeName,
 		ChangeStats:      changeStats,
-		timestamp:        time.Now(),
+		timestamped:      newTimestamped(),
 	}
 }
 
-func (e *ResourceIndexUpdatedEvent) EventType() string    { return EventTypeResourceIndexUpdated }
-func (e *ResourceIndexUpdatedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ResourceIndexUpdatedEvent) EventType() string { return EventTypeResourceIndexUpdated }
 
 // ResourceSyncCompleteEvent is published when a resource watcher has completed.
 // its initial sync with the Kubernetes API.
@@ -56,7 +54,7 @@ type ResourceSyncCompleteEvent struct {
 	// InitialCount is the number of resources loaded during initial sync.
 	InitialCount int
 
-	timestamp time.Time
+	timestamped
 }
 
 // NewResourceSyncCompleteEvent creates a new ResourceSyncCompleteEvent.
@@ -64,12 +62,11 @@ func NewResourceSyncCompleteEvent(resourceTypeName string, initialCount int) *Re
 	return &ResourceSyncCompleteEvent{
 		ResourceTypeName: resourceTypeName,
 		InitialCount:     initialCount,
-		timestamp:        time.Now(),
+		timestamped:      newTimestamped(),
 	}
 }
 
-func (e *ResourceSyncCompleteEvent) EventType() string    { return EventTypeResourceSyncComplete }
-func (e *ResourceSyncCompleteEvent) Timestamp() time.Time { return e.timestamp }
+func (e *ResourceSyncCompleteEvent) EventType() string { return EventTypeResourceSyncComplete }
 
 // IndexSynchronizedEvent is published when all resource watchers have completed.
 // their initial sync and the system has a complete view of all resources.
@@ -79,7 +76,7 @@ func (e *ResourceSyncCompleteEvent) Timestamp() time.Time { return e.timestamp }
 type IndexSynchronizedEvent struct {
 	// ResourceCounts maps resource types to their counts.
 	ResourceCounts map[string]int
-	timestamp      time.Time
+	timestamped
 }
 
 // NewIndexSynchronizedEvent creates a new IndexSynchronizedEvent.
@@ -91,9 +88,8 @@ func NewIndexSynchronizedEvent(resourceCounts map[string]int) *IndexSynchronized
 
 	return &IndexSynchronizedEvent{
 		ResourceCounts: countsCopy,
-		timestamp:      time.Now(),
+		timestamped:    newTimestamped(),
 	}
 }
 
-func (e *IndexSynchronizedEvent) EventType() string    { return EventTypeIndexSynchronized }
-func (e *IndexSynchronizedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *IndexSynchronizedEvent) EventType() string { return EventTypeIndexSynchronized }

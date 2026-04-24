@@ -39,7 +39,8 @@ const (
 	ComponentName = "discovery"
 
 	// EventBufferSize is the buffer size for event subscriptions.
-	EventBufferSize = 100
+	// High-volume to absorb pod churn bursts during scaling and rolling updates.
+	EventBufferSize = busevents.HighVolumeSubscriberBuffer
 
 	// Version check retry configuration.
 	initialRetryInterval = 5 * time.Second

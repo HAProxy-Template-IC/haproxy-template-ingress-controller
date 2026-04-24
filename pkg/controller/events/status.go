@@ -14,8 +14,6 @@
 
 package events
 
-import "time"
-
 // StatusPatchPhase identifies which pipeline phase triggered a status patch application.
 type StatusPatchPhase string
 
@@ -49,7 +47,7 @@ type StatusUpdateCompletedEvent struct {
 	// DurationMs is the total duration of status patch application.
 	DurationMs int64
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -68,13 +66,12 @@ func NewStatusUpdateCompletedEvent(
 		AppliedCount: appliedCount,
 		SkippedCount: skippedCount,
 		DurationMs:   durationMs,
-		timestamp:    time.Now(),
+		timestamped:  newTimestamped(),
 		Correlation:  NewCorrelation(opts...),
 	}
 }
 
-func (e *StatusUpdateCompletedEvent) EventType() string    { return EventTypeStatusUpdateCompleted }
-func (e *StatusUpdateCompletedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *StatusUpdateCompletedEvent) EventType() string { return EventTypeStatusUpdateCompleted }
 
 // StatusUpdateFailedEvent is published when a status patch application fails for a resource.
 //
@@ -95,7 +92,7 @@ type StatusUpdateFailedEvent struct {
 	// Retriable indicates whether the failure is transient and can be retried.
 	Retriable bool
 
-	timestamp time.Time
+	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
@@ -116,10 +113,9 @@ func NewStatusUpdateFailedEvent(
 		GVR:         gvr,
 		Error:       err,
 		Retriable:   retriable,
-		timestamp:   time.Now(),
+		timestamped: newTimestamped(),
 		Correlation: NewCorrelation(opts...),
 	}
 }
 
-func (e *StatusUpdateFailedEvent) EventType() string    { return EventTypeStatusUpdateFailed }
-func (e *StatusUpdateFailedEvent) Timestamp() time.Time { return e.timestamp }
+func (e *StatusUpdateFailedEvent) EventType() string { return EventTypeStatusUpdateFailed }

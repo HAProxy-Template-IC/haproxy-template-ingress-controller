@@ -52,7 +52,7 @@ const (
 	ValidatorID = "dryrun"
 
 	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = 50
+	EventBufferSize = busevents.StandardSubscriberBuffer
 
 	// TestExecutionTimeout is the maximum time allowed for running validation tests.
 	// Tests run sequentially with Workers=1, so this should accommodate multiple tests.

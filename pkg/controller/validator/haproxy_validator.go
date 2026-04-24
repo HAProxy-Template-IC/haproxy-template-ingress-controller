@@ -43,8 +43,8 @@ const (
 	HAProxyValidatorComponentName = "haproxy-validator"
 
 	// HAProxyValidatorEventBufferSize is the size of the event subscription buffer.
-	// Size 50: Medium-volume component (validation events during reconciliation).
-	HAProxyValidatorEventBufferSize = 50
+	// Medium-volume component (validation events during reconciliation).
+	HAProxyValidatorEventBufferSize = busevents.StandardSubscriberBuffer
 )
 
 // HAProxyValidatorComponent validates rendered HAProxy configurations.
