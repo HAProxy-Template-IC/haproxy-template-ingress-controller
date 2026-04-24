@@ -1,19 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    ":dependencyDashboard",
-    ":semanticCommits",
-    ":separateMajorReleases",
+    "gitlab>haproxy-haptic/renovate-runner",
     "customManagers:dockerfileVersions",
     "customManagers:gitlabPipelineVersions",
     "customManagers:makefileVersions",
     "customManagers:helmChartYamlAppVersions"
   ],
-  "labels": [
-    "dependencies"
-  ],
-  "platformAutomerge": true,
   "prHourlyLimit": 0,
   "postUpdateOptions": [
     "gomodTidy"
@@ -49,27 +42,6 @@
     }
   ],
   "packageRules": [
-    {
-      "description": "Automerge patch and minor updates",
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
-      "automerge": true
-    },
-    {
-      "description": "Automerge Go patch and minor",
-      "matchManagers": [
-        "gomod"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "automerge": true
-    },
     {
       "description": "Update Go version in go.mod",
       "matchManagers": [
