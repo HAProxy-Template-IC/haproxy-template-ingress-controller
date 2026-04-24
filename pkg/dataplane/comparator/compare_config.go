@@ -9,50 +9,15 @@ import (
 
 // compareHTTPErrors compares http-errors sections between current and desired configurations.
 func (c *Comparator) compareHTTPErrors(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.HTTPErrorsSection)
-	for i := range current.HTTPErrors {
-		httpError := current.HTTPErrors[i]
-		if httpError.Name != "" {
-			currentMap[httpError.Name] = httpError
-		}
-	}
-
-	desiredMap := make(map[string]*models.HTTPErrorsSection)
-	for i := range desired.HTTPErrors {
-		httpError := desired.HTTPErrors[i]
-		if httpError.Name != "" {
-			desiredMap[httpError.Name] = httpError
-		}
-	}
-
-	// Find added http-errors sections
-	for name, httpError := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewHTTPErrorsSectionCreate(httpError))
-		}
-	}
-
-	// Find deleted http-errors sections
-	for name, httpError := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewHTTPErrorsSectionDelete(httpError))
-		}
-	}
-
-	// Find modified http-errors sections
-	for name, desiredHTTPError := range desiredMap {
-		if currentHTTPError, exists := currentMap[name]; exists {
-			// Compare http-errors sections using Equal() method
-			if !currentHTTPError.Equal(*desiredHTTPError) {
-				operations = append(operations, sections.NewHTTPErrorsSectionUpdate(desiredHTTPError))
-			}
-		}
-	}
-
-	return operations
+	return compareNamedSections(
+		current.HTTPErrors,
+		desired.HTTPErrors,
+		func(s *models.HTTPErrorsSection) string { return s.Name },
+		func(a, b *models.HTTPErrorsSection) bool { return a.Equal(*b) },
+		sections.NewHTTPErrorsSectionCreate,
+		sections.NewHTTPErrorsSectionDelete,
+		sections.NewHTTPErrorsSectionUpdate,
+	)
 }
 
 // compareMailers compares mailers sections between current and desired configurations.
@@ -297,188 +262,57 @@ func (c *Comparator) comparePeerEntriesWithIndex(peersSection string, currentEnt
 
 // compareCaches compares cache sections between current and desired configurations.
 func (c *Comparator) compareCaches(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.Cache)
-	for i := range current.Caches {
-		cache := current.Caches[i]
-		if cache.Name != nil && *cache.Name != "" {
-			currentMap[*cache.Name] = cache
-		}
-	}
-
-	desiredMap := make(map[string]*models.Cache)
-	for i := range desired.Caches {
-		cache := desired.Caches[i]
-		if cache.Name != nil && *cache.Name != "" {
-			desiredMap[*cache.Name] = cache
-		}
-	}
-
-	// Find added cache sections
-	for name, cache := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewCacheCreate(cache))
-		}
-	}
-
-	// Find deleted cache sections
-	for name, cache := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewCacheDelete(cache))
-		}
-	}
-
-	// Find modified cache sections
-	for name, desiredCache := range desiredMap {
-		if currentCache, exists := currentMap[name]; exists {
-			if !currentCache.Equal(*desiredCache) {
-				operations = append(operations, sections.NewCacheUpdate(desiredCache))
+	return compareNamedSections(
+		current.Caches,
+		desired.Caches,
+		func(s *models.Cache) string {
+			if s.Name == nil {
+				return ""
 			}
-		}
-	}
-
-	return operations
+			return *s.Name
+		},
+		func(a, b *models.Cache) bool { return a.Equal(*b) },
+		sections.NewCacheCreate,
+		sections.NewCacheDelete,
+		sections.NewCacheUpdate,
+	)
 }
 
 // compareRings compares ring sections between current and desired configurations.
 func (c *Comparator) compareRings(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.Ring)
-	for i := range current.Rings {
-		ring := current.Rings[i]
-		if ring.Name != "" {
-			currentMap[ring.Name] = ring
-		}
-	}
-
-	desiredMap := make(map[string]*models.Ring)
-	for i := range desired.Rings {
-		ring := desired.Rings[i]
-		if ring.Name != "" {
-			desiredMap[ring.Name] = ring
-		}
-	}
-
-	// Find added ring sections
-	for name, ring := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewRingCreate(ring))
-		}
-	}
-
-	// Find deleted ring sections
-	for name, ring := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewRingDelete(ring))
-		}
-	}
-
-	// Find modified ring sections
-	for name, desiredRing := range desiredMap {
-		if currentRing, exists := currentMap[name]; exists {
-			if !currentRing.Equal(*desiredRing) {
-				operations = append(operations, sections.NewRingUpdate(desiredRing))
-			}
-		}
-	}
-
-	return operations
+	return compareNamedSections(
+		current.Rings,
+		desired.Rings,
+		func(r *models.Ring) string { return r.Name },
+		func(a, b *models.Ring) bool { return a.Equal(*b) },
+		sections.NewRingCreate,
+		sections.NewRingDelete,
+		sections.NewRingUpdate,
+	)
 }
 
 // comparePrograms compares program sections between current and desired configurations.
 func (c *Comparator) comparePrograms(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.Program)
-	for i := range current.Programs {
-		program := current.Programs[i]
-		if program.Name != "" {
-			currentMap[program.Name] = program
-		}
-	}
-
-	desiredMap := make(map[string]*models.Program)
-	for i := range desired.Programs {
-		program := desired.Programs[i]
-		if program.Name != "" {
-			desiredMap[program.Name] = program
-		}
-	}
-
-	// Find added program sections
-	for name, program := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewProgramCreate(program))
-		}
-	}
-
-	// Find deleted program sections
-	for name, program := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewProgramDelete(program))
-		}
-	}
-
-	// Find modified program sections
-	for name, desiredProgram := range desiredMap {
-		if currentProgram, exists := currentMap[name]; exists {
-			if !currentProgram.Equal(*desiredProgram) {
-				operations = append(operations, sections.NewProgramUpdate(desiredProgram))
-			}
-		}
-	}
-
-	return operations
+	return compareNamedSections(
+		current.Programs,
+		desired.Programs,
+		func(p *models.Program) string { return p.Name },
+		func(a, b *models.Program) bool { return a.Equal(*b) },
+		sections.NewProgramCreate,
+		sections.NewProgramDelete,
+		sections.NewProgramUpdate,
+	)
 }
 
 // compareFCGIApps compares fcgi-app sections between current and desired configurations.
 func (c *Comparator) compareFCGIApps(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.FCGIApp)
-	for i := range current.FCGIApps {
-		fcgiApp := current.FCGIApps[i]
-		if fcgiApp.Name != "" {
-			currentMap[fcgiApp.Name] = fcgiApp
-		}
-	}
-
-	desiredMap := make(map[string]*models.FCGIApp)
-	for i := range desired.FCGIApps {
-		fcgiApp := desired.FCGIApps[i]
-		if fcgiApp.Name != "" {
-			desiredMap[fcgiApp.Name] = fcgiApp
-		}
-	}
-
-	// Find added fcgi-app sections
-	for name, fcgiApp := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, sections.NewFCGIAppCreate(fcgiApp))
-		}
-	}
-
-	// Find deleted fcgi-app sections
-	for name, fcgiApp := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, sections.NewFCGIAppDelete(fcgiApp))
-		}
-	}
-
-	// Find modified fcgi-app sections
-	for name, desiredFCGIApp := range desiredMap {
-		if currentFCGIApp, exists := currentMap[name]; exists {
-			if !currentFCGIApp.Equal(*desiredFCGIApp) {
-				operations = append(operations, sections.NewFCGIAppUpdate(desiredFCGIApp))
-			}
-		}
-	}
-
-	return operations
+	return compareNamedSections(
+		current.FCGIApps,
+		desired.FCGIApps,
+		func(a *models.FCGIApp) string { return a.Name },
+		func(a, b *models.FCGIApp) bool { return a.Equal(*b) },
+		sections.NewFCGIAppCreate,
+		sections.NewFCGIAppDelete,
+		sections.NewFCGIAppUpdate,
+	)
 }
