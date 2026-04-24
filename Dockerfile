@@ -3,11 +3,11 @@
 # Build arguments for version control
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.26
-# Must match DEFAULT_HAPROXY in versions.env.
-# extractVersion keeps us on stable series only: HAProxy's floating `X.Y` tag
-# points at the latest dev release until the first `X.Y.Z` patch ships, so we
-# derive the version from patch tags (X.Y.Z → X.Y) to skip dev-only series.
-# renovate: datasource=docker depName=haproxytech/haproxy-debian extractVersion=^(?<version>\d+\.\d+)\. versioning=loose
+# Must match DEFAULT_HAPROXY in versions.env. Clamped to stable series by a
+# packageRule in renovate.json (HAProxy's floating `X.Y` tag on Docker Hub can
+# point at a dev release before the first `X.Y.Z` patch ships, so the rule
+# derives the tracked version from patch tags only).
+# renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=loose
 ARG HAPROXY_VERSION=3.3
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown

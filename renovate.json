@@ -96,6 +96,27 @@
         "haproxytech/haproxy-debian"
       ],
       "groupName": "haproxy image"
+    },
+    {
+      "description": "Keep HAPROXY_VERSION ARGs on stable series only. The built-in customManagers:dockerfileVersions preset does not honor an inline `extractVersion=...` hint, so apply it here. Without this clamp, Docker Hub's floating `3.4` tag (pointing at a dev release) would be proposed as an upgrade to these major.minor ARGs.",
+      "matchFileNames": [
+        "Dockerfile",
+        "versions.env"
+      ],
+      "matchPackageNames": [
+        "haproxytech/haproxy-debian"
+      ],
+      "extractVersion": "^(?<version>\\d+\\.\\d+)\\."
+    },
+    {
+      "description": "Keep HAPROXY_VERSION in the CI image Dockerfile on stable series only. Upstream haproxy/haproxy tags are `vX.Y-devN` during development and `vX.Y.Z` at release; deriving the version from patch tags skips series that have no stable release yet.",
+      "matchFileNames": [
+        ".gitlab/ci/images/ci/Dockerfile"
+      ],
+      "matchPackageNames": [
+        "haproxy/haproxy"
+      ],
+      "extractVersion": "^v(?<version>\\d+\\.\\d+)\\."
     }
   ]
 }
