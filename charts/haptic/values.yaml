@@ -16,21 +16,24 @@ commonAnnotations: {}
 # HAProxy version - selects the major.minor series for both controller and HAProxy pod images
 # Controller image suffix: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.2
 # HAProxy pod image: haproxytech/haproxy-debian:3.2.13 (patch from haproxyPatchVersions)
-# Must match a version built by CI (see versions.env for supported versions)
-# renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver
+# Must match a version built by CI (see versions.env for supported versions).
+# Not Renovate-managed: cutting over to a new series is an operational decision
+# (must also update Chart.yaml artifacthub annotation and dev-env manifests to match).
 haproxyVersion: "3.2"
 
 # Latest tested patch versions for each supported HAProxy major.minor.
 # Used as the default HAProxy pod image tag unless haproxy.image.tag is set.
-# Renovate updates these automatically.
+# Renovate updates each entry to the latest patch within its own series (the
+# series clamp is derived from the map key by the custom manager in
+# renovate.json, so adding or removing a series needs no config change).
 haproxyPatchVersions:
-  # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver allowedVersions=>=3.0.0 <3.1.0
+  # renovate: datasource=docker depName=haproxytech/haproxy-debian
   "3.0": "3.0.17"
-  # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver allowedVersions=>=3.1.0 <3.2.0
+  # renovate: datasource=docker depName=haproxytech/haproxy-debian
   "3.1": "3.1.15"
-  # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver allowedVersions=>=3.2.0 <3.3.0
+  # renovate: datasource=docker depName=haproxytech/haproxy-debian
   "3.2": "3.2.13"
-  # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=semver allowedVersions=>=3.3.0 <3.4.0
+  # renovate: datasource=docker depName=haproxytech/haproxy-debian
   "3.3": "3.3.4"
 
 # Latest tested revision tags for each supported HAProxy Enterprise major.minor.

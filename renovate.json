@@ -17,6 +17,36 @@
   "postUpdateOptions": [
     "gomodTidy"
   ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "HAProxy pinned-patch image tags in dev-env manifests. Series-locked: the major.minor is captured from the current tag and baked into the versioning regex, so each manifest stays within its own series.",
+      "fileMatch": [
+        "^scripts/dev-env-assets/haproxy-.*\\.yaml$"
+      ],
+      "matchStrings": [
+        "haproxytech/haproxy-debian:(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "haproxy-debian {{{seriesMajor}}}.{{{seriesMinor}}}.x",
+      "packageNameTemplate": "haproxytech/haproxy-debian",
+      "versioningTemplate": "regex:^(?<major>{{{seriesMajor}}})\\.(?<minor>{{{seriesMinor}}})\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "HAProxy patch versions in charts/haptic/values.yaml. Each entry's series (captured from the YAML key) is baked into a per-dep regex versioning scheme, so Renovate only considers patches within the same series. Adding or removing a series requires no renovate.json change.",
+      "fileMatch": [
+        "^charts/haptic/values\\.yaml$"
+      ],
+      "matchStrings": [
+        "# renovate:\\s*datasource=docker\\s+depName=haproxytech/haproxy-debian[^\\n]*\\n\\s*\"(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\":\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "haproxy-debian {{{seriesMajor}}}.{{{seriesMinor}}}.x",
+      "packageNameTemplate": "haproxytech/haproxy-debian",
+      "versioningTemplate": "regex:^(?<major>{{{seriesMajor}}})\\.(?<minor>{{{seriesMinor}}})\\.(?<patch>\\d+)$"
+    }
+  ],
   "packageRules": [
     {
       "description": "Automerge patch and minor updates",
@@ -88,11 +118,11 @@
       ]
     },
     {
-      "description": "Only update HAProxy to released versions listed in HAPROXY_VERSIONS. Update this constraint when adding support for a new HAProxy version.",
+      "description": "Group all HAProxy image/patch bumps into a single MR per run",
       "matchPackageNames": [
         "haproxytech/haproxy-debian"
       ],
-      "allowedVersions": "<= 3.3"
+      "groupName": "haproxy image"
     }
   ]
 }
