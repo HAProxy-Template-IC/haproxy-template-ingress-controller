@@ -24,53 +24,23 @@ func ComputeContentChecksum(haproxyConfig string, auxFiles *AuxiliaryFiles) stri
 
 	// Hash auxiliary files (slices are pre-sorted by AuxiliaryFiles.Sort)
 	if auxFiles != nil {
-		hashGeneralFiles(h, auxFiles.GeneralFiles)
-		hashMapFiles(h, auxFiles.MapFiles)
-		hashSSLCertificates(h, auxFiles.SSLCertificates)
-		hashSSLCaFiles(h, auxFiles.SSLCaFiles)
-		hashCRTListFiles(h, auxFiles.CRTListFiles)
+		hashFileItems(h, auxFiles.GeneralFiles)
+		hashFileItems(h, auxFiles.MapFiles)
+		hashFileItems(h, auxFiles.SSLCertificates)
+		hashFileItems(h, auxFiles.SSLCaFiles)
+		hashFileItems(h, auxFiles.CRTListFiles)
 	}
 
 	checksum := h.Sum(nil)
 	return hex.EncodeToString(checksum[:8]) // First 8 bytes for brevity
 }
 
-// hashGeneralFiles hashes general files in order (must be pre-sorted by Filename).
-func hashGeneralFiles(h hash.Hash, files []auxiliaryfiles.GeneralFile) {
-	for _, f := range files {
-		h.Write([]byte(f.Filename))
-		h.Write([]byte(f.Content))
-	}
-}
-
-// hashMapFiles hashes map files in order (must be pre-sorted by Path).
-func hashMapFiles(h hash.Hash, files []auxiliaryfiles.MapFile) {
-	for _, f := range files {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-}
-
-// hashSSLCertificates hashes SSL certificates in order (must be pre-sorted by Path).
-func hashSSLCertificates(h hash.Hash, files []auxiliaryfiles.SSLCertificate) {
-	for _, f := range files {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-}
-
-// hashSSLCaFiles hashes SSL CA files in order (must be pre-sorted by Path).
-func hashSSLCaFiles(h hash.Hash, files []auxiliaryfiles.SSLCaFile) {
-	for _, f := range files {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-}
-
-// hashCRTListFiles hashes CRT-list files in order (must be pre-sorted by Path).
-func hashCRTListFiles(h hash.Hash, files []auxiliaryfiles.CRTListFile) {
-	for _, f := range files {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
+// hashFileItems writes each item's identifier and content to h in slice order.
+// Slices must be pre-sorted by the caller (typically via AuxiliaryFiles.Sort)
+// to keep results deterministic.
+func hashFileItems[T auxiliaryfiles.FileItem](h hash.Hash, items []T) {
+	for _, item := range items {
+		h.Write([]byte(item.GetIdentifier()))
+		h.Write([]byte(item.GetContent()))
 	}
 }
