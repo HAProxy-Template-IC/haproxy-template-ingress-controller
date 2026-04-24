@@ -130,46 +130,49 @@ func compareNamedSections[T any](
 	deleteOp func(*T) Operation,
 	updateOp func(*T) Operation,
 ) []Operation {
-	var operations []Operation
-
-	// Convert slices to maps for easier comparison by Name
 	currentMap := make(map[string]*T)
 	for _, item := range currentSlice {
 		if name := getName(item); name != "" {
 			currentMap[name] = item
 		}
 	}
-
 	desiredMap := make(map[string]*T)
 	for _, item := range desiredSlice {
 		if name := getName(item); name != "" {
 			desiredMap[name] = item
 		}
 	}
+	return compareNamedMaps(currentMap, desiredMap, equal, createOp, deleteOp, updateOp)
+}
 
-	// Find added sections (in desired but not in current)
-	for name, item := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			operations = append(operations, createOp(item))
+// compareNamedMaps compares two maps keyed by name, emitting create/delete/update
+// operations via caller-supplied factories. Nil maps are treated as empty.
+//
+// Type parameter:
+//   - V: The map's value type (typically a pointer to a section model).
+func compareNamedMaps[V any](
+	current, desired map[string]V,
+	equal func(V, V) bool,
+	create func(V) Operation,
+	remove func(V) Operation,
+	update func(V) Operation,
+) []Operation {
+	var operations []Operation
+	for name, item := range desired {
+		if _, exists := current[name]; !exists {
+			operations = append(operations, create(item))
 		}
 	}
-
-	// Find deleted sections (in current but not in desired)
-	for name, item := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			operations = append(operations, deleteOp(item))
+	for name, item := range current {
+		if _, exists := desired[name]; !exists {
+			operations = append(operations, remove(item))
 		}
 	}
-
-	// Find modified sections (in both, but different)
-	for name, desiredItem := range desiredMap {
-		if currentItem, exists := currentMap[name]; exists {
-			if !equal(currentItem, desiredItem) {
-				operations = append(operations, updateOp(desiredItem))
-			}
+	for name, desiredItem := range desired {
+		if currentItem, exists := current[name]; exists && !equal(currentItem, desiredItem) {
+			operations = append(operations, update(desiredItem))
 		}
 	}
-
 	return operations
 }
 

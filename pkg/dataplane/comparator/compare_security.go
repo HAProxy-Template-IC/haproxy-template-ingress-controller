@@ -207,46 +207,13 @@ func groupsEqualWithIndex(g1, g2 map[string]*models.Group) bool {
 
 // compareUserlistUsersWithIndex compares users within a userlist using pointer indexes.
 func (c *Comparator) compareUserlistUsersWithIndex(userlistName string, currentUserIndex, desiredUserIndex map[string]map[string]*models.User) []Operation {
-	var operations []Operation
-
-	// Get user maps from pointer indexes
-	currentUsers := currentUserIndex[userlistName]
-	desiredUsers := desiredUserIndex[userlistName]
-	if currentUsers == nil {
-		currentUsers = make(map[string]*models.User)
-	}
-	if desiredUsers == nil {
-		desiredUsers = make(map[string]*models.User)
-	}
-
-	// Find added users
-	for username, user := range desiredUsers {
-		if _, exists := currentUsers[username]; !exists {
-			operations = append(operations, sections.NewUserCreate(userlistName, user))
-		}
-	}
-
-	// Find deleted users
-	for username, user := range currentUsers {
-		if _, exists := desiredUsers[username]; !exists {
-			operations = append(operations, sections.NewUserDelete(userlistName, user))
-		}
-	}
-
-	// Find modified users
-	for username, desiredUser := range desiredUsers {
-		currentUser, exists := currentUsers[username]
-		if !exists {
-			continue
-		}
-
-		// Compare user attributes (password, groups, etc.) with order-insensitive Groups
-		if !userEqual(*currentUser, *desiredUser) {
-			operations = append(operations, sections.NewUserUpdate(userlistName, desiredUser))
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentUserIndex[userlistName], desiredUserIndex[userlistName],
+		func(a, b *models.User) bool { return userEqual(*a, *b) },
+		func(u *models.User) Operation { return sections.NewUserCreate(userlistName, u) },
+		func(u *models.User) Operation { return sections.NewUserDelete(userlistName, u) },
+		func(u *models.User) Operation { return sections.NewUserUpdate(userlistName, u) },
+	)
 }
 
 // compareCrtStores compares crt-store sections between current and desired configurations.
