@@ -21,6 +21,7 @@ package resourceloader
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -91,6 +92,9 @@ func NewBaseLoader(
 // The component is already subscribed to the EventBus (subscription happens
 // in the constructor via NewBaseLoader).
 // Returns nil on graceful shutdown.
+//
+// Each event is dispatched through handleEvent, which recovers from panics in
+// the processor so a single bad event can't tear down the loader goroutine.
 func (b *BaseLoader) Start(ctx context.Context) error {
 	b.logger.Debug(b.name + " starting")
 
@@ -103,9 +107,23 @@ func (b *BaseLoader) Start(ctx context.Context) error {
 			b.logger.Info(b.name + " shutting down")
 			return nil
 		case event := <-b.eventChan:
-			b.processor.ProcessEvent(event)
+			b.handleEvent(event)
 		}
 	}
+}
+
+// handleEvent dispatches a single event to the processor with panic recovery.
+// A panic inside the processor is logged with the event type and swallowed so
+// subsequent events keep flowing.
+func (b *BaseLoader) handleEvent(event busevents.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			b.logger.Error(b.name+" panicked during event handling",
+				"panic", r,
+				"event_type", fmt.Sprintf("%T", event))
+		}
+	}()
+	b.processor.ProcessEvent(event)
 }
 
 // Stop gracefully stops the loader.
