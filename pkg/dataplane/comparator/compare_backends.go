@@ -117,7 +117,8 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		backendModified := false
 
 		// Compare servers within this backend using pointer indexes
-		currentServers, desiredServers := getServerIndexes(name, current.ServerIndex, desired.ServerIndex)
+		currentServers := nilSafeChildMap(current.ServerIndex, name)
+		desiredServers := nilSafeChildMap(desired.ServerIndex, name)
 		serverOps := c.compareServersWithIndex(name, currentServers, desiredServers, summary)
 		appendOperationsIfNotEmpty(&operations, serverOps, &backendModified)
 
@@ -170,7 +171,8 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		appendOperationsIfNotEmpty(&operations, tcpCheckOps, &backendModified)
 
 		// Compare server templates within this backend using pointer indexes
-		currentTemplates, desiredTemplates := getServerTemplateIndexes(name, current.ServerTemplateIndex, desired.ServerTemplateIndex)
+		currentTemplates := nilSafeChildMap(current.ServerTemplateIndex, name)
+		desiredTemplates := nilSafeChildMap(desired.ServerTemplateIndex, name)
 		serverTemplateOps := c.compareServerTemplatesWithIndex(name, currentTemplates, desiredTemplates)
 		appendOperationsIfNotEmpty(&operations, serverTemplateOps, &backendModified)
 
@@ -346,28 +348,12 @@ func backendBaseDiffFields(b1, b2 *models.Backend) []string {
 	return fields
 }
 
-// getServerIndexes retrieves server indexes for a backend, returning empty maps if not found.
-func getServerIndexes(backendName string, currentIndex, desiredIndex map[string]map[string]*models.Server) (currentServers, desiredServers map[string]*models.Server) {
-	currentServers = currentIndex[backendName]
-	if currentServers == nil {
-		currentServers = make(map[string]*models.Server)
+// nilSafeChildMap returns idx[parent] or an empty (non-nil) map when the
+// parent key is missing or its value is nil. Callers can iterate the result
+// without separate nil checks.
+func nilSafeChildMap[V any](idx map[string]map[string]V, parent string) map[string]V {
+	if m := idx[parent]; m != nil {
+		return m
 	}
-	desiredServers = desiredIndex[backendName]
-	if desiredServers == nil {
-		desiredServers = make(map[string]*models.Server)
-	}
-	return currentServers, desiredServers
-}
-
-// getServerTemplateIndexes retrieves server template indexes for a backend, returning empty maps if not found.
-func getServerTemplateIndexes(backendName string, currentIndex, desiredIndex map[string]map[string]*models.ServerTemplate) (currentTemplates, desiredTemplates map[string]*models.ServerTemplate) {
-	currentTemplates = currentIndex[backendName]
-	if currentTemplates == nil {
-		currentTemplates = make(map[string]*models.ServerTemplate)
-	}
-	desiredTemplates = desiredIndex[backendName]
-	if desiredTemplates == nil {
-		desiredTemplates = make(map[string]*models.ServerTemplate)
-	}
-	return currentTemplates, desiredTemplates
+	return make(map[string]V)
 }
