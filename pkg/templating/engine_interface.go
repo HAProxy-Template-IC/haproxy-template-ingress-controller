@@ -16,19 +16,20 @@ package templating
 
 import "context"
 
-// Renderer provides core template rendering.
-type Renderer interface {
+// Engine is the contract every template engine implementation satisfies.
+// The methods are grouped visually by concern — rendering, introspection,
+// tracing, filter debug, and resource management — but they all live on a
+// single interface because no current caller needs a narrower view and
+// every implementation ends up providing the full surface anyway.
+type Engine interface {
+	// --- Rendering ---
+
 	// Render executes a template with the given context and returns the output.
 	// The ctx parameter is used for cancellation and timeout control.
 	// Returns RenderError if template execution fails, RenderTimeoutError if
 	// the context deadline is exceeded, or TemplateNotFoundError if the
 	// template doesn't exist.
 	Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error)
-}
-
-// ProfilingRenderer extends Renderer with profiling support.
-type ProfilingRenderer interface {
-	Renderer
 
 	// RenderWithProfiling renders a template and returns profiling statistics
 	// for included templates. Useful for performance debugging.
@@ -36,13 +37,12 @@ type ProfilingRenderer interface {
 	// Use NewScriggoWithProfiling to enable profiling. Returns nil
 	// stats when profiling is disabled (NewScriggo).
 	//
-	// Stats are aggregated by template name - multiple renders of the same
+	// Stats are aggregated by template name — multiple renders of the same
 	// template are combined into a single IncludeStats entry with count > 1.
 	RenderWithProfiling(ctx context.Context, templateName string, templateContext map[string]any) (string, []IncludeStats, error)
-}
 
-// TemplateIntrospector provides template inspection capabilities.
-type TemplateIntrospector interface {
+	// --- Template introspection ---
+
 	// EngineType returns the type of this engine.
 	EngineType() EngineType
 
@@ -58,10 +58,9 @@ type TemplateIntrospector interface {
 
 	// TemplateCount returns the number of templates in the engine.
 	TemplateCount() int
-}
 
-// TracingController manages execution tracing.
-type TracingController interface {
+	// --- Execution tracing ---
+
 	// EnableTracing enables template execution tracing for debugging.
 	EnableTracing()
 
@@ -77,10 +76,9 @@ type TracingController interface {
 	// AppendTraces appends traces from another engine to this engine's trace buffer.
 	// This is useful for aggregating traces from multiple worker engines.
 	AppendTraces(other Engine)
-}
 
-// FilterDebugController manages filter debug logging.
-type FilterDebugController interface {
+	// --- Filter debug logging ---
+
 	// EnableFilterDebug enables detailed filter operation logging.
 	EnableFilterDebug()
 
@@ -89,23 +87,11 @@ type FilterDebugController interface {
 
 	// IsFilterDebugEnabled returns whether filter debug logging is enabled.
 	IsFilterDebugEnabled() bool
-}
 
-// ResourceManager manages engine resource lifecycle.
-type ResourceManager interface {
+	// --- Resource management ---
+
 	// ClearVMPool releases pooled VMs to allow garbage collection.
 	// Call after rendering completes to reduce memory from parallel rendering spikes.
 	// No-op for engines that don't use VM pooling.
 	ClearVMPool()
-}
-
-// Engine defines the interface that all template engines must implement.
-// It composes all sub-interfaces for full capability. Callers that only need
-// a subset of functionality can accept narrower interfaces instead.
-type Engine interface {
-	ProfilingRenderer
-	TemplateIntrospector
-	TracingController
-	FilterDebugController
-	ResourceManager
 }
