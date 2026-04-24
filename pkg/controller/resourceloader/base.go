@@ -15,16 +15,15 @@
 // Package resourceloader provides shared event loop infrastructure for loader
 // components that watch a single resource type and parse/transform its data.
 //
-// The pattern matches validator/base.go: each loader embeds a BaseLoader and
-// implements EventProcessor to provide its resource-specific parsing logic.
+// BaseLoader is a thin wrapper over pkg/controller/component.Base that keeps
+// the ProcessEvent naming familiar to existing loader implementations
+// (configloader, credentialsloader, certloader).
 package resourceloader
 
 import (
-	"context"
-	"fmt"
 	"log/slog"
-	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -38,34 +37,18 @@ type EventProcessor interface {
 	ProcessEvent(event busevents.Event)
 }
 
-// BaseLoader provides common event loop infrastructure for all loader components.
+// BaseLoader is a resource-loader flavoured wrapper around component.Base
+// that exposes the same field accessors (EventBus, Logger, Name) as before
+// and delegates event dispatch to the processor's ProcessEvent method.
 //
-// It handles:
-//   - Event subscription and routing
-//   - Graceful shutdown via context or Stop()
-//   - Stop idempotency
-//
-// Loaders embed this struct and provide an EventProcessor implementation
-// for their specific parsing logic.
+// Panics inside ProcessEvent are caught by the embedded base, logged with
+// the event type and then swallowed so the event loop keeps running.
 type BaseLoader struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event
-	logger    *slog.Logger
-	stopCh    chan struct{}
-	stopOnce  sync.Once
-	name      string
+	*component.Base
 	processor EventProcessor
 }
 
 // NewBaseLoader creates a new base loader with the given configuration.
-//
-// Parameters:
-//   - eventBus: The EventBus to subscribe to and publish on
-//   - logger: Structured logger for diagnostics
-//   - name: Component name (used for logging and subscription)
-//   - bufferSize: Event subscription buffer size
-//   - processor: EventProcessor implementation for loader-specific logic
-//   - eventTypes: Event types to subscribe to (for type-filtered subscription)
 func NewBaseLoader(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
@@ -74,72 +57,21 @@ func NewBaseLoader(
 	processor EventProcessor,
 	eventTypes ...string,
 ) *BaseLoader {
-	eventChan := eventBus.SubscribeTypes(name, bufferSize, eventTypes...)
-
-	return &BaseLoader{
-		eventBus:  eventBus,
-		eventChan: eventChan,
-		logger:    logger.With("component", name),
-		stopCh:    make(chan struct{}),
-		name:      name,
-		processor: processor,
-	}
-}
-
-// Start begins processing events from the EventBus.
-//
-// This method blocks until Stop() is called or the context is canceled.
-// The component is already subscribed to the EventBus (subscription happens
-// in the constructor via NewBaseLoader).
-// Returns nil on graceful shutdown.
-//
-// Each event is dispatched through handleEvent, which recovers from panics in
-// the processor so a single bad event can't tear down the loader goroutine.
-func (b *BaseLoader) Start(ctx context.Context) error {
-	b.logger.Debug(b.name + " starting")
-
-	for {
-		select {
-		case <-ctx.Done():
-			b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
-			return nil
-		case <-b.stopCh:
-			b.logger.Info(b.name + " shutting down")
-			return nil
-		case event := <-b.eventChan:
-			b.handleEvent(event)
-		}
-	}
-}
-
-// handleEvent dispatches a single event to the processor with panic recovery.
-// A panic inside the processor is logged with the event type and swallowed so
-// subsequent events keep flowing.
-func (b *BaseLoader) handleEvent(event busevents.Event) {
-	defer func() {
-		if r := recover(); r != nil {
-			b.logger.Error(b.name+" panicked during event handling",
-				"panic", r,
-				"event_type", fmt.Sprintf("%T", event))
-		}
-	}()
-	b.processor.ProcessEvent(event)
-}
-
-// Stop gracefully stops the loader.
-// Safe to call multiple times.
-func (b *BaseLoader) Stop() {
-	b.stopOnce.Do(func() {
-		close(b.stopCh)
+	b := &BaseLoader{processor: processor}
+	b.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       name,
+		BufferSize: bufferSize,
+		Handler:    b,
+		EventTypes: eventTypes,
 	})
+	return b
 }
 
-// EventBus returns the event bus for use by the processor.
-func (b *BaseLoader) EventBus() *busevents.EventBus {
-	return b.eventBus
-}
-
-// Logger returns the logger for use by the processor.
-func (b *BaseLoader) Logger() *slog.Logger {
-	return b.logger
+// HandleEvent implements component.EventHandler by forwarding to the
+// processor so loader implementations do not need to change their method
+// name.
+func (b *BaseLoader) HandleEvent(event busevents.Event) {
+	b.processor.ProcessEvent(event)
 }

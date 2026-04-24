@@ -1,11 +1,24 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package validator
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
@@ -25,25 +38,14 @@ type ValidationHandler interface {
 	HandleRequest(req *events.ConfigValidationRequest)
 }
 
-// BaseValidator provides common event loop infrastructure for all validators.
-//
-// It handles:
-//   - Event subscription and routing
-//   - Panic recovery
-//   - Graceful shutdown
-//   - Stop idempotency
-//
-// Validators embed this struct and provide a ValidationHandler implementation
-// for their specific validation logic.
+// BaseValidator wraps component.Base with validator-specific dispatch:
+// it forwards only ConfigValidationRequest events to the handler, and on
+// panic it publishes a failure ConfigValidationResponse so the
+// scatter-gather coordinator does not time out.
 type BaseValidator struct {
-	eventBus    *busevents.EventBus
-	eventChan   <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger      *slog.Logger
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	name        string
-	description string
-	handler     ValidationHandler
+	*component.Base
+	name    string
+	handler ValidationHandler
 }
 
 // NewBaseValidator creates a new base validator with the given configuration.
@@ -52,7 +54,8 @@ type BaseValidator struct {
 //   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //   - name: Validator name (for error messages and responses)
-//   - description: Human-readable component description (for logging)
+//   - description: Human-readable component description (unused; retained for
+//     API compatibility with existing validator constructors)
 //   - handler: ValidationHandler implementation for validator-specific logic
 //
 // Returns:
@@ -61,87 +64,47 @@ func NewBaseValidator(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	name string,
-	description string,
+	_ string,
 	handler ValidationHandler,
 ) *BaseValidator {
-	// Subscribe to only ConfigValidationRequest events during construction
-	// This ensures proper startup synchronization and reduces buffer pressure
-	// by filtering at the EventBus level rather than in the event loop
-	eventChan := eventBus.SubscribeTypes(name, EventBufferSize, events.EventTypeConfigValidationRequest)
-
-	return &BaseValidator{
-		eventBus:    eventBus,
-		eventChan:   eventChan,
-		logger:      logger.With("component", name+"-validator"),
-		stopCh:      make(chan struct{}),
-		name:        name,
-		description: description,
-		handler:     handler,
+	v := &BaseValidator{
+		name:    name,
+		handler: handler,
 	}
+	v.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       name + "-validator",
+		BufferSize: EventBufferSize,
+		Handler:    v,
+		EventTypes: []string{events.EventTypeConfigValidationRequest},
+	})
+	return v
 }
 
-// Start begins processing validation requests from the EventBus.
-//
-// This method blocks until Stop() is called or the context is canceled.
-// The component is already subscribed to the EventBus (subscription happens in constructor).
-// Returns nil on graceful shutdown.
-//
-// The event loop:
-//  1. Filters for ConfigValidationRequest events
-//  2. Wraps handling in panic recovery
-//  3. Delegates to the ValidationHandler
-//
-// Example:
-//
-//	go validator.Start(ctx)
-func (v *BaseValidator) Start(ctx context.Context) error {
-	v.logger.Info(fmt.Sprintf("%s starting", v.description))
-
-	for {
-		select {
-		case <-ctx.Done():
-			v.logger.Info(fmt.Sprintf("%s shutting down", v.description), "reason", ctx.Err())
-			return nil
-		case <-v.stopCh:
-			v.logger.Info(fmt.Sprintf("%s shutting down", v.description))
-			return nil
-		case event := <-v.eventChan:
-			v.handleEvent(event)
-		}
-	}
-}
-
-// handleEvent processes a single event with panic recovery.
-// Filters for ConfigValidationRequest events and delegates to the ValidationHandler.
-func (v *BaseValidator) handleEvent(event busevents.Event) {
-	defer func() {
-		if r := recover(); r != nil {
-			v.logger.Error(fmt.Sprintf("%s panicked during validation", v.name),
-				"panic", r,
-				"event_type", fmt.Sprintf("%T", event))
-
-			// Publish error response to prevent scatter-gather timeout
-			if req, ok := event.(*events.ConfigValidationRequest); ok {
-				response := events.NewConfigValidationResponse(
-					req.RequestID(),
-					v.name,
-					false,
-					[]string{fmt.Sprintf("validator panicked: %v", r)},
-				)
-				v.eventBus.Publish(response)
-			}
-		}
-	}()
-
+// HandleEvent implements component.EventHandler. We subscribed with a type
+// filter so only ConfigValidationRequest events arrive, but the type
+// assertion keeps things defensive in case the filter is widened later.
+func (v *BaseValidator) HandleEvent(event busevents.Event) {
 	if req, ok := event.(*events.ConfigValidationRequest); ok {
 		v.handler.HandleRequest(req)
 	}
 }
 
-// Stop gracefully stops the validator.
-// Safe to call multiple times.
-func (v *BaseValidator) Stop() {
-	v.stopOnce.Do(func() {
-		close(v.stopCh)
-	})
+// HandlePanic implements component.PanicHandler. Publishing a failure
+// response on panic keeps the scatter-gather coordinator from waiting on a
+// validator that has unwound. The outer recover in component.Base is still
+// responsible for keeping the event loop alive.
+func (v *BaseValidator) HandlePanic(recovered any, event busevents.Event) {
+	req, ok := event.(*events.ConfigValidationRequest)
+	if !ok {
+		return
+	}
+	response := events.NewConfigValidationResponse(
+		req.RequestID(),
+		v.name,
+		false,
+		[]string{fmt.Sprintf("validator panicked: %v", recovered)},
+	)
+	v.EventBus().Publish(response)
 }
