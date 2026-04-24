@@ -1,72 +1,82 @@
 # pkg/core/config
 
-Configuration types, parsing, and validation for the HAProxy Template Ingress Controller.
+Defines the internal `Config` / `Credentials` structs and the pure functions that load and validate them. No Kubernetes client calls, no event bus — everything here operates on already-materialised bytes or strings.
 
-## Overview
+Upstream in the pipeline: `pkg/controller/conversion.ParseCRD` converts a `HAProxyTemplateConfig` CRD into the `*Config` this package defines. Standalone callers (CLI `controller validate`, tests) can use `LoadConfig` directly on a YAML string.
 
-Defines configuration schema and provides functions for parsing ConfigMap data and loading credentials from Secrets.
-
-## Installation
+## Public API
 
 ```go
-import "haptic/pkg/core/config"
+// YAML → Config
+func LoadConfig(configYAML string) (*Config, error)
+
+// Fill in defaults (mutates in place)
+func SetDefaults(cfg *Config)
+
+// Required fields, port ranges, enum values
+func ValidateStructure(cfg *Config) error
+
+// Secret data → Credentials
+func LoadCredentials(secretData map[string][]byte) (*Credentials, error)
+func ValidateCredentials(creds *Credentials) error
+
+// Helpers
+func ParseSecretData(raw map[string]any) (map[string][]byte, error)
+func ValidateExtraContext(ctx map[string]any) error
 ```
 
-## Quick Start
+The `Config` struct mirrors the CRD shape (camelCase throughout): `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `HAProxyConfig`, `ValidationTests`. The `types.go` source is the authoritative schema.
 
-```go
-// Parse configuration from ConfigMap data
-cfg, err := config.ParseConfig(configYAML)
-if err != nil {
-    log.Fatal(err)
-}
+## Validation Layers
 
-// Load credentials from Secret data
-creds, err := config.LoadCredentials(secretData)
-if err != nil {
-    log.Fatal(err)
-}
-```
-
-## Configuration Schema
-
-### Main Types
-
-```go
-type Config struct {
-    PodSelector                  PodSelector
-    Controller                   ControllerConfig
-    Logging                      LoggingConfig
-    Dataplane                    DataplaneConfig
-    WatchedResourcesIgnoreFields []string
-    WatchedResources             map[string]WatchedResource
-    TemplateSnippets             map[string]TemplateSnippet
-    Maps                         map[string]MapFile
-    Files                        map[string]GeneralFile
-    SSLCertificates              map[string]SSLCertificate
-    HAProxyConfig                HAProxyConfig
-}
-
-type Credentials struct {
-    DataplaneUsername string
-    DataplanePassword string
-}
-```
-
-## Validation
-
-**Basic Validation** (this package):
+This package only does **structural** validation:
 
 - Required fields present
-- Port numbers valid (1-65535)
-- Enum values valid
+- `int` fields in range (ports 1–65535, non-negative counters)
+- Enum values from the allowed set
+- Non-empty strings where semantically required
+- `time.Duration` strings parse
 
-**Advanced Validation** (pkg/controller/validator):
+It deliberately **does not**:
 
-- Template syntax
-- JSONPath expressions
-- Cross-field validation
+- Validate template syntax → `pkg/templating.ValidateTemplates`
+- Validate JSONPath expressions → `pkg/k8s/indexer.ValidateJSONPath`
+- Validate rendered HAProxy config → `pkg/dataplane.ValidateConfiguration`
+- Apply cross-field business rules → `pkg/controller/validator`
+
+Those run via scatter-gather in the controller so each validator can evolve independently.
+
+## Key Defaults (`SetDefaults`)
+
+Authoritative list is `defaults.go`. Ones operators commonly look up:
+
+- `dataplane.port`: 5555
+- `dataplane.minDeploymentInterval`: 2s
+- `dataplane.driftPreventionInterval`: 60s
+- `dataplane.deploymentTimeout`: 30s
+- `dataplane.rawPushThreshold`: 100
+- `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: `/etc/haproxy/...`
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 60s, 15s, 5s (chart overrides these to 15s/10s/2s for faster failover)
+- `controller.configPublishing.compressionThreshold`: 1 MiB
+- `templatingSettings.engine`: `scriggo`
+
+## Credentials Schema
+
+`LoadCredentials` expects four non-empty string keys in the Secret data:
+
+- `dataplane_username`
+- `dataplane_password`
+- `validation_username`
+- `validation_password`
+
+`ValidateCredentials` additionally rejects empty strings after base64 decode. No `String()` / `GoString()` methods are defined on `Credentials` — helps prevent accidental password leaks via `%v` or `log.Info("…", creds)`.
+
+## See Also
+
+- [`pkg/controller/conversion`](../../controller/conversion/) — CRD → `Config` adapter used by the running controller
+- [`pkg/controller/configloader`](../../controller/configloader/) / [`credentialsloader`](../../controller/credentialsloader/) — event adapters that call into this package
+- `docs/controller/docs/crd-reference.md` — user-facing field reference
 
 ## License
 
-See main repository for license information.
+Apache-2.0 — see root `LICENSE`.

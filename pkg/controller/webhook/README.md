@@ -1,299 +1,78 @@
-# pkg/controller/webhook - Webhook Adapter Component
+# pkg/controller/webhook
 
-Event adapter component that bridges the pure webhook library to the controller architecture.
+Event adapter that mounts the pure HTTPS server from `pkg/webhook` on the controller's lifecycle, registers one `ValidationFunc` per webhook rule, and routes each admission request through the dry-run validator.
 
-## Overview
+Certificates are supplied ready-to-use — cert-manager provisions the Secret, `pkg/controller/certloader` watches it and pushes the PEM bytes into this component's `Config`. This package does **not** manage certs, CA bundles, or `ValidatingWebhookConfiguration` resources (the Helm chart provisions those).
 
-The webhook adapter manages the complete lifecycle of Kubernetes admission webhooks:
-
-- TLS certificate generation and rotation
-- HTTPS webhook server lifecycle
-- Dynamic ValidatingWebhookConfiguration management
-- Integration with controller event bus
-- Bridging webhook validation to controller validators
-
-This is a coordination layer - the actual webhook functionality lives in `pkg/webhook` (pure library).
-
-## Component Architecture
-
-```
-pkg/webhook/ (Pure Library)
-    ├── CertificateManager
-    ├── Server
-    └── ConfigManager
-         ↓
-    wrapped by
-         ↓
-pkg/controller/webhook/ (Event Adapter)
-    └── Component
-         ├── Manages lifecycle
-         ├── Publishes events
-         └── Bridges to validators
-```
-
-## Usage
-
-### Basic Setup
+## Minimal Usage
 
 ```go
 import (
-    "haptic/pkg/controller/webhook"
-    "haptic/pkg/webhook"
+    "context"
+
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
+    pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
 
-// Create component
-webhookComponent := webhook.New(
-    kubeClient,
-    eventBus,
-    logger,
-    webhook.Config{
-        Namespace:   "default",
-        ServiceName: "my-webhook-svc",
-        Rules: []webhook.WebhookRule{
-            {
-                APIGroups:   []string{""},
-                APIVersions: []string{"v1"},
-                Resources:   []string{"configmaps"},
-            },
-        },
-    },
-)
+cfg := &webhook.Config{
+    Port:            9443,                    // default
+    Path:            "/validate",             // default
+    CertPEM:         cert,                    // from cert-manager via certloader
+    KeyPEM:          key,
+    Rules:           rules,                   // built by ExtractWebhookRules(cfg)
+    DryRunValidator: dryRunValidator,         // pkg/controller/dryrunvalidator.Component
+}
 
-// Start component (blocks until context cancelled)
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-
-go webhookComponent.Start(ctx)
-```
-
-### Configuration
-
-```go
-config := webhook.Config{
-    // Required
-    Namespace:   "default",
-    ServiceName: "webhook-service",
-
-    // Optional (defaults shown)
-    WebhookConfigName: "haptic-webhook",
-    Port:              9443,
-    Path:              "/validate",
-    CertRotationCheckInterval: 24 * time.Hour,
-
-    // Validation rules
-    Rules: []webhook.WebhookRule{
-        {
-            APIGroups:   []string{""},
-            APIVersions: []string{"v1"},
-            Resources:   []string{"configmaps"},
-        },
-    },
+comp := webhook.New(logger, cfg, restMapper, metricsRecorder)
+if err := comp.Start(ctx); err != nil {
+    return err
 }
 ```
 
-### Graceful Shutdown
+`Start` blocks until the server returns an error or `ctx` is cancelled; on cancellation it shuts the HTTPS listener down gracefully. The component's reinitialisation lifecycle is owned by the controller — when the CRD changes, the controller cancels the iteration context and `Start` returns cleanly.
 
-```go
-// Stop webhook component
-if err := webhookComponent.Stop(ctx); err != nil {
-    log.Error("Failed to stop webhook", "error", err)
-}
-```
+## Config
 
-## Events Published
+| Field | Notes |
+|-------|-------|
+| `Port` | TCP port for the HTTPS listener (default `9443`) |
+| `Path` | URL path that handles `POST /…` AdmissionReview calls (default `/validate`) |
+| `CertPEM` / `KeyPEM` | PEM-encoded TLS material. Empty values cause `Start` to return an error. Rotate by restarting the component with new bytes — the server reads them once at `Start` time. |
+| `Rules` | `[]pkg/webhook.WebhookRule`, one per kind to register. Built from the CRD via `webhook.ExtractWebhookRules(cfg *config.Config)`. |
+| `DryRunValidator` | Interface with a single method: `ValidateDirect(ctx, gvk, namespace, name, object, operation) (allowed bool, reason string)`. Satisfied by `pkg/controller/dryrunvalidator.Component`. If `nil`, the component fails open (accepts everything) — useful only in tests. |
 
-The component publishes events to the EventBus for observability and coordination:
+`restMapper` is used to resolve `(APIGroup, APIVersion, Resource)` → `Kind` when wiring rules into `"group/version.Kind"` registration keys that the underlying `pkg/webhook.Server` expects. A live `meta.RESTMapper` from the controller's cluster connection is required.
 
-### Lifecycle Events
+`metrics` implements two methods: `RecordWebhookRequest(gvk, result, durationSec)` and `RecordWebhookValidation(gvk, result)`. `pkg/controller/metrics` satisfies this directly; pass `nil` to skip metrics entirely.
 
-- **WebhookServerStartedEvent**: Server started successfully
-- **WebhookServerStoppedEvent**: Server stopped
+## Validator Flow
 
-### Certificate Events
+Registration happens once at `Start`:
 
-- **WebhookCertificatesGeneratedEvent**: Initial certificates generated
-- **WebhookCertificatesRotatedEvent**: Certificates rotated
+1. For each `Rule`, resolve `Kind` via `restMapper` and build a `group/version.Kind` key.
+2. Register a thin wrapper `ValidationFunc` that:
+   - Extracts `namespace`, `name`, `operation` from the `AdmissionRequest`.
+   - Performs basic structural sanity (`validateBasicStructure`).
+   - Delegates to `DryRunValidator.ValidateDirect`.
+   - Records metrics and logs the outcome.
 
-### Configuration Events
+`ValidateDirect` renders the config against an overlay store that includes the proposed change (via `pkg/stores.StoreOverlay`) and runs `haproxy -c`. If either fails, the webhook denies with the simplified error message; if both pass, it allows.
 
-- **WebhookConfigurationCreatedEvent**: ValidatingWebhookConfiguration created
-- **WebhookConfigurationUpdatedEvent**: ValidatingWebhookConfiguration updated
+## Integration Points
 
-### Validation Events
-
-- **WebhookValidationRequestEvent**: Admission request received
-- **WebhookValidationAllowedEvent**: Resource admitted
-- **WebhookValidationDeniedEvent**: Resource rejected
-- **WebhookValidationErrorEvent**: Validation error
-
-## Certificate Rotation
-
-Certificates are automatically rotated when they approach expiration:
-
-1. **Periodic Check**: Every 24 hours (configurable)
-2. **Rotation Threshold**: 30 days before expiry (from certificate manager)
-3. **Rotation Process**:
-   - Generate new certificates
-   - Update ValidatingWebhookConfiguration with new CA bundle
-   - Restart server with new certificates
-   - Publish rotation event
-
-## Integration with Controller
-
-The webhook component is typically started in controller initialization:
-
-```go
-// After config loaded and EventBus started
-webhookComponent := webhook.New(kubeClient, eventBus, logger, webhookConfig)
-go webhookComponent.Start(ctx)
-```
-
-## Kubernetes Resources Required
-
-### Service
-
-The webhook server needs a Kubernetes Service to receive requests from the API server:
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: my-webhook-svc
-  namespace: default
-spec:
-  selector:
-    app: my-controller
-  ports:
-    - port: 443
-      targetPort: 9443
-      protocol: TCP
-```
-
-### RBAC
-
-The controller needs permissions to manage ValidatingWebhookConfiguration:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: webhook-manager
-rules:
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
-    verbs: ["get", "create", "update", "patch", "delete"]
-```
-
-## Troubleshooting
-
-### Webhook Not Receiving Requests
-
-**Check:**
-
-1. Service exists and selects correct pods
-2. ValidatingWebhookConfiguration exists
-3. CA bundle matches generated CA certificate
-4. Network policies allow API server → webhook traffic
-
-**Debug:**
-
-```bash
-# Verify service
-kubectl get svc my-webhook-svc -o yaml
-
-# Verify webhook configuration
-kubectl get validatingwebhookconfigurations my-webhook -o yaml
-
-# Check webhook server logs
-kubectl logs deployment/my-controller | grep webhook
-```
-
-### Certificate Errors
-
-**Symptoms**: `x509: certificate signed by unknown authority`
-
-**Fix**: Ensure CA bundle in ValidatingWebhookConfiguration matches the CA certificate used to sign server certificate.
-
-**Check:**
-
-```bash
-# View CA bundle
-kubectl get validatingwebhookconfigurations my-webhook \
-    -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | base64 -d
-```
-
-### Port Conflicts
-
-**Symptoms**: `address already in use`
-
-**Fix**: Change webhook port in configuration or verify no other process uses port 9443.
-
-## Advanced Topics
-
-### Custom Validation
-
-To wire webhook to existing validators (Phase 2 feature):
-
-```go
-// Create validator bridge
-func (c *Component) createValidator(gvk string) webhook.ValidationFunc {
-    return func(obj interface{}) (bool, string, error) {
-        // Publish validation request event
-        req := events.NewConfigValidationRequest(obj)
-
-        // Use request-response pattern to gather validation results
-        result, err := c.eventBus.Request(ctx, req, events.RequestOptions{
-            Timeout: 5 * time.Second,
-            ExpectedResponders: []string{"basic", "template"},
-        })
-
-        // Aggregate results
-        if err != nil || !allValid(result) {
-            return false, extractReason(result), nil
-        }
-
-        return true, "", nil
-    }
-}
-```
-
-### Multiple Webhook Rules
-
-Define separate rules for different resource types:
-
-```go
-Rules: []webhook.WebhookRule{
-    {
-        APIGroups:   []string{""},
-        APIVersions: []string{"v1"},
-        Resources:   []string{"configmaps"},
-        Operations:  []admissionv1.OperationType{admissionv1.Create, admissionv1.Update},
-    },
-    {
-        APIGroups:   []string{""},
-        APIVersions: []string{"v1"},
-        Resources:   []string{"secrets"},
-        Operations:  []admissionv1.OperationType{admissionv1.Create},
-    },
-}
-```
-
-### Failure Policy
-
-Control what happens when webhook is unavailable:
-
-```go
-// Fail-closed (reject requests if webhook down)
-fail := admissionv1.Fail
-rule.FailurePolicy = &fail
-
-// Fail-open (allow requests if webhook down)
-ignore := admissionv1.Ignore
-rule.FailurePolicy = &ignore
-```
+- **Upstream** — `pkg/controller/certloader` emits `CertParsedEvent` with `CertPEM`/`KeyPEM`. The controller iterates on cert updates by restarting this component.
+- **Downstream** — `pkg/controller/dryrunvalidator` is the only implementation of the `DryRunValidator` interface in the tree.
+- **Sibling** — `pkg/controller/proposalvalidator` handles validation for the CRD itself (the `HAProxyTemplateConfig` kind) rather than user resources.
+- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration`, including `failurePolicy: Fail`, `objectSelector` matching `app.kubernetes.io/instance`, and cert-manager's `cert-manager.io/inject-ca-from` annotation for CA bundle injection.
 
 ## See Also
 
-- Pure webhook library: `pkg/webhook/README.md`
-- Webhook event types: `pkg/controller/events/README.md`
-- Controller architecture: `docs/controller/docs/development/design.md`
+- [`pkg/webhook`](../../webhook/) — pure HTTPS server + AdmissionReview protocol
+- [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — the `DryRunValidator` implementation this component calls into
+- [`pkg/controller/proposalvalidator`](../proposalvalidator/) — validates the controller's own CRD (complementary webhook path)
+- [`pkg/controller/certloader`](../certloader/) — supplies `CertPEM`/`KeyPEM`
+- `docs/controller/docs/development/crd-validation-design.md` — why the webhook fails closed, lives in the controller pod, and runs the same render/validate code as the reconciler
+
+## License
+
+Apache-2.0 — see root `LICENSE`.

@@ -1,284 +1,114 @@
 # pkg/events
 
-Pure event bus infrastructure for event-driven architecture.
+Generic, domain-agnostic event bus with pub/sub and scatter-gather coordination. The controller pulls this in; everything else in the tree stays clean of it (only `pkg/controller/events` knows about domain event types).
 
-## Overview
+Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go doc ./pkg/events`); this README is a short orientation.
 
-This package provides generic pub/sub and request-response coordination mechanisms. It contains **no domain knowledge** - all application-specific event types are defined in `pkg/controller/events`.
-
-## Architecture
-
-```
-pkg/events/              # Generic infrastructure (reusable)
-├── bus.go              # EventBus with startup coordination
-├── request.go          # Scatter-gather pattern
-└── bus_test.go         # Infrastructure tests
-
-pkg/controller/events/   # Domain-specific event catalog
-└── types.go            # 50+ controller event types
-```
-
-## Core Components
-
-### EventBus
-
-Thread-safe pub/sub coordinator with startup synchronization.
-
-**Features:**
-
-- Non-blocking publish with backpressure handling (drops events to slow subscribers)
-- Startup coordination via buffering (prevents race conditions during initialization)
-- Thread-safe concurrent access
-- Simple subscribe/publish API
-
-**Usage:**
+## Minimal Usage
 
 ```go
-import "haptic/pkg/events"
+import "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
-// Create bus with buffer capacity for pre-start events
-bus := events.NewEventBus(100)
+bus := events.NewEventBus(100)          // pre-start buffer capacity
+ch := bus.Subscribe("my-component", 50) // per-subscriber buffer
 
-// Subscribe (returns read-only channel)
-eventChan := bus.Subscribe("component", 200) // 200 event buffer
+bus.Start()   // call once all subscribers are registered; releases buffered events
 
-// Start after all subscribers are ready (releases buffered events)
-bus.Start()
+bus.Publish(MyEvent{...})
 
-// Publish events
-bus.Publish(myEvent)
-
-// Receive events
-for event := range eventChan {
+for event := range ch {
     switch e := event.(type) {
-    case SomeEventType:
-        // Handle event
+    case MyEvent:
+        // ...
     }
 }
 ```
 
-### Event Interface
-
-All events must implement the Event interface:
+Every event type implements `Event`:
 
 ```go
 type Event interface {
-    EventType() string      // Unique event identifier (e.g., "config.validated")
-    Timestamp() time.Time   // When the event occurred
+    EventType() string
+    Timestamp() time.Time
 }
 ```
 
-### Startup Coordination
+The `CoalescibleEvent` interface marks events that `pkg/controller/coalesce` can collapse when bursts arrive faster than a component can process them.
 
-The EventBus includes buffering to prevent race conditions during initialization:
+## Startup Buffering
 
-1. **Before Start()**: Events are buffered
-2. **After Start()**: Buffered events are replayed, then events flow normally
+Subscribers must register **before** `Start()` or they miss the replay of events published during initialisation. The controller's reinitialisation loop does this in a strict order inside `iteration.go`; bespoke users of this library should follow the same pattern:
 
-This ensures no events are lost if published before all subscribers connect.
+1. `NewEventBus(n)` — `n` is the buffer that holds pre-start publishes.
+2. Construct every component. Each calls `Subscribe(...)` inside its constructor.
+3. `bus.Start()` — flushes the pre-start buffer to each subscriber's channel.
+4. Start the component goroutines.
 
-**Example:**
+Forgetting step 3 is a common footgun: publishes succeed silently (buffered) but nothing ever fires.
 
-```go
-bus := events.NewEventBus(100)
+## Typed Subscriptions
 
-// Components subscribe during setup
-component1 := NewComponent1(bus)
-component2 := NewComponent2(bus)
-component3 := NewComponent3(bus)
+Three filter patterns on top of the base `Subscribe`:
 
-// Start the bus after all subscribers are ready
-// This replays any buffered events and switches to normal operation
-bus.Start()
+- **`SubscribeTypes(name, bufferSize, types...)`** — filters at the bus, only delivers events whose `EventType()` is in the list. Cheapest when you only care about a handful of types.
+- **`Subscribe[T](ctx, bus, bufferSize) <-chan T`** — generic helper that returns a typed channel for a single event type. No type assertion in the consumer loop.
+- **`SubscribeMultiple(ctx, bus, bufferSize, types...)`** — like `SubscribeTypes` but ties the subscription lifetime to a `context.Context` for automatic cleanup.
 
-// Now all components will receive events
-bus.Publish(SystemReadyEvent{})
-```
+The commentator and anything logging "everything" should use plain `Subscribe` — filtering there would just hide events.
 
-### Request-Response (Scatter-Gather)
+## Scatter-Gather (Request/Response)
 
-Synchronous coordination across multiple responders using the scatter-gather pattern.
-
-**Use Cases:**
-
-- Configuration validation (multiple validators must approve)
-- Distributed queries (gather responses from multiple sources)
-- Coordinated operations (need confirmation from multiple parties)
-
-**Interfaces:**
+Used when multiple independent responders all need to approve something (the admission-webhook validator is the canonical example).
 
 ```go
-type Request interface {
-    Event
-    RequestID() string  // Unique ID for correlating responses
-}
-
-type Response interface {
-    Event
-    RequestID() string  // Links back to request
-    Responder() string  // Who sent this response
-}
-```
-
-**Usage:**
-
-```go
-import (
-    "context"
-    "time"
-    "haptic/pkg/events"
-)
-
-// Create request
-req := MyValidationRequest{
-    id: "req-123",
-    data: configToValidate,
-}
-
-// Send request and wait for responses
+req := NewMyRequest(payload)
 result, err := bus.Request(ctx, req, events.RequestOptions{
     Timeout:            10 * time.Second,
-    ExpectedResponders: []string{"validator-1", "validator-2", "validator-3"},
-    MinResponses:       2,  // Optional: allow partial responses
+    ExpectedResponders: []string{"basic", "template", "jsonpath"},
 })
-
 if err != nil {
-    // Timeout or context cancellation
-    log.Error("request failed", "error", err)
+    // timeout or context cancelled
 }
-
-// Process responses
 for _, resp := range result.Responses {
-    // Handle each response
-}
-
-// Check for missing responders
-if len(result.Errors) > 0 {
-    log.Warn("some responders did not reply", "errors", result.Errors)
+    // resp.Responder() identifies who sent it, resp.RequestID() ties it back
 }
 ```
 
-**Responder Implementation:**
+Responders listen on their own subscription, match on request ID, and `Publish` a `Response` — there's no direct wiring, they just need to call `bus.Publish(resp)` with the request ID matching.
 
-```go
-func (v *Validator) Run(ctx context.Context, bus *events.EventBus) {
-    eventChan := bus.Subscribe("responder", 100)
+Don't nest `Request()` calls on the same path without spawning a goroutine for the outer call — a responder that blocks on another `Request` while its own pending request waits can deadlock.
 
-    for {
-        select {
-        case event := <-eventChan:
-            if req, ok := event.(MyValidationRequest); ok {
-                // Process request
-                valid, errors := v.validate(req.data)
+## Back-Pressure
 
-                // Send response
-                resp := MyValidationResponse{
-                    reqID:     req.RequestID(),
-                    responder: "validator-1",
-                    valid:     valid,
-                    errors:    errors,
-                }
-                bus.Publish(resp)
-            }
-        case <-ctx.Done():
-            return
-        }
-    }
-}
-```
+Publish is non-blocking. If a subscriber's buffer is full, the event is **dropped for that subscriber** (others still receive it). The bus increments a drop counter and invokes the registered `DropCallback` (used by `pkg/controller/metrics` to emit `haptic_events_dropped_*_total`). Slow consumers are your problem — hand work off to a goroutine or raise the subscriber buffer.
 
-## Design Principles
+## Buffer Sizing Rule of Thumb
 
-### 1. Generic Infrastructure
+- Low-frequency control events (config changes, leadership transitions): `StandardSubscriberBuffer` (50).
+- Reconciliation-path events: 100–200.
+- Observability consumers (commentator, debug buffer) that see *every* event: 500+.
+- The pre-start buffer on `NewEventBus`: roughly the number of events you expect during initialisation; 100 is fine for the main controller.
 
-This package is **domain-agnostic** - it provides the plumbing, not the events:
-
-- EventBus, Request, Response are generic mechanisms
-- Event types are defined in `pkg/controller/events`
-- Could be extracted as a standalone library
-
-### 2. Non-Blocking
-
-The EventBus never blocks publishers:
-
-- Full subscriber channels → event dropped for that subscriber
-- Prevents slow consumers from blocking the system
-- Subscribers must drain their channels promptly
-
-### 3. Thread-Safe
-
-All operations are safe for concurrent access:
-
-- Multiple goroutines can publish simultaneously
-- Multiple goroutines can subscribe simultaneously
-- Thread-safe startup coordination
-
-### 4. Simple API
-
-Minimal surface area:
-
-- `Publish(event)` - send event to all subscribers
-- `Subscribe(name, bufferSize)` - create new event channel
-- `Start()` - release buffered events
-- `Request(ctx, req, opts)` - scatter-gather pattern
+See `pkg/events/types.go` for the `Standard*SubscriberBuffer` constants.
 
 ## Testing
 
-Tests use simple mock events and verify infrastructure behavior:
-
 ```bash
-go test ./pkg/events/... -v
+go test ./pkg/events/...           # unit tests
+go test ./pkg/events/... -race     # race detector
+go test ./pkg/events/... -bench=.  # pub/sub benchmarks
 ```
 
-Test coverage includes:
+Tests define ad-hoc `Event` types inline — the infrastructure never needs domain types.
 
-- Basic pub/sub
-- Startup coordination (buffering/replay)
-- Slow subscriber behavior
-- Concurrent publishing
-- Request-response coordination
-- Timeout handling
-- Context cancellation
+## See Also
 
-## Performance Characteristics
+- `pkg/events/CLAUDE.md` — design rationale, pitfall catalogue (blocking handlers, buffer sizing, Request deadlocks), extension points
+- `pkg/events/ringbuffer` — generic thread-safe ring buffer used by commentator and debug event history
+- `pkg/controller/events` — domain event catalogue (~50 types across lifecycle, config, resources, reconciliation, deployment, leader election)
+- `pkg/controller/commentator` — subscribes to every event for domain-aware logging
+- `pkg/controller/coalesce` — collapses `CoalescibleEvent` bursts
 
-- **Publish**: O(N) where N = number of subscribers (non-blocking select)
-- **Subscribe**: O(1) append to slice
-- **Memory**: Bounded by subscriber buffer sizes and pre-start buffer
-- **Startup Buffer**: O(M) where M = events published before Start()
+## License
 
-## When to Use
-
-**Use EventBus for:**
-
-- Async pub/sub notifications
-- Observability events
-- Decoupling components
-- Event-driven workflows
-
-**Use Request() for:**
-
-- Multi-phase validation
-- Distributed queries
-- Coordinated operations requiring responses
-
-**Don't Use for:**
-
-- Direct function calls (if you don't need decoupling)
-- High-frequency data streams (consider channels instead)
-- Large payloads (events should be lightweight)
-
-## Integration
-
-See `docs/design.md` for:
-
-- Event-driven architecture overview
-- Controller event catalog
-- Startup coordination flow
-- Request-response validation example
-
-## Related Packages
-
-- `pkg/controller/events` - Domain-specific event type definitions
-- `pkg/controller/commentator` - Event observability component
-- `pkg/controller/reconciler` - Event-driven reconciliation logic
+Apache-2.0 — see root `LICENSE`.

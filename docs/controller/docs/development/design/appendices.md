@@ -1,6 +1,6 @@
-## Appendices and References
+# Appendices and References
 
-### Definitions and Abbreviations
+## Definitions and Abbreviations
 
 - **API**: Application Programming Interface
 - **CRD**: Custom Resource Definition - Kubernetes extension mechanism
@@ -13,7 +13,7 @@
 - **Runtime API**: HAProxy's socket-based interface for zero-reload updates
 - **SharedInformerFactory**: client-go factory for creating resource watchers with shared caches
 
-#### References
+## References
 
 1. **HAProxy Documentation**
    - Configuration Manual: <https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/>
@@ -43,7 +43,6 @@
 
 5. **Observability**
    - Prometheus client_golang: <https://github.com/prometheus/client_golang>
-   - OpenTelemetry Go: <https://github.com/open-telemetry/opentelemetry-go>
 
 6. **Design Patterns**
    - Kubernetes Operator Pattern: <https://kubernetes.io/docs/concepts/extend-kubernetes/operator/>

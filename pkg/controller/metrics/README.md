@@ -1,530 +1,149 @@
-# pkg/controller/metrics - Controller Domain Metrics
+# pkg/controller/metrics
 
-Domain-specific Prometheus metrics for the HAProxy Template Ingress Controller.
+Domain metrics for the HAProxy Template Ingress Controller. Two things live here:
 
-## Overview
+- A `Metrics` struct that owns every controller-defined Prometheus metric (instance-based `prometheus.Registry`, not the global default).
+- A `Component` event adapter that subscribes to controller events and updates metrics accordingly.
 
-This package provides controller-specific metrics and an event adapter component that translates controller events into Prometheus metric updates.
+User-facing queries, alerting rules, and dashboard templates live in [`docs/controller/docs/operations/monitoring.md`](../../../docs/controller/docs/operations/monitoring.md). This README is the authoritative developer reference for *which* metrics exist and which component owns them.
 
-**Architecture:**
+## Complete Metric Catalogue
 
-- **metrics.go** - Defines controller-specific Prometheus metrics
-- **component.go** - Event adapter that subscribes to controller events and updates metrics
+All names are listed exactly as exported. `metrics.go` contains the authoritative list — the `TestMetrics_ExpectedNames` assertion in `metrics_test.go` keeps this page honest.
 
-## Metrics
+### Reconciliation pipeline
 
-### Reconciliation Metrics
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_reconciliation_total` | counter | — | Reconciliation cycles triggered |
+| `haptic_reconciliation_errors_total` | counter | — | Reconciliations that failed |
+| `haptic_reconciliation_duration_seconds` | histogram | — | End-to-end reconciliation wall-clock |
+| `haptic_reconciliation_queue_wait_seconds` | histogram | — | Time between `ReconciliationTriggeredEvent` and the pipeline actually picking it up (debounce + queue depth) |
 
-Track reconciliation cycle performance and errors.
+### Deployment
 
-**haptic_reconciliation_total** (counter)
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_deployment_total` | counter | — | Deployments dispatched to at least one HAProxy endpoint |
+| `haptic_deployment_errors_total` | counter | — | Deployments that failed |
+| `haptic_deployment_duration_seconds` | histogram | — | Deployment duration, aggregated across all parallel endpoint calls |
 
-- Total number of reconciliation cycles triggered
-- Increments on both successful and failed reconciliations
+### Config validation
 
-**haptic_reconciliation_duration_seconds** (histogram)
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_validation_total` | counter | — | Controller-side validations (`haproxy -c` + parser) |
+| `haptic_validation_errors_total` | counter | — | Controller-side validation failures |
 
-- Time spent in reconciliation cycles
-- Buckets: 10ms to 10s (see pkg/metrics.DurationBuckets)
+### Embedded validation tests (the `validationTests` suite)
 
-**haptic_reconciliation_errors_total** (counter)
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_validation_tests_total` | counter | — | Test runs kicked off (webhook + CLI) |
+| `haptic_validation_tests_pass_total` | counter | — | Passing test runs |
+| `haptic_validation_tests_fail_total` | counter | — | Failing test runs |
+| `haptic_validation_test_duration_seconds` | histogram | — | Per-test duration |
 
-- Total number of failed reconciliation cycles
-- Increments when reconciliation fails due to template errors, validation failures, etc.
+### Watched resources
 
-**Example Queries:**
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_resource_count` | gauge | `type` | Current size of each watched-resource store (including `haproxy-pods`) |
 
-```promql
-# Reconciliation rate per second
-rate(haptic_reconciliation_total[5m])
+### Event bus
 
-# Average reconciliation duration
-rate(haptic_reconciliation_duration_seconds_sum[5m]) /
-rate(haptic_reconciliation_duration_seconds_count[5m])
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_event_subscribers` | gauge | — | Live subscribers on the `EventBus`. Drops during normal ops usually indicate a crash |
+| `haptic_events_published_total` | counter | — | Total publishes |
+| `haptic_events_dropped_total` | counter | — | Publishes where the subscriber's channel was full |
+| `haptic_events_dropped_critical_total` | counter | — | Drops where the buffered event was marked critical |
+| `haptic_events_dropped_by_subscriber_total` | counter | `subscriber` | Drops attributed to each subscriber by name |
+| `haptic_events_dropped_observability_total` | gauge | — | Drops to the observability subscribers (commentator, debug buffer); expected to be low but non-zero on bursts |
 
-# Error rate
-rate(haptic_reconciliation_errors_total[5m])
+### Webhook
 
-# Success rate percentage
-100 * (1 - (
-  rate(haptic_reconciliation_errors_total[5m]) /
-  rate(haptic_reconciliation_total[5m])
-))
-```
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_webhook_requests_total` | counter | `gvk`, `result` | Admission requests by kind and allow/deny/error |
+| `haptic_webhook_request_duration_seconds` | histogram | `gvk` | Per-request wall-clock |
+| `haptic_webhook_validation_total` | counter | `gvk`, `result` | Validation-only tally (no timing) — handy for ratios |
+| `haptic_webhook_cert_expiry_timestamp_seconds` | gauge | — | UNIX timestamp when the current TLS cert expires |
+| `haptic_webhook_cert_rotations_total` | counter | — | Cert-rotation events observed (via `certloader`) |
 
-### Deployment Metrics
+### Leader election
 
-Track HAProxy configuration deployment performance.
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_leader_election_is_leader` | gauge | — | `1` if this replica holds the lease, else `0` |
+| `haptic_leader_election_transitions_total` | counter | — | Leadership changes observed |
+| `haptic_leader_election_time_as_leader_seconds_total` | counter | — | Cumulative seconds spent as leader |
 
-**haptic_deployment_total** (counter)
+### Dataplane parser cache
 
-- Total number of deployment attempts
-- Increments regardless of success/failure
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_parser_cache_hits_total` | counter | — | client-native parser result cache hits |
+| `haptic_parser_cache_misses_total` | counter | — | client-native parser result cache misses |
 
-**haptic_deployment_duration_seconds** (histogram)
+### Build info
 
-- Time spent deploying configurations to HAProxy instances
-- Buckets: 10ms to 10s
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_build_info` | gauge (always 1) | `version`, `goversion`, `haproxy_version` | Static metadata for dashboards |
 
-**haptic_deployment_errors_total** (counter)
+## Component
 
-- Total number of failed deployments
-- Increments when deployment to at least one instance fails
-
-**Example Queries:**
-
-```promql
-# Deployment rate
-rate(haptic_deployment_total[5m])
-
-# 95th percentile deployment latency
-histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
-
-# Failed deployment rate
-rate(haptic_deployment_errors_total[5m])
-```
-
-### Validation Metrics
-
-Track configuration validation performance.
-
-**haptic_validation_total** (counter)
-
-- Total number of validation attempts
-- Increments for both successful and failed validations
-
-**haptic_validation_errors_total** (counter)
-
-- Total number of failed validations
-- Increments when configuration has syntax errors or validation warnings
-
-**Example Queries:**
-
-```promql
-# Validation rate
-rate(haptic_validation_total[5m])
-
-# Validation error rate
-rate(haptic_validation_errors_total[5m])
-
-# Validation success rate
-100 * (1 - (
-  rate(haptic_validation_errors_total[5m]) /
-  rate(haptic_validation_total[5m])
-))
-```
-
-### Resource Metrics
-
-Track Kubernetes resources being watched.
-
-**haptic_resource_count** (gauge with `type` label)
-
-- Current number of resources indexed by type
-- Labels: `type` (e.g., "ingresses", "services", "endpoints", "haproxy-pods")
-- Updates on every index change
-
-**Example Queries:**
-
-```promql
-# Current resource counts
-haptic_resource_count
-
-# Ingress count
-haptic_resource_count{type="ingresses"}
-
-# Resource count over time
-haptic_resource_count{type="services"}[1h]
-```
-
-### Event Metrics
-
-Track event bus activity.
-
-**haptic_event_subscribers** (gauge)
-
-- Current number of active event subscribers
-- Reflects component health (subscribers should remain constant)
-
-**haptic_events_published_total** (counter)
-
-- Total number of events published to the event bus
-- Indicates overall controller activity level
-
-**Example Queries:**
-
-```promql
-# Event publishing rate
-rate(haptic_events_published_total[5m])
-
-# Current subscribers (should be constant)
-haptic_event_subscribers
-
-# Subscriber changes (indicator of component restarts)
-delta(haptic_event_subscribers[5m])
-```
-
-### Leader Election Metrics
-
-Track leadership status and transitions for high availability deployments.
-
-**haptic_leader_election_is_leader** (gauge)
-
-- Indicates if this replica is currently the leader
-- Values: 1 (leader), 0 (follower)
-- Only one replica should report 1 across all controller instances
-
-**haptic_leader_election_transitions_total** (counter)
-
-- Total number of leadership transitions (becoming leader or losing leadership)
-- Increments on both gain and loss of leadership
-- Frequent transitions may indicate cluster instability
-
-**haptic_leader_election_time_as_leader_seconds_total** (counter)
-
-- Cumulative time this replica has spent as leader (in seconds)
-- Updates when losing leadership
-- Useful for understanding leadership distribution
-
-**Example Queries:**
-
-```promql
-# Current leader count (should be 1 across all replicas)
-sum(haptic_leader_election_is_leader)
-
-# Leadership transition rate
-rate(haptic_leader_election_transitions_total[1h])
-
-# Average time as leader per transition
-haptic_leader_election_time_as_leader_seconds_total /
-haptic_leader_election_transitions_total
-
-# Identify current leader pod
-haptic_leader_election_is_leader{pod=~".*"} == 1
-
-# Alert on split-brain (multiple leaders)
-sum(haptic_leader_election_is_leader) > 1
-
-# Alert on no leader
-sum(haptic_leader_election_is_leader) < 1
-
-# Alert on frequent leadership changes (> 5 per hour)
-rate(haptic_leader_election_transitions_total[1h]) > 5
-```
-
-**Operational Notes:**
-
-- In single-replica deployments (leader election disabled), metrics still exist
-- Normal failover causes 1 transition (old leader loses, new leader gains)
-- High transition rates may indicate: clock skew, network issues, or resource contention
-- Leadership distribution should be relatively balanced over time
-
-## Component Architecture
-
-### Metrics Struct
-
-Holds all controller-specific Prometheus metrics:
-
-```go
-type Metrics struct {
-    ReconciliationDuration prometheus.Histogram
-    ReconciliationTotal    prometheus.Counter
-    ReconciliationErrors   prometheus.Counter
-    DeploymentDuration     prometheus.Histogram
-    DeploymentTotal        prometheus.Counter
-    DeploymentErrors       prometheus.Counter
-    ValidationTotal        prometheus.Counter
-    ValidationErrors       prometheus.Counter
-    ResourceCount          *prometheus.GaugeVec  // type label
-    EventSubscribers       prometheus.Gauge
-    EventsPublished        prometheus.Counter
-    LeaderElectionIsLeader       prometheus.Gauge
-    LeaderElectionTransitionsTotal prometheus.Counter
-    LeaderElectionTimeAsLeaderSeconds prometheus.Counter
-}
-```
-
-### Component (Event Adapter)
-
-Subscribes to controller events and updates metrics accordingly:
-
-```go
-type Component struct {
-    metrics        *Metrics
-    eventBus       *events.EventBus
-    eventChan      <-chan events.Event
-    resourceCounts map[string]int  // Track resource counts
-}
-```
-
-**Lifecycle:**
-
-1. Create component: `NewComponent(metrics, eventBus)`
-2. Subscribe to events: `component.Start()`
-3. Start event loop: `go component.Run(ctx)`
-4. Stop on context cancellation
-
-## Usage
-
-### Basic Setup
+`Component` embeds `*component.Base` and subscribes to reconciliation, deployment, validation, resource, event-bus, webhook, leader-election, and parser events. Metric updates happen inside `HandleEvent` — there's no direct caller path into the `Metrics` struct from other components; they emit events and this component records them.
 
 ```go
 import (
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
+    pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+
     "github.com/prometheus/client_golang/prometheus"
-    "haptic/pkg/controller/metrics"
-    "haptic/pkg/events"
 )
 
-// Create instance-based registry
-registry := prometheus.NewRegistry()
+registry := prometheus.NewRegistry()          // instance-based, swapped per controller iteration
+m := metrics.NewMetrics(registry, versionInfo)
 
-// Create controller metrics
-domainMetrics := metrics.NewMetrics(registry)
+comp := metrics.NewComponent(bus, m, logger)
+go comp.Start(ctx)                             // subscribes + starts the event loop
 
-// Create event bus
-bus := events.NewEventBus(100)
-
-// Create metrics component (event adapter)
-metricsComponent := metrics.New(domainMetrics, bus)
-
-// Subscribe before starting event bus (prevents race)
-metricsComponent.Start()
-
-// Start event bus
-bus.Start()
-
-// Start metrics component event loop
-go metricsComponent.Run(ctx)
+// Serve on the port pkg/metrics exposes
+pkgmetrics.NewServer(":9090", registry).Start(ctx)
 ```
 
-### Direct Metric Updates
+The `Metrics` struct is intentionally safe to use stand-alone (CLI validation, tests) without the `Component` — call the typed update methods directly when you already have a value.
 
-You can also update metrics directly (without events):
+### Why an instance-based registry?
 
-```go
-// Record reconciliation
-metrics.RecordReconciliation(durationMs, success)
+The controller's reinitialisation loop creates a fresh `EventBus` on every config change. Using the global default registry would leak prior-iteration collectors into the new one and produce duplicate-registration panics. `NewMetrics` always takes a caller-provided registry, which the controller swaps per iteration; Prometheus sees a clean slate with the same metric names each time.
 
-// Record deployment
-metrics.RecordDeployment(durationMs, success)
+### Resource-count tracking
 
-// Record validation
-metrics.RecordValidation(success)
+`ResourceCount` is a gauge with a `type` label. The component seeds it from `IndexSynchronizedEvent` (absolute counts per resource type) and then applies deltas from `ResourceIndexUpdatedEvent` (created − deleted), skipping events marked `IsInitialSync`. The running totals live in a `map[string]int` on the component struct, so gauge values match reality across churn without re-listing from the API server.
 
-// Update resource count
-metrics.SetResourceCount("ingresses", 42)
+## Dropping or Renaming a Metric
 
-// Update event subscribers
-metrics.SetEventSubscribers(10)
-
-// Record event published
-metrics.RecordEvent()
-```
-
-### Event-Driven Updates
-
-The component automatically updates metrics based on these events:
-
-**Reconciliation Events:**
-
-- `ReconciliationCompletedEvent` → Increments total, records duration
-- `ReconciliationFailedEvent` → Increments total and errors
-
-**Deployment Events:**
-
-- `DeploymentCompletedEvent` → Increments total, records duration
-- `InstanceDeploymentFailedEvent` → Increments total and errors
-
-**Validation Events:**
-
-- `ValidationCompletedEvent` → Increments total (success)
-- `ValidationFailedEvent` → Increments total and errors
-
-**Resource Events:**
-
-- `IndexSynchronizedEvent` → Initializes resource counts
-- `ResourceIndexUpdatedEvent` → Updates resource counts incrementally
-
-**Leader Election Events:**
-
-- `BecameLeaderEvent` → Sets is_leader to 1, increments transitions, starts time tracking
-- `LostLeadershipEvent` → Sets is_leader to 0, increments transitions, records time as leader
+- Every exported name is guarded by the `TestMetrics_ExpectedNames` assertion. Update that slice when you add, rename, or remove one — the test is the tripwire.
+- Dashboards and alert rules in `docs/controller/docs/operations/monitoring.md` reference names too; keep that file in sync or link the dashboard PR to the metric PR.
 
 ## Testing
 
-### Metrics Tests
-
-Test metric creation and updates:
-
-```go
-func TestMetrics_RecordReconciliation(t *testing.T) {
-    registry := prometheus.NewRegistry()
-    metrics := New(registry)
-
-    // Record successful reconciliation
-    metrics.RecordReconciliation(1500, true)
-
-    assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationTotal))
-    assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ReconciliationErrors))
-}
+```bash
+go test ./pkg/controller/metrics/...          # unit tests
+go test ./pkg/controller/metrics/... -race    # race detector
 ```
 
-### Component Tests
+`component_test.go` asserts that publishing each event type produces exactly the expected metric update — no surprise side-effects, no accidental double counting.
 
-Test event-driven metric updates:
+## See Also
 
-```go
-func TestComponent_ReconciliationEvents(t *testing.T) {
-    registry := prometheus.NewRegistry()
-    metrics := New(registry)
-    eventBus := events.NewEventBus(100)
+- [`pkg/metrics`](../../metrics/) — generic HTTP `/metrics` server + `NewCounter`/`NewHistogram`/`NewGauge` helpers
+- [`pkg/controller/events`](../events/) — event catalogue; this package subscribes to nearly all of it
+- [`docs/controller/docs/operations/monitoring.md`](../../../docs/controller/docs/operations/monitoring.md) — user-facing queries, alerts, dashboards
 
-    component := NewComponent(metrics, eventBus)
+## License
 
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
-
-    component.Start()
-    eventBus.Start()
-    go component.Run(ctx)
-
-    // Publish event
-    eventBus.Publish(events.NewReconciliationCompletedEvent(1500))
-
-    time.Sleep(100 * time.Millisecond)
-
-    // Verify metrics updated
-    assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationTotal))
-}
-```
-
-## Alerting Examples
-
-### Prometheus Alerts
-
-```yaml
-groups:
-  - name: haptic
-    rules:
-      - alert: HighReconciliationErrorRate
-        expr: |
-          rate(haptic_reconciliation_errors_total[5m]) /
-          rate(haptic_reconciliation_total[5m]) > 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High reconciliation error rate (>10%)"
-
-      - alert: HighDeploymentLatency
-        expr: |
-          histogram_quantile(0.95,
-            rate(haptic_deployment_duration_seconds_bucket[5m])
-          ) > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "95th percentile deployment latency >5s"
-
-      - alert: ValidationFailures
-        expr: |
-          rate(haptic_validation_errors_total[5m]) > 0
-        for: 5m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Configuration validation failing"
-
-      - alert: ComponentStopped
-        expr: |
-          delta(haptic_event_subscribers[5m]) < 0
-        labels:
-          severity: critical
-        annotations:
-          summary: "Event subscriber count decreased (component crash?)"
-```
-
-## Dashboard Examples
-
-### Grafana Queries
-
-**Reconciliation Performance:**
-
-```promql
-# Reconciliation rate
-rate(haptic_reconciliation_total[5m])
-
-# Success rate
-100 * (1 - (
-  rate(haptic_reconciliation_errors_total[5m]) /
-  rate(haptic_reconciliation_total[5m])
-))
-
-# P50, P95, P99 latencies
-histogram_quantile(0.50, rate(haptic_reconciliation_duration_seconds_bucket[5m]))
-histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m]))
-histogram_quantile(0.99, rate(haptic_reconciliation_duration_seconds_bucket[5m]))
-```
-
-**Deployment Performance:**
-
-```promql
-# Deployment rate
-rate(haptic_deployment_total[5m])
-
-# Average deployment duration
-rate(haptic_deployment_duration_seconds_sum[5m]) /
-rate(haptic_deployment_duration_seconds_count[5m])
-
-# Deployment success rate
-100 * (1 - (
-  rate(haptic_deployment_errors_total[5m]) /
-  rate(haptic_deployment_total[5m])
-))
-```
-
-**Resource Tracking:**
-
-```promql
-# All resource counts
-haptic_resource_count
-
-# Ingress count
-haptic_resource_count{type="ingresses"}
-
-# HAProxy pod count
-haptic_resource_count{type="haproxy-pods"}
-```
-
-## Best Practices
-
-### DO
-
-- ✅ Record duration for all async operations
-- ✅ Increment error counters for all failure cases
-- ✅ Update resource counts on every index change
-- ✅ Keep metrics simple and focused
-- ✅ Use histogram for latency, counter for totals
-
-### DON'T
-
-- ❌ Create metrics with unbounded labels (e.g., pod names)
-- ❌ Skip error tracking (every failure should increment error counter)
-- ❌ Use gauges for cumulative values (use counters instead)
-- ❌ Update metrics manually in business logic (use events)
-
-## Architecture Integration
-
-This package integrates with the controller architecture:
-
-- **Pure metrics** (metrics.go) - No event dependencies
-- **Event adapter** (component.go) - Bridges events to metrics
-- **Controller orchestration** (pkg/controller) - Wires everything together
-
-## Resources
-
-- Development context: `pkg/controller/metrics/CLAUDE.md`
-- Generic metrics utilities: `pkg/metrics/README.md`
-- Controller events: `pkg/controller/events/types.go`
-- Prometheus documentation: <https://prometheus.io/docs/>
+Apache-2.0 — see root `LICENSE`.

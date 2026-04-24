@@ -9,7 +9,7 @@ Provides a wrapper around haproxytech/client-native for accessing the HAProxy Da
 ## Quick Start
 
 ```go
-import "haptic/pkg/dataplane/client"
+import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 
 client, err := client.New(client.Config{
     BaseURL:  "http://haproxy:5555",

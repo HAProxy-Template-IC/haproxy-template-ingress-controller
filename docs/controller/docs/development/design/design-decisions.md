@@ -1,6 +1,6 @@
-#### Key Design Decisions
+# Key Design Decisions
 
-##### Configuration Validation Strategy
+## Configuration Validation Strategy
 
 **Decision**: Use two-phase validation (client-native parser + haproxy binary) instead of running a full validation sidecar.
 
@@ -47,14 +47,14 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths Va
 
 **Validation Paths Configuration**:
 
-The validation paths must match the HAProxy Dataplane API server's resource configuration. These are configured via the controller's ConfigMap:
+The validation paths must match the HAProxy Dataplane API server's resource configuration. They are set under `spec.dataplane` in the `HAProxyTemplateConfig` CRD:
 
 ```yaml
-validation:
-  maps_dir: /etc/haproxy/maps
-  ssl_certs_dir: /etc/haproxy/certs
-  general_storage_dir: /etc/haproxy/general
-  config_file: /etc/haproxy/haproxy.cfg
+dataplane:
+  mapsDir: /etc/haproxy/maps
+  sslCertsDir: /etc/haproxy/certs
+  generalStorageDir: /etc/haproxy/general
+  configFile: /etc/haproxy/haproxy.cfg
 ```
 
 The validator uses mutex locking to ensure only one validation runs at a time, preventing concurrent writes to the HAProxy directories. This approach exactly matches how the Dataplane API performs validation.
@@ -83,7 +83,7 @@ The config parser (`pkg/dataplane/parser`) has been enhanced to correctly handle
 
 This fix resolves issues where valid HAProxy configurations were rejected during the parsing phase of validation.
 
-##### Template Engine Selection
+## Template Engine Selection
 
 **Decision**: Use Scriggo, a Go-native template engine with dynamic include support.
 
@@ -98,7 +98,7 @@ This fix resolves issues where valid HAProxy configurations were rejected during
 - **Extensibility**: Custom file systems enable dynamic template loading and include resolution
 - **Pure Go**: No external dependencies
 
-##### Kubernetes Client Architecture
+## Kubernetes Client Architecture
 
 **Decision**: Use client-go with SharedInformerFactory for resource watching, no heavy controller framework.
 
@@ -130,7 +130,7 @@ for _, resource := range config.WatchedResources {
 factory.Start(stopCh)
 ```
 
-##### Concurrency Model
+## Concurrency Model
 
 **Decision**: Use Go routines and channels for async operations with structured concurrency.
 
@@ -169,7 +169,7 @@ factory.Start(stopCh)
    }
    ```
 
-##### Observability Integration
+## Observability Integration
 
 **Decision**: Prometheus metrics + OpenTelemetry tracing with standardized naming.
 
@@ -244,7 +244,7 @@ func (r *Renderer) Render(ctx context.Context, tpl string) (string, error) {
 }
 ```
 
-##### Error Handling Strategy
+## Error Handling Strategy
 
 **Decision**: Structured errors with context using standard library errors package and custom error types.
 
@@ -280,7 +280,7 @@ func validate(config string) error {
 }
 ```
 
-##### Event-Driven Architecture
+## Event-Driven Architecture
 
 **Decision**: Implement event-driven architecture for component decoupling and extensibility.
 
@@ -976,7 +976,7 @@ func (r *OperatorRunner) Run(ctx context.Context) error {
 5. **Debugging**: Event log provides complete audit trail
 6. **Idiomatic Go**: Uses channels, select, context - native Go patterns
 
-##### Request-Response Pattern (Scatter-Gather)
+## Request-Response Pattern (Scatter-Gather)
 
 **Problem**: Configuration validation requires synchronous coordination across multiple validators (template syntax, JSONPath expressions, structural validation). Using async pub/sub with manual timeout management would add complexity and be error-prone.
 
@@ -1314,7 +1314,7 @@ level=warn msg="configuration validation failed"
 
 **Selected**: Scatter-gather provides the best balance of simplicity, observability, and maintainability.
 
-##### Event Commentator Pattern
+## Event Commentator Pattern
 
 **Decision**: Implement a dedicated Event Commentator component that subscribes to all EventBus events and produces domain-aware log messages with contextual insights.
 

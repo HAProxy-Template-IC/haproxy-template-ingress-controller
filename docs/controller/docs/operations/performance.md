@@ -302,7 +302,7 @@ replicaCount: 3
 controller:
   config:
     controller:
-      leader_election:
+      leaderElection:
         enabled: true
 ```
 
@@ -313,27 +313,32 @@ Only the leader performs deployments; followers maintain hot-standby status.
 Reduce watched resources to minimize controller load:
 
 ```yaml
-# Only watch specific namespaces
+# Watch a single namespace
 spec:
   watchedResources:
     ingresses:
       apiVersion: networking.k8s.io/v1
       resources: ingresses
-      namespaceSelector:
-        matchNames:
-          - production
-          - staging
+      namespace: production
 
-# Use label selectors
+# Watch multiple namespaces by label (e.g. label namespaces with `env=prod`)
 spec:
   watchedResources:
     ingresses:
       apiVersion: networking.k8s.io/v1
       resources: ingresses
-      labelSelector:
-        matchLabels:
-          managed-by: haptic
+      namespaceSelector: "env=prod"
+
+# Or narrow by label selector on the resources themselves
+spec:
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      labelSelector: "managed-by=haptic"
 ```
+
+All selector fields are simple Kubernetes label-selector strings — the `matchLabels`/`matchExpressions` object form is not supported here.
 
 ## Deployment Performance
 

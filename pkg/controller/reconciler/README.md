@@ -16,7 +16,7 @@ Stage 5 component that applies debouncing logic to prevent excessive reconciliat
 ## Quick Start
 
 ```go
-import "haptic/pkg/controller/reconciler"
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 
 // Default configuration (5s debounce)
 reconciler := reconciler.New(bus, logger, nil)

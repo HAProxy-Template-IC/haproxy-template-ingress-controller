@@ -644,4 +644,4 @@ haproxyConfig:
 
 - [Template Engine Reference](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/templating/README.md)
 - [Scriggo Documentation](https://scriggo.com/templates)
-- [HAProxy Configuration Manual](https://docs.haproxy.org/2.9/configuration.html)
+- [HAProxy Configuration Manual](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/)

@@ -1,375 +1,92 @@
-## User Interface Design
+# Configuration Model
 
-This is a headless controller with no graphical user interface. Interaction occurs through:
+The controller is headless. Operators interact with it through four surfaces:
 
-1. **ConfigMap**: Primary configuration interface
-2. **Kubernetes Resources**: Watched resources (Ingress, Service, etc.)
-3. **Metrics Endpoint**: Prometheus metrics on `:9090/metrics` (configurable)
-4. **Health Endpoint**: Liveness/readiness on `:8080/healthz` (configurable)
-5. **Debug Endpoint**: Runtime introspection on configurable port (disabled by default, typically `:6060/debug/vars` when enabled) with JSONPath support and pprof
-6. **Logs**: Structured JSON logs for operational visibility
+| Surface | Purpose |
+|---------|---------|
+| `HAProxyTemplateConfig` CRD | Primary configuration: templates, watched resources, validation, logging |
+| `Secret` (credentialsSecretRef) | Dataplane API and validation credentials |
+| `/metrics` (default `:9090`) | Prometheus metrics |
+| `/healthz` (default `:8080`) | Liveness/readiness probes |
+| `/debug/vars`, `/debug/pprof/` (disabled by default) | Runtime introspection; enable with `--debug-port` or `DEBUG_PORT` |
 
-## Configuration Example
+Structured JSON logs on stdout round out the operational surface.
 
-The following example demonstrates a complete controller configuration with all major features:
+## What the CRD Covers
+
+`HAProxyTemplateConfig.spec` is the single source of truth for controller behaviour. It has four top-level groups:
+
+- **Runtime settings** — `controller`, `dataplane`, `logging`, `templatingSettings`, `configPublishing`.
+- **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`, `httpResources`.
+- **Templates** — `haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`.
+- **Validation** — `validationTests` plus the per-resource `enableValidationWebhook` flag.
+
+The full field reference (types, defaults, validation rules) lives in [CRD Reference](../../crd-reference.md). This page focuses on how the pieces fit together; the reference page tells you what every field does.
+
+## Minimal Example
+
+A working configuration renders a single Ingress-driven backend and nothing else. The Helm chart ships a much larger default that covers Ingress and Gateway API via template libraries; see [Template Libraries](https://haproxy-haptic.org/helm-chart/latest/template-libraries/).
 
 ```yaml
-pod_selector:
-  match_labels:
-    app: haproxy
-    component: loadbalancer
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: haptic
+spec:
+  credentialsSecretRef:
+    name: haproxy-credentials
 
-logging:
-  level: DEBUG  # TRACE, DEBUG, INFO, WARN, ERROR
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: loadbalancer
 
-# Fields to omit from indexed resources (reduces memory usage)
-watched_resources_ignore_fields:
-  - metadata.managedFields
+  watchedResources:
+    ingresses:
+      apiVersion: networking.k8s.io/v1
+      resources: ingresses
+      indexBy: ["metadata.namespace", "metadata.name"]
+      enableValidationWebhook: true
+    endpointslices:
+      apiVersion: discovery.k8s.io/v1
+      resources: endpointslices
+      indexBy: ["metadata.labels['kubernetes.io/service-name']"]
 
-watched_resources:
-  ingresses:
-    api_version: networking.k8s.io/v1
-    resources: ingresses
-    # Enable validation webhook for Ingress resources to prevent faulty configs
-    enable_validation_webhook: true
-    # Default indexing by namespace and name for standard iteration
-    index_by: ["metadata.namespace", "metadata.name"]
-
-  endpoints:
-    api_version: discovery.k8s.io/v1
-    resources: endpointslices
-    # Leave validation disabled for critical resources like EndpointSlices
-    enable_validation_webhook: false
-    # Custom indexing by service name for O(1) service-to-endpoints matching
-    index_by: ["metadata.labels['kubernetes.io/service-name']"]
-
-  secrets:
-    api_version: v1
-    resources: secrets
-    # Enable validation for TLS secrets to catch certificate issues early
-    enable_validation_webhook: true
-    # Index by namespace and type for efficient TLS secret lookup
-    index_by: ["metadata.namespace", "type"]
-
-  services:
-    api_version: v1
-    resources: services
-    enable_validation_webhook: false
-    # Index by namespace and app label for cross-resource matching
-    index_by: ["metadata.namespace", "metadata.labels['app']"]
-
-template_snippets:
-  backend-name:
+  haproxyConfig:
     template: |
-      ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ fallback(path.backend.service.port.name, path.backend.service.port.number) }}
+      global
+        log stdout len 4096 local0 info
+        maxconn 4096
 
-  path-map-entry:
-    template: |
-      {{ "" }}
+      defaults
+        mode http
+        timeout connect 5s
+        timeout client 50s
+        timeout server 50s
+
+      frontend http
+        bind *:80
+        default_backend default
+
       {% for _, ingress := range resources.ingresses.List() %}
-      {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-      {% if rule.http != nil %}
-      {% for _, path := range fallback(rule.http.paths, []any{}) %}
-      {% if path.path != nil && contains(path_types, path.pathType) %}
-      {{ rule.host }}{{ path.path }} {{ render "backend-name" }}{{ suffix }}
-      {% end %}
-      {% end %}
-      {% end %}
-      {% end %}
-      {% end %}
-
-  validate-ingress:
-    template: |
-      {#- Validation snippet for ingress resources #}
-      {%- if ingress.spec == nil %}
-        {% register_error("ingresses", ingress.metadata.uid, "Ingress missing spec") %}
-      {%- end %}
-      {%- if ingress.spec.rules != nil %}
-        {%- for _, rule := range ingress.spec.rules %}
-          {%- if rule.host == "" %}
-            {% register_error("ingresses", ingress.metadata.uid, "Ingress rule missing host") %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-
-  backend-servers:
-    template: |
-      {#- Pre-allocated server pool with auto-expansion #}
-      {%- var initial_slots = 10 %}  {#- Single place to adjust initial slots #}
-
-      {#- Collect active endpoints #}
-      {%- var active_endpoints = []map[string]any{} %}
-      {%- for _, endpoint_slice := range resources.endpoints.Fetch(service_name) %}
-        {%- for _, endpoint := range fallback(endpoint_slice.endpoints, []any{}) %}
-          {%- for _, address := range endpoint.addresses %}
-            {%- active_endpoints = append(active_endpoints, map[string]any{"name": endpoint.targetRef.name, "address": address, "port": port}) %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
-
-      {#- Calculate required slots using mathematical approach #}
-      {%- var active_count = len(active_endpoints) %}
-      # active count = {{ active_count }}
-      {%- var max_servers = initial_slots %}
-      {%- if initial_slots > 0 && active_count > 0 && active_count > initial_slots %}
-        {%- max_servers = initial_slots * 2 %}
-        {%- for max_servers < active_count %}
-          {%- max_servers = max_servers * 2 %}
-        {%- end %}
-      {%- end %}
-      # max servers = {{ max_servers }}
-
-      {#- Generate all server slots with fixed names #}
-      {%- for i := 1; i <= max_servers; i++ %}
-        {%- if i-1 < len(active_endpoints) %}
-          {#- Active server with real endpoint #}
-          {%- var endpoint = active_endpoints[i-1] %}
-        server SRV_{{ i }} {{ endpoint["address"] }}:{{ endpoint["port"] }}
-        {%- else %}
-          {#- Disabled placeholder server #}
-        server SRV_{{ i }} 127.0.0.1:1 disabled
-        {%- end %}
-      {%- end %}
-
-  ingress-backends:
-    template: |
-      {#- Generate all backend definitions from ingress resources #}
-      {#- Usage: {{ render "ingress-backends" }} #}
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {{ render "validate-ingress" }}
-      {%- if ingress.spec != nil && ingress.spec.rules != nil %}
-      {%- for _, rule := range ingress.spec.rules %}
-      {%- if rule.http != nil && rule.http.paths != nil %}
-      {%- for _, path := range rule.http.paths %}
-      {%- if path.backend != nil && path.backend.service != nil %}
-      {%- var service_name = path.backend.service.name %}
-      {%- var port = fallback(path.backend.service.port.number, 80) %}
-      backend {{ render "backend-name" }}
+      backend ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
         balance roundrobin
-        option httpchk GET {{ fallback(path.path, "/") }}
-        default-server check
-        {{ render "backend-servers" }}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-
-maps:
-  host.map:
-    template: |
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {%- for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-      {%- if rule.http != nil %}
-      {%- var host_without_asterisk = replace(rule.host, "*", "") %}
-      {{ host_without_asterisk }} {{ host_without_asterisk }}
-      {%- end %}
-      {%- end %}
-      {%- end %}
-
-  path-exact.map:
-    template: |
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-      # It should be used with the equality string matcher. Example:
-      #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(/etc/haproxy/maps/path-exact.map)
-      {%- var path_types = []string{"Exact"} %}
-      {%- var suffix = "" %}
-      {{ render "path-map-entry" }}
-
-  path-prefix-exact.map:
-    template: |
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-
-      {%- for _, ingress := range resources.ingresses.List() %}
-      {% for _, rule := range fallback(ingress.spec.rules, []any{}) %}
-      {% if rule.http != nil %}
-      {% for _, path := range fallback(rule.http.paths, []any{}) %}
-      {% if path.path != nil && (path.pathType == "Prefix" || path.pathType == "ImplementationSpecific") %}
-      {{ rule.host }}{{ path.path }} ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}_{{ path.backend.service.name }}_{{ fallback(path.backend.service.port.name, path.backend.service.port.number) }}
-      {% end %}
-      {% end %}
-      {% end %}
-      {% end %}
+        # server lines generated from endpointslices...
       {% end %}
 
-  path-prefix.map:
-    template: |
-      # This map is used to match the host header (without ":port") concatenated with the requested path (without query params) to an HAProxy backend defined in haproxy.cfg.
-      # It should be used with the prefix string matcher. Example:
-      #   http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg(/etc/haproxy/maps/path-prefix.map)
-      {%- var path_types = []string{"Prefix", "ImplementationSpecific"} %}
-      {%- var suffix = "/" %}
-      {{ render "path-map-entry" }}
-
-files:
-  400.http:
-    template: |
-      HTTP/1.0 400 Bad Request
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>400 Bad Request</h1>
-      <p>Your browser sent a request that this server could not understand.</p>
-      </body></html>
-
-  403.http:
-    template: |
-      HTTP/1.0 403 Forbidden
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>403 Forbidden</h1>
-      <p>You don't have permission to access this resource.</p>
-      </body></html>
-
-  408.http:
-    template: |
-      HTTP/1.0 408 Request Time-out
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>408 Request Time-out</h1>
-      <p>Your browser didn't send a complete request in time.</p>
-      </body></html>
-
-  500.http:
-    template: |
-      HTTP/1.0 500 Internal Server Error
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>500 Internal Server Error</h1>
-      <p>An internal server error occurred.</p>
-      </body></html>
-
-  502.http:
-    template: |
-      HTTP/1.0 502 Bad Gateway
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>502 Bad Gateway</h1>
-      <p>The server received an invalid response from an upstream server.</p>
-      </body></html>
-
-  503.http:
-    template: |
-      HTTP/1.0 503 Service Unavailable
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>503 Service Unavailable</h1>
-      <p>No server is available to handle this request.</p>
-      </body></html>
-
-  504.http:
-    template: |
-      HTTP/1.0 504 Gateway Time-out
-      Cache-Control: no-cache
-      Connection: close
-      Content-Type: text/html
-
-      <html><body><h1>504 Gateway Time-out</h1>
-      <p>The server didn't respond in time.</p>
-      </body></html>
-
-haproxy_config:
-  template: |
-    global
-      log stdout len 4096 local0 info
-      chroot /var/lib/haproxy
-      user haproxy
-      group haproxy
-      daemon
-      ca-base /etc/ssl/certs
-      crt-base /etc/haproxy/certs
-      tune.ssl.default-dh-param 2048
-
-    defaults
-      mode http
-      log global
-      option httplog
-      option dontlognull
-      option log-health-checks
-      option forwardfor
-      option httpchk GET /
-      timeout connect 5000
-      timeout client 50000
-      timeout server 50000
-      errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
-      errorfile 403 {{ pathResolver.GetPath("403.http", "file") }}
-      errorfile 408 {{ pathResolver.GetPath("408.http", "file") }}
-      errorfile 500 {{ pathResolver.GetPath("500.http", "file") }}
-      errorfile 502 {{ pathResolver.GetPath("502.http", "file") }}
-      errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
-      errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
-
-    frontend status
-      bind *:8404
-      no log
-      http-request return status 200 content-type text/plain string "OK" if { path /healthz }
-      http-request return status 200 content-type text/plain string "READY" if { path /ready }
-
-    frontend http_frontend
-      bind *:80
-
-      # Set a few variables
-      http-request set-var(txn.base) base
-      http-request set-var(txn.path) path
-      http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      http-request set-var(txn.host_match) var(txn.host),map(/etc/haproxy/maps/host.map)
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map(/etc/haproxy/maps/host.map,'') if !{ var(txn.host_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(/etc/haproxy/maps/path-exact.map)
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(/etc/haproxy/maps/path-prefix-exact.map) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg(/etc/haproxy/maps/path-prefix.map) if !{ var(txn.path_match) -m found }
-
-      # Use path maps for routing
-      use_backend %[var(txn.path_match)]
-
-      # Default backend
-      default_backend default_backend
-
-    {{ render "ingress-backends" }}
-
-    backend default_backend
+      backend default
         http-request return status 404
 ```
 
-**Configuration Highlights**:
+## Configuration Layers
 
-1. **Pod Selector**: Identifies HAProxy pods using `app: haproxy` and `component: loadbalancer` labels
+Users commonly compose configuration from three layers, in order of precedence:
 
-2. **Watched Resources**: Four resource types with strategic indexing:
-   - **Ingresses**: Indexed by namespace and name for iteration, validation webhook enabled
-   - **EndpointSlices**: Indexed by service name for O(1) endpoint lookup
-   - **Secrets**: Indexed by namespace and type for TLS certificate management
-   - **Services**: Indexed by namespace and app label for cross-resource matching
+1. **Template libraries** shipped in the Helm chart (base, SSL, ingress, gateway, haproxytech). These are merged into a single rendered `HAProxyTemplateConfig`.
+2. **`controller.config`** in Helm values — anything set here is merged on top of library output.
+3. **Direct `HAProxyTemplateConfig` edits** (via `kubectl edit htplcfg`) for ad-hoc overrides.
 
-3. **Template Snippets**: Reusable template components:
-   - **backend-name**: Generates consistent backend names from ingress metadata
-   - **path-map-entry**: Creates map entries for different path types
-   - **validate-ingress**: Validates ingress resources during rendering
-   - **backend-servers**: Dynamic server pool with auto-expansion (powers-of-two scaling)
-   - **ingress-backends**: Generates complete backend definitions from ingresses
+Because templates are just strings inside a CRD, the chart layers and the user's own values can both contribute snippets and be composed at render time. See [Templating Guide](../../templating.md) for how snippets and extension points interact.
 
-4. **Maps**: Three routing maps for different match types:
-   - **host.map**: Host-based routing with wildcard support
-   - **path-exact.map**: Exact path matching
-   - **path-prefix.map**: Prefix-based path matching
+## Reloading Behaviour
 
-5. **Files**: HTTP error response pages (400, 403, 408, 500, 502, 503, 504)
-
-6. **HAProxy Configuration**: Complete configuration with:
-   - Global settings and defaults
-   - Status frontend for health checks
-   - HTTP frontend with advanced routing using maps
-   - Dynamic backend generation via template inclusion
-
-This configuration demonstrates production-ready patterns including resource indexing optimization, validation webhooks for critical resources, and dynamic backend scaling.
+Changes to the `HAProxyTemplateConfig` resource trigger an internal **reinitialization loop**: the controller cancels its current iteration, re-validates the new config, and restarts all components against it. No pod restart is required. The Secret referenced by `credentialsSecretRef` is watched the same way, so credential rotation is picked up live.

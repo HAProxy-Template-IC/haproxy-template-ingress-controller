@@ -194,9 +194,11 @@ controller validate -f config.yaml --test test-basic-routing
 controller validate -f config.yaml --output json
 controller validate -f config.yaml --output yaml
 
-# Custom HAProxy binary
-controller validate -f config.yaml --haproxy-binary /usr/local/bin/haproxy
+# Parallelism (0=auto-detect CPUs, 1=sequential)
+controller validate -f config.yaml --workers 4
 ```
+
+The `controller validate` command shells out to the `haproxy` binary on your `PATH` for the semantic validation phase. Install HAProxy locally (e.g. via your package manager) so that step can run; otherwise only the syntax phase is exercised.
 
 Exit code 0 means all tests passed.
 
@@ -344,7 +346,7 @@ test1:
 
 | Problem | Solution |
 |---------|----------|
-| "haproxy: command not found" | Use `--haproxy-binary /path/to/haproxy` |
+| "haproxy: command not found" | Install HAProxy locally (the validator invokes `haproxy -c` on your `PATH`) |
 | "template rendering failed" | Check for undefined variables, missing filters |
 | Pattern not matching | Escape regex chars, check whitespace, use simpler patterns |
 | JSONPath returns no results | Verify path syntax, use `.List()` for resources |

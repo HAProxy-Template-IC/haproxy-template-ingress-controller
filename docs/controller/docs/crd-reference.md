@@ -141,20 +141,23 @@ If not set (empty string), the controller uses the `LOG_LEVEL` environment varia
 
 ### dataplane
 
-Dataplane API connection and deployment settings.
+Dataplane API connection, deployment, and validation settings.
 
 ```yaml
 dataplane:
-  port: 5555  # Dataplane API port
-  minDeploymentInterval: 2s  # Rate limiting
-  driftPreventionInterval: 60s  # Periodic sync
-  mapsDir: /etc/haproxy/maps
+  port: 5555                         # Dataplane API port (default 5555)
+  minDeploymentInterval: 2s          # Minimum gap between deployments (default 2s)
+  driftPreventionInterval: 60s       # Periodic redeploy to correct drift (default 60s)
+  deploymentTimeout: 30s             # Safety net for lost deployments (default 30s)
+  maxParallel: 0                     # Concurrent Dataplane ops; 0 = auto from dataplane CPU × 10
+  rawPushThreshold: 100              # Switch to raw config push when change count exceeds this (default 100)
+  mapsDir: /etc/haproxy/maps         # Used for both validation and deployment
   sslCertsDir: /etc/haproxy/ssl
   generalStorageDir: /etc/haproxy/general
   configFile: /etc/haproxy/haproxy.cfg
 ```
 
-**Paths must match Dataplane API resource configuration.**
+The four `*Dir` / `configFile` paths are used by the controller's local `haproxy -c` validation step as well as for deployment — they must match the paths the Dataplane API server is configured to manage. The Helm chart keeps them in sync by deriving both sides from a single set of chart values.
 
 ### watchedResourcesIgnoreFields
 
@@ -194,8 +197,9 @@ Reusable template fragments.
 
 ```yaml
 templateSnippets:
-  backend-name: |
-    ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
+  backend-name:
+    template: |
+      ing_{{ ingress.metadata.namespace }}_{{ ingress.metadata.name }}
 ```
 
 Include in templates: `{{ render "backend-name" }}`
@@ -347,7 +351,7 @@ validationTests:
         description: Config must include host
 ```
 
-See [CRD Validation Design](./development/crd-validation-design.md) for test framework details.
+See [Validation Tests](./validation-tests.md) for the full test-framework reference (fixtures, assertion types, CLI usage) and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
 
 ## Status Subresource
 
@@ -412,7 +416,7 @@ spec:
 
 ## Migration from ConfigMap
 
-If upgrading from ConfigMap-based configuration:
+Earlier pre-release builds accepted configuration as a `ConfigMap` with snake_case field names. That path was removed before the first tagged release. If you're still on an unreleased build that ships the old format, the mapping is:
 
 **Old (ConfigMap):**
 
@@ -498,7 +502,8 @@ Additional validation occurs when:
 
 ## See Also
 
-- [Templating Guide](./templating.md) - Template syntax and examples
-- [Watching Resources](./watching-resources.md) - Resource watching configuration
-- [CRD Validation Design](./development/crd-validation-design.md) - Validation framework
-- [Getting Started](./getting-started.md) - Installation and basic usage
+- [Templating Guide](./templating.md) — template syntax, filters, context variables
+- [Watching Resources](./watching-resources.md) — store types, indexing, selectors
+- [Validation Tests](./validation-tests.md) — writing and running embedded tests
+- [CRD & Validation Design](./development/crd-validation-design.md) — rationale behind the CRD shape and validation layers
+- [Getting Started](./getting-started.md) — installation walkthrough

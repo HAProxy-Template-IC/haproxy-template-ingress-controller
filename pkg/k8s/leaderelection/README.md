@@ -15,7 +15,7 @@ import (
     "time"
 
     "k8s.io/client-go/kubernetes"
-    "haptic/pkg/k8s/leaderelection"
+    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
 )
 
 // Create configuration

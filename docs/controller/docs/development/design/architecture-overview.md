@@ -30,7 +30,7 @@ The controller operates through event-driven coordination where components commu
 
 - **Fail-Safe**: Invalid configurations are rejected before reaching production
 - **Performance**: Debouncing prevents rapid successive renders, indexing enables fast lookups
-- **Observability**: Comprehensive metrics (Prometheus) and distributed tracing (OpenTelemetry)
+- **Observability**: Prometheus metrics, structured logging, and a `/debug/vars` introspection endpoint
 - **Flexibility**: Templates provide complete control over HAProxy configuration, no annotation limitations
 
 ## Component Diagrams

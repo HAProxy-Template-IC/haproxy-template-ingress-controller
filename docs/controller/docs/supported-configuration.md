@@ -10,12 +10,7 @@ The controller supports all configuration sections that can be managed through t
 
 **HAProxy Editions:** Both HAProxy Community and HAProxy Enterprise are supported. Enterprise-only features are automatically detected and enabled when connected to an Enterprise instance.
 
-**Coverage:**
-
-- **15 main configuration sections** (global, defaults, frontends, backends, etc.)
-- **23 child component types** across frontends and backends (servers, ACLs, rules, etc.)
-- **12 Enterprise-only sections** (WAF, bot management, UDP load balancing, etc.)
-- **Complete Dataplane API compatibility** - All manageable resources are supported
+**Coverage:** Every section the Dataplane API exposes as a manageable resource is supported — see the tables below for the current list. The comparator delegates attribute-level equality to `haproxytech/client-native` models' generated `.Equal()` methods, so new fields and sections added by HAProxy upstream become supported automatically without controller changes.
 
 ## Supported Configuration Sections
 
@@ -34,8 +29,10 @@ The controller supports all configuration sections that can be managed through t
 | **Userlists** | User authentication lists | 10 | Create/Delete (no update) |
 | **Programs** | External program configurations | 10 | Create/Update/Delete |
 | **LogForwards** | Syslog forwarding sections | 10 | Create/Update/Delete |
+| **LogProfiles** | Log-format profiles (DataPlane API 3.1+) | 10 | Create/Update/Delete |
 | **FCGIApps** | FastCGI application configs | 10 | Create/Update/Delete |
 | **CrtStores** | Certificate store sections | 10 | Create/Update/Delete |
+| **AcmeProviders** | ACME certificate provider configurations | 10 | Create/Update/Delete |
 
 **Note:** Lower priority numbers are processed first. Operations are automatically ordered by dependency and priority.
 
@@ -43,7 +40,7 @@ The controller supports all configuration sections that can be managed through t
 
 ### Frontend Child Components
 
-Frontends support **9 child component types** with individual Create/Update/Delete operations:
+Frontends support these child component types with individual Create/Update/Delete operations:
 
 | Component | Description |
 |-----------|-------------|
@@ -59,7 +56,7 @@ Frontends support **9 child component types** with individual Create/Update/Dele
 
 ### Backend Child Components
 
-Backends support **14 child component types** with individual Create/Update/Delete operations:
+Backends support these child component types with individual Create/Update/Delete operations:
 
 | Component | Description |
 |-----------|-------------|
@@ -251,8 +248,7 @@ Keepalived sections support fine-grained management of VRRP configuration:
 The implementation uses two approaches for optimal performance:
 
 1. **Fine-Grained Child Resource Management** (frequently-changing resources)
-   - Frontends: 9 child resource types
-   - Backends: 14 child resource types
+   - Frontends and backends expose per-child operations (binds, ACLs, rules, servers, health checks, …)
    - Each child resource has individual Create/Update/Delete operations
    - Changes to individual ACLs, rules, or servers are applied independently
    - **Benefit:** Minimizes API calls and reduces reload frequency
@@ -274,15 +270,3 @@ Operations are automatically ordered by:
 This ensures that, for example, a Backend is created before its Servers, and Servers are deleted before the Backend is removed.
 
 The comparator uses the `haproxytech/client-native` models' built-in `.Equal()` methods for comprehensive attribute comparison, ensuring zero-maintenance compatibility with future HAProxy features.
-
-## Summary
-
-HAPTIC provides complete HAProxy Dataplane API coverage:
-
-- 15 main sections fully supported
-- 23 child component types with fine-grained operations
-- 12 Enterprise-only sections (WAF, bot management, UDP, Keepalived, etc.)
-- Runtime API optimization for zero-reload server updates
-- Dependency-aware operation ordering for safe deployments
-- Future-proof comparison using HAProxy models' `.Equal()` methods
-- Listen sections not supported (Dataplane API limitation)

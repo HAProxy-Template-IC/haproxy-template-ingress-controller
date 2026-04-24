@@ -9,7 +9,7 @@ Event-driven component that subscribes to SecretResourceChangedEvent, extracts c
 ## Quick Start
 
 ```go
-import "haptic/pkg/controller/credentialsloader"
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/credentialsloader"
 
 loader := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 go loader.Start(ctx)

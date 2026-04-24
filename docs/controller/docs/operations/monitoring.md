@@ -25,7 +25,7 @@ Configure the metrics port in Helm values:
 controller:
   config:
     controller:
-      metrics_port: 9090  # Default
+      metricsPort: 9090  # Default
 ```
 
 Set to `0` to disable metrics.
@@ -56,11 +56,12 @@ If using Prometheus Operator, enable the ServiceMonitor in Helm:
 
 ```yaml
 # values.yaml
-serviceMonitor:
-  enabled: true
-  interval: 30s
-  labels:
-    release: prometheus  # Match your Prometheus selector
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels:
+      release: prometheus  # Match your Prometheus selector
 ```
 
 ### Manual Access
@@ -436,7 +437,7 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 
 **Missing metrics:**
 
-1. Verify metrics port is enabled (`controller.config.controller.metrics_port`)
+1. Verify metrics port is enabled (`controller.config.controller.metricsPort`)
 2. Check ServiceMonitor selector matches Prometheus configuration
 3. Verify network policies allow scraping
 
@@ -452,16 +453,16 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 
 ```yaml
 # values.yaml
-serviceMonitor:
-  enabled: true
-  interval: 30s
-  scrapeTimeout: 10s
-  labels:
-    release: prometheus
-  namespaceSelector:
-    matchNames:
-      - haptic
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
 ```
+
+The chart renders a `ServiceMonitor` that targets the controller Service in the release namespace — no explicit namespace selector is needed.
 
 ### Victoria Metrics
 
