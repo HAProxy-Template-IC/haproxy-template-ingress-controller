@@ -165,9 +165,13 @@ compute-ci-image-tag:
     BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
   tags:
     - saas-linux-medium-amd64
+  # NOTE: build-ci must run on main too, otherwise a merge commit that blends
+  # concurrent Dockerfile edits (e.g. two Renovate dependency bumps) produces a
+  # content hash that existed in no feature branch, so no image was pushed for
+  # it and every subsequent branch fails to pull the CI image. The changes rule
+  # keeps the cost bounded on ordinary main commits, and the --import-cache in
+  # the build-ci script makes unchanged rebuilds near-instant.
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
