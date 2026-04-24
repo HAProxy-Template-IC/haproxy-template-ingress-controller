@@ -98,10 +98,11 @@
       "groupName": "haproxy image"
     },
     {
-      "description": "Keep HAPROXY_VERSION ARGs on stable series only. The built-in customManagers:dockerfileVersions preset does not honor an inline `extractVersion=...` hint, so apply it here. Without this clamp, Docker Hub's floating `3.4` tag (pointing at a dev release) would be proposed as an upgrade to these major.minor ARGs.",
+      "description": "Keep HAPROXY_VERSION ARGs on stable series only. Docker Hub's floating `X.Y` tag can point at a dev release before the first `X.Y.Z` patch ships (e.g. `3.4` → `3.4-dev2`), so derive the tracked version from patch tags. Covers both the `ARG HAPROXY_VERSION=` lines and the `FROM haproxytech/haproxy-debian:${HAPROXY_VERSION}` lines that Renovate's built-in dockerfile manager extracts by resolving the ARG — both need the clamp, across all three files.",
       "matchFileNames": [
         "Dockerfile",
-        "versions.env"
+        "versions.env",
+        ".gitlab/ci/images/ci/Dockerfile"
       ],
       "matchPackageNames": [
         "haproxytech/haproxy-debian"
