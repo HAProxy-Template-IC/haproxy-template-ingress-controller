@@ -65,9 +65,9 @@ func (c *Comparator) compareLogForwards(current, desired *parser.StructuredConfi
 		desired.LogForwards,
 		func(lf *models.LogForward) string { return lf.Name },
 		func(l1, l2 *models.LogForward) bool { return l1.Equal(*l2) },
-		func(lf *models.LogForward) Operation { return sections.NewLogForwardCreate(lf) },
-		func(lf *models.LogForward) Operation { return sections.NewLogForwardDelete(lf) },
-		func(lf *models.LogForward) Operation { return sections.NewLogForwardUpdate(lf) },
+		sections.NewLogForwardCreate,
+		sections.NewLogForwardDelete,
+		sections.NewLogForwardUpdate,
 	)
 }
 
@@ -79,9 +79,9 @@ func (c *Comparator) compareLogProfiles(current, desired *parser.StructuredConfi
 		desired.LogProfiles,
 		func(lp *models.LogProfile) string { return lp.Name },
 		func(l1, l2 *models.LogProfile) bool { return l1.Equal(*l2) },
-		func(lp *models.LogProfile) Operation { return sections.NewLogProfileCreate(lp) },
-		func(lp *models.LogProfile) Operation { return sections.NewLogProfileDelete(lp) },
-		func(lp *models.LogProfile) Operation { return sections.NewLogProfileUpdate(lp) },
+		sections.NewLogProfileCreate,
+		sections.NewLogProfileDelete,
+		sections.NewLogProfileUpdate,
 	)
 }
 
