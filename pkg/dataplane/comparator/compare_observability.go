@@ -10,52 +10,17 @@ import (
 // compareLogTargets compares log target configurations within a frontend or backend.
 // Log targets are compared by position since they don't have unique identifiers.
 func (c *Comparator) compareLogTargets(parentType, parentName string, currentLogs, desiredLogs models.LogTargets) []Operation {
-	var operations []Operation
-
-	// Compare log targets by position
-	maxLen := max(len(desiredLogs), len(currentLogs))
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentLog := i < len(currentLogs)
-		hasDesiredLog := i < len(desiredLogs)
-
-		if !hasCurrentLog && hasDesiredLog {
-			ops := c.createLogTargetOperation(parentType, parentName, desiredLogs[i], i)
-			operations = append(operations, ops...)
-		} else if hasCurrentLog && !hasDesiredLog {
-			ops := c.deleteLogTargetOperation(parentType, parentName, currentLogs[i], i)
-			operations = append(operations, ops...)
-		} else if hasCurrentLog && hasDesiredLog {
-			ops := c.updateLogTargetOperation(parentType, parentName, currentLogs[i], desiredLogs[i], i)
-			operations = append(operations, ops...)
-		}
-	}
-
-	return operations
-}
-
-func (c *Comparator) createLogTargetOperation(parentType, parentName string, logTarget *models.LogTarget, index int) []Operation {
+	create, remove, update := sections.NewLogTargetBackendCreate, sections.NewLogTargetBackendDelete, sections.NewLogTargetBackendUpdate
 	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewLogTargetFrontendCreate(parentName, logTarget, index)}
+		create, remove, update = sections.NewLogTargetFrontendCreate, sections.NewLogTargetFrontendDelete, sections.NewLogTargetFrontendUpdate
 	}
-	return []Operation{sections.NewLogTargetBackendCreate(parentName, logTarget, index)}
-}
-
-func (c *Comparator) deleteLogTargetOperation(parentType, parentName string, logTarget *models.LogTarget, index int) []Operation {
-	if parentType == parentTypeFrontend {
-		return []Operation{sections.NewLogTargetFrontendDelete(parentName, logTarget, index)}
-	}
-	return []Operation{sections.NewLogTargetBackendDelete(parentName, logTarget, index)}
-}
-
-func (c *Comparator) updateLogTargetOperation(parentType, parentName string, currentLog, desiredLog *models.LogTarget, index int) []Operation {
-	if !currentLog.Equal(*desiredLog) {
-		if parentType == parentTypeFrontend {
-			return []Operation{sections.NewLogTargetFrontendUpdate(parentName, desiredLog, index)}
-		}
-		return []Operation{sections.NewLogTargetBackendUpdate(parentName, desiredLog, index)}
-	}
-	return nil
+	return compareIndexedItems(
+		currentLogs, desiredLogs,
+		func(a, b *models.LogTarget) bool { return a.Equal(*b) },
+		func(log *models.LogTarget, i int) Operation { return create(parentName, log, i) },
+		func(log *models.LogTarget, i int) Operation { return remove(parentName, log, i) },
+		func(log *models.LogTarget, i int) Operation { return update(parentName, log, i) },
+	)
 }
 
 // compareLogForwards compares log-forward sections between current and desired configurations.

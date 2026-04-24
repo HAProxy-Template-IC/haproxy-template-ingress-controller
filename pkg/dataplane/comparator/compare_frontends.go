@@ -263,33 +263,17 @@ func (c *Comparator) compareBindsWithIndex(frontendName string, currentBinds, de
 // compareCaptures compares capture configurations within a frontend.
 // Captures are compared by position since they don't have unique identifiers.
 func (c *Comparator) compareCaptures(frontendName string, currentCaptures, desiredCaptures models.Captures) []Operation {
-	var operations []Operation
-
-	// Compare captures by position
-	maxLen := max(len(desiredCaptures), len(currentCaptures))
-
-	for i := 0; i < maxLen; i++ {
-		hasCurrentCapture := i < len(currentCaptures)
-		hasDesiredCapture := i < len(desiredCaptures)
-
-		if !hasCurrentCapture && hasDesiredCapture {
-			// Capture added at this position
-			capture := desiredCaptures[i]
-			operations = append(operations, sections.NewCaptureFrontendCreate(frontendName, capture, i))
-		} else if hasCurrentCapture && !hasDesiredCapture {
-			// Capture removed at this position
-			capture := currentCaptures[i]
-			operations = append(operations, sections.NewCaptureFrontendDelete(frontendName, capture, i))
-		} else if hasCurrentCapture && hasDesiredCapture {
-			// Both exist - check if modified
-			currentCapture := currentCaptures[i]
-			desiredCapture := desiredCaptures[i]
-
-			if !currentCapture.Equal(*desiredCapture) {
-				operations = append(operations, sections.NewCaptureFrontendUpdate(frontendName, desiredCapture, i))
-			}
-		}
-	}
-
-	return operations
+	return compareIndexedItems(
+		currentCaptures, desiredCaptures,
+		func(a, b *models.Capture) bool { return a.Equal(*b) },
+		func(capture *models.Capture, i int) Operation {
+			return sections.NewCaptureFrontendCreate(frontendName, capture, i)
+		},
+		func(capture *models.Capture, i int) Operation {
+			return sections.NewCaptureFrontendDelete(frontendName, capture, i)
+		},
+		func(capture *models.Capture, i int) Operation {
+			return sections.NewCaptureFrontendUpdate(frontendName, capture, i)
+		},
+	)
 }
