@@ -1,0 +1,171 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package testrunner
+
+import (
+	"log/slog"
+	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+)
+
+// Runner executes validation tests for HAProxyTemplateConfig.
+//
+// It's a pure component with no EventBus dependency, designed to be called
+// directly from the CLI or from the DryRunValidator.
+type Runner struct {
+	// engineTemplate is a pre-compiled template engine WITHOUT path filters.
+	// Workers will create their own engines with worker-specific paths.
+	engineTemplate  templating.Engine
+	validationPaths *dataplane.ValidationPaths // Base paths (used to create worker-specific paths)
+	config          *config.Config
+	logger          *slog.Logger
+	workers         int
+	debugFilters    bool                   // Enable detailed filter operation logging
+	traceTemplates  bool                   // Enable template execution tracing
+	profileIncludes bool                   // Enable include timing profiling
+	capabilities    dataplane.Capabilities // HAProxy/DataPlane API capabilities
+	haproxyVersion  *dataplane.Version     // Local HAProxy version for test skipping
+}
+
+// testEntry is a tuple of test name and test definition for worker processing.
+type testEntry struct {
+	name string
+	test config.ValidationTest
+}
+
+// Options configures the test runner.
+type Options struct {
+	// TestName filters tests to run. If empty, all tests run.
+	TestName string
+
+	// Logger for structured logging. If nil, uses default logger.
+	Logger *slog.Logger
+
+	// Workers is the number of parallel workers for test execution.
+	// Default: 4
+	// Set to 1 for sequential execution.
+	Workers int
+
+	// DebugFilters enables detailed filter operation logging.
+	// When enabled, each sort comparison is logged with values and results.
+	DebugFilters bool
+
+	// ProfileIncludes enables include timing profiling.
+	// When enabled, shows which included templates take the most time.
+	ProfileIncludes bool
+
+	// Capabilities defines which features are available for the local HAProxy version.
+	// Used to determine path resolution (e.g., CRT-list paths fallback when not supported).
+	Capabilities dataplane.Capabilities
+
+	// HAProxyVersion is the detected local HAProxy version.
+	// When set, tests with MinHAProxyVersion above this version are skipped.
+	HAProxyVersion *dataplane.Version
+}
+
+// TestResults contains the results of running validation tests.
+type TestResults struct {
+	// TotalTests is the total number of tests executed (excluding skipped).
+	TotalTests int
+
+	// PassedTests is the number of tests that passed all assertions.
+	PassedTests int
+
+	// FailedTests is the number of tests with at least one failed assertion.
+	FailedTests int
+
+	// SkippedTests is the number of tests skipped (e.g., due to HAProxy version requirements).
+	SkippedTests int
+
+	// TestResults contains detailed results for each test.
+	TestResults []TestResult
+
+	// Duration is the total time taken to run all tests.
+	Duration time.Duration
+}
+
+// AllPassed returns true if all tests passed.
+func (r *TestResults) AllPassed() bool {
+	return r.FailedTests == 0 && r.TotalTests > 0
+}
+
+// TestResult contains the result of running a single validation test.
+type TestResult struct {
+	// TestName is the name of the test.
+	TestName string
+
+	// Description is the test description.
+	Description string
+
+	// Passed is true if all assertions passed.
+	Passed bool
+
+	// Skipped is true if the test was skipped (e.g., HAProxy version too low).
+	Skipped bool
+
+	// SkipReason explains why the test was skipped.
+	SkipReason string
+
+	// Duration is the time taken to run this test.
+	Duration time.Duration
+
+	// Assertions contains results for each assertion.
+	Assertions []AssertionResult
+
+	// RenderError is set if template rendering failed.
+	RenderError string
+
+	// RenderedConfig contains the rendered HAProxy configuration (for --dump-rendered).
+	RenderedConfig string `json:"renderedConfig,omitempty" yaml:"renderedConfig,omitempty"`
+
+	// RenderedMaps contains rendered map files (for --dump-rendered).
+	RenderedMaps map[string]string `json:"renderedMaps,omitempty" yaml:"renderedMaps,omitempty"`
+
+	// RenderedFiles contains rendered general files (for --dump-rendered).
+	RenderedFiles map[string]string `json:"renderedFiles,omitempty" yaml:"renderedFiles,omitempty"`
+
+	// RenderedCerts contains rendered SSL certificates (for --dump-rendered).
+	RenderedCerts map[string]string `json:"renderedCerts,omitempty" yaml:"renderedCerts,omitempty"`
+
+	// IncludeStats contains timing statistics for included templates (for --profile-includes).
+	IncludeStats []templating.IncludeStats `json:"includeStats,omitempty" yaml:"includeStats,omitempty"`
+}
+
+// AssertionResult contains the result of running a single assertion.
+type AssertionResult struct {
+	// Type is the assertion type (haproxy_valid, contains, etc).
+	Type string
+
+	// Description is the assertion description.
+	Description string
+
+	// Passed is true if the assertion passed.
+	Passed bool
+
+	// Error contains the failure message if assertion failed.
+	Error string
+
+	// Target is the assertion target (e.g., "haproxy.cfg", "map:path-prefix.map").
+	Target string `json:"target,omitempty" yaml:"target,omitempty"`
+
+	// TargetSize is the size of the target content in bytes.
+	TargetSize int `json:"targetSize,omitempty" yaml:"targetSize,omitempty"`
+
+	// TargetPreview is a preview of the target content (first 200 chars, only for failed assertions).
+	TargetPreview string `json:"targetPreview,omitempty" yaml:"targetPreview,omitempty"`
+}

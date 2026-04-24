@@ -15,6 +15,7 @@
 package testrunner
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pmezard/go-difflib/difflib"
@@ -215,5 +216,92 @@ func extractCRTListFileMap(files []auxiliaryfiles.CRTListFile) map[string]string
 	for _, f := range files {
 		result[f.Path] = f.Content
 	}
+	return result
+}
+
+// executeAssertions runs all assertions for a test and updates the result.
+func (r *Runner) executeAssertions(
+	ctx context.Context,
+	result *TestResult,
+	test *config.ValidationTest,
+	haproxyConfig string,
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	templateContext map[string]any,
+	validationPaths *dataplane.ValidationPaths,
+	renderDeps *RenderDependencies,
+) {
+	for i := range test.Assertions {
+		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, templateContext, result.RenderError, validationPaths, renderDeps)
+		result.Assertions = append(result.Assertions, assertionResult)
+
+		if !assertionResult.Passed {
+			result.Passed = false
+		}
+	}
+}
+
+// hasRenderingErrorAssertions checks if the test has any assertions targeting rendering_error.
+// This is used to determine if a test expects rendering to fail (negative test).
+func hasRenderingErrorAssertions(assertions []config.ValidationAssertion) bool {
+	for _, assertion := range assertions {
+		if assertion.Target == "rendering_error" {
+			return true
+		}
+	}
+	return false
+}
+
+// runAssertion executes a single assertion.
+func (r *Runner) runAssertion(
+	ctx context.Context,
+	assertion *config.ValidationAssertion,
+	haproxyConfig string,
+	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	templateContext map[string]any,
+	renderError string,
+	validationPaths *dataplane.ValidationPaths,
+	renderDeps *RenderDependencies,
+) AssertionResult {
+	result := AssertionResult{
+		Type:        assertion.Type,
+		Description: assertion.Description,
+		Passed:      true,
+	}
+
+	switch assertion.Type {
+	case "haproxy_valid":
+		result = r.assertHAProxyValid(ctx, haproxyConfig, auxiliaryFiles, assertion, validationPaths)
+
+	case "contains":
+		result = r.assertContains(haproxyConfig, auxiliaryFiles, assertion, renderError)
+
+	case "not_contains":
+		result = r.assertNotContains(haproxyConfig, auxiliaryFiles, assertion, renderError)
+
+	case "match_count":
+		result = r.assertMatchCount(haproxyConfig, auxiliaryFiles, assertion, renderError)
+
+	case "equals":
+		result = r.assertEquals(haproxyConfig, auxiliaryFiles, assertion, renderError)
+
+	case "jsonpath":
+		result = r.assertJSONPath(templateContext, assertion)
+
+	case "match_order":
+		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, assertion, renderError)
+
+	case "deterministic":
+		if renderDeps == nil {
+			result.Passed = false
+			result.Error = "deterministic assertion requires render dependencies (internal error)"
+		} else {
+			result = r.assertDeterministic(assertion, haproxyConfig, auxiliaryFiles, renderDeps)
+		}
+
+	default:
+		result.Passed = false
+		result.Error = fmt.Sprintf("unknown assertion type: %s", assertion.Type)
+	}
+
 	return result
 }
