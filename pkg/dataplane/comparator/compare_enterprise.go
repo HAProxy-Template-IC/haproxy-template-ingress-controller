@@ -43,13 +43,11 @@ func (c *Comparator) compareBotMgmtProfiles(current, desired *parser.StructuredC
 	return compareNamedSections(
 		current.BotMgmtProfiles,
 		desired.BotMgmtProfiles,
-		func(p *v32ee.BotmgmtProfile) string {
-			return p.Name
-		},
+		func(p *v32ee.BotmgmtProfile) string { return p.Name },
 		eeModelEqual[v32ee.BotmgmtProfile],
-		func(p *v32ee.BotmgmtProfile) Operation { return sections.NewBotMgmtProfileCreate(p) },
-		func(p *v32ee.BotmgmtProfile) Operation { return sections.NewBotMgmtProfileDelete(p) },
-		func(p *v32ee.BotmgmtProfile) Operation { return sections.NewBotMgmtProfileUpdate(p) },
+		sections.NewBotMgmtProfileCreate,
+		sections.NewBotMgmtProfileDelete,
+		sections.NewBotMgmtProfileUpdate,
 	)
 }
 
@@ -59,13 +57,11 @@ func (c *Comparator) compareCaptchas(current, desired *parser.StructuredConfig) 
 	return compareNamedSections(
 		current.Captchas,
 		desired.Captchas,
-		func(cap *v32ee.Captcha) string {
-			return cap.Name
-		},
+		func(cap *v32ee.Captcha) string { return cap.Name },
 		eeModelEqual[v32ee.Captcha],
-		func(cap *v32ee.Captcha) Operation { return sections.NewCaptchaCreate(cap) },
-		func(cap *v32ee.Captcha) Operation { return sections.NewCaptchaDelete(cap) },
-		func(cap *v32ee.Captcha) Operation { return sections.NewCaptchaUpdate(cap) },
+		sections.NewCaptchaCreate,
+		sections.NewCaptchaDelete,
+		sections.NewCaptchaUpdate,
 	)
 }
 
@@ -75,13 +71,11 @@ func (c *Comparator) compareWAFProfiles(current, desired *parser.StructuredConfi
 	return compareNamedSections(
 		current.WAFProfiles,
 		desired.WAFProfiles,
-		func(p *v32ee.WafProfile) string {
-			return p.Name
-		},
+		func(p *v32ee.WafProfile) string { return p.Name },
 		eeModelEqual[v32ee.WafProfile],
-		func(p *v32ee.WafProfile) Operation { return sections.NewWAFProfileCreate(p) },
-		func(p *v32ee.WafProfile) Operation { return sections.NewWAFProfileDelete(p) },
-		func(p *v32ee.WafProfile) Operation { return sections.NewWAFProfileUpdate(p) },
+		sections.NewWAFProfileCreate,
+		sections.NewWAFProfileDelete,
+		sections.NewWAFProfileUpdate,
 	)
 }
 
