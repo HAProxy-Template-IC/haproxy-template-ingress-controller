@@ -8,10 +8,10 @@
 # Global ARGs must be declared before the first FROM to be available to all stages
 # renovate: datasource=docker depName=golang
 ARG GO_VERSION=1.26
-# extractVersion keeps us on stable series only: upstream tags `vX.Y-devN` during
-# development and `vX.Y.Z` on release, so we derive the version from patch tags
-# (vX.Y.Z → X.Y) to skip dev-only series that have no stable release yet.
-# renovate: datasource=github-tags depName=haproxy/haproxy extractVersion=^v(?<version>\d+\.\d+)\. versioning=loose
+# Clamped to stable upstream series by a packageRule in renovate.json (upstream
+# tags `vX.Y-devN` during development and `vX.Y.Z` at release; we skip series
+# that have no stable release yet).
+# renovate: datasource=github-tags depName=haproxy/haproxy versioning=loose
 ARG HAPROXY_VERSION=3.3
 
 # Stage 1: Go toolchain source
