@@ -103,41 +103,13 @@ func mailersEqualWithoutMailerEntries(m1, m2 *models.MailersSection) bool {
 
 // compareMailerEntriesWithIndex compares mailer entry configurations using pointer indexes.
 func (c *Comparator) compareMailerEntriesWithIndex(mailersSection string, currentEntries, desiredEntries map[string]*models.MailerEntry) []Operation {
-	if currentEntries == nil {
-		currentEntries = make(map[string]*models.MailerEntry)
-	}
-	if desiredEntries == nil {
-		desiredEntries = make(map[string]*models.MailerEntry)
-	}
-
-	var operations []Operation
-
-	// Find added entries
-	for name, entry := range desiredEntries {
-		if _, exists := currentEntries[name]; !exists {
-			operations = append(operations, sections.NewMailerEntryCreate(mailersSection, entry))
-		}
-	}
-
-	// Find deleted entries
-	for name, entry := range currentEntries {
-		if _, exists := desiredEntries[name]; !exists {
-			operations = append(operations, sections.NewMailerEntryDelete(mailersSection, entry))
-		}
-	}
-
-	// Find modified entries
-	for name, desiredEntry := range desiredEntries {
-		currentEntry, exists := currentEntries[name]
-		if !exists {
-			continue
-		}
-		if !currentEntry.Equal(*desiredEntry) {
-			operations = append(operations, sections.NewMailerEntryUpdate(mailersSection, desiredEntry))
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentEntries, desiredEntries,
+		func(a, b *models.MailerEntry) bool { return a.Equal(*b) },
+		func(e *models.MailerEntry) Operation { return sections.NewMailerEntryCreate(mailersSection, e) },
+		func(e *models.MailerEntry) Operation { return sections.NewMailerEntryDelete(mailersSection, e) },
+		func(e *models.MailerEntry) Operation { return sections.NewMailerEntryUpdate(mailersSection, e) },
+	)
 }
 
 // comparePeers compares peer sections between current and desired configurations.
@@ -223,41 +195,13 @@ func peersEqualWithoutPeerEntries(p1, p2 *models.PeerSection) bool {
 
 // comparePeerEntriesWithIndex compares peer entry configurations using pointer indexes.
 func (c *Comparator) comparePeerEntriesWithIndex(peersSection string, currentEntries, desiredEntries map[string]*models.PeerEntry) []Operation {
-	if currentEntries == nil {
-		currentEntries = make(map[string]*models.PeerEntry)
-	}
-	if desiredEntries == nil {
-		desiredEntries = make(map[string]*models.PeerEntry)
-	}
-
-	var operations []Operation
-
-	// Find added entries
-	for name, entry := range desiredEntries {
-		if _, exists := currentEntries[name]; !exists {
-			operations = append(operations, sections.NewPeerEntryCreate(peersSection, entry))
-		}
-	}
-
-	// Find deleted entries
-	for name, entry := range currentEntries {
-		if _, exists := desiredEntries[name]; !exists {
-			operations = append(operations, sections.NewPeerEntryDelete(peersSection, entry))
-		}
-	}
-
-	// Find modified entries
-	for name, desiredEntry := range desiredEntries {
-		currentEntry, exists := currentEntries[name]
-		if !exists {
-			continue
-		}
-		if !currentEntry.Equal(*desiredEntry) {
-			operations = append(operations, sections.NewPeerEntryUpdate(peersSection, desiredEntry))
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentEntries, desiredEntries,
+		func(a, b *models.PeerEntry) bool { return a.Equal(*b) },
+		func(e *models.PeerEntry) Operation { return sections.NewPeerEntryCreate(peersSection, e) },
+		func(e *models.PeerEntry) Operation { return sections.NewPeerEntryDelete(peersSection, e) },
+		func(e *models.PeerEntry) Operation { return sections.NewPeerEntryUpdate(peersSection, e) },
+	)
 }
 
 // compareCaches compares cache sections between current and desired configurations.
