@@ -51,7 +51,7 @@ ARG HELM_VERSION=3.20.1
 # renovate: datasource=github-releases depName=kubernetes/kubernetes
 ARG KUBECTL_VERSION=1.35.3
 # renovate: datasource=github-releases depName=mikefarah/yq
-ARG YQ_VERSION=4.52.5
+ARG YQ_VERSION=4.53.2
 # renovate: datasource=github-releases depName=boumenot/gocover-cobertura
 ARG GOCOVER_COBERTURA_VERSION=1.4.0
 
