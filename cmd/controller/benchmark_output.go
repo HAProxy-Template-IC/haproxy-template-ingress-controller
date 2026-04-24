@@ -1,0 +1,218 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+)
+
+// tableLayout holds the calculated column widths for benchmark table output.
+type tableLayout struct {
+	timeWidth    int // Width for each time value
+	fileColWidth int // File name column width
+	iterColWidth int // Width for iterations group per test
+}
+
+// outputAllBenchmarkResults formats and prints benchmark results as a table.
+func outputAllBenchmarkResults(results []*BenchmarkResult, compilationTime time.Duration) {
+	if len(results) == 0 {
+		fmt.Println("No benchmark results to display")
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("BENCHMARK RESULTS")
+	fmt.Println(separatorDouble)
+	fmt.Printf("\nCompilation: %.3fms\n\n", float64(compilationTime.Microseconds())/1000)
+
+	fileNames := extractFileNames(results)
+	layout := calculateTableLayout(results)
+
+	printTableHeader(results, layout)
+	printTableSeparator(results, layout)
+	printTableDataRows(results, fileNames, layout)
+	printTableSeparator(results, layout)
+	printTableTotalRow(results, layout)
+
+	fmt.Println()
+
+	// Output include profile if profiling was enabled
+	if benchmarkProfileIncludes {
+		outputBenchmarkIncludeProfile(results)
+	}
+}
+
+// extractFileNames gets file names from the first result (all tests render same files).
+func extractFileNames(results []*BenchmarkResult) []string {
+	if len(results[0].Iterations) == 0 {
+		return nil
+	}
+	fileResults := results[0].Iterations[0].FileResults
+	fileNames := make([]string, 0, len(fileResults))
+	for _, fr := range fileResults {
+		fileNames = append(fileNames, fr.Name)
+	}
+	return fileNames
+}
+
+// calculateTableLayout determines column widths for the table.
+func calculateTableLayout(results []*BenchmarkResult) tableLayout {
+	layout := tableLayout{
+		timeWidth:    7,
+		fileColWidth: 30,
+	}
+	layout.iterColWidth = layout.timeWidth*benchmarkIterations + benchmarkIterations - 1
+
+	for _, r := range results {
+		shortName := shortenTestName(r.TestName)
+		if len(shortName) > layout.iterColWidth {
+			layout.iterColWidth = len(shortName)
+		}
+	}
+	return layout
+}
+
+// printTableHeader prints the two header rows (test names and iteration numbers).
+func printTableHeader(results []*BenchmarkResult, layout tableLayout) {
+	// Row 1: test names
+	fmt.Printf("%-*s", layout.fileColWidth, "")
+	for _, r := range results {
+		fmt.Printf(" | %-*s", layout.iterColWidth, shortenTestName(r.TestName))
+	}
+	fmt.Println(" |")
+
+	// Row 2: iteration numbers
+	fmt.Printf("%-*s", layout.fileColWidth, "File")
+	for range results {
+		printIterationHeaders(layout)
+	}
+	fmt.Println(" |")
+}
+
+// printIterationHeaders prints the iteration column headers for one test.
+func printIterationHeaders(layout tableLayout) {
+	fmt.Print(" | ")
+	for i := 0; i < benchmarkIterations; i++ {
+		if i > 0 {
+			fmt.Print(" ")
+		}
+		fmt.Printf("%*s", layout.timeWidth, fmt.Sprintf("It%d", i+1))
+	}
+	printColumnPadding(layout)
+}
+
+// printTableSeparator prints a separator line.
+func printTableSeparator(results []*BenchmarkResult, layout tableLayout) {
+	fmt.Print(strings.Repeat("-", layout.fileColWidth))
+	for range results {
+		fmt.Print("-|-")
+		fmt.Print(strings.Repeat("-", layout.iterColWidth))
+	}
+	fmt.Println("-|")
+}
+
+// printTableDataRows prints the data rows for each file.
+func printTableDataRows(results []*BenchmarkResult, fileNames []string, layout tableLayout) {
+	for fileIdx, fileName := range fileNames {
+		fmt.Printf("%-*s", layout.fileColWidth, truncateString(fileName, layout.fileColWidth))
+		for _, r := range results {
+			printFileTimings(r, fileIdx, layout)
+		}
+		fmt.Println(" |")
+	}
+}
+
+// printFileTimings prints the timing values for one file across all iterations of a test.
+func printFileTimings(result *BenchmarkResult, fileIdx int, layout tableLayout) {
+	fmt.Print(" | ")
+	for i, iter := range result.Iterations {
+		if i > 0 {
+			fmt.Print(" ")
+		}
+		if fileIdx < len(iter.FileResults) {
+			fmt.Printf("%*.2f", layout.timeWidth, float64(iter.FileResults[fileIdx].Duration.Microseconds())/1000)
+		} else {
+			fmt.Printf("%*s", layout.timeWidth, "-")
+		}
+	}
+	printColumnPadding(layout)
+}
+
+// printTableTotalRow prints the TOTAL row with iteration totals.
+func printTableTotalRow(results []*BenchmarkResult, layout tableLayout) {
+	fmt.Printf("%-*s", layout.fileColWidth, "TOTAL")
+	for _, r := range results {
+		printTotalTimings(r, layout)
+	}
+	fmt.Println(" |")
+}
+
+// printTotalTimings prints the total timing values for all iterations of a test.
+func printTotalTimings(result *BenchmarkResult, layout tableLayout) {
+	fmt.Print(" | ")
+	for i, iter := range result.Iterations {
+		if i > 0 {
+			fmt.Print(" ")
+		}
+		fmt.Printf("%*.2f", layout.timeWidth, float64(iter.TotalTime.Microseconds())/1000)
+	}
+	printColumnPadding(layout)
+}
+
+// printColumnPadding prints padding to align columns.
+func printColumnPadding(layout tableLayout) {
+	padding := layout.iterColWidth - (layout.timeWidth*benchmarkIterations + benchmarkIterations - 1)
+	if padding > 0 {
+		fmt.Print(strings.Repeat(" ", padding))
+	}
+}
+
+// shortenTestName removes common prefixes for compact display.
+func shortenTestName(name string) string {
+	name = strings.TrimPrefix(name, "benchmark-")
+	return name
+}
+
+// truncateString truncates a string to maxLen, adding "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// outputBenchmarkIncludeProfile outputs aggregated include timing statistics.
+func outputBenchmarkIncludeProfile(results []*BenchmarkResult) {
+	var statSlices [][]templating.IncludeStats
+	for _, result := range results {
+		for _, iter := range result.Iterations {
+			statSlices = append(statSlices, iter.IncludeStats)
+		}
+	}
+
+	stats := aggregateIncludeStatsFromSlices(statSlices)
+	if len(stats) == 0 {
+		return
+	}
+
+	printIncludeProfile(stats)
+}
