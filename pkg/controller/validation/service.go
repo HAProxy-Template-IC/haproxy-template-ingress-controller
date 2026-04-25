@@ -227,12 +227,7 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 
 	// Check for context cancellation before starting
 	if err := ctx.Err(); err != nil {
-		return &ValidationResult{
-			Valid:      false,
-			Error:      fmt.Errorf("validation cancelled: %w", err),
-			Phase:      "setup",
-			DurationMs: time.Since(startTime).Milliseconds(),
-		}
+		return failedResult(fmt.Errorf("validation cancelled: %w", err), "setup", startTime)
 	}
 
 	// Check validation cache - skip all phases if content unchanged
@@ -250,29 +245,13 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	// is what downstream components need.
 	parsedConfig, err := dataplane.ValidateSyntaxAndSchema(config, s.version)
 	if err != nil {
-		// Extract phase from ValidationError if available
-		phase := "unknown"
-		if valErr, ok := err.(*dataplane.ValidationError); ok {
-			phase = valErr.Phase
-		}
-
-		return &ValidationResult{
-			Valid:      false,
-			Error:      err,
-			Phase:      phase,
-			DurationMs: time.Since(startTime).Milliseconds(),
-		}
+		return failedResult(err, validationPhase(err), startTime)
 	}
 
 	// Step 2: Create isolated temp directory for semantic validation
 	tempDir, err := os.MkdirTemp("", "haproxy-validation-*")
 	if err != nil {
-		return &ValidationResult{
-			Valid:      false,
-			Error:      fmt.Errorf("creating temp directory: %w", err),
-			Phase:      "setup",
-			DurationMs: time.Since(startTime).Milliseconds(),
-		}
+		return failedResult(fmt.Errorf("creating temp directory: %w", err), "setup", startTime)
 	}
 
 	// Ensure cleanup happens regardless of validation outcome
@@ -306,30 +285,14 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 
 	// Check for context cancellation before running semantic validation
 	if err := ctx.Err(); err != nil {
-		return &ValidationResult{
-			Valid:      false,
-			Error:      fmt.Errorf("validation cancelled: %w", err),
-			Phase:      "setup",
-			DurationMs: time.Since(startTime).Milliseconds(),
-		}
+		return failedResult(fmt.Errorf("validation cancelled: %w", err), "setup", startTime)
 	}
 
 	// Step 4: Run semantic validation with haproxy -c using the MODIFIED config
 	// This validates that HAProxy can actually load the config with all file references resolved.
 	err = dataplane.ValidateSemantics(validationConfig, auxFiles, paths, s.skipDNSValidation)
 	if err != nil {
-		// Extract phase from ValidationError if available
-		phase := "unknown"
-		if valErr, ok := err.(*dataplane.ValidationError); ok {
-			phase = valErr.Phase
-		}
-
-		return &ValidationResult{
-			Valid:      false,
-			Error:      err,
-			Phase:      phase,
-			DurationMs: time.Since(startTime).Milliseconds(),
-		}
+		return failedResult(err, validationPhase(err), startTime)
 	}
 
 	// Step 5: Cache successful result and return the ORIGINAL parsed config
@@ -341,6 +304,28 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 		DurationMs:   time.Since(startTime).Milliseconds(),
 		ParsedConfig: parsedConfig,
 	}
+}
+
+// failedResult builds a Valid=false ValidationResult with the elapsed time
+// since startTime. Used by every error exit path in ValidateWithChecksum so the
+// timing math and zero-value fields live in one place.
+func failedResult(err error, phase string, startTime time.Time) *ValidationResult {
+	return &ValidationResult{
+		Valid:      false,
+		Error:      err,
+		Phase:      phase,
+		DurationMs: time.Since(startTime).Milliseconds(),
+	}
+}
+
+// validationPhase returns the phase tag carried by a *dataplane.ValidationError,
+// or "unknown" for any other error type. Lets callers tag failed results with a
+// consistent phase string regardless of the underlying error shape.
+func validationPhase(err error) string {
+	if valErr, ok := err.(*dataplane.ValidationError); ok {
+		return valErr.Phase
+	}
+	return "unknown"
 }
 
 func (s *ValidationService) getCachedResult(checksum string) *parser.StructuredConfig {
