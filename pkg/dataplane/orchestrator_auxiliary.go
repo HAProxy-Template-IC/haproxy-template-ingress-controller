@@ -23,6 +23,16 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
 
+// preConfigDiff returns a copy of diff that drops ToDelete. Pre-config syncs
+// only apply create/update operations; deletion is deferred to the post-config
+// phase to keep config references valid until the new config is live.
+func preConfigDiff[T auxiliaryfiles.FileItem](diff *auxiliaryfiles.FileDiffGeneric[T]) *auxiliaryfiles.FileDiffGeneric[T] {
+	return &auxiliaryfiles.FileDiffGeneric[T]{
+		ToCreate: diff.ToCreate,
+		ToUpdate: diff.ToUpdate,
+	}
+}
+
 // deleteUnreferencedFilesPostConfig deletes auxiliary files no longer referenced by the
 // rendered HAProxy config, AFTER the new config has been applied successfully.
 // Errors are logged as warnings but do not fail the sync since config is already applied.
@@ -167,12 +177,7 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 				"Review error message for specific certificate failures",
 			},
 			syncFunc: func(ctx context.Context) ([]string, error) {
-				preConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
-					ToCreate: sslDiff.ToCreate,
-					ToUpdate: sslDiff.ToUpdate,
-					ToDelete: nil,
-				}
-				return auxiliaryfiles.SyncSSLCertificates(ctx, o.client, preConfigSSL)
+				return auxiliaryfiles.SyncSSLCertificates(ctx, o.client, preConfigDiff(sslDiff))
 			},
 		})
 		if err != nil {
@@ -199,12 +204,7 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 				"Review error message for specific CA file failures",
 			},
 			syncFunc: func(ctx context.Context) ([]string, error) {
-				preConfigCA := &auxiliaryfiles.SSLCaFileDiff{
-					ToCreate: caFileDiff.ToCreate,
-					ToUpdate: caFileDiff.ToUpdate,
-					ToDelete: nil,
-				}
-				return auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, preConfigCA)
+				return auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, preConfigDiff(caFileDiff))
 			},
 		})
 		if err != nil {
@@ -232,12 +232,7 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 				"Review error message for specific file failures",
 			},
 			syncFunc: func(ctx context.Context) ([]string, error) {
-				preConfigDiff := &auxiliaryfiles.FileDiff{
-					ToCreate: fileDiff.ToCreate,
-					ToUpdate: fileDiff.ToUpdate,
-					ToDelete: nil,
-				}
-				return auxiliaryfiles.SyncGeneralFiles(ctx, o.client, preConfigDiff)
+				return auxiliaryfiles.SyncGeneralFiles(ctx, o.client, preConfigDiff(fileDiff))
 			},
 		}, &allReloadIDs, &mu)
 	}
@@ -257,12 +252,7 @@ func (o *orchestrator) syncAuxiliaryFilesPreConfig(
 				"Review error message for specific map failures",
 			},
 			syncFunc: func(ctx context.Context) ([]string, error) {
-				preConfigMap := &auxiliaryfiles.MapFileDiff{
-					ToCreate: mapDiff.ToCreate,
-					ToUpdate: mapDiff.ToUpdate,
-					ToDelete: nil,
-				}
-				return auxiliaryfiles.SyncMapFiles(ctx, o.client, preConfigMap)
+				return auxiliaryfiles.SyncMapFiles(ctx, o.client, preConfigDiff(mapDiff))
 			},
 		}, &allReloadIDs, &mu)
 	}
