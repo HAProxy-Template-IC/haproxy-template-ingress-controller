@@ -156,34 +156,19 @@ func compareSSLStorageFiles[T FileItem](
 		return nil, err
 	}
 
-	// Build map of original desired files for path restoration
+	// Build map of original desired files keyed by basename so the normalised
+	// entries returned from the generic diff can be re-keyed back to the
+	// originals (which carry the full caller-supplied paths).
 	desiredMap := make(map[string]T)
 	for _, file := range desired {
 		desiredMap[filepath.Base(getPath(file))] = file
 	}
 
-	// Create result diff with restored original paths
-	result := &FileDiffGeneric[T]{
-		ToCreate: make([]T, 0, len(genericDiff.ToCreate)),
-		ToUpdate: make([]T, 0, len(genericDiff.ToUpdate)),
+	return &FileDiffGeneric[T]{
+		ToCreate: restoreOriginals(genericDiff.ToCreate, desiredMap, getPath),
+		ToUpdate: restoreOriginals(genericDiff.ToUpdate, desiredMap, getPath),
 		ToDelete: genericDiff.ToDelete,
-	}
-
-	// Restore original paths for create operations
-	for _, file := range genericDiff.ToCreate {
-		if original, exists := desiredMap[getPath(file)]; exists {
-			result.ToCreate = append(result.ToCreate, original)
-		}
-	}
-
-	// Restore original paths for update operations
-	for _, file := range genericDiff.ToUpdate {
-		if original, exists := desiredMap[getPath(file)]; exists {
-			result.ToUpdate = append(result.ToUpdate, original)
-		}
-	}
-
-	return result, nil
+	}, nil
 }
 
 // syncSSLStorageFiles is a generic helper for syncing SSL storage files (CA, CRL).
