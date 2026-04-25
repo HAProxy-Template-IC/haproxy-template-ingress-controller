@@ -199,47 +199,36 @@ func (p *Publisher) generateRuntimeConfigName(templateConfigName string) string 
 	return GenerateRuntimeConfigName(templateConfigName)
 }
 
-func (p *Publisher) generateMapFileName(mapName string) string {
-	// Sanitize map name to create valid Kubernetes resource name
-	// Remove file extension and special characters
-	name := mapName
+// sanitizeResourceName strips a file extension from source and applies the
+// supplied character replacements (each pair is old, new), then prepends prefix.
+// The result is a Kubernetes-safe resource name segment.
+func sanitizeResourceName(prefix, source string, replacements ...string) string {
+	name := source
 	if ext := filepath.Ext(name); ext != "" {
 		name = name[:len(name)-len(ext)]
 	}
-	return "haproxy-map-" + name
+	for i := 0; i+1 < len(replacements); i += 2 {
+		name = strings.ReplaceAll(name, replacements[i], replacements[i+1])
+	}
+	return prefix + name
 }
 
+func (p *Publisher) generateMapFileName(mapName string) string {
+	return sanitizeResourceName("haproxy-map-", mapName)
+}
+
+// Replace underscores with hyphens to comply with DNS-1123 subdomain naming
+// (Kubernetes secret names can't contain underscores).
 func (p *Publisher) generateSecretName(certPath string) string {
-	// Sanitize cert path to create valid Kubernetes resource name
-	name := filepath.Base(certPath)
-	if ext := filepath.Ext(name); ext != "" {
-		name = name[:len(name)-len(ext)]
-	}
-	// Replace underscores with hyphens to comply with DNS-1123 subdomain naming
-	// (Kubernetes secret names can't contain underscores)
-	name = strings.ReplaceAll(name, "_", "-")
-	return "haproxy-cert-" + name
+	return sanitizeResourceName("haproxy-cert-", filepath.Base(certPath), "_", "-")
 }
 
 func (p *Publisher) generateGeneralFileName(fileName string) string {
-	// Sanitize file name to create valid Kubernetes resource name
-	name := filepath.Base(fileName)
-	if ext := filepath.Ext(name); ext != "" {
-		name = name[:len(name)-len(ext)]
-	}
-	name = strings.ReplaceAll(name, "_", "-")
-	name = strings.ReplaceAll(name, ".", "-")
-	return "haproxy-file-" + name
+	return sanitizeResourceName("haproxy-file-", filepath.Base(fileName), "_", "-", ".", "-")
 }
 
 func (p *Publisher) generateCRTListFileName(listPath string) string {
-	// Sanitize list path to create valid Kubernetes resource name
-	name := filepath.Base(listPath)
-	if ext := filepath.Ext(name); ext != "" {
-		name = name[:len(name)-len(ext)]
-	}
-	name = strings.ReplaceAll(name, "_", "-")
-	return "haproxy-crtlist-" + name
+	return sanitizeResourceName("haproxy-crtlist-", filepath.Base(listPath), "_", "-")
 }
 
 func calculateChecksum(content string) string {
