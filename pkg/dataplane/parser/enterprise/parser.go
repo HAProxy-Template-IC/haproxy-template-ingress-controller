@@ -27,7 +27,6 @@ import (
 	"sync"
 
 	clientparser "github.com/haproxytech/client-native/v6/config-parser"
-	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
@@ -105,19 +104,9 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 // extractConfiguration builds a StructuredConfig from parsed data.
 // It combines CE sections from client-native parser with EE sections from EE reader.
 func (p *Parser) extractConfiguration(parsed *ConfiguredParsers) (*StructuredConfig, error) {
-	conf := &StructuredConfig{
-		EEFrontends: make(map[string]*parserconfig.EEFrontendData),
-		EEBackends:  make(map[string]*parserconfig.EEBackendData),
-		// Initialize pointer-based indexes for zero-copy iteration
-		ServerIndex:         make(map[string]map[string]*models.Server),
-		ServerTemplateIndex: make(map[string]map[string]*models.ServerTemplate),
-		BindIndex:           make(map[string]map[string]*models.Bind),
-		PeerEntryIndex:      make(map[string]map[string]*models.PeerEntry),
-		NameserverIndex:     make(map[string]map[string]*models.Nameserver),
-		MailerEntryIndex:    make(map[string]map[string]*models.MailerEntry),
-		UserIndex:           make(map[string]map[string]*models.User),
-		GroupIndex:          make(map[string]map[string]*models.Group),
-	}
+	conf := parserconfig.NewStructuredConfig()
+	conf.EEFrontends = make(map[string]*parserconfig.EEFrontendData)
+	conf.EEBackends = make(map[string]*parserconfig.EEBackendData)
 
 	// Extract CE sections from client-native parser (complete field extraction)
 	if err := p.extractCESections(conf); err != nil {

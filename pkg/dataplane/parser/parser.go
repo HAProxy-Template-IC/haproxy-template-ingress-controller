@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 
 	parser "github.com/haproxytech/client-native/v6/config-parser"
-	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
@@ -259,17 +258,7 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 // Note: This extracts the parsed structure but does NOT validate semantics.
 // The config-parser only ensures syntax correctness.
 func (p *Parser) extractConfiguration() (*StructuredConfig, error) {
-	conf := &StructuredConfig{
-		// Initialize pointer-based indexes for zero-copy iteration
-		ServerIndex:         make(map[string]map[string]*models.Server),
-		ServerTemplateIndex: make(map[string]map[string]*models.ServerTemplate),
-		BindIndex:           make(map[string]map[string]*models.Bind),
-		PeerEntryIndex:      make(map[string]map[string]*models.PeerEntry),
-		NameserverIndex:     make(map[string]map[string]*models.Nameserver),
-		MailerEntryIndex:    make(map[string]map[string]*models.MailerEntry),
-		UserIndex:           make(map[string]map[string]*models.User),
-		GroupIndex:          make(map[string]map[string]*models.Group),
-	}
+	conf := parserconfig.NewStructuredConfig()
 
 	// Extract core sections (global, defaults, frontends, backends)
 	if err := p.extractCoreSections(conf); err != nil {
