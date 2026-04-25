@@ -22,6 +22,9 @@ Performance optimization involves three areas:
 
 These recommendations are based on the controller's primary memory consumers (watched resource caches, template rendering buffers, event history) and CPU consumers (template rendering, API server watch streams). Adjust based on your actual resource counts and template complexity.
 
+!!! note "Chart defaults differ — deliberately"
+    The Helm chart ships with `cpu request 100m`, **no CPU limit**, and `memory request = limit = 512Mi` (Guaranteed QoS), which differs from the table above for two reasons spelled out in the [Helm chart's HAProxy Deployment guide](https://haproxy-haptic.org/helm-chart/latest/haproxy-deployment/#resource-limits-and-container-awareness): omitting the CPU limit avoids GOMAXPROCS-aware Go workloads being throttled when bursts exceed the limit, and matching memory request to limit prevents the kernel OOM killer from preferring this pod over Burstable neighbours. The CPU-limit values in the table above are the *upper bound* you'd need if you choose to set one; you can equally well leave it unset and rely on requests + node capacity.
+
 Configure via Helm values:
 
 ```yaml
@@ -70,7 +73,7 @@ rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 
 The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 5-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 5 s are batched.
 
-This interval is not exposed as a CRD field — it is a compile-time default chosen to balance latency against CPU burn during rolling deploys. If you need a different value, override it via the `pkg/controller.NewController` constructor in a custom build.
+This interval is not exposed as a CRD field, env var, or CLI flag — it is a compile-time default chosen to balance latency against CPU burn during rolling deploys. If you need a different value in a custom build, change `DefaultDebounceInterval` in `pkg/k8s/types/types.go` (or set `DebounceInterval` on the `WatcherConfig` constructed in `pkg/controller/resourcewatcher/watcher.go`, which currently passes `0` to mean "use the default").
 
 ### Deployment Pacing
 
@@ -494,28 +497,30 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 
 **High memory usage:**
 
-- Check for memory leaks: growing heap over time
-- Reduce event buffer size
-- Limit watched resources
+- Check for memory leaks: growing heap over time (`/debug/pprof/heap`)
+- Switch large, infrequently-accessed resources (e.g. TLS Secrets) to `store: on-demand`
+- Trim noisy fields with `watchedResourcesIgnoreFields`
+- Narrow watch scope via `namespace` / `namespaceSelector` / `labelSelector`
 
 **High CPU usage:**
 
-- Profile to find hot spots
-- Optimize template complexity
-- Increase debounce interval
+- Profile to find hot spots (`/debug/pprof/profile?seconds=30`)
+- Optimize template complexity — see [Template Optimization](#template-optimization)
+- Raise `dataplane.minDeploymentInterval` to absorb more updates per push (the debounce interval is not user-tunable)
 
 **Slow deployments:**
 
-- Check DataPlane API health
+- Check Dataplane API health (`/v3/info` from inside the pod)
 - Verify network latency to HAProxy pods
-- Consider reducing config size
+- Reduce config size by avoiding unnecessary nested loops in templates
+- Consider lowering `dataplane.maxParallel` if the Dataplane API is overwhelmed by parallel ops
 
 ## Performance Checklist
 
 ### Initial Deployment
 
 - [ ] Set appropriate resource requests/limits
-- [ ] Configure debounce interval for workload
+- [ ] Tune `dataplane.minDeploymentInterval` for workload (debounce itself is not configurable)
 - [ ] Set HAProxy maxconn based on expected load
 - [ ] Match nbthread to CPU allocation
 

@@ -62,14 +62,12 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 
 ## Credentials Schema
 
-`LoadCredentials` expects four non-empty string keys in the Secret data:
+`LoadCredentials` expects two non-empty string keys in the Secret data:
 
 - `dataplane_username`
 - `dataplane_password`
-- `validation_username`
-- `validation_password`
 
-`ValidateCredentials` additionally rejects empty strings after base64 decode. No `String()` / `GoString()` methods are defined on `Credentials` — helps prevent accidental password leaks via `%v` or `log.Info("…", creds)`.
+The same credentials are used for both production and validation Dataplane API instances. `ValidateCredentials` additionally rejects empty strings after base64 decode. No `String()` / `GoString()` methods are defined on `Credentials` — helps prevent accidental password leaks via `%v` or `log.Info("…", creds)`.
 
 ## See Also
 

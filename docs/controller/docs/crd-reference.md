@@ -57,10 +57,10 @@ credentialsSecretRef:
 
 **Required Secret keys:**
 
-- `dataplane_username` - Production Dataplane API username
-- `dataplane_password` - Production Dataplane API password
-- `validation_username` - Validation HAProxy username (if validation enabled)
-- `validation_password` - Validation HAProxy password (if validation enabled)
+- `dataplane_username` - Dataplane API username
+- `dataplane_password` - Dataplane API password
+
+The same credentials are used for both production and validation Dataplane API instances; the controller does not need separate validation credentials.
 
 ### podSelector (required)
 

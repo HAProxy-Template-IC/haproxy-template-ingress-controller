@@ -111,7 +111,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 
 	// Publish ConfigParsedEvent with both parsed config and original CRD
 	// Note: SecretVersion will be empty here - it gets populated later when
-	// the ValidationCoordinator correlates with credentials
+	// the ConfigChangeHandler correlates with credentials.
 	parsedEvent := events.NewConfigParsedEvent(cfg, templateConfig, version, "")
 	c.EventBus().Publish(parsedEvent)
 }

@@ -11,20 +11,21 @@ The Helm chart provisions a `ServiceAccount` and `ClusterRole` (names derive fro
 | Resource | Verbs | Why |
 |----------|-------|-----|
 | `pods`, `namespaces` | get, list, watch | Discover HAProxy pods, target namespaces |
-| `ingresses` (networking.k8s.io) | get, list, watch | Default watched resource |
-| `services`, `endpoints`, `endpointslices` | get, list, watch | Resolve backends |
-| `secrets` | get, list, watch | Load TLS certificates referenced from templates and the credentials Secret |
+| `<each watched resource>` | get, list, watch | Generated per `watchedResources` entry — Ingress, Service, EndpointSlice, Secret, etc. depending on the enabled libraries |
+| `<watched resource>/status` | patch | Generated for watched resources with `statusPatch: true` (e.g. Ingress LoadBalancer status, Gateway / HTTPRoute conditions) |
 | `leases` (coordination.k8s.io) | get, create, update | Leader election |
 | `haproxytemplateconfigs.haproxy-haptic.org` | get, list, watch | Primary config CRD |
-| `haproxycfgs.haproxy-haptic.org` | get, list, watch, create, update, patch | Publish rendered config for observability |
+| `haproxytemplateconfigs/status` | update, patch | Report validation status back onto the CRD |
+| `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full CRUD because the controller owns these resources and prunes stale entries) |
+| `<above CRDs>/status` | update, patch | Report deployment status on the published artifacts |
 
-Anything else referenced from `watchedResources` needs matching RBAC; if you manage RBAC yourself (`rbac.create: false`), keep it in sync.
+Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
 
 Narrow the cluster-wide watch to specific namespaces by pinning `namespace:` or `namespaceSelector:` on each watched-resource entry — see [Watching Resources](../watching-resources.md).
 
 ### Credentials
 
-The CRD references a `Secret` via `spec.credentialsSecretRef`. It must contain four keys:
+The CRD references a `Secret` via `spec.credentialsSecretRef`. It must contain two keys:
 
 ```yaml
 apiVersion: v1
@@ -35,11 +36,12 @@ type: Opaque
 stringData:
   dataplane_username: admin
   dataplane_password: <random>
-  validation_username: validator   # validation endpoint (if used)
-  validation_password: <random>
 ```
 
 The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, SOPS, …); the controller just reads the Secret.
+
+!!! warning "Helm chart fallback password is deterministic"
+    If you install via the Helm chart and leave `credentials.dataplane.password` empty, the chart fills it with `sha256(<release>-<namespace>-haptic-dataplane-api) | trunc 32`. That value is preserved across upgrades from the existing Secret, but anyone who can guess your release name and namespace can reproduce it. Set `credentials.dataplane.password` explicitly (from a real random source / your secret manager) for any deployment whose Dataplane API is reachable beyond cluster-internal pod networking.
 
 Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/vars.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
 

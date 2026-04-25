@@ -142,26 +142,35 @@ The controller uses event-driven staged startup:
 
 ```
 Stage 1: Config Management Components
-  - ConfigWatcher (watches ConfigMap)
-  - ConfigValidator (validates config)
-  - EventBus.Start() (replay buffered events)
+  - ConfigLoader (parses HAProxyTemplateConfig CRD)
+  - CredentialsLoader (parses credentials Secret)
+  - ConfigValidator (basic + template + jsonpath validators via scatter-gather)
+  - Commentator (subscribes to all events for domain-aware logging)
 
 Stage 2: Wait for Valid Config
+  - Fetch HAProxyTemplateConfig CRD and credentials Secret synchronously
   - Block until ConfigValidatedEvent received
-  - Publish ControllerStartedEvent
 
 Stage 3: Resource Watchers
-  - Create ResourceWatcher for each watched resource
-  - Start IndexSynchronizationTracker
+  - Create a watcher.Watcher for each spec.watchedResources entry
+  - Start the CRD and credentials SingleWatchers (immediate-callback mode)
+  - IndexSynchronizationTracker waits for every store's initial sync
 
-Stage 4: Wait for Index Sync
-  - Block until IndexSynchronizedEvent received
+Stage 4: EventBus.Start()
+  - Replays the pre-start buffer to all components that subscribed during construction
+  - Without this step, leader-only components miss the events that fired during init
 
-Stage 5: Reconciliation Components
-  - Reconciler (debounces changes)
-  - Executor (orchestrates rendering/deployment)
+Stage 5: Reconciliation & Observability Components
+  - Reconciler (debounces resource-index updates)
+  - Coordinator (drives the render → validate → publish pipeline; leader-only)
+  - Renderer, HAProxyValidator (all-replica)
+  - DeploymentScheduler, Deployer, DriftMonitor (leader-only)
+  - Discovery, ConfigPublisher, Metrics, Webhook
+  - Initial ReconciliationTriggeredEvent is published
 
-All components running → Controller operational
+Controller operational: subsequent CRD or Secret changes cancel the iteration
+context, components shut down, and the loop restarts with the new config (no pod
+restart required).
 ```
 
 **Why staged?**
@@ -171,46 +180,20 @@ All components running → Controller operational
 - Clear startup progression for debugging
 - Testable stages
 
-## Environment Variables
+## Flags and Environment Variables
 
-```go
-// Configuration location
-ENV_VAR: CONTROLLER_NAMESPACE
-Default: auto-detect from service account
-Purpose: Namespace where controller runs
+Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cmd/controller/main.go` (package doc). Each flag falls back to its env var, then to the listed default.
 
-ENV_VAR: CONFIG_CONFIGMAP_NAME
-Default: haptic-config
-Purpose: ConfigMap name containing configuration
+| Flag | Env var | Default | Purpose |
+|------|---------|---------|---------|
+| `--crd-name` | `CRD_NAME` | `haproxy-config` | Name of the `HAProxyTemplateConfig` CRD the controller reads. |
+| `--secret-name` | `SECRET_NAME` | `haproxy-credentials` | Name of the `Secret` with `dataplane_username` / `dataplane_password`. |
+| `--webhook-cert-secret-name` | `WEBHOOK_CERT_SECRET_NAME` | `""` (disabled) | TLS Secret for the validating-admission-webhook server. Empty disables the webhook entirely. |
+| `--debug-port` | `DEBUG_PORT` | `0` (disabled) | Port for the introspection HTTP server (`/healthz` + `/debug/vars` + `/debug/pprof`). The Helm chart sets this to `8080` by default. |
+| `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
+| — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |
 
-ENV_VAR: CREDENTIALS_SECRET_NAME
-Default: haptic-credentials
-Purpose: Secret name containing credentials
-
-// Logging
-ENV_VAR: LOG_LEVEL
-Default: info
-Values: debug, info, warn, error
-Purpose: Logging verbosity
-
-ENV_VAR: LOG_FORMAT
-Default: json
-Values: json, text
-Purpose: Log output format
-
-// Metrics/Profiling
-ENV_VAR: METRICS_PORT
-Default: 9090
-Purpose: Prometheus metrics endpoint port
-
-ENV_VAR: HEALTH_PORT
-Default: 8080
-Purpose: Health check endpoint port
-
-ENV_VAR: ENABLE_PPROF
-Default: false
-Purpose: Enable Go profiling endpoints
-```
+The controller's namespace is auto-detected from the in-cluster service-account token mount; there is no `CONTROLLER_NAMESPACE` env var. There is no `LOG_FORMAT`, `METRICS_PORT`, `HEALTH_PORT`, or `ENABLE_PPROF` env var either — log output is always structured slog (logfmt-ish in the default handler), and the metrics / healthz / pprof ports come from the CRD (`spec.controller.metricsPort`, `spec.controller.healthzPort`) and the `--debug-port` flag respectively.
 
 ## Signal Handling
 
@@ -266,82 +249,13 @@ func main() {
 
 ### Health Endpoint
 
-```go
-// Health check handler
-http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-    // Check if controller is operational
-    if !controller.IsReady() {
-        w.WriteHeader(http.StatusServiceUnavailable)
-        w.Write([]byte("not ready"))
-        return
-    }
+The controller doesn't hand-roll its HTTP servers — three reusable infra packages own the surfaces:
 
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("ok"))
-})
+- **`pkg/introspection`** — `/healthz` (also aliased as `/health`), `/debug/vars`, `/debug/vars/<name>?field={…}`, `/debug/events`, `/debug/pprof/*`. Backed by an instance-based registry of `Var` implementations. Listening port comes from `--debug-port` / `DEBUG_PORT` (default 0 = disabled; the Helm chart sets 8080). Setting it to 0 disables `/debug/*` and moves `/healthz` to the port specified by `controller.ports.healthz`. There is no separate `/readyz` — Kubernetes readiness probes hit `/healthz` too.
+- **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from `spec.controller.metricsPort` (default 9090, set to 0 to disable). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
+- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-secret-name` is empty. Port comes from `spec.controller.webhookPort` (default 9443).
 
-// Readiness check
-http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-    // Check if all stages completed
-    if !controller.AllStagesComplete() {
-        w.WriteHeader(http.StatusServiceUnavailable)
-        w.Write([]byte("not ready"))
-        return
-    }
-
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("ready"))
-})
-
-// Start health server
-go func() {
-    log.Info("Starting health server", "port", healthPort)
-    if err := http.ListenAndServe(fmt.Sprintf(":%d", healthPort), nil); err != nil {
-        log.Error("Health server failed", "error", err)
-    }
-}()
-```
-
-### Metrics Endpoint
-
-```go
-import "github.com/prometheus/client_golang/prometheus/promhttp"
-
-// Register metrics
-prometheus.MustRegister(reconCounter)
-prometheus.MustRegister(syncDuration)
-prometheus.MustRegister(errorCounter)
-
-// Metrics handler
-http.Handle("/metrics", promhttp.Handler())
-
-// Start metrics server
-go func() {
-    log.Info("Starting metrics server", "port", metricsPort)
-    if err := http.ListenAndServe(fmt.Sprintf(":%d", metricsPort), nil); err != nil {
-        log.Error("Metrics server failed", "error", err)
-    }
-}()
-```
-
-### Profiling (Development)
-
-```go
-import _ "net/http/pprof"
-
-if enablePprof {
-    go func() {
-        log.Info("Starting pprof server", "port", 6060)
-        if err := http.ListenAndServe(":6060", nil); err != nil {
-            log.Error("Pprof server failed", "error", err)
-        }
-    }()
-}
-
-// Access profiling:
-// http://localhost:6060/debug/pprof/
-// go tool pprof http://localhost:6060/debug/pprof/heap
-```
+Don't add new HTTP surfaces in `cmd/controller`. Add a `Var` to `pkg/introspection`, a metric to `pkg/controller/metrics`, or a handler on the existing webhook server.
 
 ## Testing Approach
 
@@ -351,56 +265,60 @@ Test full startup sequence:
 
 ```go
 func TestController_Startup(t *testing.T) {
-    // Create fake Kubernetes cluster
-    fakeClient := fake.NewSimpleClientset()
-
-    // Create test ConfigMap
-    configMap := &corev1.ConfigMap{
+    // Create fake clients: typed for Secrets, dynamic for the haproxy-haptic.org CRD.
+    // The controller reads its config from an HAProxyTemplateConfig CRD via the
+    // dynamic client; CRDs aren't part of the typed clientset.
+    fakeKube := fake.NewSimpleClientset()
+    scheme := runtime.NewScheme()
+    require.NoError(t, haproxyv1alpha1.AddToScheme(scheme))
+    fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme, &haproxyv1alpha1.HAProxyTemplateConfig{
         ObjectMeta: metav1.ObjectMeta{
             Name:      "haproxy-config",
             Namespace: "default",
         },
-        Data: map[string]string{
-            "config.yaml": validConfigYAML,
+        Spec: haproxyv1alpha1.HAProxyTemplateConfigSpec{
+            // … fill in podSelector, watchedResources, haproxyConfig.template …
         },
-    }
-    fakeClient.CoreV1().ConfigMaps("default").Create(ctx, configMap, metav1.CreateOptions{})
+    })
 
-    // Create test Secret
+    // Credentials Secret — only dataplane_username and dataplane_password;
+    // there are no validation_* keys.
     secret := &corev1.Secret{
         ObjectMeta: metav1.ObjectMeta{
-            Name:      "haproxy-creds",
+            Name:      "haproxy-credentials",
             Namespace: "default",
         },
         Data: map[string][]byte{
             "dataplane_username": []byte("admin"),
             "dataplane_password": []byte("pass"),
-            // ... other credentials
         },
     }
-    fakeClient.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{})
+    fakeKube.CoreV1().Secrets("default").Create(ctx, secret, metav1.CreateOptions{})
 
-    // Start controller
+    // Start controller. There is no struct + NewController() — the entry point
+    // is a package-level function `controller.Run(ctx, k8sClient, crdName,
+    // secretName, webhookCertSecretName, debugPort)`. Build a `*client.Client`
+    // around the fake clients and pass it in.
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
 
-    controller := NewController(fakeClient)
+    k8sClient := &client.Client{
+        Clientset: fakeKube,
+        Dynamic:   fakeDynamic,
+    }
 
     done := make(chan error)
     go func() {
-        done <- controller.Run(ctx)
+        done <- controller.Run(ctx, k8sClient, "haproxy-config", "haproxy-credentials", "", 0)
     }()
 
-    // Verify startup progresses through all stages
-    select {
-    case err := <-done:
-        require.NoError(t, err)
-    case <-ctx.Done():
-        t.Fatal("startup timeout")
-    }
+    // Wait for the iteration to publish ControllerStartedEvent (subscribed via
+    // the EventBus) — there is no public `IsReady()` method.
+    waitForEvent[*events.ControllerStartedEvent](t, ctx, eventBus, 5*time.Second)
 
-    // Verify controller is operational
-    assert.True(t, controller.IsReady())
+    // Trigger shutdown
+    cancel()
+    require.NoError(t, <-done)
 }
 ```
 
@@ -420,28 +338,31 @@ KEEP_CLUSTER=true go test ./cmd/controller/... -tags=e2e -v
 **Problem**: Components started before dependencies ready.
 
 ```go
-// Bad - race condition
-resourceWatcher := createResourceWatcher()  // Needs config
+// Bad — race condition: resource watchers spin up before the CRD has loaded
+resourceWatcher := resourcewatcher.New(eventBus, ...)
 go resourceWatcher.Run(ctx)
 
-// Config might not be loaded yet!
-configWatcher := createConfigWatcher()
-go configWatcher.Run(ctx)
+// CRD might not be loaded yet — the configloader hasn't published
+// ConfigValidatedEvent.
+configLoader := configloader.NewConfigLoaderComponent(eventBus, logger)
+go configLoader.Run(ctx)
 ```
 
 **Solution**: Follow staged startup pattern.
 
 ```go
-// Good - stages ensure dependencies
-// Stage 1: Config components
-configWatcher := createConfigWatcher()
-go configWatcher.Run(ctx)
+// Good — stages ensure dependencies (mirrors pkg/controller/iteration.go)
 
-// Stage 2: Wait for valid config
-config := waitForConfig(ctx)
+// Stage 1–2: configloader + credentialsloader run, the iteration blocks
+// on the synchronous fetch+validate of the CRD and Secret before any
+// resource watchers exist.
+configLoader := configloader.NewConfigLoaderComponent(eventBus, logger)
+go configLoader.Run(ctx)
+config := <-validatedConfigCh   // ConfigValidatedEvent
 
-// Stage 3: Resource watchers (now config is available)
-resourceWatcher := createResourceWatcher(config)
+// Stage 3: only after the config is in hand, build resource watchers
+// from spec.watchedResources and wait for their initial sync.
+resourceWatcher := resourcewatcher.New(eventBus, config, ...)
 go resourceWatcher.Run(ctx)
 ```
 
@@ -568,20 +489,21 @@ func (c *Controller) Run(ctx context.Context) error {
 ### Enable Debug Logging
 
 ```bash
-# Set environment variable
-export LOG_LEVEL=debug
+# Local (running the binary directly)
+export LOG_LEVEL=DEBUG  # also: TRACE, INFO (default), WARN, ERROR
 
-# Or in Kubernetes
-kubectl set env deployment/haptic-controller LOG_LEVEL=debug
+# In a Kubernetes deployment installed via the chart
+kubectl set env -n haptic deployment/haptic-controller LOG_LEVEL=DEBUG
 ```
+
+For runtime changes without a pod restart, set `spec.logging.level` on the `HAProxyTemplateConfig` CRD instead — the configloader picks it up live and the dynamic logger switches without re-init.
 
 ### Check Stage Progress
 
 ```bash
-# Watch logs for stage messages
-kubectl logs -f deployment/haptic-controller | grep "Stage"
+kubectl logs -f -n haptic deployment/haptic-controller | grep -i "stage\|operational"
 
-# Expected output:
+# Expected progression:
 # Stage 1: Config management
 # Stage 2: Waiting for valid config
 # Stage 3: Resource watchers
@@ -593,31 +515,33 @@ kubectl logs -f deployment/haptic-controller | grep "Stage"
 ### Identify Stuck Stage
 
 ```bash
-# If startup hangs, check which stage
-kubectl logs deployment/haptic-controller | tail -1
+# If startup hangs, look at the last log line
+kubectl logs -n haptic deployment/haptic-controller | tail -1
 
-# Stage 2 stuck? → Check ConfigMap
-kubectl get configmap haptic-config
+# Stage 2 stuck → check the HAProxyTemplateConfig CRD exists and validates
+kubectl get htplcfg -n haptic
+kubectl get htplcfg -n haptic haproxy-config -o yaml | yq '.status'
 
-# Stage 4 stuck? → Check resource syncing
-kubectl logs deployment/haptic-controller | grep "sync"
+# Stage 4 stuck → at least one watcher's initial sync isn't completing
+kubectl logs -n haptic deployment/haptic-controller | grep -i "sync\|watcher"
 ```
 
 ### Enable Profiling
 
-```bash
-# Set environment variable
-kubectl set env deployment/haptic-controller ENABLE_PPROF=true
+`pprof` is part of the introspection HTTP server, not a separate binary. The Helm chart already enables it on port 8080 by default (same port as `/healthz`); no env-var toggle is needed.
 
-# Port-forward profiling endpoint
-kubectl port-forward deployment/haptic-controller 6060:6060
+```bash
+# Port-forward the introspection port
+kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 
 # Profile CPU
-go tool pprof http://localhost:6060/debug/pprof/profile?seconds=30
+go tool pprof http://localhost:8080/debug/pprof/profile?seconds=30
 
 # Profile memory
-go tool pprof http://localhost:6060/debug/pprof/heap
+go tool pprof http://localhost:8080/debug/pprof/heap
 ```
+
+To disable profiling in production, set `controller.debugPort: 0` (the chart then moves `/healthz` to `controller.ports.healthz`). To move it to a dedicated port, set `controller.debugPort: <port>`.
 
 ## Kubernetes Deployment
 
@@ -629,26 +553,41 @@ kind: ClusterRole
 metadata:
   name: haptic-controller
 rules:
-  # Read ConfigMap (configuration)
-  - apiGroups: [""]
-    resources: ["configmaps"]
+  # Primary CRD (input)
+  - apiGroups: ["haproxy-haptic.org"]
+    resources: ["haproxytemplateconfigs"]
     verbs: ["get", "watch", "list"]
 
-  # Read Secret (credentials)
+  # Output CRDs (rendered config + auxiliary files)
+  - apiGroups: ["haproxy-haptic.org"]
+    resources:
+      - "haproxycfgs"
+      - "haproxygeneralfiles"
+      - "haproxycrtlistfiles"
+      - "haproxymapfiles"
+    verbs: ["get", "watch", "list", "create", "update", "patch", "delete"]
+
+  # Credentials Secret + watched-resource Secrets (TLS)
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "watch", "list"]
 
-  # Watch resources (Ingress, Service, etc.)
+  # Leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+
+  # Watched resources (Ingress, Service, EndpointSlice, etc.)
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "watch", "list"]
 
   - apiGroups: [""]
-    resources: ["services", "pods"]
+    resources: ["services", "pods", "namespaces"]
     verbs: ["get", "watch", "list"]
 
-  # Add more resources as configured
+  # Add per-watched-resource rules as `spec.watchedResources` grows;
+  # the Helm chart auto-generates these. See operations/security.md.
 ```
 
 ### Deployment Manifest
@@ -660,7 +599,7 @@ metadata:
   name: haptic-controller
   namespace: default
 spec:
-  replicas: 1  # Single replica (no leader election yet)
+  replicas: 2  # Default; leader election handles deploy-side exclusivity
   selector:
     matchLabels:
       app: haptic
@@ -673,39 +612,37 @@ spec:
       containers:
       - name: controller
         image: haptic:latest
+        args:
+          - run
+          - --crd-name=haproxy-config
+          - --secret-name=haproxy-credentials
+          - --debug-port=8080
         env:
         - name: LOG_LEVEL
-          value: "info"
-        - name: LOG_FORMAT
-          value: "json"
-        - name: CONFIG_CONFIGMAP_NAME
-          value: "haptic-config"
-        - name: CREDENTIALS_SECRET_NAME
-          value: "haptic-credentials"
+          value: "INFO"  # TRACE / DEBUG / INFO / WARN / ERROR
         ports:
-        - name: health
-          containerPort: 8080
+        - name: healthz
+          containerPort: 8080  # also serves /debug/* — see --debug-port
         - name: metrics
           containerPort: 9090
         livenessProbe:
           httpGet:
             path: /healthz
-            port: health
+            port: healthz
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /readyz
-            port: health
+            path: /healthz       # the controller exposes /healthz only;
+            port: healthz        # /readyz is not served separately
           initialDelaySeconds: 5
           periodSeconds: 5
         resources:
           requests:
             cpu: 100m
-            memory: 128Mi
+            memory: 512Mi        # request = limit gives Guaranteed QoS
           limits:
-            cpu: 500m
-            memory: 512Mi
+            memory: 512Mi        # CPU limit deliberately omitted
 ```
 
 ## Resources

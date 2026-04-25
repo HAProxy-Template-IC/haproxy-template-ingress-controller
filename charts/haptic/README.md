@@ -48,11 +48,11 @@ The full values reference lives in [`docs/reference.md`](./docs/reference.md). T
 | `controller.templateLibraries.haproxyIngress.enabled` | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
 | `controller.debugPort` | `8080` | `/healthz` + `/debug/vars` + `/debug/pprof`; set to `0` to disable |
-| `controller.logLevel` | `INFO` | Initial level — `TRACE` / `DEBUG` / `INFO` / `WARNING` / `ERROR` (case-insensitive); runtime-adjustable via the `HAProxyTemplateConfig` CRD's `spec.logging.level` |
+| `controller.logLevel` | `INFO` | Initial level — `TRACE` / `DEBUG` / `INFO` / `WARN` / `ERROR` (case-insensitive); runtime-adjustable via the `HAProxyTemplateConfig` CRD's `spec.logging.level` |
 | `monitoring.serviceMonitor.enabled` | `false` | Prometheus Operator `ServiceMonitor` |
 | `networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |
 | `ingressClass.name` / `gatewayClass.name` | `haptic` | Class names the controller matches against — deliberately distinct from `haproxy` so HAPTIC can run side-by-side with other HAProxy-based ingress controllers; set to `haproxy` when replacing an incumbent |
-| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / auto-generated | Override for deterministic credentials in dev; empty `password` means the chart generates a 32-char random password on install |
+| `credentials.dataplane.username` / `credentials.dataplane.password` | `admin` / sha256-of-release-name | Empty `password` falls back to a deterministic 32-char SHA256 hash (preserved across upgrades from the existing Secret); **set explicitly in production**. See [`docs/reference.md`](./docs/reference.md#credentials). |
 
 ## Template Libraries
 
@@ -69,7 +69,7 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `haproxy-ingress` | on | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
 
-Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [`docs/template-libraries.md`](./docs/template-libraries.md) and [`CLAUDE.md`](./CLAUDE.md) for the library-merging design, extension points, and snippet priority ranges.
+Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [`docs/template-libraries.md`](./docs/template-libraries.md) and [`CLAUDE.md`](../CLAUDE.md) for the library-merging design, extension points, and snippet priority ranges.
 
 ## Documentation
 
@@ -82,7 +82,7 @@ Each library contributes entries under `watchedResources`, `templateSnippets`, `
 | Library reference | [`docs/template-libraries.md`](./docs/template-libraries.md) + [`docs/libraries/`](./docs/libraries/) |
 | Day-two operations | [`docs/operations/`](./docs/operations/) (HA, monitoring, networking, debugging, troubleshooting) |
 | Full values reference | [`docs/reference.md`](./docs/reference.md) |
-| Chart development | [`CLAUDE.md`](./CLAUDE.md) |
+| Chart development | [`CLAUDE.md`](../CLAUDE.md) |
 
 ## Upgrading
 

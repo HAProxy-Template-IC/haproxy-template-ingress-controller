@@ -302,11 +302,11 @@ watcher.WaitForSync(ctx)
 **Debouncing:**
 
 ```go
-// Rapid changes batched
-// t=0ms:   Create Ingress A → debounce starts
-// t=100ms: Update Ingress A → debounce reset
-// t=200ms: Create Ingress B → debounce reset
-// t=700ms: No more changes → OnChange called once with stats
+// Rapid changes batched (default DebounceInterval = 5s, leading-edge)
+// t=0s:   Create Ingress A → fires immediately, refractory window starts
+// t=1s:   Update Ingress A → suppressed (within window)
+// t=3s:   Create Ingress B → suppressed (within window)
+// t=5s:   Window closes → OnChange called once with the suppressed stats
 ```
 
 ## Testing Strategies
@@ -524,7 +524,7 @@ config.LabelSelector = "app=myapp"
 1. Define GVR (GroupVersionResource)
 2. Choose index expressions (what lookups do you need?)
 3. Determine store type (Memory vs Cached)
-4. Set debounce interval (default 500ms is usually fine)
+4. Leave `DebounceInterval` at zero to use `types.DefaultDebounceInterval` (5s, leading-edge); only override for resources that need a faster reaction
 5. Implement callbacks
 6. Add validation for index expressions
 7. Write tests with fake client

@@ -30,7 +30,7 @@ The program lives in [`main.go`](./main.go) and targets a stand-alone HAProxy + 
 The example reads three environment variables with sensible defaults; override them for your environment:
 
 ```bash
-export HAPROXY_URL=http://localhost:5555/v3   # /v3 for Dataplane API 3.x; /v2 still accepted
+export HAPROXY_URL=http://localhost:5555/v3   # /v3 only — the library detects v3.0/v3.1/v3.2/v3.3 at startup. Trailing /v2 is silently rewritten to /v3 for the version-detection probe but no v2-only operations are supported.
 export HAPROXY_USER=admin
 export HAPROXY_PASS=admin
 

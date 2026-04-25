@@ -21,10 +21,10 @@ For the complete list of all Helm values, see the [Configuration Reference](./re
 | `gatewayClass.name` | GatewayClass name | `haptic` |
 | `controller.debugPort` | Introspection HTTP server port (provides /healthz and /debug/*) | `8080` |
 | `controller.config.podSelector` | Labels to match HAProxy pods | `{app.kubernetes.io/component: loadbalancer}` |
-| `controller.logLevel` | Initial log level (`LOG_LEVEL` env var: TRACE, DEBUG, INFO, WARNING, ERROR) | `INFO` |
+| `controller.logLevel` | Initial log level (`LOG_LEVEL` env var: TRACE, DEBUG, INFO, WARN, ERROR — case-insensitive) | `INFO` |
 | `controller.config.logging.level` | Log level from the `HAProxyTemplateConfig` CRD (overrides env var if non-empty) | `""` |
 | `credentials.dataplane.username` | Dataplane API username | `admin` |
-| `credentials.dataplane.password` | Dataplane API password (empty = auto-generated 32-char random) | `""` |
+| `credentials.dataplane.password` | Dataplane API password. Empty falls back to a deterministic 32-char SHA256 hash of `<release>-<namespace>-haptic-dataplane-api`, preserved across upgrades from the existing Secret when `lookup` works. **Set explicitly in production** — see `reference.md`. | `""` |
 | `networkPolicy.enabled` | Enable NetworkPolicy | `true` |
 
 ## Controller Configuration

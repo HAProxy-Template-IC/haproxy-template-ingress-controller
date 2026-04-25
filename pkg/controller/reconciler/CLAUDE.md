@@ -31,7 +31,7 @@ HTTPResourceAcceptedEvent → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
 
     ↓
-ReconciliationTriggeredEvent → Executor
+ReconciliationTriggeredEvent → Coordinator
 ```
 
 ## Debounce Behavior
@@ -41,22 +41,22 @@ ReconciliationTriggeredEvent → Executor
 The debouncer uses leading-edge triggering: the first change fires immediately if no callback has fired recently. Subsequent changes within the refractory period are batched.
 
 ```
-t=0:    Resource change → Immediate callback (no recent activity)
-t=10:   Resource change → Queued (refractory period active)
-t=50:   Resource change → Queued (refractory period active)
-t=100:  Refractory expires → Callback with batched changes
+t=0s:   Resource change → Immediate callback (no recent activity)
+t=1s:   Resource change → Queued (refractory period active)
+t=3s:   Resource change → Queued (refractory period active)
+t=5s:   Refractory expires → Callback with batched changes
 ```
 
-This ensures fast response (0ms delay) when changes are isolated, while still batching rapid successive changes during busy periods.
+The refractory period is `pkg/k8s/types.DefaultDebounceInterval` (5s). This ensures fast response (0ms delay) for isolated changes while batching rapid successive changes during busy periods.
 
 ### Old Behavior (for reference)
 
 Previously used trailing-edge triggering where every change reset the timer:
 
 ```
-t=0:    Resource change → Start timer (500ms)
-t=100:  Resource change → Reset timer (another 500ms)
-t=600:  Timer expires → Trigger reconciliation
+t=0s:   Resource change → Start timer (5s)
+t=2s:   Resource change → Reset timer (another 5s)
+t=7s:   Timer expires → Trigger reconciliation
 ```
 
 The new leading-edge behavior significantly reduces latency for rolling deployments.

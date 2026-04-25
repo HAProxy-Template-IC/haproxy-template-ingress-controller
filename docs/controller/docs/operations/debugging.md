@@ -47,6 +47,23 @@ curl 'http://localhost:8080/debug/vars/resources?field={.ingresses}'
 
 The syntax is the same as `kubectl get -o jsonpath='{…}'`; see the [Kubernetes JSONPath reference](https://kubernetes.io/docs/reference/kubectl/jsonpath/).
 
+## Event Search (`/debug/events`)
+
+`/debug/events` is a separate endpoint (not under `/debug/vars/`) for querying the event ring buffer. Useful when chasing a specific reconciliation by `correlation_id`:
+
+```bash
+# Last 100 events (default limit)
+curl http://localhost:8080/debug/events
+
+# Last 500 events
+curl 'http://localhost:8080/debug/events?limit=500'
+
+# All events that share a correlation ID — every event in one reconciliation
+curl 'http://localhost:8080/debug/events?correlation_id=<id>'
+```
+
+Pull a `correlation_id` out of `/debug/vars/events` (each entry exposes one) or out of structured logs, then use it here to fetch every related event in order.
+
 ## Go Profiling
 
 `/debug/pprof/*` is the standard `net/http/pprof` handler:

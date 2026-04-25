@@ -6,19 +6,22 @@ This page covers common issues when deploying and operating the HAPTIC Helm char
 
 For controller behavior troubleshooting, see the [controller troubleshooting guide](https://haproxy-haptic.org/controller/latest/troubleshooting/).
 
+!!! note "Namespace"
+    The examples below assume the chart is installed into the `haptic` namespace. Substitute your release namespace if you installed elsewhere.
+
 ## Controller Not Starting
 
 Check logs:
 
 ```bash
-kubectl logs -f -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
+kubectl logs -n haptic -f -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
 ```
 
 Common issues:
 
-- **HAProxyTemplateConfig missing**: `kubectl get haproxytemplateconfig` — reinstall the Helm chart if absent
-- **Credentials Secret missing**: `kubectl get secret haptic-credentials` — recreate with the correct keys
-- **RBAC permissions incorrect**: `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<namespace>:<serviceaccount>`
+- **HAProxyTemplateConfig missing**: `kubectl get haproxytemplateconfig -n haptic` — reinstall the Helm chart if absent
+- **Credentials Secret missing**: `kubectl get secret -n haptic haptic-credentials` — recreate with the correct keys
+- **RBAC permissions incorrect**: `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:haptic:<serviceaccount>`
 - **NetworkPolicy blocking access**: see [Networking](./networking.md)
 
 ## Image Pull Errors
@@ -26,7 +29,7 @@ Common issues:
 If pods are stuck in `ImagePullBackOff`:
 
 ```bash
-kubectl describe pod -l app.kubernetes.io/name=haptic
+kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic
 ```
 
 Verify the `haproxyVersion` value matches an available image tag:
@@ -68,7 +71,7 @@ If creating an Ingress produces no HAProxy configuration change:
 3. **Check controller logs** for watch events:
 
    ```bash
-   kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i ingress
+   kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i ingress
    ```
 
 ## Cannot Connect to HAProxy Pods
@@ -76,20 +79,21 @@ If creating an Ingress produces no HAProxy configuration change:
 1. **Check HAProxy pod labels** match `podSelector`
 
    ```bash
-   kubectl get pods --show-labels
+   kubectl get pods -n haptic --show-labels
    ```
 
 2. **Verify Dataplane API is accessible**
 
    ```bash
-   kubectl port-forward <haproxy-pod> 5555:5555
-   curl http://localhost:5555/v3/info
+   kubectl port-forward -n haptic <haproxy-pod> 5555:5555
+   # Substitute the actual dataplane password from the credentials Secret
+   curl -u admin:<password> http://localhost:5555/v3/info
    ```
 
 3. **Check NetworkPolicy**
 
    ```bash
-   kubectl describe networkpolicy
+   kubectl describe networkpolicy -n haptic
    ```
 
 ## Dataplane API Authentication Failure
@@ -97,7 +101,7 @@ If creating an Ingress produces no HAProxy configuration change:
 If the controller logs show "401 Unauthorized" or "403 Forbidden" when connecting to HAProxy, decode the credentials from the Secret and confirm they match what the Dataplane API was configured with:
 
 ```bash
-for key in dataplane_username dataplane_password validation_username validation_password; do
+for key in dataplane_username dataplane_password; do
   echo "$key: $(kubectl get secret haptic-credentials -n haptic -o jsonpath="{.data.$key}" | base64 -d)"
 done
 ```
@@ -107,14 +111,14 @@ done
 After updating the Secret, restart the controller:
 
 ```bash
-kubectl rollout restart deployment haptic-controller
+kubectl rollout restart -n haptic deployment haptic-controller
 ```
 
 ## HAProxy Returning 503
 
 A 503 usually means HAProxy has no healthy servers for the backend:
 
-1. **Check that backend pods are running and ready**
+1. **Check that backend pods are running and ready** (in the application's namespace, not necessarily `haptic`)
 
    ```bash
    kubectl get pods -l app=<your-app>
@@ -124,13 +128,13 @@ A 503 usually means HAProxy has no healthy servers for the backend:
 2. **Verify servers appear in HAProxy config**
 
    ```bash
-   kubectl exec <haproxy-pod> -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A5 "backend"
+   kubectl exec -n haptic <haproxy-pod> -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A5 "backend"
    ```
 
 3. **Check HAProxy stats** for server state (UP/DOWN):
 
    ```bash
-   kubectl port-forward svc/haptic-haproxy 8404:8404
+   kubectl port-forward -n haptic svc/haptic-haproxy 8404:8404
    curl http://localhost:8404/stats
    ```
 
@@ -141,7 +145,7 @@ If controller logs show successful deployment but HAProxy still serves the old c
 1. **Confirm the config file was written**
 
    ```bash
-   kubectl exec <haproxy-pod> -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
+   kubectl exec -n haptic <haproxy-pod> -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
    ```
 
 2. **Check that both containers share the config volume** — HAProxy and Dataplane API must mount the same volume
@@ -149,7 +153,7 @@ If controller logs show successful deployment but HAProxy still serves the old c
 3. **Check Dataplane API reload logs**
 
    ```bash
-   kubectl logs <haproxy-pod> -c dataplane | tail -20
+   kubectl logs -n haptic <haproxy-pod> -c dataplane | tail -20
    ```
 
 ## NetworkPolicy Issues in kind
@@ -164,10 +168,10 @@ Debug NetworkPolicy:
 
 ```bash
 # Check controller can resolve DNS
-kubectl exec <controller-pod> -- nslookup kubernetes.default
+kubectl exec -n haptic <controller-pod> -- nslookup kubernetes.default
 
 # Check controller can reach HAProxy pod
-kubectl exec <controller-pod> -- curl http://<haproxy-pod-ip>:5555/v3/info
+kubectl exec -n haptic <controller-pod> -- curl http://<haproxy-pod-ip>:5555/v3/info
 ```
 
 For NetworkPolicy configuration details, see [Networking](./networking.md).

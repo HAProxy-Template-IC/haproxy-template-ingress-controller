@@ -29,7 +29,7 @@ Failure at layer 3 never takes down traffic — the reconciler refuses to deploy
 - Allows independent rotation: the credentials loader watches the Secret and re-publishes `CredentialsUpdatedEvent` without a full reinitialisation cycle.
 - Follows the conventional Kubernetes split between "what to do" (typed API) and "secrets needed to do it" (opaque Secret).
 
-Required keys: `dataplane_username`, `dataplane_password`, `validation_username`, `validation_password`.
+Required keys: `dataplane_username`, `dataplane_password`.
 
 ## Webhook Architecture
 

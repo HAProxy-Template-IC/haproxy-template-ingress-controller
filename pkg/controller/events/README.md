@@ -25,7 +25,7 @@ One file per category. The full list as of writing, with representative types:
 | `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeployedEvent` |
 | `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent` |
 | `leader.go` | Leader election | `BecameLeaderEvent`, `LostLeadershipEvent` |
-| `publishing.go` | `HAProxyCfg` / `HAProxyGeneralFile` publishing | `ConfigPublishedEvent` |
+| `publishing.go` | Output-CRD publishing (`HAProxyCfg` + `HAProxy{General,Map,CRTList}File`) and per-pod sync outcomes | `ConfigPublishedEvent`, `ConfigPublishFailedEvent`, `ConfigAppliedToPodEvent` |
 | `proposal.go` | Admission-time proposal validation | `ProposalValidatedEvent` |
 | `http.go` | HTTP resource fetcher | `HTTPResourceUpdatedEvent` |
 | `status.go` | Status-patch application | `StatusPatchAppliedEvent` |

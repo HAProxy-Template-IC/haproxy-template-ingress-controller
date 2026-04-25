@@ -10,7 +10,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 |-----------|------|---------|-------------|
 | `replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
 | `haproxyVersion` | string | `"3.2"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
-| `haproxyPatchVersions` | map | See values.yaml | Per-`haproxyVersion` community patch pins (e.g. `"3.2": "3.2.13"`). Maintained by the chart and auto-updated by Renovate |
+| `haproxyPatchVersions` | map | See values.yaml | Per-`haproxyVersion` community patch pins (e.g. `"3.2": "3.2.x"`). Maintained by the chart and auto-updated by Renovate |
 | `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (e.g. `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
 | `image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
@@ -96,7 +96,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.logLevel` | string | `INFO` | Initial log level (`LOG_LEVEL` env var): TRACE, DEBUG, INFO, WARNING, ERROR (case-insensitive) |
+| `controller.logLevel` | string | `INFO` | Initial log level (`LOG_LEVEL` env var): TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive) |
 | `controller.config.logging.level` | string | `""` | Log level in the `HAProxyTemplateConfig` CRD (`spec.logging.level`); overrides `controller.logLevel` at runtime when non-empty |
 | `controller.config.templatingSettings.extraContext.debug` | bool | `true` | Enable debug headers in HAProxy responses |
 | `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields]` | Fields to ignore in watched resources |
@@ -143,7 +143,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `credentials.dataplane.username` | string | `admin` | Dataplane API username |
-| `credentials.dataplane.password` | string | `""` | Dataplane API password; empty = chart auto-generates a 32-char random password and stores it in the credentials Secret (override for deterministic credentials in dev) |
+| `credentials.dataplane.password` | string | `""` | Dataplane API password. Empty triggers a 32-character fallback derived as `sha256(<release>-<namespace>-haptic-dataplane-api) | trunc 32` so GitOps tools without `lookup` access render deterministically. On the second `helm upgrade` (or any chart-driven install where `lookup` works) the chart reads the existing Secret and preserves whatever password is there. **Override this with a strong random value in any environment where the Dataplane API is reachable beyond cluster-internal networking** — the SHA256 fallback is only unguessable to people who don't know your release name and namespace. |
 
 ## ServiceAccount & RBAC
 
@@ -234,7 +234,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `haproxy.replicaCount` | int | `2` | Number of HAProxy replicas |
 | `haproxy.image.repository` | string | `haproxytech/haproxy-debian` | HAProxy image repository |
 | `haproxy.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
-| `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` and `haproxyPatchVersions` (e.g. `3.2` → `3.2.13`) |
+| `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` plus the matching entry in `haproxyPatchVersions` (e.g. `3.2` → whichever 3.2.x patch the chart currently pins). Override to pin a specific patch yourself. |
 | `haproxy.enterprise.enabled` | bool | `false` | Use HAProxy Enterprise |
 | `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |

@@ -1,29 +1,28 @@
 # Considerations
 
-## Assumptions
+## What the Controller Does
 
-This software acts as ingress controller for a fleet of HAProxy load-balancers.
-It continuously watches a list of user-defined Kubernetes resource types and uses that as input to render the HAProxy
-main configuration file `haproxy.cfg` via templating engine and an optional amount of auxiliary files like custom error pages (`500.http`)
-or map files for lookups (`host.map`).
-After rendering the files they are validated and pushed via HAProxy Dataplane API (<https://www.haproxy.com/documentation/haproxy-data-plane-api/>).
-By pushing only changed config parts via specialized API endpoints this prevents unnecessary HAProxy reloads.
-Many specialized endpoints use the HAProxy runtime socket (<https://www.haproxy.com/documentation/haproxy-runtime-api/>)
-under the hood and perform changes at runtime.
-The template rendering is triggered by changed Kubernetes resources.
-Additionally, a drift prevention monitor periodically triggers deployments (default 60s interval) to detect and correct configuration drift caused by external changes.
-If any rendered file differs from the rendered files of the last run dataplane a sync is triggered.
-The drift prevention mechanism ensures the controller's desired configuration is eventually consistent with the actual HAProxy configuration.
+HAPTIC is an ingress controller for a fleet of HAProxy load balancers. It continuously watches a user-defined set of Kubernetes resource types and uses them as input to render:
+
+- The main HAProxy configuration file (`haproxy.cfg`)
+- Optional auxiliary files — custom error pages (e.g. `500.http`) and lookup map files (e.g. `host.map`)
+
+After rendering, files are validated and pushed to each HAProxy pod via the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). The controller pushes only changed parts through fine-grained Dataplane API endpoints; many of those endpoints use the [HAProxy Runtime API](https://www.haproxy.com/documentation/haproxy-runtime-api/) under the hood, applying changes at runtime without process reloads.
+
+## Triggers
+
+Two mechanisms trigger reconciliation:
+
+- **Watched resource changes** — the primary trigger; debounced to coalesce bursts.
+- **Drift prevention** — a periodic check (default 60s, set via `spec.dataplane.driftPreventionInterval`) that re-deploys if any rendered file differs from what was last pushed. This catches out-of-band changes to HAProxy and keeps desired and actual configuration eventually consistent.
 
 ## Constraints
 
-The dataplane API does not support all config statements that the HAProxy config language supports
-(see <https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/>).
-Therefore, only rendered configurations that can be parsed by the dataplane API library
-(<https://github.com/haproxytech/client-native>) are supported.
+- The Dataplane API does not cover every directive in the [HAProxy configuration language](https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/). HAPTIC can only deploy configurations that the underlying [`haproxytech/client-native`](https://github.com/haproxytech/client-native) parser accepts. See [Supported Configuration](../../supported-configuration.md) for the current coverage.
+- The controller assumes HAProxy runs alongside a Dataplane API instance reachable on the pod network (default port `5555`). Validation and deployment go through that API; there is no SSH or kubectl-exec path into HAProxy.
 
 ## System Environment
 
-The software is designed to be run inside a Kubernetes container.
-The target dataplane APIs must also run as Kubernetes container with an HAProxy sidecar.
-The Kubernetes service account of the ingress controller pod must be able to read all watched configurable resources cluster-wide.
+- The controller runs as a Kubernetes container.
+- Each managed HAProxy instance must be a Kubernetes Pod with a Dataplane API sidecar sharing the HAProxy config volume.
+- The controller's ServiceAccount needs `get`/`list`/`watch` on every resource type listed in `spec.watchedResources`, plus the standard set granted by the chart (Pods, Services, EndpointSlices, the CRDs, and `coordination.k8s.io/leases` for leader election). See [Security — RBAC](../../operations/security.md#rbac).

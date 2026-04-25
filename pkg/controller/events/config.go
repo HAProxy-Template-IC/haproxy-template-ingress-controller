@@ -88,8 +88,9 @@ func (e *ConfigValidationRequest) RequestID() string { return e.reqID }
 
 // ConfigValidationResponse is sent by validators in response to ConfigValidationRequest.
 //
-// This is a Response event used in the scatter-gather pattern. The ValidationCoordinator
-// collects all responses and determines if the config is valid overall.
+// This is a Response event used in the scatter-gather pattern.
+// pkg/controller/configchange.ConfigChangeHandler issues the request,
+// collects all responses, and determines if the config is valid overall.
 type ConfigValidationResponse struct {
 	reqID     string
 	responder string

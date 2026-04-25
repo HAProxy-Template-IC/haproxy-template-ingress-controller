@@ -121,6 +121,10 @@ curl http://localhost:8080/debug/vars/events
 # Get recent 100 events
 curl 'http://localhost:8080/debug/vars/events?field={.last_100}'
 
+# Search events by correlation ID — separate /debug/events endpoint
+curl 'http://localhost:8080/debug/events?correlation_id=<id>'
+curl 'http://localhost:8080/debug/events?limit=500'
+
 # Get complete state dump
 curl http://localhost:8080/debug/vars/state
 
