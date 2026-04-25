@@ -337,56 +337,29 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 	g, _ := errgroup.WithContext(ctx)
 
 	// Render map files in parallel
-	for name := range s.config.Maps {
-		g.Go(func() error {
-			rendered, err := s.engine.Render(ctx, name, renderCtx)
-			if err != nil {
-				return fmt.Errorf("rendering map %s: %w", name, err)
-			}
-			mu.Lock()
-			auxFiles.MapFiles = append(auxFiles.MapFiles, auxiliaryfiles.MapFile{
-				Path:    name,
-				Content: rendered,
-			})
-			mu.Unlock()
-			return nil
+	renderAuxGroup(ctx, g, &mu, s.engine, renderCtx,
+		s.config.Maps, "map", &auxFiles.MapFiles,
+		func(name, content string) auxiliaryfiles.MapFile {
+			return auxiliaryfiles.MapFile{Path: name, Content: content}
 		})
-	}
 
 	// Render general files in parallel
-	for name := range s.config.Files {
-		g.Go(func() error {
-			rendered, err := s.engine.Render(ctx, name, renderCtx)
-			if err != nil {
-				return fmt.Errorf("rendering file %s: %w", name, err)
-			}
-			mu.Lock()
-			auxFiles.GeneralFiles = append(auxFiles.GeneralFiles, auxiliaryfiles.GeneralFile{
+	renderAuxGroup(ctx, g, &mu, s.engine, renderCtx,
+		s.config.Files, "file", &auxFiles.GeneralFiles,
+		func(name, content string) auxiliaryfiles.GeneralFile {
+			return auxiliaryfiles.GeneralFile{
 				Filename: name,
 				Path:     filepath.Join(s.pathResolver.GeneralDir, name),
-				Content:  rendered,
-			})
-			mu.Unlock()
-			return nil
+				Content:  content,
+			}
 		})
-	}
 
 	// Render SSL certificates in parallel
-	for name := range s.config.SSLCertificates {
-		g.Go(func() error {
-			rendered, err := s.engine.Render(ctx, name, renderCtx)
-			if err != nil {
-				return fmt.Errorf("rendering SSL certificate %s: %w", name, err)
-			}
-			mu.Lock()
-			auxFiles.SSLCertificates = append(auxFiles.SSLCertificates, auxiliaryfiles.SSLCertificate{
-				Path:    name,
-				Content: rendered,
-			})
-			mu.Unlock()
-			return nil
+	renderAuxGroup(ctx, g, &mu, s.engine, renderCtx,
+		s.config.SSLCertificates, "SSL certificate", &auxFiles.SSLCertificates,
+		func(name, content string) auxiliaryfiles.SSLCertificate {
+			return auxiliaryfiles.SSLCertificate{Path: name, Content: content}
 		})
-	}
 
 	if err := g.Wait(); err != nil {
 		return nil, err
@@ -400,5 +373,36 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 func (s *RenderService) ClearVMPool() {
 	if s.engine != nil {
 		s.engine.ClearVMPool()
+	}
+}
+
+// renderAuxGroup renders one auxiliary-file group in parallel via g. For each
+// name in sources it submits a render goroutine that, on success, appends the
+// per-item value built by build to *out under mu. Render errors are wrapped
+// with label so the eventual g.Wait() failure makes clear which group failed
+// (e.g. "map", "file", "SSL certificate"). The map values are unused — only
+// the keys (template names) drive the rendering.
+func renderAuxGroup[V any, T any](
+	ctx context.Context,
+	g *errgroup.Group,
+	mu *sync.Mutex,
+	engine templating.Engine,
+	renderCtx map[string]any,
+	sources map[string]V,
+	label string,
+	out *[]T,
+	build func(name, content string) T,
+) {
+	for name := range sources {
+		g.Go(func() error {
+			rendered, err := engine.Render(ctx, name, renderCtx)
+			if err != nil {
+				return fmt.Errorf("rendering %s %s: %w", label, name, err)
+			}
+			mu.Lock()
+			*out = append(*out, build(name, rendered))
+			mu.Unlock()
+			return nil
+		})
 	}
 }
