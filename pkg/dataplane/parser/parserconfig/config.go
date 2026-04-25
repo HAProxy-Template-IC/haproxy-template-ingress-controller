@@ -140,6 +140,23 @@ type StructuredConfig struct {
 	GroupIndex map[string]map[string]*models.Group
 }
 
+// NewStructuredConfig allocates a StructuredConfig with all pointer-based
+// indexes pre-initialised so callers can write to them without an additional
+// nil-check. EE-specific maps (EEFrontends, EEBackends) are left nil for
+// callers that opt into them.
+func NewStructuredConfig() *StructuredConfig {
+	return &StructuredConfig{
+		ServerIndex:         make(map[string]map[string]*models.Server),
+		ServerTemplateIndex: make(map[string]map[string]*models.ServerTemplate),
+		BindIndex:           make(map[string]map[string]*models.Bind),
+		PeerEntryIndex:      make(map[string]map[string]*models.PeerEntry),
+		NameserverIndex:     make(map[string]map[string]*models.Nameserver),
+		MailerEntryIndex:    make(map[string]map[string]*models.MailerEntry),
+		UserIndex:           make(map[string]map[string]*models.User),
+		GroupIndex:          make(map[string]map[string]*models.Group),
+	}
+}
+
 // EEFrontendData holds EE-specific directives parsed from a frontend section.
 type EEFrontendData struct {
 	Filters      []*EEFilter
