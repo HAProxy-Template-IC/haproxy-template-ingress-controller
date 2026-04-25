@@ -177,18 +177,20 @@ type Client struct {
 func (c *Client) GetVersion() (string, error) { ... }
 func (c *Client) DeployConfig(cfg string) error { ... }
 
-// pkg/controller/executor.go - Define interface at use site
-package executor
+// At the consumer site (pseudo-example): define a narrow interface
+package myconsumer
 
-// Only need subset of Client methods
+// Only need a subset of the dataplane.Client methods
 type ConfigDeployer interface {
     DeployConfig(cfg string) error
 }
 
-type Executor struct {
-    deployer ConfigDeployer  // Accepts any type implementing this
+type Component struct {
+    deployer ConfigDeployer  // Accepts any type implementing this — *dataplane.Client, a fake, etc.
 }
 ```
+
+In the real codebase this pattern shows up in `pkg/controller/reconciler/coordinator.go`, where `Coordinator` accepts a `PipelineExecutor` interface rather than the concrete pipeline type.
 
 ## Cross-Package Communication
 
@@ -197,12 +199,12 @@ type Executor struct {
 Use direct function calls for pure components:
 
 ```go
-// pkg/controller/executor.go
-import "haptic/pkg/templating"
+// In an event-adapter component (e.g. pkg/controller/renderer)
+import "gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
-func (e *Executor) render() (string, error) {
-    // Direct call to pure component
-    return e.templateEngine.Render(ctx, "haproxy.cfg", e.context)
+func (c *Component) render(ctx context.Context) (string, error) {
+    // Direct call to the pure component — no event needed for this hop
+    return c.templateEngine.Render(ctx, "haproxy.cfg", c.context)
 }
 ```
 

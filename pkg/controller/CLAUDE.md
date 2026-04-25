@@ -194,7 +194,7 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 
 **Events are required for:**
 
-1. Cross-component coordination (Reconciler → Executor → Deployer)
+1. Cross-component coordination (Reconciler → Coordinator → Deployer)
 2. Scatter-gather operations (multiple validators responding)
 3. Asynchronous workflows
 4. Observability needs (commentator logs all events)

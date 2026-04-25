@@ -31,7 +31,7 @@ HTTPResourceAcceptedEvent → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
 
     ↓
-ReconciliationTriggeredEvent → Executor
+ReconciliationTriggeredEvent → Coordinator
 ```
 
 ## Debounce Behavior
