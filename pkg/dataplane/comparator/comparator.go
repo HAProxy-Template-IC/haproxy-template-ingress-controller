@@ -156,52 +156,38 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 
 	summary := NewDiffSummary()
 
-	// Compute all section operations before allocating to allow exact preallocation.
-	globalOps := c.compareGlobal(current, desired, &summary)
-	defaultsOps := c.compareDefaults(current, desired, &summary)
-	httpErrorsOps := c.compareHTTPErrors(current, desired)
-	resolversOps := c.compareResolvers(current, desired)
-	mailersOps := c.compareMailers(current, desired)
-	peersOps := c.comparePeers(current, desired)
-	cachesOps := c.compareCaches(current, desired)
-	ringsOps := c.compareRings(current, desired)
-	userlistsOps := c.compareUserlists(current, desired)
-	programsOps := c.comparePrograms(current, desired)
-	logForwardsOps := c.compareLogForwards(current, desired)
-	logProfilesOps := c.compareLogProfiles(current, desired)     // v3.1+ only
-	tracesOps := c.compareTraces(current, desired)               // v3.1+ only, singleton
-	acmeProvidersOps := c.compareAcmeProviders(current, desired) // v3.2+ only
-	eeOps := c.compareEnterpriseSections(current, desired)       // EE only
-	fcgiAppsOps := c.compareFCGIApps(current, desired)
-	crtStoresOps := c.compareCrtStores(current, desired)
-	frontendOps := c.compareFrontends(current, desired, &summary)
-	backendOps := c.compareBackends(current, desired, &summary)
+	// Compute all section operations once so we can preallocate the merged slice
+	// to the exact capacity instead of growing it incrementally.
+	sectionOps := [][]Operation{
+		c.compareGlobal(current, desired, &summary),
+		c.compareDefaults(current, desired, &summary),
+		c.compareHTTPErrors(current, desired),
+		c.compareResolvers(current, desired),
+		c.compareMailers(current, desired),
+		c.comparePeers(current, desired),
+		c.compareCaches(current, desired),
+		c.compareRings(current, desired),
+		c.compareUserlists(current, desired),
+		c.comparePrograms(current, desired),
+		c.compareLogForwards(current, desired),
+		c.compareLogProfiles(current, desired),        // v3.1+ only
+		c.compareTraces(current, desired),             // v3.1+ only, singleton
+		c.compareAcmeProviders(current, desired),      // v3.2+ only
+		c.compareEnterpriseSections(current, desired), // EE only
+		c.compareFCGIApps(current, desired),
+		c.compareCrtStores(current, desired),
+		c.compareFrontends(current, desired, &summary),
+		c.compareBackends(current, desired, &summary),
+	}
 
-	capacity := len(globalOps) + len(defaultsOps) + len(httpErrorsOps) + len(resolversOps) +
-		len(mailersOps) + len(peersOps) + len(cachesOps) + len(ringsOps) + len(userlistsOps) +
-		len(programsOps) + len(logForwardsOps) + len(logProfilesOps) + len(tracesOps) +
-		len(acmeProvidersOps) + len(eeOps) + len(fcgiAppsOps) + len(crtStoresOps) +
-		len(frontendOps) + len(backendOps)
+	capacity := 0
+	for _, ops := range sectionOps {
+		capacity += len(ops)
+	}
 	operations := make([]Operation, 0, capacity)
-	operations = append(operations, globalOps...)
-	operations = append(operations, defaultsOps...)
-	operations = append(operations, httpErrorsOps...)
-	operations = append(operations, resolversOps...)
-	operations = append(operations, mailersOps...)
-	operations = append(operations, peersOps...)
-	operations = append(operations, cachesOps...)
-	operations = append(operations, ringsOps...)
-	operations = append(operations, userlistsOps...)
-	operations = append(operations, programsOps...)
-	operations = append(operations, logForwardsOps...)
-	operations = append(operations, logProfilesOps...)
-	operations = append(operations, tracesOps...)
-	operations = append(operations, acmeProvidersOps...)
-	operations = append(operations, eeOps...)
-	operations = append(operations, fcgiAppsOps...)
-	operations = append(operations, crtStoresOps...)
-	operations = append(operations, frontendOps...)
-	operations = append(operations, backendOps...)
+	for _, ops := range sectionOps {
+		operations = append(operations, ops...)
+	}
 
 	// Update summary counts from operations
 	updateSummaryFromOperations(&summary, operations)
