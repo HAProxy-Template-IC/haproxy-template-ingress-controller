@@ -29,6 +29,30 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
+// runtimeConfigOwnerRefs builds the OwnerReferences slice that ties an
+// auxiliary-file CRD (or Secret) to its parent HAProxyCfg. All four
+// createOrUpdate* helpers in this file use the same shape.
+func runtimeConfigOwnerRefs(owner *haproxyv1alpha1.HAProxyCfg) []metav1.OwnerReference {
+	return []metav1.OwnerReference{
+		{
+			APIVersion:         "haproxy-haptic.org/v1alpha1",
+			Kind:               "HAProxyCfg",
+			Name:               owner.Name,
+			UID:                owner.UID,
+			Controller:         new(true),
+			BlockOwnerDeletion: new(true),
+		},
+	}
+}
+
+// runtimeConfigLabels returns the standard label map that pins an auxiliary
+// resource to its parent HAProxyCfg via the runtime-config label.
+func runtimeConfigLabels(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
+	return map[string]string{
+		"haproxy-haptic.org/runtime-config": owner.Name,
+	}
+}
+
 // createOrUpdateMapFile creates or updates a HAProxyMapFile resource.
 func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, mapFile auxiliaryfiles.MapFile) (string, error) {
 	name := p.generateMapFileName(filepath.Base(mapFile.Path))
@@ -45,19 +69,8 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 		Checksum:   checksum,
 		Compressed: result.compressed,
 	}
-	labels := map[string]string{
-		"haproxy-haptic.org/runtime-config": owner.Name,
-	}
-	ownerRefs := []metav1.OwnerReference{
-		{
-			APIVersion:         "haproxy-haptic.org/v1alpha1",
-			Kind:               "HAProxyCfg",
-			Name:               owner.Name,
-			UID:                owner.UID,
-			Controller:         new(true),
-			BlockOwnerDeletion: new(true),
-		},
-	}
+	labels := runtimeConfigLabels(owner)
+	ownerRefs := runtimeConfigOwnerRefs(owner)
 
 	var resultName string
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -133,28 +146,18 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 	// Compress if content exceeds threshold
 	result := p.compressIfNeeded(cert.Content, req.CompressionThreshold, "Secret/"+name)
 
+	labels := runtimeConfigLabels(owner)
+	labels["haproxy-haptic.org/type"] = "ssl-certificate"
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: req.TemplateConfigNamespace,
-			Labels: map[string]string{
-				"haproxy-haptic.org/runtime-config": owner.Name,
-				"haproxy-haptic.org/type":           "ssl-certificate",
-			},
+			Labels:    labels,
 			Annotations: map[string]string{
 				"haproxy-haptic.org/compressed": strconv.FormatBool(result.compressed),
 				"haproxy-haptic.org/checksum":   checksum,
 			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         "haproxy-haptic.org/v1alpha1",
-					Kind:               "HAProxyCfg",
-					Name:               owner.Name,
-					UID:                owner.UID,
-					Controller:         new(true),
-					BlockOwnerDeletion: new(true),
-				},
-			},
+			OwnerReferences: runtimeConfigOwnerRefs(owner),
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
@@ -220,19 +223,8 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 		Checksum:   checksum,
 		Compressed: result.compressed,
 	}
-	labels := map[string]string{
-		"haproxy-haptic.org/runtime-config": owner.Name,
-	}
-	ownerRefs := []metav1.OwnerReference{
-		{
-			APIVersion:         "haproxy-haptic.org/v1alpha1",
-			Kind:               "HAProxyCfg",
-			Name:               owner.Name,
-			UID:                owner.UID,
-			Controller:         new(true),
-			BlockOwnerDeletion: new(true),
-		},
-	}
+	labels := runtimeConfigLabels(owner)
+	ownerRefs := runtimeConfigOwnerRefs(owner)
 
 	var resultName string
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -316,19 +308,8 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 		Checksum:   checksum,
 		Compressed: result.compressed,
 	}
-	labels := map[string]string{
-		"haproxy-haptic.org/runtime-config": owner.Name,
-	}
-	ownerRefs := []metav1.OwnerReference{
-		{
-			APIVersion:         "haproxy-haptic.org/v1alpha1",
-			Kind:               "HAProxyCfg",
-			Name:               owner.Name,
-			UID:                owner.UID,
-			Controller:         new(true),
-			BlockOwnerDeletion: new(true),
-		},
-	}
+	labels := runtimeConfigLabels(owner)
+	ownerRefs := runtimeConfigOwnerRefs(owner)
 
 	var resultName string
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
