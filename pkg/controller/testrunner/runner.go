@@ -39,6 +39,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -439,27 +440,28 @@ func (r *Runner) storeAuxiliaryFiles(result *TestResult, auxiliaryFiles *datapla
 		return
 	}
 
-	// Store rendered maps
-	if len(auxiliaryFiles.MapFiles) > 0 {
-		result.RenderedMaps = make(map[string]string)
-		for _, mapFile := range auxiliaryFiles.MapFiles {
-			result.RenderedMaps[mapFile.Path] = mapFile.Content
-		}
-	}
+	result.RenderedMaps = collectByKey(auxiliaryFiles.MapFiles,
+		func(m auxiliaryfiles.MapFile) string { return m.Path },
+		func(m auxiliaryfiles.MapFile) string { return m.Content })
+	result.RenderedFiles = collectByKey(auxiliaryFiles.GeneralFiles,
+		func(f auxiliaryfiles.GeneralFile) string { return f.Filename },
+		func(f auxiliaryfiles.GeneralFile) string { return f.Content })
+	result.RenderedCerts = collectByKey(auxiliaryFiles.SSLCertificates,
+		func(c auxiliaryfiles.SSLCertificate) string { return c.Path },
+		func(c auxiliaryfiles.SSLCertificate) string { return c.Content })
+}
 
-	// Store rendered general files
-	if len(auxiliaryFiles.GeneralFiles) > 0 {
-		result.RenderedFiles = make(map[string]string)
-		for _, file := range auxiliaryFiles.GeneralFiles {
-			result.RenderedFiles[file.Filename] = file.Content
-		}
+// collectByKey returns a fresh map keyed by key(item) with values content(item),
+// or nil for empty input so callers can leave their pointer fields unset rather
+// than holding empty maps. The three RenderedMaps/RenderedFiles/RenderedCerts
+// fields all share this "iterate, key by one field, value by another" shape.
+func collectByKey[T any](items []T, key, content func(T) string) map[string]string {
+	if len(items) == 0 {
+		return nil
 	}
-
-	// Store rendered SSL certificates
-	if len(auxiliaryFiles.SSLCertificates) > 0 {
-		result.RenderedCerts = make(map[string]string)
-		for _, cert := range auxiliaryFiles.SSLCertificates {
-			result.RenderedCerts[cert.Path] = cert.Content
-		}
+	out := make(map[string]string, len(items))
+	for _, item := range items {
+		out[key(item)] = content(item)
 	}
+	return out
 }
