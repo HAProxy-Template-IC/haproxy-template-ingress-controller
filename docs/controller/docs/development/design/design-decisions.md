@@ -831,12 +831,14 @@ func main() {
     // Stage 1: Config Management Components
     log.Info("Stage 1: Starting config management")
 
-    configWatcher := NewConfigWatcher(client, eventBus)
-    configLoader := NewConfigLoader(eventBus)
-    configValidator := NewConfigValidator(eventBus)
+    // SingleWatcher subscriptions feed CRD/Secret bytes into the loaders
+    // (see pkg/controller/iteration.go for the real wiring).
+    configLoader := configloader.NewConfigLoaderComponent(eventBus, logger)
+    credentialsLoader := credentialsloader.NewCredentialsLoaderComponent(eventBus, logger)
+    configValidator := validator.NewCoordinator(eventBus)
 
-    go configWatcher.Run(ctx)
     go configLoader.Run(ctx)
+    go credentialsLoader.Run(ctx)
     go configValidator.Run(ctx)
 
     // Start the event bus - ensures all components have subscribed before events flow
@@ -1078,7 +1080,7 @@ type RequestResult struct {
 
 ```mermaid
 sequenceDiagram
-    participant CW as ConfigWatcher
+    participant CW as ConfigLoader
     participant EB as EventBus
     participant VC as ValidationCoordinator
     participant BV as BasicValidator<br/>(Pure Function)

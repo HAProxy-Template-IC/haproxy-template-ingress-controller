@@ -338,28 +338,31 @@ KEEP_CLUSTER=true go test ./cmd/controller/... -tags=e2e -v
 **Problem**: Components started before dependencies ready.
 
 ```go
-// Bad - race condition
-resourceWatcher := createResourceWatcher()  // Needs config
+// Bad — race condition: resource watchers spin up before the CRD has loaded
+resourceWatcher := resourcewatcher.New(eventBus, ...)
 go resourceWatcher.Run(ctx)
 
-// Config might not be loaded yet!
-configWatcher := createConfigWatcher()
-go configWatcher.Run(ctx)
+// CRD might not be loaded yet — the configloader hasn't published
+// ConfigValidatedEvent.
+configLoader := configloader.NewConfigLoaderComponent(eventBus, logger)
+go configLoader.Run(ctx)
 ```
 
 **Solution**: Follow staged startup pattern.
 
 ```go
-// Good - stages ensure dependencies
-// Stage 1: Config components
-configWatcher := createConfigWatcher()
-go configWatcher.Run(ctx)
+// Good — stages ensure dependencies (mirrors pkg/controller/iteration.go)
 
-// Stage 2: Wait for valid config
-config := waitForConfig(ctx)
+// Stage 1–2: configloader + credentialsloader run, the iteration blocks
+// on the synchronous fetch+validate of the CRD and Secret before any
+// resource watchers exist.
+configLoader := configloader.NewConfigLoaderComponent(eventBus, logger)
+go configLoader.Run(ctx)
+config := <-validatedConfigCh   // ConfigValidatedEvent
 
-// Stage 3: Resource watchers (now config is available)
-resourceWatcher := createResourceWatcher(config)
+// Stage 3: only after the config is in hand, build resource watchers
+// from spec.watchedResources and wait for their initial sync.
+resourceWatcher := resourcewatcher.New(eventBus, config, ...)
 go resourceWatcher.Run(ctx)
 ```
 

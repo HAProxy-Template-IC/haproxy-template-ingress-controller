@@ -11,7 +11,7 @@ sequenceDiagram
     participant EventBus
     participant Components
     participant ResourceWatcher as Resource<br/>Watcher
-    participant ConfigWatcher as Config<br/>SingleWatcher
+    participant CRDSingleWatcher as CRD/Secret<br/>SingleWatcher
     participant Reconciler
 
     Main->>Main: Reinitialization Loop
@@ -31,9 +31,9 @@ sequenceDiagram
         Iteration->>ResourceWatcher: Create & Start
         Iteration->>ResourceWatcher: WaitForAllSync()
 
-        Note over Iteration,ConfigWatcher: 4. Setup CRD + Secret SingleWatchers
-        Iteration->>ConfigWatcher: Create & Start
-        Iteration->>ConfigWatcher: WaitForSync()
+        Note over Iteration,CRDSingleWatcher: 4. Setup CRD + Secret SingleWatchers
+        Iteration->>CRDSingleWatcher: Create & Start
+        Iteration->>CRDSingleWatcher: WaitForSync()
 
         Note over Iteration,EventBus: 5. Start EventBus
         Iteration->>EventBus: Start() (replay buffered events)
@@ -46,7 +46,7 @@ sequenceDiagram
         Iteration->>Iteration: Wait for config change or cancellation
 
         alt Config Change Detected
-            ConfigWatcher->>EventBus: ConfigValidatedEvent (new CRD spec)
+            CRDSingleWatcher->>EventBus: ConfigValidatedEvent (new CRD spec)
             Iteration->>Iteration: Cancel iteration context
             Iteration-->>Main: Return nil (reinitialize)
         else Context Cancelled

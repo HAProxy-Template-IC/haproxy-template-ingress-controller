@@ -53,8 +53,8 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 
 **All replicas run** (read-only or validation operations):
 
-- ConfigWatcher - Monitors `HAProxyTemplateConfig` CRD changes (SingleWatcher)
-- CredentialsLoader - Monitors Secret changes
+- ConfigLoader (`pkg/controller/configloader`) - Parses `HAProxyTemplateConfig` CRD updates from a SingleWatcher
+- CredentialsLoader (`pkg/controller/credentialsloader`) - Parses credentials Secret updates from a SingleWatcher
 - ResourceWatcher - Watches Kubernetes resources (Ingress, Service, etc.)
 - Reconciler - Debounces changes and triggers reconciliation
 - Renderer - Generates HAProxy configurations from templates
@@ -162,8 +162,8 @@ Stage 0: Leader Election Initialization (NEW)
   - Continue startup (don't block on becoming leader)
 
 Stage 1: Config Management Components
-  - ConfigWatcher (all replicas)
-  - ConfigValidator (all replicas)
+  - ConfigLoader, CredentialsLoader (all replicas)
+  - ConfigValidator (all replicas, scatter-gather over basic / template / jsonpath)
   - EventBus.Start()
 
 Stage 2: Wait for Valid Config
