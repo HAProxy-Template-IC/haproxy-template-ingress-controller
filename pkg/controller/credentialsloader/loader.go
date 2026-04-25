@@ -63,12 +63,8 @@ func (c *CredentialsLoaderComponent) ProcessEvent(event busevents.Event) {
 
 // processSecretChange handles a SecretResourceChangedEvent by parsing the Secret.
 func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretResourceChangedEvent) {
-	// Extract unstructured resource
-	resource, ok := event.Resource.(*unstructured.Unstructured)
+	resource, ok := c.AssertUnstructured("SecretResourceChangedEvent", event.Resource)
 	if !ok {
-		c.Logger().Error("SecretResourceChangedEvent contains invalid resource type",
-			"expected", "*unstructured.Unstructured",
-			"got", fmt.Sprintf("%T", event.Resource))
 		return
 	}
 
