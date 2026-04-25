@@ -69,54 +69,13 @@ func FormatRenderError(err error, templateName, templateContent string) string {
 	if err == nil {
 		return ""
 	}
-
-	// Parse the error to extract structured information
-	parsed := parseTemplateError(err.Error())
-
-	var builder strings.Builder
-
-	// Header
-	fmt.Fprintf(&builder, "Template Rendering Error: %s\n", templateName)
-	builder.WriteString(strings.Repeat("─", 60))
-	builder.WriteString("\n")
-
-	// Location
-	if parsed.Location != nil {
-		fmt.Fprintf(&builder, "Location: Line %d, Column %d\n",
-			parsed.Location.Line, parsed.Location.Column)
-	}
-
-	// Problem
-	if parsed.Problem != "" {
-		fmt.Fprintf(&builder, "Problem:  %s\n", parsed.Problem)
-	} else {
-		// Fallback: show truncated original error
-		problem := err.Error()
-		if len(problem) > 100 {
-			problem = problem[:97] + "..."
-		}
-		fmt.Fprintf(&builder, "Problem:  %s\n", problem)
-	}
-
-	// Template context (show the line with the error)
-	if parsed.Location != nil && templateContent != "" {
-		context := extractTemplateContext(templateContent, parsed.Location.Line, parsed.Location.Column)
-		if context != "" {
-			builder.WriteString("\n")
-			builder.WriteString("Template Context:\n")
-			builder.WriteString(context)
-		}
-	}
-
-	// Hints
-	if len(parsed.Hints) > 0 {
-		builder.WriteString("\n")
-		builder.WriteString("Hint: ")
-		builder.WriteString(strings.Join(parsed.Hints, "\n      "))
-		builder.WriteString("\n")
-	}
-
-	return builder.String()
+	return formatParsedError(
+		"Template Rendering Error: "+templateName,
+		templateContent,
+		err,
+		parseTemplateError(err.Error()),
+		formatLocationLine,
+	)
 }
 
 // FormatCompilationError formats a template compilation error into a human-readable multi-line string.
@@ -144,49 +103,46 @@ func FormatCompilationError(err error, templateName, templateContent string) str
 	if err == nil {
 		return ""
 	}
+	return formatParsedError(
+		"Template Compilation Error: "+templateName,
+		templateContent,
+		err,
+		parseCompilationError(err.Error()),
+		formatLocationLineOptionalColumn,
+	)
+}
 
-	// Parse the error to extract structured information
-	parsed := parseCompilationError(err.Error())
-
+// formatParsedError builds the shared header / location / problem / template
+// context / hints layout used by FormatRenderError and FormatCompilationError.
+// formatLocation lets callers customise how a non-nil location renders.
+func formatParsedError(header, templateContent string, originalErr error, parsed parsedError, formatLocation func(*errorLocation) string) string {
 	var builder strings.Builder
 
-	// Header
-	fmt.Fprintf(&builder, "Template Compilation Error: %s\n", templateName)
+	fmt.Fprintf(&builder, "%s\n", header)
 	builder.WriteString(strings.Repeat("─", 60))
 	builder.WriteString("\n")
 
-	// Location
 	if parsed.Location != nil {
-		if parsed.Location.Column > 0 {
-			fmt.Fprintf(&builder, "Location: Line %d, Column %d\n",
-				parsed.Location.Line, parsed.Location.Column)
-		} else {
-			fmt.Fprintf(&builder, "Location: Line %d\n", parsed.Location.Line)
-		}
+		builder.WriteString(formatLocation(parsed.Location))
 	}
 
-	// Problem
 	if parsed.Problem != "" {
 		fmt.Fprintf(&builder, "Problem:  %s\n", parsed.Problem)
 	} else {
-		// Fallback: show truncated original error
-		problem := err.Error()
+		problem := originalErr.Error()
 		if len(problem) > 100 {
 			problem = problem[:97] + "..."
 		}
 		fmt.Fprintf(&builder, "Problem:  %s\n", problem)
 	}
 
-	// Template context (show the line with the error and surrounding lines)
 	if parsed.Location != nil && templateContent != "" {
-		context := extractTemplateContext(templateContent, parsed.Location.Line, parsed.Location.Column)
-		if context != "" {
+		if context := extractTemplateContext(templateContent, parsed.Location.Line, parsed.Location.Column); context != "" {
 			builder.WriteString("\nTemplate Context:\n")
 			builder.WriteString(context)
 		}
 	}
 
-	// Hints
 	if len(parsed.Hints) > 0 {
 		builder.WriteString("\nHint: ")
 		builder.WriteString(strings.Join(parsed.Hints, "\n      "))
@@ -194,6 +150,20 @@ func FormatCompilationError(err error, templateName, templateContent string) str
 	}
 
 	return builder.String()
+}
+
+// formatLocationLine renders "Location: Line X, Column Y" unconditionally.
+func formatLocationLine(l *errorLocation) string {
+	return fmt.Sprintf("Location: Line %d, Column %d\n", l.Line, l.Column)
+}
+
+// formatLocationLineOptionalColumn renders the column only when it's non-zero.
+// Compilation errors sometimes lack column info and we want to omit it cleanly.
+func formatLocationLineOptionalColumn(l *errorLocation) string {
+	if l.Column > 0 {
+		return fmt.Sprintf("Location: Line %d, Column %d\n", l.Line, l.Column)
+	}
+	return fmt.Sprintf("Location: Line %d\n", l.Line)
 }
 
 // parseCompilationError parses a compilation error string to extract structured information.
