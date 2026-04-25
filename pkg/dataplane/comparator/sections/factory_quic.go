@@ -20,98 +20,52 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// NewQUICInitialRuleFrontendCreate creates an operation to create a QUIC initial rule in a frontend.
+// describeQUICInitialRule wraps DescribeIndexChild for the quic-initial-rule section.
+func describeQUICInitialRule(parentType string) func(OperationType, *models.QUICInitialRule, string, int) func() string {
+	return func(op OperationType, _ *models.QUICInitialRule, parentName string, index int) func() string {
+		return DescribeIndexChild(op, "quic-initial-rule", index, parentType, parentName)
+	}
+}
+
+// CRUD builders for QUIC initial rules in frontends and defaults sections.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
-func NewQUICInitialRuleFrontendCreate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"quic_initial_rule",
-		PriorityQUICInitialRule,
-		frontendName,
-		index,
-		rule,
-		Identity[*models.QUICInitialRule],
-		executors.QUICInitialRuleFrontendCreate(),
-		DescribeIndexChild(OperationCreate, "quic-initial-rule", index, "frontend", frontendName),
+var (
+	quicInitialRuleFrontendOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule](
+		"quic_initial_rule", PriorityQUICInitialRule, describeQUICInitialRule("frontend"),
+		executors.QUICInitialRuleFrontendCreate(), executors.QUICInitialRuleFrontendUpdate(), executors.QUICInitialRuleFrontendDelete(),
 	)
+	quicInitialRuleDefaultsOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule](
+		"quic_initial_rule", PriorityQUICInitialRule, describeQUICInitialRule("defaults"),
+		executors.QUICInitialRuleDefaultsCreate(), executors.QUICInitialRuleDefaultsUpdate(), executors.QUICInitialRuleDefaultsDelete(),
+	)
+)
+
+// NewQUICInitialRuleFrontendCreate creates an operation to create a QUIC initial rule in a frontend.
+func NewQUICInitialRuleFrontendCreate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
+	return quicInitialRuleFrontendOps.Create(frontendName, rule, index)
 }
 
 // NewQUICInitialRuleFrontendUpdate creates an operation to update a QUIC initial rule in a frontend.
-// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func NewQUICInitialRuleFrontendUpdate(frontendName string, rule *models.QUICInitialRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"quic_initial_rule",
-		PriorityQUICInitialRule,
-		frontendName,
-		index,
-		rule,
-		Identity[*models.QUICInitialRule],
-		executors.QUICInitialRuleFrontendUpdate(),
-		DescribeIndexChild(OperationUpdate, "quic-initial-rule", index, "frontend", frontendName),
-	)
+	return quicInitialRuleFrontendOps.Update(frontendName, rule, index)
 }
 
 // NewQUICInitialRuleFrontendDelete creates an operation to delete a QUIC initial rule from a frontend.
-// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func NewQUICInitialRuleFrontendDelete(frontendName string, rule *models.QUICInitialRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"quic_initial_rule",
-		PriorityQUICInitialRule,
-		frontendName,
-		index,
-		rule,
-		Nil[*models.QUICInitialRule],
-		executors.QUICInitialRuleFrontendDelete(),
-		DescribeIndexChild(OperationDelete, "quic-initial-rule", index, "frontend", frontendName),
-	)
+	return quicInitialRuleFrontendOps.Delete(frontendName, rule, index)
 }
 
 // NewQUICInitialRuleDefaultsCreate creates an operation to create a QUIC initial rule in defaults.
-// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func NewQUICInitialRuleDefaultsCreate(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"quic_initial_rule",
-		PriorityQUICInitialRule,
-		defaultsName,
-		index,
-		rule,
-		Identity[*models.QUICInitialRule],
-		executors.QUICInitialRuleDefaultsCreate(),
-		DescribeIndexChild(OperationCreate, "quic-initial-rule", index, "defaults", defaultsName),
-	)
+	return quicInitialRuleDefaultsOps.Create(defaultsName, rule, index)
 }
 
 // NewQUICInitialRuleDefaultsUpdate creates an operation to update a QUIC initial rule in defaults.
-// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func NewQUICInitialRuleDefaultsUpdate(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"quic_initial_rule",
-		PriorityQUICInitialRule,
-		defaultsName,
-		index,
-		rule,
-		Identity[*models.QUICInitialRule],
-		executors.QUICInitialRuleDefaultsUpdate(),
-		DescribeIndexChild(OperationUpdate, "quic-initial-rule", index, "defaults", defaultsName),
-	)
+	return quicInitialRuleDefaultsOps.Update(defaultsName, rule, index)
 }
 
 // NewQUICInitialRuleDefaultsDelete creates an operation to delete a QUIC initial rule from defaults.
-// QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 func NewQUICInitialRuleDefaultsDelete(defaultsName string, rule *models.QUICInitialRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"quic_initial_rule",
-		PriorityQUICInitialRule,
-		defaultsName,
-		index,
-		rule,
-		Nil[*models.QUICInitialRule],
-		executors.QUICInitialRuleDefaultsDelete(),
-		DescribeIndexChild(OperationDelete, "quic-initial-rule", index, "defaults", defaultsName),
-	)
+	return quicInitialRuleDefaultsOps.Delete(defaultsName, rule, index)
 }

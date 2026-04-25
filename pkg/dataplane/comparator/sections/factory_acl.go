@@ -20,92 +20,51 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
+// describeACLOp wraps DescribeACL into the IndexChildCRUDWithDescriber describer shape.
+func describeACLOp(parentType string) func(OperationType, *models.ACL, string, int) func() string {
+	return func(op OperationType, acl *models.ACL, parentName string, _ int) func() string {
+		return DescribeACL(op, acl.ACLName, parentType, parentName)
+	}
+}
+
+// CRUD builders for ACLs in frontends and backends.
+var (
+	aclFrontendOps = NewIndexChildCRUDWithDescriber[*models.ACL](
+		"acl", PriorityACL, describeACLOp("frontend"),
+		executors.ACLFrontendCreate(), executors.ACLFrontendUpdate(), executors.ACLFrontendDelete(),
+	)
+	aclBackendOps = NewIndexChildCRUDWithDescriber[*models.ACL](
+		"acl", PriorityACL, describeACLOp("backend"),
+		executors.ACLBackendCreate(), executors.ACLBackendUpdate(), executors.ACLBackendDelete(),
+	)
+)
+
 // NewACLFrontendCreate creates an operation to create an ACL in a frontend.
 func NewACLFrontendCreate(frontendName string, acl *models.ACL, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"acl",
-		PriorityACL,
-		frontendName,
-		index,
-		acl,
-		Identity[*models.ACL],
-		executors.ACLFrontendCreate(),
-		DescribeACL(OperationCreate, acl.ACLName, "frontend", frontendName),
-	)
+	return aclFrontendOps.Create(frontendName, acl, index)
 }
 
 // NewACLFrontendUpdate creates an operation to update an ACL in a frontend.
 func NewACLFrontendUpdate(frontendName string, acl *models.ACL, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"acl",
-		PriorityACL,
-		frontendName,
-		index,
-		acl,
-		Identity[*models.ACL],
-		executors.ACLFrontendUpdate(),
-		DescribeACL(OperationUpdate, acl.ACLName, "frontend", frontendName),
-	)
+	return aclFrontendOps.Update(frontendName, acl, index)
 }
 
 // NewACLFrontendDelete creates an operation to delete an ACL from a frontend.
 func NewACLFrontendDelete(frontendName string, acl *models.ACL, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"acl",
-		PriorityACL,
-		frontendName,
-		index,
-		acl,
-		Nil[*models.ACL],
-		executors.ACLFrontendDelete(),
-		DescribeACL(OperationDelete, acl.ACLName, "frontend", frontendName),
-	)
+	return aclFrontendOps.Delete(frontendName, acl, index)
 }
 
 // NewACLBackendCreate creates an operation to create an ACL in a backend.
 func NewACLBackendCreate(backendName string, acl *models.ACL, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"acl",
-		PriorityACL,
-		backendName,
-		index,
-		acl,
-		Identity[*models.ACL],
-		executors.ACLBackendCreate(),
-		DescribeACL(OperationCreate, acl.ACLName, "backend", backendName),
-	)
+	return aclBackendOps.Create(backendName, acl, index)
 }
 
 // NewACLBackendUpdate creates an operation to update an ACL in a backend.
 func NewACLBackendUpdate(backendName string, acl *models.ACL, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"acl",
-		PriorityACL,
-		backendName,
-		index,
-		acl,
-		Identity[*models.ACL],
-		executors.ACLBackendUpdate(),
-		DescribeACL(OperationUpdate, acl.ACLName, "backend", backendName),
-	)
+	return aclBackendOps.Update(backendName, acl, index)
 }
 
 // NewACLBackendDelete creates an operation to delete an ACL from a backend.
 func NewACLBackendDelete(backendName string, acl *models.ACL, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"acl",
-		PriorityACL,
-		backendName,
-		index,
-		acl,
-		Nil[*models.ACL],
-		executors.ACLBackendDelete(),
-		DescribeACL(OperationDelete, acl.ACLName, "backend", backendName),
-	)
+	return aclBackendOps.Delete(backendName, acl, index)
 }
