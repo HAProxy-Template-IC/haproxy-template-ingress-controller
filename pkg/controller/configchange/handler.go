@@ -221,18 +221,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 	// If no validators are configured, skip validation and immediately publish validated event
 	if len(h.validators) == 0 {
 		h.logger.Debug("No validators configured, skipping validation", "version", event.Version)
-
-		validatedEvent := events.NewConfigValidatedEvent(
-			event.Config,
-			event.TemplateConfig,
-			event.Version,
-			event.SecretVersion,
-		)
-
-		// Cache the event for leadership transition replay
-		h.configReplayer.Cache(validatedEvent)
-
-		h.eventBus.Publish(validatedEvent)
+		h.publishValidated(event)
 		return
 	}
 
@@ -291,19 +280,7 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 
 	if allValid {
 		h.logger.Info("Config validation succeeded", "version", event.Version)
-
-		validatedEvent := events.NewConfigValidatedEvent(
-			event.Config,
-			event.TemplateConfig,
-			event.Version,
-			event.SecretVersion,
-		)
-
-		// Cache the event for leadership transition replay
-		h.configReplayer.Cache(validatedEvent)
-
-		// Publish validated event
-		h.eventBus.Publish(validatedEvent)
+		h.publishValidated(event)
 	} else {
 		h.logger.Error("Config validation failed",
 			"version", event.Version,
@@ -312,6 +289,21 @@ func (h *ConfigChangeHandler) handleConfigParsed(ctx context.Context, event *eve
 		// Publish invalid event with TemplateConfig reference for status updates
 		h.eventBus.Publish(events.NewConfigInvalidEvent(event.Version, event.TemplateConfig, validationErrors))
 	}
+}
+
+// publishValidated builds a ConfigValidatedEvent from the parsed event,
+// caches it for leadership-transition replay, and publishes it. Used by both
+// the no-validators short-circuit and the all-valid branch of
+// handleConfigParsed.
+func (h *ConfigChangeHandler) publishValidated(event *events.ConfigParsedEvent) {
+	validatedEvent := events.NewConfigValidatedEvent(
+		event.Config,
+		event.TemplateConfig,
+		event.Version,
+		event.SecretVersion,
+	)
+	h.configReplayer.Cache(validatedEvent)
+	h.eventBus.Publish(validatedEvent)
 }
 
 // handleConfigValidated signals controller reinitialization when config is validated.
