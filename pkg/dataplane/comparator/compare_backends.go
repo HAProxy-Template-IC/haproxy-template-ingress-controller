@@ -274,37 +274,13 @@ func (c *Comparator) compareModifiedServersWithIndex(backendName string, current
 
 // compareServerTemplatesWithIndex compares server template configurations using pointer indexes for zero-copy iteration.
 func (c *Comparator) compareServerTemplatesWithIndex(backendName string, currentTemplates, desiredTemplates map[string]*models.ServerTemplate) []Operation {
-	// Pre-allocate with capacity for potential changes (add + delete + modify)
-	maxOps := len(currentTemplates) + len(desiredTemplates)
-	operations := make([]Operation, 0, maxOps)
-
-	// Find added server templates
-	for prefix, template := range desiredTemplates {
-		if _, exists := currentTemplates[prefix]; !exists {
-			operations = append(operations, sections.NewServerTemplateCreate(backendName, template))
-		}
-	}
-
-	// Find deleted server templates
-	for prefix, template := range currentTemplates {
-		if _, exists := desiredTemplates[prefix]; !exists {
-			operations = append(operations, sections.NewServerTemplateDelete(backendName, template))
-		}
-	}
-
-	// Find modified server templates
-	for prefix, desiredTemplate := range desiredTemplates {
-		currentTemplate, exists := currentTemplates[prefix]
-		if !exists {
-			continue
-		}
-		// Compare server template attributes using Equal() method
-		if !currentTemplate.Equal(*desiredTemplate) {
-			operations = append(operations, sections.NewServerTemplateUpdate(backendName, desiredTemplate))
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentTemplates, desiredTemplates,
+		func(a, b *models.ServerTemplate) bool { return a.Equal(*b) },
+		func(t *models.ServerTemplate) Operation { return sections.NewServerTemplateCreate(backendName, t) },
+		func(t *models.ServerTemplate) Operation { return sections.NewServerTemplateDelete(backendName, t) },
+		func(t *models.ServerTemplate) Operation { return sections.NewServerTemplateUpdate(backendName, t) },
+	)
 }
 
 // clearNestedCollections zeroes all nested collection fields on a Backend copy
