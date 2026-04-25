@@ -835,7 +835,14 @@ func main() {
     // (see pkg/controller/iteration.go for the real wiring).
     configLoader := configloader.NewConfigLoaderComponent(eventBus, logger)
     credentialsLoader := credentialsloader.NewCredentialsLoaderComponent(eventBus, logger)
-    configValidator := validator.NewCoordinator(eventBus)
+
+    // Three validators subscribe to ConfigValidationRequest via their shared BaseValidator;
+    // the ConfigChangeHandler is the orchestrator that fans the request out to them.
+    validator.NewBasicValidator(eventBus, logger)
+    validator.NewTemplateValidator(eventBus, logger)
+    validator.NewJSONPathValidator(eventBus, logger)
+    configValidator := configchange.NewHandler(eventBus, logger, configChangeCh,
+        []string{"basic", "template", "jsonpath"})
 
     go configLoader.Run(ctx)
     go credentialsLoader.Run(ctx)

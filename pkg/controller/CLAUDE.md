@@ -416,47 +416,54 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 ## Staged Startup Pattern
 
-The controller uses a 5-stage startup sequence coordinated via events:
+The controller uses a 5-stage startup sequence coordinated via events. The entry point is the package-level function `controller.Run` (no `Controller` struct); each iteration is `pkg/controller/iteration.go`. Below is the *shape* — read `iteration.go` for the canonical wiring (constructor signatures, error handling, leader-only gating).
 
 ```go
-// controller.go
-func (c *Controller) Run(ctx context.Context) error {
-    // Stage 1: Config Management
-    log.Info("Stage 1: Config management")
-    configWatcher := configloader.New(c.client, c.eventBus)
-    configValidator := validator.NewCoordinator(c.eventBus)
-    go configWatcher.Run(ctx)
-    go configValidator.Run(ctx)
+// pkg/controller/iteration.go (sketch — see source for the real thing)
+func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
+    bus := busevents.NewEventBus(busBufferSize)
 
-    c.eventBus.Start()  // Release buffered events
+    // Stage 1: Config management — every component subscribes to its events
+    // *during construction*, before bus.Start() releases the pre-start buffer.
+    configLoader := configloader.NewConfigLoaderComponent(bus, logger)
+    credentialsLoader := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
+    validator.NewBasicValidator(bus, logger)      // BaseValidator subscribes
+    validator.NewTemplateValidator(bus, logger)
+    validator.NewJSONPathValidator(bus, logger)
+    handler := configchange.NewHandler(bus, logger, configChangeCh,
+        []string{"basic", "template", "jsonpath"})
 
-    // Stage 2: Wait for Valid Config
-    log.Info("Stage 2: Waiting for valid config")
-    config := c.waitForEvent(ctx, "config.validated")
+    bus.Start()
+    go configLoader.Run(iterCtx)
+    go credentialsLoader.Run(iterCtx)
+    go handler.Run(iterCtx)
 
-    // Stage 3: Resource Watchers
-    log.Info("Stage 3: Resource watchers")
-    resourceWatcher := c.createResourceWatcher(config)
-    go resourceWatcher.Run(ctx)
+    // Stage 2: synchronously fetch + validate the CRD/Secret before continuing.
+    cfg, creds := fetchAndValidate(ctx, k8sClient, ...)
 
-    // Stage 4: Wait for Index Sync
-    log.Info("Stage 4: Waiting for index sync")
-    c.waitForEvent(ctx, "index.synchronized")
+    // Stage 3: watch each spec.watchedResources entry; wait for initial sync.
+    rw := resourcewatcher.New(bus, cfg, ...)
+    go rw.Run(iterCtx)
+    rw.WaitForAllSync(ctx)
 
-    // Stage 5: Reconciliation
-    log.Info("Stage 5: Reconciliation components")
-    rec := reconciler.New(c.eventBus, logger, nil)
-    coordinator := reconciler.NewCoordinator(c.eventBus, pipeline, storeProvider, logger)
-    go rec.Start(ctx)
-    go coordinator.Start(ctx)
+    // Stage 4 sits inside Stage 3's WaitForAllSync.
 
-    log.Info("Controller fully operational")
+    // Stage 5: reconciliation + observability components.
+    reconciler.New(bus, logger, nil)
+    reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
+        EventBus: bus, Pipeline: pipeline, StoreProvider: storeProvider, Logger: logger,
+    })
+    // … plus deployer, discovery, metrics, commentator, debug HTTP server …
 
-    // Wait for shutdown
-    <-ctx.Done()
+    <-iterCtx.Done()  // until config change cancels the iteration or shutdown signal
     return nil
 }
 ```
+
+Key non-obvious points:
+
+- **Subscribe in constructors**, not in `Run` / `Start`. `bus.Start()` flushes the pre-start buffer to whoever's subscribed *at that moment*; late subscribers miss buffered events. Every constructor in this tree obeys this rule via the shared `pkg/controller/component.Base` scaffold.
+- **Leader-only components** (Coordinator, Deployer, DriftMonitor) subscribe inside `Start()` after `BecameLeaderEvent`. All-replica components that hold state (Renderer, Validator, Discovery) re-publish their last state on `BecameLeaderEvent` so the late-subscribed leader-only components don't miss the events that landed during the leadership transition.
 
 **Why staged startup?**
 
