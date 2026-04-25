@@ -27,64 +27,25 @@ import (
 // rendered HAProxy config, AFTER the new config has been applied successfully.
 // Errors are logged as warnings but do not fail the sync since config is already applied.
 func (o *orchestrator) deleteUnreferencedFilesPostConfig(ctx context.Context, fileDiff *auxiliaryfiles.FileDiff, sslDiff *auxiliaryfiles.SSLCertificateDiff, caFileDiff *auxiliaryfiles.SSLCaFileDiff, mapDiff *auxiliaryfiles.MapFileDiff) {
-	// Delete general files
-	if fileDiff != nil && len(fileDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting unreferenced general files", "count", len(fileDiff.ToDelete))
-
-		postConfigDiff := &auxiliaryfiles.FileDiff{
-			ToDelete: fileDiff.ToDelete,
-		}
-
-		if _, err := auxiliaryfiles.SyncGeneralFiles(ctx, o.client, postConfigDiff); err != nil {
-			o.logger.Warn("Failed to delete unreferenced general files", "error", err, "files", fileDiff.ToDelete)
-		} else {
-			o.logger.Info("Unreferenced general files deleted successfully")
-		}
+	if fileDiff != nil {
+		o.deleteUnreferencedAuxFiles(ctx, fileDiff.ToDelete, "general files", "files", func(ctx context.Context) ([]string, error) {
+			return auxiliaryfiles.SyncGeneralFiles(ctx, o.client, &auxiliaryfiles.FileDiff{ToDelete: fileDiff.ToDelete})
+		})
 	}
-
-	// Delete SSL certificates
-	if sslDiff != nil && len(sslDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting unreferenced SSL certificates", "count", len(sslDiff.ToDelete))
-
-		postConfigSSL := &auxiliaryfiles.SSLCertificateDiff{
-			ToDelete: sslDiff.ToDelete,
-		}
-
-		if _, err := auxiliaryfiles.SyncSSLCertificates(ctx, o.client, postConfigSSL); err != nil {
-			o.logger.Warn("Failed to delete unreferenced SSL certificates", "error", err, "certificates", sslDiff.ToDelete)
-		} else {
-			o.logger.Info("Unreferenced SSL certificates deleted successfully")
-		}
+	if sslDiff != nil {
+		o.deleteUnreferencedAuxFiles(ctx, sslDiff.ToDelete, "SSL certificates", "certificates", func(ctx context.Context) ([]string, error) {
+			return auxiliaryfiles.SyncSSLCertificates(ctx, o.client, &auxiliaryfiles.SSLCertificateDiff{ToDelete: sslDiff.ToDelete})
+		})
 	}
-
-	// Delete SSL CA files
-	if caFileDiff != nil && len(caFileDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting unreferenced SSL CA files", "count", len(caFileDiff.ToDelete))
-
-		postConfigCA := &auxiliaryfiles.SSLCaFileDiff{
-			ToDelete: caFileDiff.ToDelete,
-		}
-
-		if _, err := auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, postConfigCA); err != nil {
-			o.logger.Warn("Failed to delete unreferenced SSL CA files", "error", err, "ca_files", caFileDiff.ToDelete)
-		} else {
-			o.logger.Info("Unreferenced SSL CA files deleted successfully")
-		}
+	if caFileDiff != nil {
+		o.deleteUnreferencedAuxFiles(ctx, caFileDiff.ToDelete, "SSL CA files", "ca_files", func(ctx context.Context) ([]string, error) {
+			return auxiliaryfiles.SyncSSLCaFiles(ctx, o.client, &auxiliaryfiles.SSLCaFileDiff{ToDelete: caFileDiff.ToDelete})
+		})
 	}
-
-	// Delete map files
-	if mapDiff != nil && len(mapDiff.ToDelete) > 0 {
-		o.logger.Info("Deleting unreferenced map files", "count", len(mapDiff.ToDelete))
-
-		postConfigMap := &auxiliaryfiles.MapFileDiff{
-			ToDelete: mapDiff.ToDelete,
-		}
-
-		if _, err := auxiliaryfiles.SyncMapFiles(ctx, o.client, postConfigMap); err != nil {
-			o.logger.Warn("Failed to delete unreferenced map files", "error", err, "maps", mapDiff.ToDelete)
-		} else {
-			o.logger.Info("Unreferenced map files deleted successfully")
-		}
+	if mapDiff != nil {
+		o.deleteUnreferencedAuxFiles(ctx, mapDiff.ToDelete, "map files", "maps", func(ctx context.Context) ([]string, error) {
+			return auxiliaryfiles.SyncMapFiles(ctx, o.client, &auxiliaryfiles.MapFileDiff{ToDelete: mapDiff.ToDelete})
+		})
 	}
 
 	// Note: CRT-list deletion is handled by the general files deletion above.
@@ -92,6 +53,21 @@ func (o *orchestrator) deleteUnreferencedFilesPostConfig(ctx context.Context, fi
 	// they are merged into the general files comparison and deleted together.
 	// The crtlistDiff.ToDelete is cleared in compareAuxiliaryFiles() to prevent
 	// conflicting delete operations between general files and CRT-lists.
+}
+
+// deleteUnreferencedAuxFiles runs a post-config deletion for one auxiliary file type,
+// logging the intent, dispatching to the type-specific sync function, and downgrading
+// failures to warnings (the new config is already live).
+func (o *orchestrator) deleteUnreferencedAuxFiles(ctx context.Context, toDelete []string, label, logField string, syncFn func(context.Context) ([]string, error)) {
+	if len(toDelete) == 0 {
+		return
+	}
+	o.logger.Info("Deleting unreferenced "+label, "count", len(toDelete))
+	if _, err := syncFn(ctx); err != nil {
+		o.logger.Warn("Failed to delete unreferenced "+label, "error", err, logField, toDelete)
+		return
+	}
+	o.logger.Info("Unreferenced " + label + " deleted successfully")
 }
 
 // auxiliaryFileSyncParams contains parameters for auxiliary file synchronization.
