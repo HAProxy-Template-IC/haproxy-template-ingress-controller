@@ -418,7 +418,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 **Features:**
 
-- Debounces resource changes with configurable interval (default 500ms)
+- Debounces resource changes with a leading-edge refractory window (`types.DefaultDebounceInterval`, currently 5s); not configurable via the CRD
 - Triggers immediate reconciliation when all indices are synchronized
 - Filters initial sync events to prevent premature reconciliation
 - Publishes ReconciliationTriggeredEvent
