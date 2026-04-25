@@ -109,24 +109,34 @@ func (t *HealthTracker) Check() error {
 	defer t.mu.RUnlock()
 
 	// Activity-based check (for timer components)
-	if t.activityTimeout > 0 {
-		timeSinceActivity := time.Since(t.lastActivity)
-		if timeSinceActivity > t.activityTimeout {
-			return fmt.Errorf("%s stalled: no activity for %v (timeout: %v)",
-				t.componentName, timeSinceActivity.Round(time.Second), t.activityTimeout)
-		}
+	if err := t.checkStall("no activity for", t.lastActivity, t.activityTimeout); err != nil {
+		return err
 	}
 
 	// Processing-based check (for event-driven components)
-	if t.processTimeout > 0 && !t.processingStart.IsZero() {
-		processingDuration := time.Since(t.processingStart)
-		if processingDuration > t.processTimeout {
-			return fmt.Errorf("%s stalled: processing for %v (timeout: %v)",
-				t.componentName, processingDuration.Round(time.Second), t.processTimeout)
-		}
+	if err := t.checkStall("processing for", t.processingStart, t.processTimeout); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+// checkStall returns an error if the duration since "since" exceeds timeout.
+// A zero timeout disables the check; a zero "since" timestamp means the
+// component is not currently in the tracked state (e.g. processing-idle) and
+// is reported healthy. label is the slug embedded in the error ("no activity
+// for", "processing for") so callers can express both kinds of stall checks
+// without duplicating the if/format/return pattern. Caller must hold t.mu.
+func (t *HealthTracker) checkStall(label string, since time.Time, timeout time.Duration) error {
+	if timeout == 0 || since.IsZero() {
+		return nil
+	}
+	duration := time.Since(since)
+	if duration <= timeout {
+		return nil
+	}
+	return fmt.Errorf("%s stalled: %s %v (timeout: %v)",
+		t.componentName, label, duration.Round(time.Second), timeout)
 }
 
 // IsProcessing returns true if the component is currently processing an event.
