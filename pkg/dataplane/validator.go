@@ -18,10 +18,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"log/slog"
 	"sync"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
@@ -196,38 +198,23 @@ func hashAuxFiles(auxFiles *AuxiliaryFiles) string {
 	}
 
 	h := sha256.New()
-
-	// Hash map files
-	for _, f := range auxFiles.MapFiles {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-
-	// Hash general files
-	for _, f := range auxFiles.GeneralFiles {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-
-	// Hash SSL certificates
-	for _, f := range auxFiles.SSLCertificates {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-
-	// Hash SSL CA files
-	for _, f := range auxFiles.SSLCaFiles {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-
-	// Hash CRT-list files
-	for _, f := range auxFiles.CRTListFiles {
-		h.Write([]byte(f.Path))
-		h.Write([]byte(f.Content))
-	}
-
+	hashAuxByPath(h, auxFiles.MapFiles, func(f auxiliaryfiles.MapFile) string { return f.Path })
+	hashAuxByPath(h, auxFiles.GeneralFiles, func(f auxiliaryfiles.GeneralFile) string { return f.Path })
+	hashAuxByPath(h, auxFiles.SSLCertificates, func(f auxiliaryfiles.SSLCertificate) string { return f.Path })
+	hashAuxByPath(h, auxFiles.SSLCaFiles, func(f auxiliaryfiles.SSLCaFile) string { return f.Path })
+	hashAuxByPath(h, auxFiles.CRTListFiles, func(f auxiliaryfiles.CRTListFile) string { return f.Path })
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// hashAuxByPath writes (path, content) for each item to h. Used for the
+// validation cache key, which keys on Path (the on-disk location HAProxy will
+// see) rather than the API-side identifier returned by FileItem.GetIdentifier()
+// (which differs from Path for GeneralFile, where it's the bare Filename).
+func hashAuxByPath[T auxiliaryfiles.FileItem](h hash.Hash, items []T, getPath func(T) string) {
+	for _, item := range items {
+		h.Write([]byte(getPath(item)))
+		h.Write([]byte(item.GetContent()))
+	}
 }
 
 // hashVersion computes a hash string for the version to include in cache key.
