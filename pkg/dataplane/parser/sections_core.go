@@ -20,6 +20,8 @@ import (
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 	"github.com/haproxytech/client-native/v6/configuration"
 	"github.com/haproxytech/client-native/v6/models"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // extractGlobal extracts the global section using client-native's ParseGlobalSection.
@@ -111,15 +113,8 @@ func (p *Parser) extractFrontendsWithIndexes(conf *StructuredConfig) {
 		fe.ACLList, _ = configuration.ParseACLs(parser.Frontends, sectionName, p.parser)
 
 		// Parse binds and build pointer index for zero-copy iteration.
-		// ParseBinds returns []*models.Bind - we store pointers directly in the index.
 		binds, _ := configuration.ParseBinds(string(parser.Frontends), sectionName, p.parser)
-		if binds != nil {
-			bindIndex := make(map[string]*models.Bind, len(binds))
-			for _, bind := range binds {
-				if bind != nil {
-					bindIndex[bind.Name] = bind // Store pointer directly, no copy
-				}
-			}
+		if bindIndex := parserconfig.BuildPointerIndex(binds, func(b *models.Bind) string { return b.Name }); bindIndex != nil {
 			conf.BindIndex[sectionName] = bindIndex
 		}
 
@@ -182,15 +177,8 @@ func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be 
 	be.ACLList, _ = configuration.ParseACLs(parser.Backends, sectionName, p.parser)
 
 	// Parse servers and build pointer index for zero-copy iteration.
-	// ParseServers returns []*models.Server - we store pointers directly in the index.
 	servers, _ := configuration.ParseServers(string(parser.Backends), sectionName, p.parser)
-	if servers != nil {
-		serverIndex := make(map[string]*models.Server, len(servers))
-		for _, server := range servers {
-			if server != nil {
-				serverIndex[server.Name] = server // Store pointer directly, no copy
-			}
-		}
+	if serverIndex := parserconfig.BuildPointerIndex(servers, func(s *models.Server) string { return s.Name }); serverIndex != nil {
 		conf.ServerIndex[sectionName] = serverIndex
 	}
 
@@ -201,15 +189,8 @@ func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be 
 	p.parseBackendFiltersAndChecks(sectionName, be)
 
 	// Parse server templates and build pointer index for zero-copy iteration.
-	// ParseServerTemplates returns []*models.ServerTemplate - we store pointers directly.
 	serverTemplates, _ := configuration.ParseServerTemplates(sectionName, p.parser)
-	if serverTemplates != nil {
-		templateIndex := make(map[string]*models.ServerTemplate, len(serverTemplates))
-		for _, template := range serverTemplates {
-			if template != nil {
-				templateIndex[template.Prefix] = template // Store pointer directly, no copy
-			}
-		}
+	if templateIndex := parserconfig.BuildPointerIndex(serverTemplates, func(t *models.ServerTemplate) string { return t.Prefix }); templateIndex != nil {
 		conf.ServerTemplateIndex[sectionName] = templateIndex
 	}
 }

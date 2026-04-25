@@ -41,15 +41,8 @@ func (p *Parser) extractPeersWithIndexes(conf *StructuredConfig) {
 		peer.Name = sectionName
 
 		// Parse peer entries and build pointer index for zero-copy iteration.
-		// ParsePeerEntries returns []*models.PeerEntry - we store pointers directly.
 		peerEntries, _ := configuration.ParsePeerEntries(sectionName, p.parser)
-		if peerEntries != nil {
-			entryIndex := make(map[string]*models.PeerEntry, len(peerEntries))
-			for _, entry := range peerEntries {
-				if entry != nil {
-					entryIndex[entry.Name] = entry // Store pointer directly, no copy
-				}
-			}
+		if entryIndex := parserconfig.BuildPointerIndex(peerEntries, func(e *models.PeerEntry) string { return e.Name }); entryIndex != nil {
 			conf.PeerEntryIndex[sectionName] = entryIndex
 		}
 
@@ -78,15 +71,8 @@ func (p *Parser) extractResolversWithIndexes(conf *StructuredConfig) {
 		}
 
 		// Parse nameservers and build pointer index for zero-copy iteration.
-		// ParseNameservers returns []*models.Nameserver - we store pointers directly.
 		nameservers, _ := configuration.ParseNameservers(sectionName, p.parser)
-		if nameservers != nil {
-			nsIndex := make(map[string]*models.Nameserver, len(nameservers))
-			for _, ns := range nameservers {
-				if ns != nil {
-					nsIndex[ns.Name] = ns // Store pointer directly, no copy
-				}
-			}
+		if nsIndex := parserconfig.BuildPointerIndex(nameservers, func(n *models.Nameserver) string { return n.Name }); nsIndex != nil {
 			conf.NameserverIndex[sectionName] = nsIndex
 		}
 
@@ -115,15 +101,8 @@ func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 		}
 
 		// Parse mailer entries and build pointer index for zero-copy iteration.
-		// ParseMailerEntries returns []*models.MailerEntry - we store pointers directly.
 		mailerEntries, _ := configuration.ParseMailerEntries(sectionName, p.parser)
-		if mailerEntries != nil {
-			entryIndex := make(map[string]*models.MailerEntry, len(mailerEntries))
-			for _, entry := range mailerEntries {
-				if entry != nil {
-					entryIndex[entry.Name] = entry // Store pointer directly, no copy
-				}
-			}
+		if entryIndex := parserconfig.BuildPointerIndex(mailerEntries, func(e *models.MailerEntry) string { return e.Name }); entryIndex != nil {
 			conf.MailerEntryIndex[sectionName] = entryIndex
 		}
 

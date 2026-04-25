@@ -211,32 +211,34 @@ type EEGlobalDirective struct {
 	Comment string
 }
 
-// BuildUserIndex builds a pointer index from a slice of users.
-// Returns nil if the input slice is nil.
-func BuildUserIndex(users []*models.User) map[string]*models.User {
-	if users == nil {
+// BuildPointerIndex builds a pointer index from a slice of items, keyed by
+// the value returned by getKey. Nil items and items with an empty key are
+// skipped. Returns nil if the input slice is nil so callers can keep the
+// section's index unset when there is nothing to record.
+func BuildPointerIndex[T any](items []*T, getKey func(*T) string) map[string]*T {
+	if items == nil {
 		return nil
 	}
-	index := make(map[string]*models.User, len(users))
-	for _, user := range users {
-		if user != nil && user.Username != "" {
-			index[user.Username] = user
+	index := make(map[string]*T, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if key := getKey(item); key != "" {
+			index[key] = item
 		}
 	}
 	return index
 }
 
+// BuildUserIndex builds a pointer index from a slice of users.
+// Returns nil if the input slice is nil.
+func BuildUserIndex(users []*models.User) map[string]*models.User {
+	return BuildPointerIndex(users, func(u *models.User) string { return u.Username })
+}
+
 // BuildGroupIndex builds a pointer index from a slice of groups.
 // Returns nil if the input slice is nil.
 func BuildGroupIndex(groups []*models.Group) map[string]*models.Group {
-	if groups == nil {
-		return nil
-	}
-	index := make(map[string]*models.Group, len(groups))
-	for _, group := range groups {
-		if group != nil && group.Name != "" {
-			index[group.Name] = group
-		}
-	}
-	return index
+	return BuildPointerIndex(groups, func(g *models.Group) string { return g.Name })
 }
