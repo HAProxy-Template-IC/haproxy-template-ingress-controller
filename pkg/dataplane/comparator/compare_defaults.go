@@ -10,22 +10,14 @@ import (
 // compareGlobal compares global section configurations between current and desired.
 // The global section is a singleton - it always exists and can only be updated, not created or deleted.
 func (c *Comparator) compareGlobal(current, desired *parser.StructuredConfig, summary *DiffSummary) []Operation {
-	var operations []Operation
-
-	// Both configs should have a global section (even if empty)
-	// If either is nil, we skip comparison
 	if current.Global == nil || desired.Global == nil {
-		return operations
+		return nil
 	}
-
-	// Compare using built-in Equal() method
-	// This automatically compares all global attributes (log settings, stats socket, maxconn, etc.)
-	if !current.Global.Equal(*desired.Global) {
-		operations = append(operations, sections.NewGlobalUpdate(desired.Global))
-		summary.GlobalChanged = true
+	if current.Global.Equal(*desired.Global) {
+		return nil
 	}
-
-	return operations
+	summary.GlobalChanged = true
+	return []Operation{sections.NewGlobalUpdate(desired.Global)}
 }
 
 // compareDefaults compares defaults section configurations between current and desired.

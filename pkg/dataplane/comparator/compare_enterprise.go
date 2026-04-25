@@ -83,29 +83,18 @@ func (c *Comparator) compareWAFProfiles(current, desired *parser.StructuredConfi
 // WAF global is a singleton section (only one per configuration).
 // WAF global is only available in HAProxy Enterprise Edition v3.2+.
 func (c *Comparator) compareWAFGlobal(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// If desired has no WAF global, nothing to do (can't delete singleton)
-	if desired.WAFGlobal == nil {
-		// If current has WAF global but desired doesn't, generate delete
-		if current.WAFGlobal != nil {
-			operations = append(operations, sections.NewWAFGlobalDelete(current.WAFGlobal))
-		}
-		return operations
+	switch {
+	case desired.WAFGlobal == nil && current.WAFGlobal != nil:
+		return []Operation{sections.NewWAFGlobalDelete(current.WAFGlobal)}
+	case desired.WAFGlobal == nil:
+		return nil
+	case current.WAFGlobal == nil:
+		return []Operation{sections.NewWAFGlobalCreate(desired.WAFGlobal)}
+	case !eeModelEqual(current.WAFGlobal, desired.WAFGlobal):
+		return []Operation{sections.NewWAFGlobalUpdate(desired.WAFGlobal)}
+	default:
+		return nil
 	}
-
-	// If current is nil but desired has WAF global, create it
-	if current.WAFGlobal == nil {
-		operations = append(operations, sections.NewWAFGlobalCreate(desired.WAFGlobal))
-		return operations
-	}
-
-	// Compare using JSON equality (EE types don't have Equal methods)
-	if !eeModelEqual(current.WAFGlobal, desired.WAFGlobal) {
-		operations = append(operations, sections.NewWAFGlobalUpdate(desired.WAFGlobal))
-	}
-
-	return operations
 }
 
 // eeModelEqual compares two EE models for equality using JSON serialization.
