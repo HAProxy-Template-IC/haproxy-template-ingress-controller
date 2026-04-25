@@ -544,30 +544,30 @@ func TestDebouncer_ResetAfterCallback(t *testing.T) {
 	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false)
 
-	// First batch
+	// First batch — leading-edge fires immediately on the first
+	// RecordCreate; the second RecordCreate may either batch with
+	// the first (one callback with Created=2) OR fire after the
+	// refractory window (a second callback with Created=1). The
+	// per-burst total Created is deterministic (=2) regardless of
+	// how the leading-edge schedule split it.
 	debouncer.RecordCreate()
 	debouncer.RecordCreate()
 
-	recorder.waitForCallbacks(t, 1)
+	// Wait for the FIRST batch to fully settle (totals reach 2).
+	recorder.waitForTotal(t, types.ChangeStats{Created: 2})
 
-	// Wait for refractory period to expire
+	// Wait for refractory period to expire so the next batch starts fresh.
 	time.Sleep(100 * time.Millisecond)
+	recorder.clear()
 
-	// Second batch (should be independent)
+	// Second batch (independent): RecordUpdate fires immediately
+	// (leading edge), RecordDelete may batch with it or fire after
+	// the refractory window. The per-burst totals are still
+	// deterministic.
 	debouncer.RecordUpdate()
 	debouncer.RecordDelete()
 
-	recorder.waitForCallbacks(t, 2)
-
-	received := recorder.getReceived()
-	require.Len(t, received, 2)
-	// First batch
-	assert.Equal(t, 2, received[0].Created)
-	assert.Equal(t, 0, received[0].Modified)
-	// Second batch
-	assert.Equal(t, 0, received[1].Created)
-	assert.Equal(t, 1, received[1].Modified)
-	assert.Equal(t, 1, received[1].Deleted)
+	recorder.waitForTotal(t, types.ChangeStats{Modified: 1, Deleted: 1})
 }
 
 func TestDebouncer_LeadingEdge_ImmediateFire(t *testing.T) {
