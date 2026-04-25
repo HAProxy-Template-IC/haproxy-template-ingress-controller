@@ -26,6 +26,36 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
+// lookupCachedConfig fetches the template config and rendered entry tied to the
+// event's correlation ID. Returns ok=false (with a warning logged) when either the
+// correlation ID is missing or the cached state isn't yet complete; callers should
+// bail out in that case. eventName labels the event in the missing-correlation-id
+// warning, action labels the intended operation in the missing-state warning.
+func (c *Component) lookupCachedConfig(eventID, correlationID, eventName, action string) (*v1alpha1.HAProxyTemplateConfig, *renderedConfigEntry, bool) {
+	if correlationID == "" {
+		c.logger.Warn(eventName+" missing correlation ID, cannot match rendered config",
+			"event_id", eventID)
+		return nil, nil, false
+	}
+
+	c.mu.RLock()
+	hasTemplateConfig := c.hasTemplateConfig
+	templateConfig := c.templateConfig
+	entry, hasRenderedConfig := c.renderedConfigs[correlationID]
+	c.mu.RUnlock()
+
+	if !hasTemplateConfig || !hasRenderedConfig {
+		c.logger.Warn("cannot "+action+", missing cached state",
+			"has_template_config", hasTemplateConfig,
+			"has_rendered_config", hasRenderedConfig,
+			"correlation_id", correlationID,
+		)
+		return nil, nil, false
+	}
+
+	return templateConfig, entry, true
+}
+
 // handleConfigValidated caches the template config for later publishing.
 func (c *Component) handleConfigValidated(event *events.ConfigValidatedEvent) {
 	// Extract HAProxyTemplateConfig from event.TemplateConfig (not event.Config)
@@ -96,26 +126,8 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 // slow API calls, allowing the component to keep up with event volume.
 func (c *Component) handleValidationCompleted(event *events.ValidationCompletedEvent) {
 	correlationID := event.CorrelationID()
-	if correlationID == "" {
-		c.logger.Warn("ValidationCompletedEvent missing correlation ID, cannot match rendered config",
-			"event_id", event.EventID())
-		return
-	}
-
-	// Get cached state using correlation ID for proper event matching
-	c.mu.RLock()
-	hasTemplateConfig := c.hasTemplateConfig
-	templateConfig := c.templateConfig
-	entry, hasRenderedConfig := c.renderedConfigs[correlationID]
-	c.mu.RUnlock()
-
-	// Check if we have all required data
-	if !hasTemplateConfig || !hasRenderedConfig {
-		c.logger.Warn("cannot publish configuration, missing cached state",
-			"has_template_config", hasTemplateConfig,
-			"has_rendered_config", hasRenderedConfig,
-			"correlation_id", correlationID,
-		)
+	templateConfig, entry, ok := c.lookupCachedConfig(event.EventID(), correlationID, "ValidationCompletedEvent", "publish configuration")
+	if !ok {
 		return
 	}
 
@@ -174,26 +186,8 @@ func (c *Component) handleValidationCompleted(event *events.ValidationCompletedE
 // of making K8S API calls directly.
 func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) {
 	correlationID := event.CorrelationID()
-	if correlationID == "" {
-		c.logger.Warn("ValidationFailedEvent missing correlation ID, cannot match rendered config",
-			"event_id", event.EventID())
-		return
-	}
-
-	// Get cached state using correlation ID for proper event matching
-	c.mu.RLock()
-	hasTemplateConfig := c.hasTemplateConfig
-	templateConfig := c.templateConfig
-	entry, hasRenderedConfig := c.renderedConfigs[correlationID]
-	c.mu.RUnlock()
-
-	// Check if we have all required data
-	if !hasTemplateConfig || !hasRenderedConfig {
-		c.logger.Warn("cannot publish invalid configuration, missing cached state",
-			"has_template_config", hasTemplateConfig,
-			"has_rendered_config", hasRenderedConfig,
-			"correlation_id", correlationID,
-		)
+	templateConfig, entry, ok := c.lookupCachedConfig(event.EventID(), correlationID, "ValidationFailedEvent", "publish invalid configuration")
+	if !ok {
 		return
 	}
 
