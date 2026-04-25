@@ -17,6 +17,7 @@ package events
 import (
 	"log/slog"
 	"runtime"
+	"strings"
 )
 
 // subscriber represents a universal subscription to the event bus.
@@ -25,6 +26,23 @@ type subscriber struct {
 	name       string // Subscriber name for debugging (e.g., "commentator", "reconciler")
 	bufferSize int    // Original buffer size for debugging
 	lossy      bool   // If true, drops are silent (no onDrop callback)
+}
+
+// subscriptionCallerInfo returns the source file (basename only) and line of
+// the user-facing Subscribe* call that triggered the late-subscription warning.
+// Skip is measured from the *caller* of this helper to the user's call site
+// (the same value the caller would pass to runtime.Caller without the
+// indirection through this helper). The extra frame for this helper itself
+// is added internally.
+func subscriptionCallerInfo(skip int) (file string, line int) {
+	_, fullPath, line, ok := runtime.Caller(skip + 1)
+	if !ok {
+		return "unknown", 0
+	}
+	if i := strings.LastIndex(fullPath, "/"); i >= 0 {
+		fullPath = fullPath[i+1:]
+	}
+	return fullPath, line
 }
 
 // Subscribe creates a new subscription to the event bus.
@@ -117,20 +135,7 @@ func (b *EventBus) subscribeInternal(name string, bufferSize int, suppressLateWa
 	b.startMu.Unlock()
 
 	if started && !suppressLateWarning {
-		// Get caller info for debugging
-		_, file, line, ok := runtime.Caller(2)
-		caller := "unknown"
-		if ok {
-			// Extract just the filename for brevity
-			for i := len(file) - 1; i >= 0; i-- {
-				if file[i] == '/' {
-					file = file[i+1:]
-					break
-				}
-			}
-			caller = file
-		}
-
+		caller, line := subscriptionCallerInfo(2)
 		slog.Warn("Subscription after EventBus.Start() may miss buffered events",
 			"caller", caller,
 			"line", line,
