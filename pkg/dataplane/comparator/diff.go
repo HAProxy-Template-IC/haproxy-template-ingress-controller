@@ -129,35 +129,28 @@ func (s *DiffSummary) String() string {
 
 // formatFrontendChanges formats the frontend changes section.
 func (s *DiffSummary) formatFrontendChanges() []string {
-	var parts []string
-
-	if len(s.FrontendsAdded) > 0 {
-		parts = append(parts, fmt.Sprintf("- Frontends added: %s", strings.Join(s.FrontendsAdded, ", ")))
-	}
-	if len(s.FrontendsModified) > 0 {
-		parts = append(parts, fmt.Sprintf("- Frontends modified: %s", strings.Join(s.FrontendsModified, ", ")))
-	}
-	if len(s.FrontendsDeleted) > 0 {
-		parts = append(parts, fmt.Sprintf("- Frontends deleted: %s", strings.Join(s.FrontendsDeleted, ", ")))
-	}
-
-	return parts
+	return formatNamedChanges("Frontends", s.FrontendsAdded, s.FrontendsModified, s.FrontendsDeleted)
 }
 
 // formatBackendChanges formats the backend changes section.
 func (s *DiffSummary) formatBackendChanges() []string {
+	return formatNamedChanges("Backends", s.BackendsAdded, s.BackendsModified, s.BackendsDeleted)
+}
+
+// formatNamedChanges builds the "- <Label> {added,modified,deleted}: a, b, c"
+// lines for a section whose changes are tracked as comma-joined name slices.
+// Empty slices are skipped so callers don't end up with blank lines.
+func formatNamedChanges(label string, added, modified, deleted []string) []string {
 	var parts []string
-
-	if len(s.BackendsAdded) > 0 {
-		parts = append(parts, fmt.Sprintf("- Backends added: %s", strings.Join(s.BackendsAdded, ", ")))
+	if len(added) > 0 {
+		parts = append(parts, fmt.Sprintf("- %s added: %s", label, strings.Join(added, ", ")))
 	}
-	if len(s.BackendsModified) > 0 {
-		parts = append(parts, fmt.Sprintf("- Backends modified: %s", strings.Join(s.BackendsModified, ", ")))
+	if len(modified) > 0 {
+		parts = append(parts, fmt.Sprintf("- %s modified: %s", label, strings.Join(modified, ", ")))
 	}
-	if len(s.BackendsDeleted) > 0 {
-		parts = append(parts, fmt.Sprintf("- Backends deleted: %s", strings.Join(s.BackendsDeleted, ", ")))
+	if len(deleted) > 0 {
+		parts = append(parts, fmt.Sprintf("- %s deleted: %s", label, strings.Join(deleted, ", ")))
 	}
-
 	return parts
 }
 
