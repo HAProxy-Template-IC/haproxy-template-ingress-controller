@@ -135,15 +135,7 @@ func (p *Parser) extractFrontendsWithIndexes(conf *StructuredConfig) {
 
 		// Parse binds and build pointer index for zero-copy iteration.
 		binds, _ := configuration.ParseBinds(string(clientparser.Frontends), sectionName, p.ceParser)
-		if binds != nil {
-			bindIndex := make(map[string]*models.Bind, len(binds))
-			for _, bind := range binds {
-				if bind != nil {
-					bindIndex[bind.Name] = bind // Store pointer directly, no copy
-				}
-			}
-			conf.BindIndex[sectionName] = bindIndex
-		}
+		conf.BindIndex[sectionName] = parserconfig.BuildPointerIndex(binds, func(b *models.Bind) string { return b.Name })
 
 		fe.HTTPRequestRuleList, _ = configuration.ParseHTTPRequestRules(string(clientparser.Frontends), sectionName, p.ceParser)
 		fe.HTTPResponseRuleList, _ = configuration.ParseHTTPResponseRules(string(clientparser.Frontends), sectionName, p.ceParser)
@@ -197,15 +189,7 @@ func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be 
 
 	// Parse servers and build pointer index for zero-copy iteration.
 	servers, _ := configuration.ParseServers(string(clientparser.Backends), sectionName, p.ceParser)
-	if servers != nil {
-		serverIndex := make(map[string]*models.Server, len(servers))
-		for _, server := range servers {
-			if server != nil {
-				serverIndex[server.Name] = server // Store pointer directly, no copy
-			}
-		}
-		conf.ServerIndex[sectionName] = serverIndex
-	}
+	conf.ServerIndex[sectionName] = parserconfig.BuildPointerIndex(servers, func(s *models.Server) string { return s.Name })
 
 	// Parse HTTP/TCP rules
 	be.HTTPRequestRuleList, _ = configuration.ParseHTTPRequestRules(string(clientparser.Backends), sectionName, p.ceParser)
@@ -225,15 +209,7 @@ func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be 
 
 	// Parse server templates and build pointer index for zero-copy iteration.
 	serverTemplates, _ := configuration.ParseServerTemplates(sectionName, p.ceParser)
-	if serverTemplates != nil {
-		templateIndex := make(map[string]*models.ServerTemplate, len(serverTemplates))
-		for _, template := range serverTemplates {
-			if template != nil {
-				templateIndex[template.Prefix] = template // Store pointer directly, no copy
-			}
-		}
-		conf.ServerTemplateIndex[sectionName] = templateIndex
-	}
+	conf.ServerTemplateIndex[sectionName] = parserconfig.BuildPointerIndex(serverTemplates, func(t *models.ServerTemplate) string { return t.Prefix })
 }
 
 // extractPeerAndDiscoverySectionsWithIndexes extracts peer and service discovery sections
@@ -263,15 +239,7 @@ func (p *Parser) extractPeersWithIndexes(conf *StructuredConfig) {
 
 		// Parse peer entries and build pointer index for zero-copy iteration.
 		peerEntries, _ := configuration.ParsePeerEntries(sectionName, p.ceParser)
-		if peerEntries != nil {
-			entryIndex := make(map[string]*models.PeerEntry, len(peerEntries))
-			for _, entry := range peerEntries {
-				if entry != nil {
-					entryIndex[entry.Name] = entry // Store pointer directly, no copy
-				}
-			}
-			conf.PeerEntryIndex[sectionName] = entryIndex
-		}
+		conf.PeerEntryIndex[sectionName] = parserconfig.BuildPointerIndex(peerEntries, func(e *models.PeerEntry) string { return e.Name })
 
 		peers = append(peers, peer)
 	}
@@ -298,15 +266,7 @@ func (p *Parser) extractResolversWithIndexes(conf *StructuredConfig) {
 
 		// Parse nameservers and build pointer index for zero-copy iteration.
 		nameservers, _ := configuration.ParseNameservers(sectionName, p.ceParser)
-		if nameservers != nil {
-			nsIndex := make(map[string]*models.Nameserver, len(nameservers))
-			for _, ns := range nameservers {
-				if ns != nil {
-					nsIndex[ns.Name] = ns // Store pointer directly, no copy
-				}
-			}
-			conf.NameserverIndex[sectionName] = nsIndex
-		}
+		conf.NameserverIndex[sectionName] = parserconfig.BuildPointerIndex(nameservers, func(n *models.Nameserver) string { return n.Name })
 
 		resolvers = append(resolvers, resolver)
 	}
@@ -333,15 +293,7 @@ func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 
 		// Parse mailer entries and build pointer index for zero-copy iteration.
 		mailerEntries, _ := configuration.ParseMailerEntries(sectionName, p.ceParser)
-		if mailerEntries != nil {
-			entryIndex := make(map[string]*models.MailerEntry, len(mailerEntries))
-			for _, entry := range mailerEntries {
-				if entry != nil {
-					entryIndex[entry.Name] = entry // Store pointer directly, no copy
-				}
-			}
-			conf.MailerEntryIndex[sectionName] = entryIndex
-		}
+		conf.MailerEntryIndex[sectionName] = parserconfig.BuildPointerIndex(mailerEntries, func(e *models.MailerEntry) string { return e.Name })
 
 		mailers = append(mailers, mailer)
 	}
