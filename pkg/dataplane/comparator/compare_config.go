@@ -69,13 +69,8 @@ func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) [
 		if !exists {
 			continue
 		}
-		mailersModified := false
-
 		// Compare mailer entries within this mailers section using pointer indexes
-		currentEntries := current.MailerEntryIndex[name]
-		desiredEntries := desired.MailerEntryIndex[name]
-		mailerEntryOps := c.compareMailerEntriesWithIndex(name, currentEntries, desiredEntries)
-		appendOperationsIfNotEmpty(&operations, mailerEntryOps, &mailersModified)
+		operations = append(operations, c.compareMailerEntriesWithIndex(name, current.MailerEntryIndex[name], desired.MailerEntryIndex[name])...)
 
 		// Compare mailers section attributes (excluding mailer entries which we already compared)
 		if !mailersEqualWithoutMailerEntries(currentMailers, desiredMailers) {
@@ -161,13 +156,8 @@ func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []O
 		if !exists {
 			continue
 		}
-		peerModified := false
-
 		// Compare peer entries within this peers section using pointer indexes
-		currentEntries := current.PeerEntryIndex[name]
-		desiredEntries := desired.PeerEntryIndex[name]
-		peerEntryOps := c.comparePeerEntriesWithIndex(name, currentEntries, desiredEntries)
-		appendOperationsIfNotEmpty(&operations, peerEntryOps, &peerModified)
+		operations = append(operations, c.comparePeerEntriesWithIndex(name, current.PeerEntryIndex[name], desired.PeerEntryIndex[name])...)
 
 		// Compare peers section attributes (excluding peer entries which we already compared)
 		if !peersEqualWithoutPeerEntries(currentPeer, desiredPeer) {

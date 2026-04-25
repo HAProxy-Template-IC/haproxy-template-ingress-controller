@@ -56,13 +56,8 @@ func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig)
 		if !exists {
 			continue
 		}
-		resolverModified := false
-
 		// Compare nameserver entries within this resolver section using pointer indexes
-		currentNameservers := current.NameserverIndex[name]
-		desiredNameservers := desired.NameserverIndex[name]
-		nameserverOps := c.compareNameserversWithIndex(name, currentNameservers, desiredNameservers)
-		appendOperationsIfNotEmpty(&operations, nameserverOps, &resolverModified)
+		operations = append(operations, c.compareNameserversWithIndex(name, current.NameserverIndex[name], desired.NameserverIndex[name])...)
 
 		// Compare resolver section attributes (excluding nameserver entries which we already compared)
 		if !resolversEqualWithoutNameservers(currentResolver, desiredResolver) {
