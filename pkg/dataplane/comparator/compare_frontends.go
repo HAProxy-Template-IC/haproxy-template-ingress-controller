@@ -226,38 +226,16 @@ func frontendsEqualWithoutNestedCollections(f1, f2 *models.Frontend) bool {
 }
 
 // compareBindsWithIndex compares bind configurations within a frontend using pointer indexes.
+// The bind maps are keyed by bind.Name (see parser.BindIndex construction), so the
+// factory closures can pull the bind name from the model itself.
 func (c *Comparator) compareBindsWithIndex(frontendName string, currentBinds, desiredBinds map[string]*models.Bind) []Operation {
-	// Pre-allocate with capacity for potential changes
-	maxOps := len(currentBinds) + len(desiredBinds)
-	operations := make([]Operation, 0, maxOps)
-
-	// Find added binds
-	for name, bind := range desiredBinds {
-		if _, exists := currentBinds[name]; !exists {
-			operations = append(operations, sections.NewBindFrontendCreate(frontendName, name, bind))
-		}
-	}
-
-	// Find deleted binds
-	for name, bind := range currentBinds {
-		if _, exists := desiredBinds[name]; !exists {
-			operations = append(operations, sections.NewBindFrontendDelete(frontendName, name, bind))
-		}
-	}
-
-	// Find modified binds
-	for name, desiredBind := range desiredBinds {
-		currentBind, exists := currentBinds[name]
-		if !exists {
-			continue
-		}
-		// Compare using built-in Equal() method
-		if !currentBind.Equal(*desiredBind) {
-			operations = append(operations, sections.NewBindFrontendUpdate(frontendName, name, desiredBind))
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentBinds, desiredBinds,
+		func(a, b *models.Bind) bool { return a.Equal(*b) },
+		func(b *models.Bind) Operation { return sections.NewBindFrontendCreate(frontendName, b.Name, b) },
+		func(b *models.Bind) Operation { return sections.NewBindFrontendDelete(frontendName, b.Name, b) },
+		func(b *models.Bind) Operation { return sections.NewBindFrontendUpdate(frontendName, b.Name, b) },
+	)
 }
 
 // compareCaptures compares capture configurations within a frontend.
