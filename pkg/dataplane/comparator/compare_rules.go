@@ -9,109 +9,63 @@ import (
 )
 
 // compareACLs compares ACL configurations within a frontend or backend.
-// ACLs are identified by their name (ACLName field).
+// ACLs are identified by their name (ACLName field). Adds are emitted in
+// ascending index order so the DataPlane API sees a valid insertion sequence
+// (it requires lower indices to exist before higher ones).
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
-	// Build maps for easier comparison using ACL names
-	currentACLMap := make(map[string]int) // name -> index
-	for i, acl := range currentACLs {
+	create, remove, update := sections.NewACLBackendCreate, sections.NewACLBackendDelete, sections.NewACLBackendUpdate
+	if parentType == parentTypeFrontend {
+		create, remove, update = sections.NewACLFrontendCreate, sections.NewACLFrontendDelete, sections.NewACLFrontendUpdate
+	}
+
+	currentByName := indexACLsByName(currentACLs)
+	desiredByName := indexACLsByName(desiredACLs)
+
+	// Adds: collect indices first, then sort, then emit in index order.
+	var addIndices []int
+	for name, idx := range desiredByName {
+		if _, exists := currentByName[name]; !exists {
+			addIndices = append(addIndices, idx)
+		}
+	}
+	slices.Sort(addIndices)
+
+	operations := make([]Operation, 0, len(addIndices)+len(currentByName))
+	for _, idx := range addIndices {
+		operations = append(operations, create(parentName, desiredACLs[idx], idx))
+	}
+
+	// Deletes: in current but not in desired.
+	for name, idx := range currentByName {
+		if _, exists := desiredByName[name]; !exists {
+			operations = append(operations, remove(parentName, currentACLs[idx], idx))
+		}
+	}
+
+	// Updates: in both, content differs.
+	for name, desiredIdx := range desiredByName {
+		currentIdx, exists := currentByName[name]
+		if !exists {
+			continue
+		}
+		if !currentACLs[currentIdx].Equal(*desiredACLs[desiredIdx]) {
+			operations = append(operations, update(parentName, desiredACLs[desiredIdx], desiredIdx))
+		}
+	}
+
+	return operations
+}
+
+// indexACLsByName builds a name → slice-index lookup, skipping ACLs without
+// names (which can't be addressed by the DataPlane API anyway).
+func indexACLsByName(acls models.Acls) map[string]int {
+	index := make(map[string]int, len(acls))
+	for i, acl := range acls {
 		if acl.ACLName != "" {
-			currentACLMap[acl.ACLName] = i
+			index[acl.ACLName] = i
 		}
 	}
-
-	desiredACLMap := make(map[string]int) // name -> index
-	for i, acl := range desiredACLs {
-		if acl.ACLName != "" {
-			desiredACLMap[acl.ACLName] = i
-		}
-	}
-
-	// Find added ACLs
-	addedOps := c.compareAddedACLs(parentType, parentName, desiredACLMap, currentACLMap, desiredACLs)
-	// Find deleted ACLs
-	deletedOps := c.compareDeletedACLs(parentType, parentName, currentACLMap, desiredACLMap, currentACLs)
-	// Find modified ACLs
-	modifiedOps := c.compareModifiedACLs(parentType, parentName, desiredACLMap, currentACLMap, currentACLs, desiredACLs)
-
-	operations := make([]Operation, 0, len(addedOps)+len(deletedOps)+len(modifiedOps))
-	operations = append(operations, addedOps...)
-	operations = append(operations, deletedOps...)
-	operations = append(operations, modifiedOps...)
-
-	return operations
-}
-
-// compareAddedACLs compares added ACLs and creates operations for them.
-// Operations are sorted by index to ensure correct insertion order (index 0 before 1, etc.)
-// since the DataPlane API requires indices to be valid at insertion time.
-func (c *Comparator) compareAddedACLs(parentType, parentName string, desiredACLMap, currentACLMap map[string]int, desiredACLs models.Acls) []Operation {
-	// Collect indices of ACLs to add, then sort them
-	// This is necessary because map iteration order is not guaranteed,
-	// but the DataPlane API requires ACLs to be created in index order
-	// (can't create index 2 before index 0 exists)
-	var indicesToAdd []int
-	for name, idx := range desiredACLMap {
-		if _, exists := currentACLMap[name]; !exists {
-			indicesToAdd = append(indicesToAdd, idx)
-		}
-	}
-
-	// Sort indices to ensure correct insertion order
-	slices.Sort(indicesToAdd)
-
-	// Create operations in sorted index order
-	var operations []Operation
-	for _, idx := range indicesToAdd {
-		acl := desiredACLs[idx]
-		if parentType == parentTypeFrontend {
-			operations = append(operations, sections.NewACLFrontendCreate(parentName, acl, idx))
-		} else {
-			operations = append(operations, sections.NewACLBackendCreate(parentName, acl, idx))
-		}
-	}
-
-	return operations
-}
-
-// compareDeletedACLs compares deleted ACLs and creates operations for them.
-func (c *Comparator) compareDeletedACLs(parentType, parentName string, currentACLMap, desiredACLMap map[string]int, currentACLs models.Acls) []Operation {
-	var operations []Operation
-
-	for name, idx := range currentACLMap {
-		if _, exists := desiredACLMap[name]; !exists {
-			acl := currentACLs[idx]
-			if parentType == parentTypeFrontend {
-				operations = append(operations, sections.NewACLFrontendDelete(parentName, acl, idx))
-			} else {
-				operations = append(operations, sections.NewACLBackendDelete(parentName, acl, idx))
-			}
-		}
-	}
-
-	return operations
-}
-
-// compareModifiedACLs compares modified ACLs and creates operations for them.
-func (c *Comparator) compareModifiedACLs(parentType, parentName string, desiredACLMap, currentACLMap map[string]int, currentACLs, desiredACLs models.Acls) []Operation {
-	var operations []Operation
-
-	for name, desiredIdx := range desiredACLMap {
-		if currentIdx, exists := currentACLMap[name]; exists {
-			currentACL := currentACLs[currentIdx]
-			desiredACL := desiredACLs[desiredIdx]
-
-			// Compare using built-in Equal() method
-			if !currentACL.Equal(*desiredACL) {
-				if parentType == parentTypeFrontend {
-					operations = append(operations, sections.NewACLFrontendUpdate(parentName, desiredACL, desiredIdx))
-				} else {
-					operations = append(operations, sections.NewACLBackendUpdate(parentName, desiredACL, desiredIdx))
-				}
-			}
-		}
-	}
-
-	return operations
+	return index
 }
 
 // compareEditedItems runs an LCS-based diff (diffIndexedRules +
