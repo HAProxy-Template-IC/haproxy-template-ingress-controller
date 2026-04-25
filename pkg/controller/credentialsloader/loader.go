@@ -83,35 +83,26 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 	// and must be decoded.
 	dataRaw, found, err := unstructured.NestedMap(resource.Object, "data")
 	if err != nil {
-		c.Logger().Error("Failed to extract Secret data field",
-			"error", err,
-			"version", version)
-		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, fmt.Sprintf("extracting Secret data: %v", err)))
+		c.failInvalid(version, "Failed to extract Secret data field",
+			fmt.Sprintf("extracting Secret data: %v", err), "error", err)
 		return
 	}
 	if !found {
-		c.Logger().Error("Secret has no data field", "version", version)
-		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, "Secret has no data field"))
+		c.failInvalid(version, "Secret has no data field", "Secret has no data field")
 		return
 	}
 
 	// Parse Secret data (handles base64 decoding)
 	data, err := config.ParseSecretData(dataRaw)
 	if err != nil {
-		c.Logger().Error("Failed to parse Secret data",
-			"error", err,
-			"version", version)
-		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
+		c.failInvalid(version, "Failed to parse Secret data", err.Error(), "error", err)
 		return
 	}
 
 	// Load the credentials
 	creds, err := config.LoadCredentials(data)
 	if err != nil {
-		c.Logger().Error("Failed to load credentials from Secret",
-			"error", err,
-			"version", version)
-		c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, err.Error()))
+		c.failInvalid(version, "Failed to load credentials from Secret", err.Error(), "error", err)
 		return
 	}
 
@@ -119,4 +110,13 @@ func (c *CredentialsLoaderComponent) processSecretChange(event *events.SecretRes
 
 	// Publish CredentialsUpdatedEvent
 	c.EventBus().Publish(events.NewCredentialsUpdatedEvent(creds, version))
+}
+
+// failInvalid logs an error and publishes a CredentialsInvalidEvent. logMsg is
+// the structured-log message; reason is the user-visible message embedded in
+// the event. logFields are extra key/value pairs added to the log entry
+// alongside "version".
+func (c *CredentialsLoaderComponent) failInvalid(version, logMsg, reason string, logFields ...any) {
+	c.Logger().Error(logMsg, append(logFields, "version", version)...)
+	c.EventBus().Publish(events.NewCredentialsInvalidEvent(version, reason))
 }
