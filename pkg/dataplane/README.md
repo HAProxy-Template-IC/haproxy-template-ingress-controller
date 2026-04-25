@@ -58,7 +58,8 @@ opts := &dataplane.SyncOptions{
     Timeout:          2 * time.Minute,  // overall operation deadline (default 2m)
     ContinueOnError:  false,            // keep going after a failing operation (default false)
     FallbackToRaw:    true,             // fall back to raw push on non-recoverable failure (default true)
-    RawPushThreshold: 100,              // switch to raw push when > N operations would be applied
+    RawPushThreshold: 100,              // switch to raw push when > N operations would be applied (0 = disabled, the default)
+    MaxParallel:      0,                // cap concurrent Dataplane API ops (0 = unlimited; not recommended for large configs)
 }
 ```
 

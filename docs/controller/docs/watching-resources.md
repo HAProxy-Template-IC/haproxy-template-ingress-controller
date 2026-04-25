@@ -97,7 +97,9 @@ Applies uniformly to every watched-resource store. Fields that are referenced by
 
 ## HTTP Resources
 
-`spec.httpResources` is a separate mechanism that doesn't involve Kubernetes watches — the controller periodically fetches HTTP URLs and exposes the content through the `http.Fetch()` template function. See [Templating Guide — HTTP Resources](./templating.md) and the CRD reference for schedule and caching knobs.
+Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically refreshes it at a per-URL `delay`, and surfaces the cached body back to the template on the next render.
+
+For fixture-based mocking during validation tests, set per-test `httpResources` under `spec.validationTests[].fixtures.httpResources` (see [CRD Reference](./crd-reference.md)); there is no top-level `spec.httpResources` field.
 
 ## Validating Webhook Scope
 

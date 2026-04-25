@@ -11,10 +11,12 @@ For ingress class filtering (controlling which Ingress resources the controller 
 ```yaml
 ingressClass:
   enabled: true       # Create IngressClass (default: true)
-  name: haproxy       # IngressClass name
+  name: haptic        # IngressClass name (default: haptic, avoids conflict with other HAProxy controllers)
   default: false      # Mark as cluster default
   controllerName: haproxy-haptic.org/controller
 ```
+
+The default name is `haptic` (not `haproxy`) so the chart can be installed alongside other HAProxy-based ingress controllers without colliding on IngressClass. When replacing an existing controller, override `ingressClass.name` to match your incumbent's class (often `haproxy`) and your existing Ingress manifests keep working.
 
 ## Capability Detection
 
@@ -37,7 +39,7 @@ When running multiple ingress controllers:
 ```yaml
 # Controller 1 (haptic)
 ingressClass:
-  name: haproxy
+  name: haptic
   controllerName: haproxy-haptic.org/controller
 
 # Controller 2 (nginx)
@@ -73,7 +75,7 @@ kind: Ingress
 metadata:
   name: example
 spec:
-  ingressClassName: haproxy  # References IngressClass.metadata.name
+  ingressClassName: haptic  # References IngressClass.metadata.name
   rules:
     - host: example.com
       http:

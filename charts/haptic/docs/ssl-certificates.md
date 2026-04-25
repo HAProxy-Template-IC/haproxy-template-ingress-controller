@@ -61,7 +61,7 @@ spec:
     solvers:
     - http01:
         ingress:
-          class: haproxy
+          class: haptic   # Match ingressClass.name from chart values
 EOF
 ```
 
@@ -168,7 +168,9 @@ kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | b
 
 **Certificate not being updated:**
 
-The controller watches Secrets with `store: on-demand`. Changes are detected automatically, but HAProxy deployment follows the configured drift prevention interval (default: 60s).
+The controller watches Secrets via an in-memory store (the default). Secret changes are detected immediately and trigger a reconciliation within the 5s debounce window; HAProxy deployment then follows the configured `dataplane.minDeploymentInterval` (2s default) plus the normal render → validate → deploy pipeline. If deployments appear stuck, the `dataplane.driftPreventionInterval` (60s default) will also force a push.
+
+For very large cert Secrets that you don't want to keep resident in memory, you can override the watched-resource store to `on-demand` via `controller.config.watchedResources.secrets.store: on-demand` — but this is not the chart default.
 
 ## Webhook Certificates
 

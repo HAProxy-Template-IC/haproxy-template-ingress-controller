@@ -35,7 +35,7 @@ annotations:
   # Changelog
   artifacthub.io/changes: |
     - kind: added
-      description: HAProxy Ingress annotation compatibility with 47 annotations
+      description: HAProxy Ingress annotation compatibility with 56 annotations
     - kind: changed
       description: HAProxy Ingress library enabled by default
     - kind: fixed

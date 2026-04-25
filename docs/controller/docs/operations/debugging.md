@@ -25,6 +25,9 @@ Set `controller.debugPort: 0` in Helm values to disable, or change the port via 
 | `/debug/vars/rendered` | Last rendered `haproxy.cfg`, its size, and timestamp |
 | `/debug/vars/auxfiles` | Last rendered SSL certs, map files, general files + a summary count |
 | `/debug/vars/resources` | Per-type counts for every `watchedResources` entry |
+| `/debug/vars/pipeline` | Per-phase status (`config_parse`, `validation`, `deployment`) — useful for "is reconciliation stuck?" checks |
+| `/debug/vars/validated` | Last successful render+validate output (`config`, `timestamp`, `config_bytes`, `validation_duration_ms`) |
+| `/debug/vars/errors` | Last error per phase, keyed by `config_parse_error` / `template_render_error` / `haproxy_validation_error` / `deployment_errors`, plus `last_error_timestamp` |
 | `/debug/vars/events` | Ring buffer of the most recent controller events |
 | `/debug/vars/state` | Aggregate of the above — large; prefer the specific paths for scripting |
 | `/debug/vars/uptime` | Process uptime since last reinitialisation |
@@ -83,6 +86,16 @@ curl -s 'http://localhost:8080/debug/vars/rendered?field={.config}' | jq -r > cu
 haproxy -c -f current.cfg
 diff expected.cfg current.cfg
 ```
+
+**Why did the last reconciliation fail?**
+
+```bash
+curl -s http://localhost:8080/debug/vars/errors | jq '.'
+# Inspect just one phase, e.g. semantic validation:
+curl -s 'http://localhost:8080/debug/vars/errors?field={.haproxy_validation_error}'
+```
+
+The keys (`config_parse_error`, `template_render_error`, `haproxy_validation_error`, `deployment_errors`) tell you which phase rejected the change; pair with `/debug/vars/pipeline` to see whether the controller has retried since.
 
 **Is reconciliation happening?**
 

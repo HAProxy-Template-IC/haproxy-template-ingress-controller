@@ -66,23 +66,36 @@ rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 
 ## Reconciliation Tuning
 
-### Debounce Interval
+### Debounce Interval (internal, 5s)
 
-The controller debounces resource changes to avoid excessive reconciliation:
+The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 5-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 5 s are batched.
+
+This interval is not exposed as a CRD field — it is a compile-time default chosen to balance latency against CPU burn during rolling deploys. If you need a different value, override it via the `pkg/controller.NewController` constructor in a custom build.
+
+### Deployment Pacing
+
+Two CRD fields on `spec.dataplane` bound how often the controller pushes configuration to HAProxy:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `dataplane.minDeploymentInterval` | 2s | Minimum time between consecutive deployments; rate-limits rapid-fire pushes |
+| `dataplane.driftPreventionInterval` | 60s | Forces a deployment if none has happened within this window; corrects external drift |
 
 ```yaml
-# HAProxyTemplateConfig CRD
+apiVersion: haproxy-haptic.org/v1alpha1
+kind: HAProxyTemplateConfig
+metadata:
+  name: haptic-config
 spec:
-  controller:
-    reconciliation:
-      debounceInterval: 500ms  # Default
+  dataplane:
+    minDeploymentInterval: "2s"
+    driftPreventionInterval: "60s"
 ```
 
 **Tuning guidelines:**
 
-- **Lower (100-300ms)**: Faster response to changes, higher CPU usage
-- **Default (500ms)**: Balanced for most workloads
-- **Higher (1-5s)**: Better for high-churn environments with many changes
+- Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per push (trades latency for fewer Dataplane API calls).
+- Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client cannot hold HAProxy in a drifted state for long.
 
 ### Reconciliation Metrics
 
@@ -116,7 +129,7 @@ histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m])
 {#- GOOD: Filter early, process less data -#}
 {%- var matching_ingresses = []any{} %}
 {%- for _, ingress := range resources.ingresses.List() %}
-  {%- if ingress.spec.ingressClassName == "haproxy" %}
+  {%- if ingress.spec.ingressClassName == "haptic" %}
     {%- matching_ingresses = append(matching_ingresses, ingress) %}
   {%- end %}
 {%- end %}
@@ -126,7 +139,7 @@ histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m])
 
 {#- ALTERNATIVE: Process with inline filtering -#}
 {%- for _, ingress := range resources.ingresses.List() %}
-  {%- if ingress.spec.ingressClassName == "haproxy" %}
+  {%- if ingress.spec.ingressClassName == "haptic" %}
     ...
   {%- end %}
 {%- end %}
@@ -134,17 +147,20 @@ histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m])
 
 **Use caching for expensive operations:**
 
+The template engine exposes a thread-safe `shared` cache via `ComputeIfAbsent(key, factory)` / `Get(key)`. `ComputeIfAbsent` guarantees the factory runs exactly once per render even across concurrent template sections:
+
 ```go
-{%- if !has_cached("sorted_routes") %}
-  {#- Expensive computation only runs once per render -#}
-  {%- var sorted_routes = []any{} %}
-  {%- for _, route := range resources.httproutes.List() %}
-    {%- sorted_routes = append(sorted_routes, route) %}
-  {%- end %}
-  {%- set_cached("sorted_routes", sorted_routes) %}
-{%- end %}
-{%- var analysis_routes = get_cached("sorted_routes") %}
+{%- var _, _ = shared.ComputeIfAbsent("sorted_routes", func() any {
+  var sorted = []any{}
+  for _, route := range resources.httproutes.List() {
+    sorted = append(sorted, route)
+  }
+  return sorted
+}) -%}
+{%- var analysis_routes = shared.Get("sorted_routes") %}
 ```
+
+There is no `Set` method on the shared cache — this is deliberate and prevents racy check-then-act patterns. The old `has_cached` / `set_cached` / `get_cached` top-level functions no longer exist; translate them to the `shared.ComputeIfAbsent` / `shared.Get` pair shown above.
 
 **Avoid nested loops when possible:**
 
@@ -171,27 +187,42 @@ histogram_quantile(0.95, rate(haptic_reconciliation_duration_seconds_bucket[5m])
 
 ### Template Debugging
 
-Profile template rendering:
+Profile template rendering with the `validate` subcommand's tracing flags (output goes to stderr):
 
 ```bash
-# Enable template tracing
-./bin/haptic-controller validate -f config.yaml --trace
+# Top-level render order with per-template timing
+./bin/haptic-controller validate -f config.yaml --trace-templates
 
-# View trace output
-cat /tmp/template-trace.log
+# Full call tree including nested render/render_glob
+./bin/haptic-controller validate -f config.yaml --trace-templates --profile-includes
+
+# Combine with --verbose and --dump-rendered for end-to-end diagnosis
+./bin/haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
 
 ## HAProxy Optimization
 
 ### Configuration Parameters
 
-Key HAProxy parameters for performance:
+Key HAProxy parameters for performance. Surface them as `extraContext` values in your HAProxyTemplateConfig so they can be tuned without editing templates:
+
+```yaml
+# HAProxyTemplateConfig
+spec:
+  templatingSettings:
+    extraContext:
+      maxconn: 2000
+      nbthread: 4
+      bufsize: 16384
+```
+
+Then reference them in your template (or override a built-in `global-settings-*` snippet):
 
 ```go
 global
-    maxconn {{ fallback(controller.config.haproxy.maxconn, 2000) }}
-    nbthread {{ fallback(controller.config.haproxy.nbthread, 4) }}
-    tune.bufsize {{ fallback(controller.config.haproxy.bufsize, 16384) }}
+    maxconn {{ fallback(maxconn, 2000) }}
+    nbthread {{ fallback(nbthread, 4) }}
+    tune.bufsize {{ fallback(bufsize, 16384) }}
     tune.ssl.default-dh-param 2048
 
 defaults
@@ -370,42 +401,27 @@ The controller deploys to multiple HAProxy pods in parallel. If deployment is sl
 
 ### Drift Prevention
 
-Configure drift prevention to avoid unnecessary deployments:
-
-```yaml
-spec:
-  controller:
-    deployment:
-      driftPreventionInterval: 60s  # Check for drift every 60s
-```
+See [Reconciliation Tuning → Deployment Pacing](#deployment-pacing) above. Configure via `spec.dataplane.driftPreventionInterval` (default 60s).
 
 ## Event Processing
 
-### Event Buffer Sizing
-
-The controller maintains event buffers for debugging:
-
-```yaml
-spec:
-  controller:
-    eventBufferSize: 1000  # Default
-```
-
-Increase for high-throughput environments if you need more event history.
-
-### Subscriber Performance
-
-Monitor event subscriber health:
+The controller's in-process event bus uses per-subscriber buffers sized at construction time (see `pkg/events/bus.go`); there is no CRD field to tune them. Monitor the event subsystem via the standard metrics:
 
 ```promql
-# Event publishing rate
+# Per-event-type publish rate
 rate(haptic_events_published_total[5m])
 
-# Subscriber count (should be constant)
-haptic_event_subscribers
+# Dropped events — subscriber channel was full (should be 0)
+rate(haptic_events_dropped_total[5m])
+
+# Critical drops — dropped event was flagged critical (should always be 0)
+rate(haptic_events_dropped_critical_total[5m])
+
+# Drops per subscriber — pinpoint which component can't keep up
+rate(haptic_events_dropped_by_subscriber_total[5m])
 ```
 
-If subscriber count drops, components may be failing.
+A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is too slow to keep up with its event stream; look at the component owning that subscriber rather than trying to raise a buffer.
 
 ## Profiling
 

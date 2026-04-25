@@ -278,11 +278,13 @@ All artifacts are signed with [Cosign](https://github.com/sigstore/cosign) using
 
 **Verify image signature:**
 
+Release tags produce one image per supported HAProxy series (`<version>-haproxy<series>`). The `v` prefix from the git tag is stripped, so the git tag `v0.1.0` yields image tags `0.1.0-haproxy3.0`, `0.1.0-haproxy3.1`, `0.1.0-haproxy3.2`, `0.1.0-haproxy3.3`:
+
 ```bash
 cosign verify \
   --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
   --certificate-oidc-issuer='https://gitlab.com' \
-  registry.gitlab.com/haproxy-haptic/haptic:v0.1.0
+  registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.2
 ```
 
 ### SBOM (Software Bill of Materials)
@@ -296,7 +298,7 @@ cosign verify-attestation \
   --type spdxjson \
   --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
   --certificate-oidc-issuer='https://gitlab.com' \
-  registry.gitlab.com/haproxy-haptic/haptic:v0.1.0 \
+  registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.2 \
   | jq -r '.payload' | base64 -d | jq '.predicate'
 ```
 

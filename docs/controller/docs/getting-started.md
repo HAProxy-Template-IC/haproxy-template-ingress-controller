@@ -116,7 +116,7 @@ metadata:
   name: echo-ingress
   namespace: default
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   rules:
   - host: echo.example.local
     http:
@@ -288,7 +288,7 @@ If you run into issues during setup, check these common areas:
 
 - **Controller not starting** -- check logs for missing HAProxyTemplateConfig, RBAC errors, or API connectivity issues
 - **HAProxy pods not updating** -- verify the Dataplane API sidecar is running and credentials match
-- **Ingress not routing** -- ensure `ingressClassName: haproxy` is set and the backend Service has endpoints
+- **Ingress not routing** -- ensure `ingressClassName: haptic` is set (or whatever you configured `ingressClass.name` to) and the backend Service has endpoints
 
 For detailed diagnosis steps, see the [Troubleshooting Guide](./troubleshooting.md).
 

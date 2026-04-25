@@ -40,53 +40,60 @@ controller:
 
 ## Extension Points
 
-### Extension Points Used
+The haproxytech library implements these extension points from base.yaml. All snippets follow the `<extension-point>-<NNN>-haproxytech-*` naming convention, where `NNN` is the numeric priority (see [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority)).
 
-The haproxytech library implements these extension points from base.yaml:
+### features-* (shared-state initialization)
 
-| Extension Point | This Library's Snippets | What They Generate |
-|-----------------|-------------------------|-------------------|
-| Global Top | `global-top-haproxytech-ingress-auth` | Userlist definitions for basic auth |
-| Frontend Filters | `frontend-filters-haproxytech-*` | SSL redirect, CORS, access control, logging |
-| Backend Directives | `backend-directives-haproxytech-*` | Load balancing, rate limiting, health checks |
+| Snippet | Purpose |
+|---------|---------|
+| `features-100-haproxytech-ssl-redirect` | Registers SSL-redirect host/code pairs in `gf["sslRedirect"]` |
+| `features-100-haproxytech-ssl-passthrough` | Scans ingresses for `haproxy.org/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
 
-### Frontend Filter Snippets
-
-| Snippet | Annotations Processed |
-|---------|----------------------|
-| `frontend-filters-haproxytech-ssl-redirect` | `haproxy.org/ssl-redirect` |
-| `frontend-filters-haproxytech-redirects` | `haproxy.org/request-redirect`, `haproxy.org/request-redirect-code` |
-| `frontend-filters-haproxytech-cors` | `haproxy.org/cors-*` annotations |
-| `frontend-filters-haproxytech-access-control` | `haproxy.org/allowlist-with-*`, `haproxy.org/denylist-with-*` |
-| `frontend-filters-haproxytech-logging` | `haproxy.org/log-format` |
-| `frontend-filters-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/set-host` |
-| `frontend-filters-haproxytech-timeouts` | `haproxy.org/timeout-client` |
-
-### Backend Directive Snippets
+### frontend-filters-* (HTTP-frontend request/response filters)
 
 | Snippet | Annotations Processed |
 |---------|----------------------|
-| `backend-directives-haproxytech-load-balance` | `haproxy.org/load-balance` |
-| `backend-directives-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
-| `backend-directives-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
-| `backend-directives-haproxytech-advanced` | `haproxy.org/server-*`, `haproxy.org/check-*` |
-| `backend-directives-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` |
-| `backend-directives-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
-| `backend-directives-haproxytech-set-host` | `haproxy.org/set-host` |
-| `backend-directives-haproxytech-health-checks` | `haproxy.org/check`, `haproxy.org/check-*` |
-| `backend-directives-haproxytech-pod-maxconn` | `haproxy.org/pod-maxconn` |
-| `backend-directives-haproxytech-timeouts` | `haproxy.org/timeout-*` |
+| `frontend-filters-100-haproxytech-basic-headers` | `haproxy.org/forwarded-for`, `haproxy.org/src-ip-header` |
+| `frontend-filters-200-haproxytech-access-control` | `haproxy.org/allowlist`, `haproxy.org/denylist` |
+| `frontend-filters-300-haproxytech-cors` | `haproxy.org/cors-*` |
+| `frontend-filters-450-haproxytech-redirects` | `haproxy.org/request-redirect`, `haproxy.org/request-redirect-code` |
+| `frontend-filters-500-haproxytech-logging` | `haproxy.org/request-capture`, `haproxy.org/request-capture-len` |
+
+### backend-directives-* (per-backend directives)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `backend-directives-100-haproxytech-pod-maxconn` | `haproxy.org/pod-maxconn` |
+| `backend-directives-100-haproxytech-timeouts` | `haproxy.org/timeout-server`, `/timeout-connect`, `/timeout-queue`, `/timeout-tunnel`, `/timeout-http-*`, `/timeout-check` |
+| `backend-directives-150-haproxytech-load-balance` | `haproxy.org/load-balance` |
+| `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
+| `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
+| `backend-directives-250-haproxytech-rate-limiting` | `haproxy.org/rate-limit-*` |
+| `backend-directives-250-haproxytech-set-host` | `haproxy.org/set-host` |
+| `backend-directives-300-haproxytech-header-manipulation` | `haproxy.org/request-set-header`, `haproxy.org/response-set-header` |
+| `backend-directives-350-haproxytech-path-rewrite` | `haproxy.org/path-rewrite` |
+| `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
+| `backend-directives-401-haproxytech-session-persistence-no-dynamic` | `haproxy.org/cookie-persistence-no-dynamic` |
+| `backend-directives-500-haproxytech-ingress-auth` | `haproxy.org/auth-*` (attaches the userlist per backend) |
+| `backend-directives-900-haproxytech-advanced` | `haproxy.org/backend-config-snippet`, `haproxy.org/server-*`, `haproxy.org/send-proxy-protocol` |
+
+### Other extension points
+
+| Snippet | Extension Point | Purpose |
+|---------|-----------------|---------|
+| `global-top-500-haproxytech-ingress-auth` | `global-top-*` | Emits a deduplicated `userlist auth_<secretNs>_<secretName>` per unique auth secret |
+| `backends-501-haproxytech-ssl-passthrough` | `backends-*` | TCP-mode backends for hosts annotated with `haproxy.org/ssl-passthrough: "true"` |
 
 ### Injecting Custom Annotations
 
-You can extend annotation processing by adding snippets:
+You can extend annotation processing by adding snippets with the right prefix and priority:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      # Add custom frontend filter
-      frontend-filters-custom-security:
+      # Runs alongside the built-in frontend filters (before the 200-range access-control)
+      frontend-filters-150-custom-security:
         template: |
           {%- for ingress in resources.ingresses.List() %}
           {%- var security_level = ingress.metadata.annotations["custom.io/security-level"] | fallback("") %}
@@ -806,19 +813,11 @@ haproxy.org/ssl-redirect-code: "301"
 
 ### haproxy.org/ssl-redirect-port
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Target HTTPS port for SSL redirect.
+**Description**: Target HTTPS port for the SSL redirect. The haproxytech library always redirects to the scheme (`https://`) without an explicit port.
 
-**Default**: `443`
-
-**Usage**:
-
-```yaml
-haproxy.org/ssl-redirect-port: "8443"
-```
-
-**Dependencies**: Requires `ssl-redirect: "true"`
+**Workaround**: Override the `frontend-filters-050-ssl-redirect` snippet (from the SSL library) to emit a `redirect location https://…:<port>` line instead of `redirect scheme https`.
 
 ---
 
@@ -963,7 +962,7 @@ haproxy.org/server-ca: "default/ca-cert"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server pod1 10.0.1.5:8443 ssl crt /etc/haproxy/certs/client-cert.pem ca-file /etc/haproxy/certs/ca-cert.pem verify required
+server pod1 10.0.1.5:8443 ssl crt /etc/haproxy/ssl/client-cert.pem ca-file /etc/haproxy/ssl/ca-cert.pem verify required
 ```
 
 **Dependencies**: Requires `server-ssl: "true"`
@@ -988,7 +987,7 @@ haproxy.org/server-ca: "default/ca-cert"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server pod1 10.0.1.5:8443 ssl ca-file /etc/haproxy/certs/ca-cert.pem verify required
+server pod1 10.0.1.5:8443 ssl ca-file /etc/haproxy/ssl/ca-cert.pem verify required
 ```
 
 **Dependencies**: Requires `server-ssl: "true"`
@@ -1382,25 +1381,11 @@ timeout server 30s
 
 ### haproxy.org/timeout-client
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Maximum inactivity time on client side. Supports duration format.
+**Description**: Maximum inactivity time on the client side. The haproxytech library does not emit a per-backend `timeout client` (it would have no effect anyway — `timeout client` only applies in frontend/defaults sections).
 
-**Default**: `50s`
-
-**Usage**:
-
-```yaml
-haproxy.org/timeout-client: "60s"
-```
-
-**Generated HAProxy Configuration**:
-
-```haproxy
-timeout client 60s
-```
-
-**Dependencies**: None
+**Workaround**: Set the global `timeout client` via the `defaults-settings-300-timeouts` snippet override. See [Base Library](base.md#injecting-custom-configuration).
 
 ---
 
@@ -1430,49 +1415,21 @@ timeout connect 10s
 
 ### haproxy.org/timeout-http-request
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Maximum time to wait for complete HTTP request. Supports duration format.
+**Description**: The haproxytech library does not process this annotation. The equivalent exists in the `haproxy-ingress` library as `haproxy-ingress.github.io/timeout-http-request`.
 
-**Default**: `5s`
-
-**Usage**:
-
-```yaml
-haproxy.org/timeout-http-request: "10s"
-```
-
-**Generated HAProxy Configuration**:
-
-```haproxy
-timeout http-request 10s
-```
-
-**Dependencies**: None
+**Workaround**: Either add the `haproxy-ingress.github.io/timeout-http-request` annotation (see [haproxy-ingress library](haproxy-ingress.md)), or override `defaults-settings-300-timeouts` globally.
 
 ---
 
 ### haproxy.org/timeout-http-keep-alive
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Maximum time to wait for a new HTTP request on a keep-alive connection. Supports duration format.
+**Description**: The haproxytech library does not process this annotation. The equivalent exists in the `haproxy-ingress` library as `haproxy-ingress.github.io/timeout-keep-alive`.
 
-**Default**: `1m`
-
-**Usage**:
-
-```yaml
-haproxy.org/timeout-http-keep-alive: "2m"
-```
-
-**Generated HAProxy Configuration**:
-
-```haproxy
-timeout http-keep-alive 2m
-```
-
-**Dependencies**: None
+**Workaround**: Either add the `haproxy-ingress.github.io/timeout-keep-alive` annotation (see [haproxy-ingress library](haproxy-ingress.md)), or override `defaults-settings-300-timeouts` globally.
 
 ---
 
@@ -1863,34 +1820,37 @@ haproxy.org/auth-realm: "API Access"
 
 ## Implementation Status Summary
 
-**Total annotations**: 54
+The library processes **46** `haproxy.org/*` annotations (verified against `libraries/haproxytech.yaml`).
 
-- ✅ **Fully Supported**: 51 (94.4%)
-  - Access Control & IP Filtering: 2 annotations (allowlist, denylist)
-  - Authentication: 3 annotations (auth-type, auth-secret, auth-realm)
-  - CORS: 6 annotations (enable, allow-origin, allow-methods, allow-headers, allow-credentials, max-age)
-  - Rate Limiting: 4 annotations (requests, period, size, status-code)
-  - Header Manipulation: 3 annotations (forwarded-for, request-set-header, response-set-header)
-  - Path Manipulation: 1 annotation (path-rewrite)
-  - Request Redirect: 2 annotations (request-redirect, request-redirect-code)
-  - SSL/TLS: 4 annotations (ssl-redirect, ssl-redirect-code, ssl-redirect-port, ssl-passthrough)
-  - Health Checks: 3 annotations (check, check-http, check-interval)
-  - Load Balancing: 1 annotation (load-balance)
-  - Session Persistence: 2 annotations (cookie-persistence, cookie-persistence-no-dynamic)
-  - Timeouts: 8 annotations (server, client, connect, http-request, http-keep-alive, queue, tunnel, check)
-  - Logging: 3 annotations (src-ip-header, request-capture, request-capture-len)
-  - Host Manipulation: 1 annotation (set-host)
-  - Connection Management: 1 annotation (pod-maxconn)
-  - Server Scaling: 1 annotation (scale-server-slots)
-  - Backend Server Options: 4 annotations (server-ssl, server-proto, server-crt, server-ca)
-  - Proxy Protocol: 1 annotation (send-proxy-protocol)
-  - Advanced Backend Config: 1 annotation (backend-config-snippet)
+**Supported by category:**
 
-- ⚠️ **Partially Implemented**: 0 (0%)
+| Category | Count | Annotations |
+|----------|-------|-------------|
+| Access control | 2 | `allowlist`, `denylist` |
+| Authentication | 3 | `auth-type`, `auth-secret`, `auth-realm` |
+| CORS | 6 | `cors-enable`, `cors-allow-origin`, `cors-allow-methods`, `cors-allow-headers`, `cors-allow-credentials`, `cors-max-age` |
+| Rate limiting | 4 | `rate-limit-requests`, `rate-limit-period`, `rate-limit-size`, `rate-limit-status-code` |
+| Header manipulation | 3 | `forwarded-for`, `request-set-header`, `response-set-header` |
+| Path manipulation | 1 | `path-rewrite` |
+| Request redirect | 2 | `request-redirect`, `request-redirect-code` |
+| SSL/TLS | 3 | `ssl-redirect`, `ssl-redirect-code`, `ssl-passthrough` |
+| Health checks | 3 | `check`, `check-http`, `check-interval` |
+| Load balancing | 1 | `load-balance` |
+| Session persistence | 2 | `cookie-persistence`, `cookie-persistence-no-dynamic` |
+| Timeouts | 5 | `timeout-server`, `timeout-connect`, `timeout-queue`, `timeout-tunnel`, `timeout-check` |
+| Logging | 3 | `src-ip-header`, `request-capture`, `request-capture-len` |
+| Host manipulation | 1 | `set-host` |
+| Connection management | 1 | `pod-maxconn` |
+| Server scaling | 1 | `scale-server-slots` |
+| Backend server options | 4 | `server-ssl`, `server-proto`, `server-crt`, `server-ca` |
+| Proxy protocol | 1 | `send-proxy-protocol` |
+| Advanced backend config | 1 | `backend-config-snippet` |
 
-- ❌ **Not Implemented**: 3 (5.6%)
-  - 1 annotation: standalone-backend (not planned - architecture already provides this functionality)
-  - 2 deprecated annotations: whitelist, blacklist (replaced by allowlist/denylist)
+**Not implemented in the `haproxy.org/*` namespace:**
+
+- `ssl-redirect-port`, `timeout-client`, `timeout-http-request`, `timeout-http-keep-alive` — four of these timeouts are available under `haproxy-ingress.github.io/*` instead (see [haproxy-ingress library](haproxy-ingress.md))
+- `whitelist`, `blacklist` — replaced by `allowlist` / `denylist` in the upstream project
+- `standalone-backend` — not needed; this controller already emits a dedicated backend per `<namespace>_<ingress-name>_svc_<service-name>_<port>` tuple
 
 ## See Also
 

@@ -1,94 +1,75 @@
 # pkg/controller/reconciler
 
-Reconciler component - debounces resource changes and triggers reconciliation.
+Entry point to the reconciliation pipeline. Two components:
 
-## Overview
+- **`Reconciler`** — leading-edge-triggered with a refractory period on watched-resource / HTTP-resource changes, immediate on whole-index events. Publishes `ReconciliationTriggeredEvent`.
+- **`Coordinator`** — leader-only adapter that consumes `ReconciliationTriggeredEvent` and drives the synchronous render/validate pipeline via a `PipelineExecutor`.
 
-Stage 5 component that applies debouncing logic to prevent excessive reconciliations. Waits for quiet periods before triggering reconciliation events.
-
-## Features
-
-- **Debouncing**: Batches rapid resource changes
-- **Immediate initial sync**: Triggers reconciliation when all resources synced
-- **Configurable interval**: Default 5s
-- **Initial sync filtering**: Ignores initial resource sync events
-
-## Quick Start
+## Reconciler
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
+import (
+    "context"
+    "time"
 
-// Default configuration (5s debounce)
-reconciler := reconciler.New(bus, logger, nil)
-go reconciler.Start(ctx)
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
+)
 
-// Custom debounce interval
-reconciler := reconciler.New(bus, logger, &reconciler.Config{
+// Nil config → default refractory period from types.DefaultDebounceInterval (5s)
+r := reconciler.New(bus, logger, nil)
+
+// Or override:
+r = reconciler.New(bus, logger, &reconciler.Config{
     DebounceInterval: 2 * time.Second,
 })
-go reconciler.Start(ctx)
+
+go r.Start(ctx)
 ```
 
-## How It Works
+### Triggering Rules
 
-### Resource Changes (Debounced)
+| Incoming event | Behaviour |
+|----------------|-----------|
+| `ResourceIndexUpdatedEvent` (real change) | Leading-edge: fire immediately if no recent reconciliation, otherwise batch into the next one |
+| `ResourceIndexUpdatedEvent` (initial sync) | Ignored — the initial bulk load is covered by `IndexSynchronizedEvent` |
+| `HTTPResourceUpdatedEvent` | Same leading-edge rule |
+| `IndexSynchronizedEvent` | Immediate — first reconciliation always runs with a complete store |
+| `HTTPResourceAcceptedEvent` | Immediate — content is only promoted from pending to accepted after validation |
+| `DriftPreventionTriggeredEvent` | Immediate — periodic redeploy path, no debounce |
 
-1. ResourceIndexUpdatedEvent received
-2. Debounce timer reset to 5s
-3. If another change arrives, timer reset again
-4. When timer expires (no changes for 5s), publish ReconciliationTriggeredEvent
+The refractory-period design is deliberately different from classic trailing-edge debouncing: the *first* change in a quiet period fires with 0ms delay (so single ingress flips react fast), and only further changes arriving within the refractory window are batched. This removes the multi-second latency that a trailing-edge debouncer introduces during rolling deployments where many `ResourceIndexUpdatedEvent`s arrive in sequence. 5s default is shared with `pkg/k8s/types.DefaultDebounceInterval`.
 
-### Index Synchronized (Immediate)
+The initial-sync filter exists because `ResourceIndexUpdatedEvent` fires for every object as stores hydrate. Early reconciliations there would run against an incomplete store, so `IndexSynchronizedEvent` (which fires once every watcher finishes its initial list) is the correct first-reconciliation trigger.
 
-1. IndexSynchronizedEvent received (all resource watchers synced)
-2. Stop any pending debounce timer
-3. Immediately publish ReconciliationTriggeredEvent
-
-This triggers the initial reconciliation after all resources are indexed,
-ensuring the first render has a complete view of cluster state.
-
-## Events
-
-### Subscribes To
-
-- **ResourceIndexUpdatedEvent**: Resource change (debounced)
-- **IndexSynchronizedEvent**: All resources synced (immediate)
-- **HTTPResourceUpdatedEvent**: HTTP content change (debounced)
-- **HTTPResourceAcceptedEvent**: HTTP content accepted (immediate)
-- **DriftPreventionTriggeredEvent**: Drift prevention (immediate)
-
-### Publishes
-
-- **ReconciliationTriggeredEvent**: Reconciliation requested
-
-## Configuration
+## Coordinator
 
 ```go
-type Config struct {
-    DebounceInterval time.Duration  // Default: 5s
-}
+coord := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
+    EventBus:      bus,
+    Pipeline:      pipeline,       // implements PipelineExecutor
+    StoreProvider: storeProvider,  // pkg/stores.StoreProvider
+    Logger:        logger,
+})
+go coord.Start(ctx)
 ```
 
-## Constants
+Leader-only adapter around `pkg/controller/pipeline`:
 
-```go
-const (
-    DefaultDebounceInterval = 5 * time.Second
-    EventBufferSize        = 100
-)
-```
+1. Subscribe in `Start` (leader-only subscription pattern — not in the constructor, because followers must not subscribe).
+2. On `ReconciliationTriggeredEvent`, publish `ReconciliationStartedEvent`.
+3. Call `Pipeline.Execute(ctx, storeProvider)` synchronously — render + validate + build render context in one atomic step.
+4. Publish the results: `TemplateRenderedEvent` + `ValidationCompletedEvent` on success, `ReconciliationFailedEvent` (with a `PipelineError` carrying the failing phase via `errors.As`) on error. Either path ends with `ReconciliationCompletedEvent` so the metrics adapter can close its histogram observation.
 
-## Example Timing
+The pipeline is called directly, not through another event hop. That's deliberate: from the controller's perspective a reconciliation is one atomic stage, so making it a function call keeps error propagation straightforward and avoids inter-stage synchronization events.
 
-```
-t=0ms:    Resource change → Start 5s timer
-t=100ms:  Resource change → Reset timer (now expires at t=5100ms)
-t=300ms:  Resource change → Reset timer (now expires at t=5300ms)
-t=5300ms: Timer expires → Trigger reconciliation
-```
+## See Also
 
-Result: 3 changes batched into 1 reconciliation.
+- [`pkg/controller/pipeline`](../pipeline/) — `Pipeline.Execute` implementation driven by this coordinator
+- [`pkg/controller/renderer`](../renderer/) / [`validator`](../validator/) — pure stages composed into the pipeline
+- [`pkg/controller/deployer`](../deployer/) — downstream consumer of `TemplateRenderedEvent` + `ValidationCompletedEvent`
+- [`pkg/controller/timers`](../timers/) — `DriftPreventionTriggeredEvent` source
+- `pkg/controller/reconciler/CLAUDE.md` — developer context (leading-edge triggering design, leadership-transition patterns)
 
 ## License
 
-See main repository for license information.
+Apache-2.0 — see root `LICENSE`.

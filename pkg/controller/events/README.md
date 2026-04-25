@@ -1,271 +1,116 @@
 # pkg/controller/events
 
-Domain-specific event type definitions for controller coordination.
+Domain event catalogue for the controller. All event types that flow through the `pkg/events` bus live here; the infrastructure itself (publish/subscribe, scatter-gather) lives in `pkg/events` and has no knowledge of domain semantics.
 
-## Overview
+- ~50 event types across ~15 categories.
+- All implement the `pkg/events.Event` interface (`EventType() string`, `Timestamp() time.Time`) via pointer receivers.
+- All exported constructors `NewFooEvent(...)` perform defensive copies of slices and maps so consumers can't mutate a published event.
+- A custom `go vet`-style analyzer in `tools/linters/eventimmutability` enforces the pointer-receiver rule at build time.
 
-This package defines all event types used by the controller for component coordination via the EventBus. Events represent facts about what happened in the system and are immutable after creation.
+## Source of Truth
 
-**Separation**:
+One file per category. The full list as of writing, with representative types:
 
-- `pkg/events` - Generic pub/sub infrastructure
-- `pkg/controller/events` - Domain event types (this package)
+| File | Category | Representative types |
+|------|----------|----------------------|
+| `types.go` | Event-type constants and shared helpers | — |
+| `correlation.go` | Request/response correlation metadata | `CorrelationID` |
+| `config.go` | CRD parsed / validated / invalid | `ConfigParsedEvent`, `ConfigValidatedEvent` |
+| `credentials.go` | `Secret` ingestion and validation | `CredentialsUpdatedEvent` |
+| `certificate.go` | Webhook TLS cert lifecycle | `CertParsedEvent`, `WebhookCertRotatedEvent` |
+| `resource.go` | Watched-resource index changes | `ResourceIndexUpdatedEvent`, `IndexSynchronizedEvent` |
+| `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent` |
+| `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
+| `validation.go` | Syntax/semantic validation | `ValidationCompletedEvent`, `ValidationFailedEvent` |
+| `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeployedEvent` |
+| `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent` |
+| `leader.go` | Leader election | `BecameLeaderEvent`, `LostLeadershipEvent` |
+| `publishing.go` | `HAProxyCfg` / `HAProxyGeneralFile` publishing | `ConfigPublishedEvent` |
+| `proposal.go` | Admission-time proposal validation | `ProposalValidatedEvent` |
+| `http.go` | HTTP resource fetcher | `HTTPResourceUpdatedEvent` |
+| `status.go` | Status-patch application | `StatusPatchAppliedEvent` |
+| `webhook.go` | Scatter-gather admission request/response plumbing | `WebhookValidationRequest`, `WebhookValidationResponse` |
+| `webhookobservability.go` | Webhook telemetry events | `WebhookValidationAllowedEvent` |
 
-## Installation
+`types.go` plus the event-category files enumerate every constant — if the list above looks incomplete, check `grep -E "^type [A-Z].*Event " pkg/controller/events/*.go` rather than trusting this README.
+
+## Publishing
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-```
-
-## Event Categories
-
-### Configuration Events
-
-```go
-const (
-    EventTypeConfigParsed             = "config.parsed"
-    EventTypeConfigValidationRequest  = "config.validation.request"
-    EventTypeConfigValidationResponse = "config.validation.response"
-    EventTypeConfigValidated          = "config.validated"
-    EventTypeConfigInvalid            = "config.invalid"
+import (
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+    "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
+
+bus.Publish(events.NewConfigParsedEvent(cfg, templateConfig, version))
 ```
 
-- **ConfigParsedEvent** - HAProxyTemplateConfig CRD parsed successfully
-- **ConfigValidationRequest** - Scatter-gather validation request
-- **ConfigValidationResponse** - Validator response
-- **ConfigValidatedEvent** - All validators passed
-- **ConfigInvalidEvent** - Validation failed
+Always use the `New*` constructors — they copy any slices/maps to cut off the ownership chain. Don't construct events with a struct literal; you lose the defensive copy and the analyzer can't help.
 
-### Resource Events
+## Consuming
+
+Either accept everything and switch on type, or subscribe to a filtered set:
 
 ```go
-const (
-    EventTypeResourceIndexUpdated = "resource.index.updated"
-    EventTypeResourceSyncComplete = "resource.sync.complete"
-    EventTypeIndexSynchronized    = "index.synchronized"
-)
-```
-
-- **ResourceIndexUpdatedEvent** - Resource index changed (add/update/delete)
-- **ResourceSyncCompleteEvent** - Single resource type synced
-- **IndexSynchronizedEvent** - All resource types synced
-
-### Reconciliation Events
-
-```go
-const (
-    EventTypeReconciliationTriggered = "reconciliation.triggered"
-    EventTypeReconciliationStarted   = "reconciliation.started"
-    EventTypeReconciliationCompleted = "reconciliation.completed"
-    EventTypeReconciliationFailed    = "reconciliation.failed"
-)
-```
-
-- **ReconciliationTriggeredEvent** - Reconciliation requested
-- **ReconciliationStartedEvent** - Reconciliation cycle started
-- **ReconciliationCompletedEvent** - Reconciliation succeeded
-- **ReconciliationFailedEvent** - Reconciliation failed
-
-### Template Events
-
-```go
-const (
-    EventTypeTemplateRendered     = "template.rendered"
-    EventTypeTemplateRenderFailed = "template.render.failed"
-)
-```
-
-- **TemplateRenderedEvent** - Template rendering succeeded
-- **TemplateRenderFailedEvent** - Template rendering failed
-
-### Validation Events
-
-```go
-const (
-    EventTypeValidationStarted   = "validation.started"
-    EventTypeValidationCompleted = "validation.completed"
-    EventTypeValidationFailed    = "validation.failed"
-)
-```
-
-- **ValidationStartedEvent** - HAProxy config validation started
-- **ValidationCompletedEvent** - Validation succeeded
-- **ValidationFailedEvent** - Validation failed
-
-### Deployment Events
-
-```go
-const (
-    EventTypeDeploymentStarted        = "deployment.started"
-    EventTypeInstanceDeployed         = "instance.deployed"
-    EventTypeInstanceDeploymentFailed = "instance.deployment.failed"
-    EventTypeDeploymentCompleted      = "deployment.completed"
-)
-```
-
-- **DeploymentStartedEvent** - Deployment to HAProxy pods started
-- **InstanceDeployedEvent** - Single HAProxy instance deployed
-- **InstanceDeploymentFailedEvent** - Single instance deployment failed
-- **DeploymentCompletedEvent** - All instances deployed
-
-### HAProxy Pod Events
-
-```go
-const (
-    EventTypeHAProxyPodsDiscovered = "haproxy.pods.discovered"
-    EventTypeHAProxyPodTerminated  = "haproxy.pod.terminated"
-)
-```
-
-- **HAProxyPodsDiscoveredEvent** - HAProxy pods discovered
-- **HAProxyPodTerminatedEvent** - HAProxy pod terminated
-
-## Usage
-
-### Publishing Events
-
-```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-
-// Create event using constructor (performs defensive copying)
-event := events.NewConfigParsedEvent(config, "v1")
-
-// Publish to EventBus
-eventBus.Publish(event)
-```
-
-### Consuming Events
-
-```go
-// Subscribe to EventBus
-eventChan := eventBus.Subscribe(100)
-
-for event := range eventChan {
-    // Type assertion to specific event
-    if parsed, ok := event.(*events.ConfigParsedEvent); ok {
-        fmt.Printf("Config version: %s\n", parsed.Version)
-        // Process config...
+// Any event
+eventChan := bus.Subscribe("my-component", 100)
+for ev := range eventChan {
+    switch e := ev.(type) {
+    case *events.ConfigValidatedEvent:
+        // ...
+    case *events.ReconciliationTriggeredEvent:
+        // ...
     }
 }
+
+// Just a few types (cheaper — filtered at the bus)
+filtered := bus.SubscribeTypes(
+    "my-component", 100,
+    events.EventTypeReconciliationTriggered,
+    events.EventTypeReconciliationCompleted,
+)
 ```
 
-### Scatter-Gather Pattern
+## Scatter-Gather (Admission Validation)
+
+`ConfigValidationRequest` and `WebhookValidationRequest` are the two `Request` types in the catalogue. Usage goes through `pkg/events.Request`:
 
 ```go
-// Create validation request
-req := events.NewConfigValidationRequest(config, "v1")
+req := events.NewConfigValidationRequest(cfg, version)
 
-// Send scatter-gather request
-result, err := eventBus.Request(ctx, req, events.RequestOptions{
+result, err := bus.Request(ctx, req, busevents.RequestOptions{
     Timeout:            10 * time.Second,
     ExpectedResponders: []string{"basic", "template", "jsonpath"},
 })
-
 if err != nil {
-    // Timeout or error
+    return err
 }
-
-// Process responses
 for _, resp := range result.Responses {
-    if valResp, ok := resp.(*events.ConfigValidationResponse); ok {
-        if !valResp.Valid {
-            fmt.Printf("Validator %s failed: %v\n", valResp.Validator, valResp.Errors)
-        }
+    if r, ok := resp.(*events.ConfigValidationResponse); ok && !r.Valid {
+        return fmt.Errorf("validator %s: %s", r.Validator, r.Message)
     }
 }
 ```
 
-## Event Immutability
+Each responder subscribes normally, matches on request ID, and `bus.Publish`es a matching `*ConfigValidationResponse`.
 
-Events are immutable after creation to ensure consistency across consumers.
+## Adding a New Event
 
-### Constructors Perform Defensive Copying
+1. Add `const EventTypeFoo = "foo"` to `types.go` (or the category file if it already has its own constants block).
+2. Define the struct in the appropriate category file (or create a new file if there's no natural home).
+3. Implement `EventType() string` with a **pointer** receiver.
+4. Add a `NewFooEvent(...)` constructor that `copy()`s every incoming slice and map field.
+5. Update `pkg/controller/commentator` with a matching log case — every event type should be logged somewhere so the ring buffer shows meaningful history.
+6. If this event should drive a Prometheus metric, wire a case into `pkg/controller/metrics.Component.HandleEvent` and update `pkg/controller/metrics/README.md`.
 
-```go
-func NewResourceIndexUpdatedEvent(resourceType string, changes []types.ResourceChange) *ResourceIndexUpdatedEvent {
-    // Copy slice to prevent external mutations
-    changesCopy := make([]types.ResourceChange, len(changes))
-    copy(changesCopy, changes)
+## See Also
 
-    return &ResourceIndexUpdatedEvent{
-        ResourceType: resourceType,
-        Changes:      changesCopy,
-    }
-}
-```
-
-### Consumers Must Not Modify Events
-
-```go
-// Good - read-only access
-event := <-eventChan
-if update, ok := event.(*events.ResourceIndexUpdatedEvent); ok {
-    for _, change := range update.Changes {
-        processChange(change)  // Read only
-    }
-}
-
-// Bad - DO NOT MODIFY
-if update, ok := event.(*events.ResourceIndexUpdatedEvent); ok {
-    update.Changes = append(update.Changes, newChange)  // FORBIDDEN!
-}
-```
-
-## Adding New Event Types
-
-1. Define event struct with exported fields
-2. Add EventType constant
-3. Implement EventType() method with pointer receiver
-4. Create constructor with defensive copying
-5. Update commentator to log the event
-
-Example:
-
-```go
-// 1. Define struct
-type MyNewEvent struct {
-    Field string
-    Data  []string
-}
-
-// 2. Add constant
-const EventTypeMyNew = "my.new"
-
-// 3. Implement EventType()
-func (e *MyNewEvent) EventType() string {
-    return EventTypeMyNew
-}
-
-// 4. Create constructor
-func NewMyNewEvent(field string, data []string) *MyNewEvent {
-    dataCopy := make([]string, len(data))
-    copy(dataCopy, data)
-
-    return &MyNewEvent{
-        Field: field,
-        Data:  dataCopy,
-    }
-}
-```
-
-## Common Event Fields
-
-Most events include:
-
-- **Timestamp** - When the event occurred
-- **Version** - Resource version (for CRD/Secret events)
-- **Errors** - Error messages (for failure events)
-
-## Examples
-
-See:
-
-- Event publishing: `pkg/controller/configloader/`
-- Event consumption: `pkg/controller/reconciler/`
-- Scatter-gather: `pkg/controller/validator/coordinator.go`
-- Event logging: `pkg/controller/commentator/`
+- [`pkg/events`](../../events/) — generic bus (`Publish`, `Subscribe`, `Request`, typed subscriptions)
+- [`pkg/controller/commentator`](../commentator/) — logs every event, attaches recent-event context via the ring buffer
+- [`pkg/controller/metrics`](../metrics/) — subscribes to nearly everything in this catalogue for domain metrics
+- [`tools/linters/eventimmutability`](../../../tools/linters/eventimmutability/) — custom analyzer that enforces pointer receivers
+- `pkg/controller/events/CLAUDE.md` — developer context (immutability rules, category file organisation, common pitfalls)
 
 ## License
 
-See main repository for license information.
+Apache-2.0 — see root `LICENSE`.

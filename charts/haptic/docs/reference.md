@@ -9,9 +9,12 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
+| `haproxyVersion` | string | `"3.2"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
+| `haproxyPatchVersions` | map | See values.yaml | Per-`haproxyVersion` community patch pins (e.g. `"3.2": "3.2.13"`). Maintained by the chart and auto-updated by Renovate |
+| `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (e.g. `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
 | `image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
-| `image.tag` | string | Chart appVersion | Controller image tag |
+| `image.tag` | string | `""` | Controller image tag; empty = `<chart appVersion>-haproxy<haproxyVersion>` |
 | `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
 | `nameOverride` | string | `""` | Override chart name |
 | `fullnameOverride` | string | `""` | Override full release name |
@@ -35,7 +38,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTPRoute, GRPCRoute) |
 | `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
-| `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | HAProxy Ingress Controller compatibility |
+| `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
+| `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
 | `controller.templateLibraries.pathRegexLast.enabled` | bool | `false` | Performance-first path matching (regex last) |
 
 ## Default SSL Certificate
@@ -92,8 +96,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.logLevel` | string | `INFO` | Initial log level: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive) |
-| `controller.config.logging.level` | string | `""` | Log level from ConfigMap. If set, overrides controller.logLevel at runtime |
+| `controller.logLevel` | string | `INFO` | Initial log level (`LOG_LEVEL` env var): TRACE, DEBUG, INFO, WARNING, ERROR (case-insensitive) |
+| `controller.config.logging.level` | string | `""` | Log level in the `HAProxyTemplateConfig` CRD (`spec.logging.level`); overrides `controller.logLevel` at runtime when non-empty |
 | `controller.config.templatingSettings.extraContext.debug` | bool | `true` | Enable debug headers in HAProxy responses |
 | `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields]` | Fields to ignore in watched resources |
 
@@ -104,7 +108,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `webhook.enabled` | bool | `true` | Enable admission webhook validation |
 | `webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
 | `webhook.service.port` | int | `443` | Webhook service port |
-| `webhook.certManager.enabled` | bool | `false` | Use cert-manager for certificates |
+| `webhook.certManager.enabled` | bool | `true` | Use cert-manager for certificates (set to `false` for manual cert management via `webhook.caBundle`) |
 | `webhook.certManager.createIssuer` | bool | `true` | Create a self-signed Issuer for webhook certs |
 | `webhook.certManager.issuerRef.name` | string | `""` | Issuer name (auto-set when createIssuer=true) |
 | `webhook.certManager.issuerRef.kind` | string | `Issuer` | Issuer kind |
@@ -117,7 +121,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ingressClass.enabled` | bool | `true` | Create IngressClass resource |
-| `ingressClass.name` | string | `haproxy` | IngressClass name |
+| `ingressClass.name` | string | `haptic` | IngressClass name; default avoids conflict with other HAProxy-based ingress controllers (override to `haproxy` when replacing one) |
 | `ingressClass.default` | bool | `false` | Mark as default IngressClass |
 | `ingressClass.controllerName` | string | `haproxy-haptic.org/controller` | Controller identifier |
 
@@ -126,7 +130,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `gatewayClass.enabled` | bool | `true` | Create GatewayClass resource |
-| `gatewayClass.name` | string | `haproxy` | GatewayClass name |
+| `gatewayClass.name` | string | `haptic` | GatewayClass name; default matches `ingressClass.name` |
 | `gatewayClass.default` | bool | `false` | Mark as default GatewayClass |
 | `gatewayClass.controllerName` | string | `haproxy-haptic.org/controller` | Controller identifier |
 | `gatewayClass.parametersRef.group` | string | `haproxy-haptic.org` | HAProxyTemplateConfig API group |
@@ -139,7 +143,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `credentials.dataplane.username` | string | `admin` | Dataplane API username |
-| `credentials.dataplane.password` | string | `adminpass` | Dataplane API password |
+| `credentials.dataplane.password` | string | `""` | Dataplane API password; empty = chart auto-generates a 32-char random password and stores it in the credentials Secret (override for deterministic credentials in dev) |
 
 ## ServiceAccount & RBAC
 
@@ -194,9 +198,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `resources.requests.cpu` | string | `100m` | CPU request |
-| `resources.requests.memory` | string | `128Mi` | Memory request |
-| `resources.limits.cpu` | string | `""` | CPU limit (optional) |
-| `resources.limits.memory` | string | `""` | Memory limit (optional) |
+| `resources.requests.memory` | string | `512Mi` | Memory request (Guaranteed QoS — matches `limits.memory`) |
+| `resources.limits.memory` | string | `512Mi` | Memory limit |
 | `nodeSelector` | map | `{}` | Node selector |
 | `tolerations` | list | `[]` | Pod tolerations |
 | `affinity` | map | `{}` | Pod affinity rules |
@@ -231,7 +234,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `haproxy.replicaCount` | int | `2` | Number of HAProxy replicas |
 | `haproxy.image.repository` | string | `haproxytech/haproxy-debian` | HAProxy image repository |
 | `haproxy.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
-| `haproxy.image.tag` | string | `3.2` | HAProxy image tag |
+| `haproxy.image.tag` | string | `""` | HAProxy image tag; empty = derive from `haproxyVersion` and `haproxyPatchVersions` (e.g. `3.2` → `3.2.13`) |
 | `haproxy.enterprise.enabled` | bool | `false` | Use HAProxy Enterprise |
 | `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
@@ -276,25 +279,26 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `haproxy.dataplane.service.type` | string | `ClusterIP` | Dataplane service type |
-| `haproxy.dataplane.credentials.username` | string | `admin` | Dataplane API username |
-| `haproxy.dataplane.credentials.password` | string | `adminpass` | Dataplane API password |
+
+Dataplane API credentials moved to the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
 
 ## HAProxy Resources & Scheduling
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.resources.requests.cpu` | string | `100m` | CPU request |
-| `haproxy.resources.requests.memory` | string | `128Mi` | Memory request |
-| `haproxy.resources.limits.cpu` | string | `500m` | CPU limit |
-| `haproxy.resources.limits.memory` | string | `512Mi` | Memory limit |
+| `haproxy.resources.requests.cpu` | string | `250m` | CPU request |
+| `haproxy.resources.requests.memory` | string | `1Gi` | Memory request (Guaranteed QoS — limits.memory matches) |
+| `haproxy.resources.limits.memory` | string | `1Gi` | Memory limit |
 | `haproxy.priorityClassName` | string | `""` | Pod priority class |
 | `haproxy.topologySpreadConstraints` | list | `[]` | Topology spread constraints |
+
+No CPU limit is set by default to avoid throttling; Go's auto-GOMAXPROCS adapts to the request value.
 
 ## HAProxy NetworkPolicy
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.networkPolicy.enabled` | bool | `false` | Enable HAProxy NetworkPolicy |
+| `haproxy.networkPolicy.enabled` | bool | `true` | Enable HAProxy NetworkPolicy |
 | `haproxy.networkPolicy.allowExternal` | bool | `true` | Allow external traffic |
 | `haproxy.networkPolicy.allowedSources` | list | `[]` | Allowed traffic sources (when allowExternal=false) |
 | `haproxy.networkPolicy.extraIngress` | list | `[]` | Additional ingress rules |

@@ -5,158 +5,133 @@
 ```mermaid
 graph TB
     subgraph "Kubernetes Cluster"
-        subgraph "kube-system Namespace"
-            API[Kubernetes API Server]
-        end
+        API[Kubernetes API Server]
 
-        subgraph "haproxy-system Namespace"
-            subgraph "Controller Deployment"
-                CTRL_POD[Controller Pod<br/>Single Container<br/>- Resource Watching<br/>- Template Rendering<br/>- Config Validation<br/>- Deployment]
+        subgraph "haptic Namespace (release namespace)"
+            subgraph "Controller Deployment (2 replicas, leader-elected)"
+                CTRL1[Controller Pod 1<br/>leader]
+                CTRL2[Controller Pod 2<br/>hot standby]
             end
 
-            CM[ConfigMap<br/>haproxy-config<br/>Templates & Settings]
+            HTPLCFG[HAProxyTemplateConfig CRD<br/>Templates, watched resources, settings]
+            CREDS[Secret<br/>dataplane credentials]
 
-            CTRL_SVC[Controller Service<br/>ClusterIP<br/>:8080 healthz<br/>:9090 metrics]
+            CTRL_SVC[Controller Service<br/>ClusterIP<br/>:8080 healthz + /debug<br/>:9090 metrics<br/>:9443 webhook]
 
-            subgraph "HAProxy StatefulSet"
-                subgraph "haproxy-0"
-                    HAP1[HAProxy Container<br/>:80, :443, :8404]
+            subgraph "HAProxy Deployment (2+ replicas)"
+                subgraph "haproxy pod A"
+                    HAP1[HAProxy<br/>:8080, :8443, :8404]
                     DP1[Dataplane API<br/>:5555]
                 end
-
-                subgraph "haproxy-1"
-                    HAP2[HAProxy Container<br/>:80, :443, :8404]
+                subgraph "haproxy pod B"
+                    HAP2[HAProxy<br/>:8080, :8443, :8404]
                     DP2[Dataplane API<br/>:5555]
-                end
-
-                subgraph "haproxy-N"
-                    HAPN[HAProxy Container<br/>:80, :443, :8404]
-                    DPN[Dataplane API<br/>:5555]
                 end
             end
 
-            HAP_SVC[HAProxy Service<br/>LoadBalancer/NodePort<br/>:80 http<br/>:443 https]
+            HAP_SVC[HAProxy Service<br/>NodePort by default<br/>:80 → :8080<br/>:443 → :8443]
         end
 
-        subgraph "Application Namespace"
-            ING[Ingress Resources]
-            APPSVC[Service Resources]
+        subgraph "Application Namespaces"
+            ING[Ingress / HTTPRoute / GRPCRoute]
+            APPSVC[Services + EndpointSlices]
             PODS[Application Pods]
-        end
-
-        subgraph "Monitoring Namespace"
-            PROM[Prometheus<br/>Metrics Collection]
-            JAEGER[Jaeger<br/>Trace Collection]
         end
     end
 
     USERS[External Users] --> HAP_SVC
     HAP_SVC --> HAP1
     HAP_SVC --> HAP2
-    HAP_SVC --> HAPN
 
-    CTRL_SVC --> CTRL_POD
-    API --> CTRL_POD
-    CM --> CTRL_POD
-    ING -.Watch.-> CTRL_POD
-    APPSVC -.Watch.-> CTRL_POD
+    CTRL_SVC --> CTRL1 & CTRL2
+    API --> CTRL1 & CTRL2
+    HTPLCFG --> CTRL1 & CTRL2
+    CREDS --> CTRL1 & CTRL2
+    ING -.Watch.-> CTRL1 & CTRL2
+    APPSVC -.Watch.-> CTRL1 & CTRL2
 
-    CTRL_POD --> DP1
-    CTRL_POD --> DP2
-    CTRL_POD --> DPN
-
+    CTRL1 --> DP1 & DP2
     DP1 --> HAP1
     DP2 --> HAP2
-    DPN --> HAPN
 
     HAP1 --> PODS
     HAP2 --> PODS
-    HAPN --> PODS
 
-    CTRL_SVC -.Metrics.-> PROM
-    CTRL_SVC -.Health.-> PROM
-
-    style CTRL_POD fill:#4CAF50
+    style CTRL1 fill:#4CAF50
+    style CTRL2 fill:#A5D6A7
     style HAP1 fill:#FF9800
     style HAP2 fill:#FF9800
-    style HAPN fill:#FF9800
-    style CM fill:#2196F3
+    style HTPLCFG fill:#2196F3
 ```
 
 **Deployment Components:**
 
-1. **Controller Deployment**: Single replica deployment running the operator
-   - Watches Kubernetes resources cluster-wide
-   - Renders templates and validates configurations
-   - Deploys to HAProxy instances via Dataplane API
-   - Exposes metrics and health endpoints via Controller Service
+1. **Controller Deployment** — defaults to 2 replicas with leader election
+   - All replicas watch resources, render templates, and validate configs (hot standby)
+   - Only the elected leader pushes configuration to HAProxy via Dataplane API
+   - See [High Availability](../../operations/high-availability.md) for tuning failover
 
-2. **Controller Service**: ClusterIP service for operational endpoints
-   - Port 8080: Health checks (liveness/readiness probes)
-   - Port 9090: Prometheus metrics
-   - Internal use only (not exposed externally)
+2. **Controller Service** (ClusterIP) — operational endpoints only
+   - `:8080` → healthz probes and `/debug/*` introspection
+   - `:9090` → Prometheus metrics
+   - `:9443` → validating webhook
 
-3. **HAProxy StatefulSet**: Multiple replicas for high availability
-   - Each pod runs HAProxy + Dataplane API sidecar
-   - Service selector targets HAProxy pods for traffic routing
-   - Scales horizontally based on load
+3. **HAProxy Deployment** (not StatefulSet) — scales horizontally
+   - Each pod runs HAProxy + the Dataplane API as a sidecar, sharing the config volume
+   - Ready pods are auto-discovered via `controller.config.podSelector`
 
-4. **HAProxy Service**: LoadBalancer/NodePort service for ingress traffic
-   - Port 80: HTTP traffic routing
-   - Port 443: HTTPS/TLS traffic routing
-   - Exposes HAProxy pods externally for user traffic
+4. **HAProxy Service** — NodePort by default; set `haproxy.service.type: LoadBalancer` for cloud providers
+   - Service port 80 maps to HAProxy container port 8080, service port 443 maps to 8443
 
-5. **ConfigMap**: Contains controller configuration
-   - Template definitions (haproxy.cfg, maps, certificates)
-   - Watched resource types and indexing configuration
-   - Rendering and deployment settings
+5. **HAProxyTemplateConfig CRD** — holds every piece of configuration the controller needs
+   - Template bodies (`haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`)
+   - `watchedResources` (what to subscribe to and how to index it)
+   - Dataplane tuning (`minDeploymentInterval`, `driftPreventionInterval`, storage paths)
+   - Validation tests shipped alongside the templates
+
+6. **Credentials Secret** referenced by `spec.credentialsSecretRef` — holds Dataplane API usernames/passwords. Watched live, so rotations don't require a restart.
 
 ## Container Architecture
 
 ```mermaid
 graph TB
     subgraph "Controller Pod"
-        CTRL_MAIN[Controller Process<br/>Port 8080: Health<br/>Port 9090: Metrics<br/>Port 9443: Webhook]
-
-        CTRL_VOL1[ConfigMap Volume<br/>/config]
+        CTRL_MAIN[Controller Process<br/>:8080 healthz + /debug<br/>:9090 metrics<br/>:9443 webhook]
+        CTRL_TMP[/tmp emptyDir<br/>haproxy -c validation]
     end
 
-    subgraph "HAProxy Pod (StatefulSet Member)"
-        HAP_PROC[HAProxy Process<br/>Port 80: HTTP<br/>Port 443: HTTPS<br/>Port 8404: Stats]
-
-        DP_PROC[Dataplane API<br/>Port 5555: API<br/>Port 8080: Health]
-
-        HAP_VOL1[Config Volume<br/>/etc/haproxy]
-        HAP_VOL2[Maps Volume<br/>/etc/haproxy/maps]
-        HAP_VOL3[Certs Volume<br/>/etc/haproxy/certs]
+    subgraph "HAProxy Pod (Deployment member)"
+        HAP_PROC[HAProxy Process<br/>:8080 HTTP<br/>:8443 HTTPS<br/>:8404 Stats]
+        DP_PROC[Dataplane API<br/>:5555 API<br/>Unix master socket]
+        HAP_VOL[Shared config emptyDir<br/>/etc/haproxy<br/>maps/, ssl/, files/]
     end
 
-    CM_SRC[ConfigMap<br/>haproxy-config] --> CTRL_VOL1
-    CTRL_VOL1 --> CTRL_MAIN
+    HTPLCFG[HAProxyTemplateConfig CRD] -. watch .-> CTRL_MAIN
+    CREDS_SECRET[Credentials Secret] -. watch .-> CTRL_MAIN
+    CTRL_TMP --> CTRL_MAIN
 
-    DP_PROC -.API.-> HAP_PROC
-    HAP_VOL1 --> HAP_PROC
-    HAP_VOL2 --> HAP_PROC
-    HAP_VOL3 --> HAP_PROC
+    DP_PROC <-. master socket .-> HAP_PROC
+    HAP_VOL --> HAP_PROC
+    HAP_VOL --> DP_PROC
 
     style CTRL_MAIN fill:#4CAF50
     style HAP_PROC fill:#FF9800
     style DP_PROC fill:#FFB74D
 ```
 
-**Resource Requirements:**
+**Resource Requirements** (chart defaults; see [Performance Guide](../../operations/performance.md) for sizing by ingress count):
 
 Controller Pod:
 
-- CPU: 100m request, 500m limit
-- Memory: 128Mi request, 512Mi limit
-- Volumes: ConfigMap mount for configuration
+- CPU request `100m` (no CPU limit — avoids throttling; GOMAXPROCS auto-derived)
+- Memory `512Mi` request = limit (Guaranteed QoS; GOMEMLIMIT auto-derived via automemlimit)
+- `/tmp` emptyDir for transient `haproxy -c` validation; root filesystem is read-only
 
 HAProxy Pod:
 
-- HAProxy Container: 200m CPU, 256Mi memory (per instance)
-- Dataplane API Container: 100m CPU, 128Mi memory
-- Volumes: EmptyDir for dynamic configs, maps, and certificates
+- HAProxy container: tuned by the chart; the main consumer is connection buffers
+- Dataplane API sidecar: `50m` CPU request, `256Mi` memory request = limit
+- Shared config volume (`emptyDir`) mounted at `/etc/haproxy`; both containers read/write it
 
 ## Network Topology
 
@@ -176,13 +151,13 @@ graph LR
             end
 
             subgraph "HAProxy Instances"
-                subgraph "haproxy-0 Pod<br/>10.0.1.10"
-                    HAP1[HAProxy Process<br/>:80, :443, :8404]
+                subgraph "haproxy pod A<br/>10.0.1.10"
+                    HAP1[HAProxy Process<br/>:8080, :8443, :8404]
                     DP1[Dataplane API<br/>:5555]
                 end
 
-                subgraph "haproxy-1 Pod<br/>10.0.1.11"
-                    HAP2[HAProxy Process<br/>:80, :443, :8404]
+                subgraph "haproxy pod B<br/>10.0.1.11"
+                    HAP2[HAProxy Process<br/>:8080, :8443, :8404]
                     DP2[Dataplane API<br/>:5555]
                 end
             end
@@ -234,7 +209,7 @@ graph LR
 
 **Scaling Considerations:**
 
-- **Horizontal Scaling**: Increase HAProxy StatefulSet replicas for more capacity
-- **Controller Scaling**: Single active controller (leader election for HA in future)
-- **Resource Limits**: Adjust based on number of watched resources and template complexity
-- **Network**: Ensure LoadBalancer can distribute traffic across all HAProxy replicas
+- **HAProxy horizontal scaling**: `kubectl scale deployment <release>-haproxy --replicas=N` (or set `haproxy.replicaCount`). Pods are auto-discovered via `controller.config.podSelector`.
+- **Controller horizontal scaling**: Run 2+ replicas with leader election (the chart default). Only the leader pushes configuration; followers are hot standby.
+- **Resource sizing**: Scales with the number of watched resources and template complexity — see [Performance Guide](../../operations/performance.md) for per-size profiles.
+- **Network topology**: Ensure LoadBalancer/NodePort can distribute traffic across all HAProxy replicas and that NetworkPolicy allows the controller to reach Dataplane API port 5555 on each HAProxy pod.

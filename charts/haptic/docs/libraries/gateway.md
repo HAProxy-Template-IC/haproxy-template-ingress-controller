@@ -29,34 +29,39 @@ controller:
 
 ## Extension Points
 
-### Extension Points Used
+The Gateway API library hooks into these extension points from base.yaml. Snippet names encode their priority via a numeric prefix (see [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority)).
 
-The Gateway API library implements these extension points from base.yaml:
-
-| Extension Point | This Library's Snippets | What They Generate |
-|-----------------|-------------------------|-------------------|
-| Features | `features-gateway-ssl-passthrough`, `features-gateway-tls` | SSL passthrough registration, TLS certificates |
-| Host Map | `map-host-gateway` | Host-to-group mapping entries |
-| Path Exact Map | `map-path-exact-gateway` | Exact path match entries |
-| Path Prefix Exact Map | `map-pfxexact-gateway` | Prefix paths matching exactly |
-| Path Prefix Map | `map-path-prefix-gateway` | Prefix path match entries |
-| Path Regex Map | `map-path-regex-gateway` | Regex path match entries |
-| Weighted Backend Map | `map-weighted-backend-gateway` | Weighted routing entries |
-| Backends | `backends-gateway`, `backends-gateway-ssl-passthrough` | Backend definitions |
-| Advanced Matchers | `frontend-matchers-advanced-gateway-*` | Method/header/query matching |
-| Frontend Filters | `frontend-filters-gateway-*` | Header modification, redirects, rewrites |
-| Status Patches | `status-patches-200-gateway` | Gateway, HTTPRoute, GRPCRoute status updates |
+| Extension Point | Snippet | What It Generates |
+|-----------------|---------|-------------------|
+| `features-*` | `features-100-gateway-ssl-passthrough` | Populates `gf["sslPassthroughBackends"]` from HTTPRoutes annotated for SNI passthrough |
+| `features-*` | `features-100-gateway-tls` | Registers TLS certificates from Gateway listeners into `gf["tlsCertificates"]` |
+| `backends-*` | `backends-500-gateway` | HTTP backend blocks for every unique `(namespace, service, port)` touched by an HTTPRoute or GRPCRoute |
+| `backends-*` | `backends-501-gateway-ssl-passthrough` | TCP-mode passthrough backends for listeners with `tls.mode: Passthrough` |
+| `map-host-*` | `map-host-500-gateway` | Host → group mapping entries derived from `spec.hostnames` |
+| `map-path-exact-*` | `map-path-exact-500-gateway` | Entries for `path.type: Exact` matches |
+| `map-pfxexact-*` | `map-pfxexact-500-gateway` | Prefix-exact entries (e.g. matching `/foo` but not `/foobar`) |
+| `map-path-prefix-*` | `map-path-prefix-500-gateway` | Entries for `path.type: PathPrefix` matches |
+| `map-path-regex-*` | `map-path-regex-500-gateway` | Entries for `path.type: RegularExpression` matches |
+| `map-weighted-backend-*` | `map-weighted-backend-500-gateway` | Weighted-multi-backend entries for traffic-split `backendRefs[].weight` |
+| `frontend-matchers-advanced-*` | `frontend-matchers-advanced-010-route-id-setup` | Sets up per-request route-ID variables before the 500-range matchers run |
+| `frontend-matchers-advanced-*` | `frontend-matchers-advanced-500-gateway` | Method, header, and query-parameter matchers |
+| `frontend-matchers-advanced-*` | `frontend-matchers-advanced-900-path-match` | Final path-match backend-selection logic |
+| `frontend-filters-*` | `frontend-filters-500-gateway-request-header` | `RequestHeaderModifier` filter |
+| `frontend-filters-*` | `frontend-filters-500-gateway-response-header` | `ResponseHeaderModifier` filter |
+| `frontend-filters-*` | `frontend-filters-500-gateway-redirect` | `RequestRedirect` filter |
+| `frontend-filters-*` | `frontend-filters-500-gateway-urlrewrite` | `URLRewrite` filter |
+| `status-patches-*` | `status-patches-200-gateway` | Patches Gateway / HTTPRoute / GRPCRoute `status` (Accepted, ResolvedRefs, attachedRoutes, addresses) |
 
 ### Injecting Custom Configuration
 
-You can extend Gateway API functionality by adding snippets that match extension point patterns:
+You can extend Gateway API functionality by adding snippets with the right prefix and priority:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      # Add custom advanced matcher
-      frontend-matchers-advanced-custom-auth:
+      # Runs before the 500-range gateway matchers so the deny takes effect per route
+      frontend-matchers-advanced-400-custom-auth:
         template: |
           # Custom authentication check
           http-request deny if { var(txn.matched_route) -m found } !{ req.hdr(Authorization) -m found }
@@ -64,15 +69,17 @@ controller:
 
 ## Watched Resources
 
+The gateway library declares these resources in its `watchedResources`:
+
 | Resource | API Version | Purpose |
 |----------|-------------|---------|
-| Gateways | gateway.networking.k8s.io/v1 | Gateway definitions |
+| Gateways | gateway.networking.k8s.io/v1 | Gateway definitions (filtered by `gatewayClass.name`) |
 | HTTPRoutes | gateway.networking.k8s.io/v1 | HTTP routing rules |
 | GRPCRoutes | gateway.networking.k8s.io/v1 | gRPC routing rules |
 | Services | v1 | Service discovery |
 | EndpointSlices | discovery.k8s.io/v1 | Backend endpoints |
-| Secrets | v1 | TLS certificates |
-| Controller Services | v1 | Address discovery for status reporting |
+
+TLS Secrets are watched by the SSL library (not gateway), and controller-service address discovery for status patches is owned by base.yaml. See [SSL Library](ssl.md) and [Base Library](base.md).
 
 ## Architecture
 

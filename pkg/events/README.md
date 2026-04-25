@@ -84,12 +84,17 @@ Publish is non-blocking. If a subscriber's buffer is full, the event is **droppe
 
 ## Buffer Sizing Rule of Thumb
 
-- Low-frequency control events (config changes, leadership transitions): `StandardSubscriberBuffer` (50).
-- Reconciliation-path events: 100–200.
-- Observability consumers (commentator, debug buffer) that see *every* event: 500+.
-- The pre-start buffer on `NewEventBus`: roughly the number of events you expect during initialisation; 100 is fine for the main controller.
+`pkg/events/defaults.go` exposes five named constants — prefer them over raw integers so the intent is readable at the call site:
 
-See `pkg/events/types.go` for the `Standard*SubscriberBuffer` constants.
+| Tier | Constant | Value | For |
+|------|----------|-------|-----|
+| Low | `LowVolumeSubscriberBuffer` | 10 | Components that see at most a handful of events per second (leadership transitions, config reloads). |
+| Standard | `StandardSubscriberBuffer` | 50 | Default for most controller components. |
+| High | `HighVolumeSubscriberBuffer` | 100 | Reconciliation-path consumers that fan in from many resource types. |
+| Publishing | `PublishingSubscriberBuffer` | 200 | Components that publish downstream work in response to every event. |
+| Debug | `DebugSubscriberBuffer` | 1000 | Observability consumers (commentator, debug ring buffer) that must catch everything. |
+
+Pre-start buffer on `NewEventBus`: roughly the number of events you expect during initialisation; 100 is fine for the main controller.
 
 ## Testing
 

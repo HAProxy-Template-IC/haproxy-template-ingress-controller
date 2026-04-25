@@ -19,6 +19,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Changed
 
+- **BREAKING**: `ingressClass.name` and `gatewayClass.name` default from `haproxy` to `haptic`. Avoids conflicts with other HAProxy-based ingress controllers during side-by-side migration. Existing users replacing an incumbent controller should set `ingressClass.name: haproxy` (and/or `gatewayClass.name: haproxy`) explicitly in their values, or update their Ingress / Gateway manifests to `ingressClassName: haptic` / `gatewayClassName: haptic`.
 - `extraDeploy` now accepts both list and dict formats (dict enables composing across multiple values files)
 - `haproxy.org/pod-maxconn` quantizes the pod count to the next power of 2 to avoid HAProxy reload cascades on scaling
 
@@ -34,10 +35,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 - Modular template library system with composable libraries merged at Helm render time (enable/disable via `controller.templateLibraries.<name>.enabled`):
   - `base.yaml`: Core HAProxy template structure with extension points
   - `ingress.yaml`: Kubernetes Ingress support (path types: Exact, Prefix, ImplementationSpecific; TLS termination; default backend)
-  - `gateway.yaml`: Gateway API support (HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute; traffic splitting; header modification; URL rewrites)
+  - `gateway.yaml`: Gateway API support — HTTPRoute and GRPCRoute are watched and routed; traffic splitting, request/response header modification, URL rewrites, and Gateway/Route status patches are emitted. TLS/TCP/UDP listeners are reflected in each Gateway's `supportedKinds` status but TLSRoute/TCPRoute/UDPRoute resources are not watched or routed
   - `haproxytech.yaml`: `haproxy.org/*` annotation compatibility (backend config snippets, SSL passthrough, CORS, basic auth)
   - `ssl.yaml`: TLS/SSL features
-  - `haproxy-ingress.yaml`: 47 `haproxy-ingress.github.io/*` annotation compatibility (enabled by default)
+  - `haproxy-ingress.yaml`: 56 `haproxy-ingress.github.io/*` annotation compatibility (enabled by default)
 - Gateway API status reporting: Gateway conditions (Accepted, Programmed), listener status, HTTPRoute/GRPCRoute parent status with Accepted and ResolvedRefs conditions
 - Ingress status reporting: LoadBalancer addresses propagated to Ingress `.status.loadBalancer`
 - HAProxy built-in Prometheus exporter enabled by default on the status frontend (`/metrics` on port 8404)
@@ -62,7 +63,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 ### Changed
 
 - Dataplane API credentials consolidated into `credentials.dataplane` section; auto-generated if not provided
-- Basic auth matches official HAProxy Ingress Controller behavior: userlist naming changed to `{namespace}-{ingressName}`, using `http_auth_group()` with `authenticated-users` group
+- Basic auth userlists are named `auth_<secretNs>_<secretName>` and deduplicated per Secret; each Ingress references its userlist via `http_auth()`. Differs from the official HAProxy Ingress Controller's per-Ingress `{namespace}-{ingressName}` naming so multiple Ingresses sharing the same Secret produce a single userlist (significant speedup for bcrypt hashes)
 - Production-ready default resource requests and limits: controller (100m CPU / 512Mi memory), HAProxy (250m CPU / 1Gi memory), dataplane sidecar (50m CPU / 256Mi memory)
 - `sidecars`, `extraVolumes`, `extraVolumeMounts` and their `haproxy.*` counterparts support Helm template expressions
 

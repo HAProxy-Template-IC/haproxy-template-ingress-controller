@@ -194,10 +194,13 @@ Check these areas in order of likelihood:
 
 1. **Missing RBAC permissions:**
 
+   The controller's ServiceAccount name is the Helm release fullname (unless you overrode `serviceAccount.name`):
+
    ```bash
-   kubectl auth can-i get leases --as=system:serviceaccount:<namespace>:haptic
-   kubectl auth can-i create leases --as=system:serviceaccount:<namespace>:haptic
-   kubectl auth can-i update leases --as=system:serviceaccount:<namespace>:haptic
+   SA=$(kubectl get deployment haptic-controller -n haptic -o jsonpath='{.spec.template.spec.serviceAccountName}')
+   kubectl auth can-i get leases    --as=system:serviceaccount:haptic:$SA
+   kubectl auth can-i create leases --as=system:serviceaccount:haptic:$SA
+   kubectl auth can-i update leases --as=system:serviceaccount:haptic:$SA
    ```
 
 2. **Missing environment variables:**

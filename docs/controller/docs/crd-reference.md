@@ -23,8 +23,7 @@ spec:
 
   podSelector:
     matchLabels:
-      app: haproxy
-      component: loadbalancer
+      app.kubernetes.io/component: loadbalancer
 
   watchedResources:
     ingresses:
@@ -65,13 +64,12 @@ credentialsSecretRef:
 
 ### podSelector (required)
 
-Labels that identify which HAProxy pods the controller should manage.
+Labels that identify which HAProxy pods the controller should manage. The Helm chart ships `app.kubernetes.io/component: loadbalancer` (plus dynamically-set `app.kubernetes.io/name` / `app.kubernetes.io/instance`); use any labels your HAProxy pods actually carry.
 
 ```yaml
 podSelector:
   matchLabels:
-    app: haproxy
-    component: loadbalancer
+    app.kubernetes.io/component: loadbalancer
 ```
 
 At least one label must be specified.
@@ -84,14 +82,14 @@ Controller-level settings for ports and leader election.
 controller:
   leaderElection:
     enabled: true
-    leaseName: haptic-leader
+    leaseName: ""        # empty = defaults to the CRD name; Helm overrides with the release fullname
     leaseDuration: 60s
     renewDeadline: 15s
     retryPeriod: 5s
 ```
 
 !!! note
-    When installing via the Helm chart, these values are overridden by `values.yaml` (defaults: `leaseDuration: 15s`, `renewDeadline: 10s`, `retryPeriod: 2s`). The values above are the controller's own built-in defaults and only apply when managing the CRD directly without Helm.
+    When installing via the Helm chart, these values are overridden by `values.yaml` (defaults: `leaseDuration: 15s`, `renewDeadline: 10s`, `retryPeriod: 2s`, `leaseName: <release-fullname>`). The values above are the controller's own built-in defaults and only apply when managing the CRD directly without Helm.
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
@@ -390,11 +388,11 @@ kubectl get htplcfg -w
 
 ```bash
 # Validate local file
-controller validate -f haproxy-config.yaml
+haptic-controller validate -f haproxy-config.yaml
 
 # Validate deployed config
 kubectl get htplcfg -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
-controller validate -f /tmp/haptic-config.yaml
+haptic-controller validate -f /tmp/haptic-config.yaml
 ```
 
 ### Edit Configuration
@@ -470,7 +468,7 @@ Additional validation occurs when:
 
 1. **Admission webhook** - Runs embedded validation tests (if webhook enabled)
 2. **Controller startup** - Validates configuration before starting
-3. **CLI command** - `controller validate` runs tests locally
+3. **CLI command** - `haptic-controller validate` runs tests locally
 
 ## Best Practices
 
@@ -490,7 +488,7 @@ Additional validation occurs when:
 
 - Include validation tests for critical routing paths
 - Test with realistic fixtures, not toy examples
-- Run `controller validate` before applying changes
+- Run `haptic-controller validate` before applying changes
 - Use CI/CD to validate configs in pull requests
 
 **Templates:**

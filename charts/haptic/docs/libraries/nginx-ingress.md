@@ -698,7 +698,7 @@ metadata:
     nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
     nginx.ingress.kubernetes.io/canary-weight: "20"
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   rules:
     - host: app.example.com
       http:

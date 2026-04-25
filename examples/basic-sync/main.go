@@ -13,7 +13,7 @@
 // Configuration:
 //
 //	Set these environment variables or modify the code:
-//	- HAPROXY_URL: Dataplane API endpoint (default: http://localhost:5555/v2)
+//	- HAPROXY_URL: Dataplane API endpoint (default: http://localhost:5555/v3; /v2 still accepted)
 //	- HAPROXY_USER: Basic auth username (default: admin)
 //	- HAPROXY_PASS: Basic auth password (default: admin)
 package main
@@ -38,7 +38,7 @@ func main() {
 func run() error {
 	// Configure connection to HAProxy Dataplane API
 	endpoint := dataplane.Endpoint{
-		URL:      getEnv("HAPROXY_URL", "http://localhost:5555/v2"),
+		URL:      getEnv("HAPROXY_URL", "http://localhost:5555/v3"),
 		Username: getEnv("HAPROXY_USER", "admin"),
 		Password: getEnv("HAPROXY_PASS", "admin"),
 	}

@@ -6,17 +6,17 @@ Validation tests verify that your templates render correctly and produce valid H
 
 ## Quick Start
 
-`controller validate` is the controller binary running in validation mode. Download it for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) and run it locally:
+`haptic-controller validate` is the controller binary running in validation mode. Download it for your platform from the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) and run it locally:
 
 ```bash
-controller validate -f my-config.yaml
+haptic-controller validate -f my-config.yaml
 ```
 
 To validate the config currently deployed in your cluster:
 
 ```bash
 kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > /tmp/haptic-config.yaml
-controller validate -f /tmp/haptic-config.yaml
+haptic-controller validate -f /tmp/haptic-config.yaml
 ```
 
 Add a `validationTests` section to your HAProxyTemplateConfig:
@@ -55,7 +55,7 @@ spec:
 Run tests:
 
 ```bash
-controller validate -f my-config.yaml
+haptic-controller validate -f my-config.yaml
 ```
 
 ## Test Structure
@@ -185,20 +185,20 @@ Queries template rendering context:
 
 ```bash
 # Run all tests
-controller validate -f config.yaml
+haptic-controller validate -f config.yaml
 
 # Run specific test
-controller validate -f config.yaml --test test-basic-routing
+haptic-controller validate -f config.yaml --test test-basic-routing
 
 # Output formats
-controller validate -f config.yaml --output json
-controller validate -f config.yaml --output yaml
+haptic-controller validate -f config.yaml --output json
+haptic-controller validate -f config.yaml --output yaml
 
 # Parallelism (0=auto-detect CPUs, 1=sequential)
-controller validate -f config.yaml --workers 4
+haptic-controller validate -f config.yaml --workers 4
 ```
 
-The `controller validate` command shells out to the `haproxy` binary on your `PATH` for the semantic validation phase. Install HAProxy locally (e.g. via your package manager) so that step can run; otherwise only the syntax phase is exercised.
+The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` for the semantic validation phase. Install HAProxy locally (e.g. via your package manager) so that step can run; otherwise only the syntax phase is exercised.
 
 Exit code 0 means all tests passed.
 
@@ -223,7 +223,7 @@ Tests: 1 passed, 1 failed, 2 total (0.214s)
 Shows content preview for failed assertions:
 
 ```bash
-controller validate -f config.yaml --verbose
+haptic-controller validate -f config.yaml --verbose
 ```
 
 ```
@@ -239,7 +239,7 @@ controller validate -f config.yaml --verbose
 Shows all rendered content after test results:
 
 ```bash
-controller validate -f config.yaml --dump-rendered
+haptic-controller validate -f config.yaml --dump-rendered
 ```
 
 ### --trace-templates
@@ -247,7 +247,7 @@ controller validate -f config.yaml --dump-rendered
 Shows top-level template execution order and timing:
 
 ```bash
-controller validate -f config.yaml --trace-templates
+haptic-controller validate -f config.yaml --trace-templates
 ```
 
 ```
@@ -262,13 +262,13 @@ Completed: path-prefix.map (3.347ms)
     `render_glob`, `render`, and macro invocations, combine with `--profile-includes`:
 
     ```bash
-    controller validate -f config.yaml --trace-templates --profile-includes
+    haptic-controller validate -f config.yaml --trace-templates --profile-includes
     ```
 
 ### Combining Flags
 
 ```bash
-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
+haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
 ```
 
 **Workflow**: Start with `--verbose`, add `--dump-rendered` for full content, add `--trace-templates` for execution flow.

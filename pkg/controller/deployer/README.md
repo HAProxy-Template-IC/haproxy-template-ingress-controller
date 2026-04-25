@@ -1,143 +1,91 @@
 # pkg/controller/deployer
 
-Deployment orchestration components for HAProxy configuration deployment.
+Three components that together get validated configurations onto HAProxy pods:
 
-## Overview
+- **`DeploymentScheduler`** — decides *when* to deploy. Keeps the last validated config + last discovered endpoints, rate-limits to `minDeploymentInterval`, and queues at most one pending deployment ("latest wins"). Also times out deployments that take longer than `deploymentTimeout` so a dropped `DeploymentCompletedEvent` can't wedge the pipeline forever.
+- **`Component`** (the deployer itself) — stateless executor. Consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. `maxParallel` and `rawPushThreshold` are passed through to the dataplane client.
+- **`DriftPreventionMonitor`** — fires a synthetic `DriftPreventionTriggeredEvent` every `driftPreventionInterval` when nothing has deployed recently, so an out-of-band change applied directly via the Dataplane API gets overwritten by the controller's last-known-good config.
 
-The deployer package implements a three-component architecture that provides smart deployment scheduling with rate limiting, drift prevention, and stateless execution.
+All three are leader-only — only the replica holding the `Lease` deploys, observers on other replicas stay idle.
 
-## Architecture
-
-### Three-Component Design
-
-```
-ValidationCompletedEvent ──────┐
-HAProxyPodsDiscoveredEvent ────┤
-DriftPreventionTriggeredEvent ─┤
-                               ↓
-                    DeploymentScheduler
-                    (Rate Limiting & State)
-                               ↓
-                    DeploymentScheduledEvent
-                               ↓
-                         Deployer
-                    (Stateless Executor)
-                               ↓
-                    DeploymentCompletedEvent
-                               ↓
-                    DriftPreventionMonitor
-                    (Periodic Triggering)
-```
-
-### Components
-
-#### 1. DeploymentScheduler
-
-**Purpose**: Coordinates WHEN deployments happen
-
-**Responsibilities**:
-
-- Maintains state (last validated config, current endpoints)
-- Enforces minimum deployment interval (rate limiting)
-- Implements "latest wins" queueing for concurrent changes
-- Publishes DeploymentScheduledEvent when ready to deploy
-
-**Events**:
-
-- Subscribes: `TemplateRenderedEvent`, `ValidationCompletedEvent`, `HAProxyPodsDiscoveredEvent`, `DriftPreventionTriggeredEvent`, `DeploymentCompletedEvent`
-- Publishes: `DeploymentScheduledEvent`
-
-**Configuration**:
-
-- `min_deployment_interval`: Minimum time between consecutive deployments (default: 2s)
-
-#### 2. Deployer
-
-**Purpose**: Executes deployments to HAProxy instances
-
-**Responsibilities**:
-
-- Stateless deployment execution
-- Parallel deployment to multiple endpoints
-- Per-instance success/failure tracking
-- Publishes detailed deployment events
-
-**Events**:
-
-- Subscribes: `DeploymentScheduledEvent`
-- Publishes: `DeploymentStartedEvent`, `InstanceDeployedEvent`, `InstanceDeploymentFailedEvent`, `DeploymentCompletedEvent`
-
-#### 3. DriftPreventionMonitor
-
-**Purpose**: Prevents configuration drift from external changes
-
-**Responsibilities**:
-
-- Monitors deployment activity via timer
-- Triggers periodic deployments after idle period
-- Resets timer on each successful deployment
-
-**Events**:
-
-- Subscribes: `DeploymentCompletedEvent`
-- Publishes: `DriftPreventionTriggeredEvent`
-
-**Configuration**:
-
-- `drift_prevention_interval`: Interval for periodic deployments (default: 60s)
-
-## Quick Start
+## Minimal Usage
 
 ```go
-// Create deployment scheduler with rate limiting
-minInterval := 2 * time.Second
-scheduler := deployer.NewDeploymentScheduler(bus, logger, minInterval)
+import (
+    "context"
+    "time"
+
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/deployer"
+    "gitlab.com/haproxy-haptic/haptic/pkg/events"
+)
+
+scheduler := deployer.NewDeploymentScheduler(
+    bus, logger,
+    2*time.Second,   // minDeploymentInterval
+    30*time.Second,  // deploymentTimeout
+)
+exec := deployer.New(bus, logger, 0, 100)       // maxParallel (0 = auto), rawPushThreshold
+monitor := deployer.NewDriftPreventionMonitor(bus, logger, 60*time.Second)
+
 go scheduler.Start(ctx)
-
-// Create stateless deployer
-deployer := deployer.New(bus, logger)
-go deployer.Start(ctx)
-
-// Create drift prevention monitor
-driftInterval := 60 * time.Second
-monitor := deployer.NewDriftPreventionMonitor(bus, logger, driftInterval)
+go exec.Start(ctx)
 go monitor.Start(ctx)
 ```
 
-## Key Features
+All five durations / ints come from `spec.dataplane` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `maxParallel`, `rawPushThreshold`, and `driftPreventionInterval`.
 
-### Rate Limiting
+## Event Flow
 
-Prevents rapid-fire deployments during high-frequency changes:
+```
+TemplateRenderedEvent ───────┐
+ValidationCompletedEvent ────┤
+HAProxyPodsDiscoveredEvent ──┤
+DriftPreventionTriggeredEvent┤
+DeploymentCompletedEvent ────┤       (feedback edge)
+                             ▼
+                     DeploymentScheduler
+                             │
+                             ▼
+                     DeploymentScheduledEvent
+                             │
+                             ▼
+                         Component
+                             │
+                             ▼
+           DeploymentStartedEvent
+           InstanceDeployedEvent         (per endpoint)
+           InstanceDeploymentFailedEvent (per endpoint)
+           DeploymentCompletedEvent
+                             │
+                             ▼
+                   DriftPreventionMonitor
+                             │
+                             ▼
+                   DriftPreventionTriggeredEvent (if idle for > interval)
+```
 
-- Configurable minimum interval between deployments
-- Enforced by DeploymentScheduler before publishing events
-- Prevents version conflicts in HAProxy Dataplane API
+Notable details:
 
-### "Latest Wins" Queueing
+- The scheduler only deploys when it has *all three* inputs: a rendered config, a successful validation, and at least one discovered HAProxy endpoint. Partial state waits.
+- "Latest wins" is a single slot — concurrent changes don't queue up as a FIFO, they coalesce to the most recent one.
+- `DeploymentCompletedEvent` both closes the in-progress flag in the scheduler *and* resets the drift-monitor's idle timer, which is why it's on the feedback edge in the diagram.
+- `deploymentTimeout` is a safety net, not an operational target — hitting it means a lost completion event or a stuck dataplane call, both of which are bugs to investigate.
 
-Only the most recent configuration change is queued:
+## Leadership Transitions
 
-- Single pending deployment value (not a queue)
-- New deployment requests overwrite pending deployments
-- Ensures eventual consistency without unnecessary work
+On `LostLeadershipEvent` the scheduler drops any pending deployment and clears its in-progress flag (otherwise a new leader would wait on a deployment the dead leader was handling); the drift monitor stops its timer. On `BecameLeaderEvent` upstream components re-publish their last state (`HAProxyPodsDiscoveredEvent`, `TemplateRenderedEvent`, `ValidationCompletedEvent`) so the newly-leading scheduler can assemble the inputs without waiting for the next reconciliation.
 
-### Drift Prevention
+See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full replay/clear contract every leader-only component implements.
 
-Detects and corrects external configuration changes:
+## See Also
 
-- Periodic deployment triggers if system is idle
-- Helps identify drift from other Dataplane API clients
-- Configurable interval (default: 60s)
-
-### Concurrent Deployment Protection
-
-Prevents overlapping deployments:
-
-- Scheduler tracks deployment in-progress state
-- Pending deployments queued until current completes
-- Recursive processing ensures all changes are applied
+- [`pkg/dataplane`](../../dataplane/) — the `Client.Sync` call that the executor drives
+- [`pkg/controller/discovery`](../discovery/) — publishes `HAProxyPodsDiscoveredEvent`
+- [`pkg/controller/renderer`](../renderer/) / [`validator`](../validator/) — upstream producers of `TemplateRenderedEvent` / `ValidationCompletedEvent`
+- [`pkg/controller/leadership`](../leadership/) — the gating helper these components use
+- `pkg/controller/LEADER_ONLY_COMPONENTS.md` — leadership-transition patterns
+- `docs/controller/docs/operations/high-availability.md` — user-facing view of the leader-only deployment split
 
 ## License
 
-See main repository for license information.
+Apache-2.0 — see root `LICENSE`.

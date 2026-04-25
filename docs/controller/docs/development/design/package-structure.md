@@ -114,9 +114,9 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 **Scatter-gather validation.** Configuration validation uses `pkg/events` request/response to fan a `ConfigValidationRequest` out to independent validators (structural, template syntax, JSONPath, HAProxy config) and aggregate responses.
 
-**Single-resource vs. bulk watching.** `pkg/k8s/watcher` provides `Watcher` (collections, debounced) and `SingleWatcher` (one named resource, immediate callbacks) so the controller ConfigMap and credentials Secret don't pay indexing overhead.
+**Single-resource vs. bulk watching.** `pkg/k8s/watcher` provides `Watcher` (collections, debounced) and `SingleWatcher` (one named resource, immediate callbacks) so the `HAProxyTemplateConfig` CRD and credentials Secret don't pay indexing overhead.
 
-**Two-phase HAProxy validation.** `pkg/dataplane` exposes `ValidateConfiguration(mainConfig, auxFiles, paths)` which runs the client-native parser (syntax) followed by the `haproxy -c` binary check (semantics). Writes auxiliary files to the real HAProxy paths under a mutex so file references resolve exactly like at runtime.
+**Three-phase HAProxy validation.** `pkg/dataplane` exposes `ValidateConfiguration(mainConfig, auxFiles, paths, version, skipDNSValidation)` which runs (1) the client-native parser for syntax, (2) OpenAPI schema validation against the version-specific DataPlane API spec, and (3) the `haproxy -c` binary check for semantics. Results are cached by `(configHash, auxHash, versionHash)` so the same rendered output isn't re-validated during drift-prevention. Writes auxiliary files to the real HAProxy paths under a mutex (`haproxyCheckMutex` in `validate_haproxy.go`) so file references resolve exactly like at runtime.
 
 **Component lifecycle.** `pkg/lifecycle` centralises registration, dependency ordering, leader-only flags, and health tracking; the controller registers every component there instead of starting goroutines directly.
 

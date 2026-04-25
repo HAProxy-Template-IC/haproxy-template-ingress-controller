@@ -25,18 +25,18 @@ controller:
 
 ### Default SSL Certificate
 
-Configure the default certificate used when no SNI match is found:
+Configure the default certificate used when no SNI match is found via the chart-level values (recommended):
 
 ```yaml
 controller:
-  config:
-    templatingSettings:
-      extraContext:
-        default_ssl_cert_namespace: haptic
-        default_ssl_cert_name: default-ssl-cert
+  defaultSSLCertificate:
+    secretName: default-ssl-cert
+    namespace: haptic            # defaults to the Helm release namespace
 ```
 
-The referenced Secret must be of type `kubernetes.io/tls` with `tls.crt` and `tls.key` fields.
+The chart wires those values into the template engine as `extraContext.default_ssl_cert_name` and `extraContext.default_ssl_cert_namespace`; the SSL library reads them and emits the corresponding `default.pem` entry in `certificate-list.txt`.
+
+The referenced Secret must be of type `kubernetes.io/tls` with `tls.crt` and `tls.key` fields. For the full configuration surface (cert-manager integration, disabling HTTPS, manual certificates) see [SSL Certificates](../ssl-certificates.md).
 
 ## Extension Points
 
@@ -46,12 +46,15 @@ The SSL library implements these extension points from base.yaml:
 
 | Extension Point | This Library's Snippet | What It Generates |
 |-----------------|------------------------|-------------------|
-| Features | `features-ssl-initialization` | Initializes SSL data structures (priority 50) |
-| Features | `features-ssl-crtlist` | Generates CRT-list file (priority 150) |
-| Global Top | `global-ssl-ocsp-config` | OCSP stapling configuration |
-| Frontends | `frontends-https` | HTTPS frontend with TLS termination |
-| Frontends | `frontends-ssl-tcp` | TCP frontend for SSL passthrough (conditional) |
-| Backends | `backends-ssl-loopback` | Loopback backend for passthrough architecture |
+| `features-*` | `features-050-ssl-initialization` | Initializes shared state (`gf["tlsCertificates"]`, `gf["sslPassthroughBackends"]`) |
+| `features-*` | `features-150-ssl-crtlist` | Generates `certificate-list.txt` (runs after resource libraries have registered certs) |
+| `features-*` | `features-160-ssl-redirect-map` | Builds the HTTP→HTTPS redirect map consumed by `frontend-filters-050-ssl-redirect` |
+| `frontend-filters-*` | `frontend-filters-050-ssl-redirect` | HTTP→HTTPS redirect rules |
+| `frontends-*` | `frontends-500-https` | HTTPS frontend with TLS termination |
+| `frontends-*` | `frontends-500-ssl-tcp` | TCP frontend for SSL passthrough (conditional on registered passthrough backends) |
+| `backends-*` | `backends-500-ssl-loopback` | Loopback backend that forwards passthrough-decrypted traffic from the TCP frontend to the HTTPS frontend |
+
+Snippet names reflect their real numeric-prefix values in `libraries/ssl.yaml`; lower-numbered `features-050-*` snippets run before higher-numbered `features-150-*` ones, which is how SSL initializes shared state before resource libraries populate it and before the CRT-list is emitted.
 
 ### Extension Points Provided
 
@@ -81,7 +84,7 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 
 The SSL library generates an HTTPS frontend that:
 
-- Binds to port 8443 (configurable via `httpsPort`)
+- Binds to port 8443 (override via `controller.config.templatingSettings.extraContext.httpsPort`; the default matches `haproxy.ports.https` in `values.yaml`)
 - Uses CRT-list for certificate selection
 - Enables HTTP/2 via ALPN negotiation
 - Reuses routing logic from base.yaml
@@ -115,15 +118,14 @@ default.pem [ocsp-update on]
 
 ### OCSP Stapling
 
-Automatic OCSP (Online Certificate Status Protocol) stapling is configured globally:
+Every certificate line in the generated `certificate-list.txt` is emitted with the `[ocsp-update on]` option, which instructs HAProxy to fetch and cache OCSP responses for that certificate:
 
-```haproxy
-ocsp-update.mode on
-ocsp-update.mindelay 300
-ocsp-update.maxdelay 3600
+```
+namespace_secretname.pem [ocsp-update on] host1.example.com host2.example.com
+default.pem [ocsp-update on]
 ```
 
-This enables HAProxy to automatically fetch and cache OCSP responses for certificate validation.
+There is no separate global OCSP configuration — the per-certificate option is all that's needed with HAProxy 3.0+.
 
 ### SSL Passthrough
 

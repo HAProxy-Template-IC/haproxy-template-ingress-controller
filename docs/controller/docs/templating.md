@@ -228,15 +228,18 @@ bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
 | Filter | Description | Example |
 |--------|-------------|---------|
-| `b64decode` | Decode base64 strings | `{{ secret.data.password \| b64decode }}` |
+| `b64decode` | Decode base64 strings | `{{ secret.data.password \| b64decode() }}` |
 | `glob_match` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
 | `group_by` | Group items by JSONPath | `{{ ingresses \| group_by("$.metadata.namespace") }}` |
 | `indent` | Indent each line by N spaces | `{{ render("snippet") \| indent(4) }}` |
-| `sanitize_regex` | Escape regex special characters | `{{ path \| sanitize_regex }}` |
+| `sanitize_regex` | Escape regex special characters | `{{ path \| sanitize_regex() }}` |
 | `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
 | `toJSON` | Convert value to JSON string | `{{ myMap \| toJSON() }}` |
 | `semver_gte` | Compare HAProxy version (major.minor) | `{{ semver_gte(haproxyVersion, "3.3") }}` |
+
+!!! note "Pipe operator requires parentheses"
+    Scriggo's pipe operator requires a function call on the right side. `{{ value \| toLower }}` is a parse error; write `{{ value \| toLower() }}`. For filters that take additional arguments, the pipe passes the left-hand value as the first argument: `{{ items \| join(", ") }}` is equivalent to `{{ join(items, ", ") }}`.
 
 **sort_by modifiers**: `:desc` (descending), `:exists` (by field presence), `| length` (by length)
 
@@ -262,7 +265,7 @@ All templates have access to the following top-level variables:
 | `pathResolver` | object | Resolves filenames to HAProxy paths — use `GetPath(name, type)` |
 | `haproxyVersion` | string | HAProxy version string, e.g. `"3.2"` — use with `semver_gte` filter |
 | `currentConfig` | string | The currently deployed HAProxy configuration — used for slot-preserving updates |
-| `shared` | map | Mutable cross-template cache for expensive computations |
+| `shared` | `*SharedContext` | Thread-safe compute-once cache for expensive computations (`shared.ComputeIfAbsent(key, factory)` + `shared.Get(key)`; no `Set` — prevents racy check-then-act patterns) |
 | `templateSnippets` | list | Names of all available template snippets — useful for dynamic `render_glob` patterns |
 
 Custom variables defined in `templatingSettings.extraContext` are also available directly by name. See [Custom Template Variables](#custom-template-variables).

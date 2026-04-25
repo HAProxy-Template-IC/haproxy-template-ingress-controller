@@ -19,9 +19,11 @@ graph TB
             CONFIG[ConfigVar]
             CREDS[CredentialsVar]
             REND[RenderedVar]
+            AUX[AuxFilesVar]
             RES[ResourcesVar]
             EVENTS[EventsVar]
-            STATE[StateVar]
+            STATE[FullStateVar]
+            PIPE[PipelineVar / ValidatedVar / ErrorsVar]
         end
     end
 
@@ -34,16 +36,20 @@ graph TB
     VARS --> CONFIG
     VARS --> CREDS
     VARS --> REND
+    VARS --> AUX
     VARS --> RES
     VARS --> EVENTS
     VARS --> STATE
+    VARS --> PIPE
 
     CONFIG --> REG
     CREDS --> REG
     REND --> REG
+    AUX --> REG
     RES --> REG
     EVENTS --> REG
     STATE --> REG
+    PIPE --> REG
 
     REG --> HTTP
 
@@ -75,9 +81,11 @@ graph TB
 **pkg/controller/debug** - Controller-specific debug variables:
 
 - Implements `introspection.Var` interface for controller data
-- ConfigVar, CredentialsVar (metadata only), RenderedVar, ResourcesVar
-- EventBuffer for independent event tracking
-- StateProvider interface for accessing controller state
+- Core state vars: `ConfigVar`, `CredentialsVar` (metadata only), `RenderedVar`, `AuxFilesVar`, `ResourcesVar`
+- Pipeline status vars (used by acceptance tests): `PipelineVar`, `ValidatedVar`, `ErrorsVar`
+- `EventsVar` for the event-buffer view, `FullStateVar` for the catch-all `/debug/vars/state` payload
+- `EventBuffer` for independent event tracking
+- `StateProvider` interface for accessing controller state without coupling to specific event types
 
 **StateCache** - Event-driven state tracking:
 
@@ -89,10 +97,10 @@ graph TB
 
 ## HTTP Endpoints
 
-The debug server exposes controller state via HTTP (port configurable via `--debug-port` flag or `DEBUG_PORT` environment variable, disabled by default):
+The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`); set it to `0` to disable the server entirely.
 
 ```bash
-# List all available variables (assuming port 8080 is configured)
+# List all available variables
 curl http://localhost:8080/debug/vars
 
 # Get current configuration
@@ -154,13 +162,13 @@ type DebugClient struct {
 }
 
 // In test
-func TestConfigMapReload(t *testing.T) {
+func TestHAProxyTemplateConfigReload(t *testing.T) {
     // Create debug client with port-forward
-    debugClient := NewDebugClient(cfg.RESTConfig(), "controller-pod", 6060)
+    debugClient := NewDebugClient(cfg.RESTConfig(), "controller-pod", 8080)
     debugClient.Start(ctx)
 
-    // Update ConfigMap
-    UpdateConfigMap(ctx, "new-template")
+    // Patch the HAProxyTemplateConfig CRD to a new template revision
+    UpdateHAProxyTemplateConfig(ctx, "new-template")
 
     // Wait for controller to process change
     err := debugClient.WaitForConfigVersion(ctx, "v2", 30*time.Second)
@@ -208,20 +216,16 @@ The debug server should be:
 
 ## Configuration
 
-Debug server configuration via controller ConfigMap:
+The debug server is configured by the controller binary at startup, not via the `HAProxyTemplateConfig` CRD:
 
-```yaml
-controller:
-  introspection:
-    enabled: true
-    port: 6060
-    bind_address: "0.0.0.0"  # For kubectl port-forward compatibility
+| Setting | Source | Notes |
+|---------|--------|-------|
+| Port | `--debug-port` flag, `DEBUG_PORT` env, or Helm `controller.debugPort` value | Default `0` = disabled; the chart sets it to `8080` by default |
+| Bind address | Hardcoded `0.0.0.0:<port>` | So that `kubectl port-forward` can reach it |
+| Event-buffer size | Compile-time constant (`pkg/controller/debug`) | Not tunable per-deployment |
+| Go profiling | Always mounted at `/debug/pprof/*` when the debug port is enabled | See [Debugging Guide](../../operations/debugging.md#go-profiling) |
 
-  debug:
-    enabled: true
-    event_buffer_size: 1000
-    state_snapshots: true
-```
+Disable the debug server entirely by setting `controller.debugPort: 0` in Helm values; the `/healthz` endpoint then moves to `controller.ports.healthz` (see [Security — Network Exposure](../../operations/security.md#network-exposure)).
 
 For detailed implementation and API documentation, see:
 

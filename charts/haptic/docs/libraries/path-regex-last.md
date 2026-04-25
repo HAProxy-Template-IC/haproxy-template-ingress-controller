@@ -6,15 +6,17 @@ The Path Regex Last library overrides the default path matching order to optimiz
 
 By default, the base library evaluates paths in this order (de facto industry standard):
 
-1. **Exact** - Exact string match
-2. **Regex** - Regular expression match
-3. **Prefix** - String prefix match
+1. **Exact** match (`path-exact.map`)
+2. **Regex** match (`path-regex.map`)
+3. **Prefix-exact** match (`path-prefix-exact.map`)
+4. **Prefix** match (`path-prefix.map`)
 
 The Path Regex Last library changes this to a performance-first order:
 
-1. **Exact** - Exact string match
-2. **Prefix** - String prefix match (faster)
-3. **Regex** - Regular expression match (slower)
+1. **Exact** match (fastest)
+2. **Prefix-exact** match
+3. **Prefix** match
+4. **Regex** match (slowest, evaluated last)
 
 This optimization improves performance because exact and prefix matching are significantly faster than regex matching in HAProxy.
 
@@ -48,14 +50,15 @@ When both libraries are loaded, the merge order ensures path-regex-last.yaml's `
 
 ```
 Merge order (lowest to highest priority):
-1. base.yaml          <- defines frontend-routing-logic
+1. base.yaml            <- defines frontend-routing-logic
 2. ssl.yaml
 3. ingress.yaml
 4. gateway.yaml
 5. haproxytech.yaml
 6. haproxy-ingress.yaml
-7. path-regex-last.yaml  <- overrides frontend-routing-logic
-8. values.yaml
+7. nginx-ingress.yaml
+8. path-regex-last.yaml <- overrides frontend-routing-logic
+9. values.yaml
 ```
 
 ## Features

@@ -204,7 +204,7 @@ The following sections are available only when connected to HAProxy Enterprise. 
 
 | Section | Description | API Version |
 |---------|-------------|-------------|
-| **WAF Profiles** | Web Application Firewall profile definitions | Enterprise 3.0+ |
+| **WAF Profiles** | Web Application Firewall profile definitions | Enterprise 3.2+ |
 | **WAF Body Rules** | WAF request body inspection rules | Enterprise 3.0+ |
 | **WAF Rulesets** | ModSecurity ruleset file references | Enterprise 3.0+ |
 | **WAF Global** | Global WAF configuration settings | Enterprise 3.2+ |
