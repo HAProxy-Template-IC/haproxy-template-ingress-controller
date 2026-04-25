@@ -99,12 +99,10 @@ func reflectValueToString(v reflect.Value) string {
 		return ""
 	}
 
-	// Dereference pointers
-	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
-		if v.IsNil() {
-			return ""
-		}
-		v = v.Elem()
+	// Follow pointers/interfaces to the concrete value; nil along the way → "".
+	v, ok := derefForFilter(v)
+	if !ok {
+		return ""
 	}
 
 	// Convert based on kind

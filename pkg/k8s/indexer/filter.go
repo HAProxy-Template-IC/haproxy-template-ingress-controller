@@ -40,15 +40,11 @@ func (f *FieldFilter) Filter(resource any) error {
 	// This allows us to modify the actual data
 	data := unwrapUnstructured(resource)
 
-	// Get reflect.Value for the unwrapped data
-	rv := reflect.ValueOf(data)
-
-	// Dereference pointers
-	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
-		if rv.IsNil() {
-			return nil
-		}
-		rv = rv.Elem()
+	// Get reflect.Value for the unwrapped data and follow pointers/interfaces
+	// to the concrete map/struct we want to mutate.
+	rv, ok := derefForFilter(reflect.ValueOf(data))
+	if !ok {
+		return nil
 	}
 
 	// Apply each pattern
