@@ -211,6 +211,78 @@ haptic_leader_election_time_as_leader_seconds_total /
 haptic_leader_election_transitions_total
 ```
 
+### Webhook Metrics
+
+Exposed when the validating admission webhook is enabled (`webhook.enabled=true`).
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
+| `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
+| `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes (allowed / rejected / error) per GVK |
+| `haptic_webhook_cert_expiry_timestamp_seconds` | Gauge | — | Unix timestamp at which the webhook serving cert expires |
+| `haptic_webhook_cert_rotations_total` | Counter | — | Number of times the webhook serving cert was reloaded |
+
+**Key queries:**
+
+```promql
+# Reject rate per resource kind
+sum by (gvk) (rate(haptic_webhook_validation_total{result="rejected"}[5m]))
+
+# Days until webhook cert expires (alert when < 14)
+(haptic_webhook_cert_expiry_timestamp_seconds - time()) / 86400
+
+# 95th percentile webhook latency (must stay well under the 10s admission timeout)
+histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]))
+```
+
+### Validation Test Metrics
+
+Exposed when validation tests run (CRD-embedded tests, executed by the controller and webhook).
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `haptic_validation_tests_total` | Counter | Tests executed |
+| `haptic_validation_tests_pass_total` | Counter | Tests that passed |
+| `haptic_validation_tests_fail_total` | Counter | Tests that failed |
+| `haptic_validation_test_duration_seconds` | Histogram | Time spent running each test |
+
+### Reconciliation Queue & Parser Cache
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `haptic_reconciliation_queue_wait_seconds` | Histogram | Time a triggered reconciliation waits in the coordinator queue before processing starts; rising values indicate the controller can't keep up with change volume |
+| `haptic_parser_cache_hits_total` | Counter | Parser cache hits — the controller caches parsed HAProxy configs so repeated reconciliations don't re-parse unchanged input |
+| `haptic_parser_cache_misses_total` | Counter | Parser cache misses |
+
+```promql
+# Parser cache hit ratio
+rate(haptic_parser_cache_hits_total[5m]) /
+(rate(haptic_parser_cache_hits_total[5m]) + rate(haptic_parser_cache_misses_total[5m]))
+```
+
+### Event Bus Backpressure
+
+These complement `haptic_events_published_total` / `haptic_event_subscribers` from above.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_events_dropped_total` | Counter | — | Total events dropped because a subscriber's buffer was full |
+| `haptic_events_dropped_critical_total` | Counter | — | Drops from critical subscribers (alert if > 0 — indicates lost reconciliation work) |
+| `haptic_events_dropped_observability_total` | Gauge | — | Drops from observability-only subscribers (expected under load, non-alerting) |
+| `haptic_events_dropped_by_subscriber_total` | Counter | `subscriber`, `event_type` | Per-subscriber drop counts for diagnosing which component is falling behind |
+
+### Build Info
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_build_info` | Gauge | `version`, `haproxy_version`, `go_version` | Always `1`; useful for joining build metadata into other queries |
+
+```promql
+# Pin a query to controller version 0.1.0
+haptic_reconciliation_total * on() group_left(version) haptic_build_info{version="0.1.0"}
+```
+
 ## Alerting Rules
 
 ### Recommended Alerts
@@ -303,6 +375,25 @@ groups:
         annotations:
           summary: "No HAProxy pods discovered"
           description: "Controller cannot find any HAProxy pods to manage"
+
+      # Critical events dropped (lost reconciliation work)
+      - alert: HAProxyICCriticalEventsDropped
+        expr: increase(haptic_events_dropped_critical_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical events dropped from event bus"
+          description: "A critical subscriber's buffer overflowed; reconciliation work has been lost"
+
+      # Webhook certificate expiring soon
+      - alert: HAProxyICWebhookCertExpiringSoon
+        expr: (haptic_webhook_cert_expiry_timestamp_seconds - time()) / 86400 < 14
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook certificate expires in less than 14 days"
+          description: "Renew or rotate the webhook serving cert before it expires"
 ```
 
 !!! note "Tuning alert thresholds"
@@ -482,7 +573,7 @@ datadog:
 
 ## See Also
 
-- [Helm Chart Monitoring Configuration](https://haproxy-haptic.org/helm-chart/operations/monitoring/) - ServiceMonitor setup via Helm values
+- [Helm Chart Monitoring Configuration](https://haproxy-haptic.org/helm-chart/latest/operations/monitoring/) - ServiceMonitor setup via Helm values
 - [Debugging Guide](./debugging.md) - Runtime introspection and troubleshooting
 - [High Availability](./high-availability.md) - Leader election configuration
 - [Troubleshooting Guide](../troubleshooting.md) - General troubleshooting

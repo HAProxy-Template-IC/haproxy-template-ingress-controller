@@ -30,9 +30,9 @@ Common issues and solutions for the HAProxy Template Ingress Controller.
 **Diagnosis**:
 
 ```bash
-kubectl get pods -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=100
-kubectl describe pod -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
+kubectl get pods -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=100
+kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller
 ```
 
 **Common Causes**:
@@ -50,7 +50,7 @@ kubectl describe pod -l app.kubernetes.io/name=haptic,app.kubernetes.io/componen
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "watch\|sync complete"
 ```
 
 **Common Causes**:
@@ -70,7 +70,7 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "template\|render"
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "template\|render"
 ```
 
 **Solution**:
@@ -125,8 +125,8 @@ See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detaile
 **Diagnosis**:
 
 ```bash
-HAPROXY_POD=$(kubectl get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
-kubectl port-forward $HAPROXY_POD 5555:5555
+HAPROXY_POD=$(kubectl get pods -n haptic -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
+kubectl port-forward -n haptic $HAPROXY_POD 5555:5555
 # Substitute your actual dataplane password; see spec.credentialsSecretRef
 curl -u admin:<password> http://localhost:5555/v3/info
 ```
@@ -146,8 +146,8 @@ curl -u admin:<password> http://localhost:5555/v3/info
 **Diagnosis**:
 
 ```bash
-kubectl exec $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
+kubectl exec -n haptic $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/haproxy.cfg
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep -i "deployment.*succeeded"
 ```
 
 **Common Causes**:
@@ -164,7 +164,7 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 **Diagnosis**:
 
 ```bash
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep "shm-stats"
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller | grep "shm-stats"
 ```
 
 Look for:
@@ -207,7 +207,7 @@ haproxy:
 **Diagnosis**:
 
 ```bash
-kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A10 "backend"
+kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg | grep -A10 "backend"
 kubectl get endpointslices -l kubernetes.io/service-name=<service>
 ```
 
@@ -226,7 +226,7 @@ kubectl get endpointslices -l kubernetes.io/service-name=<service>
 **Diagnosis**:
 
 ```bash
-kubectl exec $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/ssl/
+kubectl exec -n haptic $HAPROXY_POD -c haproxy -- ls -lh /etc/haproxy/ssl/
 openssl s_client -connect localhost:443 -servername your-host.example.com < /dev/null
 ```
 
@@ -246,7 +246,7 @@ openssl s_client -connect localhost:443 -servername your-host.example.com < /dev
 **Diagnosis**:
 
 ```bash
-kubectl port-forward deployment/haptic-controller 9090:9090
+kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
 curl http://localhost:9090/metrics | grep reconciliation_duration_seconds
 ```
 
@@ -288,16 +288,16 @@ watchedResources:
 
 ```bash
 # Controller version
-kubectl get deployment haptic-controller -o jsonpath='{.spec.template.spec.containers[0].image}'
+kubectl get deployment -n haptic haptic-controller -o jsonpath='{.spec.template.spec.containers[0].image}'
 
 # Controller logs
-kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
+kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=controller --tail=500 > controller-logs.txt
 
 # Configuration
-kubectl get haproxytemplateconfig haptic-config -o yaml > config.yaml
+kubectl get haproxytemplateconfig -n haptic haptic-config -o yaml > config.yaml
 
 # HAProxy config (sanitize sensitive data!)
-kubectl exec $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg
+kubectl exec -n haptic $HAPROXY_POD -c haproxy -- cat /etc/haproxy/haproxy.cfg > haproxy.cfg
 ```
 
 ### Enable Debug Logging
@@ -314,21 +314,21 @@ The controller supports multiple log levels via the `LOG_LEVEL` environment vari
 
 ```bash
 # Enable debug logging
-kubectl set env deployment/haptic-controller LOG_LEVEL=DEBUG
+kubectl set env -n haptic deployment/haptic-controller LOG_LEVEL=DEBUG
 
 # Enable trace logging (very verbose)
-kubectl set env deployment/haptic-controller LOG_LEVEL=TRACE
+kubectl set env -n haptic deployment/haptic-controller LOG_LEVEL=TRACE
 ```
 
-The log level can also be configured via the ConfigMap's `logging.level` field. When set, the ConfigMap value takes precedence over the `LOG_LEVEL` environment variable:
+The log level can also be configured via the HAProxyTemplateConfig CRD's `spec.logging.level` field. When set, the CRD value takes precedence over the `LOG_LEVEL` environment variable, and changes take effect without a pod restart:
 
 ```yaml
 # In values.yaml
 controller:
-  logLevel: INFO  # Initial level (LOG_LEVEL env var)
+  logLevel: INFO  # Initial LOG_LEVEL env var (used until the CRD is loaded)
   config:
     logging:
-      level: DEBUG  # Overrides env var at runtime
+      level: DEBUG  # Written to spec.logging.level — overrides env var at runtime
 ```
 
 !!! note

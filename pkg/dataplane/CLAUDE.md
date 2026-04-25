@@ -150,7 +150,7 @@ This allows endpoint changes (pod IP/port) and server state changes (enabled/dis
 
 ## Multi-Version API Support
 
-The client supports HAProxy DataPlane API versions v3.0, v3.1, and v3.2 simultaneously through runtime version detection and a centralized dispatcher pattern.
+The client supports HAProxy DataPlane API versions v3.0, v3.1, v3.2, and v3.3 simultaneously through runtime version detection and a centralized dispatcher pattern. The capability matrix tables below predate v3.3; treat v3.3 as a superset of v3.2 unless the section comparator explicitly opts out — consult `pkg/dataplane/capabilities.go` and the per-version client packages (`pkg/generated/.../v33`) for the authoritative answer.
 
 ### Version Detection
 
@@ -418,37 +418,39 @@ func (c *DataplaneClient) GetNewFeature(ctx context.Context, name string) (strin
 
 ### client/ - Dataplane API Client
 
-Manages HTTP client and transaction lifecycle:
+Manages HTTP client and transaction lifecycle. The actual public surface is two layers:
 
 ```go
-// Create client with endpoints
-endpoints := []types.Endpoint{
-    {URL: "http://haproxy-0:5555", Username: "admin", Password: "pass"},
-    {URL: "http://haproxy-1:5555", Username: "admin", Password: "pass"},
-}
-
-client := client.New(endpoints, client.Options{
-    Timeout:        30 * time.Second,
-    RetryAttempts:  3,
-    RetryInterval:  1 * time.Second,
+// Layer 1 — DataplaneClient (one per HAProxy endpoint)
+dpClient, err := client.New(ctx, &client.Config{
+    BaseURL:  "http://haproxy:5555/v3",
+    Username: "admin",
+    Password: "pass",
 })
+defer dpClient.Close()
 
-// Execute operations with transaction
-tx, err := client.StartTransaction()
-defer tx.Commit()  // Or Rollback()
-
-err = client.CreateBackend(tx, backend)
-err = client.UpdateFrontend(tx, frontend)
+// Layer 2 — VersionAdapter wraps DataplaneClient with retry-on-version-conflict
+// and the callback-based ExecuteTransaction pattern. This is what every
+// section comparator in pkg/dataplane/comparator/ uses.
+adapter := client.NewVersionAdapter(dpClient, 3 /* maxRetries */)
+result, err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
+    if err := operations[0].Execute(ctx, dpClient, tx.ID); err != nil {
+        return err  // Adapter aborts the transaction
+    }
+    return operations[1].Execute(ctx, dpClient, tx.ID)
+    // Adapter commits when the callback returns nil
+})
 ```
+
+There is **no** public `client.StartTransaction() / tx.Commit() / tx.Rollback()` API — all transaction lifecycle is owned by `VersionAdapter.ExecuteTransaction`. If you need version-explicit control (e.g. retrying with a known-good version after a 409), use `ExecuteTransactionWithVersion` instead.
 
 **When to modify:**
 
-- Adding new Dataplane API endpoint support
-- Changing retry logic
-- Improving error handling
-- Adding request/response logging
+- Adding new Dataplane API endpoint support → look at the dispatcher pattern below
+- Changing retry logic → `VersionAdapter.executeTransactionWithRetry`
+- Improving error handling → `errors.go` (`VersionConflictError`, `OperationError`, etc.)
 
-**Common pitfall**: Forgetting to commit/rollback transactions leads to hung transactions on Dataplane API.
+**Common pitfall**: Calling `dpClient.CreateTransaction(ctx, version)` directly outside the adapter. You then have to handle the `*Transaction` lifecycle yourself; you almost always want `adapter.ExecuteTransaction` instead.
 
 ### parser/ - Configuration Parser
 
@@ -758,31 +760,16 @@ Common errors surfaced from `SyncOperations`:
 
 **Transaction retry logic:**
 
-```go
-maxAttempts := 3
-for attempt := 1; attempt <= maxAttempts; attempt++ {
-    tx, err := client.StartTransaction()
-    if err != nil {
-        continue
-    }
+The retry loop lives inside `client.VersionAdapter.executeTransactionWithRetry` (in `pkg/dataplane/client/adapter.go`). On each attempt it:
 
-    err = executeOperations(tx, operations)
-    if err != nil {
-        tx.Rollback()
-        if isVersionConflict(err) && attempt < maxAttempts {
-            // Reload config and retry
-            continue
-        }
-        return err
-    }
+1. Resolves the current config version via `dpClient.GetVersion(ctx)`.
+2. Calls `dpClient.CreateTransaction(ctx, version)`.
+3. Runs the user's `TransactionFunc` callback.
+4. Commits.
+5. On `*VersionConflictError` (HTTP 409), increments the attempt counter and loops, up to `MaxRetries`.
+6. Any other error aborts the transaction and propagates.
 
-    if err := tx.Commit(); err == nil {
-        return nil
-    }
-
-    // Commit failed, retry
-}
-```
+Callers should not write a parallel retry loop — `ExecuteTransaction(ctx, fn)` already provides this. If you need explicit version control (e.g. retrying with a known-good version after pre-fetching it), use `ExecuteTransactionWithVersion(ctx, version, fn)` instead.
 
 ### auxiliaryfiles/ - Auxiliary File Management
 
@@ -931,21 +918,11 @@ func (m *MockDataplaneClient) Sync(ctx context.Context, config string) error {
     return nil
 }
 
-func TestController_UsesDataplane(t *testing.T) {
-    var syncedConfig string
-
-    mockClient := &MockDataplaneClient{
-        SyncFunc: func(ctx context.Context, config string) error {
-            syncedConfig = config
-            return nil
-        },
-    }
-
-    controller := NewController(mockClient)
-    controller.Reconcile(ctx)
-
-    assert.Contains(t, syncedConfig, "frontend http")
-}
+// Wire the mock into a Deployer or similar component (whichever consumes
+// the dataplane Sync surface), then trigger reconciliation through the
+// EventBus. There's no `NewController` constructor and no `Reconcile`
+// method to call directly — coordination is event-driven; see
+// `pkg/controller/deployer/component_test.go` for a real example.
 ```
 
 ## Error Simplification Pattern
@@ -1135,101 +1112,57 @@ func TestSimplifyRenderingError_FailFunction(t *testing.T) {
 
 ## Common Pitfalls
 
-### Not Using Three-Phase Sync
+### Bypassing Three-Phase Sync
 
-**Problem**: Config references file before it exists.
+**Problem**: Pushing the main config separately from its auxiliary files, then trying to upload referenced files later. HAProxy's semantic validation runs `haproxy -c` on the config that just came in — if that config references `maps/host.map` and the map isn't on disk yet, validation fails. The Dataplane API doesn't let you stage them: by the time the config lands, every referenced file already needs to exist.
 
 ```go
-// Bad
-client.Sync(ctx, haproxyConfig)  // References map file
-client.SyncMaps(ctx, maps)       // Upload map file - too late!
+// Bad — pushes config standalone; aux files aren't staged
+result, err := client.Sync(ctx, haproxyConfig, nil, nil)
+// → semantic validation fails on the first map/cert reference
 ```
 
-**Solution**: Pre-config, config, post-config sequence.
+**Solution**: Build a single `*dataplane.AuxiliaryFiles` and pass it to `Sync` (or to `client.Sync`). The orchestrator sequences the three phases internally — pre-config aux upload, then config sync inside a transaction, then post-config cleanup of orphaned aux files.
 
 ```go
-// Good
-client.SyncMaps(ctx, maps)         // Phase 1: Upload maps
-client.Sync(ctx, haproxyConfig)    // Phase 2: Config (references maps)
-client.CleanupMaps(ctx, maps)      // Phase 3: Delete unused maps
-```
-
-### Forgetting Transaction Cleanup
-
-**Problem**: Transaction not committed/rolled back.
-
-```go
-// Bad
-tx, err := client.StartTransaction()
-// ... operations ...
-return nil  // Transaction leaked!
-```
-
-**Solution**: Always defer cleanup.
-
-```go
-// Good
-tx, err := client.StartTransaction()
-if err != nil {
-    return err
+// Good — orchestrator handles all three phases
+aux := &dataplane.AuxiliaryFiles{
+    MapFiles:        []auxiliaryfiles.MapFile{...},
+    SSLCertificates: []auxiliaryfiles.SSLCertificate{...},
+    GeneralFiles:    []auxiliaryfiles.GeneralFile{...},
 }
-
-success := false
-defer func() {
-    if success {
-        tx.Commit()
-    } else {
-        tx.Rollback()
-    }
-}()
-
-// ... operations ...
-
-success = true
-return nil
+result, err := dataplane.Sync(ctx, endpoint, haproxyConfig, aux, nil)
 ```
 
-### Ignoring Version Conflicts
+There is no separate `client.SyncMaps` / `client.CleanupMaps` API; everything aux-related goes through `AuxiliaryFiles` + the orchestrator's three-phase workflow in `pkg/dataplane/orchestrator_*.go`. If you reach into `pkg/dataplane/auxiliaryfiles` directly, you're rebuilding what `Sync` already does.
 
-**Problem**: Concurrent modifications cause transaction failures.
+### Hand-rolling Transaction Lifecycle
+
+**Problem**: Calling `dpClient.CreateTransaction(ctx, version)` directly and trying to commit/abort manually. The Dataplane API has no rollback verb — you "abort" a transaction by issuing a `DELETE /v3/services/haproxy/transactions/<id>`, and you have to track the version-conflict retry loop yourself.
 
 ```go
-// Bad
-tx, err := client.StartTransaction()
-err = execute(tx)
-tx.Commit()  // Might fail due to version conflict
+// Bad — bypasses VersionAdapter, you own all the edge cases
+tx, err := dpClient.CreateTransaction(ctx, version)
+// ... operations ...
+// Now you have to: commit on success, delete on failure, retry on 409,
+// re-resolve the version on retry, …
 ```
 
-**Solution**: Retry on version conflict.
+**Solution**: Use `VersionAdapter.ExecuteTransaction`. The callback signature makes commit/abort flow obvious — return `nil` to commit, return any error to abort — and the adapter handles 409 retries (`MaxRetries`) plus per-attempt version resolution internally.
 
 ```go
 // Good
-for attempt := 0; attempt < 3; attempt++ {
-    tx, err := client.StartTransaction()
-    if err != nil {
-        continue
+adapter := client.NewVersionAdapter(dpClient, 3)
+result, err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
+    if err := op1.Execute(ctx, dpClient, tx.ID); err != nil {
+        return err  // → adapter aborts the transaction
     }
-
-    err = execute(tx)
-    if err != nil {
-        tx.Rollback()
-        return err
-    }
-
-    err = tx.Commit()
-    if err == nil {
-        return nil
-    }
-
-    if isVersionConflict(err) && attempt < 2 {
-        // Refresh and retry
-        time.Sleep(100 * time.Millisecond)
-        continue
-    }
-
-    return err
-}
+    return op2.Execute(ctx, dpClient, tx.ID)
+    // → adapter commits and returns the CommitResult (reload-id, etc.)
+})
 ```
+
+Layered over that, `synchronizer.SyncOperations(ctx, dpClient, ops, tx, maxParallel)` (called from inside the `ExecuteTransaction` callback) groups operations by priority and runs them in parallel within each group. Don't reimplement that loop in new code.
 
 ### Not Validating Before Parsing
 
@@ -1351,17 +1284,24 @@ func TestHTTPErrorFilesComparator(t *testing.T) {
 ### Minimize API Calls
 
 ```go
-// Bad - one API call per operation
+// Bad — N standalone HTTP requests, each fetching the version + opening
+// and committing its own transaction. The Dataplane API serializes commits
+// per HAProxy instance, so this is O(N) network round-trips and O(N) reloads.
 for _, backend := range backends {
-    client.CreateBackend(backend)
+    adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
+        return createBackend(ctx, dpClient, tx.ID, backend)
+    })
 }
 
-// Good - batch in single transaction
-tx := client.StartTransaction()
-for _, backend := range backends {
-    client.CreateBackendInTransaction(tx, backend)
-}
-tx.Commit()
+// Good — single ExecuteTransaction, one commit, one reload (if needed).
+adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
+    for _, backend := range backends {
+        if err := createBackend(ctx, dpClient, tx.ID, backend); err != nil {
+            return err
+        }
+    }
+    return nil
+})
 ```
 
 ### Parallel Endpoint Sync
@@ -1423,14 +1363,14 @@ for _, endpoint := range endpoints {
 4. Check for stuck transactions
 
 ```bash
-# Check Dataplane API health
-curl http://haproxy-endpoint:5555/v2/info
+# Check Dataplane API health (the controller talks v3 only — see pkg/dataplane/client/version.go)
+curl -u admin:<password> http://haproxy-endpoint:5555/v3/info
 
 # View active transactions
-curl http://haproxy-endpoint:5555/v2/transactions
+curl -u admin:<password> http://haproxy-endpoint:5555/v3/services/haproxy/transactions
 
-# HAProxy logs
-kubectl logs haproxy-pod -c haproxy
+# HAProxy logs (run from inside the haptic namespace)
+kubectl logs -n haptic <haproxy-pod> -c haproxy
 ```
 
 ### Parsing Failures

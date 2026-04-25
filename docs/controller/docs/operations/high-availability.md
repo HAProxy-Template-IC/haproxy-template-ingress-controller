@@ -334,19 +334,19 @@ kubectl logs -n haptic <leader-pod> | grep "Started.*Deployer\|DeploymentSchedul
 
 ### Resource Allocation
 
-Allocate sufficient resources for hot standby:
+All replicas perform the same work (watching, rendering, validating), so resource usage is similar across leader and followers — size them all the same. The chart defaults already do this:
 
 ```yaml
+# chart default — sized for the typical 50–200 Ingress range
 resources:
   requests:
     cpu: 100m
-    memory: 128Mi
+    memory: 512Mi      # request = limit gives Guaranteed QoS
   limits:
-    cpu: 500m      # Allow bursts during leader work
-    memory: 512Mi
+    memory: 512Mi      # CPU limit deliberately omitted to avoid GOMAXPROCS throttling
 ```
 
-All replicas perform the same work (watching, rendering, validating), so resource usage is similar.
+For larger or smaller workloads see the sizing table in [Performance — Controller Resource Sizing](./performance.md#controller-resource-sizing). Don't shrink memory below what the watch-set needs (rule of thumb: ~1KB per Ingress + EndpointSlice churn) or the leader will OOMKill mid-deploy and the lease will flap.
 
 ### Anti-Affinity
 
@@ -439,7 +439,7 @@ To migrate an existing single-replica deployment to HA:
 
 ## See Also
 
-- [Helm Chart HA Configuration](https://haproxy-haptic.org/helm-chart/operations/high-availability/) - HA configuration via Helm values
+- [Helm Chart HA Configuration](https://haproxy-haptic.org/helm-chart/latest/operations/high-availability/) - HA configuration via Helm values
 - [Leader Election Design](../development/design/leader-election.md) - Architecture and implementation details
 - [Monitoring Guide](./monitoring.md) - Prometheus metrics and alerting
 - [Debugging Guide](./debugging.md) - Runtime introspection and troubleshooting

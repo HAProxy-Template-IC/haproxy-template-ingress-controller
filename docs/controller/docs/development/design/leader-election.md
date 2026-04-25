@@ -53,8 +53,8 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 
 **All replicas run** (read-only or validation operations):
 
-- ConfigWatcher - Monitors `HAProxyTemplateConfig` CRD changes (SingleWatcher)
-- CredentialsLoader - Monitors Secret changes
+- ConfigLoader (`pkg/controller/configloader`) - Parses `HAProxyTemplateConfig` CRD updates from a SingleWatcher
+- CredentialsLoader (`pkg/controller/credentialsloader`) - Parses credentials Secret updates from a SingleWatcher
 - ResourceWatcher - Watches Kubernetes resources (Ingress, Service, etc.)
 - Reconciler - Debounces changes and triggers reconciliation
 - Renderer - Generates HAProxy configurations from templates
@@ -162,8 +162,8 @@ Stage 0: Leader Election Initialization (NEW)
   - Continue startup (don't block on becoming leader)
 
 Stage 1: Config Management Components
-  - ConfigWatcher (all replicas)
-  - ConfigValidator (all replicas)
+  - ConfigLoader, CredentialsLoader (all replicas)
+  - ConfigValidator (all replicas, scatter-gather over basic / template / jsonpath)
   - EventBus.Start()
 
 Stage 2: Wait for Valid Config
@@ -527,36 +527,9 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 
 **Impact**: No new configuration updates until controller recovers
 
-## Migration Path
+## Status
 
-### Phase 1: Code Implementation
-
-1. Implement LeaderElector package
-2. Add leader election events
-3. Modify controller startup for conditional components
-4. Add configuration options
-5. Update RBAC manifests
-
-### Phase 2: Testing
-
-1. Unit tests for LeaderElector
-2. Integration tests with multi-replica setup
-3. Chaos testing (kill leaders, network partitions)
-4. Performance testing (ensure no regression)
-
-### Phase 3: Documentation
-
-1. Update deployment guide for HA setup
-2. Document troubleshooting procedures
-3. Update architecture diagrams
-4. Create runbooks for common scenarios
-
-### Phase 4: Rollout
-
-1. Release with `enabled: false` default
-2. Document opt-in HA setup
-3. Collect feedback from early adopters
-4. After validation, change default to `enabled: true`
+Leader election is fully implemented and enabled by default in the Helm chart (`controller.config.controller.leaderElection.enabled: true`, 2 replicas by default). The opt-in/opt-out switch lives on the CRD; the chart RBAC ships with the lease permissions required. Operator-facing setup, tuning, and troubleshooting live in [High Availability](../../operations/high-availability.md).
 
 ## Alternatives Considered
 

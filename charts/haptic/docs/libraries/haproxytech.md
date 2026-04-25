@@ -1723,7 +1723,7 @@ http-request auth realm "API Access" unless { http_auth(auth_default_auth-creden
 - Secret format: Opaque secret where key=username, value=base64-encoded password hash
 - Supports cross-namespace secrets: `namespace/secretname`
 - Automatic deduplication: multiple ingresses sharing the same secret generate a single userlist
-- HAProxy 3.2+ uses bcrypt password hashing (not MD5 apr1)
+- HAProxy parses `$1$` (MD5 crypt), `$5$` (SHA-256), `$6$` (SHA-512), and `$2y$` (bcrypt). It does **not** parse `$apr1$` (Apache MD5 — the htpasswd *default* without `-B` / `-5` / `-6`); generate hashes with `htpasswd -nbB` (bcrypt), `-nb5` (SHA-256), or `-nb6` (SHA-512). See [Performance — Password hash validation](https://haproxy-haptic.org/controller/latest/operations/performance/#password-hash-performance) for the cost/perf trade-off.
 
 !!! note "Implementation Difference from HAProxy Ingress Controller"
     This controller uses **per-secret** userlist naming (`auth_{secretNs}_{secretName}`) rather than the official HAProxy Ingress Controller's per-ingress naming (`{namespace}-{ingressName}`). This deduplicates userlists when multiple Ingresses reference the same secret, significantly improving configuration validation performance for expensive password hashes like bcrypt (~85ms per hash validation).
@@ -1764,9 +1764,14 @@ data:
 **Generate password hash**:
 
 ```bash
-# Create bcrypt hash and encode to base64
+# SHA-512 ($6$) — recommended: ~3ms validation per hash
+htpasswd -nb6 admin mypassword | cut -d: -f2 | base64 -w0
+
+# bcrypt ($2y$) — strongest, but ~85ms validation per hash at cost 10
 htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
 ```
+
+Validation cost matters because HAProxy re-runs the hash at every config parse, and the controller validates the config on every reconciliation. With many users or high-cost bcrypt, this dominates reconciliation time. Stick with SHA-512 unless you specifically need bcrypt's adjustable work factor.
 
 **Dependencies**: Requires `auth-type: basic-auth`
 
@@ -1774,7 +1779,7 @@ htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
 
 - Value must be ONLY the password hash, NOT "username:hash" (htpasswd format)
 - Multiple usernames supported: add multiple keys to the secret
-- HAProxy 3.2+ supports bcrypt ($2y$), not MD5 apr1 ($apr1$)
+- The hash must be in a format HAProxy parses (`$1$` MD5 crypt, `$5$` SHA-256, `$6$` SHA-512, or `$2y$` bcrypt). `$apr1$` (Apache MD5 — what plain `htpasswd -nb` produces) is **not** parsed; pass `-B`, `-5`, or `-6` to `htpasswd` instead.
 
 ---
 
@@ -1820,7 +1825,7 @@ haproxy.org/auth-realm: "API Access"
 
 ## Implementation Status Summary
 
-The library processes **46** `haproxy.org/*` annotations (verified against `libraries/haproxytech.yaml`).
+The library processes **47** `haproxy.org/*` annotations (verified against `libraries/haproxytech.yaml`).
 
 **Supported by category:**
 

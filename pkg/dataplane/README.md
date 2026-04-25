@@ -131,7 +131,7 @@ For user-facing surfaces (webhook responses, CLI output), call `dataplane.Simpli
 ## Common Pitfalls
 
 - **Skipping aux-file pre-sync.** If `haproxy.cfg` references `maps/host.map` and the file hasn't been uploaded yet, HAProxy validation fails. `AuxiliaryFiles` plus the orchestrator handle this automatically; bypassing them is almost always a bug.
-- **Leaking transactions.** If you use the low-level `client` package directly, always pair `StartTransaction` with a deferred `Commit`/`Rollback` — a leaked transaction blocks future writes to the Dataplane API until it times out.
+- **Leaking transactions.** If you reach into `pkg/dataplane/client` and call `dpClient.CreateTransaction(ctx, version)` yourself, you take on commit/abort responsibility (the Dataplane API has no rollback verb — abort = `DELETE /v3/.../transactions/<id>`). Almost always you want `client.NewVersionAdapter(dpClient, maxRetries).ExecuteTransaction(ctx, fn)` instead — it owns the lifecycle and the 409-retry loop. A leaked transaction blocks future writes until it times out on the Dataplane API side.
 - **Comparing on 409.** Version conflicts (`409`) mean someone else moved the current config forward. The orchestrator re-fetches and retries up to `MaxRetries`; don't layer your own retry loop on top.
 - **Pushing aux-file deletes before config.** Phase 3 must run *after* the main config is applied so we're not deleting files the live config still references.
 - **Using `List()` patterns at the dataplane layer.** This package operates on parsed config structures, not on Kubernetes stores — the `.List()` / `.Fetch()` semantics from `pkg/k8s` are irrelevant here.

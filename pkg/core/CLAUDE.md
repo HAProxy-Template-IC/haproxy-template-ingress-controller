@@ -313,25 +313,26 @@ func ValidateConfig(cfg Config) error {
 ```go
 // Bad - default in multiple places
 func createWatcher(cfg WatchedResource) {
-    debounce := 500 * time.Millisecond  // Default hardcoded here
+    debounce := 5 * time.Second   // Default hardcoded here
     // ...
 }
 
 func anotherPlace(cfg WatchedResource) {
-    debounce := 300 * time.Millisecond  // Different default!
+    debounce := 3 * time.Second   // Different default!
     // ...
 }
 ```
 
-**Solution**: Define defaults in config package.
+**Solution**: Define defaults in the canonical package and have callers depend on it. The actual debounce default lives in `pkg/k8s/types.DefaultDebounceInterval`, not in `pkg/core/config` — config-side defaults like `DefaultStoreType` live here.
 
 ```go
 // Good - centralized defaults
 package config
 
 const (
-    DefaultDebounceInterval = 500 * time.Millisecond
-    DefaultStoreType        = "memory"
+    DefaultStoreType = "memory"
+    // DebounceInterval is intentionally NOT redefined here; reuse
+    // pkg/k8s/types.DefaultDebounceInterval (5 * time.Second).
 )
 
 func (r *WatchedResource) GetDebounceInterval() time.Duration {

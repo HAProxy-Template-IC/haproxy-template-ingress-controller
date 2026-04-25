@@ -31,11 +31,9 @@ type: Opaque
 stringData:
   dataplane_username: admin
   dataplane_password: <random>
-  validation_username: validator
-  validation_password: <random>
 ```
 
-`config.ValidateCredentials` rejects any of the four being empty after base64 decode. On failure the loader publishes `CredentialsInvalidEvent` with the specific field name; the previously-accepted credentials stay active.
+`config.ValidateCredentials` rejects either being empty after base64 decode. On failure the loader publishes `CredentialsInvalidEvent` with the specific field name; the previously-accepted credentials stay active.
 
 ## Event Contract
 

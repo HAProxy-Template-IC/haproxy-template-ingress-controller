@@ -40,7 +40,7 @@ ConfigLoaderComponent
     ├─ Parse YAML → config.Config
     └─ Publish ConfigParsedEvent
             ↓
-    ValidationCoordinator (Stage 1)
+    ConfigChangeHandler (Stage 1)
 ```
 
 Event-driven with no direct Kubernetes or watcher dependencies.
@@ -85,7 +85,7 @@ bus.Publish(&events.ConfigResourceChangedEvent{
 // - Parses YAML
 // - Publishes ConfigParsedEvent
 
-// 3. ValidationCoordinator receives ConfigParsedEvent
+// 3. ConfigChangeHandler receives ConfigParsedEvent
 eventChan := bus.Subscribe("config-validator", 50)
 for event := range eventChan {
     if parsed, ok := event.(*events.ConfigParsedEvent); ok {

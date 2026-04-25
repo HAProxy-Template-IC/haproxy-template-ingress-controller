@@ -7,7 +7,7 @@ HAPTIC supports multiple HAProxy major.minor series simultaneously. The `haproxy
 - The **controller image** tag suffix (e.g. `-haproxy3.2`) — must match a version built by CI
 - The **HAProxy pod image** tag — defaults to the latest tested patch for that series
 
-The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.13`) because CI builds one image per supported series. Patch versions within a series are API-compatible with the controller.
+The controller image uses major.minor only (`-haproxy3.2`, not `-haproxy3.2.x`) because CI builds one image per supported series. Patch versions within a series are API-compatible with the controller.
 
 ## Supported Versions
 
@@ -38,9 +38,9 @@ haproxyVersion: "3.0"
 
 ## Patch Version Pinning
 
-By default, the HAProxy pod image is pinned to the latest patch version tested with the chart (stored in `haproxyPatchVersions`). For example, with `haproxyVersion: "3.2"`, the pod uses `haproxytech/haproxy-debian:3.2.13`.
+By default, the HAProxy pod image is pinned to the latest patch version tested with the chart, looked up from the `haproxyPatchVersions` map in [`charts/haptic/values.yaml`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/values.yaml). For example, with `haproxyVersion: "3.2"`, the pod uses whichever 3.2.x patch the chart currently pins (e.g. `haproxytech/haproxy-debian:3.2.16`). The pin moves forward over time as Renovate updates the chart.
 
-To pin a specific patch version, set `haproxy.image.tag`:
+To pin a specific patch version yourself, set `haproxy.image.tag`:
 
 ```yaml
 haproxyVersion: "3.2"
