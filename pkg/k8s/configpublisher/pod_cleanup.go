@@ -245,39 +245,44 @@ func (p *Publisher) removePodFromList(pods []haproxyv1alpha1.PodDeploymentStatus
 	return newPods, removed
 }
 
+// auxFileGroup binds an AuxiliaryFileReferences slice to the metadata needed
+// to operate on each referenced resource: a human-readable label for log
+// messages, a slog key for the file name, and a handle accessor.
+type auxFileGroup struct {
+	refs   []haproxyv1alpha1.ResourceReference
+	label  string // e.g. "map file" — interpolated into log messages
+	logKey string // e.g. "map_file" — slog field key for the file name
+	handle func(ctx context.Context, namespace, name string) (*auxFileHandle, error)
+}
+
+// auxFileGroupsFor collects the per-type metadata for each auxiliary file
+// reference list on a HAProxyCfg's AuxiliaryFiles status.
+func (p *Publisher) auxFileGroupsFor(auxFiles *haproxyv1alpha1.AuxiliaryFileReferences) []auxFileGroup {
+	if auxFiles == nil {
+		return nil
+	}
+	return []auxFileGroup{
+		{auxFiles.MapFiles, "map file", "map_file", p.mapFileHandle},
+		{auxFiles.GeneralFiles, "general file", "general_file", p.generalFileHandle},
+		{auxFiles.CRTListFiles, "crt-list file", "crt_list_file", p.crtListFileHandle},
+	}
+}
+
 // cleanupAuxiliaryFilePodReferences removes pod reference from all auxiliary files (map files, general files, crt-list files).
 func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, cleanup *PodCleanupRequest) {
-	if auxFiles == nil {
-		return
-	}
-
-	for _, mapFileRef := range auxFiles.MapFiles {
-		if err := p.cleanupMapFilePodReference(ctx, mapFileRef.Namespace, mapFileRef.Name, *cleanup); err != nil {
-			p.logger.Warn("failed to cleanup map file pod reference",
-				"map_file", mapFileRef.Name,
-				"error", err,
+	for _, group := range p.auxFileGroupsFor(auxFiles) {
+		for _, ref := range group.refs {
+			err := mutateAuxFilePodStatus(
+				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
+				removePodMutation(cleanup.PodName),
 			)
-			// Non-blocking - continue
-		}
-	}
-
-	for _, generalFileRef := range auxFiles.GeneralFiles {
-		if err := p.cleanupGeneralFilePodReference(ctx, generalFileRef.Namespace, generalFileRef.Name, *cleanup); err != nil {
-			p.logger.Warn("failed to cleanup general file pod reference",
-				"general_file", generalFileRef.Name,
-				"error", err,
-			)
-			// Non-blocking - continue
-		}
-	}
-
-	for _, crtListFileRef := range auxFiles.CRTListFiles {
-		if err := p.cleanupCRTListFilePodReference(ctx, crtListFileRef.Namespace, crtListFileRef.Name, *cleanup); err != nil {
-			p.logger.Warn("failed to cleanup crt-list file pod reference",
-				"crt_list_file", crtListFileRef.Name,
-				"error", err,
-			)
-			// Non-blocking - continue
+			if err != nil {
+				p.logger.Warn("failed to cleanup "+group.label+" pod reference",
+					group.logKey, ref.Name,
+					"error", err,
+				)
+				// Non-blocking - continue
+			}
 		}
 	}
 }
@@ -286,73 +291,17 @@ func (p *Publisher) cleanupAuxiliaryFilePodReferences(ctx context.Context, auxFi
 // Unlike cleanupAuxiliaryFilePodReferences which handles one pod at a time,
 // this processes all pods in a single pass per file to minimize API calls.
 func (p *Publisher) reconcileAuxiliaryFilePods(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, runningSet map[string]struct{}) {
-	for _, ref := range auxFiles.MapFiles {
-		if err := p.reconcileMapFilePods(ctx, ref.Namespace, ref.Name, runningSet); err != nil {
-			p.logger.Warn("failed to reconcile map file pods", "name", ref.Name, "error", err)
+	for _, group := range p.auxFileGroupsFor(auxFiles) {
+		for _, ref := range group.refs {
+			err := mutateAuxFilePodStatus(
+				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
+				filterRunningPods(runningSet, func(removed []string) {
+					p.logger.Debug("removing stale pods from "+group.label, "name", ref.Name, "removed_pods", removed)
+				}),
+			)
+			if err != nil {
+				p.logger.Warn("failed to reconcile "+group.label+" pods", "name", ref.Name, "error", err)
+			}
 		}
 	}
-	for _, ref := range auxFiles.GeneralFiles {
-		if err := p.reconcileGeneralFilePods(ctx, ref.Namespace, ref.Name, runningSet); err != nil {
-			p.logger.Warn("failed to reconcile general file pods", "name", ref.Name, "error", err)
-		}
-	}
-	for _, ref := range auxFiles.CRTListFiles {
-		if err := p.reconcileCRTListFilePods(ctx, ref.Namespace, ref.Name, runningSet); err != nil {
-			p.logger.Warn("failed to reconcile crt-list file pods", "name", ref.Name, "error", err)
-		}
-	}
-}
-
-// reconcileMapFilePods removes all stale pods from a map file in one update.
-func (p *Publisher) reconcileMapFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
-	return mutateAuxFilePodStatus(
-		func() (*auxFileHandle, error) { return p.mapFileHandle(ctx, namespace, name) },
-		filterRunningPods(runningSet, func(removed []string) {
-			p.logger.Debug("removing stale pods from map file", "name", name, "removed_pods", removed)
-		}),
-	)
-}
-
-// reconcileGeneralFilePods removes all stale pods from a general file in one update.
-func (p *Publisher) reconcileGeneralFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
-	return mutateAuxFilePodStatus(
-		func() (*auxFileHandle, error) { return p.generalFileHandle(ctx, namespace, name) },
-		filterRunningPods(runningSet, func(removed []string) {
-			p.logger.Debug("removing stale pods from general file", "name", name, "removed_pods", removed)
-		}),
-	)
-}
-
-// reconcileCRTListFilePods removes all stale pods from a crt-list file in one update.
-func (p *Publisher) reconcileCRTListFilePods(ctx context.Context, namespace, name string, runningSet map[string]struct{}) error {
-	return mutateAuxFilePodStatus(
-		func() (*auxFileHandle, error) { return p.crtListFileHandle(ctx, namespace, name) },
-		filterRunningPods(runningSet, func(removed []string) {
-			p.logger.Debug("removing stale pods from crt-list file", "name", name, "removed_pods", removed)
-		}),
-	)
-}
-
-// cleanupMapFilePodReference removes a pod from a map file's deployment status.
-func (p *Publisher) cleanupMapFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
-	return mutateAuxFilePodStatus(
-		func() (*auxFileHandle, error) { return p.mapFileHandle(ctx, namespace, name) },
-		removePodMutation(cleanup.PodName),
-	)
-}
-
-// cleanupGeneralFilePodReference removes a pod from a general file's deployment status.
-func (p *Publisher) cleanupGeneralFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
-	return mutateAuxFilePodStatus(
-		func() (*auxFileHandle, error) { return p.generalFileHandle(ctx, namespace, name) },
-		removePodMutation(cleanup.PodName),
-	)
-}
-
-// cleanupCRTListFilePodReference removes a pod from a crt-list file's deployment status.
-func (p *Publisher) cleanupCRTListFilePodReference(ctx context.Context, namespace, name string, cleanup PodCleanupRequest) error {
-	return mutateAuxFilePodStatus(
-		func() (*auxFileHandle, error) { return p.crtListFileHandle(ctx, namespace, name) },
-		removePodMutation(cleanup.PodName),
-	)
 }
