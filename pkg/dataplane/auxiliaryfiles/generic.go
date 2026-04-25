@@ -15,6 +15,53 @@ func isAlreadyExistsError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "already exists")
 }
 
+// clientFileOps implements FileOperations[T] by delegating to function values
+// pulled from the DataplaneClient. The Create wrapper falls back to Update on
+// "already exists" errors, which is the standard recovery for storage that has
+// the file on disk but missing from the storage listing (e.g. after a raw
+// config push + reload). The optional idForAPI hook normalizes the controller
+// side identifier before each per-id API call (e.g. filepath.Base for storage
+// APIs that take a filename rather than a full path).
+type clientFileOps[T FileItem] struct {
+	getAll     func(context.Context) ([]string, error)
+	getContent func(context.Context, string) (string, error)
+	create     func(context.Context, string, string) (string, error)
+	update     func(context.Context, string, string) (string, error)
+	deleteFn   func(context.Context, string) error
+	idForAPI   func(string) string
+}
+
+func (o *clientFileOps[T]) apiID(id string) string {
+	if o.idForAPI == nil {
+		return id
+	}
+	return o.idForAPI(id)
+}
+
+func (o *clientFileOps[T]) GetAll(ctx context.Context) ([]string, error) {
+	return o.getAll(ctx)
+}
+
+func (o *clientFileOps[T]) GetContent(ctx context.Context, id string) (string, error) {
+	return o.getContent(ctx, o.apiID(id))
+}
+
+func (o *clientFileOps[T]) Create(ctx context.Context, id, content string) (string, error) {
+	reloadID, err := o.create(ctx, o.apiID(id), content)
+	if isAlreadyExistsError(err) {
+		return o.Update(ctx, id, content)
+	}
+	return reloadID, err
+}
+
+func (o *clientFileOps[T]) Update(ctx context.Context, id, content string) (string, error) {
+	return o.update(ctx, o.apiID(id), content)
+}
+
+func (o *clientFileOps[T]) Delete(ctx context.Context, id string) error {
+	return o.deleteFn(ctx, o.apiID(id))
+}
+
 // FileItem represents any auxiliary file type (GeneralFile, SSLCertificate, MapFile).
 //
 // All auxiliary file types must implement this interface to work with the
