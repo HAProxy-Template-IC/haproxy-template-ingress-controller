@@ -1,10 +1,7 @@
 package configloader
 
 import (
-	"fmt"
 	"log/slog"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -62,12 +59,8 @@ func (c *ConfigLoaderComponent) ProcessEvent(event busevents.Event) {
 
 // processConfigChange handles a ConfigResourceChangedEvent by parsing the config resource.
 func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResourceChangedEvent) {
-	// Extract unstructured resource
-	resource, ok := event.Resource.(*unstructured.Unstructured)
+	resource, ok := c.AssertUnstructured("ConfigResourceChangedEvent", event.Resource)
 	if !ok {
-		c.Logger().Error("ConfigResourceChangedEvent contains invalid resource type",
-			"expected", "*unstructured.Unstructured",
-			"got", fmt.Sprintf("%T", event.Resource))
 		return
 	}
 

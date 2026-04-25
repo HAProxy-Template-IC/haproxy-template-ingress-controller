@@ -21,7 +21,10 @@
 package resourceloader
 
 import (
+	"fmt"
 	"log/slog"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -74,4 +77,21 @@ func NewBaseLoader(
 // name.
 func (b *BaseLoader) HandleEvent(event busevents.Event) {
 	b.processor.ProcessEvent(event)
+}
+
+// AssertUnstructured type-asserts a resource carried by an event to
+// *unstructured.Unstructured. On a type mismatch it logs an error tagged with
+// the event type name and returns (nil, false); callers should early-return on
+// a false result. Every loader on the bus receives resources via watcher
+// events whose payloads are unstructured, so this is the single chokepoint for
+// the "invalid resource type" failure mode.
+func (b *BaseLoader) AssertUnstructured(eventTypeName string, resource any) (*unstructured.Unstructured, bool) {
+	u, ok := resource.(*unstructured.Unstructured)
+	if !ok {
+		b.Logger().Error(eventTypeName+" contains invalid resource type",
+			"expected", "*unstructured.Unstructured",
+			"got", fmt.Sprintf("%T", resource))
+		return nil, false
+	}
+	return u, true
 }

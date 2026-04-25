@@ -77,12 +77,8 @@ func (c *CertLoaderComponent) ProcessEvent(event busevents.Event) {
 
 // processCertChange handles a CertResourceChangedEvent by extracting certificate data from the Secret.
 func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChangedEvent) {
-	// Extract unstructured resource
-	resource, ok := event.Resource.(*unstructured.Unstructured)
+	resource, ok := c.AssertUnstructured("CertResourceChangedEvent", event.Resource)
 	if !ok {
-		c.Logger().Error("CertResourceChangedEvent contains invalid resource type",
-			"expected", "*unstructured.Unstructured",
-			"got", fmt.Sprintf("%T", event.Resource))
 		return
 	}
 
