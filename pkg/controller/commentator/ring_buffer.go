@@ -151,23 +151,9 @@ func (rb *RingBuffer) FindByType(eventType string) []busevents.Event {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	indices := rb.typeIndex[eventType]
-	if len(indices) == 0 {
-		return nil
-	}
-
-	result, validIndices := rb.filterValidIndices(indices, func(event busevents.Event) bool {
+	result := rb.findInIndex(rb.typeIndex, eventType, func(event busevents.Event) bool {
 		return event != nil && event.EventType() == eventType
 	})
-
-	// Update index with valid indices (lazy cleanup)
-	if len(validIndices) == 0 {
-		delete(rb.typeIndex, eventType)
-	} else {
-		rb.typeIndex[eventType] = validIndices
-	}
-
-	// Return nil if no events found (consistent with early return above)
 	if len(result) == 0 {
 		return nil
 	}
@@ -310,26 +296,12 @@ func (rb *RingBuffer) FindByCorrelationID(correlationID string, maxCount int) []
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 
-	indices := rb.correlationIndex[correlationID]
-	if len(indices) == 0 {
-		return nil
-	}
-
-	result, validIndices := rb.filterValidIndices(indices, func(event busevents.Event) bool {
+	result := rb.findInIndex(rb.correlationIndex, correlationID, func(event busevents.Event) bool {
 		if correlated, ok := event.(events.CorrelatedEvent); ok {
 			return correlated.CorrelationID() == correlationID
 		}
 		return false
 	})
-
-	// Update index with valid indices (lazy cleanup)
-	if len(validIndices) == 0 {
-		delete(rb.correlationIndex, correlationID)
-	} else {
-		rb.correlationIndex[correlationID] = validIndices
-	}
-
-	// Return nil if no events found (consistent with early return above)
 	if len(result) == 0 {
 		return nil
 	}
@@ -363,6 +335,27 @@ func (rb *RingBuffer) filterValidIndices(indices []int, predicate func(busevents
 	}
 
 	return result, validIndices
+}
+
+// findInIndex looks up indices in idx[key], filters them by predicate, and
+// performs the lazy-cleanup write-back: if no entries survive the predicate it
+// deletes idx[key]; otherwise it stores the surviving subset back. Returns the
+// matching events in original (oldest-first) order so callers can apply
+// further trimming (maxCount) before reversing for the public API.
+//
+// Must be called with rb.mu held — the index is mutated.
+func (rb *RingBuffer) findInIndex(idx map[string][]int, key string, predicate func(busevents.Event) bool) []busevents.Event {
+	indices := idx[key]
+	if len(indices) == 0 {
+		return nil
+	}
+	result, validIndices := rb.filterValidIndices(indices, predicate)
+	if len(validIndices) == 0 {
+		delete(idx, key)
+	} else {
+		idx[key] = validIndices
+	}
+	return result
 }
 
 // reverseEvents reverses a slice of events in place.
