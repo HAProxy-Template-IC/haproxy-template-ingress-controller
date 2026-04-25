@@ -123,79 +123,59 @@ func SetDefaults(cfg *Config) {
 	// IndexBy must be explicitly configured, no default
 }
 
+// parseDurationOr returns the duration parsed from value, or fallback when
+// value is empty or fails to parse. The "Get*" duration accessors below are
+// thin wrappers around this helper so that the empty / invalid / default
+// behaviour lives in exactly one place.
+func parseDurationOr(value string, fallback time.Duration) time.Duration {
+	if value == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return duration
+}
+
 // GetMinDeploymentInterval returns the configured minimum deployment interval
 // or the default if not specified or invalid.
 func (d *DataplaneConfig) GetMinDeploymentInterval() time.Duration {
-	if d.MinDeploymentInterval != "" {
-		if duration, err := time.ParseDuration(d.MinDeploymentInterval); err == nil {
-			return duration
-		}
-	}
-	return DefaultMinDeploymentInterval
+	return parseDurationOr(d.MinDeploymentInterval, DefaultMinDeploymentInterval)
 }
 
 // GetDriftPreventionInterval returns the configured drift prevention interval
 // or the default if not specified or invalid.
 func (d *DataplaneConfig) GetDriftPreventionInterval() time.Duration {
-	if d.DriftPreventionInterval != "" {
-		if duration, err := time.ParseDuration(d.DriftPreventionInterval); err == nil {
-			return duration
-		}
-	}
-	return DefaultDriftPreventionInterval
+	return parseDurationOr(d.DriftPreventionInterval, DefaultDriftPreventionInterval)
 }
 
 // GetDeploymentTimeout returns the configured deployment timeout
 // or the default if not specified or invalid.
 func (d *DataplaneConfig) GetDeploymentTimeout() time.Duration {
-	if d.DeploymentTimeout != "" {
-		if duration, err := time.ParseDuration(d.DeploymentTimeout); err == nil {
-			return duration
-		}
-	}
-	return DefaultDeploymentTimeout
+	return parseDurationOr(d.DeploymentTimeout, DefaultDeploymentTimeout)
 }
 
 // GetConfigPublishInterval returns the configured CRD publish throttle interval
 // or the default if not specified or invalid.
 func (d *DataplaneConfig) GetConfigPublishInterval() time.Duration {
-	if d.ConfigPublishInterval != "" {
-		if duration, err := time.ParseDuration(d.ConfigPublishInterval); err == nil {
-			return duration
-		}
-	}
-	return DefaultConfigPublishInterval
+	return parseDurationOr(d.ConfigPublishInterval, DefaultConfigPublishInterval)
 }
 
 // GetLeaseDuration returns the configured lease duration
 // or the default if not specified or invalid.
 func (le *LeaderElectionConfig) GetLeaseDuration() time.Duration {
-	if le.LeaseDuration != "" {
-		if duration, err := time.ParseDuration(le.LeaseDuration); err == nil {
-			return duration
-		}
-	}
-	return DefaultLeaderElectionLeaseDuration
+	return parseDurationOr(le.LeaseDuration, DefaultLeaderElectionLeaseDuration)
 }
 
 // GetRenewDeadline returns the configured renew deadline
 // or the default if not specified or invalid.
 func (le *LeaderElectionConfig) GetRenewDeadline() time.Duration {
-	if le.RenewDeadline != "" {
-		if duration, err := time.ParseDuration(le.RenewDeadline); err == nil {
-			return duration
-		}
-	}
-	return DefaultLeaderElectionRenewDeadline
+	return parseDurationOr(le.RenewDeadline, DefaultLeaderElectionRenewDeadline)
 }
 
 // GetRetryPeriod returns the configured retry period
 // or the default if not specified or invalid.
 func (le *LeaderElectionConfig) GetRetryPeriod() time.Duration {
-	if le.RetryPeriod != "" {
-		if duration, err := time.ParseDuration(le.RetryPeriod); err == nil {
-			return duration
-		}
-	}
-	return DefaultLeaderElectionRetryPeriod
+	return parseDurationOr(le.RetryPeriod, DefaultLeaderElectionRetryPeriod)
 }
