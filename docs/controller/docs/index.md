@@ -117,7 +117,7 @@ kind: Ingress
 metadata:
   name: example
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   rules:
     - host: example.com
       http:
@@ -139,7 +139,9 @@ One of the key strengths of HAPTIC is how easily you can add custom behavior. Su
 controller:
   config:
     templateSnippets:
-      frontend-filters-request-id:
+      # Numeric prefix (300) places this alongside the built-in header-manipulation
+      # snippets; any name matching frontend-filters-* is picked up automatically.
+      frontend-filters-300-request-id:
         template: |
           {%- for _, ingress := range resources.ingresses.List() %}
           {%- var header = fallback(ingress.metadata.annotations["example.com/request-id-header"], "") %}

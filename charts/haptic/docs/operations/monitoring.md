@@ -8,13 +8,17 @@ For the complete metrics reference, alerting rules, and dashboard examples, see 
 
 ## Metrics Overview
 
-The controller exposes 11 Prometheus metrics covering:
+The controller exposes **31 Prometheus metrics** (asserted by `TestMetrics_ExpectedNames`). The full catalogue with types, labels, and update semantics is in [`pkg/controller/metrics/README.md`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/controller/metrics/README.md). High-level coverage:
 
-- **Reconciliation**: Cycles, errors, and duration
-- **Deployment**: Operations, errors, and duration
-- **Validation**: Total validations and errors
-- **Resources**: Tracked resource counts by type
-- **Events**: Event bus activity and subscribers
+- **Reconciliation pipeline**: cycles, errors, duration, queue wait
+- **Deployment**: operations, errors, duration
+- **Config validation** and **embedded validation tests**: totals, errors, pass/fail/duration
+- **Watched resources**: per-type counts
+- **Event bus**: subscribers, publishes, drops (by subscriber, critical, observability)
+- **Webhook**: admission requests, validation results, cert expiry + rotations
+- **Leader election**: is-leader gauge, transitions, time-as-leader
+- **Parser cache**: hits and misses
+- **Build info**: static gauge labelled with controller / Go / HAProxy versions
 
 ## Quick Access
 

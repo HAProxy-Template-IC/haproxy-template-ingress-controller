@@ -26,7 +26,7 @@ controller:
 
 ## Extension Points
 
-The base library defines extension points using the `include_matching("prefix-*")` pattern. Any template snippet with a matching prefix is automatically included at the designated location in the HAProxy configuration.
+The base library defines extension points using the `render_glob "prefix-*"` operator. Any template snippet with a matching prefix is automatically rendered at the designated location in the HAProxy configuration.
 
 ### Available Extension Points
 
@@ -52,9 +52,9 @@ The base library defines extension points using the `include_matching("prefix-*"
 
 ### How Extension Points Work
 
-1. Base library uses `include_matching("prefix-*")` to include all snippets matching the pattern
+1. Base library uses `render_glob "prefix-*"` to render all snippets matching the pattern
 2. Other libraries (or user config) define snippets with matching prefixes
-3. At render time, all matching snippets are included in order
+3. At render time, all matching snippets are rendered in **alphabetical order** — numeric prefixes in snippet names (e.g. `backends-500-ingress`) control execution order
 
 ### Injecting Custom Configuration
 
@@ -100,20 +100,22 @@ controller:
 
 ### Snippet Priority
 
-Snippets can specify a `priority` field to control inclusion order (lower numbers run first):
+Snippets within a `render_glob` pattern execute in **alphabetical order**. Encode priority in the snippet name via a numeric prefix (lower numbers run first):
 
 ```yaml
 templateSnippets:
-  features-ssl-initialization:
-    priority: 50  # Runs early
+  # Runs early — sorts before the 500-range
+  features-050-ssl-initialization:
     template: |
       {# Initialize SSL infrastructure #}
 
-  features-ssl-crtlist:
-    priority: 150  # Runs after certificates are registered
+  # Runs later — sorts after the 100-range certificate registration
+  features-150-ssl-crtlist:
     template: |
       {# Generate certificate list #}
 ```
+
+See [Template Libraries → Snippet Priority](../template-libraries.md#snippet-priority) for the reserved range conventions used by the built-in libraries.
 
 ## Features
 
@@ -122,36 +124,58 @@ templateSnippets:
 The base library implements a sophisticated routing system using HAProxy maps and transaction variables:
 
 1. **Host matching**: Extracts and matches the Host header
-2. **Path matching**: Evaluates paths in priority order (Exact > Regex > Prefix)
+2. **Path matching**: Evaluates paths in order (Exact > Regex > Prefix-exact > Prefix). The `path-regex-last` library can override this to use performance-first ordering (Exact > Prefix-exact > Prefix > Regex).
 3. **Qualifier system**: Supports `BACKEND` (direct) and `MULTIBACKEND` (weighted) routing
 
 ```haproxy
 # Path matching order: Exact > Regex > Prefix-exact > Prefix
-http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map(/etc/haproxy/maps/path-exact.map)
-http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg(/etc/haproxy/maps/path-regex.map) if !{ var(txn.path_match) -m found }
+http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map(maps/path-exact.map)
+http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map_reg(maps/path-regex.map) if !{ var(txn.path_match) -m found }
+http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map(maps/path-prefix-exact.map) if !{ var(txn.path_match) -m found }
+http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map_beg(maps/path-prefix.map) if !{ var(txn.path_match) -m found }
 ```
 
 !!! note "Overriding Path Match Order"
-    The `path-regex-last` library overrides this to use performance-first ordering (Exact > Prefix > Regex).
+    Enabling the `path-regex-last` library overrides the default routing snippet with performance-first ordering (Exact > Prefix-exact > Prefix > Regex), so faster matchers run first and regex matching is only evaluated as a fallback.
 
-### Utility Macros
+### Built-in Operators and Functions
 
-#### include_matching
+#### render_glob (operator)
 
-Includes all snippets matching a glob pattern:
+Renders all snippets matching a glob pattern. This is a built-in Scriggo operator, not a macro — no import is needed:
 
 ```scriggo
-{%- import "util-macros" for include_matching -%}
-{{ include_matching("backends-*") }}
+{{ render_glob "backends-*" }}
+{{ render_glob "map-host-*" inherit_context }}
 ```
 
-#### sanitize_regex
+See the [Scriggo template guide](../../../docs/controller/docs/templating.md) for details.
 
-Escapes regex patterns for HAProxy's double-quoted context:
+#### sanitize_regex (function)
+
+Built-in function that escapes regex metacharacters so a user-supplied pattern can be safely embedded in a `map_reg()` lookup:
 
 ```scriggo
-{%- import "util-regex-sanitize" for sanitize_regex -%}
 {{ sanitize_regex("^/api/v[0-9]+$") }}
+```
+
+### Utility Macros (`util-macros`)
+
+The `util-macros` snippet provides reusable macros imported by other libraries:
+
+| Macro | Purpose |
+|-------|---------|
+| `SanitizeRegex(pattern)` | Escapes `$` for HAProxy's double-quoted context |
+| `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
+| `HostMatchCondition(hosts)` | Builds a host-match ACL condition |
+| `BuildServerOptions(serverOpts)` | Renders server-line option flags |
+| `BackendServers(serviceName, maxSlots, port, opts, portName, backendName, namespace)` | Generates the full server pool with reserved slots |
+
+Usage:
+
+```scriggo
+{%- import "util-macros" for BackendServers %}
+{{ BackendServers(serviceName, 10, port, serverOpts, nil, backendKey, namespace) }}
 ```
 
 ### Backend Server Pool
@@ -249,7 +273,7 @@ global
     nbthread 2          # auto-calculated from CPU requests
     # global-settings-300-paths
     default-path origin /etc/haproxy
-    crt-base /etc/haproxy/certs
+    crt-base /etc/haproxy/ssl
     # global-settings-400-ssl
     tune.ssl.default-dh-param 2048
     # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)

@@ -10,7 +10,7 @@ The Ingress library enables HAProxy to route traffic based on Kubernetes Ingress
 - Host-based routing via Ingress rules
 - TLS termination via Ingress `spec.tls` configuration
 - Backend generation with automatic endpoint discovery
-- IngressClass filtering (default: `haproxy`)
+- IngressClass filtering (default: `haptic`)
 
 This library is enabled by default.
 
@@ -25,34 +25,34 @@ controller:
 
 ### Ingress Class Filtering
 
-By default, only Ingresses with `spec.ingressClassName: haproxy` are processed. This is configured via field selector in the library's watched resources.
+By default, only Ingresses with `spec.ingressClassName: haptic` are processed. This is configured via field selector in the library's watched resources. Override `ingressClass.name` to match an incumbent controller's class (often `haproxy`) when replacing one in-place.
 
 ## Extension Points
 
-### Extension Points Used
+The Ingress library hooks into these extension points from base.yaml. Snippet names match what's emitted in `libraries/ingress.yaml`.
 
-The Ingress library implements these extension points from base.yaml:
+| Extension Point | Snippet | What It Generates |
+|-----------------|---------|-------------------|
+| `features-*` | `features-100-ingress-tls` | Registers TLS Secrets from `ingress.spec.tls[]` into `gf["tlsCertificates"]` for the SSL library's CRT-list |
+| `backends-*` | `backends-500-ingress` | Backend blocks per unique `(namespace, service, port)` referenced by an Ingress |
+| `map-host-*` | `map-host-500-ingress` | Host → group entries derived from `ingress.spec.rules[].host` |
+| `map-path-exact-*` | `map-path-exact-500-ingress` | Entries for `pathType: Exact` paths |
+| `map-pfxexact-*` | `map-pfxexact-500-ingress` | Prefix-exact entries emitted when `pathType: Prefix` paths need to match their exact boundary |
+| `map-path-prefix-*` | `map-path-prefix-500-ingress` | Prefix entries for `pathType: Prefix` paths |
+| `status-patches-*` | `status-patches-200-ingress` | Patches the LoadBalancer status on each matched Ingress |
 
-| Extension Point | This Library's Snippet | What It Generates |
-|-----------------|------------------------|-------------------|
-| Features | `features-ingress-tls` | TLS certificate registration (priority 100) |
-| Host Map | `map-host-ingress` | Host-to-group mapping entries |
-| Path Exact Map | `map-path-exact-ingress` | Exact path match entries |
-| Path Prefix Exact Map | `map-pfxexact-ingress` | Prefix paths matching exactly |
-| Path Prefix Map | `map-path-prefix-ingress` | Prefix path match entries |
-| Backends | `backends-ingress` | Backend definitions for Ingress services |
-| Status Patches | `status-patches-200-ingress` | Ingress LoadBalancer status updates |
+Regex-path matching is not emitted by this library directly — it comes from the `haproxy-ingress` library's `map-path-regex-600-haproxy-ingress` snippet (enabled by default) which handles the `haproxy-ingress.github.io/path-type: regex` annotation.
 
 ### Injecting Custom Configuration
 
-You can extend Ingress functionality by adding snippets that match extension point patterns:
+You can extend Ingress functionality by adding snippets with the right extension-point prefix and a priority that places them correctly alongside the built-in 500-range entries:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      # Add custom path map entries
-      map-path-exact-custom:
+      # Runs alongside the built-in 500-range exact-path entries
+      map-path-exact-700-custom:
         template: |
           # Custom exact path routing
           api.example.com/v1/health BACKEND:custom_health_backend
@@ -79,7 +79,7 @@ metadata:
   name: my-app
   namespace: default
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   rules:
     - host: app.example.com
       http:
@@ -111,7 +111,7 @@ metadata:
   name: secure-app
   namespace: default
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   tls:
     - hosts:
         - secure.example.com
@@ -204,7 +204,7 @@ Addresses are discovered from the controller's LoadBalancer Service. Once an add
 
 ### Field Selector
 
-Ingresses are filtered by `spec.ingressClassName=haproxy`. Only matching Ingresses are watched and processed.
+Ingresses are filtered by `spec.ingressClassName=haptic`. Only matching Ingresses are watched and processed.
 
 ## Generated Map Files
 

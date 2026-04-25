@@ -64,7 +64,7 @@ type Engine interface {
 }
 ```
 
-`ctx` controls rendering timeouts (`RenderTimeoutError` is returned on cancellation). Tracing produces a nested indented trace of every `render` / `render_glob` call; filter debug logs `sort_by` comparisons via `log/slog` at INFO level. Both are off by default and have negligible overhead when disabled — they're wired up to the `--trace-templates` and `--debug-filters` flags on `controller validate`.
+`ctx` controls rendering timeouts (`RenderTimeoutError` is returned on cancellation). Tracing produces a nested indented trace of every `render` / `render_glob` call; filter debug logs `sort_by` comparisons via `log/slog` at INFO level. Both are off by default and have negligible overhead when disabled — they're wired up to the `--trace-templates` and `--debug-filters` flags on `haptic-controller validate`.
 
 ## Error Types
 

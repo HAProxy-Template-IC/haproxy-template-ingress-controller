@@ -77,14 +77,17 @@ The CRD uses camelCase field names throughout (`podSelector`, `watchedResources`
 ```go
 import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 
-logger := logging.New(logging.Config{
-    Level:  slog.LevelInfo,
-    Format: logging.FormatJSON,
-})
+// Static (level parsed once, string values: "TRACE", "DEBUG", "INFO", "WARN"/"WARNING", "ERROR")
+logger := logging.NewLogger("INFO")
 slog.SetDefault(logger)
+
+// Dynamic (runtime-adjustable via SetLevel)
+logger = logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
+slog.SetDefault(logger)
+logging.SetLevel("DEBUG")  // bumps all existing loggers
 ```
 
-The controller reads its initial level from `LOG_LEVEL` and then hands off to the CRD's `logging.level` once the config loads.
+Output is structured JSON on stderr. The controller wires up `NewDynamicLogger` at startup using `LOG_LEVEL`, then `SetLevel`s from the CRD's `spec.logging.level` once the config loads. See [`pkg/core/logging/README.md`](./logging/README.md) for the full API.
 
 ## Testing
 

@@ -73,19 +73,14 @@ Extension points are the core mechanism for library extensibility. The base libr
 
 ### How Extension Points Work
 
-The base library uses `include_matching("prefix-*")` to automatically include all template snippets matching a glob pattern:
+The base library uses `render_glob "prefix-*"` to automatically include all template snippets matching a glob pattern:
 
 ```scriggo
 {# In base.yaml #}
-{%- import "util-macros" for include_matching -%}
-{{ include_matching("backends-*") }}
+{{ render_glob "backends-*" }}
 ```
 
-This includes all snippets with names starting with `backends-`:
-
-- `backends-ingress` (from ingress library)
-- `backends-gateway` (from gateway library)
-- `backends-custom` (from your values.yaml)
+This includes all snippets whose names start with `backends-` (e.g. `backends-500-ingress`, `backends-500-gateway`, any user-provided `backends-*`). Snippets render in alphabetical order, so numeric prefixes control execution order — see the [snippet priority numbering table](#snippet-priority) below.
 
 ### Available Extension Points
 
@@ -158,24 +153,35 @@ controller:
 
 ### Snippet Priority
 
-Control execution order with the `priority` field (lower numbers execute first):
+Snippets within a `render_glob` pattern execute in **alphabetical order**. Priority is encoded in the snippet name via a numeric prefix:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      features-init-early:
-        priority: 10   # Runs early
+      # Runs early (alphabetically sorts before the 500-range)
+      features-050-my-init:
         template: |
           {# Initialize something first #}
 
-      features-init-late:
-        priority: 200  # Runs after other features-* snippets
+      # Runs after the core 500-range snippets
+      features-700-my-finalize:
         template: |
           {# Finalize after other initialization #}
 ```
 
-Default priority is 100 if not specified.
+Reserved numeric ranges used by the built-in libraries:
+
+| Range | Purpose |
+|-------|---------|
+| 000-099 | Infrastructure / initialization |
+| 100-199 | Feature registration |
+| 200-499 | Security, CORS, header manipulation, redirects |
+| 500-599 | Core functionality (ingress, gateway) |
+| 600-799 | Compatibility layers (haproxy-ingress, nginx-ingress) |
+| 900-999 | Finalization / cleanup |
+
+To override a built-in snippet, use the **same key name**; values-file entries take precedence over library entries during merge.
 
 ### Which Libraries Use Which Extension Points
 

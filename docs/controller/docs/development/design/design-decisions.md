@@ -2,7 +2,7 @@
 
 ## Configuration Validation Strategy
 
-**Decision**: Use two-phase validation (client-native parser + haproxy binary) instead of running a full validation sidecar.
+**Decision**: Use in-process three-phase validation (client-native syntax parse + OpenAPI schema check + `haproxy -c` semantic check) instead of running a full validation sidecar.
 
 **Rationale**:
 
@@ -20,7 +20,7 @@
 // ValidationPaths holds filesystem paths for validation
 type ValidationPaths struct {
     MapsDir           string  // e.g., /etc/haproxy/maps
-    SSLCertsDir       string  // e.g., /etc/haproxy/certs
+    SSLCertsDir       string  // e.g., /etc/haproxy/ssl
     GeneralStorageDir string  // e.g., /etc/haproxy/general
     ConfigFile        string  // e.g., /etc/haproxy/haproxy.cfg
 }
@@ -52,7 +52,7 @@ The validation paths must match the HAProxy Dataplane API server's resource conf
 ```yaml
 dataplane:
   mapsDir: /etc/haproxy/maps
-  sslCertsDir: /etc/haproxy/certs
+  sslCertsDir: /etc/haproxy/ssl
   generalStorageDir: /etc/haproxy/general
   configFile: /etc/haproxy/haproxy.cfg
 ```
@@ -171,7 +171,7 @@ factory.Start(stopCh)
 
 ## Observability Integration
 
-**Decision**: Prometheus metrics + OpenTelemetry tracing with standardized naming.
+**Decision**: Prometheus metrics + structured `log/slog` logging with rich contextual fields and event correlation via the `EventCommentator`. Distributed tracing is out of scope for now — the controller does not emit OpenTelemetry spans.
 
 **Metrics Implementation**:
 
@@ -200,49 +200,63 @@ metricsServer := pkgmetrics.NewServer(":9090", metricsRegistry)
 go metricsServer.Start(ctx)
 ```
 
-**Metrics Exposed** (11 total):
+**Metrics exposed** (31 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue and `TestMetrics_ExpectedNames` for the authoritative list). Key groups:
 
-1. **Reconciliation Metrics**:
-   - `haptic_reconciliation_total`: Counter for reconciliation cycles
-   - `haptic_reconciliation_errors_total`: Counter for reconciliation failures
-   - `haptic_reconciliation_duration_seconds`: Histogram for reconciliation duration
+1. **Reconciliation**:
+   - `haptic_reconciliation_total`, `haptic_reconciliation_errors_total`, `haptic_reconciliation_duration_seconds`
+   - `haptic_reconciliation_queue_wait_seconds`
 
-2. **Deployment Metrics**:
-   - `haptic_deployment_total`: Counter for deployments
-   - `haptic_deployment_errors_total`: Counter for deployment failures
-   - `haptic_deployment_duration_seconds`: Histogram for deployment duration
+2. **Deployment**:
+   - `haptic_deployment_total`, `haptic_deployment_errors_total`, `haptic_deployment_duration_seconds`
 
-3. **Validation Metrics**:
-   - `haptic_validation_total`: Counter for validations
-   - `haptic_validation_errors_total`: Counter for validation failures
+3. **Validation**:
+   - `haptic_validation_total`, `haptic_validation_errors_total`
+   - `haptic_validation_tests_{total,pass_total,fail_total}`, `haptic_validation_test_duration_seconds`
 
-4. **Resource Metrics**:
-   - `haptic_resource_count`: Gauge vector with type labels (haproxy-pods, watched-resources)
+4. **Resources**:
+   - `haptic_resource_count` (gauge vector labeled by `type`, including `haproxy-pods` and every `watchedResources` key)
 
-5. **Event Bus Metrics**:
-   - `haptic_event_subscribers`: Gauge for active subscribers
-   - `haptic_events_published_total`: Counter for published events
+5. **Event bus**:
+   - `haptic_event_subscribers`, `haptic_events_published_total`
+   - Drops: `haptic_events_dropped_total`, `..._dropped_critical_total`, `..._dropped_by_subscriber_total`, `..._dropped_observability_total`
 
-See `pkg/controller/metrics/README.md` for complete metric definitions and Prometheus queries.
+6. **Leader election**:
+   - `haptic_leader_election_is_leader`, `haptic_leader_election_transitions_total`, `haptic_leader_election_time_as_leader_seconds_total`
 
-**Tracing Integration**:
+7. **Webhook**:
+   - `haptic_webhook_requests_total`, `haptic_webhook_request_duration_seconds`, `haptic_webhook_validation_total`
+   - `haptic_webhook_cert_expiry_timestamp_seconds`, `haptic_webhook_cert_rotations_total`
+
+8. **Parser cache**:
+   - `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`
+
+9. **Build info**:
+   - `haptic_build_info` (labels: version, git commit, Go version)
+
+**Logging + event correlation (instead of distributed tracing)**:
+
+Rather than emitting OpenTelemetry spans, the controller wires per-operation context into its structured logs. The `EventCommentator` (`pkg/controller/commentator`) subscribes to the full EventBus stream, buffers events in a ring buffer, and produces domain-aware log lines that correlate each reconciliation to the change that triggered it.
 
 ```go
-import "go.opentelemetry.io/otel"
+logger := slog.Default().With(
+    "component", "renderer",
+    "namespace", ingress.Namespace,
+    "name",      ingress.Name,
+)
 
-func (r *Renderer) Render(ctx context.Context, tpl string) (string, error) {
-    ctx, span := otel.Tracer("haptic").Start(ctx, "render_template")
-    defer span.End()
-
-    span.SetAttributes(
-        attribute.Int("template_size", len(tpl)),
+func (r *Renderer) Render(ctx context.Context, tpl string, rc RenderContext) (string, error) {
+    start := time.Now()
+    output, err := r.engine.Render(ctx, tpl, rc)
+    logger.Info("template rendered",
+        "template", tpl,
+        "output_bytes", len(output),
+        "duration_ms", time.Since(start).Milliseconds(),
     )
-
-    // ... rendering logic
-
-    return result, nil
+    return output, err
 }
 ```
+
+If the deployment later requires end-to-end trace correlation across controller and HAProxy, OTel integration would be added as a separate component adapter subscribing to the same EventBus stream.
 
 ## Error Handling Strategy
 
@@ -307,9 +321,10 @@ Component Architecture:
 └── Event-Driven Components (event adapters wrapping pure libraries)
     ├── pkg/controller/renderer - Subscribes to ReconciliationTriggeredEvent, calls pkg/templating
     ├── pkg/controller/validator - Subscribes to TemplateRenderedEvent, calls pkg/dataplane validation
-    ├── pkg/controller/deployer - DeploymentScheduler and Deployer components calling pkg/dataplane
-    ├── pkg/controller/reconciler - Debounces resource changes and triggers reconciliation
-    └── pkg/controller/executor - Observability component tracking reconciliation lifecycle
+    ├── pkg/controller/deployer - DeploymentScheduler + Deployer + DriftMonitor around pkg/dataplane
+    ├── pkg/controller/reconciler - Debounces resource changes; Coordinator drives the pipeline
+    ├── pkg/controller/commentator - Domain-aware logging of every event for correlation
+    └── pkg/controller/metrics - Subscribes to lifecycle events, updates Prometheus histograms/counters
 ```
 
 **Key Distinction**:
@@ -825,7 +840,7 @@ func main() {
     // Stage 2: Wait for Valid Config
     log.Info("Stage 2: Waiting for valid configuration")
 
-    events := eventBus.Subscribe(100)
+    events := eventBus.Subscribe("startup", 100)
     var config Config
 
     for {
@@ -879,11 +894,16 @@ IndexReady:
     // Stage 5: Reconciliation Components
     log.Info("Stage 5: Starting reconciliation")
 
-    reconciler := NewReconciliationComponent(eventBus)
-    executor := NewReconciliationExecutor(eventBus, config, stores)
+    reconciler := reconciler.New(eventBus, logger, nil)
+    coordinator := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
+        EventBus:      eventBus,
+        Pipeline:      pipeline,
+        StoreProvider: storeProvider,
+        Logger:        logger,
+    })
 
-    go reconciler.Run(ctx)
-    go executor.Run(ctx)
+    go reconciler.Start(ctx)
+    go coordinator.Start(ctx)
 
     log.Info("All components started")
 
@@ -902,7 +922,7 @@ type ReconciliationComponent struct {
 }
 
 func (r *ReconciliationComponent) Run(ctx context.Context) error {
-    events := r.eventBus.Subscribe(100)
+    events := r.eventBus.Subscribe("reconciler", 100)
 
     for {
         select {
@@ -936,7 +956,8 @@ func (r *ReconciliationComponent) Run(ctx context.Context) error {
 **Graceful Shutdown with Context**:
 
 ```go
-// pkg/controller/runner.go
+// Illustrative — actual implementation is in pkg/controller/iteration.go
+// (runIteration) and composed by pkg/controller/controller.go (Controller.Run)
 func (r *OperatorRunner) Run(ctx context.Context) error {
     eventBus := events.NewEventBus(1000)
 
@@ -1101,7 +1122,7 @@ pkg/k8s/indexer/
 pkg/core/config/
   validator.go         # Pure: ValidateStructure(cfg Config) error  // OK - same package
 
-pkg/controller/validators/    # Event adapters (glue layer)
+pkg/controller/validator/    # Event adapters (glue layer)
   template_validator.go      # Adapter: extracts primitives → templating.ValidateTemplates() → events
   jsonpath_validator.go      # Adapter: extracts strings → indexer.ValidateJSONPath() → events
   basic_validator.go         # Adapter: events → config.ValidateStructure() → events
@@ -1136,13 +1157,13 @@ func ValidateTemplates(templates map[string]string) []error {
 **Event Adapter Example**:
 
 ```go
-// pkg/controller/validators/template_validator.go - Event adapter
-package validators
+// pkg/controller/validator/template_validator.go - Event adapter
+package validator
 
 import (
-    "github.com/yourorg/haproxy-template-ic/pkg/core/config"
-    "github.com/yourorg/haproxy-template-ic/pkg/events"
-    "github.com/yourorg/haproxy-template-ic/pkg/templating"
+    "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+    "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    "gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 type TemplateValidatorComponent struct {
@@ -1150,7 +1171,7 @@ type TemplateValidatorComponent struct {
 }
 
 func (c *TemplateValidatorComponent) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe(100)
+    eventChan := c.eventBus.Subscribe("template-validator", 100)
 
     for {
         select {
@@ -1201,15 +1222,15 @@ func (c *TemplateValidatorComponent) Run(ctx context.Context) error {
 **Validation Coordinator with Scatter-Gather**:
 
 ```go
-// pkg/controller/validators/coordinator.go
-package validators
+// pkg/controller/validator/coordinator.go
+package validator
 
 type ValidationCoordinator struct {
     eventBus *events.EventBus
 }
 
 func (v *ValidationCoordinator) Run(ctx context.Context) error {
-    eventChan := v.eventBus.Subscribe(100)
+    eventChan := v.eventBus.Subscribe("validation-coordinator", 100)
 
     for {
         select {
@@ -1373,7 +1394,7 @@ import (
     "log/slog"
     "time"
 
-    "haptic/pkg/events"
+    "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // EventCommentator subscribes to all events and produces domain-aware log messages
@@ -1392,7 +1413,7 @@ func NewEventCommentator(eventBus *events.EventBus, logger *slog.Logger, bufferS
 }
 
 func (c *EventCommentator) Run(ctx context.Context) error {
-    events := c.eventBus.Subscribe(1000)
+    events := c.eventBus.SubscribeLossy("commentator", 1000)
 
     for {
         select {
@@ -1548,7 +1569,7 @@ import (
     "sync"
     "time"
 
-    "haptic/pkg/events"
+    "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // EventWithTimestamp wraps an event with its occurrence time
@@ -1647,7 +1668,8 @@ func main() {
     // ... create eventBus ...
 
     // Create dynamic logger from pkg/core/logging
-    // LOG_LEVEL env var used at startup, can be overridden by ConfigMap
+    // LOG_LEVEL env var used at startup; can be overridden at runtime by the
+    // HAProxyTemplateConfig CRD field spec.logging.level
     logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
 
     // Start event commentator early (Stage 1)

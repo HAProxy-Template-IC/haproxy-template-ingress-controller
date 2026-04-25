@@ -1,456 +1,85 @@
 # tests/
 
-Test organization and infrastructure for the HAProxy Template Ingress Controller.
+Everything that isn't a unit test. Unit tests live beside their code under `pkg/**`; this directory holds architecture validation, integration tests against a real Kubernetes + HAProxy, and end-to-end acceptance tests.
 
-## Overview
-
-This directory contains all non-unit tests, organized by test type:
-
-- **Architecture validation** - Enforces package dependency rules
-- **Integration tests** - Component testing against real Kubernetes/HAProxy
-- **Acceptance tests** - End-to-end regression tests
-
-**Unit tests** are co-located with source code in `pkg/*/`.
-
-## Directory Structure
+## Layout
 
 ```
 tests/
-├── architecture_test.go    # Architecture rule validation
-├── integration/            # Integration tests (requires Kind cluster)
-└── acceptance/             # Acceptance tests (requires Kind cluster + Docker image)
+├── architecture_test.go   # arch-go validation (runs on every `go test ./tests`)
+├── kindutil/              # Kind cluster helpers shared by integration & acceptance
+├── testutil/              # Generic helpers (fixtures, assertions) shared across suites
+├── integration/           # Integration tests (fixenv + Kind, //go:build integration)
+│   └── CLAUDE.md / README.md
+└── acceptance/            # End-to-end tests (e2e-framework + Kind)
+    └── CLAUDE.md / README.md
 ```
 
-## Test Types
+## Running
 
-### Architecture Tests
+From the root of the repo:
 
-Validates codebase architecture using [arch-go](https://github.com/arch-go/arch-go).
+| Command | What it runs | Typical duration |
+|---------|--------------|------------------|
+| `make test` | Unit tests + `TestArchitecture` | seconds |
+| `make test-integration` | Integration suite (creates/uses a persistent Kind cluster) | ~2min cold, ~30s warm |
+| `make test-acceptance` | Acceptance suite (builds controller image, creates Kind cluster, runs tests sequentially) | 3–5min |
+| `make test-acceptance-parallel` | Same as above but shares one cluster across test cases | ~half the above |
+| `make test-coverage` / `test-integration-coverage` / `test-coverage-combined` | Same suites with coverage output | as above + small overhead |
+| `make check-all` | `make lint` + `make audit` + `make test` (the CI baseline) | under a minute |
 
-**What it validates**:
+There is no `test-all` target — run the three top-level ones in sequence if you need them all.
 
-- Package dependencies follow clean architecture
-- No circular dependencies
-- Layer separation (libraries are independent, controller coordinates)
+Environment knobs used by the integration suite:
 
-**Run**:
+- `KEEP_CLUSTER=true` (default) — reuse the Kind cluster across runs; set to `false` to always clean up.
+- `KIND_NODE_VERSION=v1.29.0` — override the node image.
 
-```bash
-go test ./tests -run TestArchitecture
-```
+Integration tests additionally require the `integration` build tag; `make test-integration` adds it automatically. Running `go test ./tests/integration/...` with no tag silently finds no tests.
 
-**Example failure**:
+## Architecture Test
 
-```
+`architecture_test.go` drives [`arch-go`](https://github.com/arch-go/arch-go) against `arch-go.yml` in the repo root. The rules enforce the "controller is the only coordination layer, libraries are independent" shape of the tree. A failure looks like:
+
+```text
 Architecture validation failed!
-  Package: pkg/core/config
-    - imports pkg/controller/events (forbidden)
+  Rule: pkg/core should not depend on pkg/controller
+    Package: pkg/core/config
+      - imports pkg/controller/events (forbidden)
 ```
 
-**Fix**:
+The fix is almost always moving the offending import, not changing the rule. Update `arch-go.yml` only when the boundary itself has legitimately moved.
 
-1. Remove forbidden import
-2. Move shared types to appropriate location
-3. Update `arch-go.yml` if rule is incorrect
+## Integration Tests
 
-### Integration Tests
+Live under `tests/integration/`. Use [`fixenv`](https://github.com/rekby/fixenv) for fixture composition and a shared Kind cluster (via `tests/kindutil`) so each test runs in its own namespace without paying the cluster-creation cost every time. All test files are tagged `//go:build integration`.
 
-Component-level tests against real Kubernetes and HAProxy.
+See `tests/integration/README.md` for per-test organisation and `CLAUDE.md` for fixture design.
 
-**Location**: `tests/integration/`
+## Acceptance Tests
 
-**Framework**: [fixenv](https://github.com/rekby/fixenv) + [Kind](https://kind.sigs.k8s.io/)
+Live under `tests/acceptance/`. Use [`kubernetes-sigs/e2e-framework`](https://github.com/kubernetes-sigs/e2e-framework) and a locally built controller image. Each test exercises user-facing behaviour end-to-end (config reloads, metrics endpoint shape, debug endpoint content, etc.) and talks to the controller via the Kubernetes API-server proxy (see `tests/acceptance/README.md` for rationale).
 
-**Run**:
+See `tests/acceptance/README.md` for the test inventory and `CLAUDE.md` for the env helpers.
 
-```bash
-make test-integration
-```
+## Adding Tests
 
-**Features**:
+- **Unit tests** — beside the code they cover (`pkg/foo/foo_test.go`). No build tag.
+- **Integration tests** — under `tests/integration/`, tagged `//go:build integration`, reuse the fixtures in `env.go`.
+- **Acceptance tests** — under `tests/acceptance/`, follow the feature-based style in `leader_election_test.go` or `metrics_test.go`.
+- **New test type** — put the directory under `tests/`, add a Makefile target, and document it both here and in its own `CLAUDE.md`.
 
-- Shared Kind cluster across tests (fast)
-- Test-scoped namespaces (isolated)
-- Automatic cleanup (configurable)
-- Real HAProxy instances
-
-**See**: `tests/integration/README.md`
-
-### Acceptance Tests
-
-End-to-end regression tests for critical functionality.
-
-**Location**: `tests/acceptance/`
-
-**Framework**: [kubernetes-sigs/e2e-framework](https://github.com/kubernetes-sigs/e2e-framework) + Kind
-
-**Run**:
-
-```bash
-make test-acceptance
-```
-
-**Features**:
-
-- Full controller lifecycle testing
-- Debug endpoint verification
-- ConfigMap reload regression test
-- Port-forward integration
-
-**See**: `tests/acceptance/README.md`
-
-## Running Tests
-
-### Quick Feedback (Unit + Architecture)
-
-```bash
-make test
-```
-
-Runs in ~5-10 seconds. Includes:
-
-- All package unit tests
-- Architecture validation
-
-Does NOT include integration or acceptance tests.
-
-### Integration Tests
-
-```bash
-make test-integration
-```
-
-First run: ~2 minutes (creates cluster)
-Subsequent runs: ~30 seconds (reuses cluster)
-
-**Environment variables**:
-
-```bash
-# Always cleanup after tests
-KEEP_CLUSTER=false make test-integration
-
-# Use specific Kubernetes version
-KIND_NODE_VERSION=v1.29.0 make test-integration
-```
-
-### Acceptance Tests
-
-```bash
-make test-acceptance
-```
-
-Duration: ~3-5 minutes (builds image, creates cluster, runs tests)
-
-**Prerequisites**:
-
-- Docker (for building controller image)
-- Kind (installed automatically if missing)
-
-### All Tests
-
-```bash
-make test-all
-```
-
-Runs everything:
-
-- Unit tests
-- Architecture tests
-- Integration tests
-- Acceptance tests
-
-Duration: ~5-10 minutes
-
-## Test Tags
-
-Integration tests use build tags to prevent running by default:
-
-```go
-//go:build integration
-
-package integration
-
-func TestSyncFrontendAdd(t *testing.T) {
-    // Integration test - only runs with -tags=integration
-}
-```
-
-**Why?** Integration tests are slow and require external infrastructure.
-
-**Run with tags**:
-
-```bash
-go test -tags=integration ./tests/integration/...
-```
-
-## Architecture Validation
-
-Architecture rules are defined in `arch-go.yml` at project root:
-
-```yaml
-dependencies_rules:
-  # Core packages are independent
-  - package: "pkg/core"
-    should_not_depend_on:
-      - "pkg/controller"
-      - "pkg/dataplane"
-      # ...
-
-  # Controller coordinates everything
-  - package: "pkg/controller"
-    may_depend_on:
-      - "pkg/**"
-```
-
-**Test**: `architecture_test.go`
-
-**When to update**:
-
-- Adding new top-level package
-- Changing package boundaries
-- Refactoring package dependencies
-
-## Common Commands
-
-```bash
-# Unit tests only (fast)
-make test
-
-# Integration tests (medium speed)
-make test-integration
-
-# Acceptance tests (slow)
-make test-acceptance
-
-# Everything
-make test-all
-
-# With coverage
-make test-coverage
-
-# Specific test
-go test ./tests -run TestArchitecture
-go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
-
-# Keep cluster for debugging
-KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncFrontendAdd
-
-# Cleanup manually
-kind delete cluster --name=haproxy-test
-```
-
-## Debugging Tests
-
-### Integration Tests
-
-```bash
-# Run specific test and keep cluster
-KEEP_CLUSTER=true go test -tags=integration ./tests/integration -run TestSyncFrontendAdd -v
-
-# Inspect cluster state
-kubectl config use-context kind-haproxy-test
-kubectl get pods -A
-kubectl logs -n test-sync-frontend-add-xxx haproxy-xxx
-
-# Cleanup when done
-kind delete cluster --name=haproxy-test
-```
-
-### Acceptance Tests
-
-```bash
-# Run with verbose output
-go test -v ./tests/acceptance -run TestConfigMapReload
-
-# Access controller logs during test
-kubectl logs -n haproxy-test haptic-xxx -f
-
-# Access debug endpoint
-kubectl port-forward -n haproxy-test pod/haptic-xxx 6060:6060
-curl http://localhost:6060/debug/vars/config
-```
-
-## Test Organization Principles
-
-1. **Unit tests** live with code (`pkg/*/`)
-2. **Integration tests** live in `tests/integration/`
-3. **Acceptance tests** live in `tests/acceptance/`
-4. **Architecture tests** live in `tests/`
-
-5. **Slow tests** use build tags
-6. **Fast tests** run by default
-7. **Test data** goes in `testdata/` subdirectories
-
-## Adding New Tests
-
-### Unit Test
-
-```bash
-# Create in same package as code
-cat > pkg/mypackage/mycode_test.go <<EOF
-package mypackage
-
-import "testing"
-
-func TestMyFunction(t *testing.T) {
-    result := MyFunction()
-    // assertions...
-}
-EOF
-```
-
-### Integration Test
-
-```bash
-# Create in tests/integration/
-cat > tests/integration/myfeature_test.go <<EOF
-//go:build integration
-
-package integration
-
-import "testing"
-
-func TestMyFeature(t *testing.T) {
-    env := fixenv.New(t)
-    haproxy := TestHAProxy(env)
-    // test against real HAProxy...
-}
-EOF
-```
-
-### Acceptance Test
-
-```bash
-# Create in tests/acceptance/
-cat > tests/acceptance/myfeature_test.go <<EOF
-package acceptance
-
-import "testing"
-
-func TestMyFeature(t *testing.T) {
-    testEnv := Setup(t)
-
-    feature := features.New("My Feature").
-        Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-            // setup...
-        }).
-        Assess("Feature works", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-            // test...
-        }).
-        Feature()
-
-    testEnv.Test(t, feature)
-}
-EOF
-```
+Flaky-test policy: flakes are bugs, not noise. `tests/CLAUDE.md` has the investigation checklist — retrying a CI job without finding root cause is not an option.
 
 ## Prerequisites
 
-### For Unit Tests
+- Go `1.26.x` (pinned via `.tool-versions` / `go.mod`; use `env -u GOROOT go ...` if your shell points at an older toolchain).
+- Docker (for Kind, and for the `test-acceptance` image build).
+- Kind is installed automatically by the Makefile targets the first time you run them.
 
-- Go 1.23+
+## See Also
 
-### For Integration Tests
-
-- Go 1.23+
-- Docker (for Kind)
-- Kind (installed automatically)
-
-### For Acceptance Tests
-
-- Go 1.23+
-- Docker (for Kind and building images)
-- Kind (installed automatically)
-
-## Troubleshooting
-
-### "No tests found"
-
-**Problem**: Running `go test ./tests/integration/` shows no tests.
-
-**Cause**: Integration tests require `-tags=integration` flag.
-
-**Fix**:
-
-```bash
-go test -tags=integration ./tests/integration/...
-```
-
-### Architecture test fails
-
-**Problem**: `TestArchitecture` fails after adding import.
-
-**Cause**: Import violates rules in `arch-go.yml`.
-
-**Fix**:
-
-1. Check error message for specific violation
-2. Remove forbidden import or refactor
-3. Update `arch-go.yml` if rule is incorrect
-
-### Integration tests slow
-
-**Problem**: Tests take 2+ minutes every run.
-
-**Cause**: Cluster is recreated each run.
-
-**Fix**: Cluster is kept by default. If forcing cleanup:
-
-```bash
-# Default - keeps cluster
-make test-integration
-
-# To force cleanup
-KEEP_CLUSTER=false make test-integration
-```
-
-### Kind cluster issues
-
-**Problem**: Kind cluster creation fails.
-
-**Possible causes**:
-
-- Docker not running
-- Port conflicts (6443 already in use)
-- Insufficient resources
-
-**Fix**:
-
-```bash
-# Check Docker
-docker ps
-
-# Delete existing cluster
-kind delete cluster --name=haproxy-test
-
-# Try again
-make test-integration
-```
-
-## CI Integration
-
-Typical CI workflow:
-
-```yaml
-# .github/workflows/test.yml
-jobs:
-  unit:
-    - run: make test
-
-  integration:
-    - run: make test-integration
-
-  acceptance:
-    - run: make test-acceptance
-```
-
-Tests run in parallel for faster CI.
-
-## Resources
-
-- Architecture validation: [arch-go](https://github.com/arch-go/arch-go)
-- Integration testing: [fixenv](https://github.com/rekby/fixenv)
-- Acceptance testing: [e2e-framework](https://github.com/kubernetes-sigs/e2e-framework)
-- Kind: [kind.sigs.k8s.io](https://kind.sigs.k8s.io/)
-- Integration tests: `tests/integration/README.md`
-- Acceptance tests: `tests/acceptance/README.md`
+- `tests/CLAUDE.md` — developer notes, flaky-test policy, fixture conventions
+- `tests/integration/` and `tests/acceptance/` sub-READMEs and CLAUDE.md files
+- `arch-go.yml` — the architecture rules this directory enforces
+- `Makefile` — authoritative list of `test-*` targets

@@ -47,8 +47,9 @@ helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 The chart deploys:
 
 - **Controller Deployment** -- the operator that watches resources and generates configurations
-- **HAProxy Deployment** (optional) -- the load balancers that serve your traffic, with Dataplane API sidecars
-- **HAProxyTemplateConfig CRD** -- merged template library configuration that drives config rendering
+- **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, with Dataplane API sidecars
+- **`HAProxyTemplateConfig` CRD** -- installed from `charts/haptic/crds/`; preserved across `helm uninstall`
+- **`HAProxyTemplateConfig` custom resource** -- the merged template-library configuration that drives config rendering (created from the enabled `controller.templateLibraries.*` at render time)
 - **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
 - **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
 - Optional **ServiceMonitor** -- Prometheus integration for metrics scraping
@@ -82,7 +83,7 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 ## Uninstalling
 
 ```bash
-helm uninstall haptic
+helm uninstall my-controller
 ```
 
-This removes all resources created by the chart.
+Replace `my-controller` with whatever release name you used at install time. `helm uninstall` removes all resources created by the chart; the `HAProxyTemplateConfig` CRD itself is preserved so reinstalling the chart picks up existing custom resources. To remove the CRD as well, run `kubectl delete crd haproxytemplateconfigs.haproxy-haptic.org` explicitly.

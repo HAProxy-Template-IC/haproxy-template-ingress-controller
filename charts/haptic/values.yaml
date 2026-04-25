@@ -442,7 +442,11 @@ ingressClass:
   # Enable IngressClass creation
   enabled: true
   # Name of the IngressClass
-  name: haproxy
+  # Default is "haptic" (not "haproxy") to avoid conflicts with other HAProxy
+  # ingress controllers during side-by-side migration. Override to "haproxy"
+  # (or any other value) if you are replacing an existing controller and want
+  # existing Ingress manifests to match without edits.
+  name: haptic
   # Mark as default IngressClass for the cluster
   # Warning: Only one IngressClass should be marked as default cluster-wide
   # Set to true only if this is the sole ingress controller
@@ -459,7 +463,9 @@ gatewayClass:
   # Enable GatewayClass creation
   enabled: true
   # Name of the GatewayClass
-  name: haproxy
+  # Default is "haptic" (matching ingressClass.name) to avoid conflicts with
+  # other HAProxy Gateway controllers during side-by-side migration.
+  name: haptic
   # Mark as default GatewayClass for the cluster
   # Warning: Only one GatewayClass should be marked as default cluster-wide
   # Set to true only if this is the sole Gateway API controller
@@ -705,11 +711,17 @@ podDisruptionBudget:
   minAvailable: 1
   # maxUnavailable: 1
 # Prometheus Metrics and Monitoring
-# The controller exposes 11 Prometheus metrics on port 9090 covering:
-# - Reconciliation cycles and errors
-# - Deployment operations and duration
-# - Configuration validation
-# - Resource counts and event bus activity
+# The controller exposes 31 Prometheus metrics on port 9090 (asserted by
+# pkg/controller/metrics.TestMetrics_ExpectedNames). Coverage groups:
+# - Reconciliation pipeline: cycles, errors, duration, queue wait
+# - Deployment: operations, errors, duration
+# - Validation: totals, errors, embedded test pass/fail/duration
+# - Resources: per-type counts (includes haproxy-pods + every watched type)
+# - Event bus: subscribers, publishes, drop counters (by subscriber/critical/observability)
+# - Webhook: admission requests, validation results, cert expiry + rotations
+# - Leader election: is-leader gauge, transitions, time-as-leader
+# - Parser cache: hits and misses
+# - Build info: version/commit/Go-version static gauge
 #
 # Metrics endpoint: http://<pod-ip>:9090/metrics
 # Access via: kubectl port-forward pod/<controller-pod> 9090:9090

@@ -28,19 +28,21 @@ No configuration needed - this works automatically when you set CPU limits in th
 
 ### Configuration
 
-Set resource limits in your values file:
+Set resource limits in your values file. Top-level `resources:` applies to the controller pod; HAProxy and the Dataplane API sidecar have their own blocks under `haproxy.resources` and `haproxy.dataplane.resources`:
 
 ```yaml
+# Controller pod
 resources:
-  limits:
-    cpu: 500m
-    memory: 512Mi
   requests:
     cpu: 100m
-    memory: 128Mi
+    memory: 512Mi
+  limits:
+    memory: 512Mi   # No CPU limit by default to avoid throttling
 ```
 
-The controller will automatically log the detected limits at startup:
+The chart defaults to **Guaranteed QoS for memory** (`requests.memory == limits.memory`) and deliberately omits the CPU limit; see [Robusta on Kubernetes memory limits](https://home.robusta.dev/blog/kubernetes-memory-limit) for the rationale.
+
+At startup the controller logs the detected limits, for example:
 
 ```
 INFO HAPTIC starting ... gomaxprocs=1 gomemlimit="461373644 bytes (440.00 MiB)"
@@ -48,16 +50,15 @@ INFO HAPTIC starting ... gomaxprocs=1 gomemlimit="461373644 bytes (440.00 MiB)"
 
 ### Fine-Tuning Memory Limits
 
-The `AUTOMEMLIMIT` environment variable can adjust the memory limit ratio (default: 0.9):
+The `AUTOMEMLIMIT` environment variable can adjust the memory limit ratio (default: 0.9). Set it via the chart's top-level `extraEnv` list, which is injected into the controller container:
 
 ```yaml
-# In deployment.yaml or via Helm values
-env:
+extraEnv:
   - name: AUTOMEMLIMIT
-    value: "0.8"  # Set GOMEMLIMIT to 80% of container limit
+    value: "0.8"   # Set GOMEMLIMIT to 80% of container memory limit
 ```
 
-Valid range: 0.0 < AUTOMEMLIMIT <= 1.0
+Valid range: `0.0 < AUTOMEMLIMIT <= 1.0`.
 
 ### Why This Matters
 
@@ -67,112 +68,114 @@ Valid range: 0.0 < AUTOMEMLIMIT <= 1.0
 
 ## Service Architecture
 
-The chart deploys two separate Kubernetes Services:
+The chart deploys separate Services for the controller and HAProxy so data-plane traffic and operational endpoints never cross. The controller Service is for cluster-internal monitoring only; the HAProxy Service is what external traffic hits.
 
 ### Controller Service
 
-Exposes the controller's operational endpoints:
+A single `ClusterIP` Service (`.Release.Name-controller`) that exposes the controller's ports defined in `controller.ports`:
 
-- **healthz** (8080): Liveness and readiness probes
-- **metrics** (9090): Prometheus metrics endpoint
+| Name | Container port | Values key | Purpose |
+|------|----------------|------------|---------|
+| `healthz` | 8080 | `controller.ports.healthz` | Liveness/readiness probes and the `/debug/*` introspection endpoints (also served on `controller.debugPort`, which defaults to the same value) |
+| `metrics` | 9090 | `controller.ports.metrics` | Prometheus metrics |
+| `webhook` | 9443 | `controller.ports.webhook` | Admission-webhook HTTPS endpoint |
 
-This service is for cluster-internal monitoring only. Default configuration:
+Override Service type, annotations, etc. under the top-level `service:` block:
 
 ```yaml
 service:
   type: ClusterIP
-  healthzPort: 8080
-  metricsPort: 9090
+  annotations: {}
 ```
 
 ### HAProxy Service
 
-Exposes the HAProxy load balancer for ingress traffic:
+A Service (`.Release.Name-haproxy`, `NodePort` by default) that fronts the HAProxy pods. Port structure comes from `haproxy.service.*` and container ports from `haproxy.ports.*`:
 
-- **http** (80): HTTP traffic routing
-- **https** (443): HTTPS/TLS traffic routing
-- **stats** (8404): Health and statistics page
+| Name | Service port | Container port | nodePort default |
+|------|--------------|----------------|------------------|
+| `http` | 80 | 8080 | 30080 |
+| `https` | 443 | 8443 | 30443 |
+| `stats` | 8404 | 8404 | 30404 |
 
-This service routes external traffic to HAProxy pods. You can configure it based on your deployment environment:
+The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`haproxy.dataplane.service`) on port 5555.
 
-**Development (kind cluster)**:
+**Development (kind cluster)** — NodePort default works out of the box; switch to LoadBalancer if you want `localhost` mapping via kind's port-forward:
 
 ```yaml
 haproxy:
-  enabled: true
   service:
-    type: LoadBalancer  # kind maps to localhost
+    type: LoadBalancer
 ```
 
-**Production (cloud provider)**:
+**Cloud provider LoadBalancer**:
 
 ```yaml
 haproxy:
-  enabled: true
   service:
     type: LoadBalancer
     annotations:
       service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
 ```
 
-**Production (NodePort for external LB)**:
+**External / self-managed HAProxy** — turn off the chart's HAProxy deployment and manage pods yourself (see [HAProxy Pod Requirements](#haproxy-pod-requirements)):
+
+```yaml
+haproxy:
+  enabled: false
+```
+
+### Full HAProxy Service Reference
 
 ```yaml
 haproxy:
   enabled: true
+  ports:
+    http: 8080       # HAProxy container HTTP bind
+    https: 8443      # HAProxy container HTTPS bind
+    stats: 8404      # Stats/health page
+    dataplane: 5555  # Dataplane API
   service:
-    type: NodePort
-    http:
-      nodePort: 30080
-    https:
-      nodePort: 30443
-```
-
-**Production (managed externally)**:
-
-```yaml
-haproxy:
-  enabled: false  # Manage HAProxy deployment separately
-```
-
-### HAProxy Service Configuration
-
-```yaml
-haproxy:
-  enabled: true
-  service:
-    type: NodePort  # ClusterIP, NodePort, or LoadBalancer
-    annotations: {}  # Cloud provider annotations
+    type: NodePort   # ClusterIP, NodePort, or LoadBalancer
+    annotations: {}
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    externalTrafficPolicy: ""   # Cluster | Local
     http:
       port: 80
-      nodePort: 30080  # Only for NodePort/LoadBalancer
+      nodePort: 30080           # Only honored for NodePort/LoadBalancer
     https:
       port: 443
-      nodePort: 30443  # Only for NodePort/LoadBalancer
+      nodePort: 30443
     stats:
       port: 8404
-      nodePort: 30404  # Only for NodePort/LoadBalancer
+      nodePort: 30404
 ```
-
-### Why Separate Services?
-
-Separating the controller and HAProxy services provides:
-
-- **Clear separation of concerns**: Operational metrics vs data plane traffic
-- **Independent scaling**: Controller runs as single replica, HAProxy scales independently
-- **Security**: Controller endpoints remain internal, only HAProxy exposed externally
-- **Flexibility**: Different service types for different purposes (ClusterIP for controller, LoadBalancer for HAProxy)
 
 ## HAProxy Pod Requirements
 
-The controller manages HAProxy pods deployed separately. Each HAProxy pod must:
+When `haproxy.enabled: false`, you're responsible for deploying HAProxy pods yourself. The controller discovers them via the pod selector at `controller.config.podSelector`, which defaults to:
 
-1. **Have matching labels** as defined in `podSelector`
-2. **Run HAProxy with Dataplane API sidecar**
-3. **Share config volume** between HAProxy and Dataplane containers
-4. **Expose Dataplane API** on port 5555
+```yaml
+controller:
+  config:
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/component: loadbalancer
+        app.kubernetes.io/name: haptic        # set dynamically by the chart
+        app.kubernetes.io/instance: <release> # set dynamically by the chart
+```
 
-### Example HAProxy Pod Deployment
+If your existing HAProxy pods don't have those exact labels, either relabel them or override `controller.config.podSelector.matchLabels` to match.
+
+Each discovered pod must:
+
+1. **Carry labels matching `podSelector.matchLabels`**
+2. **Run HAProxy in master-worker mode** with an admin socket the Dataplane API sidecar can connect to
+3. **Run the Dataplane API sidecar** in the same pod, sharing the config volume with HAProxy
+4. **Expose Dataplane API** on `haproxy.ports.dataplane` (default 5555)
+
+### Example HAProxy Pod Deployment (BYO HAProxy)
 
 ```yaml
 apiVersion: apps/v1
@@ -183,13 +186,15 @@ spec:
   replicas: 2
   selector:
     matchLabels:
-      app: haproxy
-      component: loadbalancer
+      app.kubernetes.io/component: loadbalancer
+      app.kubernetes.io/name: haptic
+      app.kubernetes.io/instance: haptic
   template:
     metadata:
       labels:
-        app: haproxy
-        component: loadbalancer
+        app.kubernetes.io/component: loadbalancer
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/instance: haptic
     spec:
       containers:
       - name: haproxy
@@ -197,7 +202,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
           - |
-            mkdir -p /etc/haproxy/maps /etc/haproxy/certs
+            mkdir -p /etc/haproxy/maps /etc/haproxy/ssl /etc/haproxy/general
             cat > /etc/haproxy/haproxy.cfg <<EOF
             global
                 log stdout len 4096 local0 info
@@ -253,7 +258,8 @@ spec:
                 backups_dir: /var/lib/dataplaneapi/backups
               resources:
                 maps_dir: /etc/haproxy/maps
-                ssl_certs_dir: /etc/haproxy/certs
+                ssl_certs_dir: /etc/haproxy/ssl
+                general_storage_dir: /etc/haproxy/general
             haproxy:
               config_file: /etc/haproxy/haproxy.cfg
               haproxy_bin: /usr/local/sbin/haproxy

@@ -37,13 +37,18 @@ During a failover, the standby replica acquires the lease and resumes deploying 
 
 **Check current leader:**
 
-```bash
-# View Lease resource
-kubectl get lease -n haptic haptic-leader -o yaml
+The Lease resource is named after the Helm release (e.g. `my-controller` for `helm install my-controller ...`), not a fixed `haptic-leader`. Override by setting `controller.config.controller.leaderElection.leaseName`.
 
-# Check metrics
-kubectl port-forward -n haptic deployment/haptic-controller 9090:9090
-curl http://localhost:9090/metrics | grep leader_election_is_leader
+```bash
+# List leases in the release namespace
+kubectl get lease -n haptic
+
+# View Lease resource (replace <release> with your Helm release name)
+kubectl get lease -n haptic <release> -o yaml
+
+# Check metrics via port-forward
+kubectl port-forward -n haptic deployment/<release>-controller 9090:9090
+curl http://localhost:9090/metrics | grep haptic_leader_election_is_leader
 ```
 
 ## Multiple Replicas

@@ -41,7 +41,7 @@ stringData:
 
 The controller watches the Secret and picks up rotations live — no pod restart needed. Use whatever secret-management tool you already run (ESO, Vault agent, SOPS, …); the controller just reads the Secret.
 
-Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/vars.go` enforces that. See [Debugging](./debugging.md#enabling-debug-endpoints) for access control if you run with the debug port enabled.
+Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds: true`), never passwords — `pkg/controller/debug/vars.go` enforces that. See [Debugging](./debugging.md#accessing-the-server) for access control if you run with the debug port enabled.
 
 ## Pod Hardening
 

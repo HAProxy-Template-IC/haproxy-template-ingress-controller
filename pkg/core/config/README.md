@@ -2,7 +2,7 @@
 
 Defines the internal `Config` / `Credentials` structs and the pure functions that load and validate them. No Kubernetes client calls, no event bus — everything here operates on already-materialised bytes or strings.
 
-Upstream in the pipeline: `pkg/controller/conversion.ParseCRD` converts a `HAProxyTemplateConfig` CRD into the `*Config` this package defines. Standalone callers (CLI `controller validate`, tests) can use `LoadConfig` directly on a YAML string.
+Upstream in the pipeline: `pkg/controller/conversion.ParseCRD` converts a `HAProxyTemplateConfig` CRD into the `*Config` this package defines. Standalone callers (CLI `haptic-controller validate`, tests) can use `LoadConfig` directly on a YAML string.
 
 ## Public API
 

@@ -1,6 +1,6 @@
 # pkg/events/ringbuffer
 
-Fixed-size thread-safe ring buffer using Go generics. When it fills up, new items overwrite the oldest. Used by `pkg/controller/commentator` for cross-event log correlation and by `pkg/controller/debug` for the `/debug/vars/events` endpoint.
+Fixed-size thread-safe ring buffer using Go generics. When it fills up, new items overwrite the oldest. Used by `pkg/controller/debug` for the `/debug/vars/events` endpoint. `pkg/controller/commentator` has its *own* specialised (non-generic) ring buffer with richer queries — if you're looking for how insights / correlation work, look there instead.
 
 No dependencies beyond the standard library — the package could be lifted out verbatim.
 
@@ -32,7 +32,6 @@ Target capacity = rate × retention-window:
 
 | Use case | Rate | Window | Size |
 |----------|------|--------|------|
-| Commentator event correlation | event bus throughput | a few seconds | ~500 |
 | Debug `/debug/vars/events` | event bus throughput | operator-friendly replay | ~1000 |
 | Sliding-window metric | 1/s | 60s | 60 |
 
@@ -40,8 +39,8 @@ For large `T`, store pointers so the fixed-size backing array only holds one poi
 
 ## See Also
 
-- [`pkg/controller/commentator`](../../controller/commentator/) — primary consumer; uses the buffer to attach recent-events context to log lines
-- [`pkg/controller/debug`](../../controller/debug/) — second consumer; exposes the buffer via `/debug/vars/events`
+- [`pkg/controller/debug`](../../controller/debug/) — primary consumer; exposes the buffer via `/debug/vars/events`
+- [`pkg/controller/commentator`](../../controller/commentator/) — domain-specific ring buffer (separate implementation) used for log-line event correlation
 - `pkg/events/ringbuffer/CLAUDE.md` — developer context (wrap-around semantics, concurrency tests)
 
 ## License

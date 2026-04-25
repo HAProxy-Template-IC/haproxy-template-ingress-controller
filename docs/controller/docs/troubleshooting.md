@@ -59,7 +59,7 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 |-------|-------|----------|
 | Informers not syncing | Logs show "timeout waiting for cache sync" | Check API server connectivity, network policies |
 | No matching resources | `kubectl get ingresses -A` | Verify resources exist in watched namespaces |
-| Leader election (HA) | `kubectl get lease haptic-leader -o yaml` | Ensure one pod shows `is_leader=1` |
+| Leader election (HA) | `kubectl get lease -n haptic` (the Lease is named after the Helm release) | Ensure one pod shows `is_leader=1` |
 
 ## Configuration Issues
 
@@ -76,9 +76,10 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 **Solution**:
 
 1. Check template syntax in HAProxyTemplateConfig
-2. Inspect the last rendered output via the debug server (see [Access the Debug Server](#access-the-debug-server) below):
+2. Inspect the last rendered output via the debug server — port-forward first (see [Debugging Guide](./operations/debugging.md)):
 
    ```bash
+   kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
    curl http://localhost:8080/debug/vars/rendered
    ```
 
@@ -98,19 +99,19 @@ kubectl logs -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=contro
 
 ### Validation Test Failures
 
-**Symptoms**: `controller validate` fails
+**Symptoms**: `haptic-controller validate` fails
 
 **Quick Debugging**:
 
 ```bash
 # Step 1: Run with verbose output
-controller validate -f config.yaml --verbose
+haptic-controller validate -f config.yaml --verbose
 
 # Step 2: See full rendered content
-controller validate -f config.yaml --dump-rendered
+haptic-controller validate -f config.yaml --dump-rendered
 
 # Step 3: Check template execution
-controller validate -f config.yaml --trace-templates
+haptic-controller validate -f config.yaml --trace-templates
 ```
 
 See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detailed debugging.
@@ -126,7 +127,8 @@ See [Validation Tests](./validation-tests.md#debugging-failed-tests) for detaile
 ```bash
 HAPROXY_POD=$(kubectl get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[0].metadata.name}')
 kubectl port-forward $HAPROXY_POD 5555:5555
-curl -u admin:password http://localhost:5555/v2/info
+# Substitute your actual dataplane password; see spec.credentialsSecretRef
+curl -u admin:<password> http://localhost:5555/v3/info
 ```
 
 **Common Causes**:

@@ -14,7 +14,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 ### Added
 
 - **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax) with full access to Kubernetes resources, built-in utility functions, and modular template snippets
-- **Embedded validation tests**: Declarative test fixtures and assertions for testing HAProxy configurations within template libraries; run via `controller validate --test <name>`
+- **Embedded validation tests**: Declarative test fixtures and assertions for testing HAProxy configurations within template libraries; run via `haptic-controller validate --test <name>`
 - **Dry-run validation webhook**: Admission webhook for HAProxyTemplateConfig CRD that renders templates with proposed changes and rejects invalid configurations with detailed errors
 - **Multi-architecture container images**: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
 - **HAProxy version support**: 3.0, 3.1, 3.2, 3.3 — version-specific images tagged accordingly
@@ -24,7 +24,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - **Stall detection**: Components detect when blocked and report unhealthy via `/healthz`, enabling automatic pod restart via Kubernetes liveness probes
 - **Configurable deployment timeout**: `deploymentTimeout` in dataplane config (default: 30s) to recover from stuck deployments
 - **Server slot preservation**: Preserve HAProxy server slots during rolling deployments to enable zero-reload runtime API updates via `currentConfig` template context
-- **HAProxy Ingress annotation compatibility**: 47 `haproxy-ingress.github.io/*` annotations via the haproxy-ingress template library
+- **HAProxy Ingress annotation compatibility**: 56 `haproxy-ingress.github.io/*` annotations via the haproxy-ingress template library
 - **Dataplane API concurrency limiting**: `maxParallel` config option to limit concurrent API operations, preventing timeouts for large configurations
 - **CRD content compression**: HAProxyCfg content compressed with zstd when exceeding `configPublishing.compressionThreshold` (default 1 MiB), reducing etcd storage
 - **HAProxyGeneralFile CRD**: Publish general files (error pages, etc.) as Kubernetes custom resources with compression support
@@ -36,7 +36,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Changed
 
-- **Reconciliation triggering**: Leading-edge triggering with 100ms refractory period; no latency for isolated changes
+- **Reconciliation triggering**: Leading-edge triggering with a 5s refractory period; no latency for isolated changes, bursts during that window are batched into a single reconciliation
 - **Parallel Dataplane API operations**: Operations execute in parallel within each priority group, reducing sync time for large configurations
 - **Balance directive**: `balance roundrobin` moved to `defaults` section to prevent silent behavior change when upgrading to HAProxy 3.3 (which changed the default balance algorithm from `roundrobin` to `random`)
 - **Go runtime 1.26.1**: Green Tea GC replaces manual GOGC tuning

@@ -7,7 +7,7 @@ This page captures the durable design decisions behind the `HAProxyTemplateConfi
 The controller originally accepted its configuration via `ConfigMap`. That was replaced with a cluster-scoped API because:
 
 - **Schema validation at admission.** OpenAPI rules in the CRD reject malformed YAML before it reaches the controller — a `ConfigMap` accepts any strings.
-- **Embedded test fixtures.** `spec.validationTests` lets users ship assertions alongside templates and run them via the validating webhook or the `controller validate` CLI without duplicating fixtures elsewhere.
+- **Embedded test fixtures.** `spec.validationTests` lets users ship assertions alongside templates and run them via the validating webhook or the `haptic-controller validate` CLI without duplicating fixtures elsewhere.
 - **Native tooling.** `kubectl get htplcfg`, `kubectl describe`, status subresource, RBAC on a real Kind — all come for free.
 - **Typed client.** The generated clientset (`pkg/generated`) gives both the controller and test harnesses a typed view of the config.
 
@@ -17,7 +17,7 @@ Three layers of validation run in sequence:
 
 1. **OpenAPI schema** (Kubernetes API server). Rejects structural errors the moment `kubectl apply` hits the apiserver — invalid enum values, missing required fields, bad types.
 2. **Validating admission webhook** (the controller itself). Renders templates against the fixtures declared in `spec.validationTests`, runs assertions, and rejects the write if anything fails. Disabled per-resource-kind via `enableValidationWebhook` on each watched-resource entry to avoid exploding the matrix; the CRD itself is always webhook-guarded.
-3. **Runtime validation** (reconciler). The two-phase HAProxy validator (`pkg/dataplane`, syntax + `haproxy -c`) runs on every reconciliation; if it fails the previously-deployed config stays in place.
+3. **Runtime validation** (reconciler). The three-phase HAProxy validator (`pkg/dataplane`: client-native syntax parse + OpenAPI schema check + `haproxy -c` semantic check) runs on every reconciliation; results are cached by `(configHash, auxHash, versionHash)` so drift-prevention cycles are cheap. If it fails the previously-deployed config stays in place.
 
 Failure at layer 3 never takes down traffic — the reconciler refuses to deploy invalid output while continuing to serve the last good config. Layer 2 (`failurePolicy: Fail`) does block writes to `HAProxyTemplateConfig` if the webhook endpoint is unreachable; this is deliberate — accepting an unvalidated config is riskier than rejecting a legitimate edit until the operator is back, and `HAProxyTemplateConfig` edits are rare operator actions, not part of the request path.
 

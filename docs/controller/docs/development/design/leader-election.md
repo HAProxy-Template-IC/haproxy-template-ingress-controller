@@ -6,7 +6,7 @@ This document describes the leader election system for the HAProxy Template Ingr
 
 ## Problem Statement
 
-The controller currently runs as a single instance. Running multiple replicas without coordination would cause:
+The controller is a Kubernetes operator that pushes configuration to HAProxy via the Dataplane API. Running multiple replicas in parallel without coordination would cause:
 
 1. **Resource waste**: Multiple replicas performing identical dataplane API calls
 2. **Potential conflicts**: Race conditions when multiple controllers push updates simultaneously
@@ -53,25 +53,26 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 
 **All replicas run** (read-only or validation operations):
 
-- ConfigWatcher - Monitors ConfigMap changes
+- ConfigWatcher - Monitors `HAProxyTemplateConfig` CRD changes (SingleWatcher)
 - CredentialsLoader - Monitors Secret changes
 - ResourceWatcher - Watches Kubernetes resources (Ingress, Service, etc.)
 - Reconciler - Debounces changes and triggers reconciliation
 - Renderer - Generates HAProxy configurations from templates
 - HAProxyValidator - Validates generated configurations
-- Executor - Orchestrates reconciliation workflow
 - Discovery - Discovers HAProxy pod endpoints
-- ConfigValidators - Validates controller configuration
-- WebhookValidators - Validates admission webhook requests
+- Validators (`pkg/controller/validator`) - Validate controller configuration via scatter-gather
+- DryRunValidator (`pkg/controller/dryrunvalidator`) - Validates admission webhook requests
 - Commentator - Logs events for observability
 - Metrics - Records Prometheus metrics
-- StateCache - Maintains debug state
+- StateCache (`pkg/controller/statecache.go`) - Maintains live state snapshot for debug introspection
+- DebugServer (`pkg/introspection`) - Serves /debug/vars and /debug/pprof endpoints
 
-**Leader-only components** (write operations to dataplane API):
+**Leader-only components** (subscribe only on the elected leader; cleanup on `LostLeadershipEvent`):
 
+- **Coordinator** (`pkg/controller/reconciler`) - Drives the render-validate pipeline
 - **Deployer** - Deploys configurations to HAProxy instances
 - **DeploymentScheduler** - Rate-limits and queues deployments
-- **DriftMonitor** - Monitors and corrects configuration drift
+- **DriftMonitor** - Monitors and corrects configuration drift via periodic re-deployments
 
 ### New Component: LeaderElector
 
@@ -179,11 +180,11 @@ Stage 5: Reconciliation Components
   - Reconciler (all replicas)
   - Renderer (all replicas)
   - HAProxyValidator (all replicas)
-  - Executor (all replicas)
+  - Coordinator (LEADER ONLY)
   - Discovery (all replicas)
-  - Deployer (LEADER ONLY - NEW)
-  - DeploymentScheduler (LEADER ONLY - NEW)
-  - DriftMonitor (LEADER ONLY - NEW)
+  - Deployer (LEADER ONLY)
+  - DeploymentScheduler (LEADER ONLY)
+  - DriftMonitor (LEADER ONLY)
 
 Stage 6: Webhook Validation
   - Webhook component (all replicas)
@@ -260,8 +261,8 @@ controller:
   # ... existing fields ...
 
   leaderElection:
-    enabled: true  # Enable leader election (default: true)
-    leaseName: "haptic-leader"
+    enabled: true   # Enable leader election (default: true)
+    leaseName: ""   # Empty = defaults to the CRD name; Helm injects the release fullname
     leaseDuration: 60s
     renewDeadline: 15s
     retryPeriod: 5s
@@ -334,21 +335,17 @@ No changes needed - non-leader replicas consume similar resources since they per
 **New Prometheus metrics** (`pkg/controller/metrics/metrics.go`):
 
 ```go
-// controller_leader_transitions_total
+// haptic_leader_election_transitions_total
 // Counter of leadership changes (acquire + lose)
-controller_leader_transitions_total counter
+haptic_leader_election_transitions_total counter
 
-// controller_is_leader
+// haptic_leader_election_is_leader
 // Gauge indicating current leadership status (1=leader, 0=follower)
-controller_is_leader{pod="<pod-name>"} gauge
+haptic_leader_election_is_leader gauge
 
-// controller_leader_election_duration_seconds
-// Histogram of time to acquire leadership after startup
-controller_leader_election_duration_seconds histogram
-
-// controller_time_as_leader_seconds
+// haptic_leader_election_time_as_leader_seconds_total
 // Counter of cumulative seconds spent as leader
-controller_time_as_leader_seconds counter
+haptic_leader_election_time_as_leader_seconds_total counter
 ```
 
 **Usage**:
@@ -395,7 +392,7 @@ GET /debug/vars
     "enabled": true,
     "is_leader": true,
     "identity": "haptic-7f8d9c5b-abc123",
-    "lease_name": "haptic-leader",
+    "lease_name": "my-controller",
     "lease_holder": "haptic-7f8d9c5b-abc123",
     "time_as_leader": "45m32s",
     "transitions": 2
@@ -457,24 +454,27 @@ func TestLeaderElection_BothReplicasRenderConfigs(t *testing.T)
 # Deploy with 3 replicas
 kubectl scale deployment haptic-controller --replicas=3
 
+# The Lease is named after the Helm release (e.g. "my-controller")
+RELEASE=my-controller
+
 # Check lease status
-kubectl get lease -n haproxy-system haptic-leader -o yaml
+kubectl get lease -n haptic "$RELEASE" -o yaml
 
 # Verify leader via metrics
 kubectl port-forward deployment/haptic-controller 9090:9090
-curl http://localhost:9090/metrics | grep controller_is_leader
+curl http://localhost:9090/metrics | grep haptic_leader_election_is_leader
 
 # Check logs for leadership events
-kubectl logs -l app=haptic --tail=100 | grep -i leader
+kubectl logs -l app.kubernetes.io/name=haptic --tail=100 | grep -i leader
 
 # Simulate failover
 kubectl delete pod <leader-pod>
 
 # Verify new leader takes over
-watch kubectl get lease -n haproxy-system haptic-leader
+watch kubectl get lease -n haptic "$RELEASE"
 
 # Check HAProxy configs only deployed once per change
-kubectl logs -l app=haptic | grep "deployment completed"
+kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 ```
 
 ## Failure Scenarios

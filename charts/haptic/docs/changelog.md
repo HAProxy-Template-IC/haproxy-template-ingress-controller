@@ -11,7 +11,7 @@ For controller changes, see [Controller CHANGELOG](/controller/latest/changelog/
 
 ### Added
 
-- Expanded HAProxy Ingress library with 47 annotations for haproxy-ingress.github.io compatibility:
+- Expanded HAProxy Ingress library with 56 annotations for haproxy-ingress.github.io compatibility:
   - Path matching: `path-type` with regex, exact, prefix, and begin modes
   - Backend configuration: timeouts, load balancing, connection limits, health checks
   - Session affinity: cookie-based persistence with full configuration options
@@ -42,18 +42,16 @@ For controller changes, see [Controller CHANGELOG](/controller/latest/changelog/
   - `ssl.yaml`: TLS/SSL features
   - Libraries can be enabled/disabled via `controller.templateLibraries.<name>.enabled`
 - Kubernetes Ingress support via `ingress.yaml` library
-  - Path types: Exact, Prefix, ImplementationSpecific (regex)
+  - Path types: Exact, Prefix, ImplementationSpecific (regex, via the haproxy-ingress library's `path-type: regex` annotation)
   - TLS termination with Secret references
   - Default backend configuration
-  - IngressClass filtering (`haproxy-template`)
+  - IngressClass filtering (default class name: `haptic`; override `ingressClass.name` when replacing an incumbent controller)
 - Gateway API support via `gateway.yaml` library
-  - HTTPRoute with path, header, query parameter, and method matching
-  - GRPCRoute for gRPC traffic routing
-  - TLSRoute for SNI-based routing
-  - TCPRoute and UDPRoute for L4 traffic
+  - HTTPRoute and GRPCRoute are watched and routed (path, header, query-parameter, and method matchers)
   - Traffic splitting and weighted backends
-  - Request/response header modification
-  - URL rewrites and redirects
+  - RequestHeaderModifier / ResponseHeaderModifier filters, URL rewrites, and redirects
+  - Gateway, HTTPRoute, and GRPCRoute status patches (Accepted, Programmed, ResolvedRefs, attachedRoutes, addresses)
+  - TLS/TCP/UDP listeners are surfaced in each Gateway's `supportedKinds` status; TLSRoute/TCPRoute/UDPRoute resources are not watched or routed
 - HAProxy annotation compatibility via `haproxytech.yaml` library
   - `haproxy.org/*` annotations (HAProxyTech ingress controller)
   - Backend config snippets, server options, load balancing algorithms

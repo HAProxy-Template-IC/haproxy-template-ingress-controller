@@ -17,7 +17,7 @@ Structured JSON logs on stdout round out the operational surface.
 `HAProxyTemplateConfig.spec` is the single source of truth for controller behaviour. It has four top-level groups:
 
 - **Runtime settings** — `controller`, `dataplane`, `logging`, `templatingSettings`, `configPublishing`.
-- **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`, `httpResources`.
+- **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`. (HTTP fetching is driven by the `http.Fetch()` template function — URLs that appear in templates are auto-registered; there is no top-level `spec.httpResources` field, only `validationTests[].fixtures.httpResources` for mocking responses during tests.)
 - **Templates** — `haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`.
 - **Validation** — `validationTests` plus the per-resource `enableValidationWebhook` flag.
 
@@ -46,10 +46,10 @@ spec:
       resources: ingresses
       indexBy: ["metadata.namespace", "metadata.name"]
       enableValidationWebhook: true
-    endpointslices:
+    endpoints:
       apiVersion: discovery.k8s.io/v1
       resources: endpointslices
-      indexBy: ["metadata.labels['kubernetes.io/service-name']"]
+      indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
 
   haproxyConfig:
     template: |

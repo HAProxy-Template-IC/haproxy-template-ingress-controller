@@ -20,21 +20,57 @@ controller:
 
 ## Extension Points
 
-### Extension Points Used
+The haproxy-ingress library hooks into these extension points. Snippet names encode priority via a numeric prefix — the 600-range deliberately runs after the core haproxytech 100–500 range so `haproxy-ingress.github.io/*` annotations override `haproxy.org/*` when both are set on the same Ingress.
 
-The haproxy-ingress library implements these extension points:
+### features-* (shared-state initialization)
 
-| Extension Point | This Library's Snippets | What They Generate |
-|-----------------|-------------------------|-------------------|
-| Path Regex Map | `map-path-regex-600-haproxy-ingress` | Regex path map entries |
-| Path Exact Map | `map-path-exact-600-haproxy-ingress` | Exact path map entries |
-| Path Prefix Map | `map-path-prefix-600-haproxy-ingress` | Prefix path map entries |
-| Path Prefix Map | `map-path-prefix-600-haproxy-ingress-begin` | Begin path map entries |
-| Backend Directives | `backend-directives-600-haproxy-ingress-*` | Timeouts, load balancing, health checks |
-| Backends | `backends-600-haproxy-ingress-affinity` | Session affinity configuration |
-| Frontend Filters | `frontend-filters-600-haproxy-ingress-*` | Access control, redirects, CORS, headers |
-| Features | `features-600-haproxy-ingress-ssl-passthrough` | SSL passthrough backends |
-| Global Top | `global-top-600-haproxy-ingress-userlist` | Userlist definitions for basic auth |
+| Snippet | Purpose |
+|---------|---------|
+| `features-100-haproxy-ingress-ssl-passthrough` | Scans ingresses annotated with `haproxy-ingress.github.io/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
+
+### map-path-* (path-map extension points)
+
+| Snippet | Extension Point | Purpose |
+|---------|-----------------|---------|
+| `map-path-regex-600-haproxy-ingress` | `map-path-regex-*` | Regex path-map entries for `path-type: regex` |
+| `map-path-exact-600-haproxy-ingress` | `map-path-exact-*` | Exact path-map entries for `path-type: exact` |
+| `map-path-prefix-600-haproxy-ingress` | `map-path-prefix-*` | Prefix path-map entries for `path-type: begin` |
+| `map-pfxexact-600-haproxy-ingress` | `map-pfxexact-*` | Prefix-exact entries for `path-type: prefix` |
+
+### backend-directives-* (per-backend directives)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `backend-directives-600-haproxy-ingress-timeouts` | `timeout-connect`, `timeout-server`, `timeout-queue`, `timeout-http-request`, `timeout-keep-alive`, `timeout-tunnel` |
+| `backend-directives-610-haproxy-ingress-load-balance` | `balance-algorithm` |
+| `backend-directives-620-haproxy-ingress-maxconn` | `maxconn-server` |
+| `backend-directives-630-haproxy-ingress-health-checks` | `health-check-uri`, `backend-check-interval` |
+| `backend-directives-640-haproxy-ingress-proxy-protocol` | `proxy-protocol` |
+| `backend-directives-650-haproxy-ingress-ssl-backend` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret` |
+| `backend-directives-660-haproxy-ingress-server-options` | `initial-weight`, other server-line options |
+| `backend-directives-670-haproxy-ingress-session-affinity` | `affinity`, `session-cookie-*` |
+| `backend-directives-680-haproxy-ingress-auth` | `auth-secret`, `auth-realm` (attaches userlist to the backend) |
+| `backend-directives-900-haproxy-ingress-config-backend` | `config-backend` |
+
+### frontend-filters-* (HTTP-frontend request/response filters)
+
+| Snippet | Annotations Processed |
+|---------|----------------------|
+| `frontend-filters-600-haproxy-ingress-forwardfor` | `forwardfor` |
+| `frontend-filters-610-haproxy-ingress-access-control` | `allowlist-source-range`, `denylist-source-range` |
+| `frontend-filters-620-haproxy-ingress-ssl-redirect` | `ssl-redirect`, `ssl-redirect-code` |
+| `frontend-filters-630-haproxy-ingress-hsts` | `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` |
+| `frontend-filters-640-haproxy-ingress-app-root` | `app-root` |
+| `frontend-filters-650-haproxy-ingress-redirects` | `redirect-to` |
+| `frontend-filters-660-haproxy-ingress-cors` | `cors-enable`, `cors-*` |
+| `frontend-filters-670-haproxy-ingress-headers` | `headers` |
+
+### Other extension points
+
+| Snippet | Extension Point | Purpose |
+|---------|-----------------|---------|
+| `global-top-600-haproxy-ingress-auth` | `global-top-*` | Emits a `userlist auth_<secretNs>_<secretName>` per unique auth secret (deduplicated) |
+| `backends-501-haproxy-ingress-ssl-passthrough` | `backends-*` | TCP-mode passthrough backends for hosts with `ssl-passthrough: "true"` |
 
 ---
 
@@ -58,7 +94,7 @@ metadata:
   annotations:
     haproxy-ingress.github.io/path-type: "regex"
 spec:
-  ingressClassName: haproxy
+  ingressClassName: haptic
   rules:
     - host: api.example.com
       http:
@@ -628,27 +664,32 @@ This library does not add additional watched resources. It uses Ingress resource
 
 ## Implementation Status Summary
 
-**Total annotations**: 47
+The library processes **56** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress.yaml`).
 
-- ✅ **Fully Supported**: 47 (100%)
-  - Path Matching: 4 values (regex, exact, prefix, begin)
-  - Timeouts: 6 annotations
-  - Load Balancing: 1 annotation
-  - Connection Limits: 3 annotations
-  - Health Checks: 5 annotations
-  - Backend SSL: 6 annotations
-  - PROXY Protocol: 1 annotation
-  - Session Affinity: 8 annotations
-  - Access Control: 2 annotations
-  - SSL Redirect: 2 annotations
-  - HSTS: 4 annotations
-  - App Root: 1 annotation
-  - Redirects: 2 annotations
-  - CORS: 7 annotations
-  - Headers: 2 annotations
-  - SSL Passthrough: 1 annotation
-  - Basic Auth: 2 annotations
-  - Backend Config: 2 annotations
+**Supported by category:**
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| Path matching | 1 | `path-type` (four values: regex, exact, prefix, begin) |
+| Timeouts | 6 | `timeout-connect`, `timeout-server`, `timeout-queue`, `timeout-http-request`, `timeout-keep-alive`, `timeout-tunnel` |
+| Load balancing | 1 | `balance-algorithm` |
+| Connection limits | 4 | `maxconn-server`, `maxqueue-server`, `initial-weight`, `limit-connections` |
+| Health checks | 5 | `backend-check-interval`, `health-check-uri`, `health-check-port`, `health-check-fall-count`, `health-check-rise-count` |
+| Backend SSL / mTLS | 6 | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret`, `secure-verify-hostname` |
+| PROXY protocol | 1 | `proxy-protocol` |
+| Session affinity | 8 | `affinity`, `session-cookie-name`, `session-cookie-domain`, `session-cookie-strategy`, `session-cookie-same-site`, `session-cookie-keywords`, `session-cookie-preserve`, `session-cookie-dynamic` |
+| Access control | 2 | `allowlist-source-range`, `denylist-source-range` |
+| SSL redirect | 2 | `ssl-redirect`, `ssl-redirect-code` |
+| HSTS | 4 | `hsts`, `hsts-max-age`, `hsts-include-subdomains`, `hsts-preload` |
+| App root | 1 | `app-root` |
+| Redirects | 2 | `redirect-to`, `redirect-to-code` |
+| CORS | 7 | `cors-enable`, `cors-allow-origin`, `cors-allow-methods`, `cors-allow-headers`, `cors-allow-credentials`, `cors-max-age`, `cors-expose-headers` |
+| Headers | 2 | `headers`, `forwardfor` |
+| SSL passthrough | 1 | `ssl-passthrough` |
+| Basic auth | 2 | `auth-secret`, `auth-realm` |
+| Backend config | 1 | `config-backend` |
+
+All annotations are fully supported.
 
 ## See Also
 

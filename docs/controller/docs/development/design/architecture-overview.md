@@ -19,10 +19,10 @@ The controller operates through event-driven coordination where components commu
 1. **Resource Watchers** monitor Kubernetes resources and publish change events to EventBus
 2. **Reconciler** subscribes to change events, debounces rapid changes, and publishes reconciliation trigger events
 3. **Renderer** subscribes to reconciliation trigger events, queries indexed resources from k8s stores, renders templates using pkg/templating, and publishes rendered configuration events
-4. **HAProxyValidator** subscribes to rendered configuration events, performs two-phase validation (client-native parser + haproxy binary via pkg/dataplane), and publishes validation result events
+4. **HAProxyValidator** subscribes to rendered configuration events, performs three-phase validation (client-native parser syntax + OpenAPI schema + `haproxy -c` semantic, via pkg/dataplane), and publishes validation result events
 5. **DeploymentScheduler** subscribes to validation events, enforces rate limiting, queues deployments if needed, and publishes deployment scheduled events
 6. **Deployer** subscribes to deployment scheduled events, executes parallel deployments to all HAProxy endpoints using pkg/dataplane, and publishes deployment completion events
-7. **Executor** subscribes to key lifecycle events for observability and publishes reconciliation completion events
+7. **Coordinator** (`pkg/controller/reconciler/coordinator.go`, leader-only) subscribes to ReconciliationTriggeredEvent, drives the render-validate pipeline synchronously, and publishes ReconciliationStartedEvent / ReconciliationCompletedEvent / ReconciliationFailedEvent
 8. **EventBus** coordinates all component interactions - no direct component-to-component function calls
 9. All components publish completion/failure events for metrics, logging, and further coordination
 
@@ -57,12 +57,12 @@ graph TB
             DP2[Dataplane API<br/>:5555]
         end
 
-        CONFIG[ConfigMap<br/>Controller Configuration]
+        CONFIG[HAProxyTemplateConfig CRD<br/>Controller Configuration]
         RES[Resources<br/>Ingress, Service, etc.]
     end
 
     K8S -->|Watch Events| CTRL
-    CONFIG -->|Read Config| CTRL
+    CONFIG -->|Watch + Read| CTRL
     RES -->|Watch Events| CTRL
     CTRL -->|Render & Validate| VAL
     VAL -->|Deploy Config| DP1
@@ -108,7 +108,7 @@ graph TB
         subgraph reconciliation["Reconciliation Components"]
             direction LR
             RC["Reconciler<br/>(Debouncer)"]
-            EX["Executor<br/>(Observability)"]
+            COORD["Coordinator<br/>(Pipeline driver)"]
         end
 
         subgraph pipeline["Event-Driven Pipeline"]
@@ -137,8 +137,8 @@ graph TB
         SCHED -->|Publish| EB
         EB -->|Subscribe| DEPL
         DEPL -->|Publish| EB
-        EB -->|Subscribe| EX & DISC & METR & COMM
-        EX & DISC -->|Publish| EB
+        EB -->|Subscribe| COORD & DISC & METR & COMM
+        COORD & DISC -->|Publish| EB
     end
 
     K8S -->|Watch| RW
@@ -155,12 +155,12 @@ graph TB
 **Event-Driven Data Flow:**
 
 1. **Config/Resource Watchers** receive Kubernetes changes and publish events to EventBus
-2. **Reconciler** subscribes to change events, debounces rapid changes (default 500ms), filters initial sync events, and publishes ReconciliationTriggeredEvent
+2. **Reconciler** subscribes to change events, applies a leading-edge refractory debouncer (default 5s; see `pkg/k8s/types.DefaultDebounceInterval`), filters initial sync events, and publishes ReconciliationTriggeredEvent
 3. **Renderer** subscribes to ReconciliationTriggeredEvent, queries k8s stores for resources, renders templates via pkg/templating pure library, publishes TemplateRenderedEvent
 4. **HAProxyValidator** subscribes to TemplateRenderedEvent, validates using pkg/dataplane pure validation functions (syntax + semantics), publishes ValidationCompletedEvent or ValidationFailedEvent
 5. **DeploymentScheduler** subscribes to ValidationCompletedEvent and HAProxyPodsDiscoveredEvent, enforces rate limiting (default 2s minimum interval), implements "latest wins" queueing, publishes DeploymentScheduledEvent
 6. **Deployer** subscribes to DeploymentScheduledEvent, executes parallel deployments to all HAProxy endpoints using pkg/dataplane client, publishes InstanceDeployedEvent and DeploymentCompletedEvent
-7. **Executor** subscribes to key lifecycle events for observability, publishes ReconciliationStartedEvent and ReconciliationCompletedEvent with duration metrics
+7. **Coordinator** (in `pkg/controller/reconciler`) subscribes to ReconciliationTriggeredEvent on the leader, drives the synchronous render-validate pipeline, and publishes ReconciliationStartedEvent / ReconciliationCompletedEvent / ReconciliationFailedEvent for downstream observability consumers
 8. **Support Components** (Discovery, Metrics, Commentator) subscribe to relevant events for their specific purposes
 9. All components publish completion/failure events that flow back through EventBus for metrics, logging, and coordination
 
@@ -197,9 +197,10 @@ graph TD
 
 **Validation Strategy:**
 
-The two-phase validation eliminates the need for a separate validation sidecar container:
+Three phases run in-process, eliminating the need for a separate validation sidecar container:
 
-1. **Phase 1 - Syntax Parsing**: client-native library parses configuration structure and validates against HAProxy config grammar
-2. **Phase 2 - Semantic Validation**: haproxy binary (`haproxy -c -f config`) performs full semantic validation including resource availability checks. Writes auxiliary files to actual HAProxy directories (with mutex locking) to match Dataplane API validation behavior exactly.
+1. **Phase 1 — Syntax parsing.** client-native parses the configuration and validates it against the HAProxy config grammar.
+2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against the version-specific DataPlane API OpenAPI spec — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
+3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Auxiliary files are written to the real HAProxy directories under a mutex so file references resolve exactly like at runtime.
 
-This approach provides the same validation guarantees as running a full HAProxy instance while being more lightweight and faster.
+Results are cached by `(configHash, auxHash, versionHash)` so repeat validations during drift-prevention cycles are essentially free. This provides the same guarantees as a full HAProxy instance while being lightweight and fast.

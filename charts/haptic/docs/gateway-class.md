@@ -24,7 +24,7 @@ controller:
 
 gatewayClass:
   enabled: true
-  name: haproxy
+  name: haptic
   default: false
   controllerName: haproxy-haptic.org/controller
   parametersRef:
@@ -64,7 +64,7 @@ The GatewayClass automatically references the HAProxyTemplateConfig created by t
 **Inspect the reference:**
 
 ```bash
-kubectl get gatewayclass haproxy -o yaml
+kubectl get gatewayclass haptic -o yaml
 ```
 
 ## Multi-Controller Environments
@@ -76,7 +76,7 @@ When running multiple Gateway API controllers:
 ```yaml
 # Controller 1 (haptic)
 gatewayClass:
-  name: haproxy
+  name: haptic
   controllerName: haproxy-haptic.org/controller
 
 # Controller 2 (nginx-gateway-fabric)
@@ -143,7 +143,7 @@ kind: Gateway
 metadata:
   name: example-gateway
 spec:
-  gatewayClassName: haproxy  # References GatewayClass.metadata.name
+  gatewayClassName: haptic  # References GatewayClass.metadata.name
   listeners:
     - name: http
       protocol: HTTP

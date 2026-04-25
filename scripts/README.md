@@ -1,117 +1,95 @@
-# Scripts
+# scripts/
 
-Development and maintenance scripts for the HAProxy Template Ingress Controller.
+Shell helpers used by developers and by `Makefile` targets. Everything here is meant to be runnable from the repo root. Authoritative behaviour lives in the scripts themselves — run with `--help` where supported.
+
+| Script | Purpose | Typical caller |
+|--------|---------|----------------|
+| [`start-dev-env.sh`](#start-dev-envsh) | Local Kind-based development environment | developers |
+| [`test-templates.sh`](#test-templatessh) | Run the chart's `validationTests` against a merged Helm render | developers, CI |
+| [`test-helm-defaults.sh`](#test-helm-defaultssh) | Validate the chart with default values | developers, CI |
+| [`test-routes.sh`](#test-routessh) | HTTP smoke test against the dev cluster | developers |
+| [`test-benchmark.sh`](#test-benchmarksh) | Go benchmark runner with consistent flags | developers |
+| [`generate-dev-ssl-cert.sh`](#generate-dev-ssl-certsh) | Self-signed SSL cert used by the dev environment | `start-dev-env.sh` |
+| [`source-hash.sh`](#source-hashsh) | Hash of `pkg/**/*.go` + `cmd/**/*.go` (dev-env sync check) | `start-dev-env.sh status` |
+| [`extract-dataplane-spec.sh`](#extract-dataplane-specsh) | Download Dataplane API OpenAPI spec for a given HAProxy version | code generation |
+| [`release-controller.sh`](#release-controllersh--release-chartsh) | Controller release automation | `make release-controller` |
+| [`release-chart.sh`](#release-controllersh--release-chartsh) | Chart release automation | `make release-chart` |
+| `dev-env-assets/` | Static files (CRD, kind config, manifests) used by `start-dev-env.sh` | `start-dev-env.sh` |
+
+---
+
+## start-dev-env.sh
+
+Manages a Kind-based local development environment. Subcommands:
+
+| Subcommand | Effect |
+|------------|--------|
+| *(none)* / `up` | Create or attach to the `kind-haptic-dev` cluster, build + deploy the controller |
+| `restart` | Rebuild the controller image, redeploy |
+| `logs` | `kubectl logs -f` the controller |
+| `status` | Show controller/HAProxy pod status + running-vs-local source-hash |
+| `test` | Run the basic ingress smoke test (`test-routes.sh`) |
+| `down` / `clean` | Delete the Kind cluster |
+
+`restart --skip-build` skips image rebuild (useful when iterating on chart-only changes). `status` uses `source-hash.sh` to show whether the cluster is running your latest code — always run it before debugging.
+
+## test-templates.sh
+
+Runs the validation tests embedded in the chart's libraries. Equivalent to:
+
+1. `helm template charts/haptic …` (with `--api-versions` for Gateway API)
+2. Extract the single `HAProxyTemplateConfig` with `yq`
+3. `haptic-controller validate -f <merged>.yaml [--test <name>] [--dump-rendered] [--verbose]`
+
+```bash
+./scripts/test-templates.sh                                   # all tests
+./scripts/test-templates.sh --test test-httproute-basic       # one test
+./scripts/test-templates.sh --dump-rendered --verbose         # debug failing test
+./scripts/test-templates.sh --output yaml | yq '.tests[].name'  # list available tests
+```
+
+Always prefer this over running `haptic-controller validate` against a library file directly — library files are incomplete (no `haproxyConfig`, no cross-library snippets) and will fail validation on their own.
+
+## test-helm-defaults.sh
+
+Renders the chart with default values and asserts key invariants — useful as a quick "does the chart still produce valid output after my change?" check. Runs in CI on every MR.
+
+## test-routes.sh
+
+HTTP smoke test against the dev cluster: creates a sample ingress, port-forwards, issues a few curl requests, validates responses. Requires `start-dev-env.sh` to have brought the cluster up first.
+
+## test-benchmark.sh
+
+Wrapper around `go test -bench=...` that picks the right `-count`, `-benchtime`, and `-run` defaults for this project's benchmarks, and teeing output to a file for comparison.
+
+## generate-dev-ssl-cert.sh
+
+Generates a self-signed SSL certificate plus matching key for the dev environment. Called automatically by `start-dev-env.sh`; rarely run directly.
+
+## source-hash.sh
+
+Emits a short hash of all `*.go` files under `pkg/` and `cmd/`. `start-dev-env.sh status` uses it to decide whether the controller running in the dev cluster matches local source. Deterministic — same tree produces the same hash across runs.
 
 ## extract-dataplane-spec.sh
 
-Extracts HAProxy DataPlane API OpenAPI specifications from running containers.
-
-### Purpose
-
-Downloads the OpenAPI v3 specification from the DataPlane API `/v3/specification_openapiv3` endpoint for a specific HAProxy version. Used to generate version-specific Go HTTP clients for the DataPlane API.
-
-### Usage
+Downloads the OpenAPI v3 specification for a given HAProxy Dataplane API version by spinning up a throwaway Docker container, querying `/v3/specification_openapiv3`, and saving the response as formatted JSON.
 
 ```bash
-./scripts/extract-dataplane-spec.sh <haproxy-version> [output-file]
-```
-
-### Arguments
-
-- `haproxy-version` - HAProxy version to extract (e.g., `3.0`, `3.1`, `3.2`)
-- `output-file` - Optional output file path (default: `spec.json` in current directory)
-
-### Examples
-
-```bash
-# Extract v3.2 spec to default location
 ./scripts/extract-dataplane-spec.sh 3.2
-
-# Extract v3.1 spec to specific file
 ./scripts/extract-dataplane-spec.sh 3.1 /tmp/dataplane-v31.json
-
-# Extract v3.0 spec to project structure
 ./scripts/extract-dataplane-spec.sh 3.0 pkg/generated/dataplaneapi/v30/spec.json
 ```
 
-### Requirements
+Requirements: Docker, `curl`, `jq`, `nc`. The script handles container lifecycle itself — if you see cleanup errors, remove the container manually with `docker rm -f dataplaneapi-extract-<version>`.
 
-- Docker
-- curl
-- jq
-- nc (netcat) for port availability checking
+Used for code generation — after saving a new spec, run `make generate-dataplaneapi-v<version>` to regenerate the typed Go client under `pkg/generated/dataplaneapi/`.
 
-### How It Works
+## release-controller.sh / release-chart.sh
 
-1. Creates a temporary directory with minimal DataPlane API and HAProxy configs
-2. Starts a Docker container with the specified HAProxy version
-3. Waits for the DataPlane API to become ready
-4. Downloads the OpenAPI v3 specification via authenticated HTTP request
-5. Validates and pretty-prints the JSON
-6. Cleans up the container and temporary files
+Invoked by `make release-controller VERSION=...` and `make release-chart CHART_VERSION=...` respectively. They validate that the release notes already contain an entry for the target version, bump `VERSION` / `Chart.yaml`, and create the release commit. Do **not** call them directly in normal workflows — go through the Makefile target so you get the arg validation for free. See [`docs/controller/docs/development/releasing.md`](../docs/controller/docs/development/releasing.md) for the end-to-end release process.
 
-### Output
+## See Also
 
-The script outputs a formatted JSON file containing the complete OpenAPI v3 specification for the specified HAProxy DataPlane API version.
-
-### Troubleshooting
-
-**Container fails to start:**
-
-- Check Docker is running: `docker info`
-- Verify the HAProxy version exists: `docker pull haproxytech/haproxy-alpine:<version>`
-
-**API not becoming ready:**
-
-- Check container logs manually: `docker logs dataplaneapi-extract-<version>`
-- Increase timeout by editing `max_attempts` in the script
-
-**Permission errors during cleanup:**
-
-- The script uses Docker to clean up files created by the container
-- Ensure Docker has proper permissions
-
-### Future Versions
-
-To extract specs for future HAProxy versions (e.g., 3.3, 3.4):
-
-```bash
-# Extract spec
-./scripts/extract-dataplane-spec.sh 3.3 pkg/generated/dataplaneapi/v33/spec.json
-
-# Generate client code
-make generate-dataplaneapi-v33
-
-# Update Clientset to include new version
-```
-
-## Other Scripts
-
-### start-dev-env.sh
-
-Starts the local development environment with kind cluster.
-
-```bash
-./scripts/start-dev-env.sh          # Start or attach to dev cluster
-./scripts/start-dev-env.sh restart  # Rebuild and redeploy
-./scripts/start-dev-env.sh logs     # View controller logs
-./scripts/start-dev-env.sh down     # Tear down dev environment
-```
-
-### test-templates.sh
-
-Tests Helm chart template rendering.
-
-```bash
-./scripts/test-templates.sh                                    # Run all tests
-./scripts/test-templates.sh --test test-httproute-basic       # Run specific test
-./scripts/test-templates.sh --dump-rendered --verbose         # Debug mode
-```
-
-### test-routes.sh
-
-Tests ingress route functionality in the dev cluster.
-
-```bash
-./scripts/test-routes.sh  # Test HTTP routing with live cluster
-```
+- `Makefile` — the authoritative list of developer commands; most of these scripts are accessible as `make <target>`
+- `docs/controller/docs/development/releasing.md` — release process
+- `charts/CLAUDE.md` — chart development workflow (`test-templates.sh` is the recommended entry point)

@@ -17,7 +17,7 @@ kubectl logs -f -l app.kubernetes.io/name=haptic,app.kubernetes.io/component=con
 Common issues:
 
 - **HAProxyTemplateConfig missing**: `kubectl get haproxytemplateconfig` — reinstall the Helm chart if absent
-- **Credentials Secret missing**: `kubectl get secret haptic-dataplane-credentials` — recreate with the correct keys
+- **Credentials Secret missing**: `kubectl get secret haptic-credentials` — recreate with the correct keys
 - **RBAC permissions incorrect**: `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<namespace>:<serviceaccount>`
 - **NetworkPolicy blocking access**: see [Networking](./networking.md)
 
@@ -73,7 +73,7 @@ If creating an Ingress produces no HAProxy configuration change:
 
 ## Cannot Connect to HAProxy Pods
 
-1. **Check HAProxy pod labels** match `pod_selector`
+1. **Check HAProxy pod labels** match `podSelector`
 
    ```bash
    kubectl get pods --show-labels
@@ -94,13 +94,17 @@ If creating an Ingress produces no HAProxy configuration change:
 
 ## Dataplane API Authentication Failure
 
-If the controller logs show "401 Unauthorized" or "403 Forbidden" when connecting to HAProxy:
+If the controller logs show "401 Unauthorized" or "403 Forbidden" when connecting to HAProxy, decode the credentials from the Secret and confirm they match what the Dataplane API was configured with:
 
 ```bash
-kubectl get secret haptic-dataplane-credentials -o jsonpath='{.data}' | base64 -d
+for key in dataplane_username dataplane_password validation_username validation_password; do
+  echo "$key: $(kubectl get secret haptic-credentials -n haptic -o jsonpath="{.data.$key}" | base64 -d)"
+done
 ```
 
-The username and password in the Secret must match what is configured in the HAProxy Dataplane API. After updating the Secret, restart the controller:
+(`kubectl get secret … -o jsonpath='{.data}'` alone returns the keys map verbatim — the values come out as base64-encoded strings, which is why each key is decoded individually.)
+
+After updating the Secret, restart the controller:
 
 ```bash
 kubectl rollout restart deployment haptic-controller
