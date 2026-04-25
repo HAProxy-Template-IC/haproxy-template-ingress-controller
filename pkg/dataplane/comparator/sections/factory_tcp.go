@@ -15,8 +15,6 @@
 package sections
 
 import (
-	"fmt"
-
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
@@ -43,362 +41,158 @@ func stickRuleIdentifier(rule *models.StickRule) string { return rule.Type }
 // httpAfterResponseRuleIdentifier extracts the type identifier from an HTTPAfterResponseRule model.
 func httpAfterResponseRuleIdentifier(rule *models.HTTPAfterResponseRule) string { return rule.Type }
 
+// Index-child CRUD builders for TCP/HTTP rules, checks, sticks and captures.
+var (
+	tcpRequestRuleFrontendOps = NewIndexChildCRUD[*models.TCPRequestRule](
+		"tcp_request_rule", "TCP request rule", "frontend", PriorityRule, tcpRequestRuleIdentifier,
+		executors.TCPRequestRuleFrontendCreate(), executors.TCPRequestRuleFrontendUpdate(), executors.TCPRequestRuleFrontendDelete(),
+	)
+	tcpRequestRuleBackendOps = NewIndexChildCRUD[*models.TCPRequestRule](
+		"tcp_request_rule", "TCP request rule", "backend", PriorityRule, tcpRequestRuleIdentifier,
+		executors.TCPRequestRuleBackendCreate(), executors.TCPRequestRuleBackendUpdate(), executors.TCPRequestRuleBackendDelete(),
+	)
+	tcpResponseRuleBackendOps = NewIndexChildCRUD[*models.TCPResponseRule](
+		"tcp_response_rule", "TCP response rule", "backend", PriorityRule, tcpResponseRuleIdentifier,
+		executors.TCPResponseRuleBackendCreate(), executors.TCPResponseRuleBackendUpdate(), executors.TCPResponseRuleBackendDelete(),
+	)
+	stickRuleBackendOps = NewIndexChildCRUD[*models.StickRule](
+		"stick_rule", "stick rule", "backend", PriorityStickRule, stickRuleIdentifier,
+		executors.StickRuleBackendCreate(), executors.StickRuleBackendUpdate(), executors.StickRuleBackendDelete(),
+	)
+	httpAfterResponseRuleBackendOps = NewIndexChildCRUD[*models.HTTPAfterResponseRule](
+		"http_after_response_rule", "HTTP after response rule", "backend", PriorityHTTPAfterRule, httpAfterResponseRuleIdentifier,
+		executors.HTTPAfterResponseRuleBackendCreate(), executors.HTTPAfterResponseRuleBackendUpdate(), executors.HTTPAfterResponseRuleBackendDelete(),
+	)
+	httpCheckBackendOps = NewIndexChildCRUD[*models.HTTPCheck](
+		"http_check", "HTTP check", "backend", PriorityHTTPCheck, httpCheckIdentifier,
+		executors.HTTPCheckBackendCreate(), executors.HTTPCheckBackendUpdate(), executors.HTTPCheckBackendDelete(),
+	)
+	tcpCheckBackendOps = NewIndexChildCRUD[*models.TCPCheck](
+		"tcp_check", "TCP check", "backend", PriorityTCPCheck, tcpCheckIdentifier,
+		executors.TCPCheckBackendCreate(), executors.TCPCheckBackendUpdate(), executors.TCPCheckBackendDelete(),
+	)
+	captureFrontendOps = NewIndexChildCRUD[*models.Capture](
+		"capture", "capture", "frontend", PriorityCapture, captureIdentifier,
+		executors.DeclareCaptureFrontendCreate(), executors.DeclareCaptureFrontendUpdate(), executors.DeclareCaptureFrontendDelete(),
+	)
+)
+
 // NewTCPRequestRuleFrontendCreate creates an operation to create a TCP request rule in a frontend.
 func NewTCPRequestRuleFrontendCreate(frontendName string, rule *models.TCPRequestRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"tcp_request_rule",
-		PriorityRule,
-		frontendName,
-		index,
-		rule,
-		Identity[*models.TCPRequestRule],
-		executors.TCPRequestRuleFrontendCreate(),
-		DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return tcpRequestRuleFrontendOps.Create(frontendName, rule, index)
 }
 
 // NewTCPRequestRuleFrontendUpdate creates an operation to update a TCP request rule in a frontend.
 func NewTCPRequestRuleFrontendUpdate(frontendName string, rule *models.TCPRequestRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"tcp_request_rule",
-		PriorityRule,
-		frontendName,
-		index,
-		rule,
-		Identity[*models.TCPRequestRule],
-		executors.TCPRequestRuleFrontendUpdate(),
-		DescribeTypedChild(OperationUpdate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return tcpRequestRuleFrontendOps.Update(frontendName, rule, index)
 }
 
 // NewTCPRequestRuleFrontendDelete creates an operation to delete a TCP request rule from a frontend.
 func NewTCPRequestRuleFrontendDelete(frontendName string, rule *models.TCPRequestRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"tcp_request_rule",
-		PriorityRule,
-		frontendName,
-		index,
-		rule,
-		Nil[*models.TCPRequestRule],
-		executors.TCPRequestRuleFrontendDelete(),
-		DescribeTypedChild(OperationDelete, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return tcpRequestRuleFrontendOps.Delete(frontendName, rule, index)
 }
 
 // NewTCPRequestRuleBackendCreate creates an operation to create a TCP request rule in a backend.
 func NewTCPRequestRuleBackendCreate(backendName string, rule *models.TCPRequestRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"tcp_request_rule",
-		PriorityRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.TCPRequestRule],
-		executors.TCPRequestRuleBackendCreate(),
-		DescribeTypedChild(OperationCreate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpRequestRuleBackendOps.Create(backendName, rule, index)
 }
 
 // NewTCPRequestRuleBackendUpdate creates an operation to update a TCP request rule in a backend.
 func NewTCPRequestRuleBackendUpdate(backendName string, rule *models.TCPRequestRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"tcp_request_rule",
-		PriorityRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.TCPRequestRule],
-		executors.TCPRequestRuleBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpRequestRuleBackendOps.Update(backendName, rule, index)
 }
 
 // NewTCPRequestRuleBackendDelete creates an operation to delete a TCP request rule from a backend.
 func NewTCPRequestRuleBackendDelete(backendName string, rule *models.TCPRequestRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"tcp_request_rule",
-		PriorityRule,
-		backendName,
-		index,
-		rule,
-		Nil[*models.TCPRequestRule],
-		executors.TCPRequestRuleBackendDelete(),
-		DescribeTypedChild(OperationDelete, "TCP request rule", tcpRequestRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpRequestRuleBackendOps.Delete(backendName, rule, index)
 }
 
 // NewTCPResponseRuleBackendCreate creates an operation to create a TCP response rule in a backend.
 func NewTCPResponseRuleBackendCreate(backendName string, rule *models.TCPResponseRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"tcp_response_rule",
-		PriorityRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.TCPResponseRule],
-		executors.TCPResponseRuleBackendCreate(),
-		DescribeTypedChild(OperationCreate, "TCP response rule", tcpResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpResponseRuleBackendOps.Create(backendName, rule, index)
 }
 
 // NewTCPResponseRuleBackendUpdate creates an operation to update a TCP response rule in a backend.
 func NewTCPResponseRuleBackendUpdate(backendName string, rule *models.TCPResponseRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"tcp_response_rule",
-		PriorityRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.TCPResponseRule],
-		executors.TCPResponseRuleBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "TCP response rule", tcpResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpResponseRuleBackendOps.Update(backendName, rule, index)
 }
 
 // NewTCPResponseRuleBackendDelete creates an operation to delete a TCP response rule from a backend.
 func NewTCPResponseRuleBackendDelete(backendName string, rule *models.TCPResponseRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"tcp_response_rule",
-		PriorityRule,
-		backendName,
-		index,
-		rule,
-		Nil[*models.TCPResponseRule],
-		executors.TCPResponseRuleBackendDelete(),
-		DescribeTypedChild(OperationDelete, "TCP response rule", tcpResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpResponseRuleBackendOps.Delete(backendName, rule, index)
 }
 
 // NewStickRuleBackendCreate creates an operation to create a stick rule in a backend.
 func NewStickRuleBackendCreate(backendName string, rule *models.StickRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"stick_rule",
-		PriorityStickRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.StickRule],
-		executors.StickRuleBackendCreate(),
-		DescribeTypedChild(OperationCreate, "stick rule", stickRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return stickRuleBackendOps.Create(backendName, rule, index)
 }
 
 // NewStickRuleBackendUpdate creates an operation to update a stick rule in a backend.
 func NewStickRuleBackendUpdate(backendName string, rule *models.StickRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"stick_rule",
-		PriorityStickRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.StickRule],
-		executors.StickRuleBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "stick rule", stickRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return stickRuleBackendOps.Update(backendName, rule, index)
 }
 
 // NewStickRuleBackendDelete creates an operation to delete a stick rule from a backend.
 func NewStickRuleBackendDelete(backendName string, rule *models.StickRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"stick_rule",
-		PriorityStickRule,
-		backendName,
-		index,
-		rule,
-		Nil[*models.StickRule],
-		executors.StickRuleBackendDelete(),
-		DescribeTypedChild(OperationDelete, "stick rule", stickRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return stickRuleBackendOps.Delete(backendName, rule, index)
 }
 
 // NewHTTPAfterResponseRuleBackendCreate creates an operation to create an HTTP after-response rule in a backend.
 func NewHTTPAfterResponseRuleBackendCreate(backendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"http_after_response_rule",
-		PriorityHTTPAfterRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.HTTPAfterResponseRule],
-		executors.HTTPAfterResponseRuleBackendCreate(),
-		DescribeTypedChild(OperationCreate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return httpAfterResponseRuleBackendOps.Create(backendName, rule, index)
 }
 
 // NewHTTPAfterResponseRuleBackendUpdate creates an operation to update an HTTP after-response rule in a backend.
 func NewHTTPAfterResponseRuleBackendUpdate(backendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"http_after_response_rule",
-		PriorityHTTPAfterRule,
-		backendName,
-		index,
-		rule,
-		Identity[*models.HTTPAfterResponseRule],
-		executors.HTTPAfterResponseRuleBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return httpAfterResponseRuleBackendOps.Update(backendName, rule, index)
 }
 
 // NewHTTPAfterResponseRuleBackendDelete creates an operation to delete an HTTP after-response rule from a backend.
 func NewHTTPAfterResponseRuleBackendDelete(backendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"http_after_response_rule",
-		PriorityHTTPAfterRule,
-		backendName,
-		index,
-		rule,
-		Nil[*models.HTTPAfterResponseRule],
-		executors.HTTPAfterResponseRuleBackendDelete(),
-		DescribeTypedChild(OperationDelete, "HTTP after response rule", httpAfterResponseRuleIdentifier(rule), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return httpAfterResponseRuleBackendOps.Delete(backendName, rule, index)
 }
 
 // NewHTTPCheckBackendCreate creates an operation to create an HTTP check in a backend.
 func NewHTTPCheckBackendCreate(backendName string, check *models.HTTPCheck, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"http_check",
-		PriorityHTTPCheck,
-		backendName,
-		index,
-		check,
-		Identity[*models.HTTPCheck],
-		executors.HTTPCheckBackendCreate(),
-		DescribeTypedChild(OperationCreate, "HTTP check", httpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return httpCheckBackendOps.Create(backendName, check, index)
 }
 
 // NewHTTPCheckBackendUpdate creates an operation to update an HTTP check in a backend.
 func NewHTTPCheckBackendUpdate(backendName string, check *models.HTTPCheck, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"http_check",
-		PriorityHTTPCheck,
-		backendName,
-		index,
-		check,
-		Identity[*models.HTTPCheck],
-		executors.HTTPCheckBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "HTTP check", httpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return httpCheckBackendOps.Update(backendName, check, index)
 }
 
 // NewHTTPCheckBackendDelete creates an operation to delete an HTTP check from a backend.
 func NewHTTPCheckBackendDelete(backendName string, check *models.HTTPCheck, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"http_check",
-		PriorityHTTPCheck,
-		backendName,
-		index,
-		check,
-		Nil[*models.HTTPCheck],
-		executors.HTTPCheckBackendDelete(),
-		DescribeTypedChild(OperationDelete, "HTTP check", httpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return httpCheckBackendOps.Delete(backendName, check, index)
 }
 
 // NewTCPCheckBackendCreate creates an operation to create a TCP check in a backend.
 func NewTCPCheckBackendCreate(backendName string, check *models.TCPCheck, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"tcp_check",
-		PriorityTCPCheck,
-		backendName,
-		index,
-		check,
-		Identity[*models.TCPCheck],
-		executors.TCPCheckBackendCreate(),
-		DescribeTypedChild(OperationCreate, "TCP check", tcpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpCheckBackendOps.Create(backendName, check, index)
 }
 
 // NewTCPCheckBackendUpdate creates an operation to update a TCP check in a backend.
 func NewTCPCheckBackendUpdate(backendName string, check *models.TCPCheck, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"tcp_check",
-		PriorityTCPCheck,
-		backendName,
-		index,
-		check,
-		Identity[*models.TCPCheck],
-		executors.TCPCheckBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "TCP check", tcpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpCheckBackendOps.Update(backendName, check, index)
 }
 
 // NewTCPCheckBackendDelete creates an operation to delete a TCP check from a backend.
 func NewTCPCheckBackendDelete(backendName string, check *models.TCPCheck, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"tcp_check",
-		PriorityTCPCheck,
-		backendName,
-		index,
-		check,
-		Nil[*models.TCPCheck],
-		executors.TCPCheckBackendDelete(),
-		DescribeTypedChild(OperationDelete, "TCP check", tcpCheckIdentifier(check), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return tcpCheckBackendOps.Delete(backendName, check, index)
 }
 
 // NewCaptureFrontendCreate creates an operation to create a capture declaration in a frontend.
 func NewCaptureFrontendCreate(frontendName string, capture *models.Capture, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"capture",
-		PriorityCapture,
-		frontendName,
-		index,
-		capture,
-		Identity[*models.Capture],
-		executors.DeclareCaptureFrontendCreate(),
-		DescribeTypedChild(OperationCreate, "capture", captureIdentifier(capture), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return captureFrontendOps.Create(frontendName, capture, index)
 }
 
 // NewCaptureFrontendUpdate creates an operation to update a capture declaration in a frontend.
 func NewCaptureFrontendUpdate(frontendName string, capture *models.Capture, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"capture",
-		PriorityCapture,
-		frontendName,
-		index,
-		capture,
-		Identity[*models.Capture],
-		executors.DeclareCaptureFrontendUpdate(),
-		DescribeTypedChild(OperationUpdate, "capture", captureIdentifier(capture), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return captureFrontendOps.Update(frontendName, capture, index)
 }
 
 // NewCaptureFrontendDelete creates an operation to delete a capture declaration from a frontend.
 func NewCaptureFrontendDelete(frontendName string, capture *models.Capture, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"capture",
-		PriorityCapture,
-		frontendName,
-		index,
-		capture,
-		Nil[*models.Capture],
-		executors.DeclareCaptureFrontendDelete(),
-		DescribeTypedChild(OperationDelete, "capture", captureIdentifier(capture), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return captureFrontendOps.Delete(frontendName, capture, index)
 }
