@@ -71,292 +71,195 @@ func (v *ValidatorSet) Version() string {
 	return v.version
 }
 
+// callIfSet invokes fn with m and returns its result, or the zero value of R
+// when fn is nil. Used to keep ValidatorSet's optional Validate*/Hash* methods
+// to a single line each.
+func callIfSet[T, R any](fn func(T) R, m T) R {
+	if fn != nil {
+		return fn(m)
+	}
+	var zero R
+	return zero
+}
+
 // ValidateServer validates a Server model.
 func (v *ValidatorSet) ValidateServer(m *models.Server) error {
-	if v.validateServer != nil {
-		return v.validateServer(m)
-	}
-	return nil
+	return callIfSet(v.validateServer, m)
 }
 
 // ValidateServerTemplate validates a ServerTemplate model.
 func (v *ValidatorSet) ValidateServerTemplate(m *models.ServerTemplate) error {
-	if v.validateServerTemplate != nil {
-		return v.validateServerTemplate(m)
-	}
-	return nil
+	return callIfSet(v.validateServerTemplate, m)
 }
 
 // ValidateBind validates a Bind model.
 func (v *ValidatorSet) ValidateBind(m *models.Bind) error {
-	if v.validateBind != nil {
-		return v.validateBind(m)
-	}
-	return nil
+	return callIfSet(v.validateBind, m)
 }
 
 // ValidateHTTPRequestRule validates an HTTPRequestRule model.
 func (v *ValidatorSet) ValidateHTTPRequestRule(m *models.HTTPRequestRule) error {
-	if v.validateHTTPRequestRule != nil {
-		return v.validateHTTPRequestRule(m)
-	}
-	return nil
+	return callIfSet(v.validateHTTPRequestRule, m)
 }
 
 // ValidateHTTPResponseRule validates an HTTPResponseRule model.
 func (v *ValidatorSet) ValidateHTTPResponseRule(m *models.HTTPResponseRule) error {
-	if v.validateHTTPResponseRule != nil {
-		return v.validateHTTPResponseRule(m)
-	}
-	return nil
+	return callIfSet(v.validateHTTPResponseRule, m)
 }
 
 // ValidateTCPRequestRule validates a TCPRequestRule model.
 func (v *ValidatorSet) ValidateTCPRequestRule(m *models.TCPRequestRule) error {
-	if v.validateTCPRequestRule != nil {
-		return v.validateTCPRequestRule(m)
-	}
-	return nil
+	return callIfSet(v.validateTCPRequestRule, m)
 }
 
 // ValidateTCPResponseRule validates a TCPResponseRule model.
 func (v *ValidatorSet) ValidateTCPResponseRule(m *models.TCPResponseRule) error {
-	if v.validateTCPResponseRule != nil {
-		return v.validateTCPResponseRule(m)
-	}
-	return nil
+	return callIfSet(v.validateTCPResponseRule, m)
 }
 
 // ValidateHTTPAfterResponseRule validates an HTTPAfterResponseRule model.
 func (v *ValidatorSet) ValidateHTTPAfterResponseRule(m *models.HTTPAfterResponseRule) error {
-	if v.validateHTTPAfterResponse != nil {
-		return v.validateHTTPAfterResponse(m)
-	}
-	return nil
+	return callIfSet(v.validateHTTPAfterResponse, m)
 }
 
 // ValidateHTTPErrorRule validates an HTTPErrorRule model.
 func (v *ValidatorSet) ValidateHTTPErrorRule(m *models.HTTPErrorRule) error {
-	if v.validateHTTPErrorRule != nil {
-		return v.validateHTTPErrorRule(m)
-	}
-	return nil
+	return callIfSet(v.validateHTTPErrorRule, m)
 }
 
 // ValidateServerSwitchingRule validates a ServerSwitchingRule model.
 func (v *ValidatorSet) ValidateServerSwitchingRule(m *models.ServerSwitchingRule) error {
-	if v.validateServerSwitchingRule != nil {
-		return v.validateServerSwitchingRule(m)
-	}
-	return nil
+	return callIfSet(v.validateServerSwitchingRule, m)
 }
 
 // ValidateBackendSwitchingRule validates a BackendSwitchingRule model.
 func (v *ValidatorSet) ValidateBackendSwitchingRule(m *models.BackendSwitchingRule) error {
-	if v.validateBackendSwitching != nil {
-		return v.validateBackendSwitching(m)
-	}
-	return nil
+	return callIfSet(v.validateBackendSwitching, m)
 }
 
 // ValidateStickRule validates a StickRule model.
 func (v *ValidatorSet) ValidateStickRule(m *models.StickRule) error {
-	if v.validateStickRule != nil {
-		return v.validateStickRule(m)
-	}
-	return nil
+	return callIfSet(v.validateStickRule, m)
 }
 
 // ValidateACL validates an ACL model.
 func (v *ValidatorSet) ValidateACL(m *models.ACL) error {
-	if v.validateACL != nil {
-		return v.validateACL(m)
-	}
-	return nil
+	return callIfSet(v.validateACL, m)
 }
 
 // ValidateFilter validates a Filter model.
 func (v *ValidatorSet) ValidateFilter(m *models.Filter) error {
-	if v.validateFilter != nil {
-		return v.validateFilter(m)
-	}
-	return nil
+	return callIfSet(v.validateFilter, m)
 }
 
 // ValidateLogTarget validates a LogTarget model.
 func (v *ValidatorSet) ValidateLogTarget(m *models.LogTarget) error {
-	if v.validateLogTarget != nil {
-		return v.validateLogTarget(m)
-	}
-	return nil
+	return callIfSet(v.validateLogTarget, m)
 }
 
 // ValidateHTTPCheck validates an HTTPCheck model.
 func (v *ValidatorSet) ValidateHTTPCheck(m *models.HTTPCheck) error {
-	if v.validateHTTPCheck != nil {
-		return v.validateHTTPCheck(m)
-	}
-	return nil
+	return callIfSet(v.validateHTTPCheck, m)
 }
 
 // ValidateTCPCheck validates a TCPCheck model.
 func (v *ValidatorSet) ValidateTCPCheck(m *models.TCPCheck) error {
-	if v.validateTCPCheck != nil {
-		return v.validateTCPCheck(m)
-	}
-	return nil
+	return callIfSet(v.validateTCPCheck, m)
 }
 
 // ValidateCapture validates a Capture model.
 func (v *ValidatorSet) ValidateCapture(m *models.Capture) error {
-	if v.validateCapture != nil {
-		return v.validateCapture(m)
-	}
-	return nil
+	return callIfSet(v.validateCapture, m)
 }
 
 // HashServer computes a content hash for a Server model.
 func (v *ValidatorSet) HashServer(m *models.Server) uint64 {
-	if v.hashServer != nil {
-		return v.hashServer(m)
-	}
-	return 0
+	return callIfSet(v.hashServer, m)
 }
 
 // HashServerTemplate computes a content hash for a ServerTemplate model.
 func (v *ValidatorSet) HashServerTemplate(m *models.ServerTemplate) uint64 {
-	if v.hashServerTemplate != nil {
-		return v.hashServerTemplate(m)
-	}
-	return 0
+	return callIfSet(v.hashServerTemplate, m)
 }
 
 // HashBind computes a content hash for a Bind model.
 func (v *ValidatorSet) HashBind(m *models.Bind) uint64 {
-	if v.hashBind != nil {
-		return v.hashBind(m)
-	}
-	return 0
+	return callIfSet(v.hashBind, m)
 }
 
 // HashHTTPRequestRule computes a content hash for an HTTPRequestRule model.
 func (v *ValidatorSet) HashHTTPRequestRule(m *models.HTTPRequestRule) uint64 {
-	if v.hashHTTPRequestRule != nil {
-		return v.hashHTTPRequestRule(m)
-	}
-	return 0
+	return callIfSet(v.hashHTTPRequestRule, m)
 }
 
 // HashHTTPResponseRule computes a content hash for an HTTPResponseRule model.
 func (v *ValidatorSet) HashHTTPResponseRule(m *models.HTTPResponseRule) uint64 {
-	if v.hashHTTPResponseRule != nil {
-		return v.hashHTTPResponseRule(m)
-	}
-	return 0
+	return callIfSet(v.hashHTTPResponseRule, m)
 }
 
 // HashTCPRequestRule computes a content hash for a TCPRequestRule model.
 func (v *ValidatorSet) HashTCPRequestRule(m *models.TCPRequestRule) uint64 {
-	if v.hashTCPRequestRule != nil {
-		return v.hashTCPRequestRule(m)
-	}
-	return 0
+	return callIfSet(v.hashTCPRequestRule, m)
 }
 
 // HashTCPResponseRule computes a content hash for a TCPResponseRule model.
 func (v *ValidatorSet) HashTCPResponseRule(m *models.TCPResponseRule) uint64 {
-	if v.hashTCPResponseRule != nil {
-		return v.hashTCPResponseRule(m)
-	}
-	return 0
+	return callIfSet(v.hashTCPResponseRule, m)
 }
 
 // HashHTTPAfterResponseRule computes a content hash for an HTTPAfterResponseRule model.
 func (v *ValidatorSet) HashHTTPAfterResponseRule(m *models.HTTPAfterResponseRule) uint64 {
-	if v.hashHTTPAfterResponse != nil {
-		return v.hashHTTPAfterResponse(m)
-	}
-	return 0
+	return callIfSet(v.hashHTTPAfterResponse, m)
 }
 
 // HashHTTPErrorRule computes a content hash for an HTTPErrorRule model.
 func (v *ValidatorSet) HashHTTPErrorRule(m *models.HTTPErrorRule) uint64 {
-	if v.hashHTTPErrorRule != nil {
-		return v.hashHTTPErrorRule(m)
-	}
-	return 0
+	return callIfSet(v.hashHTTPErrorRule, m)
 }
 
 // HashServerSwitchingRule computes a content hash for a ServerSwitchingRule model.
 func (v *ValidatorSet) HashServerSwitchingRule(m *models.ServerSwitchingRule) uint64 {
-	if v.hashServerSwitchingRule != nil {
-		return v.hashServerSwitchingRule(m)
-	}
-	return 0
+	return callIfSet(v.hashServerSwitchingRule, m)
 }
 
 // HashBackendSwitchingRule computes a content hash for a BackendSwitchingRule model.
 func (v *ValidatorSet) HashBackendSwitchingRule(m *models.BackendSwitchingRule) uint64 {
-	if v.hashBackendSwitching != nil {
-		return v.hashBackendSwitching(m)
-	}
-	return 0
+	return callIfSet(v.hashBackendSwitching, m)
 }
 
 // HashStickRule computes a content hash for a StickRule model.
 func (v *ValidatorSet) HashStickRule(m *models.StickRule) uint64 {
-	if v.hashStickRule != nil {
-		return v.hashStickRule(m)
-	}
-	return 0
+	return callIfSet(v.hashStickRule, m)
 }
 
 // HashACL computes a content hash for an ACL model.
 func (v *ValidatorSet) HashACL(m *models.ACL) uint64 {
-	if v.hashACL != nil {
-		return v.hashACL(m)
-	}
-	return 0
+	return callIfSet(v.hashACL, m)
 }
 
 // HashFilter computes a content hash for a Filter model.
 func (v *ValidatorSet) HashFilter(m *models.Filter) uint64 {
-	if v.hashFilter != nil {
-		return v.hashFilter(m)
-	}
-	return 0
+	return callIfSet(v.hashFilter, m)
 }
 
 // HashLogTarget computes a content hash for a LogTarget model.
 func (v *ValidatorSet) HashLogTarget(m *models.LogTarget) uint64 {
-	if v.hashLogTarget != nil {
-		return v.hashLogTarget(m)
-	}
-	return 0
+	return callIfSet(v.hashLogTarget, m)
 }
 
 // HashHTTPCheck computes a content hash for an HTTPCheck model.
 func (v *ValidatorSet) HashHTTPCheck(m *models.HTTPCheck) uint64 {
-	if v.hashHTTPCheck != nil {
-		return v.hashHTTPCheck(m)
-	}
-	return 0
+	return callIfSet(v.hashHTTPCheck, m)
 }
 
 // HashTCPCheck computes a content hash for a TCPCheck model.
 func (v *ValidatorSet) HashTCPCheck(m *models.TCPCheck) uint64 {
-	if v.hashTCPCheck != nil {
-		return v.hashTCPCheck(m)
-	}
-	return 0
+	return callIfSet(v.hashTCPCheck, m)
 }
 
 // HashCapture computes a content hash for a Capture model.
 func (v *ValidatorSet) HashCapture(m *models.Capture) uint64 {
-	if v.hashCapture != nil {
-		return v.hashCapture(m)
-	}
-	return 0
+	return callIfSet(v.hashCapture, m)
 }
 
 // ForVersion returns the ValidatorSet for a specific HAProxy version.
