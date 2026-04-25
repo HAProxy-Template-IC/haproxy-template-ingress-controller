@@ -16,6 +16,7 @@ package dataplane
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -233,123 +234,77 @@ func (o *orchestrator) compareAuxiliaryFiles(
 
 // compareGeneralFiles compares current and desired general files (comparison only, no sync).
 func (o *orchestrator) compareGeneralFiles(ctx context.Context, generalFiles []auxiliaryfiles.GeneralFile) (*auxiliaryfiles.FileDiff, error) {
-	if len(generalFiles) == 0 {
-		return &auxiliaryfiles.FileDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing general files", "desired_files", len(generalFiles))
-
-	fileDiff, err := auxiliaryfiles.CompareGeneralFiles(ctx, o.client, generalFiles)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_files",
-			Message: "failed to compare general files",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check file permissions on HAProxy storage",
-			},
-		}
-	}
-
-	return fileDiff, nil
+	return compareAuxFiles(ctx, o.client, o.logger, generalFiles, auxiliaryfiles.CompareGeneralFiles,
+		"general files", "compare_files", "failed to compare general files",
+		"Verify Dataplane API is accessible",
+		"Check file permissions on HAProxy storage",
+	)
 }
 
 // compareSSLCertificates compares current and desired SSL certificates (comparison only, no sync).
 func (o *orchestrator) compareSSLCertificates(ctx context.Context, sslCerts []auxiliaryfiles.SSLCertificate) (*auxiliaryfiles.SSLCertificateDiff, error) {
-	if len(sslCerts) == 0 {
-		return &auxiliaryfiles.SSLCertificateDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing SSL certificates", "desired_certs", len(sslCerts))
-
-	sslDiff, err := auxiliaryfiles.CompareSSLCertificates(ctx, o.client, sslCerts)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_ssl",
-			Message: "failed to compare SSL certificates",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check SSL storage permissions",
-			},
-		}
-	}
-
-	return sslDiff, nil
+	return compareAuxFiles(ctx, o.client, o.logger, sslCerts, auxiliaryfiles.CompareSSLCertificates,
+		"SSL certificates", "compare_ssl", "failed to compare SSL certificates",
+		"Verify Dataplane API is accessible",
+		"Check SSL storage permissions",
+	)
 }
 
 // compareSSLCaFiles compares current and desired SSL CA files (comparison only, no sync).
 func (o *orchestrator) compareSSLCaFiles(ctx context.Context, caFiles []auxiliaryfiles.SSLCaFile) (*auxiliaryfiles.SSLCaFileDiff, error) {
-	if len(caFiles) == 0 {
-		return &auxiliaryfiles.SSLCaFileDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing SSL CA files", "desired_ca_files", len(caFiles))
-
-	caFileDiff, err := auxiliaryfiles.CompareSSLCaFiles(ctx, o.client, caFiles)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_ssl_ca",
-			Message: "failed to compare SSL CA files",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check SSL CA storage permissions",
-				"SSL CA file storage requires DataPlane API v3.2+",
-			},
-		}
-	}
-
-	return caFileDiff, nil
+	return compareAuxFiles(ctx, o.client, o.logger, caFiles, auxiliaryfiles.CompareSSLCaFiles,
+		"SSL CA files", "compare_ssl_ca", "failed to compare SSL CA files",
+		"Verify Dataplane API is accessible",
+		"Check SSL CA storage permissions",
+		"SSL CA file storage requires DataPlane API v3.2+",
+	)
 }
 
 // compareMapFiles compares current and desired map files (comparison only, no sync).
 func (o *orchestrator) compareMapFiles(ctx context.Context, mapFiles []auxiliaryfiles.MapFile) (*auxiliaryfiles.MapFileDiff, error) {
-	if len(mapFiles) == 0 {
-		return &auxiliaryfiles.MapFileDiff{}, nil
-	}
-
-	o.logger.Debug("Comparing map files", "desired_maps", len(mapFiles))
-
-	mapDiff, err := auxiliaryfiles.CompareMapFiles(ctx, o.client, mapFiles)
-	if err != nil {
-		return nil, &SyncError{
-			Stage:   "compare_maps",
-			Message: "failed to compare map files",
-			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check map storage permissions",
-			},
-		}
-	}
-
-	return mapDiff, nil
+	return compareAuxFiles(ctx, o.client, o.logger, mapFiles, auxiliaryfiles.CompareMapFiles,
+		"map files", "compare_maps", "failed to compare map files",
+		"Verify Dataplane API is accessible",
+		"Check map storage permissions",
+	)
 }
 
 // compareCRTListFiles compares current and desired crt-list files (comparison only, no sync).
 func (o *orchestrator) compareCRTListFiles(ctx context.Context, crtlistFiles []auxiliaryfiles.CRTListFile) (*auxiliaryfiles.CRTListDiff, error) {
-	if len(crtlistFiles) == 0 {
-		return &auxiliaryfiles.CRTListDiff{}, nil
+	return compareAuxFiles(ctx, o.client, o.logger, crtlistFiles, auxiliaryfiles.CompareCRTLists,
+		"crt-list files", "compare_crtlists", "failed to compare crt-list files",
+		"Verify Dataplane API is accessible",
+		"Check crt-list storage permissions",
+	)
+}
+
+// compareAuxFiles is the shared implementation behind the per-type
+// compare*Files orchestrator methods. It short-circuits on empty input,
+// emits a debug log, runs the supplied comparator, and wraps any failure in
+// a SyncError with the caller-supplied stage/message/hints.
+func compareAuxFiles[T, D any](
+	ctx context.Context,
+	c *client.DataplaneClient,
+	logger *slog.Logger,
+	files []T,
+	compareFn func(context.Context, *client.DataplaneClient, []T) (*D, error),
+	logName, stage, message string,
+	hints ...string,
+) (*D, error) {
+	if len(files) == 0 {
+		return new(D), nil
 	}
-
-	o.logger.Debug("Comparing crt-list files", "desired_crtlists", len(crtlistFiles))
-
-	crtlistDiff, err := auxiliaryfiles.CompareCRTLists(ctx, o.client, crtlistFiles)
+	logger.Debug("Comparing "+logName, "desired_count", len(files))
+	diff, err := compareFn(ctx, c, files)
 	if err != nil {
 		return nil, &SyncError{
-			Stage:   "compare_crtlists",
-			Message: "failed to compare crt-list files",
+			Stage:   stage,
+			Message: message,
 			Cause:   err,
-			Hints: []string{
-				"Verify Dataplane API is accessible",
-				"Check crt-list storage permissions",
-			},
+			Hints:   hints,
 		}
 	}
-
-	return crtlistDiff, nil
+	return diff, nil
 }
 
 // auxiliaryFileDiffs groups all auxiliary file diff results.
