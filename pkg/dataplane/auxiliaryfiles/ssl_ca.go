@@ -25,14 +25,11 @@ import (
 // may contain full paths (e.g., "/etc/haproxy/ssl/ca/ca-bundle.pem"). We normalize using filepath.Base()
 // for comparison.
 func CompareSSLCaFiles(ctx context.Context, c *client.DataplaneClient, desired []SSLCaFile) (*SSLCaFileDiff, error) {
-	ops := newSSLCaOps(c)
-	config := newSSLCaConfig(c)
-
-	genericDiff, err := compareSSLStorageFiles(
+	return compareSSLStorageFiles(
 		ctx,
 		desired,
-		ops,
-		config,
+		newSSLCaOps(c),
+		newSSLCaConfig(c),
 		func(f SSLCaFile) SSLCaFile {
 			return SSLCaFile{
 				Path:    filepath.Base(f.Path),
@@ -44,15 +41,6 @@ func CompareSSLCaFiles(ctx context.Context, c *client.DataplaneClient, desired [
 		},
 		func(f SSLCaFile) string { return f.Path },
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &SSLCaFileDiff{
-		ToCreate: genericDiff.ToCreate,
-		ToUpdate: genericDiff.ToUpdate,
-		ToDelete: genericDiff.ToDelete,
-	}, nil
 }
 
 // SyncSSLCaFiles synchronizes SSL CA files to the desired state by applying
@@ -69,15 +57,5 @@ func SyncSSLCaFiles(ctx context.Context, c *client.DataplaneClient, diff *SSLCaF
 	if diff == nil {
 		return nil, nil
 	}
-
-	ops := newSSLCaOps(c)
-	config := newSSLCaConfig(c)
-
-	genericDiff := &FileDiffGeneric[SSLCaFile]{
-		ToCreate: diff.ToCreate,
-		ToUpdate: diff.ToUpdate,
-		ToDelete: diff.ToDelete,
-	}
-
-	return syncSSLStorageFiles(ctx, genericDiff, ops, config)
+	return syncSSLStorageFiles(ctx, diff, newSSLCaOps(c), newSSLCaConfig(c))
 }

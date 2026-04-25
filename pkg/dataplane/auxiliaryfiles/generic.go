@@ -65,6 +65,11 @@ type FileDiffGeneric[T FileItem] struct {
 	ToDelete []string
 }
 
+// HasChanges returns true if the diff contains any create, update, or delete operations.
+func (d *FileDiffGeneric[T]) HasChanges() bool {
+	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
+}
+
 // categorizeFile determines whether a file should be created, updated, or left unchanged.
 func categorizeFile[T FileItem](currentMap map[string]T, id string, desiredFile T, diff *FileDiffGeneric[T]) {
 	currentFile, exists := currentMap[id]

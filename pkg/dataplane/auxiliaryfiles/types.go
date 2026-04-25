@@ -102,81 +102,22 @@ func (c CRTListFile) GetContent() string {
 	return c.Content
 }
 
-// FileDiff represents the differences between current and desired file states.
-// It contains lists of files that need to be created, updated, or deleted.
-type FileDiff struct {
-	// ToCreate contains files that exist in the desired state but not in the current state.
-	ToCreate []GeneralFile
+// FileDiff is the diff produced for general files. It is an alias of
+// FileDiffGeneric[GeneralFile]; HasChanges and the underlying field set come
+// from the generic type.
+type FileDiff = FileDiffGeneric[GeneralFile]
 
-	// ToUpdate contains files that exist in both states but have different content.
-	ToUpdate []GeneralFile
+// SSLCertificateDiff is the diff produced for SSL certificates. Alias of
+// FileDiffGeneric[SSLCertificate].
+type SSLCertificateDiff = FileDiffGeneric[SSLCertificate]
 
-	// ToDelete contains paths of files that exist in the current state but not in the desired state.
-	// These are file paths (not full GeneralFile structs) since we only need the path to delete.
-	ToDelete []string
-}
+// MapFileDiff is the diff produced for map files. Alias of
+// FileDiffGeneric[MapFile].
+type MapFileDiff = FileDiffGeneric[MapFile]
 
-// HasChanges returns true if there are any changes to general files.
-func (d *FileDiff) HasChanges() bool {
-	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
-}
-
-// SSLCertificateDiff represents the differences between current and desired SSL certificate states.
-// It contains lists of certificates that need to be created, updated, or deleted.
-type SSLCertificateDiff struct {
-	// ToCreate contains certificates that exist in the desired state but not in the current state.
-	ToCreate []SSLCertificate
-
-	// ToUpdate contains certificates that exist in both states but have different content.
-	ToUpdate []SSLCertificate
-
-	// ToDelete contains certificate names that exist in the current state but not in the desired state.
-	// These are certificate names (not full SSLCertificate structs) since we only need the name to delete.
-	ToDelete []string
-}
-
-// HasChanges returns true if there are any changes to SSL certificates.
-func (d *SSLCertificateDiff) HasChanges() bool {
-	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
-}
-
-// MapFileDiff represents the differences between current and desired map file states.
-// It contains lists of map files that need to be created, updated, or deleted.
-type MapFileDiff struct {
-	// ToCreate contains map files that exist in the desired state but not in the current state.
-	ToCreate []MapFile
-
-	// ToUpdate contains map files that exist in both states but have different content.
-	ToUpdate []MapFile
-
-	// ToDelete contains map file paths that exist in the current state but not in the desired state.
-	// These are file paths (not full MapFile structs) since we only need the path to delete.
-	ToDelete []string
-}
-
-// HasChanges returns true if there are any changes to map files.
-func (d *MapFileDiff) HasChanges() bool {
-	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
-}
-
-// CRTListDiff represents the differences between current and desired crt-list file states.
-// It contains lists of crt-list files that need to be created, updated, or deleted.
-type CRTListDiff struct {
-	// ToCreate contains crt-list files that exist in the desired state but not in the current state.
-	ToCreate []CRTListFile
-
-	// ToUpdate contains crt-list files that exist in both states but have different content.
-	ToUpdate []CRTListFile
-
-	// ToDelete contains crt-list file paths that exist in the current state but not in the desired state.
-	// These are file paths (not full CRTListFile structs) since we only need the path to delete.
-	ToDelete []string
-}
-
-// HasChanges returns true if there are any changes to crt-list files.
-func (d *CRTListDiff) HasChanges() bool {
-	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
-}
+// CRTListDiff is the diff produced for crt-list files. Alias of
+// FileDiffGeneric[CRTListFile].
+type CRTListDiff = FileDiffGeneric[CRTListFile]
 
 // SSLCaFile represents an SSL CA certificate file containing trusted CA certificates.
 // These files are used for client certificate verification and SSL chain validation.
@@ -201,20 +142,6 @@ func (s SSLCaFile) GetContent() string {
 	return s.Content
 }
 
-// SSLCaFileDiff represents the differences between current and desired SSL CA file states.
-// It contains lists of CA files that need to be created, updated, or deleted.
-type SSLCaFileDiff struct {
-	// ToCreate contains CA files that exist in the desired state but not in the current state.
-	ToCreate []SSLCaFile
-
-	// ToUpdate contains CA files that exist in both states but have different content.
-	ToUpdate []SSLCaFile
-
-	// ToDelete contains CA file names that exist in the current state but not in the desired state.
-	ToDelete []string
-}
-
-// HasChanges returns true if there are any changes to SSL CA files.
-func (d *SSLCaFileDiff) HasChanges() bool {
-	return len(d.ToCreate) > 0 || len(d.ToUpdate) > 0 || len(d.ToDelete) > 0
-}
+// SSLCaFileDiff is the diff produced for SSL CA files. Alias of
+// FileDiffGeneric[SSLCaFile].
+type SSLCaFileDiff = FileDiffGeneric[SSLCaFile]
