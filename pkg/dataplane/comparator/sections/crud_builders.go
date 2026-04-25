@@ -65,6 +65,12 @@ type ContainerChildCRUD[T any] struct {
 // without an intermediate cast to ExecuteContainerChildFunc.
 type containerChildExecFactory[T any] func(string) func(ctx context.Context, c *client.DataplaneClient, txID string, containerName string, childName string, model T) error
 
+// nameChildExecFactory matches the literal return type of executors.ServerCreate,
+// executors.BindFrontendCreate and friends: a function that, given a parent name,
+// yields the per-operation executor. Spelled out for the same assignability
+// reason as containerChildExecFactory.
+type nameChildExecFactory[T any] func(string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model T) error
+
 // NewContainerChildCRUD creates a CRUD builder for a container-child resource.
 // section is the API section name (e.g. "user"), displayName is used in
 // descriptions (e.g. "user"), and containerType describes the parent in
@@ -145,6 +151,56 @@ func NewIndexChildCRUD[T any](
 				OperationDelete, section, priority, parentName, index, model,
 				Nil[T], deleteExec,
 				describe(OperationDelete, model, parentName, index),
+			)
+		},
+	}
+}
+
+// NameChildCRUD holds pre-built Create/Update/Delete factory functions for a
+// name-based child resource (server, server_template, bind, etc.) where the
+// child is identified by an explicit name string and the executor is a per-call
+// factory taking the parent name.
+type NameChildCRUD[T any] struct {
+	Create func(parentName, childName string, model T) Operation
+	Update func(parentName, childName string, model T) Operation
+	Delete func(parentName, childName string, model T) Operation
+}
+
+// NewNameChildCRUD creates a CRUD builder for a name-based child resource.
+// section is the API section name (e.g. "server"), displayType is used in
+// descriptions (e.g. "server"), parentType describes the parent in descriptions
+// (e.g. "backend" or "frontend"), and descNameFn renders the name shown in the
+// description (callers can return childName for plain naming or a richer
+// representation derived from the model — e.g. bindIdentifier).
+func NewNameChildCRUD[T any](
+	section, displayType, parentType string,
+	priority int,
+	descNameFn func(model T, childName string) string,
+	createExecFactory, updateExecFactory, deleteExecFactory nameChildExecFactory[T],
+) NameChildCRUD[T] {
+	describe := func(opType OperationType, model T, parentName, childName string) func() string {
+		return DescribeNamedChild(opType, displayType, descNameFn(model, childName), parentType, parentName)
+	}
+	return NameChildCRUD[T]{
+		Create: func(parentName, childName string, model T) Operation {
+			return NewNameChildOp(
+				OperationCreate, section, priority, parentName, childName, model,
+				Identity[T], createExecFactory(parentName),
+				describe(OperationCreate, model, parentName, childName),
+			)
+		},
+		Update: func(parentName, childName string, model T) Operation {
+			return NewNameChildOp(
+				OperationUpdate, section, priority, parentName, childName, model,
+				Identity[T], updateExecFactory(parentName),
+				describe(OperationUpdate, model, parentName, childName),
+			)
+		},
+		Delete: func(parentName, childName string, model T) Operation {
+			return NewNameChildOp(
+				OperationDelete, section, priority, parentName, childName, model,
+				Nil[T], deleteExecFactory(parentName),
+				describe(OperationDelete, model, parentName, childName),
 			)
 		},
 	}
