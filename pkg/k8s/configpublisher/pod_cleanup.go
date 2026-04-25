@@ -247,12 +247,14 @@ func (p *Publisher) removePodFromList(pods []haproxyv1alpha1.PodDeploymentStatus
 
 // auxFileGroup binds an AuxiliaryFileReferences slice to the metadata needed
 // to operate on each referenced resource: a human-readable label for log
-// messages, a slog key for the file name, and a handle accessor.
+// messages, a slog key for the file name, a handle accessor, and an optional
+// cached-read accessor that tries to satisfy the read from an informer cache.
 type auxFileGroup struct {
-	refs   []haproxyv1alpha1.ResourceReference
-	label  string // e.g. "map file" — interpolated into log messages
-	logKey string // e.g. "map_file" — slog field key for the file name
-	handle func(ctx context.Context, namespace, name string) (*auxFileHandle, error)
+	refs          []haproxyv1alpha1.ResourceReference
+	label         string // e.g. "map file" — interpolated into log messages
+	logKey        string // e.g. "map_file" — slog field key for the file name
+	handle        func(ctx context.Context, namespace, name string) (*auxFileHandle, error)
+	tryCachedRead func(namespace, name string) *cachedAuxFileStatus
 }
 
 // auxFileGroupsFor collects the per-type metadata for each auxiliary file
@@ -262,10 +264,47 @@ func (p *Publisher) auxFileGroupsFor(auxFiles *haproxyv1alpha1.AuxiliaryFileRefe
 		return nil
 	}
 	return []auxFileGroup{
-		{auxFiles.MapFiles, "map file", "map_file", p.mapFileHandle},
-		{auxFiles.GeneralFiles, "general file", "general_file", p.generalFileHandle},
-		{auxFiles.CRTListFiles, "crt-list file", "crt_list_file", p.crtListFileHandle},
+		{auxFiles.MapFiles, "map file", "map_file", p.mapFileHandle, p.cachedMapFileStatus},
+		{auxFiles.GeneralFiles, "general file", "general_file", p.generalFileHandle, p.cachedGeneralFileStatus},
+		{auxFiles.CRTListFiles, "crt-list file", "crt_list_file", p.crtListFileHandle, p.cachedCRTListFileStatus},
 	}
+}
+
+// cachedMapFileStatus returns the cached status of a HAProxyMapFile from the
+// informer cache, or nil when listers aren't configured / the read fails.
+func (p *Publisher) cachedMapFileStatus(namespace, name string) *cachedAuxFileStatus {
+	if p.listers == nil || p.listers.MapFiles == nil {
+		return nil
+	}
+	cached, err := p.listers.MapFiles.HAProxyMapFiles(namespace).Get(name)
+	if err != nil {
+		return nil
+	}
+	return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
+}
+
+// cachedGeneralFileStatus mirrors cachedMapFileStatus for HAProxyGeneralFile.
+func (p *Publisher) cachedGeneralFileStatus(namespace, name string) *cachedAuxFileStatus {
+	if p.listers == nil || p.listers.GeneralFiles == nil {
+		return nil
+	}
+	cached, err := p.listers.GeneralFiles.HAProxyGeneralFiles(namespace).Get(name)
+	if err != nil {
+		return nil
+	}
+	return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
+}
+
+// cachedCRTListFileStatus mirrors cachedMapFileStatus for HAProxyCRTListFile.
+func (p *Publisher) cachedCRTListFileStatus(namespace, name string) *cachedAuxFileStatus {
+	if p.listers == nil || p.listers.CRTListFiles == nil {
+		return nil
+	}
+	cached, err := p.listers.CRTListFiles.HAProxyCRTListFiles(namespace).Get(name)
+	if err != nil {
+		return nil
+	}
+	return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
 }
 
 // cleanupAuxiliaryFilePodReferences removes pod reference from all auxiliary files (map files, general files, crt-list files).
