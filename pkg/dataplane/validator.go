@@ -72,20 +72,12 @@ func ValidateSyntaxAndSchema(config string, version *Version) (*parser.Structure
 	// Phase 1: Syntax validation with client-native parser
 	parsedConfig, err := validateSyntax(config)
 	if err != nil {
-		return nil, &ValidationError{
-			Phase:   "syntax",
-			Message: "configuration has syntax errors",
-			Cause:   err,
-		}
+		return nil, phaseSyntax.wrap(err)
 	}
 
 	// Phase 1.5: API schema validation with OpenAPI spec
 	if err := validateAPISchema(parsedConfig, version); err != nil {
-		return nil, &ValidationError{
-			Phase:   "schema",
-			Message: "configuration violates API schema constraints",
-			Cause:   err,
-		}
+		return nil, phaseSchema.wrap(err)
 	}
 
 	return parsedConfig, nil
@@ -107,11 +99,7 @@ func ValidateSyntaxAndSchema(config string, version *Version) (*parser.Structure
 //   - error: ValidationError with phase "semantic" if validation fails
 func ValidateSemantics(mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool) error {
 	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
-		return &ValidationError{
-			Phase:   "semantic",
-			Message: "configuration has semantic errors",
-			Cause:   err,
-		}
+		return phaseSemantic.wrap(err)
 	}
 	return nil
 }
@@ -163,32 +151,20 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths *V
 	parsedConfig, err := validateSyntax(mainConfig)
 	syntaxMs = time.Since(syntaxStart).Milliseconds()
 	if err != nil {
-		return nil, &ValidationError{
-			Phase:   "syntax",
-			Message: "configuration has syntax errors",
-			Cause:   err,
-		}
+		return nil, phaseSyntax.wrap(err)
 	}
 
 	// Phase 1.5: API schema validation with OpenAPI spec
 	schemaStart := time.Now()
 	if err := validateAPISchema(parsedConfig, version); err != nil {
-		return nil, &ValidationError{
-			Phase:   "schema",
-			Message: "configuration violates API schema constraints",
-			Cause:   err,
-		}
+		return nil, phaseSchema.wrap(err)
 	}
 	schemaMs = time.Since(schemaStart).Milliseconds()
 
 	// Phase 2: Semantic validation with haproxy binary
 	semanticStart := time.Now()
 	if err := validateSemantics(mainConfig, auxFiles, paths, skipDNSValidation); err != nil {
-		return nil, &ValidationError{
-			Phase:   "semantic",
-			Message: "configuration has semantic errors",
-			Cause:   err,
-		}
+		return nil, phaseSemantic.wrap(err)
 	}
 	semanticMs = time.Since(semanticStart).Milliseconds()
 
