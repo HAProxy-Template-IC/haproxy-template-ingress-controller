@@ -47,27 +47,9 @@ func (o *generalFileOps) Delete(ctx context.Context, id string) error {
 //  3. Compares with the desired files list
 //  4. Returns a FileDiff with operations needed to reach desired state
 func CompareGeneralFiles(ctx context.Context, c *client.DataplaneClient, desired []GeneralFile) (*FileDiff, error) {
-	ops := &generalFileOps{client: c}
-
-	// Use generic Compare function
-	genericDiff, err := Compare[GeneralFile](
-		ctx,
-		ops,
-		desired,
-		func(id, content string) GeneralFile {
-			return GeneralFile{Filename: id, Content: content}
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert generic diff to FileDiff
-	return &FileDiff{
-		ToCreate: genericDiff.ToCreate,
-		ToUpdate: genericDiff.ToUpdate,
-		ToDelete: genericDiff.ToDelete,
-	}, nil
+	return Compare[GeneralFile](ctx, &generalFileOps{client: c}, desired, func(id, content string) GeneralFile {
+		return GeneralFile{Filename: id, Content: content}
+	})
 }
 
 // SyncGeneralFiles synchronizes general files to the desired state by applying
@@ -81,16 +63,5 @@ func SyncGeneralFiles(ctx context.Context, c *client.DataplaneClient, diff *File
 	if diff == nil {
 		return nil, nil
 	}
-
-	ops := &generalFileOps{client: c}
-
-	// Convert FileDiff to generic diff
-	genericDiff := &FileDiffGeneric[GeneralFile]{
-		ToCreate: diff.ToCreate,
-		ToUpdate: diff.ToUpdate,
-		ToDelete: diff.ToDelete,
-	}
-
-	// Use generic Sync function
-	return Sync[GeneralFile](ctx, ops, genericDiff)
+	return Sync[GeneralFile](ctx, &generalFileOps{client: c}, diff)
 }

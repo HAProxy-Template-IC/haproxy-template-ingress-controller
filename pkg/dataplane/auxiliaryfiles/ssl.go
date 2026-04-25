@@ -217,16 +217,5 @@ func SyncSSLCertificates(ctx context.Context, c *client.DataplaneClient, diff *S
 	if diff == nil {
 		return nil, nil
 	}
-
-	ops := &sslCertificateOps{client: c}
-
-	// Convert SSLCertificateDiff to generic diff
-	genericDiff := &FileDiffGeneric[SSLCertificate]{
-		ToCreate: diff.ToCreate,
-		ToUpdate: diff.ToUpdate,
-		ToDelete: diff.ToDelete,
-	}
-
-	// Use generic Sync function
-	return Sync[SSLCertificate](ctx, ops, genericDiff)
+	return Sync[SSLCertificate](ctx, &sslCertificateOps{client: c}, diff)
 }

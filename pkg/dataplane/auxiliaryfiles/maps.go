@@ -47,27 +47,9 @@ func (o *mapFileOps) Delete(ctx context.Context, id string) error {
 //  3. Compares with the desired map files list
 //  4. Returns a MapFileDiff with operations needed to reach desired state
 func CompareMapFiles(ctx context.Context, c *client.DataplaneClient, desired []MapFile) (*MapFileDiff, error) {
-	ops := &mapFileOps{client: c}
-
-	// Use generic Compare function
-	genericDiff, err := Compare[MapFile](
-		ctx,
-		ops,
-		desired,
-		func(id, content string) MapFile {
-			return MapFile{Path: id, Content: content}
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert generic diff to MapFileDiff
-	return &MapFileDiff{
-		ToCreate: genericDiff.ToCreate,
-		ToUpdate: genericDiff.ToUpdate,
-		ToDelete: genericDiff.ToDelete,
-	}, nil
+	return Compare[MapFile](ctx, &mapFileOps{client: c}, desired, func(id, content string) MapFile {
+		return MapFile{Path: id, Content: content}
+	})
 }
 
 // SyncMapFiles synchronizes map files to the desired state by applying
@@ -81,16 +63,5 @@ func SyncMapFiles(ctx context.Context, c *client.DataplaneClient, diff *MapFileD
 	if diff == nil {
 		return nil, nil
 	}
-
-	ops := &mapFileOps{client: c}
-
-	// Convert MapFileDiff to generic diff
-	genericDiff := &FileDiffGeneric[MapFile]{
-		ToCreate: diff.ToCreate,
-		ToUpdate: diff.ToUpdate,
-		ToDelete: diff.ToDelete,
-	}
-
-	// Use generic Sync function
-	return Sync[MapFile](ctx, ops, genericDiff)
+	return Sync[MapFile](ctx, &mapFileOps{client: c}, diff)
 }
