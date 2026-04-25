@@ -225,32 +225,11 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 		return
 	}
 
-	now := time.Now()
-	timeSinceLastTrigger := now.Sub(r.lastTriggerTime)
-
-	if timeSinceLastTrigger >= r.debounceInterval {
-		// Outside refractory period - trigger immediately (leading edge)
-		r.logger.Debug("Resource change detected, triggering immediately (outside refractory)",
-			"resource_type", event.ResourceTypeName,
-			"created", event.ChangeStats.Created,
-			"modified", event.ChangeStats.Modified,
-			"deleted", event.ChangeStats.Deleted,
-			"time_since_last_trigger", timeSinceLastTrigger)
-		r.triggerReconciliation("resource_change")
-	} else {
-		// Inside refractory period - queue for later, DO NOT reset timer
-		r.logger.Debug("Resource change detected, queuing (inside refractory)",
-			"resource_type", event.ResourceTypeName,
-			"created", event.ChangeStats.Created,
-			"modified", event.ChangeStats.Modified,
-			"deleted", event.ChangeStats.Deleted,
-			"remaining_refractory", r.debounceInterval-timeSinceLastTrigger,
-			"debounce_interval", r.debounceInterval)
-		r.pendingTrigger = true
-		r.lastTriggerReason = "resource_change"
-		// Only start timer if not already running (key difference from old behavior!)
-		r.ensureRefractoryTimer(now)
-	}
+	r.debounceTrigger("Resource change", "resource_change",
+		"resource_type", event.ResourceTypeName,
+		"created", event.ChangeStats.Created,
+		"modified", event.ChangeStats.Modified,
+		"deleted", event.ChangeStats.Deleted)
 }
 
 // handleIndexSynchronized processes index synchronized events.
@@ -275,27 +254,40 @@ func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEven
 // When external HTTP content changes (e.g., IP blocklists, API responses),
 // this triggers a re-render to incorporate the new content.
 func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedEvent) {
+	r.debounceTrigger("HTTP resource change", "http_resource_change",
+		"url", event.URL,
+		"content_size", event.ContentSize)
+}
+
+// debounceTrigger applies leading-edge debouncing to a reconciliation request.
+// If the refractory period has elapsed since the last trigger, fires
+// immediately; otherwise marks a pending trigger and starts the refractory
+// timer (without resetting it if already running). logPrefix is the
+// human-readable event name used in the debug logs ("Resource change",
+// "HTTP resource change"); reason is the snake_case identifier passed to
+// triggerReconciliation; extraFields lets the caller include
+// resource-specific debug attributes alongside the standard timing fields.
+func (r *Reconciler) debounceTrigger(logPrefix, reason string, extraFields ...any) {
 	now := time.Now()
 	timeSinceLastTrigger := now.Sub(r.lastTriggerTime)
 
 	if timeSinceLastTrigger >= r.debounceInterval {
 		// Outside refractory period - trigger immediately (leading edge)
-		r.logger.Debug("HTTP resource change detected, triggering immediately (outside refractory)",
-			"url", event.URL,
-			"content_size", event.ContentSize,
-			"time_since_last_trigger", timeSinceLastTrigger)
-		r.triggerReconciliation("http_resource_change")
-	} else {
-		// Inside refractory period - queue for later
-		r.logger.Debug("HTTP resource change detected, queuing (inside refractory)",
-			"url", event.URL,
-			"content_size", event.ContentSize,
-			"remaining_refractory", r.debounceInterval-timeSinceLastTrigger,
-			"debounce_interval", r.debounceInterval)
-		r.pendingTrigger = true
-		r.lastTriggerReason = "http_resource_change"
-		r.ensureRefractoryTimer(now)
+		r.logger.Debug(logPrefix+" detected, triggering immediately (outside refractory)",
+			append(extraFields, "time_since_last_trigger", timeSinceLastTrigger)...)
+		r.triggerReconciliation(reason)
+		return
 	}
+
+	// Inside refractory period - queue for later, DO NOT reset timer
+	r.logger.Debug(logPrefix+" detected, queuing (inside refractory)",
+		append(extraFields,
+			"remaining_refractory", r.debounceInterval-timeSinceLastTrigger,
+			"debounce_interval", r.debounceInterval)...)
+	r.pendingTrigger = true
+	r.lastTriggerReason = reason
+	// Only start timer if not already running (key difference from trailing-edge debounce).
+	r.ensureRefractoryTimer(now)
 }
 
 // handleHTTPResourceAccepted processes HTTP resource accepted events.
