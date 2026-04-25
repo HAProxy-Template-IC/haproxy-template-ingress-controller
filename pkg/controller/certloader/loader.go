@@ -104,33 +104,13 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 		return
 	}
 
-	// Extract tls.crt and tls.key (standard Kubernetes TLS Secret keys)
-	tlsCertBase64, ok := data["tls.crt"]
+	// Extract and decode tls.crt and tls.key (standard Kubernetes TLS Secret keys).
+	tlsCertPEM, ok := c.decodeSecretKey(data, "tls.crt", version)
 	if !ok {
-		c.Logger().Error("Secret data missing 'tls.crt' key", "version", version)
 		return
 	}
-
-	tlsKeyBase64, ok := data["tls.key"]
+	tlsKeyPEM, ok := c.decodeSecretKey(data, "tls.key", version)
 	if !ok {
-		c.Logger().Error("Secret data missing 'tls.key' key", "version", version)
-		return
-	}
-
-	// Decode base64 data
-	tlsCertPEM, err := decodeBase64SecretValue(tlsCertBase64)
-	if err != nil {
-		c.Logger().Error("Failed to decode tls.crt from base64",
-			"error", err,
-			"version", version)
-		return
-	}
-
-	tlsKeyPEM, err := decodeBase64SecretValue(tlsKeyBase64)
-	if err != nil {
-		c.Logger().Error("Failed to decode tls.key from base64",
-			"error", err,
-			"version", version)
 		return
 	}
 
@@ -142,6 +122,25 @@ func (c *CertLoaderComponent) processCertChange(event *events.CertResourceChange
 	// Publish CertParsedEvent
 	parsedEvent := events.NewCertParsedEvent(tlsCertPEM, tlsKeyPEM, version)
 	c.EventBus().Publish(parsedEvent)
+}
+
+// decodeSecretKey looks up key in the Secret's data map and base64-decodes its
+// value, logging a typed error and returning ok=false if either step fails so
+// the caller can simply early-return on the boolean.
+func (c *CertLoaderComponent) decodeSecretKey(data map[string]any, key, version string) ([]byte, bool) {
+	rawValue, ok := data[key]
+	if !ok {
+		c.Logger().Error("Secret data missing '"+key+"' key", "version", version)
+		return nil, false
+	}
+	decoded, err := decodeBase64SecretValue(rawValue)
+	if err != nil {
+		c.Logger().Error("Failed to decode "+key+" from base64",
+			"error", err,
+			"version", version)
+		return nil, false
+	}
+	return decoded, true
 }
 
 // decodeBase64SecretValue decodes a base64-encoded Secret value.
