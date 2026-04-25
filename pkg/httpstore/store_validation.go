@@ -21,36 +21,19 @@ import (
 // PromotePending promotes pending content to accepted for a URL.
 // This should be called after successful validation.
 func (s *HTTPStore) PromotePending(url string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, exists := s.cache[url]
-	if !exists || !entry.HasPending {
-		return false
-	}
-
-	s.logger.Info("Promoting pending content to accepted",
-		"url", url,
-		"old_checksum", entry.AcceptedChecksum[:min(16, len(entry.AcceptedChecksum))]+"...",
-		"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
-
-	// Promote pending to accepted
-	entry.AcceptedContent = entry.PendingContent
-	entry.AcceptedChecksum = entry.PendingChecksum
-	entry.AcceptedTime = time.Now()
-
-	// Clear pending
-	entry.PendingContent = ""
-	entry.PendingChecksum = ""
-	entry.HasPending = false
-	entry.ValidationState = StateAccepted
-
-	return true
+	return s.finalizePending(url, true)
 }
 
 // RejectPending discards pending content for a URL.
 // This should be called when validation fails.
 func (s *HTTPStore) RejectPending(url string) bool {
+	return s.finalizePending(url, false)
+}
+
+// finalizePending atomically clears the pending entry for url, optionally
+// promoting it to accepted. It logs at INFO on promotion and WARN on
+// rejection. Returns false if there is no pending entry for url.
+func (s *HTTPStore) finalizePending(url string, promote bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -59,18 +42,34 @@ func (s *HTTPStore) RejectPending(url string) bool {
 		return false
 	}
 
-	s.logger.Warn("Rejecting pending content, keeping accepted version",
-		"url", url,
-		"rejected_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...",
-		"keeping_checksum", entry.AcceptedChecksum[:min(16, len(entry.AcceptedChecksum))]+"...")
+	if promote {
+		s.logger.Info("Promoting pending content to accepted",
+			"url", url,
+			"old_checksum", checksumPrefix(entry.AcceptedChecksum),
+			"new_checksum", checksumPrefix(entry.PendingChecksum))
+		entry.AcceptedContent = entry.PendingContent
+		entry.AcceptedChecksum = entry.PendingChecksum
+		entry.AcceptedTime = time.Now()
+		entry.ValidationState = StateAccepted
+	} else {
+		s.logger.Warn("Rejecting pending content, keeping accepted version",
+			"url", url,
+			"rejected_checksum", checksumPrefix(entry.PendingChecksum),
+			"keeping_checksum", checksumPrefix(entry.AcceptedChecksum))
+		entry.ValidationState = StateRejected
+	}
 
-	// Discard pending, keep accepted
 	entry.PendingContent = ""
 	entry.PendingChecksum = ""
 	entry.HasPending = false
-	entry.ValidationState = StateRejected
 
 	return true
+}
+
+// checksumPrefix returns the first 16 characters of checksum followed by
+// "..." for compact log output.
+func checksumPrefix(checksum string) string {
+	return checksum[:min(16, len(checksum))] + "..."
 }
 
 // GetPendingURLs returns all URLs with pending content awaiting validation.
