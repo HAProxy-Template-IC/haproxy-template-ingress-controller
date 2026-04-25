@@ -86,61 +86,33 @@ Key components:
 
 ## Quick Start
 
-For a complete walkthrough, see the [Getting Started](getting-started.md) guide which covers deploying HAProxy pods, installing the controller, and verifying your setup.
-
-### Install with Helm
-
 ```bash
 helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 ```
 
-The Helm chart includes template libraries that support Kubernetes Ingress resources out of the box. See the [Helm Chart Documentation](/helm-chart/latest/) for configuration options.
+This installs both the controller and a 2-replica HAProxy Deployment, plus the default template libraries that cover Ingress and Gateway API out of the box. For the full walkthrough — including a sample app and end-to-end verification — see [Getting Started](getting-started.md).
 
-### Verify Installation
+### Inspect the Deployed Configuration
 
-Check the current rendered HAProxy configuration and deployment status:
+Once you have an Ingress (or Gateway, HTTPRoute, …) the controller writes the rendered HAProxy config to a read-only `HAProxyCfg` CRD on every reconciliation:
 
 ```bash
 kubectl describe haproxycfg -n haptic
 ```
 
-!!! note
-    `haproxycfg` is the short name for `HAProxyCfg` — a read-only resource the controller creates to expose the currently deployed configuration. To view or edit the template configuration, use `htplcfg` (short for `HAProxyTemplateConfig`). See the [CRD Reference](crd-reference.md) for all available fields.
+!!! note "CRD short names"
+    `HAProxyCfg` (singular `haproxycfg`, short name `hpcfg`) is the *output*. The *input* — templates, watched resources, dataplane settings — lives in `HAProxyTemplateConfig` (short names `htplcfg`, `haptpl`). Edit that one, not `HAProxyCfg`. Use `kubectl describe` rather than `kubectl get -o yaml`, since the latter renders multiline configs as literal `\n`.
 
-### Create an Ingress
+### What Makes HAPTIC Different
 
-With the default template libraries enabled, you can create an Ingress resource:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: example
-spec:
-  ingressClassName: haptic
-  rules:
-    - host: example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: example-service
-                port:
-                  number: 80
-```
-
-### Extend with Custom Annotations
-
-One of the key strengths of HAPTIC is how easily you can add custom behavior. Suppose your platform users need to inject an `X-Request-ID` header for distributed tracing. With HAPTIC, add a template snippet to your Helm values:
+The killer feature is templates. Suppose your platform users want a custom annotation that injects an `X-Request-ID` header for tracing. Add a snippet to your Helm values — no controller fork, no waiting for a release:
 
 ```yaml
 controller:
   config:
     templateSnippets:
-      # Numeric prefix (300) places this alongside the built-in header-manipulation
-      # snippets; any name matching frontend-filters-* is picked up automatically.
+      # The frontend-filters-* glob picks this up automatically; the 300 prefix
+      # places it alongside the built-in header-manipulation snippets.
       frontend-filters-300-request-id:
         template: |
           {%- for _, ingress := range resources.ingresses.List() %}
@@ -151,20 +123,7 @@ controller:
           {%- end %}
 ```
 
-Users then enable it by adding `example.com/request-id-header: "X-Request-ID"` as an Ingress annotation. This pattern works for any HAProxy feature — rate limiting, health checks, header manipulation, or anything else HAProxy supports.
-
-The template system is fully hackable: override any snippet, replace the main template entirely, or disable all libraries and start from scratch. See the [Templating Guide](templating.md) for how snippets, extension points, and the full template context work.
-
-### Check the Result
-
-View the generated HAProxy configuration:
-
-```bash
-kubectl describe haproxycfg
-```
-
-!!! note "Viewing YAML Output"
-    Using `kubectl get haproxycfg -o yaml` doesn't display multiline configuration content well - literal `\n` characters appear instead of line breaks. Use `kubectl describe` for readable output.
+Users opt in per-Ingress with `example.com/request-id-header: "X-Request-ID"`. The same pattern works for rate limiting, header rewrites, custom ACLs — anything HAProxy can express. Override any snippet, replace the main template, or disable all libraries and start from scratch. See the [Templating Guide](templating.md).
 
 ## Where to Go Next
 

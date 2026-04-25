@@ -48,7 +48,9 @@ type DataplaneClient struct {
 
 // Config contains configuration options for creating a DataplaneClient.
 type Config struct {
-	// BaseURL is the HAProxy Dataplane API endpoint (e.g., "http://localhost:5555/v3"; /v2 is still accepted by the library for compatibility).
+	// BaseURL is the HAProxy Dataplane API endpoint (e.g., "http://localhost:5555/v3").
+	// A trailing "/v2" or "/v3" is stripped before the v3 version-detection probe;
+	// only v3.x operations are supported (no v2-only endpoints).
 	BaseURL string
 
 	// Username for basic authentication

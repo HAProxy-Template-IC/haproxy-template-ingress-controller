@@ -44,11 +44,11 @@ haproxyConfig:
 ```
 
 !!! important
-    All auxiliary file references should use `pathResolver.GetPath()` to generate correct paths.
+    Whenever your HAProxy config references a map file, error file, certificate, or crt-list, use `pathResolver.GetPath(filename, type)` instead of a hard-coded path. The controller deploys these files to a configurable directory (set in `spec.dataplane.mapsDir`, `sslCertsDir`, `generalStorageDir`) and `pathResolver` knows where they live, so the path stays correct even if you reconfigure those directories.
 
 ### Map Files
 
-Map files generate HAProxy lookup tables stored in `/etc/haproxy/maps/`:
+Map files generate HAProxy lookup tables. They are written to `spec.dataplane.mapsDir` (default `/etc/haproxy/maps/`) on the HAProxy pod:
 
 ```yaml
 maps:
@@ -65,7 +65,7 @@ maps:
 
 ### General Files
 
-Auxiliary files like custom error pages stored in `/etc/haproxy/general/`:
+Auxiliary files like custom error pages. Written to `spec.dataplane.generalStorageDir` (default `/etc/haproxy/general/`):
 
 ```yaml
 files:
@@ -81,7 +81,7 @@ files:
 
 ### SSL Certificates
 
-SSL/TLS certificate files from Kubernetes Secrets stored in `/etc/haproxy/ssl/`:
+SSL/TLS certificate files assembled from Kubernetes Secrets. Written to `spec.dataplane.sslCertsDir` (default `/etc/haproxy/ssl/`):
 
 ```yaml
 sslCertificates:
@@ -196,33 +196,49 @@ Templates use Scriggo's template syntax. For complete syntax reference, see the 
 {# This is a comment #}
 ```
 
-### Common Functions
+### Helper Functions
 
-```go
-{{ fallback(path.backend.service.port.number, 80) }}  {# Default values #}
-{{ toLower(rule.host) }}                               {# String manipulation #}
-{{ len(ingress.spec.rules) }}                          {# Collection length #}
-```
+The most commonly needed helpers when writing HAPTIC templates. All can be called as functions or via the pipe operator (`x | fn()` is equivalent to `fn(x)`).
+
+| Helper | Purpose | Example |
+|--------|---------|---------|
+| `fallback(value, default)` | Return `default` if `value` is nil / empty / zero | `fallback(svc.port.number, 80)` |
+| `dig(obj, "k1", "k2", ...)` | Walk a nested map without nil-checking each level | `dig(ing, "metadata", "annotations")` |
+| `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(ing.spec.rules)` |
+| `tostring(v)`, `toint(v)`, `tofloat(v)` | Type conversions from `any` | `port = toint(annotation)` |
+| `len(v)` | Length of slice / map / string | `len(ing.spec.rules)` |
+| `keys(m)` | Sorted keys of a map | `for _, k := range keys(annotations)` |
+| `merge(a, b)` | New map combining `a` and `b` (b wins on conflict) | `merge(defaults, overrides)` |
+| `toLower(s)` / `toUpper(s)` | Case conversion | `host = toLower(rule.host)` |
+| `replace(s, old, new)`, `split(s, sep)`, `join(slice, sep)`, `trim(s)`, `hasPrefix(s, p)`, `hasSuffix(s, p)` | String operations | `join(items, ", ")` |
+| `first_seen(prefix, keys...)` | Returns `true` only the first time the key tuple is seen — for deduplicating | `if first_seen("backend", svc.namespace, svc.name)` |
+| `sanitize_regex(s)` | Escape regex metacharacters in user input | `sanitize_regex(annotation)` |
+| `semver_gte(version, "3.3")` | Compare HAProxy version (major.minor) | `if semver_gte(haproxyVersion, "3.3")` |
+| `fail(msg)` | Abort rendering with an error message (surfaces in validation tests and webhooks) | `fail("missing required annotation")` |
+
+For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, `min`, `max`, `sprintf`, `now()`, etc.), see the [Scriggo built-ins reference](https://scriggo.com/templates/builtins).
 
 ### Path Resolution
 
-The `pathResolver.GetPath()` method resolves filenames to paths:
+`pathResolver` is a helper available in every template. Its `GetPath(filename, type)` method returns the path that HAProxy should use to reference an auxiliary file (map, error file, certificate, crt-list). Use it instead of writing paths by hand so the controller and HAProxy agree on where files live.
+
+By default `GetPath` returns paths *relative* to HAProxy's `default-path` directive. The chart's `base` template library puts `default-path config` in the global section, which tells HAProxy to resolve relative paths against the directory containing `haproxy.cfg` — the same directory the controller writes maps, files, and certs to. If you replace the base library, keep that directive (or switch to `default-path origin <BaseDir>`) or the relative paths returned by `GetPath` will not resolve.
 
 ```go
-{# Map files #}
+{# Map files — resolves to maps/host.map #}
 use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
-{# Output: maps/host.map #}
 
-{# General files #}
+{# General files — resolves to files/504.http #}
 errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
-{# Output: files/504.http #}
 
-{# SSL certificates #}
+{# SSL certificates — resolves to ssl/example.com.pem #}
 bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
-{# Output: ssl/example.com.pem #}
+
+{# crt-list files — resolves to ssl/cert-list.txt #}
+bind *:443 ssl crt-list {{ pathResolver.GetPath("cert-list.txt", "crt-list") }}
 ```
 
-**Arguments**: filename (required), type (`"map"`, `"file"`, `"cert"`, or `"crt-list"`)
+**Arguments**: `filename` (string), `type` (one of `"map"`, `"file"`, `"cert"`, `"crt-list"`)
 
 ### Custom Filters
 

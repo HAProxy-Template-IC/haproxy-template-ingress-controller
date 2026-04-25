@@ -5,10 +5,10 @@ The controller is headless. Operators interact with it through four surfaces:
 | Surface | Purpose |
 |---------|---------|
 | `HAProxyTemplateConfig` CRD | Primary configuration: templates, watched resources, validation, logging |
-| `Secret` (credentialsSecretRef) | Dataplane API and validation credentials |
+| `Secret` (credentialsSecretRef) | Dataplane API credentials (`dataplane_username`, `dataplane_password`) |
 | `/metrics` (default `:9090`) | Prometheus metrics |
 | `/healthz` (default `:8080`) | Liveness/readiness probes |
-| `/debug/vars`, `/debug/pprof/` (disabled by default) | Runtime introspection; enable with `--debug-port` or `DEBUG_PORT` |
+| `/debug/vars`, `/debug/pprof/` | Runtime introspection. Off by default when running the binary directly (`--debug-port 0`); the Helm chart turns it on by setting `controller.debugPort: 8080` (same port as `/healthz`). Set `controller.debugPort: 0` to disable in production, or to a non-zero value to move it to a dedicated port. |
 
 Structured JSON logs on stdout round out the operational surface.
 

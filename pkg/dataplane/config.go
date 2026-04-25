@@ -11,7 +11,9 @@ import (
 
 // Endpoint represents HAProxy Dataplane API connection information.
 type Endpoint struct {
-	// URL is the Dataplane API endpoint (e.g., "http://haproxy:5555/v3"; /v2 is still accepted by the library for compatibility).
+	// URL is the Dataplane API endpoint (e.g., "http://haproxy:5555/v3").
+	// A trailing "/v2" or "/v3" is stripped before the v3 version-detection probe;
+	// only v3.x operations are supported (no v2-only endpoints).
 	URL string
 
 	// Username for basic authentication

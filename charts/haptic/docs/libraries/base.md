@@ -149,7 +149,7 @@ Renders all snippets matching a glob pattern. This is a built-in Scriggo operato
 {{ render_glob "map-host-*" inherit_context }}
 ```
 
-See the [Scriggo template guide](../../../docs/controller/docs/templating.md) for details.
+See the [Scriggo template guide](https://haproxy-haptic.org/controller/latest/templating/) for details.
 
 #### sanitize_regex (function)
 

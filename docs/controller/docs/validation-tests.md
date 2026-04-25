@@ -181,6 +181,43 @@ Queries template rendering context:
   description: First service should be my-service
 ```
 
+### match_count
+
+Asserts that a regex pattern matches an exact number of times in the target. Useful for catching duplicate or missing entries:
+
+```yaml
+- type: match_count
+  target: haproxy.cfg
+  pattern: "^backend "
+  expected: "3"          # string — parsed as integer
+  description: Exactly 3 backends must be generated
+```
+
+### match_order
+
+Asserts that multiple patterns appear in the target in the listed order. Critical for HAProxy first-match-wins constructs (Gateway API route precedence, ACL ordering):
+
+```yaml
+- type: match_order
+  target: map:path-prefix.map
+  patterns:
+    - "^/api/v2/users"   # must come before /api/v2
+    - "^/api/v2"         # must come before /api
+    - "^/api"
+  description: Path map entries must be sorted most-specific-first
+```
+
+### deterministic
+
+Renders the templates a second time with the same inputs and asserts the output is byte-for-byte identical. Catches unstable map ordering, time-dependent values, and other sources of non-determinism:
+
+```yaml
+- type: deterministic
+  description: Repeated renders must produce identical output
+```
+
+The check covers `haproxy.cfg` and every auxiliary file the template produced; no `target` or `pattern` is needed.
+
 ## Running Tests
 
 ```bash

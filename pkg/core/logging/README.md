@@ -16,10 +16,10 @@ logger := logging.NewLogger("INFO")
 logger := logging.NewDynamicLogger("INFO")
 
 logging.SetLevel("DEBUG")      // updates the dynamic level
-current := logging.GetLevel()  // "ERROR" | "WARNING" | "INFO" | "DEBUG" | "TRACE"
+current := logging.GetLevel()  // "ERROR" | "WARN" | "INFO" | "DEBUG" | "TRACE"
 ```
 
-Level parsing is case-insensitive. Empty or unknown strings fall back to `INFO`.
+Level parsing is case-insensitive. `WARNING` is accepted as an alias for `WARN`. Empty or unknown strings fall back to `INFO`.
 
 `TRACE` is not a native slog level; this package maps it to `slog.Level(-8)` (below `DEBUG`), matching what the rest of the controller passes through to filter-debug / per-resource-iteration logging.
 

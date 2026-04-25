@@ -44,7 +44,7 @@ if err := config.ValidateCredentials(creds); err != nil {
 }
 ```
 
-Required `Secret` keys: `dataplane_username`, `dataplane_password`, `validation_username`, `validation_password` — all non-empty.
+Required `Secret` keys: `dataplane_username`, `dataplane_password` — both non-empty.
 
 ### What This Package Does Not Validate
 

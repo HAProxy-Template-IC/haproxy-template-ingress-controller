@@ -43,7 +43,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 - Ingress status reporting: LoadBalancer addresses propagated to Ingress `.status.loadBalancer`
 - HAProxy built-in Prometheus exporter enabled by default on the status frontend (`/metrics` on port 8404)
 - Grafana dashboard annotations for leader transitions and controller pod starts
-- Auto-generated Dataplane API credentials (32-char random password) stored in a Secret
+- Auto-generated Dataplane API credentials stored in a Secret (deterministic 32-char SHA256 of release-name + namespace; preserved across upgrades from the existing Secret)
 - `haproxy.sysctls` for setting kernel parameters on HAProxy pods via pod-level securityContext
 - `haproxy.podAnnotations` for custom pod annotations on HAProxy pods (supports Helm template expressions)
 - `haproxy.shareProcessNamespace` to enable process namespace sharing between containers (required for signal-based sidecar reload, e.g., SPIFFE/SPIRE mTLS agents)

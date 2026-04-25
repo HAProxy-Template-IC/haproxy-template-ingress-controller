@@ -14,11 +14,11 @@ The controller exposes:
 - `/debug/vars` - Internal state and runtime variables
 - `/debug/pprof` - Go profiling endpoints
 
-This server is always enabled (defaults to port 8080) to support health checks. You can customize the port:
+The chart enables the server by default on port 8080 (the same port `/healthz` listens on). Set `controller.debugPort: 0` to disable `/debug/*` in production — `/healthz` then moves to `controller.ports.healthz`. Set it to a non-zero value to move the debug surface to a dedicated port.
 
 ```yaml
 controller:
-  debugPort: 8080  # Default port
+  debugPort: 8080  # default; 0 disables /debug/*, any other value moves it
 ```
 
 ## Accessing Endpoints
@@ -65,8 +65,12 @@ Available debug variables:
 | `/debug/vars/auxfiles` | Auxiliary files (SSL certs, maps) |
 | `/debug/vars/resources` | Resource counts by type |
 | `/debug/vars/events` | Recent events (default: last 100) |
+| `/debug/vars/pipeline` | Per-phase reconciliation status (`config_parse`, `validation`, `deployment`) |
+| `/debug/vars/validated` | Last successfully validated HAProxy config |
+| `/debug/vars/errors` | Aggregated error summary keyed by phase |
 | `/debug/vars/state` | Full state dump (use carefully) |
 | `/debug/vars/uptime` | Controller uptime |
+| `/debug/events` | Event ring buffer with `?limit=N` and `?correlation_id=<id>` query params (separate from `/debug/vars/events`) |
 | `/debug/pprof/` | Go profiling endpoints |
 
 ## JSONPath Field Selection

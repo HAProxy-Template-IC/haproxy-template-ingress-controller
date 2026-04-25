@@ -105,7 +105,7 @@ sequenceDiagram
     Renderer->>EventBus: Publish(TemplateRenderedEvent)
 
     EventBus->>Validator: TemplateRenderedEvent
-    Note over Validator: Phase 1: Syntax (parser)<br/>Phase 2: Semantics (haproxy -c)
+    Note over Validator: Phase 1: Syntax (parser)<br/>Phase 1.5: OpenAPI schema<br/>Phase 2: Semantics (haproxy -c)
     Validator->>EventBus: Publish(ValidationCompletedEvent)
 
     EventBus->>Scheduler: ValidationCompletedEvent
@@ -151,6 +151,7 @@ sequenceDiagram
     participant EventBus
     participant Validator as HAProxy<br/>Validator
     participant Parser as client-native Parser
+    participant Schema as OpenAPI Schema
     participant Binary as haproxy Binary
     participant EventBus2 as EventBus
 
@@ -167,16 +168,24 @@ sequenceDiagram
         Validator->>EventBus2: Publish(ValidationFailedEvent)
     else Valid Syntax
         Parser-->>Validator: Parsed structure
+        Validator->>Schema: Validate against OpenAPI spec
 
-        Validator->>Binary: Execute haproxy -c -f config
-        Note over Binary: Write aux files to directories<br/>Validate with -c flag
-
-        alt Semantic Error
-            Binary-->>Validator: Exit code 1 + error msg
+        alt Schema Error
+            Schema-->>Validator: Field/pattern violation
             Validator->>EventBus2: Publish(ValidationFailedEvent)
-        else Valid Config
-            Binary-->>Validator: Exit code 0
-            Validator->>EventBus2: Publish(ValidationCompletedEvent)
+        else Schema OK
+            Schema-->>Validator: OK
+
+            Validator->>Binary: Execute haproxy -c -f config
+            Note over Binary: Write aux files to directories<br/>Validate with -c flag
+
+            alt Semantic Error
+                Binary-->>Validator: Exit code 1 + error msg
+                Validator->>EventBus2: Publish(ValidationFailedEvent)
+            else Valid Config
+                Binary-->>Validator: Exit code 0
+                Validator->>EventBus2: Publish(ValidationCompletedEvent)
+            end
         end
     end
 ```
@@ -191,21 +200,23 @@ sequenceDiagram
    - Prevents concurrent writes to HAProxy directories
    - Ensures consistent validation state
 
-3. **Syntax Validation**: client-native library (pkg/dataplane) parses config structure
-   - Checks grammar and syntax rules
-   - Validates section structure
+3. **Syntax Validation (Phase 1)**: client-native library (pkg/dataplane) parses the config structure
+   - Checks grammar and section structure
    - Returns parsing errors if invalid
 
-4. **Semantic Validation**: haproxy binary performs full validation
+4. **OpenAPI Schema Validation (Phase 1.5)**: The parsed model is checked against the version-specific Dataplane API OpenAPI spec via `pkg/generated` validators
+   - Catches out-of-range values, pattern violations, and missing required fields
+   - Cheap (in-memory, no fork) — runs before the more expensive binary check
+
+5. **Semantic Validation (Phase 2)**: haproxy binary performs full validation
    - Writes auxiliary files to configured HAProxy directories (maps, certs, general files)
    - Writes main configuration to configured path
    - Executes `haproxy -c -f /etc/haproxy/haproxy.cfg`
    - Checks resource availability (files referenced in config must exist)
-   - Validates directive combinations
-   - Verifies configuration coherence
+   - Validates directive combinations and config coherence
    - Returns detailed error messages if invalid
 
-5. **Event Publishing**: Validator publishes ValidationCompletedEvent or ValidationFailedEvent
+6. **Event Publishing**: Validator publishes ValidationCompletedEvent or ValidationFailedEvent
    - Other components (Coordinator, DeploymentScheduler) subscribe to these events
    - Event-driven coordination continues the reconciliation workflow
 

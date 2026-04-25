@@ -179,17 +179,21 @@ graph TB
 graph TD
     RENDER[Rendered Configuration]
     PARSE[client-native Parser<br/>Syntax & Structure Check]
+    SCHEMA[OpenAPI Schema Check<br/>Field Patterns & Ranges]
     BIN[haproxy Binary<br/>Semantic Validation]
     DEPLOY[Deploy to Production]
     ERROR[Reject & Log Error]
 
     RENDER --> PARSE
-    PARSE -->|Valid Syntax| BIN
+    PARSE -->|Valid Syntax| SCHEMA
     PARSE -->|Invalid| ERROR
+    SCHEMA -->|Schema OK| BIN
+    SCHEMA -->|Invalid| ERROR
     BIN -->|Valid Semantics| DEPLOY
     BIN -->|Invalid| ERROR
 
     style PARSE fill:#2196F3
+    style SCHEMA fill:#9C27B0
     style BIN fill:#4CAF50
     style DEPLOY fill:#FF9800
     style ERROR fill:#F44336

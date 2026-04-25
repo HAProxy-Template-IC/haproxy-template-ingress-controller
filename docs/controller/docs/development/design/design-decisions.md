@@ -30,13 +30,19 @@ func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths Va
     validationMutex.Lock()
     defer validationMutex.Unlock()
 
-    // Phase 1: Syntax validation with client-native parser
-    if err := validateSyntax(mainConfig); err != nil {
+    // Phase 1: Syntax validation with client-native parser (returns parsed model for phase 1.5)
+    parsed, err := validateSyntax(mainConfig)
+    if err != nil {
         return &ValidationError{Phase: "syntax", Err: err}
     }
 
-    // Phase 2: Semantic validation with haproxy binary
-    // Writes files to real HAProxy directories, then runs haproxy -c
+    // Phase 1.5: OpenAPI schema validation (field patterns, ranges, required fields)
+    if err := validateSchema(parsed); err != nil {
+        return &ValidationError{Phase: "schema", Err: err}
+    }
+
+    // Phase 2: Semantic validation with haproxy binary (-c)
+    // Writes files to real HAProxy directories, then runs `haproxy -c`
     if err := validateSemantics(mainConfig, auxFiles, paths); err != nil {
         return &ValidationError{Phase: "semantic", Err: err}
     }
@@ -231,7 +237,7 @@ go metricsServer.Start(ctx)
    - `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`
 
 9. **Build info**:
-   - `haptic_build_info` (labels: version, git commit, Go version)
+   - `haptic_build_info` (labels: `version`, `haproxy_version`, `go_version`)
 
 **Logging + event correlation (instead of distributed tracing)**:
 

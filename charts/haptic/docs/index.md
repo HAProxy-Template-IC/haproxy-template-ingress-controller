@@ -48,7 +48,7 @@ The chart deploys:
 
 - **Controller Deployment** -- the operator that watches resources and generates configurations
 - **HAProxy Deployment** (optional, on by default) -- the load balancers that serve your traffic, with Dataplane API sidecars
-- **`HAProxyTemplateConfig` CRD** -- installed from `charts/haptic/crds/`; preserved across `helm uninstall`
+- **CRDs** -- five resource types under the `haproxy-haptic.org` API group: `HAProxyTemplateConfig` (input — templates, watched resources, settings) plus `HAProxyCfg`, `HAProxyGeneralFile`, `HAProxyCRTListFile`, and `HAProxyMapFile` (outputs the controller publishes for observability). Installed from `charts/haptic/crds/`; preserved across `helm uninstall` (delete them explicitly — see [Uninstalling](#uninstalling))
 - **`HAProxyTemplateConfig` custom resource** -- the merged template-library configuration that drives config rendering (created from the enabled `controller.templateLibraries.*` at render time)
 - **IngressClass** and **GatewayClass** -- routing API integration for Ingress and Gateway API resources
 - **RBAC**, **NetworkPolicy**, and **ServiceAccount** -- permissions and network security
@@ -86,4 +86,13 @@ helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/chart
 helm uninstall my-controller
 ```
 
-Replace `my-controller` with whatever release name you used at install time. `helm uninstall` removes all resources created by the chart; the `HAProxyTemplateConfig` CRD itself is preserved so reinstalling the chart picks up existing custom resources. To remove the CRD as well, run `kubectl delete crd haproxytemplateconfigs.haproxy-haptic.org` explicitly.
+Replace `my-controller` with whatever release name you used at install time. `helm uninstall` removes all resources created by the chart; the chart's CRDs are preserved so a reinstall picks up existing custom resources. To remove the CRDs as well, delete the whole `haproxy-haptic.org` API group explicitly:
+
+```bash
+kubectl delete crd \
+  haproxytemplateconfigs.haproxy-haptic.org \
+  haproxycfgs.haproxy-haptic.org \
+  haproxygeneralfiles.haproxy-haptic.org \
+  haproxycrtlistfiles.haproxy-haptic.org \
+  haproxymapfiles.haproxy-haptic.org
+```

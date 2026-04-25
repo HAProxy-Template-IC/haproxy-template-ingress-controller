@@ -13,7 +13,7 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. The authoritative interface is 
 | JSONPath key extraction + metadata trimming | `indexer` |
 | `MemoryStore` (full objects, O(1) composite-key lookup) and `CachedStore` (reference + TTL cache, API-backed fetch) | `store` |
 | `Watcher` (bulk, debounced) and `SingleWatcher` (one named resource, immediate) | `watcher` |
-| `configpublisher` helper used by the controller to publish `HAProxyCfg` / `HAProxyGeneralFile` / `HAProxyMapFile` CRDs | `configpublisher` |
+| `configpublisher` helper used by the controller to publish `HAProxyCfg` / `HAProxyGeneralFile` / `HAProxyMapFile` / `HAProxyCRTListFile` CRDs | `configpublisher` |
 | Pure leader-election component (used by `pkg/controller/leaderelection`) | `leaderelection` |
 
 ## Two Watchers

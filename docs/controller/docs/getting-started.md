@@ -21,7 +21,7 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 - Helm 3.0+
 
 !!! note "Webhook Validation"
-    This guide disables webhook validation for simplicity. For production, enable it with [cert-manager](https://cert-manager.io/docs/installation/) for CRD schema enforcement before applying configurations.
+    This guide disables the validating admission webhook (`webhook.enabled=false`) so you can install without provisioning a TLS certificate for it. The webhook intercepts CREATE/UPDATE on watched resources (Ingress, Gateway, etc.) and rejects changes that would break template rendering. For production, enable it together with [cert-manager](https://cert-manager.io/docs/installation/) — see [Security](./operations/security.md) for details.
 
 ## Step 1: Install with Helm
 
@@ -308,6 +308,12 @@ helm uninstall haptic -n haptic
 # Remove namespace
 kubectl delete namespace haptic
 
-# Remove CRD (optional, removes all HAProxyTemplateConfig resources)
-kubectl delete crd haproxytemplateconfigs.haproxy-haptic.org
+# Remove CRDs (optional). The chart installs five — keep them in place if you plan
+# to reinstall, otherwise delete all five so the API group disappears cleanly.
+kubectl delete crd \
+  haproxytemplateconfigs.haproxy-haptic.org \
+  haproxycfgs.haproxy-haptic.org \
+  haproxygeneralfiles.haproxy-haptic.org \
+  haproxycrtlistfiles.haproxy-haptic.org \
+  haproxymapfiles.haproxy-haptic.org
 ```
