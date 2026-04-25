@@ -303,73 +303,26 @@ func (c *EventCommentator) Run(ctx context.Context) error {
 
 ### validator/ - Configuration Validation
 
-Implements scatter-gather pattern for multi-phase validation:
+Implements the scatter-gather pattern for multi-phase validation. Three concrete validators (`BasicValidator`, `TemplateValidator`, `JSONPathValidator`) all wrap a shared `BaseValidator` and subscribe to `events.ConfigValidationRequest`. The orchestration that *issues* those requests does **not** live in this package — it's `pkg/controller/configchange.ConfigChangeHandler`, which subscribes to `ConfigParsedEvent` from the configloader, fans out via `bus.Request`, and publishes `ConfigValidatedEvent` / `ConfigInvalidEvent` based on the responses.
 
 ```go
-// coordinator.go orchestrates validation
-func (v *ValidationCoordinator) Run(ctx context.Context) error {
-    eventChan := v.eventBus.Subscribe("coordinator", 50)
+// configchange/handler.go (orchestration side)
+result, err := h.eventBus.Request(ctx, events.NewConfigValidationRequest(cfg, version),
+    busevents.RequestOptions{
+        Timeout:            10 * time.Second,
+        ExpectedResponders: h.validators, // ["basic", "template", "jsonpath"]
+    })
+// aggregate result.Responses → ConfigValidatedEvent or ConfigInvalidEvent
 
-    for {
-        select {
-        case event := <-eventChan:
-            if parsed, ok := event.(ConfigParsedEvent); ok {
-                // Create validation request
-                req := NewConfigValidationRequest(parsed.Config, parsed.Version)
-
-                // Scatter-gather: wait for all validators
-                result, err := v.eventBus.Request(ctx, req, events.RequestOptions{
-                    Timeout:            10 * time.Second,
-                    ExpectedResponders: []string{"basic", "template", "jsonpath"},
-                })
-
-                // Aggregate results
-                if err != nil || !allValid(result) {
-                    v.eventBus.Publish(ConfigInvalidEvent{
-                        Version: parsed.Version,
-                        Errors:  extractErrors(result),
-                    })
-                } else {
-                    v.eventBus.Publish(ConfigValidatedEvent{
-                        Config:  parsed.Config,
-                        Version: parsed.Version,
-                    })
-                }
-            }
-        case <-ctx.Done():
-            return ctx.Err()
-        }
-    }
-}
-
-// Each validator responds independently
-func (v *TemplateValidator) Run(ctx context.Context) error {
-    eventChan := v.eventBus.Subscribe("template-validator", 10)
-
-    for {
-        select {
-        case event := <-eventChan:
-            if req, ok := event.(ConfigValidationRequest); ok {
-                // Extract primitives for pure validation
-                templates := extractTemplates(req.Config)
-
-                // Call pure validator function
-                errs := templating.ValidateTemplates(templates)
-
-                // Publish response
-                v.eventBus.Publish(NewConfigValidationResponse(
-                    req.RequestID(),
-                    "template",
-                    len(errs) == 0,
-                    formatErrors(errs),
-                ))
-            }
-        case <-ctx.Done():
-            return ctx.Err()
-        }
-    }
+// validator/template.go (responder side)
+func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *TemplateValidator {
+    // BaseValidator subscribes the component to ConfigValidationRequest
+    // and dispatches to the validator's HandleRequest method.
+    return &TemplateValidator{Base: NewBaseValidator(eventBus, logger, "template", "", &templateHandler{})}
 }
 ```
+
+When adding a new validator, register it in the `ConfigChangeHandler.validators` list so the scatter-gather waits for its response.
 
 ### reconciler/ - Reconciliation Debouncer
 
@@ -555,36 +508,31 @@ func TestRendererComponent(t *testing.T) {
 ### Testing Scatter-Gather Validation
 
 ```go
-func TestValidationCoordinator(t *testing.T) {
-    bus := events.NewEventBus(100)
+func TestConfigChangeHandler_ScatterGather(t *testing.T) {
+    bus := busevents.NewEventBus(100)
+    logger := slog.Default()
 
-    // Start all validators
-    basicValidator := validator.NewBasicValidator(bus)
-    templateValidator := validator.NewTemplateValidator(bus)
-    jsonpathValidator := validator.NewJSONPathValidator(bus)
-    coordinator := validator.NewCoordinator(bus)
+    // Wire all three validators (each subscribes to ConfigValidationRequest
+    // via its embedded BaseValidator).
+    validator.NewBasicValidator(bus, logger)
+    validator.NewTemplateValidator(bus, logger)
+    validator.NewJSONPathValidator(bus, logger)
 
-    go basicValidator.Run(ctx)
-    go templateValidator.Run(ctx)
-    go jsonpathValidator.Run(ctx)
-    go coordinator.Run(ctx)
+    // The orchestrator that fans out the request and aggregates responses.
+    configChangeCh := make(chan *coreconfig.Config, 1)
+    handler := configchange.NewHandler(bus, logger, configChangeCh,
+        []string{"basic", "template", "jsonpath"})
 
-    // Subscribe to validation result
-    eventChan := bus.Subscribe("test", 10)
     bus.Start()
+    go handler.Run(ctx)
 
     // Trigger validation
-    bus.Publish(ConfigParsedEvent{
-        Config:  validConfig,
-        Version: "v1",
-    })
+    bus.Publish(events.NewConfigParsedEvent(validConfig, templateConfig, "v1", ""))
 
-    // Verify all validators responded and config validated
+    // Verify the validated config flows through the channel
     select {
-    case event := <-eventChan:
-        validated, ok := event.(ConfigValidatedEvent)
-        require.True(t, ok)
-        assert.Equal(t, "v1", validated.Version)
+    case cfg := <-configChangeCh:
+        require.NotNil(t, cfg)
     case <-time.After(2 * time.Second):
         t.Fatal("validation timeout")
     }

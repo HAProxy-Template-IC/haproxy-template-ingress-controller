@@ -1082,7 +1082,7 @@ type RequestResult struct {
 sequenceDiagram
     participant CW as ConfigLoader
     participant EB as EventBus
-    participant VC as ValidationCoordinator
+    participant VC as ConfigChangeHandler
     participant BV as BasicValidator<br/>(Pure Function)
     participant TV as TemplateValidator<br/>(Pure Function)
     participant JV as JSONPathValidator<br/>(Pure Function)
@@ -1227,70 +1227,34 @@ func (c *TemplateValidatorComponent) Run(ctx context.Context) error {
 }
 ```
 
-**Validation Coordinator with Scatter-Gather**:
+**Validation Coordination with Scatter-Gather**:
+
+The orchestration lives in `pkg/controller/configchange.ConfigChangeHandler` (not in `pkg/controller/validator/`). The handler subscribes to `ConfigParsedEvent`, fans out a `ConfigValidationRequest` via `bus.Request`, and aggregates the responses from each validator into either `ConfigValidatedEvent` or `ConfigInvalidEvent`.
 
 ```go
-// pkg/controller/validator/coordinator.go
-package validator
+// Pseudo-code mirroring pkg/controller/configchange/handler.go
+func (h *ConfigChangeHandler) handleParsed(ctx context.Context, parsed *events.ConfigParsedEvent) {
+    req := events.NewConfigValidationRequest(parsed.Config, parsed.Version)
 
-type ValidationCoordinator struct {
-    eventBus *events.EventBus
-}
+    result, err := h.eventBus.Request(ctx, req, busevents.RequestOptions{
+        Timeout:            10 * time.Second,
+        ExpectedResponders: h.validators, // []string{"basic", "template", "jsonpath"}
+    })
 
-func (v *ValidationCoordinator) Run(ctx context.Context) error {
-    eventChan := v.eventBus.Subscribe("validation-coordinator", 100)
-
-    for {
-        select {
-        case event := <-eventChan:
-            if parsed, ok := event.(events.ConfigParsedEvent); ok {
-                // Create validation request
-                req := events.NewConfigValidationRequest(parsed.Config, parsed.Version)
-
-                // Use scatter-gather to coordinate validators
-                result, err := v.eventBus.Request(ctx, req, events.RequestOptions{
-                    Timeout:            10 * time.Second,
-                    ExpectedResponders: []string{"basic", "template", "jsonpath"},
-                })
-
-                if err != nil || len(result.Errors) > 0 {
-                    // Validation failed or timeout
-                    errorMap := make(map[string][]string)
-
-                    for _, resp := range result.Responses {
-                        if validResp, ok := resp.(events.ConfigValidationResponse); ok && !validResp.Valid {
-                            errorMap[validResp.ValidatorName] = validResp.Errors
-                        }
-                    }
-
-                    for _, errMsg := range result.Errors {
-                        errorMap["timeout"] = append(errorMap["timeout"], errMsg)
-                    }
-
-                    v.eventBus.Publish(events.ConfigInvalidEvent{
-                        Version:          parsed.Version,
-                        ValidationErrors: errorMap,
-                    })
-                    continue
-                }
-
-                // All validators passed
-                v.eventBus.Publish(events.ConfigValidatedEvent{
-                    Config:  parsed.Config,
-                    Version: parsed.Version,
-                })
-            }
-
-        case <-ctx.Done():
-            return ctx.Err()
-        }
+    if err != nil || hasInvalid(result.Responses) {
+        h.eventBus.Publish(events.NewConfigInvalidEvent(parsed.Version, collectErrors(result, err)))
+        return
     }
+
+    h.eventBus.Publish(events.NewConfigValidatedEvent(parsed.Config, parsed.Version))
 }
 ```
 
+The three validators that respond — `BasicValidator`, `TemplateValidator`, `JSONPathValidator` — all live in `pkg/controller/validator/` and share a `BaseValidator` that subscribes them to `ConfigValidationRequest`. To add a new validator: drop in a new `*Validator` constructor that wraps `NewBaseValidator(...)`, then add its name to the `validators` slice passed to `configchange.NewHandler`.
+
 **Validator Logging Improvements**:
 
-The validation coordinator implements enhanced logging to provide visibility into the scatter-gather validation process:
+The handler implements enhanced logging to provide visibility into the scatter-gather validation process:
 
 1. **Structured Logging**: Uses `log/slog` with structured fields for queryability
    - Validator names, response counts, validation error counts
