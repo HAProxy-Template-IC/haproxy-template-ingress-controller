@@ -40,12 +40,7 @@ func (t *SafeTimer) Chan() <-chan time.Time {
 // Stop stops the timer if running, drains the channel, and clears the reference.
 func (t *SafeTimer) Stop() {
 	if t.timer != nil {
-		if !t.timer.Stop() {
-			select {
-			case <-t.timer.C:
-			default:
-			}
-		}
+		t.stopAndDrain()
 		t.timer = nil
 	}
 }
@@ -55,14 +50,22 @@ func (t *SafeTimer) Stop() {
 func (t *SafeTimer) Reset(d time.Duration) {
 	if t.timer == nil {
 		t.timer = time.NewTimer(d)
-	} else {
-		if !t.timer.Stop() {
-			select {
-			case <-t.timer.C:
-			default:
-			}
+		return
+	}
+	t.stopAndDrain()
+	t.timer.Reset(d)
+}
+
+// stopAndDrain stops the underlying timer if it hasn't already fired and
+// performs a non-blocking drain of t.timer.C, so a pending tick from a
+// just-expired timer can't leak into the next Reset/EnsureRunning cycle.
+// Must only be called when t.timer != nil.
+func (t *SafeTimer) stopAndDrain() {
+	if !t.timer.Stop() {
+		select {
+		case <-t.timer.C:
+		default:
 		}
-		t.timer.Reset(d)
 	}
 }
 
