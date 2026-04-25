@@ -139,95 +139,23 @@ func (p *Publisher) updateRuntimeConfigDeploymentStatus(ctx context.Context, upd
 }
 
 // updateAuxiliaryFileDeploymentStatus updates deployment status on all auxiliary files.
+// Uses the auxFileGroup dispatch table so the per-type metadata (label, slog
+// key, handle accessor, cached-read accessor) lives in one place.
 func (p *Publisher) updateAuxiliaryFileDeploymentStatus(ctx context.Context, auxFiles *haproxyv1alpha1.AuxiliaryFileReferences, podStatus *haproxyv1alpha1.PodDeploymentStatus) {
-	if auxFiles == nil {
-		return
-	}
-
-	for _, mapFileRef := range auxFiles.MapFiles {
-		if err := p.updateMapFileDeploymentStatus(ctx, mapFileRef.Namespace, mapFileRef.Name, podStatus); err != nil {
-			p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
-				"type", "map_file",
-				"name", mapFileRef.Name,
-				"error", err,
+	for _, group := range p.auxFileGroupsFor(auxFiles) {
+		for _, ref := range group.refs {
+			err := updateAuxFileDeploymentStatus(podStatus,
+				func() *cachedAuxFileStatus { return group.tryCachedRead(ref.Namespace, ref.Name) },
+				func() (*auxFileHandle, error) { return group.handle(ctx, ref.Namespace, ref.Name) },
+				group.label,
 			)
+			if err != nil {
+				p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
+					"type", group.logKey,
+					"name", ref.Name,
+					"error", err,
+				)
+			}
 		}
 	}
-
-	for _, generalFileRef := range auxFiles.GeneralFiles {
-		if err := p.updateGeneralFileDeploymentStatus(ctx, generalFileRef.Namespace, generalFileRef.Name, podStatus); err != nil {
-			p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
-				"type", "general_file",
-				"name", generalFileRef.Name,
-				"error", err,
-			)
-		}
-	}
-
-	for _, crtListFileRef := range auxFiles.CRTListFiles {
-		if err := p.updateCRTListFileDeploymentStatus(ctx, crtListFileRef.Namespace, crtListFileRef.Name, podStatus); err != nil {
-			p.logger.Debug("deployment status update conflict (will retry on next reconciliation)",
-				"type", "crt_list_file",
-				"name", crtListFileRef.Name,
-				"error", err,
-			)
-		}
-	}
-}
-
-// updateMapFileDeploymentStatus updates a map file's deployment status.
-// When listers are available, first checks the cache to skip unnecessary API calls.
-func (p *Publisher) updateMapFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	return updateAuxFileDeploymentStatus(podStatus,
-		func() *cachedAuxFileStatus {
-			if p.listers == nil || p.listers.MapFiles == nil {
-				return nil
-			}
-			cached, err := p.listers.MapFiles.HAProxyMapFiles(namespace).Get(name)
-			if err != nil {
-				return nil
-			}
-			return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
-		},
-		func() (*auxFileHandle, error) { return p.mapFileHandle(ctx, namespace, name) },
-		"map file",
-	)
-}
-
-// updateGeneralFileDeploymentStatus updates a general file's deployment status.
-// When listers are available, first checks the cache to skip unnecessary API calls.
-func (p *Publisher) updateGeneralFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	return updateAuxFileDeploymentStatus(podStatus,
-		func() *cachedAuxFileStatus {
-			if p.listers == nil || p.listers.GeneralFiles == nil {
-				return nil
-			}
-			cached, err := p.listers.GeneralFiles.HAProxyGeneralFiles(namespace).Get(name)
-			if err != nil {
-				return nil
-			}
-			return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
-		},
-		func() (*auxFileHandle, error) { return p.generalFileHandle(ctx, namespace, name) },
-		"general file",
-	)
-}
-
-// updateCRTListFileDeploymentStatus updates a crt-list file's deployment status.
-// When listers are available, first checks the cache to skip unnecessary API calls.
-func (p *Publisher) updateCRTListFileDeploymentStatus(ctx context.Context, namespace, name string, podStatus *haproxyv1alpha1.PodDeploymentStatus) error {
-	return updateAuxFileDeploymentStatus(podStatus,
-		func() *cachedAuxFileStatus {
-			if p.listers == nil || p.listers.CRTListFiles == nil {
-				return nil
-			}
-			cached, err := p.listers.CRTListFiles.HAProxyCRTListFiles(namespace).Get(name)
-			if err != nil {
-				return nil
-			}
-			return &cachedAuxFileStatus{pods: cached.Status.DeployedToPods, checksum: cached.Spec.Checksum}
-		},
-		func() (*auxFileHandle, error) { return p.crtListFileHandle(ctx, namespace, name) },
-		"crt-list file",
-	)
 }
