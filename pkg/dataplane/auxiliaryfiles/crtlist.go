@@ -78,28 +78,26 @@ func CompareCRTLists(ctx context.Context, c *client.DataplaneClient, desired []C
 		return nil, err
 	}
 
-	// Convert general file diff back to CRT-list diff format
-	crtListDiff := &CRTListDiff{
-		ToCreate: make([]CRTListFile, len(generalDiff.ToCreate)),
-		ToUpdate: make([]CRTListFile, len(generalDiff.ToUpdate)),
+	return &CRTListDiff{
+		ToCreate: generalFilesToCRTLists(generalDiff.ToCreate),
+		ToUpdate: generalFilesToCRTLists(generalDiff.ToUpdate),
 		ToDelete: generalDiff.ToDelete,
-	}
+	}, nil
+}
 
-	// Convert general files back to CRT-list files (restore Path format)
-	for i, gf := range generalDiff.ToCreate {
-		crtListDiff.ToCreate[i] = CRTListFile{
-			Path:    gf.Filename, // Use filename as path
-			Content: gf.Content,
-		}
-	}
-	for i, gf := range generalDiff.ToUpdate {
-		crtListDiff.ToUpdate[i] = CRTListFile{
+// generalFilesToCRTLists is the inverse of CRTListsToGeneralFiles: it rebuilds
+// CRTListFile entries from their general-file representation, treating the
+// general file's Filename (which is the sanitized basename used as the API id)
+// as the CRT-list path.
+func generalFilesToCRTLists(items []GeneralFile) []CRTListFile {
+	out := make([]CRTListFile, len(items))
+	for i, gf := range items {
+		out[i] = CRTListFile{
 			Path:    gf.Filename,
 			Content: gf.Content,
 		}
 	}
-
-	return crtListDiff, nil
+	return out
 }
 
 // SyncCRTLists synchronizes crt-list files to the desired state by applying
