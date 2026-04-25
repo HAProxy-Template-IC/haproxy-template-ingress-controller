@@ -127,23 +127,16 @@ func compareAuxiliaryFiles(first, second *dataplane.AuxiliaryFiles) string {
 		return "auxiliary files: one render produced files, the other did not"
 	}
 
-	// Compare map files
-	if diff := compareFileList("map files", extractMapFileMap(first.MapFiles), extractMapFileMap(second.MapFiles)); diff != "" {
+	if diff := compareFileList("map files", extractFileMap(first.MapFiles), extractFileMap(second.MapFiles)); diff != "" {
 		return diff
 	}
-
-	// Compare general files
-	if diff := compareFileList("general files", extractGeneralFileMap(first.GeneralFiles), extractGeneralFileMap(second.GeneralFiles)); diff != "" {
+	if diff := compareFileList("general files", extractFileMap(first.GeneralFiles), extractFileMap(second.GeneralFiles)); diff != "" {
 		return diff
 	}
-
-	// Compare SSL certificates
-	if diff := compareFileList("SSL certificates", extractCertFileMap(first.SSLCertificates), extractCertFileMap(second.SSLCertificates)); diff != "" {
+	if diff := compareFileList("SSL certificates", extractFileMap(first.SSLCertificates), extractFileMap(second.SSLCertificates)); diff != "" {
 		return diff
 	}
-
-	// Compare CRT-list files
-	if diff := compareFileList("crt-list files", extractCRTListFileMap(first.CRTListFiles), extractCRTListFileMap(second.CRTListFiles)); diff != "" {
+	if diff := compareFileList("crt-list files", extractFileMap(first.CRTListFiles), extractFileMap(second.CRTListFiles)); diff != "" {
 		return diff
 	}
 
@@ -183,38 +176,14 @@ func compareFileList(fileType string, first, second map[string]string) string {
 	return ""
 }
 
-// extractMapFileMap converts a slice of MapFile to a map for comparison.
-func extractMapFileMap(files []auxiliaryfiles.MapFile) map[string]string {
+// extractFileMap converts a slice of FileItem to an identifier→content map for
+// comparison. Works for any auxiliary file type since they all implement
+// FileItem (GetIdentifier returns Filename for general files and Path for the
+// rest).
+func extractFileMap[T auxiliaryfiles.FileItem](files []T) map[string]string {
 	result := make(map[string]string, len(files))
 	for _, f := range files {
-		result[f.Path] = f.Content
-	}
-	return result
-}
-
-// extractGeneralFileMap converts a slice of GeneralFile to a map for comparison.
-func extractGeneralFileMap(files []auxiliaryfiles.GeneralFile) map[string]string {
-	result := make(map[string]string, len(files))
-	for _, f := range files {
-		result[f.Filename] = f.Content
-	}
-	return result
-}
-
-// extractCertFileMap converts a slice of SSLCertificate to a map for comparison.
-func extractCertFileMap(files []auxiliaryfiles.SSLCertificate) map[string]string {
-	result := make(map[string]string, len(files))
-	for _, f := range files {
-		result[f.Path] = f.Content
-	}
-	return result
-}
-
-// extractCRTListFileMap converts a slice of CRTListFile to a map for comparison.
-func extractCRTListFileMap(files []auxiliaryfiles.CRTListFile) map[string]string {
-	result := make(map[string]string, len(files))
-	for _, f := range files {
-		result[f.Path] = f.Content
+		result[f.GetIdentifier()] = f.GetContent()
 	}
 	return result
 }
