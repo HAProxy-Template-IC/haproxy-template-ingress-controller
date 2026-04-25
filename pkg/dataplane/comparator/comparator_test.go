@@ -2,6 +2,7 @@ package comparator
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -586,19 +587,19 @@ func matchUsersByType(opType sections.OperationType, desc string, createUsers, r
 	switch opType {
 	case sections.OperationCreate:
 		for _, username := range tt.expectCreateUser {
-			if stringContains(desc, username) {
+			if strings.Contains(desc, username) {
 				createUsers[username] = true
 			}
 		}
 	case sections.OperationUpdate:
 		for _, username := range tt.expectReplaceUser {
-			if stringContains(desc, username) {
+			if strings.Contains(desc, username) {
 				replaceUsers[username] = true
 			}
 		}
 	case sections.OperationDelete:
 		for _, username := range tt.expectDeleteUser {
-			if stringContains(desc, username) {
+			if strings.Contains(desc, username) {
 				deleteUsers[username] = true
 			}
 		}
@@ -643,18 +644,4 @@ func verifyUserlistOpsMatch(t *testing.T, operations []Operation, hasUserlistOps
 			logOperations(t, operations)
 		}
 	}
-}
-
-// stringContains is a helper function for checking if a string contains a substring.
-func stringContains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsSubstring(s, substr))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
