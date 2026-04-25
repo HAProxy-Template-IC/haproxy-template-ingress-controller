@@ -15,11 +15,7 @@ func (w *Watcher) handleAdd(obj any) {
 
 	// Apply field selector filter (client-side)
 	if !w.matchesFieldSelector(resource) {
-		w.logger.Debug("resource filtered by field selector",
-			"gvr", w.config.GVR.String(),
-			"name", resource.GetName(),
-			"namespace", resource.GetNamespace(),
-			"field_selector", w.config.FieldSelector)
+		w.logFieldSelectorSkip("resource filtered by field selector", resource)
 		return
 	}
 
@@ -49,29 +45,17 @@ func (w *Watcher) handleUpdate(oldObj, newObj any) {
 
 	case oldMatches && !newMatches:
 		// Old matched, new doesn't: treat as delete (resource no longer passes filter)
-		w.logger.Debug("resource no longer matches field selector, treating as delete",
-			"gvr", w.config.GVR.String(),
-			"name", resource.GetName(),
-			"namespace", resource.GetNamespace(),
-			"field_selector", w.config.FieldSelector)
+		w.logFieldSelectorSkip("resource no longer matches field selector, treating as delete", resource)
 		w.processDelete(oldResource)
 
 	case !oldMatches && newMatches:
 		// Old didn't match, new does: treat as add (resource now passes filter)
-		w.logger.Debug("resource now matches field selector, treating as add",
-			"gvr", w.config.GVR.String(),
-			"name", resource.GetName(),
-			"namespace", resource.GetNamespace(),
-			"field_selector", w.config.FieldSelector)
+		w.logFieldSelectorSkip("resource now matches field selector, treating as add", resource)
 		w.processAdd(resource)
 
 	default:
 		// Neither match: ignore
-		w.logger.Debug("resource update filtered by field selector",
-			"gvr", w.config.GVR.String(),
-			"name", resource.GetName(),
-			"namespace", resource.GetNamespace(),
-			"field_selector", w.config.FieldSelector)
+		w.logFieldSelectorSkip("resource update filtered by field selector", resource)
 	}
 }
 
@@ -92,15 +76,23 @@ func (w *Watcher) handleDelete(obj any) {
 	// (meaning it was in our store). Resources that never matched
 	// were never added, so there's nothing to delete.
 	if !w.matchesFieldSelector(resource) {
-		w.logger.Debug("deleted resource filtered by field selector",
-			"gvr", w.config.GVR.String(),
-			"name", resource.GetName(),
-			"namespace", resource.GetNamespace(),
-			"field_selector", w.config.FieldSelector)
+		w.logFieldSelectorSkip("deleted resource filtered by field selector", resource)
 		return
 	}
 
 	w.processDelete(resource)
+}
+
+// logFieldSelectorSkip emits a debug log indicating that a resource was
+// filtered out by the configured field selector. All field-selector skip
+// sites use the same gvr/name/namespace/field_selector tuple; only the
+// human-readable message differs.
+func (w *Watcher) logFieldSelectorSkip(msg string, resource *unstructured.Unstructured) {
+	w.logger.Debug(msg,
+		"gvr", w.config.GVR.String(),
+		"name", resource.GetName(),
+		"namespace", resource.GetNamespace(),
+		"field_selector", w.config.FieldSelector)
 }
 
 // processAdd adds a resource to the store and records the change.
