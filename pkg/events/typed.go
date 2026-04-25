@@ -17,7 +17,6 @@ package events
 import (
 	"context"
 	"log/slog"
-	"runtime"
 	"strings"
 )
 
@@ -131,20 +130,7 @@ func (b *EventBus) subscribeTypesInternal(name string, bufferSize int, eventType
 	b.startMu.Unlock()
 
 	if started && !suppressLateWarning {
-		// Get caller info for debugging
-		_, file, line, ok := runtime.Caller(2)
-		caller := "unknown"
-		if ok {
-			// Extract just the filename for brevity
-			for i := len(file) - 1; i >= 0; i-- {
-				if file[i] == '/' {
-					file = file[i+1:]
-					break
-				}
-			}
-			caller = file
-		}
-
+		caller, line := subscriptionCallerInfo(2)
 		slog.Warn("Typed subscription after EventBus.Start() may miss buffered events",
 			"caller", caller,
 			"line", line,
