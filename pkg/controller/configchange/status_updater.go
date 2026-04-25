@@ -152,46 +152,17 @@ func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events
 		return
 	}
 
-	// Cache config reference for HAProxy validation events
-	u.mu.Lock()
-	u.configNamespace = htc.Namespace
-	u.configName = htc.Name
-	u.mu.Unlock()
+	u.cacheConfigRef(htc.Namespace, htc.Name)
 
-	// Get the latest version of the resource
-	current, err := u.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(htc.Namespace).
-		Get(ctx, htc.Name, metav1.GetOptions{})
-	if err != nil {
-		u.logger.Warn("Failed to get HAProxyTemplateConfig for status update",
-			"namespace", htc.Namespace,
-			"name", htc.Name,
-			"error", err)
-		return
-	}
-
-	// Update status fields
-	now := metav1.NewTime(time.Now())
-	current.Status.LastValidated = &now
-	current.Status.ValidationStatus = "Valid"
-	current.Status.ValidationMessage = "Configuration validated successfully"
-	current.Status.ValidationErrors = nil // Clear any previous errors
-
-	// Update status
-	_, err = u.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(current.Namespace).
-		UpdateStatus(ctx, current, metav1.UpdateOptions{})
-	if err != nil {
-		u.logger.Warn("Failed to update HAProxyTemplateConfig status",
-			"namespace", current.Namespace,
-			"name", current.Name,
-			"error", err)
-		return
-	}
-
-	u.logger.Debug("Updated HAProxyTemplateConfig status to Valid",
-		"namespace", current.Namespace,
-		"name", current.Name,
+	u.applyStatus(ctx, htc.Namespace, htc.Name,
+		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+			now := metav1.NewTime(time.Now())
+			status.LastValidated = &now
+			status.ValidationStatus = "Valid"
+			status.ValidationMessage = "Configuration validated successfully"
+			status.ValidationErrors = nil // Clear any previous errors
+		},
+		"Updated HAProxyTemplateConfig status to Valid",
 		"version", event.Version)
 }
 
@@ -205,23 +176,7 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		return
 	}
 
-	// Cache config reference for HAProxy validation events
-	u.mu.Lock()
-	u.configNamespace = htc.Namespace
-	u.configName = htc.Name
-	u.mu.Unlock()
-
-	// Get the latest version of the resource
-	current, err := u.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(htc.Namespace).
-		Get(ctx, htc.Name, metav1.GetOptions{})
-	if err != nil {
-		u.logger.Warn("Failed to get HAProxyTemplateConfig for status update",
-			"namespace", htc.Namespace,
-			"name", htc.Name,
-			"error", err)
-		return
-	}
+	u.cacheConfigRef(htc.Namespace, htc.Name)
 
 	// Flatten validation errors from all validators
 	var allErrors []string
@@ -229,28 +184,15 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		allErrors = append(allErrors, errors...)
 	}
 
-	// Update status fields
-	now := metav1.NewTime(time.Now())
-	current.Status.LastValidated = &now
-	current.Status.ValidationStatus = "Invalid"
-	current.Status.ValidationMessage = fmt.Sprintf("%d validation error(s)", len(allErrors))
-	current.Status.ValidationErrors = allErrors
-
-	// Update status
-	_, err = u.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(current.Namespace).
-		UpdateStatus(ctx, current, metav1.UpdateOptions{})
-	if err != nil {
-		u.logger.Warn("Failed to update HAProxyTemplateConfig status",
-			"namespace", current.Namespace,
-			"name", current.Name,
-			"error", err)
-		return
-	}
-
-	u.logger.Debug("Updated HAProxyTemplateConfig status to Invalid",
-		"namespace", current.Namespace,
-		"name", current.Name,
+	u.applyStatus(ctx, htc.Namespace, htc.Name,
+		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+			now := metav1.NewTime(time.Now())
+			status.LastValidated = &now
+			status.ValidationStatus = "Invalid"
+			status.ValidationMessage = fmt.Sprintf("%d validation error(s)", len(allErrors))
+			status.ValidationErrors = allErrors
+		},
+		"Updated HAProxyTemplateConfig status to Invalid",
 		"version", event.Version,
 		"error_count", len(allErrors))
 }
@@ -270,30 +212,55 @@ func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event
 		return
 	}
 
-	// Get the latest version of the resource
+	u.applyStatus(ctx, configNamespace, configName,
+		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+			now := metav1.NewTime(time.Now())
+			status.LastValidated = &now
+			status.ValidationStatus = "Invalid"
+			status.ValidationMessage = "HAProxy configuration validation failed"
+			status.ValidationErrors = event.Errors
+		},
+		"Updated HAProxyTemplateConfig status to Invalid (HAProxy validation)",
+		"error_count", len(event.Errors))
+}
+
+// cacheConfigRef remembers the namespace/name of the HAProxyTemplateConfig so
+// HAProxy validation events (which don't carry a CRD reference) can still find
+// the right resource to update.
+func (u *StatusUpdater) cacheConfigRef(namespace, name string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.configNamespace = namespace
+	u.configName = name
+}
+
+// applyStatus fetches the named HAProxyTemplateConfig, applies mutate to its
+// Status, and writes it back via UpdateStatus. Failures are logged at WARN and
+// swallowed (status updates are best-effort). On success, successMsg is logged
+// at DEBUG with namespace/name plus any extra logFields the caller supplies.
+func (u *StatusUpdater) applyStatus(
+	ctx context.Context,
+	namespace, name string,
+	mutate func(*v1alpha1.HAProxyTemplateConfigStatus),
+	successMsg string,
+	logFields ...any,
+) {
 	current, err := u.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyTemplateConfigs(configNamespace).
-		Get(ctx, configName, metav1.GetOptions{})
+		HAProxyTemplateConfigs(namespace).
+		Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		u.logger.Warn("Failed to get HAProxyTemplateConfig for status update",
-			"namespace", configNamespace,
-			"name", configName,
+			"namespace", namespace,
+			"name", name,
 			"error", err)
 		return
 	}
 
-	// Update status fields
-	now := metav1.NewTime(time.Now())
-	current.Status.LastValidated = &now
-	current.Status.ValidationStatus = "Invalid"
-	current.Status.ValidationMessage = "HAProxy configuration validation failed"
-	current.Status.ValidationErrors = event.Errors
+	mutate(&current.Status)
 
-	// Update status
-	_, err = u.crdClient.HaproxyTemplateICV1alpha1().
+	if _, err := u.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyTemplateConfigs(current.Namespace).
-		UpdateStatus(ctx, current, metav1.UpdateOptions{})
-	if err != nil {
+		UpdateStatus(ctx, current, metav1.UpdateOptions{}); err != nil {
 		u.logger.Warn("Failed to update HAProxyTemplateConfig status",
 			"namespace", current.Namespace,
 			"name", current.Name,
@@ -301,8 +268,6 @@ func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event
 		return
 	}
 
-	u.logger.Debug("Updated HAProxyTemplateConfig status to Invalid (HAProxy validation)",
-		"namespace", current.Namespace,
-		"name", current.Name,
-		"error_count", len(event.Errors))
+	u.logger.Debug(successMsg,
+		append(logFields, "namespace", current.Namespace, "name", current.Name)...)
 }
