@@ -27,21 +27,33 @@ import "strings"
 //   - "pods" → "Pod"
 //   - "configmaps" → "ConfigMap"
 func SingularizeResourceType(plural string) string {
-	// Remove trailing 's' for simple plurals
-	if before, ok := strings.CutSuffix(plural, "es"); ok {
-		// "ingresses" → "ingress"
-		singular := before
-		// Capitalize first letter: "ingress" → "Ingress"
-		return strings.ToUpper(singular[:1]) + singular[1:]
+	// "-es" is only the plural suffix when the singular ends in a sibilant
+	// (s, x, z, ch, sh). Otherwise "-es" is just "-s" plural after a non-sibilant
+	// stem (e.g. "services" = "service" + "s", not "servic" + "es").
+	if before, ok := strings.CutSuffix(plural, "es"); ok && endsInSibilant(before) {
+		return capitalizeFirst(before)
 	}
 
 	if before, ok := strings.CutSuffix(plural, "s"); ok {
-		// "pods" → "pod"
-		singular := before
-		// Capitalize first letter: "pod" → "Pod"
-		return strings.ToUpper(singular[:1]) + singular[1:]
+		return capitalizeFirst(before)
 	}
 
 	// Already singular or unknown, just capitalize
-	return strings.ToUpper(plural[:1]) + plural[1:]
+	return capitalizeFirst(plural)
+}
+
+// endsInSibilant reports whether s ends in an English sibilant sound that takes
+// "-es" as its plural suffix (s, x, z, ch, sh).
+func endsInSibilant(s string) bool {
+	if strings.HasSuffix(s, "s") || strings.HasSuffix(s, "x") || strings.HasSuffix(s, "z") {
+		return true
+	}
+	return strings.HasSuffix(s, "ch") || strings.HasSuffix(s, "sh")
+}
+
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
