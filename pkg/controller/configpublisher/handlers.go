@@ -149,34 +149,8 @@ func (c *Component) handleValidationCompleted(event *events.ValidationCompletedE
 		entry:          entry,
 	}
 
-	select {
-	case c.publishWork <- workItem:
-		// Work queued successfully
-	default:
-		// Channel full - drain old work and queue new work (coalescing)
-		select {
-		case oldWork := <-c.publishWork:
-			c.logger.Debug("coalescing publish work, replacing stale event",
-				"old_correlation_id", oldWork.correlationID,
-				"new_correlation_id", correlationID,
-			)
-			// Cleanup the old entry since we're skipping it
-			c.mu.Lock()
-			delete(c.renderedConfigs, oldWork.correlationID)
-			c.mu.Unlock()
-		default:
-			// Channel was drained by worker between our checks - try again
-		}
-		// Now try to queue the new work
-		select {
-		case c.publishWork <- workItem:
-			// Work queued successfully after coalescing
-		default:
-			// Very unlikely - worker grabbed our slot, just log and skip
-			c.logger.Debug("publish work channel busy, will retry on next event",
-				"correlation_id", correlationID)
-		}
-	}
+	queueWithCoalesce(c, c.publishWork, workItem, "publish", correlationID,
+		func(w *publishWorkItem) string { return w.correlationID })
 }
 
 // handleValidationFailed queues the invalid configuration for async publishing.
@@ -206,28 +180,52 @@ func (c *Component) handleValidationFailed(event *events.ValidationFailedEvent) 
 		entry:          entry,
 	}
 
+	queueWithCoalesce(c, c.validationFailedWork, workItem, "validation failed", correlationID,
+		func(w *validationFailedWorkItem) string { return w.correlationID })
+}
+
+// queueWithCoalesce sends workItem on ch with non-blocking semantics and
+// "latest wins" coalescing: if the channel is full, drain the pending item,
+// drop its renderedConfigs entry (so we don't leak the cached render that
+// will never be processed), then push the new item. If the worker grabs the
+// drained slot before we can push, log and move on. logName is the work-item
+// kind shown in debug logs ("publish" / "validation failed"), and
+// correlationOf extracts the correlation ID from a drained item so the
+// renderedConfigs cleanup can target the right entry.
+func queueWithCoalesce[T any](
+	c *Component,
+	ch chan T,
+	workItem T,
+	logName, correlationID string,
+	correlationOf func(T) string,
+) {
 	select {
-	case c.validationFailedWork <- workItem:
-		// Work queued successfully
+	case ch <- workItem:
+		return
 	default:
-		// Channel full - coalesce
-		select {
-		case oldWork := <-c.validationFailedWork:
-			c.logger.Debug("coalescing validation failed work",
-				"old_correlation_id", oldWork.correlationID,
-				"new_correlation_id", correlationID,
-			)
-			c.mu.Lock()
-			delete(c.renderedConfigs, oldWork.correlationID)
-			c.mu.Unlock()
-		default:
-		}
-		select {
-		case c.validationFailedWork <- workItem:
-		default:
-			c.logger.Debug("validation failed work channel busy",
-				"correlation_id", correlationID)
-		}
+	}
+
+	// Channel full - drain old work and queue new work (coalescing).
+	select {
+	case oldWork := <-ch:
+		oldID := correlationOf(oldWork)
+		c.logger.Debug("coalescing "+logName+" work",
+			"old_correlation_id", oldID,
+			"new_correlation_id", correlationID,
+		)
+		// Cleanup the old entry since we're skipping it.
+		c.mu.Lock()
+		delete(c.renderedConfigs, oldID)
+		c.mu.Unlock()
+	default:
+		// Channel was drained by worker between our checks - just try again.
+	}
+
+	select {
+	case ch <- workItem:
+	default:
+		c.logger.Debug(logName+" work channel busy",
+			"correlation_id", correlationID)
 	}
 }
 
