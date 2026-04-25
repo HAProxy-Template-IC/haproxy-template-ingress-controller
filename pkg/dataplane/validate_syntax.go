@@ -32,15 +32,30 @@ var (
 	syntaxParserErr  error
 )
 
-// cachedValidator provides zero-allocation validation with caching.
-// It is initialized lazily on first use.
+// cachedValidatorSlot lazily constructs a CachedValidator for one
+// (major, minor) HAProxy version on first use and reuses it thereafter.
+type cachedValidatorSlot struct {
+	once  sync.Once
+	cache *validators.CachedValidator
+	major int
+	minor int
+}
+
+// get returns the slot's CachedValidator, constructing it on first call.
+func (s *cachedValidatorSlot) get() *validators.CachedValidator {
+	s.once.Do(func() {
+		s.cache = validators.NewCachedValidator(s.major, s.minor)
+	})
+	return s.cache
+}
+
+// Per-version validator slots. Allocation is deferred until first use, so
+// instances that only ever see one HAProxy version pay the cost for that
+// version only.
 var (
-	cachedValidatorV30 *validators.CachedValidator
-	cachedValidatorV31 *validators.CachedValidator
-	cachedValidatorV32 *validators.CachedValidator
-	validatorOnceV30   sync.Once
-	validatorOnceV31   sync.Once
-	validatorOnceV32   sync.Once
+	validatorSlotV30 = &cachedValidatorSlot{major: 3, minor: 0}
+	validatorSlotV31 = &cachedValidatorSlot{major: 3, minor: 1}
+	validatorSlotV32 = &cachedValidatorSlot{major: 3, minor: 2}
 )
 
 // validateSyntax performs syntax validation using client-native parser.
@@ -65,45 +80,23 @@ func validateSyntax(config string) (*parser.StructuredConfig, error) {
 	return parsed, nil
 }
 
-// getCachedValidatorForVersion returns the cached validator for a HAProxy version.
+// getCachedValidatorForVersion returns the cached validator for a HAProxy
+// version. Unknown or pre-3.x versions fall back to the v3.0 validator;
+// versions newer than v3.2 fall back to the v3.2 validator (since that is the
+// newest schema currently bundled).
 func getCachedValidatorForVersion(version *Version) *validators.CachedValidator {
-	if version == nil {
-		// Default to v3.0
-		validatorOnceV30.Do(func() {
-			cachedValidatorV30 = validators.NewCachedValidator(3, 0)
-		})
-		return cachedValidatorV30
+	if version == nil || version.Major < 3 {
+		return validatorSlotV30.get()
 	}
-
-	if version.Major == 3 {
-		switch {
-		case version.Minor >= 2:
-			validatorOnceV32.Do(func() {
-				cachedValidatorV32 = validators.NewCachedValidator(3, 2)
-			})
-			return cachedValidatorV32
-		case version.Minor >= 1:
-			validatorOnceV31.Do(func() {
-				cachedValidatorV31 = validators.NewCachedValidator(3, 1)
-			})
-			return cachedValidatorV31
-		default:
-			validatorOnceV30.Do(func() {
-				cachedValidatorV30 = validators.NewCachedValidator(3, 0)
-			})
-			return cachedValidatorV30
-		}
-	}
-
 	if version.Major > 3 {
-		validatorOnceV32.Do(func() {
-			cachedValidatorV32 = validators.NewCachedValidator(3, 2)
-		})
-		return cachedValidatorV32
+		return validatorSlotV32.get()
 	}
-
-	validatorOnceV30.Do(func() {
-		cachedValidatorV30 = validators.NewCachedValidator(3, 0)
-	})
-	return cachedValidatorV30
+	switch {
+	case version.Minor >= 2:
+		return validatorSlotV32.get()
+	case version.Minor >= 1:
+		return validatorSlotV31.get()
+	default:
+		return validatorSlotV30.get()
+	}
 }
