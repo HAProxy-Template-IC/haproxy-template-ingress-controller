@@ -191,85 +191,26 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 	return operations
 }
 
-// compareServersWithIndex compares server configurations within a backend using pointer indexes.
+// compareServersWithIndex compares server configurations within a backend using
+// pointer indexes. Add/delete/modify side effects on summary live in the
+// factory closures so the per-server walk happens exactly once.
 func (c *Comparator) compareServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
-	// Pre-allocate with capacity for potential changes (add + delete + modify)
-	maxOps := len(currentServers) + len(desiredServers)
-	operations := make([]Operation, 0, maxOps)
-
-	// Find added servers
-	addedOps := c.compareAddedServersWithIndex(backendName, currentServers, desiredServers, summary)
-	operations = append(operations, addedOps...)
-
-	// Find deleted servers
-	deletedOps := c.compareDeletedServersWithIndex(backendName, currentServers, desiredServers, summary)
-	operations = append(operations, deletedOps...)
-
-	// Find modified servers
-	modifiedOps := c.compareModifiedServersWithIndex(backendName, currentServers, desiredServers, summary)
-	operations = append(operations, modifiedOps...)
-
-	return operations
-}
-
-// compareAddedServersWithIndex compares added servers using pointer indexes for zero-copy iteration.
-func (c *Comparator) compareAddedServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
-	// Pre-allocate with capacity for potential additions
-	operations := make([]Operation, 0, len(desiredServers))
-
-	for name, server := range desiredServers {
-		if _, exists := currentServers[name]; !exists {
-			operations = append(operations, sections.NewServerCreate(backendName, server))
-			if summary.ServersAdded[backendName] == nil {
-				summary.ServersAdded[backendName] = []string{}
-			}
-			summary.ServersAdded[backendName] = append(summary.ServersAdded[backendName], name)
-		}
-	}
-
-	return operations
-}
-
-// compareDeletedServersWithIndex compares deleted servers using pointer indexes for zero-copy iteration.
-func (c *Comparator) compareDeletedServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
-	// Pre-allocate with capacity for potential deletions
-	operations := make([]Operation, 0, len(currentServers))
-
-	for name, server := range currentServers {
-		if _, exists := desiredServers[name]; !exists {
-			operations = append(operations, sections.NewServerDelete(backendName, server))
-			if summary.ServersDeleted[backendName] == nil {
-				summary.ServersDeleted[backendName] = []string{}
-			}
-			summary.ServersDeleted[backendName] = append(summary.ServersDeleted[backendName], name)
-		}
-	}
-
-	return operations
-}
-
-// compareModifiedServersWithIndex compares modified servers using pointer indexes for zero-copy iteration.
-func (c *Comparator) compareModifiedServersWithIndex(backendName string, currentServers, desiredServers map[string]*models.Server, summary *DiffSummary) []Operation {
-	// Pre-allocate with capacity for potential modifications
-	operations := make([]Operation, 0, len(desiredServers))
-
-	for name, desiredServer := range desiredServers {
-		currentServer, exists := currentServers[name]
-		if !exists {
-			continue
-		}
-
-		// Compare server attributes using built-in Equal() method
-		if !currentServer.Equal(*desiredServer) {
-			operations = append(operations, sections.NewServerUpdate(backendName, currentServer, desiredServer))
-			if summary.ServersModified[backendName] == nil {
-				summary.ServersModified[backendName] = []string{}
-			}
-			summary.ServersModified[backendName] = append(summary.ServersModified[backendName], name)
-		}
-	}
-
-	return operations
+	return compareNamedMaps(
+		currentServers, desiredServers,
+		func(a, b *models.Server) bool { return a.Equal(*b) },
+		func(s *models.Server) Operation {
+			summary.ServersAdded[backendName] = append(summary.ServersAdded[backendName], s.Name)
+			return sections.NewServerCreate(backendName, s)
+		},
+		func(s *models.Server) Operation {
+			summary.ServersDeleted[backendName] = append(summary.ServersDeleted[backendName], s.Name)
+			return sections.NewServerDelete(backendName, s)
+		},
+		func(s *models.Server) Operation {
+			summary.ServersModified[backendName] = append(summary.ServersModified[backendName], s.Name)
+			return sections.NewServerUpdate(backendName, currentServers[s.Name], s)
+		},
+	)
 }
 
 // compareServerTemplatesWithIndex compares server template configurations using pointer indexes for zero-copy iteration.
