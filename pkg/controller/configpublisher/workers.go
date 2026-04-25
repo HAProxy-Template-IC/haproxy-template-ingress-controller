@@ -81,27 +81,15 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		"correlation_id", work.correlationID,
 	)
 
-	// Use pre-computed checksum from pipeline (propagated via TemplateRenderedEvent)
-	checksumHex := work.entry.contentChecksum
-
 	// Skip publish if checksum unchanged (content deduplication).
 	// This prevents redundant CRD updates when config content hasn't changed,
 	// which commonly happens during high-frequency EndpointSlice reconciliations.
-	c.mu.RLock()
-	lastChecksum := c.lastPublishedChecksum
-	c.mu.RUnlock()
-
-	if checksumHex != "" && checksumHex == lastChecksum {
-		c.logger.Debug("skipping publish, config unchanged",
-			"checksum", checksumHex,
-			"correlation_id", work.correlationID,
-		)
-		// Clean up cached entry
-		c.mu.Lock()
-		delete(c.renderedConfigs, work.correlationID)
-		c.mu.Unlock()
+	if c.skipIfAlreadyPublished(work, "skipping publish, config unchanged") {
 		return
 	}
+
+	// Use pre-computed checksum from pipeline (propagated via TemplateRenderedEvent)
+	checksumHex := work.entry.contentChecksum
 
 	// Throttle: if a publish interval is configured, use leading-edge refractory.
 	if c.publishInterval > 0 {
@@ -110,9 +98,7 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		if timeSinceLast < c.publishInterval {
 			// Inside refractory — buffer latest work, clean up any previously buffered entry
 			if c.pendingPublish != nil {
-				c.mu.Lock()
-				delete(c.renderedConfigs, c.pendingPublish.correlationID)
-				c.mu.Unlock()
+				c.discardCachedConfig(c.pendingPublish.correlationID)
 			}
 			c.pendingPublish = work
 			remaining := c.publishInterval - timeSinceLast
@@ -145,18 +131,7 @@ func (c *Component) flushPendingPublish() {
 	}
 
 	// Re-check content deduplication (content may have been published by another path)
-	c.mu.RLock()
-	lastChecksum := c.lastPublishedChecksum
-	c.mu.RUnlock()
-
-	if work.entry.contentChecksum != "" && work.entry.contentChecksum == lastChecksum {
-		c.logger.Debug("skipping throttled publish, config already published",
-			"checksum", work.entry.contentChecksum,
-			"correlation_id", work.correlationID,
-		)
-		c.mu.Lock()
-		delete(c.renderedConfigs, work.correlationID)
-		c.mu.Unlock()
+	if c.skipIfAlreadyPublished(work, "skipping throttled publish, config already published") {
 		return
 	}
 
@@ -164,6 +139,32 @@ func (c *Component) flushPendingPublish() {
 		"correlation_id", work.correlationID,
 	)
 	c.executePublish(work)
+}
+
+// skipIfAlreadyPublished returns true when work's content checksum matches the
+// last successfully published checksum. In that case it logs msg at debug and
+// drops the cached rendered-config entry so the caller can simply
+// early-return. Empty checksums never match (we cannot deduplicate without
+// one). The same content-deduplication check is needed both before throttle
+// buffering and after the throttle timer fires; this helper is the single
+// source of truth for that decision.
+func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bool {
+	checksum := work.entry.contentChecksum
+	if checksum == "" {
+		return false
+	}
+	c.mu.RLock()
+	lastChecksum := c.lastPublishedChecksum
+	c.mu.RUnlock()
+	if checksum != lastChecksum {
+		return false
+	}
+	c.logger.Debug(msg,
+		"checksum", checksum,
+		"correlation_id", work.correlationID,
+	)
+	c.discardCachedConfig(work.correlationID)
+	return true
 }
 
 // ensureThrottleTimer starts a one-shot timer that signals the publishWorker via throttleTimerCh.

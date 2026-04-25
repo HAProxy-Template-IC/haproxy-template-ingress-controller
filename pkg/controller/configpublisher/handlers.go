@@ -214,9 +214,7 @@ func queueWithCoalesce[T any](
 			"new_correlation_id", correlationID,
 		)
 		// Cleanup the old entry since we're skipping it.
-		c.mu.Lock()
-		delete(c.renderedConfigs, oldID)
-		c.mu.Unlock()
+		c.discardCachedConfig(oldID)
 	default:
 		// Channel was drained by worker between our checks - just try again.
 	}
