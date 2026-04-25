@@ -113,8 +113,7 @@ func (c *Comparator) createNestedFrontendOperationsWithIndexes(name string, fron
 	operations = append(operations, quicInitialRuleOps...)
 
 	// Compare binds - use pointer index for zero-copy iteration
-	emptyBinds := make(map[string]*models.Bind)
-	bindOps := c.compareBindsWithIndex(name, emptyBinds, desiredBinds)
+	bindOps := c.compareBindsWithIndex(name, nil, desiredBinds)
 	operations = append(operations, bindOps...)
 
 	return operations
@@ -169,15 +168,7 @@ func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, curre
 		appendOperationsIfNotEmpty(&operations, quicInitialRuleOps, &frontendModified)
 
 		// Compare binds within this frontend using pointer indexes
-		currentBinds := current.BindIndex[name]
-		desiredBinds := desired.BindIndex[name]
-		if currentBinds == nil {
-			currentBinds = make(map[string]*models.Bind)
-		}
-		if desiredBinds == nil {
-			desiredBinds = make(map[string]*models.Bind)
-		}
-		bindOps := c.compareBindsWithIndex(name, currentBinds, desiredBinds)
+		bindOps := c.compareBindsWithIndex(name, current.BindIndex[name], desired.BindIndex[name])
 		appendOperationsIfNotEmpty(&operations, bindOps, &frontendModified)
 
 		// Compare frontend attributes (excluding ACLs, rules, and binds which we already compared)

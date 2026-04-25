@@ -79,12 +79,10 @@ func (c *Comparator) createNestedBackendOperationsWithIndexes(name string, backe
 	operations := make([]Operation, 0, estimatedCap)
 
 	// Servers - use pointer index for zero-copy iteration
-	emptyServers := make(map[string]*models.Server)
-	operations = append(operations, c.compareServersWithIndex(name, emptyServers, desiredServers, summary)...)
+	operations = append(operations, c.compareServersWithIndex(name, nil, desiredServers, summary)...)
 
 	// Server templates - use pointer index for zero-copy iteration
-	emptyTemplates := make(map[string]*models.ServerTemplate)
-	operations = append(operations, c.compareServerTemplatesWithIndex(name, emptyTemplates, desiredTemplates)...)
+	operations = append(operations, c.compareServerTemplatesWithIndex(name, nil, desiredTemplates)...)
 
 	// ACLs and rules (compare against nil for empty collections)
 	operations = append(operations, c.compareACLs("backend", name, nil, backend.ACLList, summary)...)
@@ -117,9 +115,7 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		backendModified := false
 
 		// Compare servers within this backend using pointer indexes
-		currentServers := nilSafeChildMap(current.ServerIndex, name)
-		desiredServers := nilSafeChildMap(desired.ServerIndex, name)
-		serverOps := c.compareServersWithIndex(name, currentServers, desiredServers, summary)
+		serverOps := c.compareServersWithIndex(name, current.ServerIndex[name], desired.ServerIndex[name], summary)
 		appendOperationsIfNotEmpty(&operations, serverOps, &backendModified)
 
 		// Compare ACLs within this backend
@@ -171,9 +167,7 @@ func (c *Comparator) compareModifiedBackendsWithIndexes(desiredBackends, current
 		appendOperationsIfNotEmpty(&operations, tcpCheckOps, &backendModified)
 
 		// Compare server templates within this backend using pointer indexes
-		currentTemplates := nilSafeChildMap(current.ServerTemplateIndex, name)
-		desiredTemplates := nilSafeChildMap(desired.ServerTemplateIndex, name)
-		serverTemplateOps := c.compareServerTemplatesWithIndex(name, currentTemplates, desiredTemplates)
+		serverTemplateOps := c.compareServerTemplatesWithIndex(name, current.ServerTemplateIndex[name], desired.ServerTemplateIndex[name])
 		appendOperationsIfNotEmpty(&operations, serverTemplateOps, &backendModified)
 
 		// Compare backend attributes (excluding servers, ACLs, and rules which we already compared)
@@ -263,14 +257,4 @@ func backendBaseDiffFields(b1, b2 *models.Backend) []string {
 		fields = append(fields, field)
 	}
 	return fields
-}
-
-// nilSafeChildMap returns idx[parent] or an empty (non-nil) map when the
-// parent key is missing or its value is nil. Callers can iterate the result
-// without separate nil checks.
-func nilSafeChildMap[V any](idx map[string]map[string]V, parent string) map[string]V {
-	if m := idx[parent]; m != nil {
-		return m
-	}
-	return make(map[string]V)
 }
