@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 )
@@ -53,21 +52,8 @@ func (v *JSONPathValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	start := time.Now()
 	v.logger.Debug("Validating JSONPath expressions", "version", req.Version)
 
-	// Type-assert config to *coreconfig.Config
-	cfg, ok := req.Config.(*coreconfig.Config)
+	cfg, ok := v.assertConfigType(req)
 	if !ok {
-		v.logger.Error("ConfigValidationRequest contains invalid config type",
-			"expected", "*coreconfig.Config",
-			"got", fmt.Sprintf("%T", req.Config))
-
-		// Publish response with error and return early - no further validation possible
-		response := events.NewConfigValidationResponse(
-			req.RequestID(),
-			ValidatorNameJSONPath,
-			false,
-			[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
-		)
-		v.eventBus.Publish(response)
 		return
 	}
 

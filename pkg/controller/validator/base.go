@@ -20,6 +20,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
@@ -107,4 +108,26 @@ func (v *BaseValidator) HandlePanic(recovered any, event busevents.Event) {
 		[]string{fmt.Sprintf("validator panicked: %v", recovered)},
 	)
 	v.EventBus().Publish(response)
+}
+
+// assertConfigType type-asserts req.Config to *coreconfig.Config. On a type
+// mismatch it logs the error and publishes a failure ConfigValidationResponse
+// so the scatter-gather coordinator does not hang waiting on this validator,
+// then returns (nil, false). Callers should early-return on a false result.
+func (v *BaseValidator) assertConfigType(req *events.ConfigValidationRequest) (*coreconfig.Config, bool) {
+	cfg, ok := req.Config.(*coreconfig.Config)
+	if ok {
+		return cfg, true
+	}
+	v.Logger().Error("ConfigValidationRequest contains invalid config type",
+		"expected", "*coreconfig.Config",
+		"got", fmt.Sprintf("%T", req.Config))
+	response := events.NewConfigValidationResponse(
+		req.RequestID(),
+		v.name,
+		false,
+		[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
+	)
+	v.EventBus().Publish(response)
+	return nil, false
 }

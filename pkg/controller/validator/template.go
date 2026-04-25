@@ -1,13 +1,11 @@
 package validator
 
 import (
-	"fmt"
 	"log/slog"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -56,21 +54,8 @@ func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	start := time.Now()
 	v.logger.Debug("Validating templates", "version", req.Version)
 
-	// Type-assert config to *coreconfig.Config
-	cfg, ok := req.Config.(*coreconfig.Config)
+	cfg, ok := v.assertConfigType(req)
 	if !ok {
-		v.logger.Error("ConfigValidationRequest contains invalid config type",
-			"expected", "*coreconfig.Config",
-			"got", fmt.Sprintf("%T", req.Config))
-
-		// Publish response with error and return early - no further validation possible
-		response := events.NewConfigValidationResponse(
-			req.RequestID(),
-			ValidatorNameTemplate,
-			false,
-			[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
-		)
-		v.eventBus.Publish(response)
 		return
 	}
 
