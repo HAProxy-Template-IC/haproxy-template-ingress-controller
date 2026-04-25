@@ -76,6 +76,19 @@ func (d *Discovery) LocalVersion() *dataplane.Version {
 	return d.localVersion
 }
 
+// traceIf logs msg at the trace level with the supplied attributes when
+// logger is non-nil. The discovery functions accept an optional *slog.Logger
+// (callers pass nil to silence the verbose pod-evaluation trace output) and
+// every direct trace site in this file routes through this helper rather
+// than open-coding "if logger != nil { logger.Log(context.Background(),
+// logging.LevelTrace, ...) }".
+func traceIf(logger *slog.Logger, msg string, args ...any) {
+	if logger == nil {
+		return
+	}
+	logger.Log(context.Background(), logging.LevelTrace, msg, args...)
+}
+
 // isDataplaneContainerReady checks if the container exposing the dataplane port is ready.
 //
 // This method:
@@ -89,12 +102,10 @@ func (d *Discovery) isDataplaneContainerReady(pod *unstructured.Unstructured, lo
 		return false, err
 	}
 
-	if logger != nil {
-		logger.Log(context.Background(), logging.LevelTrace, "Found dataplane container in spec",
-			"pod", pod.GetName(),
-			"container", dataplaneContainerName,
-			"port", d.dataplanePort)
-	}
+	traceIf(logger, "Found dataplane container in spec",
+		"pod", pod.GetName(),
+		"container", dataplaneContainerName,
+		"port", d.dataplanePort)
 
 	return checkContainerReady(pod, dataplaneContainerName, logger)
 }
@@ -155,11 +166,9 @@ func containerHasPort(container map[string]any, targetPort int) bool {
 func checkContainerReady(pod *unstructured.Unstructured, containerName string, logger *slog.Logger) (bool, error) {
 	containerStatuses, found, err := unstructured.NestedSlice(pod.Object, "status", "containerStatuses")
 	if err != nil || !found {
-		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "No containerStatuses found in pod status",
-				"pod", pod.GetName(),
-				"error", err)
-		}
+		traceIf(logger, "No containerStatuses found in pod status",
+			"pod", pod.GetName(),
+			"error", err)
 		return false, nil
 	}
 
@@ -180,9 +189,7 @@ func checkContainerReady(pod *unstructured.Unstructured, containerName string, l
 
 		ready, found, err := unstructured.NestedBool(status, "ready")
 
-		if logger != nil {
-			logContainerStatus(logger, pod.GetName(), name, status, ready, found, err)
-		}
+		logContainerStatus(logger, pod.GetName(), name, status, ready, found, err)
 
 		if err != nil {
 			return false, fmt.Errorf("getting ready status: %w", err)
@@ -193,16 +200,21 @@ func checkContainerReady(pod *unstructured.Unstructured, containerName string, l
 		return ready, nil
 	}
 
-	if logger != nil {
-		logger.Log(context.Background(), logging.LevelTrace, "Dataplane container not found in containerStatuses",
-			"pod", pod.GetName(),
-			"expected_container", containerName)
-	}
+	traceIf(logger, "Dataplane container not found in containerStatuses",
+		"pod", pod.GetName(),
+		"expected_container", containerName)
 	return false, nil
 }
 
-// logContainerStatus logs detailed container status for debugging.
+// logContainerStatus logs detailed container status for debugging. When
+// logger is nil the function returns immediately without computing the
+// auxiliary fields, matching the rest of the trace-on-demand sites in this
+// file.
 func logContainerStatus(logger *slog.Logger, podName, containerName string, status map[string]any, ready, readyFound bool, readyErr error) {
+	if logger == nil {
+		return
+	}
+
 	started, _, _ := unstructured.NestedBool(status, "started")
 	restartCount, _, _ := unstructured.NestedInt64(status, "restartCount")
 
@@ -219,7 +231,7 @@ func logContainerStatus(logger *slog.Logger, podName, containerName string, stat
 		}
 	}
 
-	logger.Log(context.Background(), logging.LevelTrace, "Dataplane container status check",
+	traceIf(logger, "Dataplane container status check",
 		"pod", podName,
 		"container", containerName,
 		"ready", ready,
@@ -328,21 +340,17 @@ func (d *Discovery) evaluatePod(
 		return zero, false, nil
 	}
 
-	if logger != nil {
-		logger.Log(context.Background(), logging.LevelTrace, "Evaluating pod for discovery",
-			"pod", pod.GetName(),
-			"namespace", pod.GetNamespace(),
-			"uid", pod.GetUID())
-	}
+	traceIf(logger, "Evaluating pod for discovery",
+		"pod", pod.GetName(),
+		"namespace", pod.GetNamespace(),
+		"uid", pod.GetUID())
 
 	// Skip terminating pods — they may still report phase="Running" and ready=true
 	// during graceful shutdown, but their ports are shutting down
 	if pod.GetDeletionTimestamp() != nil {
-		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "Skipping terminating pod",
-				"pod", pod.GetName(),
-				"deletion_timestamp", pod.GetDeletionTimestamp())
-		}
+		traceIf(logger, "Skipping terminating pod",
+			"pod", pod.GetName(),
+			"deletion_timestamp", pod.GetDeletionTimestamp())
 		return zero, false, nil
 	}
 
@@ -368,21 +376,17 @@ func (d *Discovery) evaluatePod(
 			pod.GetName(), err)
 	}
 	if !ready {
-		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - dataplane container not ready",
-				"pod", pod.GetName(),
-				"pod_ip", podIP,
-				"phase", phase)
-		}
-		return zero, false, nil
-	}
-
-	if logger != nil {
-		logger.Log(context.Background(), logging.LevelTrace, "Including pod - dataplane container is ready",
+		traceIf(logger, "Skipping pod - dataplane container not ready",
 			"pod", pod.GetName(),
 			"pod_ip", podIP,
 			"phase", phase)
+		return zero, false, nil
 	}
+
+	traceIf(logger, "Including pod - dataplane container is ready",
+		"pod", pod.GetName(),
+		"pod_ip", podIP,
+		"phase", phase)
 
 	return dataplane.Endpoint{
 		URL:          fmt.Sprintf("http://%s:%d/v3", podIP, d.dataplanePort),
@@ -401,10 +405,8 @@ func extractPodIP(pod *unstructured.Unstructured, logger *slog.Logger) (string, 
 		return "", fmt.Errorf("extracting pod IP from %s: %w", pod.GetName(), err)
 	}
 	if !found || podIP == "" {
-		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - no IP assigned",
-				"pod", pod.GetName())
-		}
+		traceIf(logger, "Skipping pod - no IP assigned",
+			"pod", pod.GetName())
 		return "", nil
 	}
 	return podIP, nil
@@ -418,11 +420,9 @@ func extractPodPhase(pod *unstructured.Unstructured, logger *slog.Logger) (strin
 		return "", fmt.Errorf("extracting pod phase from %s: %w", pod.GetName(), err)
 	}
 	if !found || phase != "Running" {
-		if logger != nil {
-			logger.Log(context.Background(), logging.LevelTrace, "Skipping pod - not in Running phase",
-				"pod", pod.GetName(),
-				"phase", phase)
-		}
+		traceIf(logger, "Skipping pod - not in Running phase",
+			"pod", pod.GetName(),
+			"phase", phase)
 		return phase, nil
 	}
 	return phase, nil
