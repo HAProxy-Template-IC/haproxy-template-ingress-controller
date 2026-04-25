@@ -78,21 +78,21 @@ var (
 func NewUserCreate(userlistName string, user *models.User) Operation {
 	return NewContainerChildOp(OperationCreate, "user", PriorityUser, userlistName, user,
 		Identity[*models.User], UserName, executors.UserCreate(userlistName),
-		DescribeContainerChild(OperationCreate, "user", user.Username, "userlist", userlistName))
+		DescribeNamedChild(OperationCreate, "user", user.Username, "userlist", userlistName))
 }
 
 // NewUserUpdate creates an operation to update a user in a userlist.
 func NewUserUpdate(userlistName string, user *models.User) Operation {
 	return NewContainerChildOp(OperationUpdate, "user", PriorityUser, userlistName, user,
 		Identity[*models.User], UserName, executors.UserUpdate(userlistName),
-		DescribeContainerChild(OperationUpdate, "user", user.Username, "userlist", userlistName))
+		DescribeNamedChild(OperationUpdate, "user", user.Username, "userlist", userlistName))
 }
 
 // NewUserDelete creates an operation to delete a user from a userlist.
 func NewUserDelete(userlistName string, user *models.User) Operation {
 	return NewContainerChildOp(OperationDelete, "user", PriorityUser, userlistName, user,
 		Nil[*models.User], UserName, executors.UserDelete(userlistName),
-		DescribeContainerChild(OperationDelete, "user", user.Username, "userlist", userlistName))
+		DescribeNamedChild(OperationDelete, "user", user.Username, "userlist", userlistName))
 }
 
 // MailerEntry factory functions (container children of mailers section).
@@ -101,21 +101,21 @@ func NewUserDelete(userlistName string, user *models.User) Operation {
 func NewMailerEntryCreate(mailersName string, entry *models.MailerEntry) Operation {
 	return NewContainerChildOp(OperationCreate, "mailer_entry", PriorityMailerEntry, mailersName, entry,
 		Identity[*models.MailerEntry], MailerEntryName, executors.MailerEntryCreate(mailersName),
-		DescribeContainerChild(OperationCreate, "mailer entry", entry.Name, "mailers section", mailersName))
+		DescribeNamedChild(OperationCreate, "mailer entry", entry.Name, "mailers section", mailersName))
 }
 
 // NewMailerEntryUpdate creates an operation to update a mailer entry.
 func NewMailerEntryUpdate(mailersName string, entry *models.MailerEntry) Operation {
 	return NewContainerChildOp(OperationUpdate, "mailer_entry", PriorityMailerEntry, mailersName, entry,
 		Identity[*models.MailerEntry], MailerEntryName, executors.MailerEntryUpdate(mailersName),
-		DescribeContainerChild(OperationUpdate, "mailer entry", entry.Name, "mailers section", mailersName))
+		DescribeNamedChild(OperationUpdate, "mailer entry", entry.Name, "mailers section", mailersName))
 }
 
 // NewMailerEntryDelete creates an operation to delete a mailer entry.
 func NewMailerEntryDelete(mailersName string, entry *models.MailerEntry) Operation {
 	return NewContainerChildOp(OperationDelete, "mailer_entry", PriorityMailerEntry, mailersName, entry,
 		Nil[*models.MailerEntry], MailerEntryName, executors.MailerEntryDelete(mailersName),
-		DescribeContainerChild(OperationDelete, "mailer entry", entry.Name, "mailers section", mailersName))
+		DescribeNamedChild(OperationDelete, "mailer entry", entry.Name, "mailers section", mailersName))
 }
 
 // PeerEntry factory functions (container children of peer section).
@@ -124,21 +124,21 @@ func NewMailerEntryDelete(mailersName string, entry *models.MailerEntry) Operati
 func NewPeerEntryCreate(peerSectionName string, entry *models.PeerEntry) Operation {
 	return NewContainerChildOp(OperationCreate, "peer_entry", PriorityPeerEntry, peerSectionName, entry,
 		Identity[*models.PeerEntry], PeerEntryName, executors.PeerEntryCreate(peerSectionName),
-		DescribeContainerChild(OperationCreate, "peer entry", entry.Name, "peer section", peerSectionName))
+		DescribeNamedChild(OperationCreate, "peer entry", entry.Name, "peer section", peerSectionName))
 }
 
 // NewPeerEntryUpdate creates an operation to update a peer entry.
 func NewPeerEntryUpdate(peerSectionName string, entry *models.PeerEntry) Operation {
 	return NewContainerChildOp(OperationUpdate, "peer_entry", PriorityPeerEntry, peerSectionName, entry,
 		Identity[*models.PeerEntry], PeerEntryName, executors.PeerEntryUpdate(peerSectionName),
-		DescribeContainerChild(OperationUpdate, "peer entry", entry.Name, "peer section", peerSectionName))
+		DescribeNamedChild(OperationUpdate, "peer entry", entry.Name, "peer section", peerSectionName))
 }
 
 // NewPeerEntryDelete creates an operation to delete a peer entry.
 func NewPeerEntryDelete(peerSectionName string, entry *models.PeerEntry) Operation {
 	return NewContainerChildOp(OperationDelete, "peer_entry", PriorityPeerEntry, peerSectionName, entry,
 		Nil[*models.PeerEntry], PeerEntryName, executors.PeerEntryDelete(peerSectionName),
-		DescribeContainerChild(OperationDelete, "peer entry", entry.Name, "peer section", peerSectionName))
+		DescribeNamedChild(OperationDelete, "peer entry", entry.Name, "peer section", peerSectionName))
 }
 
 // Nameserver factory functions (container children of resolver section).
@@ -147,21 +147,21 @@ func NewPeerEntryDelete(peerSectionName string, entry *models.PeerEntry) Operati
 func NewNameserverCreate(resolverName string, nameserver *models.Nameserver) Operation {
 	return NewContainerChildOp(OperationCreate, "nameserver", PriorityNameserver, resolverName, nameserver,
 		Identity[*models.Nameserver], NameserverName, executors.NameserverCreate(resolverName),
-		DescribeContainerChild(OperationCreate, "nameserver", nameserver.Name, "resolvers section", resolverName))
+		DescribeNamedChild(OperationCreate, "nameserver", nameserver.Name, "resolvers section", resolverName))
 }
 
 // NewNameserverUpdate creates an operation to update a nameserver in a resolver.
 func NewNameserverUpdate(resolverName string, nameserver *models.Nameserver) Operation {
 	return NewContainerChildOp(OperationUpdate, "nameserver", PriorityNameserver, resolverName, nameserver,
 		Identity[*models.Nameserver], NameserverName, executors.NameserverUpdate(resolverName),
-		DescribeContainerChild(OperationUpdate, "nameserver", nameserver.Name, "resolvers section", resolverName))
+		DescribeNamedChild(OperationUpdate, "nameserver", nameserver.Name, "resolvers section", resolverName))
 }
 
 // NewNameserverDelete creates an operation to delete a nameserver from a resolver.
 func NewNameserverDelete(resolverName string, nameserver *models.Nameserver) Operation {
 	return NewContainerChildOp(OperationDelete, "nameserver", PriorityNameserver, resolverName, nameserver,
 		Nil[*models.Nameserver], NameserverName, executors.NameserverDelete(resolverName),
-		DescribeContainerChild(OperationDelete, "nameserver", nameserver.Name, "resolvers section", resolverName))
+		DescribeNamedChild(OperationDelete, "nameserver", nameserver.Name, "resolvers section", resolverName))
 }
 
 // Cache factory functions.

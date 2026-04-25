@@ -34,20 +34,14 @@ func DescribeIndexChild(op OperationType, childType string, index int, parentTyp
 }
 
 // DescribeNamedChild returns a description function for named child operations.
+// Also used for container children (user, mailer entry, etc.) where the parent
+// is a container section like userlist or mailers — the formatted output is
+// identical, only the documented intent differs.
 func DescribeNamedChild(op OperationType, childType, childName, parentType, parentName string) func() string {
 	verb := opVerb(op)
 	preposition := opPreposition(op)
 	return func() string {
 		return fmt.Sprintf("%s %s '%s' %s %s '%s'", verb, childType, childName, preposition, parentType, parentName)
-	}
-}
-
-// DescribeContainerChild returns a description function for container child operations.
-func DescribeContainerChild(op OperationType, childType, childName, containerType, containerName string) func() string {
-	verb := opVerb(op)
-	preposition := opPreposition(op)
-	return func() string {
-		return fmt.Sprintf("%s %s '%s' %s %s '%s'", verb, childType, childName, preposition, containerType, containerName)
 	}
 }
 
