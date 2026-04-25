@@ -53,58 +53,6 @@ func updateSummaryFromOperations(summary *DiffSummary, operations []Operation) {
 	}
 }
 
-// compareMapEntries is a generic helper for comparing map-based child entries (nameservers, mailer entries, peer entries).
-// This reduces code duplication for the common pattern of comparing map[string]T entries.
-func compareMapEntries[T any](
-	currentMap, desiredMap map[string]T,
-	createOp func(*T) Operation,
-	deleteOp func(*T) Operation,
-	updateOp func(*T) Operation,
-	equalFunc func(*T, *T) bool,
-) []Operation {
-	var operations []Operation
-
-	// Handle nil maps
-	if currentMap == nil {
-		currentMap = make(map[string]T)
-	}
-	if desiredMap == nil {
-		desiredMap = make(map[string]T)
-	}
-
-	// Find added entries
-	for name := range desiredMap {
-		if _, exists := currentMap[name]; !exists {
-			entry := desiredMap[name]
-			operations = append(operations, createOp(&entry))
-		}
-	}
-
-	// Find deleted entries
-	for name := range currentMap {
-		if _, exists := desiredMap[name]; !exists {
-			entry := currentMap[name]
-			operations = append(operations, deleteOp(&entry))
-		}
-	}
-
-	// Find modified entries
-	for name := range desiredMap {
-		currentEntry, exists := currentMap[name]
-		if !exists {
-			continue
-		}
-		desiredEntry := desiredMap[name]
-
-		// Compare entry attributes
-		if !equalFunc(&currentEntry, &desiredEntry) {
-			operations = append(operations, updateOp(&desiredEntry))
-		}
-	}
-
-	return operations
-}
-
 // compareNamedSections is a generic helper for comparing named configuration sections.
 // It handles the common pattern of:
 //   - Converting slices to maps by Name
