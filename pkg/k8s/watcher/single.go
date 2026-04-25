@@ -168,14 +168,38 @@ func (w *SingleWatcher) handleWatchError(_ *cache.Reflector, err error) {
 		"error", err)
 }
 
-// handleAdd handles resource addition events.
-func (w *SingleWatcher) handleAdd(obj any) {
-	// Track last event time for health monitoring
+// recordEvent records receipt of a watch event for health monitoring and emits
+// the matching debug log. action is the lower-case event name (add/update/delete).
+func (w *SingleWatcher) recordEvent(action string) {
 	w.lastEventTime.Store(time.Now().Unix())
-
-	slog.Debug("SingleWatcher received add event",
+	slog.Debug("SingleWatcher received "+action+" event",
 		"gvr", w.config.GVR.String(),
 		"synced", w.synced.Load())
+}
+
+// logProcessing emits the standard "processing <action>" debug log for a resource.
+func (w *SingleWatcher) logProcessing(action string, resource *unstructured.Unstructured) {
+	slog.Debug("SingleWatcher processing "+action,
+		"resource_name", resource.GetName(),
+		"resource_namespace", resource.GetNamespace(),
+		"resource_version", resource.GetResourceVersion())
+}
+
+// skipDuringSync returns true (and logs a debug message) when the watcher has
+// not yet completed its initial sync — callers should drop the event in that
+// case, because we only want to fire OnChange for real changes that happen
+// after the bulk-load phase, not for resources already present at startup.
+func (w *SingleWatcher) skipDuringSync(action string) bool {
+	if w.synced.Load() {
+		return false
+	}
+	slog.Debug("SingleWatcher skipping " + action + " callback - not yet synced")
+	return true
+}
+
+// handleAdd handles resource addition events.
+func (w *SingleWatcher) handleAdd(obj any) {
+	w.recordEvent("add")
 
 	resource := w.convertToUnstructured(obj)
 	if resource == nil {
@@ -183,17 +207,9 @@ func (w *SingleWatcher) handleAdd(obj any) {
 		return
 	}
 
-	slog.Debug("SingleWatcher processing add",
-		"resource_name", resource.GetName(),
-		"resource_namespace", resource.GetNamespace(),
-		"resource_version", resource.GetResourceVersion())
+	w.logProcessing("add", resource)
 
-	// Skip callback during initial sync - we don't want to trigger change events
-	// for resources that already exist. Only invoke callback for real additions
-	// that happen after sync completes.
-	if !w.synced.Load() {
-		// During initial sync, skip callback
-		slog.Debug("SingleWatcher skipping add callback - not yet synced")
+	if w.skipDuringSync("add") {
 		return
 	}
 
@@ -202,12 +218,7 @@ func (w *SingleWatcher) handleAdd(obj any) {
 
 // handleUpdate handles resource update events.
 func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
-	// Track last event time for health monitoring
-	w.lastEventTime.Store(time.Now().Unix())
-
-	slog.Debug("SingleWatcher received update event",
-		"gvr", w.config.GVR.String(),
-		"synced", w.synced.Load())
+	w.recordEvent("update")
 
 	oldResource := w.convertToUnstructured(oldObj)
 	resource := w.convertToUnstructured(newObj)
@@ -251,17 +262,9 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
 		}
 	}
 
-	slog.Debug("SingleWatcher processing update",
-		"resource_name", resource.GetName(),
-		"resource_namespace", resource.GetNamespace(),
-		"resource_version", resource.GetResourceVersion())
+	w.logProcessing("update", resource)
 
-	// Skip callback during initial sync - we don't want to trigger change events
-	// for resources that are updating during the sync process. Only invoke callback
-	// for real updates that happen after sync completes.
-	if !w.synced.Load() {
-		// During initial sync, skip callback
-		slog.Debug("SingleWatcher skipping callback - not yet synced")
+	if w.skipDuringSync("update") {
 		return
 	}
 
@@ -270,12 +273,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
 
 // handleDelete handles resource deletion events.
 func (w *SingleWatcher) handleDelete(obj any) {
-	// Track last event time for health monitoring
-	w.lastEventTime.Store(time.Now().Unix())
-
-	slog.Debug("SingleWatcher received delete event",
-		"gvr", w.config.GVR.String(),
-		"synced", w.synced.Load())
+	w.recordEvent("delete")
 
 	resource := w.convertToUnstructured(obj)
 	if resource == nil {
@@ -289,16 +287,9 @@ func (w *SingleWatcher) handleDelete(obj any) {
 		}
 	}
 
-	slog.Debug("SingleWatcher processing delete",
-		"resource_name", resource.GetName(),
-		"resource_namespace", resource.GetNamespace(),
-		"resource_version", resource.GetResourceVersion())
+	w.logProcessing("delete", resource)
 
-	// Skip callback during initial sync for consistency (unlikely scenario but possible)
-	// Only invoke callback for real deletions that happen after sync completes.
-	if !w.synced.Load() {
-		// During initial sync, skip callback
-		slog.Debug("SingleWatcher skipping delete callback - not yet synced")
+	if w.skipDuringSync("delete") {
 		return
 	}
 
