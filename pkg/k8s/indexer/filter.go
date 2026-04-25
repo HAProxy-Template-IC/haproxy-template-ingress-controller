@@ -90,14 +90,40 @@ func (f *FieldFilter) removeField(rv reflect.Value, pattern string) error {
 	return f.deleteField(parent, targetField)
 }
 
-// navigateToField navigates to a field in the resource structure.
-func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (reflect.Value, error) {
-	// Dereference pointers
+// derefForFilter follows pointers and interfaces until reaching a concrete value.
+// Returns ok=false if a nil pointer/interface is encountered along the way, in
+// which case callers typically treat the field as "already absent".
+func derefForFilter(rv reflect.Value) (reflect.Value, bool) {
 	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
 		if rv.IsNil() {
-			return reflect.Value{}, errors.New("nil pointer")
+			return reflect.Value{}, false
 		}
 		rv = rv.Elem()
+	}
+	return rv, true
+}
+
+// findStructField returns the field on rv whose name matches fieldName, trying
+// an exact match first and falling back to a case-insensitive match (common
+// when navigating Kubernetes API objects whose JSON tags differ in case from
+// their Go field names). The returned value is invalid when no match exists.
+func findStructField(rv reflect.Value, fieldName string) reflect.Value {
+	if value := rv.FieldByName(fieldName); value.IsValid() {
+		return value
+	}
+	for i := 0; i < rv.NumField(); i++ {
+		if strings.EqualFold(rv.Type().Field(i).Name, fieldName) {
+			return rv.Field(i)
+		}
+	}
+	return reflect.Value{}
+}
+
+// navigateToField navigates to a field in the resource structure.
+func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (reflect.Value, error) {
+	rv, ok := derefForFilter(rv)
+	if !ok {
+		return reflect.Value{}, errors.New("nil pointer")
 	}
 
 	switch rv.Kind() {
@@ -111,16 +137,8 @@ func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (refle
 		return value, nil
 
 	case reflect.Struct:
-		// Struct field access
-		value := rv.FieldByName(fieldName)
+		value := findStructField(rv, fieldName)
 		if !value.IsValid() {
-			// Try case-insensitive match (common in Kubernetes API objects)
-			for i := 0; i < rv.NumField(); i++ {
-				field := rv.Type().Field(i)
-				if strings.EqualFold(field.Name, fieldName) {
-					return rv.Field(i), nil
-				}
-			}
 			return reflect.Value{}, fmt.Errorf("field not found: %s", fieldName)
 		}
 		return value, nil
@@ -132,12 +150,9 @@ func (f *FieldFilter) navigateToField(rv reflect.Value, fieldName string) (refle
 
 // deleteField removes a field from a map or struct.
 func (f *FieldFilter) deleteField(parent reflect.Value, fieldName string) error {
-	// Dereference pointers
-	for parent.Kind() == reflect.Pointer || parent.Kind() == reflect.Interface {
-		if parent.IsNil() {
-			return nil
-		}
-		parent = parent.Elem()
+	parent, ok := derefForFilter(parent)
+	if !ok {
+		return nil
 	}
 
 	switch parent.Kind() {
@@ -151,20 +166,8 @@ func (f *FieldFilter) deleteField(parent reflect.Value, fieldName string) error 
 
 	case reflect.Struct:
 		// Cannot delete struct fields, can only zero them
-		value := parent.FieldByName(fieldName)
-		if !value.IsValid() {
-			// Try case-insensitive match
-			for i := 0; i < parent.NumField(); i++ {
-				field := parent.Type().Field(i)
-				if strings.EqualFold(field.Name, fieldName) {
-					value = parent.Field(i)
-					break
-				}
-			}
-		}
-
+		value := findStructField(parent, fieldName)
 		if value.IsValid() && value.CanSet() {
-			// Zero the field
 			value.Set(reflect.Zero(value.Type()))
 		}
 		return nil
