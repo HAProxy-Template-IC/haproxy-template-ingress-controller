@@ -38,17 +38,8 @@ func (o *sslStorageOps[T]) Create(ctx context.Context, id, content string) (stri
 			// File already exists, fall back to update instead of failing.
 			return o.Update(ctx, id, content)
 		}
-		// HAProxy's runtime SSL CA endpoint can return 500 errors even when the
-		// operation actually succeeds. The file creation is asynchronous, so we
-		// need to verify the file exists (with retries to handle async creation).
-		// Note: We only check existence, not content, because the API returns
-		// metadata/fingerprint instead of raw certificate content.
-		if strings.Contains(err.Error(), "500") {
-			if o.verifyExistsWithRetry(ctx, name) {
-				slog.Debug("SSL CA file create returned 500 but file exists, treating as success",
-					"file", name)
-				return "", nil
-			}
+		if o.recoverFrom500(ctx, err, name, "create") {
+			return "", nil
 		}
 	}
 	return reloadID, err
@@ -58,20 +49,29 @@ func (o *sslStorageOps[T]) Update(ctx context.Context, id, content string) (stri
 	// Normalize to filename only - DataPlane API expects just the filename.
 	name := filepath.Base(id)
 	reloadID, err := o.update(ctx, name, content)
-	if err != nil {
-		// HAProxy's runtime SSL CA endpoint can return 500 errors even when the
-		// operation actually succeeds. Verify that the file still exists.
-		// Note: We only check existence, not content, because the API returns
-		// metadata/fingerprint instead of raw certificate content.
-		if strings.Contains(err.Error(), "500") {
-			if o.verifyExistsWithRetry(ctx, name) {
-				slog.Debug("SSL CA file update returned 500 but file exists, treating as success",
-					"file", name)
-				return "", nil
-			}
-		}
+	if err != nil && o.recoverFrom500(ctx, err, name, "update") {
+		return "", nil
 	}
 	return reloadID, err
+}
+
+// recoverFrom500 inspects err and, when it carries a "500" status from
+// HAProxy's runtime SSL endpoints, verifies the file is actually present
+// (with retries — file creation is asynchronous). Returns true when the
+// caller can safely treat the original error as success.
+//
+// We only check existence, not content, because the API returns
+// metadata/fingerprint instead of raw certificate content.
+func (o *sslStorageOps[T]) recoverFrom500(ctx context.Context, err error, name, action string) bool {
+	if err == nil || !strings.Contains(err.Error(), "500") {
+		return false
+	}
+	if !o.verifyExistsWithRetry(ctx, name) {
+		return false
+	}
+	slog.Debug("SSL CA file "+action+" returned 500 but file exists, treating as success",
+		"file", name)
+	return true
 }
 
 // verifyExistsWithRetry checks if a file exists in storage with retries.
