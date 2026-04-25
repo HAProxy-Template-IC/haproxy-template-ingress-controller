@@ -60,17 +60,19 @@ This package wraps pure components in event adapters to coordinate them:
 Pure Component              Event Adapter
 (pkg/templating)           (pkg/controller/renderer)
      ↓                            ↓
-Engine          ────wraps──→  RendererComponent
-  .Render()                    - Subscribes in constructor
+Engine          ────wraps──→  renderer.Component
+  .Render()                    - Subscribes via component.Base
                                - Calls .Render()
                                - Publishes result events
 ```
 
 ### Example Event Adapter
 
+The real `renderer.Component` (constructor `renderer.New`) takes seven dependencies — bus, config, store map, HAProxy pod store, current-config store, capabilities, logger — and embeds `*component.ReadySignal` for lifecycle hooks. The skeleton below illustrates the pattern with a hypothetical adapter; see `pkg/controller/renderer/component.go` for the production version.
+
 ```go
-// pkg/controller/renderer/component.go
-package renderer
+// Illustrative — not a real package. Shows the event-adapter shape.
+package examplerenderer
 
 import (
     "haptic/pkg/controller/events"
@@ -88,7 +90,7 @@ func New(bus *busevents.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("examplerenderer", 100),  // Subscribe in constructor, before bus.Start()
     }
 }
 
@@ -97,24 +99,18 @@ func (c *Component) Run(ctx context.Context) error {
         select {
         case event := <-c.eventChan:
             switch e := event.(type) {
-            case events.ReconciliationTriggeredEvent:
+            case *events.ReconciliationTriggeredEvent:
                 // Extract primitives for pure component
-                templates := c.extractTemplates(e.Config)
-                context := c.buildContext(e.Resources)
+                renderCtx := c.buildContext(e)
 
                 // Call pure component
-                output, err := c.engine.Render(ctx, "haproxy.cfg", context)
+                output, err := c.engine.Render(ctx, "haproxy.cfg", renderCtx)
 
                 // Publish result event
                 if err != nil {
-                    c.eventBus.Publish(events.RenderFailedEvent{
-                        Error: err.Error(),
-                    })
+                    c.eventBus.Publish(events.NewTemplateRenderFailedEvent("haproxy.cfg", err.Error(), ""))
                 } else {
-                    c.eventBus.Publish(events.RenderCompletedEvent{
-                        Output: output,
-                        Size:   len(output),
-                    })
+                    c.publishRendered(output)
                 }
             }
         case <-ctx.Done():
@@ -477,12 +473,13 @@ Key non-obvious points:
 ### Testing Event Adapters
 
 ```go
-func TestRendererComponent(t *testing.T) {
-    bus := events.NewEventBus(100)
+// Illustrative — using the examplerenderer skeleton from above.
+func TestExampleRenderer(t *testing.T) {
+    bus := busevents.NewEventBus(100)
     engine, _ := templating.New(templating.EngineTypeScriggo, testTemplates, nil, nil, nil)
-    renderer := NewRendererComponent(bus, engine)
+    component := examplerenderer.New(bus, engine)
 
-    // Subscribe to output events
+    // Subscribe to output events BEFORE starting the bus
     eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
@@ -490,21 +487,18 @@ func TestRendererComponent(t *testing.T) {
     defer cancel()
 
     // Start component
-    go renderer.Run(ctx)
+    go component.Run(ctx)
 
     // Trigger event
-    bus.Publish(ReconciliationTriggeredEvent{
-        Config:    testConfig,
-        Resources: testResources,
-    })
+    bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
     // Verify response event
     select {
     case event := <-eventChan:
-        if completed, ok := event.(RenderCompletedEvent); ok {
-            assert.Contains(t, completed.Output, "expected haproxy config")
+        if rendered, ok := event.(*events.TemplateRenderedEvent); ok {
+            assert.Contains(t, rendered.HAProxyConfig, "expected haproxy config")
         } else {
-            t.Fatalf("expected RenderCompletedEvent, got %T", event)
+            t.Fatalf("expected *TemplateRenderedEvent, got %T", event)
         }
     case <-time.After(1 * time.Second):
         t.Fatal("timeout waiting for render event")

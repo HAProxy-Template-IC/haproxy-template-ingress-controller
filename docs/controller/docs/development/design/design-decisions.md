@@ -489,258 +489,39 @@ func (b *EventBus) Start() {
 
 **Event Type Definitions**:
 
+The full catalog of event-type constants (~60 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `certificate.go`, `webhookobservability.go`, `http.go`, `webhook.go`, `proposal.go`, `status.go`).
+
+Every event type follows the same shape:
+
 ```go
-// pkg/events/types.go
+// pkg/controller/events/<category>.go
 package events
 
-// Event categories covering complete controller lifecycle
-//
-// All events use pointer receivers and include private timestamp fields.
-// Constructor functions (New*Event) perform defensive copying of slices/maps.
-
-// Lifecycle Events
-type ControllerStartedEvent struct {
-    ConfigVersion  string
-    SecretVersion  string
-    timestamp      time.Time
-}
-
-func NewControllerStartedEvent(configVersion, secretVersion string) *ControllerStartedEvent {
-    return &ControllerStartedEvent{
-        ConfigVersion: configVersion,
-        SecretVersion: secretVersion,
-        timestamp:     time.Now(),
-    }
-}
-
-func (e *ControllerStartedEvent) EventType() string    { return "controller.started" }
-func (e *ControllerStartedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ControllerShutdownEvent struct {
-    Reason    string
-    timestamp time.Time
-}
-
-func NewControllerShutdownEvent(reason string) *ControllerShutdownEvent {
-    return &ControllerShutdownEvent{
-        Reason:    reason,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ControllerShutdownEvent) EventType() string    { return "controller.shutdown" }
-func (e *ControllerShutdownEvent) Timestamp() time.Time { return e.timestamp }
-
-// Configuration Events
+// Exported fields for event data; unexported `timestamped` mixes in Timestamp().
 type ConfigParsedEvent struct {
-    Config        interface{}
-    Version       string
-    SecretVersion string
-    timestamp     time.Time
+    Config         any    // parsed config (any to avoid circular deps)
+    TemplateConfig any    // original CRD (for k8s metadata)
+    Version        string // ConfigMap resourceVersion
+    SecretVersion  string // credentials Secret resourceVersion
+    timestamped
 }
 
-func NewConfigParsedEvent(config interface{}, version, secretVersion string) *ConfigParsedEvent {
+// Constructor performs defensive copying of slices/maps where present.
+func NewConfigParsedEvent(config, templateConfig any, version, secretVersion string) *ConfigParsedEvent {
     return &ConfigParsedEvent{
-        Config:        config,
-        Version:       version,
-        SecretVersion: secretVersion,
-        timestamp:     time.Now(),
+        Config:         config,
+        TemplateConfig: templateConfig,
+        Version:        version,
+        SecretVersion:  secretVersion,
+        timestamped:    newTimestamped(),
     }
 }
 
-func (e *ConfigParsedEvent) EventType() string    { return "config.parsed" }
-func (e *ConfigParsedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ConfigValidatedEvent struct {
-    Config        interface{}
-    Version       string
-    SecretVersion string
-    timestamp     time.Time
-}
-
-func NewConfigValidatedEvent(config interface{}, version, secretVersion string) *ConfigValidatedEvent {
-    return &ConfigValidatedEvent{
-        Config:        config,
-        Version:       version,
-        SecretVersion: secretVersion,
-        timestamp:     time.Now(),
-    }
-}
-
-func (e *ConfigValidatedEvent) EventType() string    { return "config.validated" }
-func (e *ConfigValidatedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ConfigInvalidEvent struct {
-    Version          string
-    ValidationErrors map[string][]string // validator name -> errors
-    timestamp        time.Time
-}
-
-// NewConfigInvalidEvent creates a new ConfigInvalidEvent with defensive copying
-func NewConfigInvalidEvent(version string, validationErrors map[string][]string) *ConfigInvalidEvent {
-    // Defensive copy of map with slice values
-    errorsCopy := make(map[string][]string, len(validationErrors))
-    for k, v := range validationErrors {
-        if len(v) > 0 {
-            vCopy := make([]string, len(v))
-            copy(vCopy, v)
-            errorsCopy[k] = vCopy
-        }
-    }
-
-    return &ConfigInvalidEvent{
-        Version:          version,
-        ValidationErrors: errorsCopy,
-        timestamp:        time.Now(),
-    }
-}
-
-func (e *ConfigInvalidEvent) EventType() string    { return "config.invalid" }
-func (e *ConfigInvalidEvent) Timestamp() time.Time { return e.timestamp }
-
-// Resource Events
-type ResourceIndexUpdatedEvent struct {
-    // ResourceTypeName identifies the resource type from config (e.g., "ingresses", "services").
-    ResourceTypeName string
-
-    // ChangeStats provides detailed change statistics including Created, Modified, Deleted counts
-    // and whether this event occurred during initial sync.
-    ChangeStats types.ChangeStats
-
-    timestamp time.Time
-}
-
-func NewResourceIndexUpdatedEvent(resourceTypeName string, changeStats types.ChangeStats) *ResourceIndexUpdatedEvent {
-    return &ResourceIndexUpdatedEvent{
-        ResourceTypeName: resourceTypeName,
-        ChangeStats:      changeStats,
-        timestamp:        time.Now(),
-    }
-}
-
-func (e *ResourceIndexUpdatedEvent) EventType() string    { return "resource.index.updated" }
-func (e *ResourceIndexUpdatedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ResourceSyncCompleteEvent struct {
-    // ResourceTypeName identifies the resource type from config (e.g., "ingresses").
-    ResourceTypeName string
-
-    // InitialCount is the number of resources loaded during initial sync.
-    InitialCount int
-
-    timestamp time.Time
-}
-
-func NewResourceSyncCompleteEvent(resourceTypeName string, initialCount int) *ResourceSyncCompleteEvent {
-    return &ResourceSyncCompleteEvent{
-        ResourceTypeName: resourceTypeName,
-        InitialCount:     initialCount,
-        timestamp:        time.Now(),
-    }
-}
-
-func (e *ResourceSyncCompleteEvent) EventType() string    { return "resource.sync.complete" }
-func (e *ResourceSyncCompleteEvent) Timestamp() time.Time { return e.timestamp }
-
-type IndexSynchronizedEvent struct {
-    // ResourceCounts maps resource types to their counts.
-    ResourceCounts map[string]int
-    timestamp      time.Time
-}
-
-// NewIndexSynchronizedEvent creates a new IndexSynchronizedEvent with defensive copying
-func NewIndexSynchronizedEvent(resourceCounts map[string]int) *IndexSynchronizedEvent {
-    // Defensive copy of map
-    countsCopy := make(map[string]int, len(resourceCounts))
-    for k, v := range resourceCounts {
-        countsCopy[k] = v
-    }
-
-    return &IndexSynchronizedEvent{
-        ResourceCounts: countsCopy,
-        timestamp:      time.Now(),
-    }
-}
-
-func (e *IndexSynchronizedEvent) EventType() string    { return "index.synchronized" }
-func (e *IndexSynchronizedEvent) Timestamp() time.Time { return e.timestamp }
-
-// Reconciliation Events
-type ReconciliationTriggeredEvent struct {
-    Reason    string
-    timestamp time.Time
-}
-
-func NewReconciliationTriggeredEvent(reason string) *ReconciliationTriggeredEvent {
-    return &ReconciliationTriggeredEvent{
-        Reason:    reason,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ReconciliationTriggeredEvent) EventType() string    { return "reconciliation.triggered" }
-func (e *ReconciliationTriggeredEvent) Timestamp() time.Time { return e.timestamp }
-
-type ReconciliationStartedEvent struct {
-    Trigger   string
-    timestamp time.Time
-}
-
-func NewReconciliationStartedEvent(trigger string) *ReconciliationStartedEvent {
-    return &ReconciliationStartedEvent{
-        Trigger:   trigger,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ReconciliationStartedEvent) EventType() string    { return "reconciliation.started" }
-func (e *ReconciliationStartedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ReconciliationCompletedEvent struct {
-    DurationMs int64
-    timestamp  time.Time
-}
-
-func NewReconciliationCompletedEvent(durationMs int64) *ReconciliationCompletedEvent {
-    return &ReconciliationCompletedEvent{
-        DurationMs: durationMs,
-        timestamp:  time.Now(),
-    }
-}
-
-func (e *ReconciliationCompletedEvent) EventType() string    { return "reconciliation.completed" }
-func (e *ReconciliationCompletedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ReconciliationFailedEvent struct {
-    Error     string
-    timestamp time.Time
-}
-
-func NewReconciliationFailedEvent(err string) *ReconciliationFailedEvent {
-    return &ReconciliationFailedEvent{
-        Error:     err,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ReconciliationFailedEvent) EventType() string    { return "reconciliation.failed" }
-func (e *ReconciliationFailedEvent) Timestamp() time.Time { return e.timestamp }
-
-// Note: All ~50 event types follow the same pattern:
-// - Pointer receivers for EventType() and Timestamp() methods
-// - Private timestamp field set in constructor
-// - Constructor function (New*Event) that performs defensive copying
-// - Exported fields for event data
-//
-// Additional event categories (not shown for brevity):
-// - Template Events (TemplateRenderedEvent, TemplateRenderFailedEvent)
-// - Validation Events (ValidationStartedEvent, ValidationCompletedEvent, ValidationFailedEvent)
-// - Deployment Events (DeploymentStartedEvent, InstanceDeployedEvent, DeploymentCompletedEvent)
-// - Storage Events (StorageSyncStartedEvent, StorageSyncCompletedEvent)
-// - HAProxy Discovery Events (HAProxyPodsDiscoveredEvent)
-//
-// See pkg/controller/events/types.go for complete event catalog.
+// Pointer receiver for the Event interface method.
+func (e *ConfigParsedEvent) EventType() string { return EventTypeConfigParsed }
 ```
+
+Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook certificates, webhook validation (observability + scatter-gather request/response), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
 
 **Event Immutability Contract**:
 

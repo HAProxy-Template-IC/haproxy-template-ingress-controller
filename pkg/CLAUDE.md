@@ -109,9 +109,11 @@ type Renderer interface {
 
 Only `pkg/controller` contains event coordination:
 
+The real `pkg/controller/renderer.Component` (constructor `renderer.New`) takes seven dependencies — bus, config, store map, HAProxy pod store, current-config store, capabilities, logger — and embeds `*component.ReadySignal` for lifecycle hooks. The illustrative skeleton below shows the event-adapter shape with a hypothetical package; see `pkg/controller/renderer/component.go` for the production version.
+
 ```go
-// pkg/controller/renderer/component.go
-package renderer
+// Illustrative — not a real package. Shows the event-adapter shape.
+package examplerenderer
 
 import (
     "haptic/pkg/events"
@@ -129,7 +131,7 @@ func New(bus *events.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("examplerenderer", 100),  // Subscribe in constructor, before bus.Start()
     }
 }
 
@@ -251,21 +253,22 @@ func TestEngine_Render(t *testing.T) {
 Test package interactions:
 
 ```go
-// pkg/controller/executor_test.go
-package executor
+// Illustrative — real cross-package wiring lives in
+// pkg/controller/reconciler/coordinator_test.go and similar files.
+package examplecoordinator
 
 import (
     "haptic/pkg/events"
     "haptic/pkg/templating"
 )
 
-func TestExecutor_Integration(t *testing.T) {
+func TestCoordinator_Integration(t *testing.T) {
     bus := events.NewEventBus(100)
     engine, _ := templating.New(...)
-    exec := NewExecutor(bus, engine, ...)
+    coord := New(bus, engine, ...)  // hypothetical adapter
 
     // Test cross-package interaction
-    bus.Publish(ReconciliationTriggeredEvent{})
+    bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
     // Verify expected behavior
 }
 ```

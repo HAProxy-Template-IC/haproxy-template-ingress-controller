@@ -34,14 +34,12 @@ Events are organized into separate files by category:
 | File | Description |
 |------|-------------|
 | `types.go` | Event type constants and package documentation |
-| `lifecycle.go` | System startup/shutdown events |
 | `config.go` | ConfigMap/Secret changes and validation events |
 | `resource.go` | Kubernetes resource indexing events |
 | `reconciliation.go` | Orchestration lifecycle events |
 | `template.go` | Template rendering events |
-| `validation.go` | Configuration validation events |
+| `validation.go` | Three-phase HAProxy validation events |
 | `deployment.go` | HAProxy deployment events |
-| `storage.go` | Auxiliary file sync events |
 | `discovery.go` | HAProxy pod discovery events |
 | `credentials.go` | Credentials loading and validation events |
 | `leader.go` | Leader election events |
@@ -51,26 +49,30 @@ Events are organized into separate files by category:
 | `http.go` | HTTP resource events |
 | `status.go` | Status patch application events |
 | `webhook.go` | Scatter-gather request/response events |
+| `proposal.go` | Proposal validation request/response events |
+| `correlation.go` | Correlation ID helpers for tracing events |
+| `timestamped.go` | Embedded `timestamped` mixin used by all events |
+| `internal_copy.go` | Internal helpers for defensive slice/map copying |
 
 ## Event Categories
 
 Events are organized by lifecycle phase:
 
-1. **Lifecycle Events** (`lifecycle.go`) - System startup/shutdown
-2. **Configuration Events** (`config.go`) - ConfigMap/Secret changes and validation
-3. **Resource Events** (`resource.go`) - Kubernetes resource indexing
-4. **Reconciliation Events** (`reconciliation.go`) - Orchestration lifecycle
-5. **Template Events** (`template.go`) - Template rendering
-6. **Validation Events** (`validation.go`) - Configuration validation
-7. **Deployment Events** (`deployment.go`) - HAProxy deployment
-8. **Storage Events** (`storage.go`) - Auxiliary file sync
-9. **HAProxy Pod Events** (`discovery.go`) - Pod discovery
-10. **Credentials Events** (`credentials.go`) - Credentials management
-11. **Leader Election Events** (`leader.go`) - Leadership transitions
-12. **Publishing Events** (`publishing.go`) - Config publishing
-13. **Certificate Events** (`certificate.go`) - Webhook certificates
-14. **Webhook Events** (`webhookobservability.go`, `webhook.go`) - Webhook validation
-15. **HTTP Resource Events** (`http.go`) - HTTP resource management
+1. **Configuration Events** (`config.go`) - ConfigMap/Secret changes and validation
+2. **Resource Events** (`resource.go`) - Kubernetes resource indexing
+3. **Reconciliation Events** (`reconciliation.go`) - Orchestration lifecycle
+4. **Template Events** (`template.go`) - Template rendering
+5. **Validation Events** (`validation.go`) - Three-phase HAProxy validation
+6. **Deployment Events** (`deployment.go`) - HAProxy deployment
+7. **HAProxy Pod Events** (`discovery.go`) - Pod discovery
+8. **Credentials Events** (`credentials.go`) - Credentials management
+9. **Leader Election Events** (`leader.go`) - Leadership transitions
+10. **Publishing Events** (`publishing.go`) - Config publishing (includes auxiliary file sync metadata)
+11. **Certificate Events** (`certificate.go`) - Webhook certificates
+12. **Webhook Events** (`webhookobservability.go`, `webhook.go`) - Webhook validation observability and scatter-gather
+13. **HTTP Resource Events** (`http.go`) - HTTP resource management
+14. **Proposal Events** (`proposal.go`) - Speculative validation of hypothetical configs
+15. **Status Events** (`status.go`) - Kubernetes status patch results
 
 ## Key Principles
 

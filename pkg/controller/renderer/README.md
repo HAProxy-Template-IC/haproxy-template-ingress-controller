@@ -1,22 +1,35 @@
 # pkg/controller/renderer
 
-Renderer component - template rendering for HAProxy configuration.
+Renderer component — template rendering for HAProxy configuration.
 
 ## Overview
 
-Event-driven component that renders HAProxy configuration from templates using current resource state.
+Event-driven component that renders HAProxy configuration and auxiliary files from templates using the current resource state. Wraps the pure `pkg/templating.Engine` in a `pkg/controller/component.Base`-backed event adapter.
 
 ## Quick Start
 
 ```go
-renderer := renderer.NewRendererComponent(bus, engine, logger)
-go renderer.Start(ctx)
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+
+component, err := renderer.New(
+    bus,
+    cfg,                 // *config.Config built from the HAProxyTemplateConfig CRD
+    storeMap,            // map[string]stores.Store — one per spec.watchedResources entry
+    haproxyPodStore,     // stores.Store of HAProxy pods (from discovery)
+    currentConfigStore,  // *currentconfigstore.Store — last-deployed HAProxy config
+    capabilities,        // dataplane.Capabilities (HAProxy version-derived)
+    logger,
+)
+if err != nil { /* ... */ }
+go component.Run(ctx)
 ```
+
+The constructor is `renderer.New` and the type it returns is `*renderer.Component` (not `RendererComponent`). For the pure rendering surface used by the pipeline and the dry-run validator, see `renderer.NewRenderService(*RenderServiceConfig)` in `service.go`.
 
 ## Events
 
-- Subscribes: ReconciliationTriggeredEvent
-- Publishes: TemplateRenderedEvent, TemplateRenderFailedEvent
+- Subscribes: `ReconciliationTriggeredEvent`
+- Publishes: `TemplateRenderedEvent`, `TemplateRenderFailedEvent`
 
 ## Template Context
 
@@ -25,23 +38,23 @@ The renderer builds a context with all watched Kubernetes resources:
 ```
 {
   "resources": {
-    "ingresses": StoreWrapper,    // Provides List() and Get()
-    "services": StoreWrapper,
-    "endpoints": StoreWrapper,
-    // ... other watched resources
+    "ingresses": *StoreWrapper,   // .List() / .Get(keys...) / .GetSingle(keys...)
+    "services":  *StoreWrapper,
+    "endpoints": *StoreWrapper,
+    // ... one entry per spec.watchedResources key
   }
 }
 ```
 
 ### StoreWrapper Performance
 
-StoreWrapper unwraps `unstructured.Unstructured` objects to plain maps for template access:
+`StoreWrapper` unwraps `unstructured.Unstructured` objects to plain maps for template access:
 
-- **List()**: Lazy-cached - unwraps all resources on first call, caches for subsequent calls within the same reconciliation
-- **Get(keys...)**: On-demand - unwraps matched resources each call (typically small result sets)
+- **`.List()`** — lazy-cached: unwraps every resource on the first call, caches the result for the rest of this reconciliation.
+- **`.Get(keys...)` / `.GetSingle(keys...)`** — on-demand: unwraps only the matched resources each call (typically small result sets).
 
-This ensures templates pay the unwrapping cost only once per reconciliation, regardless of how many times `List()` is called.
+So templates pay the unwrapping cost once per reconciliation no matter how many times they call `List()`.
 
 ## License
 
-See main repository for license information.
+Apache-2.0 — see root `LICENSE`.
