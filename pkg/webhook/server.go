@@ -209,13 +209,7 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	// This ensures consistent data types throughout reconciliation and webhook paths
 	obj := &unstructured.Unstructured{}
 	if err := json.Unmarshal(request.Object.Raw, obj); err != nil {
-		return &admissionv1.AdmissionResponse{
-			Allowed: false,
-			Result: &metav1.Status{
-				Message: fmt.Sprintf("parsing object: %v", err),
-				Code:    http.StatusBadRequest,
-			},
-		}
+		return deniedResponse(fmt.Sprintf("parsing object: %v", err), http.StatusBadRequest)
 	}
 
 	// Parse old object (if present - for UPDATE/DELETE operations)
@@ -223,13 +217,7 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	if len(request.OldObject.Raw) > 0 {
 		oldObj = &unstructured.Unstructured{}
 		if err := json.Unmarshal(request.OldObject.Raw, oldObj); err != nil {
-			return &admissionv1.AdmissionResponse{
-				Allowed: false,
-				Result: &metav1.Status{
-					Message: fmt.Sprintf("parsing old object: %v", err),
-					Code:    http.StatusBadRequest,
-				},
-			}
+			return deniedResponse(fmt.Sprintf("parsing old object: %v", err), http.StatusBadRequest)
 		}
 	}
 
@@ -252,29 +240,30 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 
 	if err != nil {
 		// Validation error (internal server error)
-		return &admissionv1.AdmissionResponse{
-			Allowed: false,
-			Result: &metav1.Status{
-				Message: fmt.Sprintf("validation error: %v", err),
-				Code:    http.StatusInternalServerError,
-			},
-		}
+		return deniedResponse(fmt.Sprintf("validation error: %v", err), http.StatusInternalServerError)
 	}
 
 	if !allowed {
 		// Validation failed
-		return &admissionv1.AdmissionResponse{
-			Allowed: false,
-			Result: &metav1.Status{
-				Message: reason,
-				Code:    http.StatusForbidden,
-			},
-		}
+		return deniedResponse(reason, http.StatusForbidden)
 	}
 
 	// Validation passed
 	return &admissionv1.AdmissionResponse{
 		Allowed: true,
+	}
+}
+
+// deniedResponse builds an AdmissionResponse with Allowed=false carrying a
+// metav1.Status with the supplied message and HTTP-style code, used for the
+// four reject paths in validate (parse failures, validator errors, denials).
+func deniedResponse(message string, code int32) *admissionv1.AdmissionResponse {
+	return &admissionv1.AdmissionResponse{
+		Allowed: false,
+		Result: &metav1.Status{
+			Message: message,
+			Code:    code,
+		},
 	}
 }
 
