@@ -100,6 +100,16 @@ func ServerIneligibleFields(current, desired *models.Server) []string {
 	return ineligible
 }
 
+// serverTemplateOps groups create/update/delete factories for server-template
+// operations under a backend. Plain server create/delete are handled inline
+// because server updates use the dedicated ServerUpdateOp (see NewServerUpdate),
+// so a NameChildCRUD with a never-called Update slot would be misleading here.
+var serverTemplateOps = NewNameChildCRUD[*models.ServerTemplate](
+	"server_template", "server template", "backend", PriorityServer,
+	func(_ *models.ServerTemplate, childName string) string { return childName },
+	executors.ServerTemplateCreate, executors.ServerTemplateUpdate, executors.ServerTemplateDelete,
+)
+
 // NewServerCreate creates an operation to create a server in a backend.
 func NewServerCreate(backendName string, server *models.Server) Operation {
 	return NewNameChildOp(
@@ -204,45 +214,15 @@ func NewServerDelete(backendName string, server *models.Server) Operation {
 
 // NewServerTemplateCreate creates an operation to create a server template in a backend.
 func NewServerTemplateCreate(backendName string, serverTemplate *models.ServerTemplate) Operation {
-	return NewNameChildOp(
-		OperationCreate,
-		"server_template",
-		PriorityServer, // Server templates use same priority as servers
-		backendName,
-		serverTemplate.Prefix,
-		serverTemplate,
-		Identity[*models.ServerTemplate],
-		executors.ServerTemplateCreate(backendName),
-		DescribeNamedChild(OperationCreate, "server template", serverTemplate.Prefix, "backend", backendName),
-	)
+	return serverTemplateOps.Create(backendName, serverTemplate.Prefix, serverTemplate)
 }
 
 // NewServerTemplateUpdate creates an operation to update a server template in a backend.
 func NewServerTemplateUpdate(backendName string, serverTemplate *models.ServerTemplate) Operation {
-	return NewNameChildOp(
-		OperationUpdate,
-		"server_template",
-		PriorityServer, // Server templates use same priority as servers
-		backendName,
-		serverTemplate.Prefix,
-		serverTemplate,
-		Identity[*models.ServerTemplate],
-		executors.ServerTemplateUpdate(backendName),
-		DescribeNamedChild(OperationUpdate, "server template", serverTemplate.Prefix, "backend", backendName),
-	)
+	return serverTemplateOps.Update(backendName, serverTemplate.Prefix, serverTemplate)
 }
 
 // NewServerTemplateDelete creates an operation to delete a server template from a backend.
 func NewServerTemplateDelete(backendName string, serverTemplate *models.ServerTemplate) Operation {
-	return NewNameChildOp(
-		OperationDelete,
-		"server_template",
-		PriorityServer, // Server templates use same priority as servers
-		backendName,
-		serverTemplate.Prefix,
-		serverTemplate,
-		Nil[*models.ServerTemplate],
-		executors.ServerTemplateDelete(backendName),
-		DescribeNamedChild(OperationDelete, "server template", serverTemplate.Prefix, "backend", backendName),
-	)
+	return serverTemplateOps.Delete(backendName, serverTemplate.Prefix, serverTemplate)
 }

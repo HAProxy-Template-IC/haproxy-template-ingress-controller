@@ -39,51 +39,27 @@ func bindIdentifier(bind *models.Bind) string {
 			desc += fmt.Sprintf(" crt %s", bind.SslCertificate)
 		}
 	}
-
 	return desc
 }
 
+// CRUD builder for binds in a frontend.
+var bindFrontendOps = NewNameChildCRUD[*models.Bind](
+	"bind", "bind", "frontend", PriorityBind,
+	func(bind *models.Bind, _ string) string { return bindIdentifier(bind) },
+	executors.BindFrontendCreate, executors.BindFrontendUpdate, executors.BindFrontendDelete,
+)
+
 // NewBindFrontendCreate creates an operation to create a bind in a frontend.
 func NewBindFrontendCreate(frontendName, bindName string, bind *models.Bind) Operation {
-	return NewNameChildOp(
-		OperationCreate,
-		"bind",
-		PriorityBind,
-		frontendName,
-		bindName,
-		bind,
-		Identity[*models.Bind],
-		executors.BindFrontendCreate(frontendName),
-		DescribeNamedChild(OperationCreate, "bind", bindIdentifier(bind), "frontend", frontendName),
-	)
+	return bindFrontendOps.Create(frontendName, bindName, bind)
 }
 
 // NewBindFrontendUpdate creates an operation to update a bind in a frontend.
 func NewBindFrontendUpdate(frontendName, bindName string, bind *models.Bind) Operation {
-	return NewNameChildOp(
-		OperationUpdate,
-		"bind",
-		PriorityBind,
-		frontendName,
-		bindName,
-		bind,
-		Identity[*models.Bind],
-		executors.BindFrontendUpdate(frontendName),
-		DescribeNamedChild(OperationUpdate, "bind", bindIdentifier(bind), "frontend", frontendName),
-	)
+	return bindFrontendOps.Update(frontendName, bindName, bind)
 }
 
 // NewBindFrontendDelete creates an operation to delete a bind from a frontend.
 func NewBindFrontendDelete(frontendName, bindName string, bind *models.Bind) Operation {
-	return NewNameChildOp(
-		OperationDelete,
-		"bind",
-		PriorityBind,
-		frontendName,
-		bindName,
-		bind,
-		Nil[*models.Bind],
-		executors.BindFrontendDelete(frontendName),
-		DescribeNamedChild(OperationDelete, "bind", bindIdentifier(bind), "frontend", frontendName),
-	)
+	return bindFrontendOps.Delete(frontendName, bindName, bind)
 }
