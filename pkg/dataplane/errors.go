@@ -109,6 +109,26 @@ func (e *ValidationError) Unwrap() error {
 	return e.Cause
 }
 
+// validationPhase pairs a phase identifier with its canonical user-facing
+// message, so callers can build a ValidationError with one call instead of
+// re-typing the message each time the same phase fails. The phase name is
+// also part of the error string surfaced by ValidationError.Error().
+type validationPhase struct {
+	name    string
+	message string
+}
+
+var (
+	phaseSyntax   = validationPhase{name: "syntax", message: "configuration has syntax errors"}
+	phaseSchema   = validationPhase{name: "schema", message: "configuration violates API schema constraints"}
+	phaseSemantic = validationPhase{name: "semantic", message: "configuration has semantic errors"}
+)
+
+// wrap builds a ValidationError attributing the failure to this phase.
+func (p validationPhase) wrap(cause error) *ValidationError {
+	return &ValidationError{Phase: p.name, Message: p.message, Cause: cause}
+}
+
 // ConflictError represents unresolved version conflicts after exhausting retries.
 type ConflictError struct {
 	// Retries is the number of retry attempts made
