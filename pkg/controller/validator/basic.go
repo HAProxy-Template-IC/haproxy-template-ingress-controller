@@ -1,7 +1,6 @@
 package validator
 
 import (
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -54,21 +53,8 @@ func (v *BasicValidator) HandleRequest(req *events.ConfigValidationRequest) {
 	start := time.Now()
 	v.logger.Debug("Validating basic structure", "version", req.Version)
 
-	// Type-assert config to *coreconfig.Config
-	cfg, ok := req.Config.(*coreconfig.Config)
+	cfg, ok := v.assertConfigType(req)
 	if !ok {
-		v.logger.Error("ConfigValidationRequest contains invalid config type",
-			"expected", "*coreconfig.Config",
-			"got", fmt.Sprintf("%T", req.Config))
-
-		// Publish response with error and return early - no further validation possible
-		response := events.NewConfigValidationResponse(
-			req.RequestID(),
-			ValidatorNameBasic,
-			false,
-			[]string{fmt.Sprintf("invalid config type: %T", req.Config)},
-		)
-		v.eventBus.Publish(response)
 		return
 	}
 
