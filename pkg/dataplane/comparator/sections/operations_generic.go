@@ -161,17 +161,39 @@ type ExecuteContainerChildFunc[TAPI any] func(
 	model TAPI,
 ) error
 
-// TopLevelOp handles operations for top-level named resources like backend, frontend, defaults.
-// These resources are identified by a single name and use DispatchCreate/Update/Delete.
-type TopLevelOp[TModel any, TAPI any] struct {
+// opBase carries the fields and trivial accessor methods shared by every
+// operation type below. Embedding it removes ~30 lines of identical struct
+// fields, getter methods, and constructor assignments per operation type.
+//
+// Priority() returns the default base*multiplier formula; IndexChildOp
+// overrides this to factor in the index, and Go's method-set rules mean the
+// override transparently wins when callers hold a *IndexChildOp.
+type opBase[TModel any, TAPI any] struct {
 	opType      OperationType
 	sectionName string
 	priorityVal int
 	model       TModel
 	transformFn func(TModel) TAPI
-	nameFn      func(TModel) string
-	executeFn   ExecuteTopLevelFunc[TAPI]
 	describeFn  func() string
+}
+
+func (b *opBase[TModel, TAPI]) Type() OperationType { return b.opType }
+func (b *opBase[TModel, TAPI]) Section() string     { return b.sectionName }
+func (b *opBase[TModel, TAPI]) Priority() int       { return b.priorityVal * PriorityMultiplier }
+func (b *opBase[TModel, TAPI]) Describe() string    { return b.describeFn() }
+
+// transformForExecute is a thin convenience wrapper that an Op's Execute
+// method calls with its own opBase fields.
+func (b *opBase[TModel, TAPI]) transformedAPIModel() (TAPI, error) {
+	return transformForExecute(b.opType, b.sectionName, b.model, b.transformFn)
+}
+
+// TopLevelOp handles operations for top-level named resources like backend, frontend, defaults.
+// These resources are identified by a single name and use DispatchCreate/Update/Delete.
+type TopLevelOp[TModel any, TAPI any] struct {
+	opBase[TModel, TAPI]
+	nameFn    func(TModel) string
+	executeFn ExecuteTopLevelFunc[TAPI]
 }
 
 // NewTopLevelOp creates a new top-level operation.
@@ -186,26 +208,21 @@ func NewTopLevelOp[TModel any, TAPI any](
 	describeFn func() string,
 ) *TopLevelOp[TModel, TAPI] {
 	return &TopLevelOp[TModel, TAPI]{
-		opType:      opType,
-		sectionName: sectionName,
-		priorityVal: priority,
-		model:       model,
-		transformFn: transformFn,
-		nameFn:      nameFn,
-		executeFn:   executeFn,
-		describeFn:  describeFn,
+		opBase: opBase[TModel, TAPI]{
+			opType:      opType,
+			sectionName: sectionName,
+			priorityVal: priority,
+			model:       model,
+			transformFn: transformFn,
+			describeFn:  describeFn,
+		},
+		nameFn:    nameFn,
+		executeFn: executeFn,
 	}
 }
 
-func (op *TopLevelOp[TModel, TAPI]) Type() OperationType { return op.opType }
-func (op *TopLevelOp[TModel, TAPI]) Section() string     { return op.sectionName }
-
-// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
-func (op *TopLevelOp[TModel, TAPI]) Priority() int    { return op.priorityVal * PriorityMultiplier }
-func (op *TopLevelOp[TModel, TAPI]) Describe() string { return op.describeFn() }
-
 func (op *TopLevelOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	apiModel, err := op.transformedAPIModel()
 	if err != nil {
 		return err
 	}
@@ -215,15 +232,10 @@ func (op *TopLevelOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Datap
 // IndexChildOp handles operations for index-based child resources like ACL, HTTP rules, TCP rules.
 // These resources belong to a parent (frontend/backend) and are identified by index position.
 type IndexChildOp[TModel any, TAPI any] struct {
-	opType      OperationType
-	sectionName string
-	priorityVal int
-	parentName  string
-	index       int
-	model       TModel
-	transformFn func(TModel) TAPI
-	executeFn   ExecuteIndexChildFunc[TAPI]
-	describeFn  func() string
+	opBase[TModel, TAPI]
+	parentName string
+	index      int
+	executeFn  ExecuteIndexChildFunc[TAPI]
 }
 
 // NewIndexChildOp creates a new index-based child operation.
@@ -239,20 +251,19 @@ func NewIndexChildOp[TModel any, TAPI any](
 	describeFn func() string,
 ) *IndexChildOp[TModel, TAPI] {
 	return &IndexChildOp[TModel, TAPI]{
-		opType:      opType,
-		sectionName: sectionName,
-		priorityVal: priority,
-		parentName:  parentName,
-		index:       index,
-		model:       model,
-		transformFn: transformFn,
-		executeFn:   executeFn,
-		describeFn:  describeFn,
+		opBase: opBase[TModel, TAPI]{
+			opType:      opType,
+			sectionName: sectionName,
+			priorityVal: priority,
+			model:       model,
+			transformFn: transformFn,
+			describeFn:  describeFn,
+		},
+		parentName: parentName,
+		index:      index,
+		executeFn:  executeFn,
 	}
 }
-
-func (op *IndexChildOp[TModel, TAPI]) Type() OperationType { return op.opType }
-func (op *IndexChildOp[TModel, TAPI]) Section() string     { return op.sectionName }
 
 // Priority returns the effective priority incorporating the index for correct ordering.
 // For creates: lower indexes run first (index 0 before index 1).
@@ -269,10 +280,9 @@ func (op *IndexChildOp[TModel, TAPI]) Priority() int {
 	// Creates/Updates: lower index = lower effective priority (runs first)
 	return basePriority + op.index
 }
-func (op *IndexChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *IndexChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	apiModel, err := op.transformedAPIModel()
 	if err != nil {
 		return err
 	}
@@ -282,15 +292,10 @@ func (op *IndexChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Dat
 // NameChildOp handles operations for name-based child resources like bind, server_template.
 // These resources belong to a parent and are identified by name (not index).
 type NameChildOp[TModel any, TAPI any] struct {
-	opType      OperationType
-	sectionName string
-	priorityVal int
-	parentName  string
-	childName   string
-	model       TModel
-	transformFn func(TModel) TAPI
-	executeFn   ExecuteNameChildFunc[TAPI]
-	describeFn  func() string
+	opBase[TModel, TAPI]
+	parentName string
+	childName  string
+	executeFn  ExecuteNameChildFunc[TAPI]
 }
 
 // NewNameChildOp creates a new name-based child operation.
@@ -306,27 +311,22 @@ func NewNameChildOp[TModel any, TAPI any](
 	describeFn func() string,
 ) *NameChildOp[TModel, TAPI] {
 	return &NameChildOp[TModel, TAPI]{
-		opType:      opType,
-		sectionName: sectionName,
-		priorityVal: priority,
-		parentName:  parentName,
-		childName:   childName,
-		model:       model,
-		transformFn: transformFn,
-		executeFn:   executeFn,
-		describeFn:  describeFn,
+		opBase: opBase[TModel, TAPI]{
+			opType:      opType,
+			sectionName: sectionName,
+			priorityVal: priority,
+			model:       model,
+			transformFn: transformFn,
+			describeFn:  describeFn,
+		},
+		parentName: parentName,
+		childName:  childName,
+		executeFn:  executeFn,
 	}
 }
 
-func (op *NameChildOp[TModel, TAPI]) Type() OperationType { return op.opType }
-func (op *NameChildOp[TModel, TAPI]) Section() string     { return op.sectionName }
-
-// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
-func (op *NameChildOp[TModel, TAPI]) Priority() int    { return op.priorityVal * PriorityMultiplier }
-func (op *NameChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
-
 func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	apiModel, err := op.transformedAPIModel()
 	if err != nil {
 		return err
 	}
@@ -336,13 +336,8 @@ func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Data
 // SingletonOp handles operations for singleton sections like global, traces, or waf-global.
 // Supports create, update, and delete operations for singleton resources.
 type SingletonOp[TModel any, TAPI any] struct {
-	opType      OperationType
-	sectionName string
-	priorityVal int
-	model       TModel
-	transformFn func(TModel) TAPI
-	executeFn   ExecuteSingletonFunc[TAPI]
-	describeFn  func() string
+	opBase[TModel, TAPI]
+	executeFn ExecuteSingletonFunc[TAPI]
 }
 
 // NewSingletonOp creates a new singleton operation with the specified operation type.
@@ -356,25 +351,20 @@ func NewSingletonOp[TModel any, TAPI any](
 	describeFn func() string,
 ) *SingletonOp[TModel, TAPI] {
 	return &SingletonOp[TModel, TAPI]{
-		opType:      opType,
-		sectionName: sectionName,
-		priorityVal: priority,
-		model:       model,
-		transformFn: transformFn,
-		executeFn:   executeFn,
-		describeFn:  describeFn,
+		opBase: opBase[TModel, TAPI]{
+			opType:      opType,
+			sectionName: sectionName,
+			priorityVal: priority,
+			model:       model,
+			transformFn: transformFn,
+			describeFn:  describeFn,
+		},
+		executeFn: executeFn,
 	}
 }
 
-func (op *SingletonOp[TModel, TAPI]) Type() OperationType { return op.opType }
-func (op *SingletonOp[TModel, TAPI]) Section() string     { return op.sectionName }
-
-// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
-func (op *SingletonOp[TModel, TAPI]) Priority() int    { return op.priorityVal * PriorityMultiplier }
-func (op *SingletonOp[TModel, TAPI]) Describe() string { return op.describeFn() }
-
 func (op *SingletonOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	apiModel, err := op.transformedAPIModel()
 	if err != nil {
 		return err
 	}
@@ -384,15 +374,10 @@ func (op *SingletonOp[TModel, TAPI]) Execute(ctx context.Context, c *client.Data
 // ContainerChildOp handles operations for container child resources like user, mailer_entry.
 // These resources belong to a container (userlist, mailers) where the parent is passed via params.
 type ContainerChildOp[TModel any, TAPI any] struct {
-	opType        OperationType
-	sectionName   string
-	priorityVal   int
+	opBase[TModel, TAPI]
 	containerName string
-	model         TModel
-	transformFn   func(TModel) TAPI
 	nameFn        func(TModel) string
 	executeFn     ExecuteContainerChildFunc[TAPI]
-	describeFn    func() string
 }
 
 // NewContainerChildOp creates a new container child operation.
@@ -408,27 +393,22 @@ func NewContainerChildOp[TModel any, TAPI any](
 	describeFn func() string,
 ) *ContainerChildOp[TModel, TAPI] {
 	return &ContainerChildOp[TModel, TAPI]{
-		opType:        opType,
-		sectionName:   sectionName,
-		priorityVal:   priority,
+		opBase: opBase[TModel, TAPI]{
+			opType:      opType,
+			sectionName: sectionName,
+			priorityVal: priority,
+			model:       model,
+			transformFn: transformFn,
+			describeFn:  describeFn,
+		},
 		containerName: containerName,
-		model:         model,
-		transformFn:   transformFn,
 		nameFn:        nameFn,
 		executeFn:     executeFn,
-		describeFn:    describeFn,
 	}
 }
 
-func (op *ContainerChildOp[TModel, TAPI]) Type() OperationType { return op.opType }
-func (op *ContainerChildOp[TModel, TAPI]) Section() string     { return op.sectionName }
-
-// Priority returns the effective priority. Uses multiplier for compatibility with IndexChildOp.
-func (op *ContainerChildOp[TModel, TAPI]) Priority() int    { return op.priorityVal * PriorityMultiplier }
-func (op *ContainerChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
-
 func (op *ContainerChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	apiModel, err := op.transformedAPIModel()
 	if err != nil {
 		return err
 	}
