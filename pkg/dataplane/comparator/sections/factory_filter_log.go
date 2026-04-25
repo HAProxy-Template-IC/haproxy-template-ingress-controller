@@ -15,8 +15,6 @@
 package sections
 
 import (
-	"fmt"
-
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
@@ -25,227 +23,104 @@ import (
 // filterIdentifier extracts the type identifier from a Filter model.
 func filterIdentifier(filter *models.Filter) string { return filter.Type }
 
+// logTargetIdentifier extracts the address identifier from a LogTarget model.
+func logTargetIdentifier(logTarget *models.LogTarget) string { return logTarget.Address }
+
+// CRUD builders for filters, log targets and the log-forward top-level section.
+var (
+	filterFrontendOps = NewIndexChildCRUD[*models.Filter](
+		"filter", "filter", "frontend", PriorityFilter, filterIdentifier,
+		executors.FilterFrontendCreate(), executors.FilterFrontendUpdate(), executors.FilterFrontendDelete(),
+	)
+	filterBackendOps = NewIndexChildCRUD[*models.Filter](
+		"filter", "filter", "backend", PriorityFilter, filterIdentifier,
+		executors.FilterBackendCreate(), executors.FilterBackendUpdate(), executors.FilterBackendDelete(),
+	)
+	logTargetFrontendOps = NewIndexChildCRUD[*models.LogTarget](
+		"log_target", "log target", "frontend", PriorityLogTarget, logTargetIdentifier,
+		executors.LogTargetFrontendCreate(), executors.LogTargetFrontendUpdate(), executors.LogTargetFrontendDelete(),
+	)
+	logTargetBackendOps = NewIndexChildCRUD[*models.LogTarget](
+		"log_target", "log target", "backend", PriorityLogTarget, logTargetIdentifier,
+		executors.LogTargetBackendCreate(), executors.LogTargetBackendUpdate(), executors.LogTargetBackendDelete(),
+	)
+	logForwardOps = NewTopLevelCRUD[*models.LogForward](
+		"log_forward", "log-forward", PriorityLogForward, LogForwardName,
+		executors.LogForwardCreate(), executors.LogForwardUpdate(), executors.LogForwardDelete(),
+	)
+)
+
 // NewFilterFrontendCreate creates an operation to create a filter in a frontend.
 func NewFilterFrontendCreate(frontendName string, filter *models.Filter, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"filter",
-		PriorityFilter,
-		frontendName,
-		index,
-		filter,
-		Identity[*models.Filter],
-		executors.FilterFrontendCreate(),
-		DescribeTypedChild(OperationCreate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return filterFrontendOps.Create(frontendName, filter, index)
 }
 
 // NewFilterFrontendUpdate creates an operation to update a filter in a frontend.
 func NewFilterFrontendUpdate(frontendName string, filter *models.Filter, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"filter",
-		PriorityFilter,
-		frontendName,
-		index,
-		filter,
-		Identity[*models.Filter],
-		executors.FilterFrontendUpdate(),
-		DescribeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return filterFrontendOps.Update(frontendName, filter, index)
 }
 
 // NewFilterFrontendDelete creates an operation to delete a filter from a frontend.
 func NewFilterFrontendDelete(frontendName string, filter *models.Filter, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"filter",
-		PriorityFilter,
-		frontendName,
-		index,
-		filter,
-		Nil[*models.Filter],
-		executors.FilterFrontendDelete(),
-		DescribeTypedChild(OperationDelete, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return filterFrontendOps.Delete(frontendName, filter, index)
 }
 
 // NewFilterBackendCreate creates an operation to create a filter in a backend.
 func NewFilterBackendCreate(backendName string, filter *models.Filter, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"filter",
-		PriorityFilter,
-		backendName,
-		index,
-		filter,
-		Identity[*models.Filter],
-		executors.FilterBackendCreate(),
-		DescribeTypedChild(OperationCreate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return filterBackendOps.Create(backendName, filter, index)
 }
 
 // NewFilterBackendUpdate creates an operation to update a filter in a backend.
 func NewFilterBackendUpdate(backendName string, filter *models.Filter, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"filter",
-		PriorityFilter,
-		backendName,
-		index,
-		filter,
-		Identity[*models.Filter],
-		executors.FilterBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return filterBackendOps.Update(backendName, filter, index)
 }
 
 // NewFilterBackendDelete creates an operation to delete a filter from a backend.
 func NewFilterBackendDelete(backendName string, filter *models.Filter, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"filter",
-		PriorityFilter,
-		backendName,
-		index,
-		filter,
-		Nil[*models.Filter],
-		executors.FilterBackendDelete(),
-		DescribeTypedChild(OperationDelete, "filter", filterIdentifier(filter), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return filterBackendOps.Delete(backendName, filter, index)
 }
-
-// logTargetIdentifier extracts the address identifier from a LogTarget model.
-func logTargetIdentifier(logTarget *models.LogTarget) string { return logTarget.Address }
 
 // NewLogTargetFrontendCreate creates an operation to create a log target in a frontend.
 func NewLogTargetFrontendCreate(frontendName string, logTarget *models.LogTarget, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"log_target",
-		PriorityLogTarget,
-		frontendName,
-		index,
-		logTarget,
-		Identity[*models.LogTarget],
-		executors.LogTargetFrontendCreate(),
-		DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return logTargetFrontendOps.Create(frontendName, logTarget, index)
 }
 
 // NewLogTargetFrontendUpdate creates an operation to update a log target in a frontend.
 func NewLogTargetFrontendUpdate(frontendName string, logTarget *models.LogTarget, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"log_target",
-		PriorityLogTarget,
-		frontendName,
-		index,
-		logTarget,
-		Identity[*models.LogTarget],
-		executors.LogTargetFrontendUpdate(),
-		DescribeTypedChild(OperationUpdate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return logTargetFrontendOps.Update(frontendName, logTarget, index)
 }
 
 // NewLogTargetFrontendDelete creates an operation to delete a log target from a frontend.
 func NewLogTargetFrontendDelete(frontendName string, logTarget *models.LogTarget, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"log_target",
-		PriorityLogTarget,
-		frontendName,
-		index,
-		logTarget,
-		Nil[*models.LogTarget],
-		executors.LogTargetFrontendDelete(),
-		DescribeTypedChild(OperationDelete, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "frontend", frontendName),
-	)
+	return logTargetFrontendOps.Delete(frontendName, logTarget, index)
 }
 
 // NewLogTargetBackendCreate creates an operation to create a log target in a backend.
 func NewLogTargetBackendCreate(backendName string, logTarget *models.LogTarget, index int) Operation {
-	return NewIndexChildOp(
-		OperationCreate,
-		"log_target",
-		PriorityLogTarget,
-		backendName,
-		index,
-		logTarget,
-		Identity[*models.LogTarget],
-		executors.LogTargetBackendCreate(),
-		DescribeTypedChild(OperationCreate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return logTargetBackendOps.Create(backendName, logTarget, index)
 }
 
 // NewLogTargetBackendUpdate creates an operation to update a log target in a backend.
 func NewLogTargetBackendUpdate(backendName string, logTarget *models.LogTarget, index int) Operation {
-	return NewIndexChildOp(
-		OperationUpdate,
-		"log_target",
-		PriorityLogTarget,
-		backendName,
-		index,
-		logTarget,
-		Identity[*models.LogTarget],
-		executors.LogTargetBackendUpdate(),
-		DescribeTypedChild(OperationUpdate, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return logTargetBackendOps.Update(backendName, logTarget, index)
 }
 
 // NewLogTargetBackendDelete creates an operation to delete a log target from a backend.
 func NewLogTargetBackendDelete(backendName string, logTarget *models.LogTarget, index int) Operation {
-	return NewIndexChildOp(
-		OperationDelete,
-		"log_target",
-		PriorityLogTarget,
-		backendName,
-		index,
-		logTarget,
-		Nil[*models.LogTarget],
-		executors.LogTargetBackendDelete(),
-		DescribeTypedChild(OperationDelete, "log target", logTargetIdentifier(logTarget), fmt.Sprintf("at index %d", index), "backend", backendName),
-	)
+	return logTargetBackendOps.Delete(backendName, logTarget, index)
 }
 
 // NewLogForwardCreate creates an operation to create a log-forward section.
 func NewLogForwardCreate(logForward *models.LogForward) Operation {
-	return NewTopLevelOp(
-		OperationCreate,
-		"log_forward",
-		PriorityLogForward,
-		logForward,
-		Identity[*models.LogForward],
-		LogForwardName,
-		executors.LogForwardCreate(),
-		DescribeTopLevel(OperationCreate, "log-forward", logForward.Name),
-	)
+	return logForwardOps.Create(logForward)
 }
 
 // NewLogForwardUpdate creates an operation to update a log-forward section.
 func NewLogForwardUpdate(logForward *models.LogForward) Operation {
-	return NewTopLevelOp(
-		OperationUpdate,
-		"log_forward",
-		PriorityLogForward,
-		logForward,
-		Identity[*models.LogForward],
-		LogForwardName,
-		executors.LogForwardUpdate(),
-		DescribeTopLevel(OperationUpdate, "log-forward", logForward.Name),
-	)
+	return logForwardOps.Update(logForward)
 }
 
 // NewLogForwardDelete creates an operation to delete a log-forward section.
 func NewLogForwardDelete(logForward *models.LogForward) Operation {
-	return NewTopLevelOp(
-		OperationDelete,
-		"log_forward",
-		PriorityLogForward,
-		logForward,
-		Nil[*models.LogForward],
-		LogForwardName,
-		executors.LogForwardDelete(),
-		DescribeTopLevel(OperationDelete, "log-forward", logForward.Name),
-	)
+	return logForwardOps.Delete(logForward)
 }
