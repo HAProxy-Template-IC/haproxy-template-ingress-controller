@@ -130,6 +130,34 @@ func TestNewDebouncer(t *testing.T) {
 	assert.False(t, debouncer.suppressDuringSync)
 }
 
+// totalStats sums Created/Modified/Deleted counts across every callback the
+// recorder has received so far. The debouncer's leading-edge semantics may
+// split a burst of records across one or two callbacks depending on goroutine
+// scheduling — the per-burst totals are deterministic, the batch boundaries
+// are not.
+func (r *callbackRecorder) totalStats() types.ChangeStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var total types.ChangeStats
+	for _, s := range r.received {
+		total.Created += s.Created
+		total.Modified += s.Modified
+		total.Deleted += s.Deleted
+	}
+	return total
+}
+
+// waitForTotal polls until the recorder has observed the expected total counts
+// across all callbacks. Used for tests that depend on totals rather than on
+// how the debouncer split a burst into individual callbacks.
+func (r *callbackRecorder) waitForTotal(t *testing.T, want types.ChangeStats) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		got := r.totalStats()
+		return got.Created == want.Created && got.Modified == want.Modified && got.Deleted == want.Deleted
+	}, time.Second, 5*time.Millisecond, "timed out waiting for total stats %+v, got %+v", want, r.totalStats())
+}
+
 func TestDebouncer_RecordCreate(t *testing.T) {
 	store := &mockStore{}
 	recorder := newCallbackRecorder()
@@ -137,19 +165,15 @@ func TestDebouncer_RecordCreate(t *testing.T) {
 	debouncer := NewDebouncer(50*time.Millisecond, recorder.callback, store, false)
 	debouncer.SetSyncMode(false) // Enable callbacks
 
-	// Record creates
 	debouncer.RecordCreate()
 	debouncer.RecordCreate()
 	debouncer.RecordCreate()
 
-	// Wait for callback (with leading edge, first fires immediately, rest batched)
-	recorder.waitForCallbacks(t, 1)
-
-	received := recorder.getReceived()
-	require.Len(t, received, 1)
-	assert.Equal(t, 3, received[0].Created)
-	assert.Equal(t, 0, received[0].Modified)
-	assert.Equal(t, 0, received[0].Deleted)
+	// Leading-edge fires the first record immediately; if subsequent
+	// RecordCreate() calls happen before the leading callback grabs the lock
+	// they batch into the same callback, otherwise the remainder fires after
+	// the refractory window. Either way the totals must match.
+	recorder.waitForTotal(t, types.ChangeStats{Created: 3})
 }
 
 func TestDebouncer_RecordUpdate(t *testing.T) {
@@ -162,13 +186,7 @@ func TestDebouncer_RecordUpdate(t *testing.T) {
 	debouncer.RecordUpdate()
 	debouncer.RecordUpdate()
 
-	recorder.waitForCallbacks(t, 1)
-
-	received := recorder.getReceived()
-	require.Len(t, received, 1)
-	assert.Equal(t, 0, received[0].Created)
-	assert.Equal(t, 2, received[0].Modified)
-	assert.Equal(t, 0, received[0].Deleted)
+	recorder.waitForTotal(t, types.ChangeStats{Modified: 2})
 }
 
 func TestDebouncer_RecordDelete(t *testing.T) {
@@ -180,13 +198,7 @@ func TestDebouncer_RecordDelete(t *testing.T) {
 
 	debouncer.RecordDelete()
 
-	recorder.waitForCallbacks(t, 1)
-
-	received := recorder.getReceived()
-	require.Len(t, received, 1)
-	assert.Equal(t, 0, received[0].Created)
-	assert.Equal(t, 0, received[0].Modified)
-	assert.Equal(t, 1, received[0].Deleted)
+	recorder.waitForTotal(t, types.ChangeStats{Deleted: 1})
 }
 
 func TestDebouncer_MixedOperations(t *testing.T) {
