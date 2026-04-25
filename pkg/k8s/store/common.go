@@ -38,6 +38,20 @@ func (e *StoreError) Unwrap() error {
 	return e.Cause
 }
 
+// validateKeyCount returns a StoreError when the supplied keys don't match the
+// store's expected key count. Used by Add/Update/Delete on both store types to
+// enforce the index-key contract.
+func validateKeyCount(operation string, keys []string, want int) error {
+	if len(keys) == want {
+		return nil
+	}
+	return &StoreError{
+		Operation: operation,
+		Keys:      keys,
+		Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), want),
+	}
+}
+
 // extractNamespaceName extracts namespace and name from a Kubernetes resource.
 // Returns empty strings if the resource doesn't have metadata.namespace or metadata.name.
 func extractNamespaceName(resource any) (namespace, name string) {

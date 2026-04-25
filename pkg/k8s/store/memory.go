@@ -133,12 +133,8 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(keys) != s.numKeys {
-		return &StoreError{
-			Operation: "add",
-			Keys:      keys,
-			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
-		}
+	if err := validateKeyCount("add", keys, s.numKeys); err != nil {
+		return err
 	}
 
 	keyStr := makeKeyString(keys)
@@ -175,12 +171,8 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(keys) != s.numKeys {
-		return &StoreError{
-			Operation: "update",
-			Keys:      keys,
-			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
-		}
+	if err := validateKeyCount("update", keys, s.numKeys); err != nil {
+		return err
 	}
 
 	keyStr := makeKeyString(keys)
@@ -221,12 +213,8 @@ func (s *MemoryStore) Delete(keys ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(keys) != s.numKeys {
-		return &StoreError{
-			Operation: "delete",
-			Keys:      keys,
-			Cause:     fmt.Errorf("wrong number of keys: got %d, expected %d", len(keys), s.numKeys),
-		}
+	if err := validateKeyCount("delete", keys, s.numKeys); err != nil {
+		return err
 	}
 
 	keyStr := makeKeyString(keys)
