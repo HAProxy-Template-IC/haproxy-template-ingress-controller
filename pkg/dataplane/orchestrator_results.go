@@ -15,6 +15,8 @@
 package dataplane
 
 import (
+	"strings"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -22,9 +24,10 @@ import (
 
 // Operation type string constants used in AppliedOperation and PlannedOperation.
 const (
-	opCreate = "create"
-	opUpdate = "update"
-	opDelete = "delete"
+	opCreate  = "create"
+	opUpdate  = "update"
+	opDelete  = "delete"
+	opUnknown = "unknown"
 )
 
 // Helper functions to convert internal types to public API types
@@ -65,25 +68,23 @@ func operationTypeToString(opType sections.OperationType) string {
 	case sections.OperationDelete:
 		return opDelete
 	default:
-		return "unknown"
+		return opUnknown
 	}
 }
 
+// extractResourceName parses the resource name out of the operation's
+// description, which follows the convention "Action section 'name'".
+// Returns "unknown" when the description doesn't contain a quoted name.
 func extractResourceName(op comparator.Operation) string {
-	desc := op.Describe()
-	// Extract resource name from description (format: "Action section 'name'")
-	// This is a simple heuristic - we look for text between single quotes
-	start := -1
-	for i, ch := range desc {
-		if ch == '\'' {
-			if start == -1 {
-				start = i + 1
-			} else {
-				return desc[start:i]
-			}
-		}
+	_, after, found := strings.Cut(op.Describe(), "'")
+	if !found {
+		return opUnknown
 	}
-	return "unknown"
+	name, _, found := strings.Cut(after, "'")
+	if !found {
+		return opUnknown
+	}
+	return name
 }
 
 func convertDiffSummary(summary *comparator.DiffSummary) DiffDetails {
