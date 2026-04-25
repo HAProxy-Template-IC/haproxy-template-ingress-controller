@@ -299,11 +299,16 @@ func TestDebouncer_Flush(t *testing.T) {
 	// Flush immediately without waiting
 	debouncer.Flush()
 
-	// Flush is synchronous, so callback should have been called
-	received := recorder.getReceived()
-	require.Len(t, received, 1)
-	assert.Equal(t, 1, received[0].Created)
-	assert.Equal(t, 1, received[0].Modified)
+	// Leading-edge debounce may split the burst across one or two
+	// callbacks depending on goroutine scheduling: if RecordCreate's
+	// async fireCallback runs before Flush, we get two callbacks
+	// ({Created:1} then {Modified:1}); otherwise we get one
+	// ({Created:1, Modified:1}). The per-burst totals are
+	// deterministic — pin those instead of the batch boundary.
+	total := recorder.totalStats()
+	assert.Equal(t, 1, total.Created, "Flush must surface the recorded Create exactly once")
+	assert.Equal(t, 1, total.Modified, "Flush must surface the recorded Update exactly once")
+	assert.Equal(t, 0, total.Deleted)
 }
 
 func TestDebouncer_FlushEmpty(t *testing.T) {
