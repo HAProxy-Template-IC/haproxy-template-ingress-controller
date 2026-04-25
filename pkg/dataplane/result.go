@@ -312,56 +312,26 @@ func (d *DiffDetails) appendResourceChanges(parts, added, modified, deleted []st
 
 // appendMapCountChanges appends formatted counts from maps of slices.
 func (d *DiffDetails) appendMapCountChanges(parts []string, added, modified, deleted map[string][]string, resourceType string) []string {
-	totalAdded := 0
-	for _, items := range added {
-		totalAdded += len(items)
+	sum := func(m map[string][]string) int {
+		total := 0
+		for _, items := range m {
+			total += len(items)
+		}
+		return total
 	}
-	totalModified := 0
-	for _, items := range modified {
-		totalModified += len(items)
-	}
-	totalDeleted := 0
-	for _, items := range deleted {
-		totalDeleted += len(items)
-	}
-
-	if totalAdded > 0 {
-		parts = append(parts, fmt.Sprintf("- %s added: %d", resourceType, totalAdded))
-	}
-	if totalModified > 0 {
-		parts = append(parts, fmt.Sprintf("- %s modified: %d", resourceType, totalModified))
-	}
-	if totalDeleted > 0 {
-		parts = append(parts, fmt.Sprintf("- %s deleted: %d", resourceType, totalDeleted))
-	}
-	return parts
+	return d.appendSimpleCountChanges(parts, sum(added), sum(modified), sum(deleted), resourceType)
 }
 
 // appendIntMapCountChanges appends formatted counts from maps of ints.
 func (d *DiffDetails) appendIntMapCountChanges(parts []string, added, modified, deleted map[string]int, resourceType string) []string {
-	totalAdded := 0
-	for _, count := range added {
-		totalAdded += count
+	sum := func(m map[string]int) int {
+		total := 0
+		for _, count := range m {
+			total += count
+		}
+		return total
 	}
-	totalModified := 0
-	for _, count := range modified {
-		totalModified += count
-	}
-	totalDeleted := 0
-	for _, count := range deleted {
-		totalDeleted += count
-	}
-
-	if totalAdded > 0 {
-		parts = append(parts, fmt.Sprintf("- %s added: %d", resourceType, totalAdded))
-	}
-	if totalModified > 0 {
-		parts = append(parts, fmt.Sprintf("- %s modified: %d", resourceType, totalModified))
-	}
-	if totalDeleted > 0 {
-		parts = append(parts, fmt.Sprintf("- %s deleted: %d", resourceType, totalDeleted))
-	}
-	return parts
+	return d.appendSimpleCountChanges(parts, sum(added), sum(modified), sum(deleted), resourceType)
 }
 
 // appendSimpleCountChanges appends formatted counts for simple integer counters.

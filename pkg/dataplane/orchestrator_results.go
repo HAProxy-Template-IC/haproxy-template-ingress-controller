@@ -88,30 +88,24 @@ func extractResourceName(op comparator.Operation) string {
 }
 
 func convertDiffSummary(summary *comparator.DiffSummary) DiffDetails {
-	return DiffDetails{
-		TotalOperations:   summary.TotalOperations(),
-		Creates:           summary.TotalCreates,
-		Updates:           summary.TotalUpdates,
-		Deletes:           summary.TotalDeletes,
-		GlobalChanged:     summary.GlobalChanged,
-		DefaultsChanged:   summary.DefaultsChanged,
-		FrontendsAdded:    summary.FrontendsAdded,
-		FrontendsModified: summary.FrontendsModified,
-		FrontendsDeleted:  summary.FrontendsDeleted,
-		BackendsAdded:     summary.BackendsAdded,
-		BackendsModified:  summary.BackendsModified,
-		BackendsDeleted:   summary.BackendsDeleted,
-		BackendDiffFields: summary.BackendDiffFields,
-		ServersAdded:      summary.ServersAdded,
-		ServersModified:   summary.ServersModified,
-		ServersDeleted:    summary.ServersDeleted,
-		ACLsAdded:         make(map[string][]string),
-		ACLsModified:      make(map[string][]string),
-		ACLsDeleted:       make(map[string][]string),
-		HTTPRulesAdded:    make(map[string]int),
-		HTTPRulesModified: make(map[string]int),
-		HTTPRulesDeleted:  make(map[string]int),
-	}
+	details := NewDiffDetails()
+	details.TotalOperations = summary.TotalOperations()
+	details.Creates = summary.TotalCreates
+	details.Updates = summary.TotalUpdates
+	details.Deletes = summary.TotalDeletes
+	details.GlobalChanged = summary.GlobalChanged
+	details.DefaultsChanged = summary.DefaultsChanged
+	details.FrontendsAdded = summary.FrontendsAdded
+	details.FrontendsModified = summary.FrontendsModified
+	details.FrontendsDeleted = summary.FrontendsDeleted
+	details.BackendsAdded = summary.BackendsAdded
+	details.BackendsModified = summary.BackendsModified
+	details.BackendsDeleted = summary.BackendsDeleted
+	details.BackendDiffFields = summary.BackendDiffFields
+	details.ServersAdded = summary.ServersAdded
+	details.ServersModified = summary.ServersModified
+	details.ServersDeleted = summary.ServersDeleted
+	return details
 }
 
 // addAuxiliaryFileCounts populates auxiliary file counts in DiffDetails from auxiliary file diffs.
