@@ -5,6 +5,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // compareResolvers compares resolver sections between current and desired configurations.
@@ -12,22 +13,9 @@ import (
 func (c *Comparator) compareResolvers(current, desired *parser.StructuredConfig) []Operation {
 	operations := make([]Operation, 0, len(desired.Resolvers))
 
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.Resolver)
-	for i := range current.Resolvers {
-		resolver := current.Resolvers[i]
-		if resolver.Name != "" {
-			currentMap[resolver.Name] = resolver
-		}
-	}
-
-	desiredMap := make(map[string]*models.Resolver)
-	for i := range desired.Resolvers {
-		resolver := desired.Resolvers[i]
-		if resolver.Name != "" {
-			desiredMap[resolver.Name] = resolver
-		}
-	}
+	getName := func(r *models.Resolver) string { return r.Name }
+	currentMap := parserconfig.BuildPointerIndex(current.Resolvers, getName)
+	desiredMap := parserconfig.BuildPointerIndex(desired.Resolvers, getName)
 
 	// Find added resolver sections
 	for name, resolver := range desiredMap {

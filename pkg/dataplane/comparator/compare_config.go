@@ -5,6 +5,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // compareHTTPErrors compares http-errors sections between current and desired configurations.
@@ -25,22 +26,9 @@ func (c *Comparator) compareHTTPErrors(current, desired *parser.StructuredConfig
 func (c *Comparator) compareMailers(current, desired *parser.StructuredConfig) []Operation {
 	operations := make([]Operation, 0, len(desired.Mailers))
 
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.MailersSection)
-	for i := range current.Mailers {
-		mailers := current.Mailers[i]
-		if mailers.Name != "" {
-			currentMap[mailers.Name] = mailers
-		}
-	}
-
-	desiredMap := make(map[string]*models.MailersSection)
-	for i := range desired.Mailers {
-		mailers := desired.Mailers[i]
-		if mailers.Name != "" {
-			desiredMap[mailers.Name] = mailers
-		}
-	}
+	getName := func(m *models.MailersSection) string { return m.Name }
+	currentMap := parserconfig.BuildPointerIndex(current.Mailers, getName)
+	desiredMap := parserconfig.BuildPointerIndex(desired.Mailers, getName)
 
 	// Find added mailers sections
 	for name, mailers := range desiredMap {
@@ -112,22 +100,9 @@ func (c *Comparator) compareMailerEntriesWithIndex(mailersSection string, curren
 func (c *Comparator) comparePeers(current, desired *parser.StructuredConfig) []Operation {
 	operations := make([]Operation, 0, len(desired.Peers))
 
-	// Convert slices to maps for easier comparison by Name
-	currentMap := make(map[string]*models.PeerSection)
-	for i := range current.Peers {
-		peer := current.Peers[i]
-		if peer.Name != "" {
-			currentMap[peer.Name] = peer
-		}
-	}
-
-	desiredMap := make(map[string]*models.PeerSection)
-	for i := range desired.Peers {
-		peer := desired.Peers[i]
-		if peer.Name != "" {
-			desiredMap[peer.Name] = peer
-		}
-	}
+	getName := func(p *models.PeerSection) string { return p.Name }
+	currentMap := parserconfig.BuildPointerIndex(current.Peers, getName)
+	desiredMap := parserconfig.BuildPointerIndex(desired.Peers, getName)
 
 	// Find added peer sections
 	for name, peer := range desiredMap {

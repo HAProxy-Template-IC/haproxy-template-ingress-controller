@@ -5,6 +5,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // compareBackends compares backend configurations between current and desired.
@@ -13,20 +14,9 @@ func (c *Comparator) compareBackends(current, desired *parser.StructuredConfig, 
 	// Pre-allocate with estimated capacity (roughly 2 ops per backend for add/modify + servers)
 	operations := make([]Operation, 0, len(desired.Backends)*2)
 
-	// Build maps for easier comparison
-	currentBackends := make(map[string]*models.Backend, len(current.Backends))
-	for _, backend := range current.Backends {
-		if backend.Name != "" {
-			currentBackends[backend.Name] = backend
-		}
-	}
-
-	desiredBackends := make(map[string]*models.Backend)
-	for _, backend := range desired.Backends {
-		if backend.Name != "" {
-			desiredBackends[backend.Name] = backend
-		}
-	}
+	getName := func(b *models.Backend) string { return b.Name }
+	currentBackends := parserconfig.BuildPointerIndex(current.Backends, getName)
+	desiredBackends := parserconfig.BuildPointerIndex(desired.Backends, getName)
 
 	// Find added backends
 	addedOps := c.compareAddedBackendsWithIndexes(desiredBackends, currentBackends, current, desired, summary)
