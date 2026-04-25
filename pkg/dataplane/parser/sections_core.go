@@ -114,9 +114,7 @@ func (p *Parser) extractFrontendsWithIndexes(conf *StructuredConfig) {
 
 		// Parse binds and build pointer index for zero-copy iteration.
 		binds, _ := configuration.ParseBinds(string(parser.Frontends), sectionName, p.parser)
-		if bindIndex := parserconfig.BuildPointerIndex(binds, func(b *models.Bind) string { return b.Name }); bindIndex != nil {
-			conf.BindIndex[sectionName] = bindIndex
-		}
+		conf.BindIndex[sectionName] = parserconfig.BuildPointerIndex(binds, func(b *models.Bind) string { return b.Name })
 
 		fe.HTTPRequestRuleList, _ = configuration.ParseHTTPRequestRules(string(parser.Frontends), sectionName, p.parser)
 		fe.HTTPResponseRuleList, _ = configuration.ParseHTTPResponseRules(string(parser.Frontends), sectionName, p.parser)
@@ -178,9 +176,7 @@ func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be 
 
 	// Parse servers and build pointer index for zero-copy iteration.
 	servers, _ := configuration.ParseServers(string(parser.Backends), sectionName, p.parser)
-	if serverIndex := parserconfig.BuildPointerIndex(servers, func(s *models.Server) string { return s.Name }); serverIndex != nil {
-		conf.ServerIndex[sectionName] = serverIndex
-	}
+	conf.ServerIndex[sectionName] = parserconfig.BuildPointerIndex(servers, func(s *models.Server) string { return s.Name })
 
 	// Parse HTTP/TCP rules
 	p.parseBackendRules(sectionName, be)
@@ -190,9 +186,7 @@ func (p *Parser) parseBackendNestedStructuresWithIndexes(sectionName string, be 
 
 	// Parse server templates and build pointer index for zero-copy iteration.
 	serverTemplates, _ := configuration.ParseServerTemplates(sectionName, p.parser)
-	if templateIndex := parserconfig.BuildPointerIndex(serverTemplates, func(t *models.ServerTemplate) string { return t.Prefix }); templateIndex != nil {
-		conf.ServerTemplateIndex[sectionName] = templateIndex
-	}
+	conf.ServerTemplateIndex[sectionName] = parserconfig.BuildPointerIndex(serverTemplates, func(t *models.ServerTemplate) string { return t.Prefix })
 }
 
 // parseBackendRules parses HTTP and TCP rules for a backend.
