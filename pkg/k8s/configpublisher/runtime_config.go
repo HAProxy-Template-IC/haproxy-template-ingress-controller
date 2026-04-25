@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 
@@ -208,33 +209,31 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 
 // buildAuxiliaryFileReferences constructs an AuxiliaryFileReferences from a PublishResult.
 func buildAuxiliaryFileReferences(namespace string, result *PublishResult) *haproxyv1alpha1.AuxiliaryFileReferences {
-	aux := &haproxyv1alpha1.AuxiliaryFileReferences{}
-
-	for _, name := range result.MapFileNames {
-		aux.MapFiles = append(aux.MapFiles, haproxyv1alpha1.ResourceReference{
-			Kind: "HAProxyMapFile", Name: name, Namespace: namespace,
-		})
+	// Returns nil (not []) for empty inputs so the AuxiliaryFileReferences
+	// field stays absent in JSON via its omitempty tag — matching the prior
+	// behavior of unexecuted appends leaving the field nil.
+	refs := func(names []string, kind string) []haproxyv1alpha1.ResourceReference {
+		if len(names) == 0 {
+			return nil
+		}
+		out := make([]haproxyv1alpha1.ResourceReference, 0, len(names))
+		for _, name := range names {
+			out = append(out, haproxyv1alpha1.ResourceReference{
+				Kind: kind, Name: name, Namespace: namespace,
+			})
+		}
+		return out
 	}
-	for _, name := range result.SecretNames {
-		aux.SSLCertificates = append(aux.SSLCertificates, haproxyv1alpha1.ResourceReference{
-			Kind: "Secret", Name: name, Namespace: namespace,
-		})
+	return &haproxyv1alpha1.AuxiliaryFileReferences{
+		MapFiles:        refs(result.MapFileNames, "HAProxyMapFile"),
+		SSLCertificates: refs(result.SecretNames, "Secret"),
+		GeneralFiles:    refs(result.GeneralFileNames, "HAProxyGeneralFile"),
+		CRTListFiles:    refs(result.CRTListFileNames, "HAProxyCRTListFile"),
 	}
-	for _, name := range result.GeneralFileNames {
-		aux.GeneralFiles = append(aux.GeneralFiles, haproxyv1alpha1.ResourceReference{
-			Kind: "HAProxyGeneralFile", Name: name, Namespace: namespace,
-		})
-	}
-	for _, name := range result.CRTListFileNames {
-		aux.CRTListFiles = append(aux.CRTListFiles, haproxyv1alpha1.ResourceReference{
-			Kind: "HAProxyCRTListFile", Name: name, Namespace: namespace,
-		})
-	}
-
-	return aux
 }
 
 // auxiliaryRefsEqual compares two AuxiliaryFileReferences for equality.
+// ResourceReference is comparable (string-only fields), so slices.Equal is sufficient.
 func auxiliaryRefsEqual(a, b *haproxyv1alpha1.AuxiliaryFileReferences) bool {
 	if a == nil && b == nil {
 		return true
@@ -242,21 +241,8 @@ func auxiliaryRefsEqual(a, b *haproxyv1alpha1.AuxiliaryFileReferences) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return resourceRefsEqual(a.MapFiles, b.MapFiles) &&
-		resourceRefsEqual(a.SSLCertificates, b.SSLCertificates) &&
-		resourceRefsEqual(a.GeneralFiles, b.GeneralFiles) &&
-		resourceRefsEqual(a.CRTListFiles, b.CRTListFiles)
-}
-
-// resourceRefsEqual compares two slices of ResourceReference for equality.
-func resourceRefsEqual(a, b []haproxyv1alpha1.ResourceReference) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a.MapFiles, b.MapFiles) &&
+		slices.Equal(a.SSLCertificates, b.SSLCertificates) &&
+		slices.Equal(a.GeneralFiles, b.GeneralFiles) &&
+		slices.Equal(a.CRTListFiles, b.CRTListFiles)
 }
