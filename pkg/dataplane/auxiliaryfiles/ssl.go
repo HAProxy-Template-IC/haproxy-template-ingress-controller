@@ -174,36 +174,33 @@ func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desi
 		return nil, err
 	}
 
-	// Convert generic diff to SSL certificate diff
-	// Note: For SSL certificates, we need to use original desired certificates (with full paths)
-	// for Create/Update operations, but use normalized paths for Delete operations
+	// For Create/Update we need the original desired certificates (with full
+	// paths), but Delete works in terms of the normalized identifiers the API
+	// returns. Build a sanitized-basename → original-cert map and look up each
+	// normalized entry from the generic diff against it.
 	desiredMap := make(map[string]SSLCertificate)
 	for _, cert := range desired {
-		// Use sanitized basename as key to match normalized paths from genericDiff
 		desiredMap[client.SanitizeSSLCertName(filepath.Base(cert.Path))] = cert
 	}
 
-	diff := &SSLCertificateDiff{
-		ToCreate: make([]SSLCertificate, 0, len(genericDiff.ToCreate)),
-		ToUpdate: make([]SSLCertificate, 0, len(genericDiff.ToUpdate)),
+	return &SSLCertificateDiff{
+		ToCreate: restoreOriginals(genericDiff.ToCreate, desiredMap, func(c SSLCertificate) string { return c.Path }),
+		ToUpdate: restoreOriginals(genericDiff.ToUpdate, desiredMap, func(c SSLCertificate) string { return c.Path }),
 		ToDelete: genericDiff.ToDelete,
-	}
+	}, nil
+}
 
-	// Restore original paths for create operations
-	for _, cert := range genericDiff.ToCreate {
-		if original, exists := desiredMap[cert.Path]; exists {
-			diff.ToCreate = append(diff.ToCreate, original)
+// restoreOriginals re-keys a normalized diff slice back to the originals from
+// desiredMap. Items whose key isn't found in the map are dropped — they were
+// never part of the desired set so the API shouldn't be asked to act on them.
+func restoreOriginals[T any](items []T, desiredMap map[string]T, getKey func(T) string) []T {
+	out := make([]T, 0, len(items))
+	for _, item := range items {
+		if original, exists := desiredMap[getKey(item)]; exists {
+			out = append(out, original)
 		}
 	}
-
-	// Restore original paths for update operations
-	for _, cert := range genericDiff.ToUpdate {
-		if original, exists := desiredMap[cert.Path]; exists {
-			diff.ToUpdate = append(diff.ToUpdate, original)
-		}
-	}
-
-	return diff, nil
+	return out
 }
 
 // SyncSSLCertificates synchronizes SSL certificates to the desired state by applying
