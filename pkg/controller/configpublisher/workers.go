@@ -19,10 +19,36 @@ import (
 	"fmt"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
+
+// buildPublishRequest assembles the PublishRequest fields shared by both the
+// happy-path publish and the validation-failed publish. Callers layer the
+// extra fields (NameSuffix, ValidationError) on top.
+func (c *Component) buildPublishRequest(templateConfig *v1alpha1.HAProxyTemplateConfig, entry *renderedConfigEntry) *configpublisher.PublishRequest {
+	return &configpublisher.PublishRequest{
+		TemplateConfigName:      templateConfig.Name,
+		TemplateConfigNamespace: templateConfig.Namespace,
+		TemplateConfigUID:       templateConfig.UID,
+		Config:                  entry.config,
+		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		AuxiliaryFiles:          c.convertAuxiliaryFiles(entry.auxFiles),
+		Checksum:                entry.contentChecksum,
+		CompressionThreshold:    c.getCompressionThreshold(templateConfig),
+	}
+}
+
+// discardCachedConfig drops the rendered config entry for the given correlation
+// ID. Used by both worker paths once the entry is no longer needed (after
+// successful publish or to clean up after a publish failure).
+func (c *Component) discardCachedConfig(correlationID string) {
+	c.mu.Lock()
+	delete(c.renderedConfigs, correlationID)
+	c.mu.Unlock()
+}
 
 // publishWorker processes publish work items asynchronously.
 // This worker runs in a separate goroutine to prevent blocking the event loop
@@ -156,22 +182,7 @@ func (c *Component) ensureThrottleTimer(remaining time.Duration) {
 
 // executePublish performs the actual K8S API call to publish the config CRD.
 func (c *Component) executePublish(work *publishWorkItem) {
-	checksumHex := work.entry.contentChecksum
-
-	// Convert auxiliary files
-	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
-
-	// Create publish request
-	request := &configpublisher.PublishRequest{
-		TemplateConfigName:      work.templateConfig.Name,
-		TemplateConfigNamespace: work.templateConfig.Namespace,
-		TemplateConfigUID:       work.templateConfig.UID,
-		Config:                  work.entry.config,
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		AuxiliaryFiles:          auxFiles,
-		Checksum:                checksumHex,
-		CompressionThreshold:    c.getCompressionThreshold(work.templateConfig),
-	}
+	request := c.buildPublishRequest(work.templateConfig, work.entry)
 
 	// Call pure publisher with timeout context
 	publishCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
@@ -184,13 +195,11 @@ func (c *Component) executePublish(work *publishWorkItem) {
 			"config_name", work.templateConfig.Name,
 			"correlation_id", work.correlationID,
 		)
-		// Clean up the cached entry
-		c.mu.Lock()
-		delete(c.renderedConfigs, work.correlationID)
-		c.mu.Unlock()
+		c.discardCachedConfig(work.correlationID)
 		return
 	}
 
+	checksumHex := request.Checksum
 	c.logger.Debug("runtime configuration published successfully",
 		"runtime_config_name", result.RuntimeConfigName,
 		"runtime_config_namespace", result.RuntimeConfigNamespace,
@@ -238,12 +247,6 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		"correlation_id", work.correlationID,
 	)
 
-	// Use pre-computed checksum from pipeline (propagated via TemplateRenderedEvent)
-	checksumHex := work.entry.contentChecksum
-
-	// Convert auxiliary files
-	auxFiles := c.convertAuxiliaryFiles(work.entry.auxFiles)
-
 	// Build validation error summary
 	var validationError string
 	if len(work.event.Errors) > 0 {
@@ -253,19 +256,10 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		}
 	}
 
-	// Create publish request with invalid state (uses "-invalid" suffix)
-	request := &configpublisher.PublishRequest{
-		TemplateConfigName:      work.templateConfig.Name,
-		TemplateConfigNamespace: work.templateConfig.Namespace,
-		TemplateConfigUID:       work.templateConfig.UID,
-		Config:                  work.entry.config,
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
-		AuxiliaryFiles:          auxFiles,
-		Checksum:                checksumHex,
-		NameSuffix:              "-invalid",
-		ValidationError:         validationError,
-		CompressionThreshold:    c.getCompressionThreshold(work.templateConfig),
-	}
+	// Layer the invalid-state extras on top of the shared request.
+	request := c.buildPublishRequest(work.templateConfig, work.entry)
+	request.NameSuffix = "-invalid"
+	request.ValidationError = validationError
 
 	// Call pure publisher with timeout context
 	publishCtx, cancel := context.WithTimeout(context.Background(), timeouts.KubernetesAPILongTimeout)
@@ -278,10 +272,7 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 			"config_name", work.templateConfig.Name,
 			"correlation_id", work.correlationID,
 		)
-		// Clean up the cached entry
-		c.mu.Lock()
-		delete(c.renderedConfigs, work.correlationID)
-		c.mu.Unlock()
+		c.discardCachedConfig(work.correlationID)
 		return
 	}
 
@@ -292,10 +283,7 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 		"correlation_id", work.correlationID,
 	)
 
-	// Clean up the cached entry after successful publish
-	c.mu.Lock()
-	delete(c.renderedConfigs, work.correlationID)
-	c.mu.Unlock()
+	c.discardCachedConfig(work.correlationID)
 }
 
 // statusWorker processes pod status update work items asynchronously with coalescing.
