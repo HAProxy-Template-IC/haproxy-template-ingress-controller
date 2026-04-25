@@ -27,6 +27,28 @@ const (
 // to ensure correct ordering within the same base priority level.
 const PriorityMultiplier = 1000
 
+// transformForExecute prepares the API model passed to an operation's executor.
+// Delete operations don't carry a model so they receive TAPI's zero value. For
+// create/update operations the model is run through transformFn; if the result
+// is the zero value (typically a nil pointer) the transform failed and an
+// error is returned. Shared by all *Op.Execute implementations.
+func transformForExecute[TModel any, TAPI any](
+	opType OperationType,
+	sectionName string,
+	model TModel,
+	transformFn func(TModel) TAPI,
+) (TAPI, error) {
+	var zero TAPI
+	if opType == OperationDelete {
+		return zero, nil
+	}
+	apiModel := transformFn(model)
+	if any(apiModel) == any(zero) {
+		return zero, fmt.Errorf("failed to transform %s model to API type", sectionName)
+	}
+	return apiModel, nil
+}
+
 // Priority constants for operation ordering (base priorities, before multiplier).
 // Lower priority = executed first for Creates, executed last for Deletes.
 // Higher priority = executed last for Creates, executed first for Deletes.
@@ -183,22 +205,11 @@ func (op *TopLevelOp[TModel, TAPI]) Priority() int    { return op.priorityVal * 
 func (op *TopLevelOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *TopLevelOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	name := op.nameFn(op.model)
-
-	// For delete operations, we may not need to transform
-	if op.opType == OperationDelete {
-		var zero TAPI
-		return op.executeFn(ctx, c, txID, zero, name)
+	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	if err != nil {
+		return err
 	}
-
-	// Transform model for create/update
-	apiModel := op.transformFn(op.model)
-	var zero TAPI
-	if any(apiModel) == any(zero) {
-		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
-	}
-
-	return op.executeFn(ctx, c, txID, apiModel, name)
+	return op.executeFn(ctx, c, txID, apiModel, op.nameFn(op.model))
 }
 
 // IndexChildOp handles operations for index-based child resources like ACL, HTTP rules, TCP rules.
@@ -261,19 +272,10 @@ func (op *IndexChildOp[TModel, TAPI]) Priority() int {
 func (op *IndexChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *IndexChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	// For delete operations, we don't need to transform
-	if op.opType == OperationDelete {
-		var zero TAPI
-		return op.executeFn(ctx, c, txID, op.parentName, op.index, zero)
+	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	if err != nil {
+		return err
 	}
-
-	// Transform model for create/update
-	apiModel := op.transformFn(op.model)
-	var zero TAPI
-	if any(apiModel) == any(zero) {
-		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
-	}
-
 	return op.executeFn(ctx, c, txID, op.parentName, op.index, apiModel)
 }
 
@@ -324,19 +326,10 @@ func (op *NameChildOp[TModel, TAPI]) Priority() int    { return op.priorityVal *
 func (op *NameChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	// For delete operations, we don't need to transform
-	if op.opType == OperationDelete {
-		var zero TAPI
-		return op.executeFn(ctx, c, txID, op.parentName, op.childName, zero)
+	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	if err != nil {
+		return err
 	}
-
-	// Transform model for create/update
-	apiModel := op.transformFn(op.model)
-	var zero TAPI
-	if any(apiModel) == any(zero) {
-		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
-	}
-
 	return op.executeFn(ctx, c, txID, op.parentName, op.childName, apiModel)
 }
 
@@ -381,18 +374,10 @@ func (op *SingletonOp[TModel, TAPI]) Priority() int    { return op.priorityVal *
 func (op *SingletonOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *SingletonOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	// For delete operations, we don't need to transform
-	if op.opType == OperationDelete {
-		var zero TAPI
-		return op.executeFn(ctx, c, txID, zero)
+	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	if err != nil {
+		return err
 	}
-
-	apiModel := op.transformFn(op.model)
-	var zero TAPI
-	if any(apiModel) == any(zero) {
-		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
-	}
-
 	return op.executeFn(ctx, c, txID, apiModel)
 }
 
@@ -443,20 +428,9 @@ func (op *ContainerChildOp[TModel, TAPI]) Priority() int    { return op.priority
 func (op *ContainerChildOp[TModel, TAPI]) Describe() string { return op.describeFn() }
 
 func (op *ContainerChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	childName := op.nameFn(op.model)
-
-	// For delete operations, we don't need to transform
-	if op.opType == OperationDelete {
-		var zero TAPI
-		return op.executeFn(ctx, c, txID, op.containerName, childName, zero)
+	apiModel, err := transformForExecute(op.opType, op.sectionName, op.model, op.transformFn)
+	if err != nil {
+		return err
 	}
-
-	// Transform model for create/update
-	apiModel := op.transformFn(op.model)
-	var zero TAPI
-	if any(apiModel) == any(zero) {
-		return fmt.Errorf("failed to transform %s model to API type", op.sectionName)
-	}
-
-	return op.executeFn(ctx, c, txID, op.containerName, childName, apiModel)
+	return op.executeFn(ctx, c, txID, op.containerName, op.nameFn(op.model), apiModel)
 }
