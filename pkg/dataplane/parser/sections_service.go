@@ -22,6 +22,59 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
+// extractSectionsByParse iterates each section of the given type and delegates
+// to a "returning" client-native parse function (one that builds the model
+// itself). Sections whose parse fails are logged via logSectionParseError and
+// skipped, matching the original per-section extractor behaviour.
+func extractSectionsByParse[T any](
+	p *Parser,
+	sectionType parser.Section,
+	label string,
+	parse func(parser.Parser, string) (*T, error),
+) ([]*T, error) {
+	sections, err := p.parser.SectionsGet(sectionType)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*T, 0, len(sections))
+	for _, sectionName := range sections {
+		item, err := parse(p.parser, sectionName)
+		if err != nil {
+			logSectionParseError(label, sectionName, err)
+			continue
+		}
+		results = append(results, item)
+	}
+	return results, nil
+}
+
+// extractSectionsByFill iterates each section of the given type and delegates
+// to a "filling" client-native parse function (one that mutates a model
+// allocated by init). Used when the model carries the section name in a
+// pre-set field that the parse function expects already populated.
+func extractSectionsByFill[T any](
+	p *Parser,
+	sectionType parser.Section,
+	label string,
+	init func(name string) *T,
+	parse func(parser.Parser, *T) error,
+) ([]*T, error) {
+	sections, err := p.parser.SectionsGet(sectionType)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]*T, 0, len(sections))
+	for _, sectionName := range sections {
+		item := init(sectionName)
+		if err := parse(p.parser, item); err != nil {
+			logSectionParseError(label, sectionName, err)
+			continue
+		}
+		results = append(results, item)
+	}
+	return results, nil
+}
+
 // extractPeersWithIndexes extracts all peers sections and builds pointer indexes.
 func (p *Parser) extractPeersWithIndexes(conf *StructuredConfig) {
 	sections, err := p.parser.SectionsGet(parser.Peers)
@@ -108,51 +161,22 @@ func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 
 // extractCaches extracts all cache sections using client-native's ParseCacheSection.
 func (p *Parser) extractCaches() ([]*models.Cache, error) {
-	sections, err := p.parser.SectionsGet(parser.Cache)
-	if err != nil {
-		return nil, err
-	}
-
-	caches := make([]*models.Cache, 0, len(sections))
-	for _, sectionName := range sections {
-		cache := &models.Cache{}
-		name := sectionName
-		cache.Name = &name
-
-		// ParseCacheSection handles all cache fields automatically
-		if err := configuration.ParseCacheSection(p.parser, cache); err != nil {
-			logSectionParseError("cache", sectionName, err)
-			continue
-		}
-
-		caches = append(caches, cache)
-	}
-
-	return caches, nil
+	return extractSectionsByFill(p, parser.Cache, "cache",
+		func(name string) *models.Cache {
+			return &models.Cache{Name: &name}
+		},
+		configuration.ParseCacheSection,
+	)
 }
 
 // extractRings extracts all ring sections using client-native's ParseRingSection.
 func (p *Parser) extractRings() ([]*models.Ring, error) {
-	sections, err := p.parser.SectionsGet(parser.Ring)
-	if err != nil {
-		return nil, err
-	}
-
-	rings := make([]*models.Ring, 0, len(sections))
-	for _, sectionName := range sections {
-		ring := &models.Ring{}
-		ring.Name = sectionName
-
-		// ParseRingSection handles all ring fields automatically
-		if err := configuration.ParseRingSection(p.parser, ring); err != nil {
-			logSectionParseError("ring", sectionName, err)
-			continue
-		}
-
-		rings = append(rings, ring)
-	}
-
-	return rings, nil
+	return extractSectionsByFill(p, parser.Ring, "ring",
+		func(name string) *models.Ring {
+			return &models.Ring{RingBase: models.RingBase{Name: name}}
+		},
+		configuration.ParseRingSection,
+	)
 }
 
 // extractHTTPErrors extracts all http-errors sections using client-native's Parse* functions.
@@ -217,117 +241,41 @@ func (p *Parser) extractUserlistsWithIndexes(conf *StructuredConfig) {
 // extractPrograms extracts all program sections using client-native's ParseProgram.
 // Programs are external processes managed by HAProxy.
 func (p *Parser) extractPrograms() ([]*models.Program, error) {
-	sections, err := p.parser.SectionsGet(parser.Program)
-	if err != nil {
-		return nil, err
-	}
-
-	programs := make([]*models.Program, 0, len(sections))
-	for _, sectionName := range sections {
-		// ParseProgram handles all program fields automatically
-		program, err := configuration.ParseProgram(p.parser, sectionName)
-		if err != nil {
-			logSectionParseError("program", sectionName, err)
-			continue
-		}
-
-		programs = append(programs, program)
-	}
-
-	return programs, nil
+	return extractSectionsByParse(p, parser.Program, "program", configuration.ParseProgram)
 }
 
 // extractLogForwards extracts all log-forward sections using client-native's ParseLogForward.
 // Log-forwards define log forwarding rules.
 func (p *Parser) extractLogForwards() ([]*models.LogForward, error) {
-	sections, err := p.parser.SectionsGet(parser.LogForward)
-	if err != nil {
-		return nil, err
-	}
-
-	logForwards := make([]*models.LogForward, 0, len(sections))
-	for _, sectionName := range sections {
-		// ParseLogForward takes a pointer to fill
-		logForward := &models.LogForward{
-			LogForwardBase: models.LogForwardBase{Name: sectionName},
-		}
-		if err := configuration.ParseLogForward(p.parser, logForward); err != nil {
-			logSectionParseError("log-forward", sectionName, err)
-			continue
-		}
-
-		logForwards = append(logForwards, logForward)
-	}
-
-	return logForwards, nil
+	return extractSectionsByFill(p, parser.LogForward, "log-forward",
+		func(name string) *models.LogForward {
+			return &models.LogForward{LogForwardBase: models.LogForwardBase{Name: name}}
+		},
+		configuration.ParseLogForward,
+	)
 }
 
 // extractFCGIApps extracts all fcgi-app sections using client-native's ParseFCGIApp.
 // FCGI apps define FastCGI application configurations.
 func (p *Parser) extractFCGIApps() ([]*models.FCGIApp, error) {
-	sections, err := p.parser.SectionsGet(parser.FCGIApp)
-	if err != nil {
-		return nil, err
-	}
-
-	fcgiApps := make([]*models.FCGIApp, 0, len(sections))
-	for _, sectionName := range sections {
-		// ParseFCGIApp handles all fields automatically
-		fcgiApp, err := configuration.ParseFCGIApp(p.parser, sectionName)
-		if err != nil {
-			logSectionParseError("fcgi-app", sectionName, err)
-			continue
-		}
-
-		fcgiApps = append(fcgiApps, fcgiApp)
-	}
-
-	return fcgiApps, nil
+	return extractSectionsByParse(p, parser.FCGIApp, "fcgi-app", configuration.ParseFCGIApp)
 }
 
 // extractCrtStores extracts all crt-store sections using client-native's ParseCrtStore.
 // Certificate stores define locations for SSL certificates.
 func (p *Parser) extractCrtStores() ([]*models.CrtStore, error) {
-	sections, err := p.parser.SectionsGet(parser.CrtStore)
-	if err != nil {
-		return nil, err
-	}
-
-	crtStores := make([]*models.CrtStore, 0, len(sections))
-	for _, sectionName := range sections {
-		crtStore := &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: sectionName}}
-		if err := configuration.ParseCrtStore(p.parser, crtStore); err != nil {
-			logSectionParseError("crt-store", sectionName, err)
-			continue
-		}
-
-		crtStores = append(crtStores, crtStore)
-	}
-
-	return crtStores, nil
+	return extractSectionsByFill(p, parser.CrtStore, "crt-store",
+		func(name string) *models.CrtStore {
+			return &models.CrtStore{CrtStoreBase: models.CrtStoreBase{Name: name}}
+		},
+		configuration.ParseCrtStore,
+	)
 }
 
 // extractLogProfiles extracts all log-profile sections using client-native's ParseLogProfile.
 // Log profiles define logging profiles for one or more steps (v3.1+ feature).
 func (p *Parser) extractLogProfiles() ([]*models.LogProfile, error) {
-	sections, err := p.parser.SectionsGet(parser.LogProfile)
-	if err != nil {
-		return nil, err
-	}
-
-	logProfiles := make([]*models.LogProfile, 0, len(sections))
-	for _, sectionName := range sections {
-		// ParseLogProfile handles all log-profile fields automatically
-		logProfile, err := configuration.ParseLogProfile(p.parser, sectionName)
-		if err != nil {
-			logSectionParseError("log-profile", sectionName, err)
-			continue
-		}
-
-		logProfiles = append(logProfiles, logProfile)
-	}
-
-	return logProfiles, nil
+	return extractSectionsByParse(p, parser.LogProfile, "log-profile", configuration.ParseLogProfile)
 }
 
 // extractTraces extracts the traces section using client-native's ParseTraces.
@@ -352,22 +300,5 @@ func (p *Parser) extractTraces() *models.Traces {
 // extractAcmeProviders extracts all acme sections using client-native's ParseAcmeProvider.
 // ACME providers define Let's Encrypt/ACME certificate automation configuration (v3.2+ feature).
 func (p *Parser) extractAcmeProviders() ([]*models.AcmeProvider, error) {
-	sections, err := p.parser.SectionsGet(parser.Acme)
-	if err != nil {
-		return nil, err
-	}
-
-	acmeProviders := make([]*models.AcmeProvider, 0, len(sections))
-	for _, sectionName := range sections {
-		// ParseAcmeProvider handles all acme fields automatically
-		acmeProvider, err := configuration.ParseAcmeProvider(p.parser, sectionName)
-		if err != nil {
-			logSectionParseError("acme", sectionName, err)
-			continue
-		}
-
-		acmeProviders = append(acmeProviders, acmeProvider)
-	}
-
-	return acmeProviders, nil
+	return extractSectionsByParse(p, parser.Acme, "acme", configuration.ParseAcmeProvider)
 }
