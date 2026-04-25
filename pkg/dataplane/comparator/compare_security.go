@@ -9,13 +9,15 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 // compareUserlists compares userlist sections between current and desired configurations.
 // Uses pointer indexes for zero-copy iteration over users and groups.
 func (c *Comparator) compareUserlists(current, desired *parser.StructuredConfig) []Operation {
-	currentMap := buildUserlistMap(current.Userlists)
-	desiredMap := buildUserlistMap(desired.Userlists)
+	getName := func(u *models.Userlist) string { return u.Name }
+	currentMap := parserconfig.BuildPointerIndex(current.Userlists, getName)
+	desiredMap := parserconfig.BuildPointerIndex(desired.Userlists, getName)
 
 	addedOps := c.findAddedUserlistsWithIndexes(desiredMap, currentMap, desired.UserIndex)
 	deletedOps := findDeletedUserlists(currentMap, desiredMap)
@@ -27,18 +29,6 @@ func (c *Comparator) compareUserlists(current, desired *parser.StructuredConfig)
 	operations = append(operations, modifiedOps...)
 
 	return operations
-}
-
-// buildUserlistMap converts a userlist slice to a map for comparison.
-func buildUserlistMap(userlists []*models.Userlist) map[string]*models.Userlist {
-	userlistMap := make(map[string]*models.Userlist)
-	for i := range userlists {
-		userlist := userlists[i]
-		if userlist.Name != "" {
-			userlistMap[userlist.Name] = userlist
-		}
-	}
-	return userlistMap
 }
 
 // findAddedUserlistsWithIndexes identifies userlist sections that need to be created.
