@@ -42,9 +42,7 @@ func (p *Parser) extractPeersWithIndexes(conf *StructuredConfig) {
 
 		// Parse peer entries and build pointer index for zero-copy iteration.
 		peerEntries, _ := configuration.ParsePeerEntries(sectionName, p.parser)
-		if entryIndex := parserconfig.BuildPointerIndex(peerEntries, func(e *models.PeerEntry) string { return e.Name }); entryIndex != nil {
-			conf.PeerEntryIndex[sectionName] = entryIndex
-		}
+		conf.PeerEntryIndex[sectionName] = parserconfig.BuildPointerIndex(peerEntries, func(e *models.PeerEntry) string { return e.Name })
 
 		peers = append(peers, peer)
 	}
@@ -72,9 +70,7 @@ func (p *Parser) extractResolversWithIndexes(conf *StructuredConfig) {
 
 		// Parse nameservers and build pointer index for zero-copy iteration.
 		nameservers, _ := configuration.ParseNameservers(sectionName, p.parser)
-		if nsIndex := parserconfig.BuildPointerIndex(nameservers, func(n *models.Nameserver) string { return n.Name }); nsIndex != nil {
-			conf.NameserverIndex[sectionName] = nsIndex
-		}
+		conf.NameserverIndex[sectionName] = parserconfig.BuildPointerIndex(nameservers, func(n *models.Nameserver) string { return n.Name })
 
 		resolvers = append(resolvers, resolver)
 	}
@@ -102,9 +98,7 @@ func (p *Parser) extractMailersWithIndexes(conf *StructuredConfig) {
 
 		// Parse mailer entries and build pointer index for zero-copy iteration.
 		mailerEntries, _ := configuration.ParseMailerEntries(sectionName, p.parser)
-		if entryIndex := parserconfig.BuildPointerIndex(mailerEntries, func(e *models.MailerEntry) string { return e.Name }); entryIndex != nil {
-			conf.MailerEntryIndex[sectionName] = entryIndex
-		}
+		conf.MailerEntryIndex[sectionName] = parserconfig.BuildPointerIndex(mailerEntries, func(e *models.MailerEntry) string { return e.Name })
 
 		mailers = append(mailers, mailer)
 	}
