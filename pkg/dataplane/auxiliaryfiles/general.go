@@ -6,35 +6,16 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// generalFileOps implements FileOperations for GeneralFile.
-type generalFileOps struct {
-	client *client.DataplaneClient
-}
-
-func (o *generalFileOps) GetAll(ctx context.Context) ([]string, error) {
-	return o.client.GetAllGeneralFiles(ctx)
-}
-
-func (o *generalFileOps) GetContent(ctx context.Context, id string) (string, error) {
-	return o.client.GetGeneralFileContent(ctx, id)
-}
-
-func (o *generalFileOps) Create(ctx context.Context, id, content string) (string, error) {
-	reloadID, err := o.client.CreateGeneralFile(ctx, id, content)
-	if isAlreadyExistsError(err) {
-		// File physically exists but wasn't in the storage listing (e.g., after a raw
-		// config push + reload). Fall back to update instead of failing.
-		return o.Update(ctx, id, content)
+// newGeneralFileOps wires the generic clientFileOps helper to the DataplaneClient
+// methods that operate on general file storage.
+func newGeneralFileOps(c *client.DataplaneClient) FileOperations[GeneralFile] {
+	return &clientFileOps[GeneralFile]{
+		getAll:     c.GetAllGeneralFiles,
+		getContent: c.GetGeneralFileContent,
+		create:     c.CreateGeneralFile,
+		update:     c.UpdateGeneralFile,
+		deleteFn:   c.DeleteGeneralFile,
 	}
-	return reloadID, err
-}
-
-func (o *generalFileOps) Update(ctx context.Context, id, content string) (string, error) {
-	return o.client.UpdateGeneralFile(ctx, id, content)
-}
-
-func (o *generalFileOps) Delete(ctx context.Context, id string) error {
-	return o.client.DeleteGeneralFile(ctx, id)
 }
 
 // CompareGeneralFiles compares the current state of general files in HAProxy storage
@@ -47,7 +28,7 @@ func (o *generalFileOps) Delete(ctx context.Context, id string) error {
 //  3. Compares with the desired files list
 //  4. Returns a FileDiff with operations needed to reach desired state
 func CompareGeneralFiles(ctx context.Context, c *client.DataplaneClient, desired []GeneralFile) (*FileDiff, error) {
-	return Compare[GeneralFile](ctx, &generalFileOps{client: c}, desired, func(id, content string) GeneralFile {
+	return Compare[GeneralFile](ctx, newGeneralFileOps(c), desired, func(id, content string) GeneralFile {
 		return GeneralFile{Filename: id, Content: content}
 	})
 }
@@ -63,5 +44,5 @@ func SyncGeneralFiles(ctx context.Context, c *client.DataplaneClient, diff *File
 	if diff == nil {
 		return nil, nil
 	}
-	return Sync[GeneralFile](ctx, &generalFileOps{client: c}, diff)
+	return Sync[GeneralFile](ctx, newGeneralFileOps(c), diff)
 }

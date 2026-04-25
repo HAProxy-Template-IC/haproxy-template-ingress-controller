@@ -84,46 +84,19 @@ func calculateCertIdentifier(content string) string {
 	return fmt.Sprintf("cert:serial:%s:issuers:%s", leafCert.SerialNumber.String(), issuersStr)
 }
 
-// sslCertificateOps implements FileOperations for SSLCertificate.
-type sslCertificateOps struct {
-	client *client.DataplaneClient
-}
-
-func (o *sslCertificateOps) GetAll(ctx context.Context) ([]string, error) {
-	// NOTE: API returns filenames only (e.g., "cert.pem"), not absolute paths.
-	// Comparison logic in CompareSSLCertificates() handles path normalization.
-	return o.client.GetAllSSLCertificates(ctx)
-}
-
-func (o *sslCertificateOps) GetContent(ctx context.Context, id string) (string, error) {
-	// Extract filename from path (API expects filename only)
-	filename := filepath.Base(id)
-	return o.client.GetSSLCertificateContent(ctx, filename)
-}
-
-func (o *sslCertificateOps) Create(ctx context.Context, id, content string) (string, error) {
-	// Extract filename from path (API expects filename only)
-	filename := filepath.Base(id)
-	reloadID, err := o.client.CreateSSLCertificate(ctx, filename, content)
-	if isAlreadyExistsError(err) {
-		// Certificate already exists, fall back to update instead of failing.
-		// This handles the case where a previous deployment partially succeeded
-		// or where path normalization causes comparison mismatches.
-		return o.Update(ctx, id, content)
+// newSSLCertificateOps wires the generic clientFileOps helper to the DataplaneClient
+// methods that operate on SSL certificate storage. The API expects filenames only
+// (e.g. "cert.pem") even though SSLCertificate.Path may be a full path, so each
+// per-id call is normalized via filepath.Base.
+func newSSLCertificateOps(c *client.DataplaneClient) FileOperations[SSLCertificate] {
+	return &clientFileOps[SSLCertificate]{
+		getAll:     c.GetAllSSLCertificates,
+		getContent: c.GetSSLCertificateContent,
+		create:     c.CreateSSLCertificate,
+		update:     c.UpdateSSLCertificate,
+		deleteFn:   c.DeleteSSLCertificate,
+		idForAPI:   filepath.Base,
 	}
-	return reloadID, err
-}
-
-func (o *sslCertificateOps) Update(ctx context.Context, id, content string) (string, error) {
-	// Extract filename from path (API expects filename only)
-	filename := filepath.Base(id)
-	return o.client.UpdateSSLCertificate(ctx, filename, content)
-}
-
-func (o *sslCertificateOps) Delete(ctx context.Context, id string) error {
-	// Extract filename from path (API expects filename only)
-	filename := filepath.Base(id)
-	return o.client.DeleteSSLCertificate(ctx, filename)
 }
 
 // CompareSSLCertificates compares the current state of SSL certificates in HAProxy storage
@@ -156,7 +129,7 @@ func CompareSSLCertificates(ctx context.Context, c *client.DataplaneClient, desi
 		}
 	}
 
-	ops := &sslCertificateOps{client: c}
+	ops := newSSLCertificateOps(c)
 
 	// Use generic Compare function with identifier-based comparison
 	genericDiff, err := Compare[SSLCertificate](
@@ -214,5 +187,5 @@ func SyncSSLCertificates(ctx context.Context, c *client.DataplaneClient, diff *S
 	if diff == nil {
 		return nil, nil
 	}
-	return Sync[SSLCertificate](ctx, &sslCertificateOps{client: c}, diff)
+	return Sync[SSLCertificate](ctx, newSSLCertificateOps(c), diff)
 }

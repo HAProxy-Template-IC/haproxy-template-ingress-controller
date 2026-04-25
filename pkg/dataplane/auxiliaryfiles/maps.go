@@ -6,35 +6,16 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// mapFileOps implements FileOperations for MapFile.
-type mapFileOps struct {
-	client *client.DataplaneClient
-}
-
-func (o *mapFileOps) GetAll(ctx context.Context) ([]string, error) {
-	return o.client.GetAllMapFiles(ctx)
-}
-
-func (o *mapFileOps) GetContent(ctx context.Context, id string) (string, error) {
-	return o.client.GetMapFileContent(ctx, id)
-}
-
-func (o *mapFileOps) Create(ctx context.Context, id, content string) (string, error) {
-	reloadID, err := o.client.CreateMapFile(ctx, id, content)
-	if isAlreadyExistsError(err) {
-		// File physically exists but wasn't in the storage listing (e.g., after a raw
-		// config push + reload). Fall back to update instead of failing.
-		return o.Update(ctx, id, content)
+// newMapFileOps wires the generic clientFileOps helper to the DataplaneClient
+// methods that operate on map file storage.
+func newMapFileOps(c *client.DataplaneClient) FileOperations[MapFile] {
+	return &clientFileOps[MapFile]{
+		getAll:     c.GetAllMapFiles,
+		getContent: c.GetMapFileContent,
+		create:     c.CreateMapFile,
+		update:     c.UpdateMapFile,
+		deleteFn:   c.DeleteMapFile,
 	}
-	return reloadID, err
-}
-
-func (o *mapFileOps) Update(ctx context.Context, id, content string) (string, error) {
-	return o.client.UpdateMapFile(ctx, id, content)
-}
-
-func (o *mapFileOps) Delete(ctx context.Context, id string) error {
-	return o.client.DeleteMapFile(ctx, id)
 }
 
 // CompareMapFiles compares the current state of map files in HAProxy storage
@@ -47,7 +28,7 @@ func (o *mapFileOps) Delete(ctx context.Context, id string) error {
 //  3. Compares with the desired map files list
 //  4. Returns a MapFileDiff with operations needed to reach desired state
 func CompareMapFiles(ctx context.Context, c *client.DataplaneClient, desired []MapFile) (*MapFileDiff, error) {
-	return Compare[MapFile](ctx, &mapFileOps{client: c}, desired, func(id, content string) MapFile {
+	return Compare[MapFile](ctx, newMapFileOps(c), desired, func(id, content string) MapFile {
 		return MapFile{Path: id, Content: content}
 	})
 }
@@ -63,5 +44,5 @@ func SyncMapFiles(ctx context.Context, c *client.DataplaneClient, diff *MapFileD
 	if diff == nil {
 		return nil, nil
 	}
-	return Sync[MapFile](ctx, &mapFileOps{client: c}, diff)
+	return Sync[MapFile](ctx, newMapFileOps(c), diff)
 }
