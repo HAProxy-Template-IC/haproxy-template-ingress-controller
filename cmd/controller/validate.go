@@ -280,35 +280,25 @@ func dumpRenderedContent(results *testrunner.TestResults) {
 			fmt.Println(separatorSingle)
 		}
 
-		if len(test.RenderedMaps) > 0 {
-			fmt.Println("\n### Map Files")
-			for name, content := range test.RenderedMaps {
-				fmt.Printf("\n#### %s\n", name)
-				fmt.Println(separatorSingle)
-				fmt.Println(content)
-				fmt.Println(separatorSingle)
-			}
-		}
+		dumpRenderedNamedContent("Map Files", test.RenderedMaps)
+		dumpRenderedNamedContent("General Files", test.RenderedFiles)
+		dumpRenderedNamedContent("SSL Certificates", test.RenderedCerts)
+	}
+}
 
-		if len(test.RenderedFiles) > 0 {
-			fmt.Println("\n### General Files")
-			for name, content := range test.RenderedFiles {
-				fmt.Printf("\n#### %s\n", name)
-				fmt.Println(separatorSingle)
-				fmt.Println(content)
-				fmt.Println(separatorSingle)
-			}
-		}
-
-		if len(test.RenderedCerts) > 0 {
-			fmt.Println("\n### SSL Certificates")
-			for name, content := range test.RenderedCerts {
-				fmt.Printf("\n#### %s\n", name)
-				fmt.Println(separatorSingle)
-				fmt.Println(content)
-				fmt.Println(separatorSingle)
-			}
-		}
+// dumpRenderedNamedContent prints a labelled section listing each name/content
+// pair from the supplied map, separated by separatorSingle. It is a no-op when
+// the map is empty so callers do not need to gate the call.
+func dumpRenderedNamedContent(label string, items map[string]string) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Println("\n### " + label)
+	for name, content := range items {
+		fmt.Printf("\n#### %s\n", name)
+		fmt.Println(separatorSingle)
+		fmt.Println(content)
+		fmt.Println(separatorSingle)
 	}
 }
 
