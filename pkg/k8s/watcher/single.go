@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -196,21 +197,7 @@ func (w *SingleWatcher) handleAdd(obj any) {
 		return
 	}
 
-	// Invoke callback immediately (no debouncing for single resource)
-	if w.config.OnChange != nil {
-		if err := w.config.OnChange(resource); err != nil {
-			// Log error but don't propagate - callback failures shouldn't stop the watcher
-			slog.Warn("Watcher callback failed on Add event",
-				"error", err,
-				"resource_name", resource.GetName(),
-				"resource_namespace", resource.GetNamespace(),
-				"resource_kind", resource.GetKind())
-		} else {
-			slog.Debug("SingleWatcher add callback succeeded",
-				"resource_name", resource.GetName(),
-				"resource_version", resource.GetResourceVersion())
-		}
-	}
+	w.invokeOnChange("Add", resource)
 }
 
 // handleUpdate handles resource update events.
@@ -278,21 +265,7 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
 		return
 	}
 
-	// Invoke callback immediately (no debouncing for single resource)
-	if w.config.OnChange != nil {
-		if err := w.config.OnChange(resource); err != nil {
-			// Log error but don't propagate - callback failures shouldn't stop the watcher
-			slog.Warn("Watcher callback failed on Update event",
-				"error", err,
-				"resource_name", resource.GetName(),
-				"resource_namespace", resource.GetNamespace(),
-				"resource_kind", resource.GetKind())
-		} else {
-			slog.Debug("SingleWatcher update callback succeeded",
-				"resource_name", resource.GetName(),
-				"resource_version", resource.GetResourceVersion())
-		}
-	}
+	w.invokeOnChange("Update", resource)
 }
 
 // handleDelete handles resource deletion events.
@@ -329,21 +302,29 @@ func (w *SingleWatcher) handleDelete(obj any) {
 		return
 	}
 
-	// Invoke callback to signal deletion
-	if w.config.OnChange != nil {
-		if err := w.config.OnChange(resource); err != nil {
-			// Log error but don't propagate - callback failures shouldn't stop the watcher
-			slog.Warn("Watcher callback failed on Delete event",
-				"error", err,
-				"resource_name", resource.GetName(),
-				"resource_namespace", resource.GetNamespace(),
-				"resource_kind", resource.GetKind())
-		} else {
-			slog.Debug("SingleWatcher delete callback succeeded",
-				"resource_name", resource.GetName(),
-				"resource_version", resource.GetResourceVersion())
-		}
+	w.invokeOnChange("Delete", resource)
+}
+
+// invokeOnChange runs the configured OnChange callback for the given event.
+// Callback errors are logged and swallowed so a misbehaving consumer can't
+// stop the watcher. The eventTitle is interpolated capitalised into the warn
+// message and lower-cased for the debug message, matching the pre-refactor
+// log strings.
+func (w *SingleWatcher) invokeOnChange(eventTitle string, resource *unstructured.Unstructured) {
+	if w.config.OnChange == nil {
+		return
 	}
+	if err := w.config.OnChange(resource); err != nil {
+		slog.Warn("Watcher callback failed on "+eventTitle+" event",
+			"error", err,
+			"resource_name", resource.GetName(),
+			"resource_namespace", resource.GetNamespace(),
+			"resource_kind", resource.GetKind())
+		return
+	}
+	slog.Debug("SingleWatcher "+strings.ToLower(eventTitle)+" callback succeeded",
+		"resource_name", resource.GetName(),
+		"resource_version", resource.GetResourceVersion())
 }
 
 // convertToUnstructured converts a resource to *unstructured.Unstructured.
