@@ -188,62 +188,62 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 		"name", req.Name,
 		"operation", req.Operation)
 
-	// Map GVK to resource type
-	resourceType, err := c.mapGVKToResourceType(req.GVK)
+	// Use timeout context to prevent validation from hanging indefinitely
+	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
+	defer cancel()
+	allowed, reason := c.validateWithOverlay(ctx, req.GVK, req.Namespace, req.Name, req.Object, req.Operation, req.ID)
+	c.publishResponse(req.ID, allowed, reason)
+}
+
+// validateWithOverlay is the shared validation pipeline used by both the
+// scatter-gather webhook path (handleValidationRequest) and the synchronous
+// direct path (ValidateDirect). It maps the GVK, builds an overlay store for
+// the affected resource, runs the proposal validator, and runs validation tests
+// if configured. It returns whether the resource is allowed and, if not, a
+// user-facing reason.
+func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, name string, object any, operation, requestID string) (allowed bool, reason string) {
+	resourceType, err := c.mapGVKToResourceType(gvk)
 	if err != nil {
-		c.publishResponse(req.ID, false, fmt.Sprintf("unsupported resource type: %v", err))
-		return
+		return false, fmt.Sprintf("unsupported resource type: %v", err)
 	}
 
-	// Create StoreOverlay from admission request
-	overlay := c.createOverlay(req.Namespace, req.Name, req.Object, req.Operation, req.ID)
-
-	// Create overlays map with single entry for the affected resource type
+	overlay := c.createOverlay(namespace, name, object, operation, requestID)
 	overlays := map[string]*stores.StoreOverlay{
 		resourceType: overlay,
 	}
 
 	c.logger.Debug("Created store overlay for dry-run",
-		"request_id", req.ID,
+		"request_id", requestID,
 		"resource_type", resourceType,
-		"operation", req.Operation)
+		"operation", operation)
 
-	// Delegate to ProposalValidator for render-validate pipeline
-	// Use timeout context to prevent validation from hanging indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
-	defer cancel()
 	result := c.proposalValidator.ValidateSync(ctx, overlays)
-
 	if !result.Valid {
 		c.logger.Info("Dry-run validation failed",
-			"request_id", req.ID,
+			"request_id", requestID,
 			"phase", result.Phase,
 			"error", result.Error)
 
-		// Simplify error message for user-facing response
 		simplified := c.simplifyError(result.Phase, result.Error)
 		c.logger.Debug("Simplified error",
-			"request_id", req.ID,
+			"request_id", requestID,
 			"phase", result.Phase,
 			"simplified", simplified)
-		c.publishResponse(req.ID, false, simplified)
-		return
+		return false, simplified
 	}
 
-	// Run validation tests if configured
 	if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
-		if err := c.runValidationTests(req.ID); err != nil {
-			c.publishResponse(req.ID, false, err.Error())
-			return
+		if err := c.runValidationTests(requestID); err != nil {
+			return false, err.Error()
 		}
 	}
 
 	c.logger.Debug("Dry-run validation passed",
-		"request_id", req.ID,
+		"request_id", requestID,
 		"resource_type", resourceType,
 		"duration_ms", result.DurationMs)
 
-	c.publishResponse(req.ID, true, "")
+	return true, ""
 }
 
 // createOverlay creates a StoreOverlay from validation parameters.
@@ -278,49 +278,5 @@ func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name str
 		"name", name,
 		"operation", operation)
 
-	// Map GVK to resource type
-	resourceType, err := c.mapGVKToResourceType(gvk)
-	if err != nil {
-		return false, fmt.Sprintf("unsupported resource type: %v", err)
-	}
-
-	// Create StoreOverlay from parameters
-	overlay := c.createOverlay(namespace, name, object, operation, "direct")
-
-	// Create overlays map with single entry for the affected resource type
-	overlays := map[string]*stores.StoreOverlay{
-		resourceType: overlay,
-	}
-
-	c.logger.Debug("Created store overlay for direct validation",
-		"resource_type", resourceType,
-		"operation", operation)
-
-	// Delegate to ProposalValidator for render-validate pipeline
-	result := c.proposalValidator.ValidateSync(ctx, overlays)
-
-	if !result.Valid {
-		c.logger.Info("Direct validation failed",
-			"gvk", gvk,
-			"phase", result.Phase,
-			"error", result.Error)
-
-		// Simplify error message for user-facing response
-		simplified := c.simplifyError(result.Phase, result.Error)
-		return false, simplified
-	}
-
-	// Run validation tests if configured
-	if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
-		if err := c.runValidationTests("direct"); err != nil {
-			return false, err.Error()
-		}
-	}
-
-	c.logger.Debug("Direct validation passed",
-		"gvk", gvk,
-		"resource_type", resourceType,
-		"duration_ms", result.DurationMs)
-
-	return true, ""
+	return c.validateWithOverlay(ctx, gvk, namespace, name, object, operation, "direct")
 }
