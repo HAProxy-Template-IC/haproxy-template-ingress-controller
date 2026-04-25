@@ -53,27 +53,17 @@ func (c *Comparator) compareLogProfiles(current, desired *parser.StructuredConfi
 // compareTraces compares the traces section between current and desired configurations.
 // The traces section is a singleton - it can only be updated, not created or deleted separately.
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
+//
+// When desired is nil we never emit a delete - traces is always present (or
+// the API doesn't support it). When current is nil we still emit an update
+// because the API treats it as a create/replace. Otherwise emit an update
+// only when contents differ.
 func (c *Comparator) compareTraces(current, desired *parser.StructuredConfig) []Operation {
-	var operations []Operation
-
-	// If desired has no traces but current does, we still don't generate a delete
-	// because traces is a singleton that's always present (or not supported).
-	// If neither has traces, nothing to do.
 	if desired.Traces == nil {
-		return operations
+		return nil
 	}
-
-	// If current is nil but desired has traces, treat as an update
-	// (the API will create/replace the traces section)
-	if current.Traces == nil {
-		operations = append(operations, sections.NewTracesUpdate(desired.Traces))
-		return operations
+	if current.Traces == nil || !current.Traces.Equal(*desired.Traces) {
+		return []Operation{sections.NewTracesUpdate(desired.Traces)}
 	}
-
-	// Compare using built-in Equal() method
-	if !current.Traces.Equal(*desired.Traces) {
-		operations = append(operations, sections.NewTracesUpdate(desired.Traces))
-	}
-
-	return operations
+	return nil
 }
