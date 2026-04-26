@@ -411,17 +411,6 @@ type WatchedResource struct {
 	// +optional
 	FieldSelector string `json:"fieldSelector,omitempty"`
 
-	// NamespaceSelector filters resources by namespace labels.
-	//
-	// NOT YET IMPLEMENTED: this field is declared on the CRD but the controller
-	// does not read it — pkg/controller/conversion never propagates it to the
-	// internal WatchedResource and pkg/controller/resourcewatcher has no code
-	// path that consumes it. Setting it has no effect today. Use the
-	// `namespace` field for a single fixed namespace, or pre-filter at the RBAC
-	// layer.
-	// +optional
-	NamespaceSelector string `json:"namespaceSelector,omitempty"`
-
 	// Store specifies the storage backend for this resource type.
 	//
 	// Valid values:

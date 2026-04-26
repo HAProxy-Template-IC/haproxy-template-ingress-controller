@@ -183,7 +183,6 @@ watchedResources:
       - metadata.namespace
       - metadata.name
     labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
-    namespaceSelector: ""  # CRD field exists but not yet wired up — has no effect; use `namespace:` for a single fixed namespace
     store: full  # or "on-demand" for cached store
 ```
 

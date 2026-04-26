@@ -14,7 +14,6 @@ watchedResources:
       - metadata.name
     namespace: ""                           # pin to one namespace, or leave empty to watch cluster-wide
     labelSelector: ""                       # "app=myapp" — string, not matchLabels object
-    namespaceSelector: ""                   # CRD field present but currently a no-op; see Narrowing the Watch below
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
 ```
@@ -77,11 +76,12 @@ Escape dots in JSONPath keys that contain them (`labels.kubernetes\\.io/service-
 
 ## Narrowing the Watch
 
-Three independent filters narrow what actually lands in the store:
+Two filters narrow what actually lands in the store:
 
 - `namespace:` — hard pin to a single namespace. Drops the need for `metadata.namespace` in `indexBy`.
 - `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Comma-separated `key=value` pairs only; set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) is **not** supported — `pkg/controller/conversion.parseLabelSelector` splits on `,` and `=`, dropping anything else.
-- `namespaceSelector:` — **not yet implemented**. The CRD field exists (`pkg/apis/haproxytemplate/v1alpha1/types_config.go`) but is never read — `pkg/controller/conversion` doesn't propagate it to the internal `WatchedResource`, and `pkg/controller/resourcewatcher` has no code path that uses it. Setting it has no effect today; track its implementation status in the issue tracker before relying on it. Use `namespace:` for a single fixed namespace, or pre-filter at the RBAC layer.
+
+Need to scope by namespace *labels* rather than a single name? Watch the `namespaces` resource and gate inside the template, or run separate controller instances per scope.
 
 ## Trimming Fields
 
@@ -110,7 +110,7 @@ Setting `enableValidationWebhook: true` on an entry registers that kind with the
 | Symptom | Likely cause |
 |---------|--------------|
 | `.List()` returns empty | Controller hasn't finished initial sync — check `haptic_reconciliation_total` or `kubectl logs … \| grep "initial sync"` |
-| `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `namespace:` is filtering it out (`namespaceSelector` is declared but currently a no-op — see "Narrowing the Watch" above) |
+| `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `namespace:` is filtering it out |
 | OOMKilled on controller | Switch large resources (TLS Secrets, big ConfigMaps) to `store: on-demand`; add `watchedResourcesIgnoreFields` entries |
 | Template rendering slow, many API logs | You're calling `.List()` on an `on-demand` store, or `.Fetch()` consistently missing the cache — profile with `/debug/pprof/profile`, consider `store: full` if the total size is modest |
 | `kubectl apply` on CRD rejected with "watchedResources must be non-empty" | The CRD schema requires at least one entry; see [CRD Reference](./crd-reference.md) |

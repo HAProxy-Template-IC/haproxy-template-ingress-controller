@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Removed
+
+- Drop `namespaceSelector` from `watchedResources` entries. The field was never wired up; setting it had no effect. Configs that included it must remove it (the API server may now reject unknown fields). For namespace scoping, filter at the template level against a watched `namespaces` resource, use `labelSelector:` on the resource, or run separate controller instances per scope.
+
 ## [0.1.0] - 2026-03-09
 
 ### Added
