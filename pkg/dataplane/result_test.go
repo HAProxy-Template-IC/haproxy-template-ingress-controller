@@ -87,6 +87,70 @@ func TestSyncResult_String(t *testing.T) {
 			},
 			contains: []string{"Reload: Not triggered (runtime API used)"},
 		},
+		// Reload-verification surface:
+		// the ReloadVerified branch and ReloadVerificationError branch
+		// of String() were both uncovered. These strings appear in
+		// operator-facing logs and status output — a regression that
+		// dropped the verification status (or the failure reason) would
+		// silently downgrade post-reload observability to "we triggered
+		// it, no idea what happened next", masking real reload failures.
+		{
+			name: "reload verified",
+			result: SyncResult{
+				Success:         true,
+				Duration:        300 * time.Millisecond,
+				ReloadTriggered: true,
+				ReloadID:        "reload-verified-1",
+				ReloadVerified:  true,
+			},
+			contains: []string{"Reload: Verified (ID: reload-verified-1)"},
+		},
+		{
+			name: "reload verification failed",
+			result: SyncResult{
+				Success:                 true,
+				Duration:                300 * time.Millisecond,
+				ReloadTriggered:         true,
+				ReloadID:                "reload-failed-1",
+				ReloadVerificationError: "haproxy still serving old config after 30s",
+			},
+			contains: []string{
+				"Reload: Failed (ID: reload-failed-1) - haproxy still serving old config after 30s",
+			},
+		},
+		// Sync-mode surface: every SyncMode value MUST format to its
+		// own distinct string. Operators triage by mode — confusing
+		// SyncModeRuntime (no reload) with SyncModeRawFallback (full
+		// rewrite + reload) leads to misdiagnosed perf incidents.
+		// SyncModeFineGrained and SyncModeRawFallback are already
+		// covered above; the three modes below were not.
+		{
+			name: "sync mode raw initial",
+			result: SyncResult{
+				Success:  true,
+				Duration: 50 * time.Millisecond,
+				SyncMode: SyncModeRawInitial,
+			},
+			contains: []string{"Mode: Raw config push (initial configuration)"},
+		},
+		{
+			name: "sync mode raw threshold",
+			result: SyncResult{
+				Success:  true,
+				Duration: 50 * time.Millisecond,
+				SyncMode: SyncModeRawThreshold,
+			},
+			contains: []string{"Mode: Raw config push (threshold exceeded)"},
+		},
+		{
+			name: "sync mode runtime",
+			result: SyncResult{
+				Success:  true,
+				Duration: 50 * time.Millisecond,
+				SyncMode: SyncModeRuntime,
+			},
+			contains: []string{"Mode: Runtime-optimized (skip_reload + X-Runtime-Actions)"},
+		},
 	}
 
 	for _, tt := range tests {
