@@ -185,6 +185,84 @@ func TestFormatServerMapChanges(t *testing.T) {
 	}
 }
 
+// formatServerChanges is the per-DiffSummary wrapper that routes
+// added/modified/deleted server maps through formatServerMapChanges.
+// formatServerMapChanges is exhaustively tested above; this test
+// pins the wrapper's three-branch contract:
+//
+//   - Empty maps for a given change-kind MUST be skipped entirely
+//     (no header line emitted) so log scrapers and DiffSummary.String()
+//     don't get noisy "- Servers added: " lines with no payload.
+//   - Non-empty maps emit one line per change-kind in the canonical
+//     order added → modified → deleted. The existing TestDiffSummary_String
+//     only exercises the ServersAdded branch; the modified-only and
+//     deleted-only branches were uncovered, so a regression that
+//     dropped the modified or deleted call would not surface in the
+//     end-to-end String test (the asserts there only check for
+//     "Servers added").
+func TestFormatServerChanges(t *testing.T) {
+	mapWith := func(backend string, n int) map[string][]string {
+		servers := make([]string, n)
+		for i := range n {
+			servers[i] = "srv"
+		}
+		return map[string][]string{backend: servers}
+	}
+
+	tests := []struct {
+		name    string
+		summary DiffSummary
+		want    []string
+	}{
+		{
+			name:    "all empty produces no lines",
+			summary: DiffSummary{},
+			want:    nil,
+		},
+		{
+			name: "only added",
+			summary: DiffSummary{
+				ServersAdded: mapWith("backend-a", 2),
+			},
+			want: []string{"- Servers added: backend-a: 2"},
+		},
+		{
+			name: "only modified",
+			summary: DiffSummary{
+				ServersModified: mapWith("backend-m", 1),
+			},
+			want: []string{"- Servers modified: backend-m: 1"},
+		},
+		{
+			name: "only deleted",
+			summary: DiffSummary{
+				ServersDeleted: mapWith("backend-d", 3),
+			},
+			want: []string{"- Servers deleted: backend-d: 3"},
+		},
+		{
+			name: "added + modified + deleted preserves canonical order",
+			summary: DiffSummary{
+				ServersAdded:    mapWith("backend-a", 1),
+				ServersModified: mapWith("backend-m", 2),
+				ServersDeleted:  mapWith("backend-d", 4),
+			},
+			want: []string{
+				"- Servers added: backend-a: 1",
+				"- Servers modified: backend-m: 2",
+				"- Servers deleted: backend-d: 4",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.summary.formatServerChanges()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // formatOtherChanges builds the "Other changes: section: count, ..." line
 // with sections sorted alphabetically. Pin the empty-skip and sort behaviour.
 func TestFormatOtherChanges(t *testing.T) {
