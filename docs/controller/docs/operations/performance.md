@@ -364,7 +364,7 @@ spec:
       labelSelector: "managed-by=haptic"
 ```
 
-`labelSelector` is a comma-separated equality-only string (`k=v[,k=v]`) — the `matchLabels`/`matchExpressions` object form and set-based syntax (`in`, `notin`, `!`) are not supported. The `namespaceSelector` field is declared on the CRD but currently unimplemented; for label-based namespace filtering, fall back to per-namespace `Role`/`RoleBinding`s and watch each namespace explicitly.
+`labelSelector` is a comma-separated equality-only string (`k=v[,k=v]`) — the `matchLabels`/`matchExpressions` object form and set-based syntax (`in`, `notin`, `!`) are not supported. For label-based namespace filtering, fall back to per-namespace `Role`/`RoleBinding`s and watch each namespace explicitly, or filter inside the template against a watched `namespaces` resource.
 
 ## Deployment Performance
 
@@ -492,7 +492,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 - Check for memory leaks: growing heap over time (`/debug/pprof/heap`)
 - Switch large, infrequently-accessed resources (e.g. TLS Secrets) to `store: on-demand`
 - Trim noisy fields with `watchedResourcesIgnoreFields`
-- Narrow watch scope via `namespace` or `labelSelector` (`namespaceSelector` is declared but unimplemented)
+- Narrow watch scope via `namespace` or `labelSelector`
 
 **High CPU usage:**
 

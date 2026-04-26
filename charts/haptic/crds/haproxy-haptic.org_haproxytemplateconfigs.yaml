@@ -792,17 +792,6 @@ spec:
                         Set-based syntax (e.g. "tier in (frontend,api)", "!disabled") is NOT supported —
                         the controller's parseLabelSelector splits on ',' and '=' and silently drops the rest.
                       type: string
-                    namespaceSelector:
-                      description: |-
-                        NamespaceSelector filters resources by namespace labels.
-
-                        NOT YET IMPLEMENTED: this field is declared on the CRD but the controller
-                        does not read it — pkg/controller/conversion never propagates it to the
-                        internal WatchedResource and pkg/controller/resourcewatcher has no code
-                        path that consumes it. Setting it has no effect today. Use the
-                        `namespace` field for a single fixed namespace, or pre-filter at the RBAC
-                        layer.
-                      type: string
                     resources:
                       description: |-
                         Resources is the plural form of the Kubernetes resource type (e.g., "ingresses", "services").
