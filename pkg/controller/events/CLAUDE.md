@@ -34,14 +34,12 @@ Events are organized into separate files by category:
 | File | Description |
 |------|-------------|
 | `types.go` | Event type constants and package documentation |
-| `lifecycle.go` | System startup/shutdown events |
-| `config.go` | ConfigMap/Secret changes and validation events |
+| `config.go` | HAProxyTemplateConfig CRD changes and validation events |
 | `resource.go` | Kubernetes resource indexing events |
 | `reconciliation.go` | Orchestration lifecycle events |
 | `template.go` | Template rendering events |
-| `validation.go` | Configuration validation events |
+| `validation.go` | Three-phase HAProxy validation events |
 | `deployment.go` | HAProxy deployment events |
-| `storage.go` | Auxiliary file sync events |
 | `discovery.go` | HAProxy pod discovery events |
 | `credentials.go` | Credentials loading and validation events |
 | `leader.go` | Leader election events |
@@ -51,43 +49,62 @@ Events are organized into separate files by category:
 | `http.go` | HTTP resource events |
 | `status.go` | Status patch application events |
 | `webhook.go` | Scatter-gather request/response events |
+| `proposal.go` | Proposal validation request/response events |
+| `correlation.go` | Correlation ID helpers for tracing events |
+| `timestamped.go` | Embedded `timestamped` mixin used by all events |
+| `internal_copy.go` | Internal helpers for defensive slice/map copying |
 
 ## Event Categories
 
 Events are organized by lifecycle phase:
 
-1. **Lifecycle Events** (`lifecycle.go`) - System startup/shutdown
-2. **Configuration Events** (`config.go`) - ConfigMap/Secret changes and validation
-3. **Resource Events** (`resource.go`) - Kubernetes resource indexing
-4. **Reconciliation Events** (`reconciliation.go`) - Orchestration lifecycle
-5. **Template Events** (`template.go`) - Template rendering
-6. **Validation Events** (`validation.go`) - Configuration validation
-7. **Deployment Events** (`deployment.go`) - HAProxy deployment
-8. **Storage Events** (`storage.go`) - Auxiliary file sync
-9. **HAProxy Pod Events** (`discovery.go`) - Pod discovery
-10. **Credentials Events** (`credentials.go`) - Credentials management
-11. **Leader Election Events** (`leader.go`) - Leadership transitions
-12. **Publishing Events** (`publishing.go`) - Config publishing
-13. **Certificate Events** (`certificate.go`) - Webhook certificates
-14. **Webhook Events** (`webhookobservability.go`, `webhook.go`) - Webhook validation
-15. **HTTP Resource Events** (`http.go`) - HTTP resource management
+1. **Configuration Events** (`config.go`) - HAProxyTemplateConfig CRD changes and validation
+2. **Resource Events** (`resource.go`) - Kubernetes resource indexing
+3. **Reconciliation Events** (`reconciliation.go`) - Orchestration lifecycle
+4. **Template Events** (`template.go`) - Template rendering
+5. **Validation Events** (`validation.go`) - Three-phase HAProxy validation
+6. **Deployment Events** (`deployment.go`) - HAProxy deployment
+7. **HAProxy Pod Events** (`discovery.go`) - Pod discovery
+8. **Credentials Events** (`credentials.go`) - Credentials management
+9. **Leader Election Events** (`leader.go`) - Leadership transitions
+10. **Publishing Events** (`publishing.go`) - Config publishing (includes auxiliary file sync metadata)
+11. **Certificate Events** (`certificate.go`) - Webhook certificates
+12. **Webhook Events** (`webhookobservability.go`, `webhook.go`) - Webhook validation observability and scatter-gather
+13. **HTTP Resource Events** (`http.go`) - HTTP resource management
+14. **Proposal Events** (`proposal.go`) - Speculative validation of hypothetical configs
+15. **Status Events** (`status.go`) - Kubernetes status patch results
 
 ## Key Principles
 
 ### Immutability Contract
 
-Events are immutable after creation:
+Events are immutable after creation. For value-typed payloads (small structs
+with no pointers, like `types.ChangeStats`) a plain assignment is enough — Go
+copies the value. For slices and maps, the constructor must allocate a fresh
+backing array/map and copy into it so the publisher can't mutate the event
+after `bus.Publish`.
 
 ```go
-// Constructor performs defensive copying
-func NewResourceIndexUpdatedEvent(resourceType string, changes []types.ResourceChange) *ResourceIndexUpdatedEvent {
-    // Copy slice to prevent mutations
-    changesCopy := make([]types.ResourceChange, len(changes))
-    copy(changesCopy, changes)
-
+// Value-typed payload: assignment is the defensive copy.
+func NewResourceIndexUpdatedEvent(resourceTypeName string, changeStats types.ChangeStats) *ResourceIndexUpdatedEvent {
     return &ResourceIndexUpdatedEvent{
-        ResourceType: resourceType,
-        Changes:      changesCopy,  // Safe from external modification
+        ResourceTypeName: resourceTypeName,
+        ChangeStats:      changeStats, // small struct, no pointers
+        timestamped:      newTimestamped(),
+    }
+}
+
+// Slice payload: copy the backing array so the caller can't mutate it later.
+func NewConfigInvalidEvent(version string, templateConfig any, validationErrors map[string][]string) *ConfigInvalidEvent {
+    errsCopy := make(map[string][]string, len(validationErrors))
+    for k, v := range validationErrors {
+        errsCopy[k] = slices.Clone(v)
+    }
+    return &ConfigInvalidEvent{
+        Version:          version,
+        TemplateConfig:   templateConfig,
+        ValidationErrors: errsCopy,
+        timestamped:      newTimestamped(),
     }
 }
 ```
@@ -120,8 +137,11 @@ Event fields are exported for idiomatic Go access:
 
 ```go
 type ConfigValidatedEvent struct {
-    Config  interface{}
-    Version string
+    Config         any            // *config.Config (any to avoid circular deps)
+    TemplateConfig any            // typed CRD wrapper (any to avoid circular deps)
+    Version        string
+    SecretVersion  string
+    timestamped                   // mixin: provides Timestamp() time.Time
 }
 ```
 
@@ -136,9 +156,11 @@ type ConfigValidatedEvent struct {
 ### Publishing Events
 
 ```go
-// Component publishes event after action
-config := loadConfig()
-bus.Publish(events.NewConfigParsedEvent(config, "v1"))
+// Real signature: NewConfigParsedEvent(config, templateConfig, version, secretVersion)
+// templateConfig is the typed CRD wrapper; the two version strings let
+// downstream subscribers correlate against the CRD's resourceVersion and
+// the credentials Secret's resourceVersion independently.
+bus.Publish(events.NewConfigParsedEvent(config, templateCfg, "1234", "5678"))
 ```
 
 ### Consuming Events
@@ -178,36 +200,46 @@ for _, resp := range result.Responses {
 ### Configuration Events
 
 ```go
-// Config parsed from ConfigMap
+// Config parsed from the HAProxyTemplateConfig CRD (config.go)
 ConfigParsedEvent{
-    Config:  config,
-    Version: "v1",
+    Config:         config,        // *config.Config (typed any to dodge import cycles)
+    TemplateConfig: templateCfg,   // typed CRD wrapper
+    Version:        "1234",        // CRD resourceVersion
+    SecretVersion:  "5678",        // credentials Secret resourceVersion
 }
 
 // Config validated (all validators passed)
 ConfigValidatedEvent{
-    Config:  config,
-    Version: "v1",
+    Config:         config,
+    TemplateConfig: templateCfg,
+    Version:        "1234",
+    SecretVersion:  "5678",
 }
 
-// Config invalid (validation failed)
+// Config invalid (validation failed) — note the field is ValidationErrors,
+// keyed by validator name, not a flat []string.
 ConfigInvalidEvent{
-    Version: "v1",
-    Errors:  []string{"template syntax error"},
+    Version:          "1234",
+    TemplateConfig:   templateCfg,
+    ValidationErrors: map[string][]string{
+        "template": {"line 12: unexpected '{%'"},
+        "jsonpath": {"watched_resources.ingresses.index_by[0]: invalid expression"},
+    },
 }
 ```
 
 ### Resource Events
 
 ```go
-// Resource index updated
+// Resource index updated — the field is ResourceTypeName (not ResourceType),
+// and there is no Changes slice; ChangeStats is the only payload.
 ResourceIndexUpdatedEvent{
-    ResourceType: "ingresses",
-    Changes:      []types.ResourceChange{...},
-    ChangeStats:  types.ChangeStats{
-        Added:   5,
-        Updated: 2,
-        Deleted: 1,
+    ResourceTypeName: "ingresses",
+    ChangeStats: types.ChangeStats{
+        Created:       5,  // not "Added"
+        Modified:      2,  // not "Updated"
+        Deleted:       1,
+        IsInitialSync: false,
     },
 }
 
@@ -223,21 +255,21 @@ IndexSynchronizedEvent{
 ### Reconciliation Events
 
 ```go
-// Reconciliation triggered by config/resource change
+// Reconciliation triggered (debouncer / sync-complete signal)
 ReconciliationTriggeredEvent{
     Reason: "config_change",
 }
 
-// Reconciliation started
+// Reconciliation started — the field is Trigger here, not Reason.
 ReconciliationStartedEvent{
-    Reason:    "config_change",
-    Timestamp: time.Now(),
+    Trigger: "config_change",
+    // Timestamp is provided by the embedded `timestamped` mixin via Timestamp(),
+    // not as an exported field on the event struct.
 }
 
 // Reconciliation completed
 ReconciliationCompletedEvent{
     DurationMs: 1234,
-    Timestamp:  time.Now(),
 }
 ```
 
@@ -295,24 +327,29 @@ func NewMyNewEvent(field1 string, field2 int, data []string) *MyNewEvent {
 
 ### Modifying Event Fields
 
-**Problem**: Consumer modifies event fields, affecting other consumers.
+**Problem**: Consumer mutates a slice/map field, affecting later subscribers.
 
 ```go
-// Bad - modifies event
+// Bad — mutates a slice that another subscriber is still iterating
 event := <-eventChan
-if indexUpdate, ok := event.(*events.ResourceIndexUpdatedEvent); ok {
-    indexUpdate.Changes = append(indexUpdate.Changes, newChange)  // Mutation!
+if invalid, ok := event.(*events.ConfigInvalidEvent); ok {
+    invalid.ValidationErrors["template"] = append(
+        invalid.ValidationErrors["template"], "extra error",
+    ) // Mutation propagates to every other subscriber!
 }
 ```
 
-**Solution**: Don't modify events. Create new ones if needed.
+**Solution**: Treat the event as read-only. If you need to derive a new
+collection, copy first.
 
 ```go
-// Good - read-only access
+// Good — read-only
 event := <-eventChan
-if indexUpdate, ok := event.(*events.ResourceIndexUpdatedEvent); ok {
-    for _, change := range indexUpdate.Changes {
-        processChange(change)  // Read-only
+if invalid, ok := event.(*events.ConfigInvalidEvent); ok {
+    for validator, errs := range invalid.ValidationErrors {
+        for _, e := range errs {
+            log.Warn("config invalid", "validator", validator, "error", e)
+        }
     }
 }
 ```

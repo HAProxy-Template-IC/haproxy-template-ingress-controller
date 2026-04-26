@@ -151,7 +151,7 @@ The HTTP store automatically evicts cache entries that haven't been accessed for
 
 ### Eviction Rules
 
-1. **Access time tracking**: Every `Get()`, `GetForValidation()`, and `GetPending()` call updates the entry's `LastAccessTime`
+1. **Access time tracking**: Every `Get()` and `GetForValidation()` call (plus the internal `getPending()` and the cache-hit branch of `Fetch()`) updates the entry's `LastAccessTime`. There is no exported `GetPending()` method — listing pending URLs is done via `GetPendingURLs()`, which is a snapshot and does *not* touch access time.
 2. **Never evict pending**: Entries with pending validation (`HasPending=true`) are never evicted, even if expired
 3. **Configurable maxAge**: Set via constructor parameter, typically 2x the drift prevention interval
 4. **Periodic cleanup**: The event adapter runs eviction at regular intervals
@@ -170,11 +170,13 @@ With default drift prevention interval of 60s:
 // Create store with 2-minute eviction
 store := New(logger, 2*time.Minute)
 
-// Manually trigger eviction (called periodically by event adapter)
-evicted := store.EvictUnused()
-// Returns count of evicted entries
+// Manually trigger eviction (called periodically by event adapter).
+// Returns the URLs that were evicted (nil/empty when none evicted or
+// when eviction is disabled), so callers can react to specific URLs
+// disappearing — e.g. cancel pending refresh timers.
+evicted := store.EvictUnused() // []string
 
-// Disable eviction (for test fixtures)
+// Disable eviction (e.g. for test fixtures); EvictUnused() then returns nil.
 store := New(logger, 0)
 ```
 
@@ -213,14 +215,22 @@ content, err := store.Fetch(ctx, url, FetchOptions{Critical: true}, nil)
 The event adapter (`pkg/controller/httpstore`) wraps this pure component:
 
 ```go
-// Pure component (this package)
-store := httpstore.New(logger, 2*time.Minute)  // maxAge for eviction
+import (
+    purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+    httpstore    "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+)
 
-// Event adapter wraps it
-component := httpstore.New(eventBus, logger, 2*time.Minute)  // different package!
+// Pure component (this package). maxAge=0 disables eviction.
+store := purehttpstore.New(logger, 2*time.Minute)
 
-// Wrapper provides template-callable interface
-wrapper := httpstore.NewHTTPStoreWrapper(ctx, component, logger, isValidation)
+// Event adapter — different package, same N-ame, different signature.
+// Constructs its own internal *purehttpstore.HTTPStore.
+component := httpstore.New(eventBus, logger, 2*time.Minute)
+
+// Template-callable wrapper. The fourth argument is a stores.HTTPContentOverlay
+// (nil for production renders, an overlay built from validation fixtures
+// when called from the dryrun / testrunner path) — *not* a bool flag.
+wrapper := httpstore.NewHTTPStoreWrapper(ctx, component, logger, overlay)
 ```
 
 ## Testing

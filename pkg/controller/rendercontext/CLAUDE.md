@@ -29,7 +29,7 @@ This package consolidates template context creation from 4 previously duplicated
 ## Usage
 
 ```go
-import "haptic/pkg/controller/rendercontext"
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 
 builder := rendercontext.NewBuilder(
     cfg,
@@ -39,37 +39,49 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithHAProxyPodStore(haproxyPodStore),
     rendercontext.WithHTTPFetcher(httpWrapper),
     rendercontext.WithCapabilities(capabilities),
+    rendercontext.WithCurrentConfig(currentConfig), // optional; nil on first deploy
 )
 
-ctx, fileRegistry := builder.Build()
+// Build returns three things — the rendering context map, the dynamic file
+// registry that templates can register into during the render, and the
+// status-patch collector that captures status mutations from filters_status.go.
+ctx, fileRegistry, statusPatches := builder.Build()
 ```
 
 ## Context Structure
 
-The builder creates a context map with these keys:
+The builder creates a context map with these keys (always populated unless
+marked "optional"):
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `resources` | `map[string]ResourceStore` | Wrapped Kubernetes resource stores |
-| `controller` | `map[string]ResourceStore` | Controller metadata (haproxy_pods) |
-| `templateSnippets` | `[]string` | Sorted snippet names |
-| `fileRegistry` | `*FileRegistry` | Dynamic file registration |
-| `pathResolver` | `*PathResolver` | File path resolution |
-| `dataplane` | `config.Dataplane` | DataPlane API config |
-| `capabilities` | `map[string]bool` | HAProxy feature flags (optional) |
-| `shared` | `map[string]interface{}` | Cross-template cache |
-| `runtimeEnvironment` | `*RuntimeEnvironment` | GOMAXPROCS, etc. |
-| `http` | `HTTPFetcher` | HTTP resource fetching (optional) |
-| `extraContext` | `map[string]interface{}` | User-defined variables |
+| `resources` | `map[string]templating.ResourceStore` (`*StoreWrapper` per entry) | Wrapped Kubernetes resource stores |
+| `controller` | `map[string]templating.ResourceStore` | Controller-managed stores; currently `controller["haproxy_pods"]` only |
+| `templateSnippets` | `[]string` | Snippet names sorted alphabetically |
+| `fileRegistry` | `*FileRegistry` | Dynamic file registration during render |
+| `statusPatchCollector` | `*templating.StatusPatchCollector` | Captures status mutations from `filters_status.go` |
+| `pathResolver` | `*templating.PathResolver` | File path resolution (relative vs absolute) |
+| `dataplane` | `config.DataplaneConfig` | DataPlane API config block |
+| `shared` | `*templating.SharedContext` | Per-render compute-once cache (`ComputeIfAbsent` etc.) |
+| `runtimeEnvironment` | `*templating.RuntimeEnvironment` | GOMAXPROCS and related runtime info |
+| `capabilities` | `map[string]bool` (from `CapabilitiesToMap`) | HAProxy feature flags — *optional*, omitted when no capabilities passed |
+| `currentConfig` | `*parserconfig.StructuredConfig` | Live HAProxy config — *optional*, omitted when nil (first deploy) to dodge a Scriggo nil-pointer-initializer panic |
+| `http` | `templating.HTTPFetcher` | HTTP resource fetching — *optional*, omitted when no fetcher passed |
+| `extraContext` | `map[string]any` | User-defined variables from `cfg.TemplatingSettings.ExtraContext` (always set, possibly empty map). The same map's *top-level keys* are also merged into the context (`maps.Copy(renderCtx, cfg.TemplatingSettings.ExtraContext)` in `MergeExtraContextInto`), so templates can write `{{ debug.enabled }}` directly *and* `{{ extraContext | dig("debug", "enabled") }}` for the Scriggo-safe variant. |
 
 ## Functional Options
 
 | Option | Purpose |
 |--------|---------|
-| `WithStores(stores)` | Set resource stores for `resources` map |
-| `WithHAProxyPodStore(store)` | Set HAProxy pod store for `controller.haproxy_pods` |
-| `WithHTTPFetcher(fetcher)` | Set HTTP fetcher for `http.Fetch()` |
-| `WithCapabilities(caps)` | Set HAProxy capabilities for feature detection |
+| `WithStores(map[string]stores.Store)` | Resource stores keyed by watched-resource name; ends up in `resources` |
+| `WithHAProxyPodStore(stores.Store)` | HAProxy pod store; ends up in `controller["haproxy_pods"]` |
+| `WithHTTPFetcher(templating.HTTPFetcher)` | Wires the `http` runtime variable so templates can call `http.Fetch(...)` |
+| `WithCapabilities(*dataplane.Capabilities)` | Drops feature flags into `capabilities` for `{% if capabilities.SupportsCrtList %}…{% end %}` |
+| `WithCurrentConfig(*parser.StructuredConfig)` | Adds `currentConfig` to the context so templates can reason about the live HAProxy config; nil on the first deployment |
+
+`extraContext` is **not** an option — `Build()` reads `cfg.TemplatingSettings.ExtraContext`
+directly and always populates the `extraContext` key (with an empty map if the
+CRD doesn't set one) so templates can safely chain `extraContext | dig("k") | fallback("v")`.
 
 ## Package Contents
 
@@ -111,6 +123,6 @@ When adding a new key to the template context:
 ## Resources
 
 - Template engine: `pkg/templating/CLAUDE.md`
-- Renderer component: `pkg/controller/renderer/CLAUDE.md`
+- Renderer component: `pkg/controller/renderer/README.md` (no CLAUDE.md in that package)
 - TestRunner: `pkg/controller/testrunner/CLAUDE.md`
 - DryRunValidator: `pkg/controller/dryrunvalidator/CLAUDE.md`

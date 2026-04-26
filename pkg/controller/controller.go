@@ -305,7 +305,7 @@ func setupComponents(
 	configLoaderComponent := configloader.NewConfigLoaderComponent(bus, logger)
 	credentialsLoaderComponent := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
 
-	// Create config validators (for ConfigMap validation)
+	// Create config validators (scatter-gather responders for HAProxyTemplateConfig CRD validation)
 	basicValidator := validator.NewBasicValidator(bus, logger)
 	templateValidator := validator.NewTemplateValidator(bus, logger)
 	jsonpathValidator := validator.NewJSONPathValidator(bus, logger)

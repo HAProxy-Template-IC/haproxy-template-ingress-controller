@@ -25,7 +25,7 @@ if err != nil {
 }
 
 out, err := engine.Render(context.Background(), "greeting",
-    map[string]interface{}{"name": "World"})
+    map[string]any{"name": "World"})
 ```
 
 The engine is safe for concurrent use — compile once at startup, render concurrently from many goroutines.
@@ -48,7 +48,7 @@ func New(
 
 ```go
 type Engine interface {
-    Render(ctx context.Context, name string, context map[string]interface{}) (string, error)
+    Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error)
 
     HasTemplate(name string) bool
     TemplateNames() []string
@@ -97,12 +97,18 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 | Variable | Type | Purpose |
 |----------|------|---------|
 | `resources` | `*map[string]ResourceStore` | Watched Kubernetes resources (`.List`, `.Fetch`, `.GetSingle`) |
+| `controller` | `*map[string]ResourceStore` | Controller-managed stores; currently `controller["haproxy_pods"]` only |
 | `pathResolver` | `*PathResolver` | `pathResolver.GetPath(name, kind)` for map / SSL / file / crt-list paths |
-| `currentConfig` | `*string` | Last deployed HAProxy config, used by slot-preserving templates |
+| `fileRegistry` | `*FileRegistrar` | Templates can register dynamically generated auxiliary files via this |
 | `templateSnippets` | `*[]string` | Names of available snippets; useful with `render_glob` |
 | `shared` | `*SharedContext` | Per-render cache; `shared.ComputeIfAbsent(key, fn)` memoises expensive work |
+| `dataplane` | `*map[string]any` | The CRD's `spec.dataplane` block — port, max-parallel, timeouts, paths |
+| `capabilities` | `*map[string]any` | HAProxy feature flags derived from the local HAProxy version |
 | `http` | `*HTTPFetcher` | `http.Fetch(url, opts)` for HTTP resources |
-| `extraContext` | `*map[string]interface{}` | User-defined variables from `templatingSettings.extraContext` |
+| `runtimeEnvironment` | `*RuntimeEnvironment` | Runtime info (`GOMAXPROCS`, etc.) |
+| `extraContext` | `*map[string]any` | User-defined variables from `templatingSettings.extraContext` |
+
+Callers can inject additional per-render declarations through `templating.NewScriggoWithDeclarations` — for example, the renderer and template validator both add `currentConfig` (`*parserconfig.StructuredConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`.
 
 To add a new runtime variable, declare it in `buildScriggoGlobals` with a nil pointer of the right type, then pass the value via the render context map — there's a walkthrough in `pkg/templating/CLAUDE.md`.
 
@@ -134,13 +140,13 @@ This package intentionally does **not** understand Kubernetes resources. There i
 
 ## Scriggo Fork
 
-The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) via a `replace` directive in `go.mod`. The fork adds:
+The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) consumed as a normal `require` in `go.mod` — there is no `replace` directive. The pinned pseudo-version drifts as Renovate updates the dep; check `grep gitlab.com/haproxy-haptic/scriggo go.mod` for the live value rather than copying one out of this README. The fork adds:
 
 - A native `{% include "..." %}` statement for compile-time includes.
 - A `callNative` fast path that eliminates `reflect.Value.Call` for the haptic function signatures — the hot render loop is effectively zero-allocation after warm-up.
 - Nil-safety fixes around `reflect.Value.Interface()` for dynamic includes.
 
-Nothing in here expects vanilla Scriggo; don't swap the `replace` out without running the template benchmarks.
+Nothing in here expects vanilla Scriggo; don't swap the dep for upstream without running the template benchmarks.
 
 ## Testing
 

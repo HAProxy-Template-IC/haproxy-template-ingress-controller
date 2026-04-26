@@ -14,10 +14,10 @@ One file per category. The full list as of writing, with representative types:
 | File | Category | Representative types |
 |------|----------|----------------------|
 | `types.go` | Event-type constants and shared helpers | — |
-| `correlation.go` | Request/response correlation metadata | `CorrelationID` |
+| `correlation.go` | Request/response correlation metadata | `Correlation` (struct), `CorrelatedEvent` (interface, exposes `CorrelationID() string`) |
 | `config.go` | CRD parsed / validated / invalid | `ConfigParsedEvent`, `ConfigValidatedEvent` |
 | `credentials.go` | `Secret` ingestion and validation | `CredentialsUpdatedEvent` |
-| `certificate.go` | Webhook TLS cert lifecycle | `CertParsedEvent`, `WebhookCertRotatedEvent` |
+| `certificate.go` | Webhook TLS cert lifecycle | `CertResourceChangedEvent`, `CertParsedEvent` |
 | `resource.go` | Watched-resource index changes | `ResourceIndexUpdatedEvent`, `IndexSynchronizedEvent` |
 | `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent` |
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
@@ -26,9 +26,9 @@ One file per category. The full list as of writing, with representative types:
 | `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent` |
 | `leader.go` | Leader election | `BecameLeaderEvent`, `LostLeadershipEvent` |
 | `publishing.go` | Output-CRD publishing (`HAProxyCfg` + `HAProxy{General,Map,CRTList}File`) and per-pod sync outcomes | `ConfigPublishedEvent`, `ConfigPublishFailedEvent`, `ConfigAppliedToPodEvent` |
-| `proposal.go` | Admission-time proposal validation | `ProposalValidatedEvent` |
+| `proposal.go` | Admission-time proposal validation | `ProposalValidationRequestedEvent`, `ProposalValidationCompletedEvent` |
 | `http.go` | HTTP resource fetcher | `HTTPResourceUpdatedEvent` |
-| `status.go` | Status-patch application | `StatusPatchAppliedEvent` |
+| `status.go` | Status-patch application | `StatusUpdateCompletedEvent`, `StatusUpdateFailedEvent` |
 | `webhook.go` | Scatter-gather admission request/response plumbing | `WebhookValidationRequest`, `WebhookValidationResponse` |
 | `webhookobservability.go` | Webhook telemetry events | `WebhookValidationAllowedEvent` |
 
@@ -39,10 +39,10 @@ One file per category. The full list as of writing, with representative types:
 ```go
 import (
     "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-bus.Publish(events.NewConfigParsedEvent(cfg, templateConfig, version))
+bus.Publish(events.NewConfigParsedEvent(cfg, templateConfig, version, secretVersion))
 ```
 
 Always use the `New*` constructors — they copy any slices/maps to cut off the ownership chain. Don't construct events with a struct literal; you lose the defensive copy and the analyzer can't help.
@@ -87,7 +87,7 @@ if err != nil {
 }
 for _, resp := range result.Responses {
     if r, ok := resp.(*events.ConfigValidationResponse); ok && !r.Valid {
-        return fmt.Errorf("validator %s: %s", r.Validator, r.Message)
+        return fmt.Errorf("validator %s: %s", r.ValidatorName, strings.Join(r.Errors, "; "))
     }
 }
 ```

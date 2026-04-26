@@ -9,7 +9,7 @@ User-facing queries, alerting rules, and dashboard templates live in [`docs/cont
 
 ## Complete Metric Catalogue
 
-All names are listed exactly as exported. `metrics.go` contains the authoritative list — the `TestMetrics_ExpectedNames` assertion in `metrics_test.go` keeps this page honest.
+All names are listed exactly as exported. `metrics.go` contains the authoritative list; the `TestMetrics_AllMetricsRegistered` assertion in `metrics_test.go` covers a representative subset (~11 of 31) — extend that slice when you add or rename a metric.
 
 ### Reconciliation pipeline
 
@@ -58,7 +58,7 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_events_published_total` | counter | — | Total publishes |
 | `haptic_events_dropped_total` | counter | — | Publishes where the subscriber's channel was full |
 | `haptic_events_dropped_critical_total` | counter | — | Drops where the buffered event was marked critical |
-| `haptic_events_dropped_by_subscriber_total` | counter | `subscriber` | Drops attributed to each subscriber by name |
+| `haptic_events_dropped_by_subscriber_total` | counter | `subscriber`, `event_type` | Drops attributed to each subscriber/event-type pair (the second label lets dashboards split by which event type the subscriber couldn't keep up with) |
 | `haptic_events_dropped_observability_total` | gauge | — | Drops to the observability subscribers (commentator, debug buffer); expected to be low but non-zero on bursts |
 
 ### Webhook
@@ -90,7 +90,7 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
-| `haptic_build_info` | gauge (always 1) | `version`, `goversion`, `haproxy_version` | Static metadata for dashboards |
+| `haptic_build_info` | gauge (always 1) | `version`, `haproxy_version`, `go_version` | Static metadata for dashboards |
 
 ## Component
 
@@ -105,10 +105,11 @@ import (
 )
 
 registry := prometheus.NewRegistry()          // instance-based, swapped per controller iteration
-m := metrics.NewMetrics(registry, versionInfo)
+m := metrics.NewMetrics(registry)              // single arg — Registerer only
+m.SetBuildInfo(version, haproxyVersion, goVersion) // populate the haptic_build_info gauge
 
-comp := metrics.NewComponent(bus, m, logger)
-go comp.Start(ctx)                             // subscribes + starts the event loop
+comp := metrics.New(m, bus)                    // (*Metrics, *EventBus) — subscribes during construction
+go comp.Start(ctx)                             // runs the event loop
 
 // Serve on the port pkg/metrics exposes
 pkgmetrics.NewServer(":9090", registry).Start(ctx)
@@ -126,7 +127,7 @@ The controller's reinitialisation loop creates a fresh `EventBus` on every confi
 
 ## Dropping or Renaming a Metric
 
-- Every exported name is guarded by the `TestMetrics_ExpectedNames` assertion. Update that slice when you add, rename, or remove one — the test is the tripwire.
+- The `TestMetrics_AllMetricsRegistered` assertion covers a representative subset of the exported names. Update that slice when you add, rename, or remove one — and ideally extend it so every name is guarded.
 - Dashboards and alert rules in `docs/controller/docs/operations/monitoring.md` reference names too; keep that file in sync or link the dashboard PR to the metric PR.
 
 ## Testing

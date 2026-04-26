@@ -431,7 +431,7 @@ webhook:
   # Provide base64-encoded CA bundle for ValidatingWebhookConfiguration
   # This is required when certManager.enabled is false
   # Create the certificate Secret manually with keys: tls.crt, tls.key, ca.crt
-  # Secret name is configured via webhook.secretName (default: haproxy-webhook-certs)
+  # Secret name is configured via webhook.secretName (default: {{ release-fullname }}-webhook-cert)
   caBundle: "" # Base64-encoded CA certificate
   # Example:
   # caBundle: LS0tLS1CRUdJTi...
@@ -711,8 +711,9 @@ podDisruptionBudget:
   minAvailable: 1
   # maxUnavailable: 1
 # Prometheus Metrics and Monitoring
-# The controller exposes 31 Prometheus metrics on port 9090 (asserted by
-# pkg/controller/metrics.TestMetrics_ExpectedNames). Coverage groups:
+# The controller exposes 31 Prometheus metrics on port 9090. Authoritative list
+# lives in pkg/controller/metrics/metrics.go; a representative subset is
+# asserted by pkg/controller/metrics.TestMetrics_AllMetricsRegistered. Coverage groups:
 # - Reconciliation pipeline: cycles, errors, duration, queue wait
 # - Deployment: operations, errors, duration
 # - Validation: totals, errors, embedded test pass/fail/duration

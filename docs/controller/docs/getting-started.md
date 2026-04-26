@@ -21,7 +21,7 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 - Helm 3.0+
 
 !!! note "Webhook Validation"
-    This guide disables the validating admission webhook (`webhook.enabled=false`) so you can install without provisioning a TLS certificate for it. The webhook intercepts CREATE/UPDATE on watched resources (Ingress, Gateway, etc.) and rejects changes that would break template rendering. For production, enable it together with [cert-manager](https://cert-manager.io/docs/installation/) — see [Security](./operations/security.md) for details.
+    This guide disables the validating admission webhook (`webhook.enabled=false`) so you can install without provisioning a TLS certificate for it. By default the webhook intercepts CREATE/UPDATE on Ingresses, HTTPRoutes, and GRPCRoutes (the kinds the chart libraries opt in via `enableValidationWebhook: true`) and rejects changes that would break template rendering. For production, enable it together with [cert-manager](https://cert-manager.io/docs/installation/) — see [Security](./operations/security.md) for details.
 
 ## Step 1: Install with Helm
 
@@ -213,12 +213,13 @@ You should see responses from different echo pods.
 
 When you created the Ingress resource, the controller:
 
-1. **Detected the change** via Kubernetes watch API
-2. **Rendered templates** using the default HAProxyTemplateConfig with your Ingress data
-3. **Validated the configuration** using HAProxy's native parser
-4. **Compared with current state** to determine what changed
-5. **Deployed updates** to all HAProxy pods via Dataplane API
-6. **Used runtime API** where possible (server addresses) to avoid reloads
+1. **Detected the change** via the Kubernetes watch API and updated its in-memory store
+2. **Triggered a reconciliation** through a leading-edge debouncer (so a single change fires immediately)
+3. **Rendered templates** using the default HAProxyTemplateConfig with your Ingress data
+4. **Validated the rendered config** in three phases: client-native syntax parse → OpenAPI schema check → `haproxy -c` semantic validation. All three must pass before the change reaches HAProxy.
+5. **Compared the validated config** with the live config on each HAProxy pod to compute a minimal set of operations
+6. **Deployed updates** to all HAProxy pods via the Dataplane API in parallel, falling back to a raw config push if the fine-grained sync would be too large
+7. **Used the runtime API** where possible (server address/weight changes, map updates, etc.) to avoid HAProxy process reloads
 
 The entire process typically completes in under 1 second.
 

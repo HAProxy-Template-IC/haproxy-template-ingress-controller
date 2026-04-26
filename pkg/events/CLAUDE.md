@@ -36,29 +36,48 @@ Thread-safe pub/sub coordinator with startup synchronization.
 
 1. **Non-blocking publish**: Drops events to slow subscribers rather than blocking
 2. **Startup buffering**: Prevents race conditions during initialization
-3. **No event replay**: Once dropped, events are gone (by design)
-4. **Minimal API**: Publish, Subscribe, Start, Request
+3. **Pause / Resume**: `Pause()` puts the bus back into buffering mode; `Start()`
+   replays the buffer. Used during leadership transitions to make late-subscribing
+   leader-only components safe (see `pkg/controller/leaderelection/CLAUDE.md`).
+   Both methods are idempotent.
+4. **No event replay** (after delivery): Once delivered to a subscriber and that
+   subscriber's buffer is full, the event is dropped — there is no per-subscriber
+   replay log.
+5. **Minimal API**: Publish, Subscribe (+ typed/lossy variants), Pause, Start, Request
 
 **Implementation Notes:**
 
 ```go
-// bus.go internals
+// bus.go internals (real shape — not just []chan Event)
 type EventBus struct {
-    subscribers    []chan Event
-    mu             sync.RWMutex
+    subscribers      []subscriber           // universal subs; carries lossy flag, name, channel
+    typedSubscribers []*typedSubscription   // type-filtered subs (SubscribeTypes / Subscribe[T])
+    mu               sync.RWMutex
 
     // Startup coordination
     started        bool
     startMu        sync.Mutex
     preStartBuffer []Event
+
+    // Drop accounting — separated by criticality so observability noise doesn't
+    // mask real backpressure problems.
+    droppedEventsCritical      uint64       // atomic counter; SubscribeLossy never increments this
+    droppedEventsObservability uint64       // atomic counter for lossy subscribers
+    onDrop                     DropCallback // fires only on critical drops
 }
 ```
 
 Why this design?
 
-- RWMutex allows concurrent reads (publish checks subscriber list)
-- Separate startMu prevents deadlock between startup and publish
-- Buffering before Start() prevents lost events during component initialization
+- RWMutex allows concurrent reads (publish walks the subscriber list).
+- Separate `startMu` prevents deadlock between startup and publish.
+- Pre-start buffering avoids lost events during component initialization,
+  capped by `MaxPreStartBufferSize`.
+- The lossy/critical split keeps observability subscribers (commentator, debug,
+  metrics) from triggering the same drop alerts as business-critical paths.
+
+`Publish` is non-blocking and returns the number of subscribers that received
+the event (`int`, not `error`). Pre-start buffered events return `0`.
 
 ### Typed Subscriptions
 
@@ -156,20 +175,22 @@ func (b *EventBus) Request(ctx context.Context, req Request, opts RequestOptions
 ### Test Infrastructure, Not Domain Logic
 
 ```go
+// Test event defined at package scope (Go doesn't allow methods inside func bodies).
+type testEvent struct{ value string }
+
+func (e testEvent) EventType() string    { return "test" }
+func (e testEvent) Timestamp() time.Time { return time.Now() }
+
 func TestEventBus_Publish(t *testing.T) {
     bus := NewEventBus(100)
 
-    // Use simple test event (no domain knowledge)
-    type TestEvent struct{ Value string }
-    func (e TestEvent) EventType() string { return "test" }
-
-    sub := bus.Subscribe("test", 10)
+    sub := bus.Subscribe("test-sub", 10)
     bus.Start()
 
-    bus.Publish(TestEvent{Value: "hello"})
+    bus.Publish(testEvent{value: "hello"})
 
     event := <-sub
-    assert.Equal(t, "hello", event.(TestEvent).Value)
+    assert.Equal(t, "hello", event.(testEvent).value)
 }
 ```
 
@@ -268,15 +289,15 @@ bus.Publish(SystemReadyEvent{})
 
 ```go
 // Bad - deadlock risk
-func (c *Component) Run(ctx context.Context, bus *EventBus) {
-    events := bus.Subscribe("component", 10)
-    for event := range events {
+func (c *Component) Start(ctx context.Context) error {
+    for event := range c.eventChan {
         if req, ok := event.(MyRequest); ok {
             // This can deadlock if request depends on this component responding
-            result, _ := bus.Request(ctx, OtherRequest{}, ...)
-            bus.Publish(MyResponse{result: result})
+            result, _ := c.eventBus.Request(ctx, OtherRequest{}, ...)
+            c.eventBus.Publish(MyResponse{result: result})
         }
     }
+    return nil
 }
 ```
 
@@ -284,18 +305,18 @@ func (c *Component) Run(ctx context.Context, bus *EventBus) {
 
 ```go
 // Good - handle in goroutine
-func (c *Component) Run(ctx context.Context, bus *EventBus) {
-    events := bus.Subscribe("component", 10)
-    for event := range events {
+func (c *Component) Start(ctx context.Context) error {
+    for event := range c.eventChan {
         if req, ok := event.(MyRequest); ok {
             req := req  // Capture
             go func() {
                 // Won't block event loop
-                result, _ := bus.Request(ctx, OtherRequest{}, ...)
-                bus.Publish(MyResponse{result: result})
+                result, _ := c.eventBus.Request(ctx, OtherRequest{}, ...)
+                c.eventBus.Publish(MyResponse{result: result})
             }()
         }
     }
+    return nil
 }
 ```
 
@@ -351,12 +372,13 @@ Follow scatter-gather as example:
 ### Benchmarking
 
 ```go
+// Reuses the package-scope testEvent declared above.
 func BenchmarkEventBus_Publish(b *testing.B) {
     bus := NewEventBus(100)
     sub := bus.Subscribe("bench", 1000)
     bus.Start()
 
-    event := TestEvent{Value: "test"}
+    event := testEvent{value: "test"}
 
     b.ResetTimer()
     for i := 0; i < b.N; i++ {
@@ -457,24 +479,39 @@ type Event interface {
 }
 ```
 
-### 2. Use Type Assertions, Not Type Switches
+### 2. Keep Domain Type Switches Out of `pkg/events`
+
+Inside `pkg/events` itself, code should treat events as opaque `Event`
+values. If something in this package starts switching on concrete event
+types, the logic almost certainly belongs in a consumer (e.g. a controller
+component) — `pkg/events` should stay domain-agnostic.
 
 ```go
-// Good - explicit type assertion
-if req, ok := event.(MyRequest); ok {
-    handle(req)
+// Good (inside pkg/events) - dispatch on the interface, not on concrete types
+func deliver(sub subscriber, event Event) {
+    select {
+    case sub.ch <- event:
+    default:
+        // drop
+    }
 }
 
-// Avoid - large type switches (indicates domain logic)
-switch e := event.(type) {
-case Type1:
-case Type2:
-case Type3:
-// 50 more cases...
+// Bad (inside pkg/events) - switching on domain types couples the bus
+// to controller events
+switch event.(type) {
+case ReconciliationTriggeredEvent:
+    // …
+case DeploymentCompletedEvent:
+    // …
 }
 ```
 
-If you need large type switches, the logic probably belongs in controller package, not events package.
+**Consumers (controller components) are different.** A `switch event.(type)`
+inside a component's event loop is the canonical shape — it's how
+`reconciler.handleEvent`, `deployer.Component.Start`, `renderer.Component.Start`,
+and the commentator's insight pipelines all dispatch their subscribed event
+types. Don't rewrite those into chains of `if _, ok := event.(X); ok` —
+that loses the exhaustiveness signal and reads worse.
 
 ### 3. Document Event Contracts
 
@@ -513,11 +550,12 @@ If modifying EventBus interface:
 Example breaking change:
 
 ```go
-// Old
+// Old (current)
 bus.Publish(event Event) int
 
-// New
+// Hypothetical breaking change
 bus.Publish(event Event) error
 ```
 
-This requires updating ~50 call sites throughout codebase.
+This would require updating every call site across the controller; tests need
+to accept the int return value as a delivered-subscriber count today.

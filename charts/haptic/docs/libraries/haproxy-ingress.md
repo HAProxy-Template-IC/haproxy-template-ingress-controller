@@ -185,22 +185,20 @@ backend my-backend
 
 ### Connection Limits
 
-**Status**: ✅ Supported
-
 **Annotations**:
 
-| Annotation | Description |
-|------------|-------------|
-| `maxconn-server` | Maximum connections per server |
-| `maxqueue-server` | Maximum queue size per server |
-| `limit-connections` | Backend fullconn limit |
+| Annotation | Status | Description |
+|------------|--------|-------------|
+| `limit-connections` | ✅ Supported | Backend `fullconn` limit |
+| `maxconn-server` | ❌ Not Implemented | Library reads the value but never emits `maxconn` to HAProxy today (use `haproxy.org/pod-maxconn` from the [haproxytech library](haproxytech.md) instead) |
+| `maxqueue-server` | ❌ Not Implemented | Library reads the value but never emits `maxqueue` to HAProxy today |
 
-**Usage**:
+`maxconn-server` and `maxqueue-server` populate `serverOpts["maxconnValue"]` / `serverOpts["maxqueueValue"]` in `backend-directives-620-haproxy-ingress-maxconn`, but no consumer reads those keys, so the annotations are silent no-ops.
+
+**Usage** (only `limit-connections` produces output today):
 
 ```yaml
 annotations:
-  haproxy-ingress.github.io/maxconn-server: "100"
-  haproxy-ingress.github.io/maxqueue-server: "50"
   haproxy-ingress.github.io/limit-connections: "1000"
 ```
 
@@ -208,26 +206,23 @@ annotations:
 
 ### Health Checks
 
-**Status**: ✅ Supported
-
 **Annotations**:
 
-| Annotation | Description |
-|------------|-------------|
-| `backend-check-interval` | Health check interval (e.g., `5s`) |
-| `health-check-uri` | HTTP health check path |
-| `health-check-port` | Custom health check port |
-| `health-check-fall-count` | Failures before marking down |
-| `health-check-rise-count` | Successes before marking up |
+| Annotation | Status | Description |
+|------------|--------|-------------|
+| `health-check-uri` | ✅ Supported | HTTP health check path — emitted as `option httpchk GET <uri>` |
+| `backend-check-interval` | ❌ Not Implemented | Library reads the value but never emits `inter` to HAProxy today |
+| `health-check-port` | ❌ Not Implemented | Library reads the value but never emits `port` on `default-server` today |
+| `health-check-fall-count` | ❌ Not Implemented | Library reads the value but never emits `fall` to HAProxy today |
+| `health-check-rise-count` | ❌ Not Implemented | Library reads the value but never emits `rise` to HAProxy today |
 
-**Usage**:
+The `Not Implemented` rows are silent no-ops: `backend-directives-630-haproxy-ingress-health-checks` populates `serverOpts["checkIntervalValue"]` / `checkPortValue` / `fallCountValue` / `riseCountValue`, but no consumer reads those keys, so they don't influence the rendered config. Use the `haproxy.org/check-*` annotations from the [haproxytech library](haproxytech.md) when you need interval/fall/rise control.
+
+**Usage** (only `health-check-uri` produces output today):
 
 ```yaml
 annotations:
   haproxy-ingress.github.io/health-check-uri: "/healthz"
-  haproxy-ingress.github.io/backend-check-interval: "5s"
-  haproxy-ingress.github.io/health-check-fall-count: "3"
-  haproxy-ingress.github.io/health-check-rise-count: "2"
 ```
 
 **Generated HAProxy Configuration**:
@@ -235,8 +230,11 @@ annotations:
 ```haproxy
 backend my-backend
     option httpchk GET /healthz
-    server SRV_1 10.0.0.1:8080 check inter 5s fall 3 rise 2
+    default-server check
+    server SRV_1 10.0.0.1:8080 enabled
 ```
+
+`check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload.
 
 ---
 
@@ -298,11 +296,11 @@ server SRV_1 10.0.0.1:8443 ssl alpn h2 ca-file /path/to/ca.pem crt /path/to/clie
 
 ### haproxy-ingress.github.io/initial-weight
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Initial weight for backend servers (0-256).
+**Description**: Initial weight for backend servers (0-256). The library reads and validates the value (0-256 range), then writes it to `serverOpts["weightValue"]` in `backend-directives-660-haproxy-ingress-server-options`, but no consumer reads the key — so the annotation is a silent no-op today. Use `weight N` flags in the [haproxytech library's](haproxytech.md) backend-config-snippet for working server-weight control.
 
-**Usage**:
+**Usage** (no effect today):
 
 ```yaml
 annotations:

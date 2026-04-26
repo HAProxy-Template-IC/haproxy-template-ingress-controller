@@ -84,7 +84,7 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 
 The SSL library generates an HTTPS frontend that:
 
-- Binds to port 8443 (override via `controller.config.templatingSettings.extraContext.httpsPort`; the default matches `haproxy.ports.https` in `values.yaml`)
+- Binds to port 8443 (override via `controller.config.templatingSettings.extraContext.httpsPort`). The bind port and the HAProxy container port (`haproxy.ports.https`) both default to 8443, but they are **not** linked — the chart does not derive one from the other, so if you change one you must set the other explicitly to keep them aligned.
 - Uses CRT-list for certificate selection
 - Enables HTTP/2 via ALPN negotiation
 - Reuses routing logic from base.yaml
@@ -92,7 +92,7 @@ The SSL library generates an HTTPS frontend that:
 ```haproxy
 frontend https
     mode http
-    bind *:8443 ssl crt-list /etc/haproxy/crt-list/certificate-list.txt alpn h2,http/1.1
+    bind *:8443 ssl crt-list general/certificate-list.txt alpn h2,http/1.1
 
     # Routing logic (same as HTTP frontend)
     # ...
@@ -100,6 +100,8 @@ frontend https
     use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
     default_backend default_backend
 ```
+
+The `general/` prefix is the basename of `dataplane.generalStorageDir` (chart default `/etc/haproxy/general`); HAProxy resolves it via the `default-path origin` directive in the global section.
 
 ### CRT-List Certificate Management
 

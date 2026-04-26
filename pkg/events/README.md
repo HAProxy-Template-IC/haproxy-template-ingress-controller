@@ -58,7 +58,7 @@ The commentator and anything logging "everything" should use plain `Subscribe` �
 
 ## Scatter-Gather (Request/Response)
 
-Used when multiple independent responders all need to approve something (the admission-webhook validator is the canonical example).
+Used when multiple independent responders all need to approve something — the canonical caller is `pkg/controller/configchange.ConfigChangeHandler`, which fans `ConfigValidationRequest` out to `BasicValidator`, `TemplateValidator`, and `JSONPathValidator` and aggregates the responses. Note that the admission webhook does **not** use scatter-gather; production calls `dryrunvalidator.ValidateDirect` synchronously to keep the admission path tight.
 
 ```go
 req := NewMyRequest(payload)
@@ -80,7 +80,12 @@ Don't nest `Request()` calls on the same path without spawning a goroutine for t
 
 ## Back-Pressure
 
-Publish is non-blocking. If a subscriber's buffer is full, the event is **dropped for that subscriber** (others still receive it). The bus increments a drop counter and invokes the registered `DropCallback` (used by `pkg/controller/metrics` to emit `haptic_events_dropped_*_total`). Slow consumers are your problem — hand work off to a goroutine or raise the subscriber buffer.
+Publish is non-blocking. If a subscriber's buffer is full, the event is **dropped for that subscriber** (others still receive it). The drop accounting splits into two paths (see `recordDrop` in `bus.go`):
+
+- **Non-lossy ("critical") subscribers** — the default `Subscribe` / `SubscribeTypes`. Drops bump `DroppedEventsCritical` *and* fire the registered `DropCallback` (used by `pkg/controller/metrics` to emit `haptic_events_dropped_critical_total` and `haptic_events_dropped_by_subscriber_total`).
+- **Lossy subscribers** — opt-in via `SubscribeLossy` / `SubscribeTypesLossy`. Drops bump `DroppedEventsObservability` only; the `DropCallback` is **not** invoked. Use this for observability subscribers (commentator, debug ring buffer) where occasional drops on a burst are acceptable and shouldn't trip the per-subscriber alert metric.
+
+Slow consumers are your problem — hand work off to a goroutine or raise the subscriber buffer.
 
 ## Buffer Sizing Rule of Thumb
 

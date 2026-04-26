@@ -6,28 +6,39 @@ Development context for working with the HAProxy Template Ingress Controller Hel
 
 ### Library Merging System
 
-The chart uses a library-based architecture where multiple YAML files are merged at Helm render time:
+The chart uses a library-based architecture where multiple YAML files are merged at Helm render time. The full sequence (read `templates/_helpers.tpl` `define "haptic.mergeLibraries"` for the canonical order):
 
 ```
 Merge Order (lowest to highest priority):
-1. base.yaml          - Core HAProxy template and snippets
-2. ingress.yaml       - Kubernetes Ingress support
-3. gateway.yaml       - Gateway API support
-4. haproxytech.yaml   - HAProxy annotation compatibility
-5. nginx-ingress.yaml - nginx-ingress annotation compatibility (disabled by default)
-6. values.yaml        - User configuration (highest priority)
+1. base.yaml             - Core HAProxy template and snippets
+2. ssl.yaml              - HTTPS frontend, TLS certs, SSL passthrough infra
+3. ingress.yaml          - Kubernetes Ingress support
+4. gateway.yaml          - Gateway API (only when GatewayClass CRD is present)
+5. haproxytech.yaml      - haproxy.org/* annotation compatibility
+6. haproxy-ingress.yaml  - haproxy-ingress.github.io/* annotation compatibility
+7. nginx-ingress.yaml    - nginx.ingress.kubernetes.io/* compat (disabled by default)
+8. path-regex-last.yaml  - Optional: regex paths matched last (disabled by default)
+9. controller.config.*   - User overrides from values.yaml (highest priority)
 ```
 
-**Merge Logic** (`templates/_helpers.tpl:69`):
+Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. Layers 5-8 are pure plugin libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up.
+
+**Merge Logic** (`templates/_helpers.tpl`, `define "haptic.mergeLibraries"`):
 
 ```yaml
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
-# Load each library in order using mustMergeOverwrite
-# Later libraries override earlier ones for the same keys
+# Load each library in order using mustMergeOverwrite, gated by its
+# enabled flag. Later libraries override earlier ones for the same keys.
 {{- $merged = mustMergeOverwrite $merged $baseLibrary }}
+{{- $merged = mustMergeOverwrite $merged $sslLibrary }}
 {{- $merged = mustMergeOverwrite $merged $ingressLibrary }}
-# ... etc
+{{- $merged = mustMergeOverwrite $merged $gatewayLibrary }}
+{{- $merged = mustMergeOverwrite $merged $haproxytechLibrary }}
+{{- $merged = mustMergeOverwrite $merged $haproxyIngressLibrary }}
+{{- $merged = mustMergeOverwrite $merged $nginxIngressLibrary }}
+{{- $merged = mustMergeOverwrite $merged $pathRegexLastLibrary }}
+{{- $merged = mustMergeOverwrite $merged $userConfig }}
 {{- end }}
 ```
 
@@ -135,23 +146,39 @@ Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are r
 2. Performing resource-specific calculations
 3. Setting generic context variables for base.yaml to consume
 
-**Pattern**: Resource libraries extract data and set variables → base.yaml reads generic variables
+**Pattern**: Resource libraries extract data and write into a shared
+`serverOpts` map → base.yaml reads back from the same map.
 
-**Example**:
+**Example** (real shape; see `haproxytech.yaml`'s
+`backend-directives-100-haproxytech-pod-maxconn` snippet for the production
+version):
 
-```jinja2
-{#- ingress.yaml or haproxytech.yaml (resource-specific) -#}
-{%- set pod_maxconn = ingress.metadata.annotations["haproxy.org/pod-maxconn"] | default("") %}
-{%- if pod_maxconn != "" %}
-  {%- set pod_maxconn_value = calculate_per_pod_value(pod_maxconn) %}
-{%- endif %}
-{% include "util-backend-servers" %}
+```scriggo
+{#- ingress.yaml or haproxytech.yaml (resource-specific):
+    extract the annotation safely with dig + fallback (ingress is `any`),
+    compute the per-pod value, and stash it on the per-server `serverOpts`
+    map that base.yaml hands every snippet. -#}
+{%- var podMaxconn = ingress | dig("metadata", "annotations", "haproxy.org/pod-maxconn") | fallback("") | tostring() %}
+{%- if podMaxconn != "" %}
+  {%- var perPod = calculate_per_pod_value(podMaxconn) %}
+  {% serverOpts["podMaxconnValue"] = perPod -%}
+{%- end %}
 
-{#- base.yaml (resource-agnostic) -#}
-{%- if pod_maxconn_value is defined %}
-  server SRV_1 {{ endpoint.address }}:{{ endpoint.port }} maxconn {{ pod_maxconn_value }}
-{%- endif %}
+{#- base.yaml (resource-agnostic): consume the map entry. The key is absent
+    when the snippet didn't write it, so check existence with the comma-ok
+    form rather than Jinja's `is defined`. -#}
+{%- var perPod, ok = serverOpts["podMaxconnValue"] %}
+{%- if ok %}
+  server SRV_1 {{ endpoint.address }}:{{ endpoint.port }} maxconn {{ perPod }}
+{%- end %}
 ```
+
+Notes for readers coming from Jinja: Scriggo declares with `{% var %}`
+(or `:=`), terminates blocks with `{% end %}` (no `{% endif %}` /
+`{% endfor %}`), and has no `is defined` — use the Go `value, ok :=` idiom
+or `dig | fallback` for safe map access. Resource objects (`ingress`,
+`route`, …) come in as `any`, so reach into them with `dig(...)` rather than
+direct field access.
 
 **Why This Matters**: This separation allows Gateway API and Ingress resources to coexist without base.yaml needing to know which resource type it's processing. Resource-specific logic stays in resource-specific libraries.
 
@@ -252,84 +279,80 @@ Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control executio
 
 ```scriggo
 {# Definition in util-gateway-analysis #}
-{%- if !has_cached("gateway_analysis") %}
-  {%- shared["gateway_analysis"] = expensive_computation() %}
-  {%- set_cached("gateway_analysis", true) %}
-{%- end %}
+{%- var _, _ = shared.ComputeIfAbsent("gateway_analysis", func() any {
+    return expensive_computation()
+}) %}
 
-{# Usage from any snippet #}
+{# Usage from any snippet — re-fetch (and re-cache if needed) in one call. #}
 {{ render "util-gateway-analysis" }}
-{%- var ga map[string]any = shared["gateway_analysis"] %}
+{%- var ga, _ = shared.ComputeIfAbsent("gateway_analysis", func() any {
+    return expensive_computation() {# only runs if util- snippet wasn't rendered first #}
+}) %}
 ```
 
 ## HAProxy File Path Requirements
 
-### The `default-path config` Directive
+### The `default-path origin` Directive
 
-**CRITICAL**: The base.yaml template **MUST** include `default-path config` in the global section for relative paths to work.
+**CRITICAL**: the base library renders `default-path origin <baseDir>` into the global section so relative paths in the rendered config resolve to the right place at runtime *and* during validation.
 
 ```haproxy
 global
-    default-path config
+    default-path origin {{ pathResolver.GetBaseDir() }}   # → /etc/haproxy in production
     # ... other global settings
 ```
 
-This directive tells HAProxy to resolve relative paths from the **configuration file's directory**, not from HAProxy's working directory. Without it, relative paths fail.
-
-**Location in templates**: `charts/haptic/libraries/base.yaml` (line 456)
+The directive lives in the `global-settings-300-paths` snippet of `charts/haptic/libraries/base.yaml` (around line 458). It tells HAProxy to resolve relative paths from the explicit base directory passed as an argument, **not** from the config file's directory or HAProxy's working directory. We use `origin <baseDir>` rather than `default-path config` because the validation pipeline rewrites this single directive (replacing the production base with a per-call temp dir) instead of mutating every file path in the rendered config.
 
 ### How Path Resolution Works
 
-**With `default-path config` (our approach):**
+**Production:**
 
 ```haproxy
-# Config file at: /tmp/haproxy-validate-12345/haproxy.cfg
-# Files at: /tmp/haproxy-validate-12345/files/400.http
-
 global
-    default-path config
+    default-path origin /etc/haproxy
 
 defaults
-    errorfile 400 files/400.http    # Resolves to /tmp/haproxy-validate-12345/files/400.http
+    errorfile 400 general/400.http   # → /etc/haproxy/general/400.http
 ```
 
-HAProxy resolves `files/400.http` relative to the config file location (`/tmp/haproxy-validate-12345/`).
+**Validation:** `pkg/controller/validation/service.go` rewrites `default-path origin <baseDir>` → `default-path origin <tempDir>` once per call (`strings.Replace(..., 1)`), then writes the auxiliary tree under `<tempDir>` mirroring the production layout. Relative paths in the rest of the config are unchanged, so the same rendered output works in both contexts.
 
-**Without `default-path config` (broken):**
+**Without the directive (broken):**
 
 ```haproxy
 # HAProxy resolves paths from its working directory (usually /)
-errorfile 400 files/400.http    # Looks for /files/400.http - NOT FOUND!
+errorfile 400 general/400.http    # Looks for /general/400.http — NOT FOUND
 ```
 
 ### Single Render with Relative Paths
 
-The codebase uses **relative paths** that work everywhere:
+The codebase uses **relative paths** that work in every consumer:
 
-1. **RenderService** uses PathResolver with relative paths: `maps/`, `ssl/`, `files/`
-2. **Templates** render paths like `files/400.http`, `maps/host.map`
-3. **ValidationService** writes files to temp directory matching this structure
-4. **HAProxy validation** runs with config in temp dir, `default-path config` resolves correctly
-5. **DataPlane API deployment** handles path mapping to production locations
+1. **RenderService** (`pkg/controller/renderer/service.go`) constructs a `PathResolver` whose `MapsDir` / `SSLDir` / `CRTListDir` / `GeneralDir` are the **basenames** of the production directories (e.g. `maps`, `ssl`, `general`), and whose `BaseDir` is the parent (e.g. `/etc/haproxy`).
+2. **Templates** call `pathResolver.GetPath(name, type)` which returns relative paths like `general/400.http`, `maps/host.map`.
+3. **ValidationService** writes the auxiliary tree under a per-call temp directory and patches `default-path origin` to point at it.
+4. **DataPlane API deployment** stores the rendered files in the production `BaseDir`, so the same relative paths resolve there too.
 
-### PathResolver Configuration
+### PathResolver Construction
 
-PathResolver is configured with **relative paths** in `pkg/controller/renderer/service.go`:
+`NewRenderService` derives the resolver from `cfg.Dataplane`, using `filepath.Base` and `filepath.Dir` so a single relative-path layout falls out of whatever the operator configured for the production directories:
 
 ```go
 pathResolver := &templating.PathResolver{
-    MapsDir:    "maps",
-    SSLDir:     "ssl",
-    CRTListDir: "ssl",
-    GeneralDir: "files",
+    BaseDir:    filepath.Dir(cfg.Config.Dataplane.MapsDir),    // /etc/haproxy
+    MapsDir:    filepath.Base(cfg.Config.Dataplane.MapsDir),   // maps
+    SSLDir:     filepath.Base(cfg.Config.Dataplane.SSLCertsDir),
+    CRTListDir: filepath.Base(cfg.Config.Dataplane.GeneralStorageDir),
+    GeneralDir: filepath.Base(cfg.Config.Dataplane.GeneralStorageDir),
 }
 ```
 
-Templates use `pathResolver.GetPath()`:
+Templates then use:
 
 ```scriggo
 errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
-{#- Output: files/400.http #}
+{#- Output: general/400.http (chart default GeneralStorageDir basename) #}
 
 use_backend %[path,map({{ pathResolver.GetPath("path.map", "map") }})]
 {#- Output: maps/path.map #}
@@ -337,25 +360,25 @@ use_backend %[path,map({{ pathResolver.GetPath("path.map", "map") }})]
 
 ### ValidationService Directory Structure
 
-The ValidationService creates a temp directory structure matching PathResolver:
+`ValidationService` mirrors the production layout under a per-call temp directory:
 
 ```
-/tmp/haproxy-validation-xxx/
-├── haproxy.cfg          # Rendered config with relative paths
+/tmp/haptic-validation-xxx/
+├── haproxy.cfg          # rendered config; default-path origin patched to point here
 ├── maps/
 │   └── host.map
 ├── ssl/
 │   └── cert.pem
-└── files/
+└── general/
     ├── 400.http
     └── 504.http
 ```
 
-HAProxy runs with this directory as the config location, and `default-path config` resolves all relative paths correctly.
+`haproxy -c -f /tmp/haptic-validation-xxx/haproxy.cfg` then resolves every relative path against the patched `default-path origin`, so validation sees the same file layout HAProxy would in production.
 
 ### Common Pitfall
 
-**DO NOT** remove `default-path config` from base.yaml. Without it, HAProxy cannot find auxiliary files during validation. This directive is essential for the relative-path architecture to work.
+Do not remove or rename the `default-path origin` line in `base.yaml` — `ValidationService.runHAProxyValidator` does an exact `strings.Replace(config, "default-path origin "+s.baseDir, "default-path origin "+tempDir, 1)`. If the directive is missing, or the rendered base differs from the configured `Dataplane.MapsDir` parent, the replacement silently no-ops and validation will look for files in the production paths inside a sandbox that doesn't have them.
 
 ## Development Workflow
 
@@ -774,21 +797,23 @@ backend {{ route.metadata.namespace }}_{{ route.metadata.name }}
 
 **How It Works (Internal Architecture):**
 
-The caching functions (`has_cached`, `get_cached`, `set_cached`) store values by key. When the same key is used across different template contexts, the cached data is retrieved:
+`shared.ComputeIfAbsent(key, fn)` stores values by key with compute-once
+semantics. When the same key is used across different template contexts, the
+cached data is reused without re-running the expensive computation:
 
-1. First render: Checks if cached, runs expensive computation, stores result
-2. Subsequent renders: Retrieves cached result
+1. First call: Runs the closure, stores the result, returns `(value, true)`.
+2. Subsequent calls: Returns the existing value with `(value, false)`.
 3. Works across different template contexts (haproxyConfig, map files, etc.)
+   because they all share the same `*SharedContext` for one render.
 
 ```go
 {# Inside util-gateway-analysis (simplified) #}
-{% if !has_cached("gateway_analysis") %}
-  {# Expensive route analysis runs ONCE (first render only) #}
-  {% import "util-analyze-routes" for analyze_routes %}
-  {% var result = analyze_routes(resources) %}
-  {% set_cached("gateway_analysis", result) %}
-{% end %}
-{% var gateway_analysis = get_cached("gateway_analysis") %}
+{# ComputeIfAbsent runs the closure at most once per render, even with
+   parallel sub-renders — singleflight serialises duplicate keys. #}
+{% var gateway_analysis, _ = shared.ComputeIfAbsent("gateway_analysis", func() any {
+    {% import "util-analyze-routes" for analyze_routes %}
+    return analyze_routes(resources)
+}) %}
 {# gateway_analysis now contains cached data from first computation #}
 ```
 
@@ -817,23 +842,22 @@ templateSnippets:
             ... use item ...
           {%- end %}
       -#}
-      {% if !has_cached("my_computation") %}
-        {# Your expensive computation here - runs only ONCE per render #}
-        {% var results = []any{} %}
-        {%- for _, resource := range resources.my_resources.List() %}
-          {% results = append(results, resource) %}
-        {%- end %}
-        {% set_cached("my_computation", map[string]any{"results": results}) %}
-      {% end %}
-      {% var my_computation = get_cached("my_computation") %}
+      {% var my_computation, _ = shared.ComputeIfAbsent("my_computation", func() any {
+          {# Runs at most once per render. #}
+          var results = []any{}
+          for _, resource := range resources.my_resources.List() {
+              results = append(results, resource)
+          }
+          return map[string]any{"results": results}
+      }) %}
 ```
 
 **Key Requirements:**
 
-1. Use a descriptive cache key (string name)
-2. Check with `has_cached()` before computing
-3. Store with `set_cached()` after computing
-4. Retrieve with `get_cached()` for use
+1. Use a descriptive cache key (string name).
+2. Wrap the expensive work in a closure passed to `shared.ComputeIfAbsent`.
+3. Discard the second return value (`_`) for plain memoisation; capture it
+   as `wasComputed` if you want the `first_seen` deduplication semantics.
 
 **Performance Impact**: Reduces expensive computations from N to 1 per render (up to 70-90% reduction for heavy operations).
 
@@ -1540,22 +1564,25 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 | `resources` | `*map[string]ResourceStore` | Kubernetes resource stores |
 | `pathResolver` | `*PathResolver` | File path resolution |
 | `fileRegistry` | `*FileRegistrar` | Dynamic file registration |
-| `shared` | `*map[string]interface{}` | Cross-template cache |
+| `shared` | `*templating.SharedContext` | Per-render cache; `shared.ComputeIfAbsent(key, fn)` memoises expensive work |
 | `templateSnippets` | `*[]string` | Available snippet names |
 | `globalFeatures` / `gf` | `map[string]any` | Cross-library shared state (see "Cross-Library Shared State" section) |
 
-### Caching with has_cached/get_cached/set_cached
+### Caching with shared.ComputeIfAbsent
 
-For expensive computations that should run only once per render:
+For expensive computations that should run only once per render. The legacy
+`has_cached` / `set_cached` / `get_cached` helpers were removed in favour of a
+single thread-safe atomic call:
 
 ```scriggo
-{%- if !has_cached("analysis_key") %}
-  {#- Expensive computation runs only once #}
-  {%- var result = expensive_computation() %}
-  {%- set_cached("analysis_key", result) %}
-{%- end %}
-{%- var cached_result = get_cached("analysis_key") %}
+{%- var result, _ = shared.ComputeIfAbsent("analysis_key", func() any {
+    {#- Runs at most once per render, even with parallel sub-renders #}
+    return expensive_computation()
+}) %}
 ```
+
+`ComputeIfAbsent` returns `(value, wasComputed)`. The boolean is useful for the
+deduplication / `first_seen` pattern; ignore it (`_`) for plain memoisation.
 
 ### Deduplication with first_seen
 

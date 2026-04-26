@@ -35,7 +35,7 @@ Plus one project-local analyzer built in `tools/linters/eventimmutability` that 
 - **`importas`** enforces canonical aliases for Kubernetes and haproxytech packages (`corev1`, `metav1`, `apierrors`, `corev1client`, `haproxy`). Deviations fail CI.
 - **`revive`** caps function length at 50 lines and cognitive complexity at 20. `exported` and `package-comments` rules are off for internal packages.
 - **`gocyclo`** rejects cyclomatic complexity > 20.
-- **`gosec`** allowlists G114 (HTTP timeout — set at infra level) and G404 (non-crypto RNG — not used for secrets). G304 is allowlisted on specific file paths, not globally.
+- **`gosec`** allowlists G114 (HTTP timeout — set at infra level), G204 (the only `exec` binary name is the hardcoded `"haproxy"` resolved via `LookPath`), and G404 (non-crypto RNG — not used for secrets). G304, G118, and G108 are allowlisted on specific file paths/messages, not globally.
 - Generated code (`zz_generated.*.go`, `codegen/**/*.gen.go`, `pkg/generated/**`) and test files run with relaxed rules; see the per-path overrides at the bottom of `.golangci.yml`.
 
 Never add a global ignore rule to silence findings, and do not suppress them with `nolint` directives on individual lines — fix the code, or add a scoped per-path exclusion in `.golangci.yml` if the rule is genuinely wrong for that file.

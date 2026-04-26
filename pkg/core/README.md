@@ -5,7 +5,7 @@ Shared primitives used everywhere in the controller. Two sub-packages, both inte
 - **`pkg/core/config`** — parses and validates the YAML that comes out of a `HAProxyTemplateConfig` CRD plus the controller's credentials `Secret`. Pure functions, no Kubernetes client calls.
 - **`pkg/core/logging`** — sets up structured `log/slog` logging for the binary.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative; this README is a short map. The `CLAUDE.md` in this directory still describes the pre-CRD ConfigMap world in places — prefer `go doc ./pkg/core/config` over the CLAUDE.md if they conflict.
+Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative; this README is a short map. When in doubt, prefer `go doc ./pkg/core/config` over the prose here or in `CLAUDE.md`.
 
 ## `config` — Loading and Validating
 
@@ -66,11 +66,16 @@ Authoritative list lives in `pkg/core/config/defaults.go`. Commonly surprising o
 - `dataplane.deploymentTimeout`: `30s`
 - `dataplane.rawPushThreshold`: `100`
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: the standard `/etc/haproxy/...` paths
-- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, `60s`, `15s`, `5s` (the Helm chart overrides these to `15s/10s/2s` for faster failover — see [High Availability](../../docs/controller/docs/operations/high-availability.md))
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, `15s`, `10s`, `2s` (matches the kube-controller-manager / kube-scheduler defaults; the Helm chart leaves the timings alone but rewrites `leaseName` to the release fullname — see [High Availability](../../docs/controller/docs/operations/high-availability.md))
 - `controller.configPublishing.compressionThreshold`: `1048576` (1 MiB)
 - `templatingSettings.engine`: `scriggo`
 
-The CRD uses camelCase field names throughout (`podSelector`, `watchedResources`, `indexBy`, …). Anything you see in snake_case (`pod_selector`, `index_by`, …) is either historical documentation or someone's typo.
+Two serialisations exist for the same struct, and they don't agree — see `pkg/core/config/CLAUDE.md` for the full mapping:
+
+- **CRD JSON keys** (what operators write in `kubectl apply`-style manifests, what `kubectl get -o yaml` prints): camelCase (`podSelector`, `watchedResources`, `indexBy`, `templatingSettings`).
+- **YAML keys consumed by `LoadConfig`** (the intermediate form `pkg/controller/conversion` produces): snake_case at the top level (`pod_selector`, `watched_resources`, `template_snippets`, `haproxy_config`, …) with a few nested fields in camelCase (`extraContext`, `currentConfig`, `httpResources`, `minHAProxyVersion`).
+
+Use camelCase in CRD manifests and snake_case in any YAML you hand directly to `LoadConfig`. The `yaml:` tags in `types.go` are the authoritative shape for either form.
 
 ## `logging` — slog Setup
 
@@ -87,7 +92,7 @@ slog.SetDefault(logger)
 logging.SetLevel("DEBUG")  // bumps all existing loggers
 ```
 
-Output is structured JSON on stderr. The controller wires up `NewDynamicLogger` at startup using `LOG_LEVEL`, then `SetLevel`s from the CRD's `spec.logging.level` once the config loads. See [`pkg/core/logging/README.md`](./logging/README.md) for the full API.
+Output is logfmt (`slog.NewTextHandler`) on **stdout** — not JSON, not stderr. The controller wires up `NewDynamicLogger` at startup using `LOG_LEVEL`, then `SetLevel`s from the CRD's `spec.logging.level` once the config loads. See [`pkg/core/logging/README.md`](./logging/README.md) for the full API.
 
 ## Testing
 

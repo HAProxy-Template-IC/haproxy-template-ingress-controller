@@ -67,9 +67,9 @@ graph TB
 **Deployment Components:**
 
 1. **Controller Deployment** — defaults to 2 replicas with leader election
-   - All replicas watch resources, render templates, and validate configs (hot standby)
-   - Only the elected leader pushes configuration to HAProxy via Dataplane API
-   - See [High Availability](../../operations/high-availability.md) for tuning failover
+   - All replicas watch Kubernetes resources, run admission webhooks, and discover HAProxy pods (hot standby — keeps caches warm so failover is instant)
+   - Only the elected leader runs the render-validate Pipeline and pushes configuration to HAProxy via Dataplane API
+   - See [High Availability](../../operations/high-availability.md) for tuning failover and [Leader Election](./leader-election.md) for the full all-replica vs leader-only component split
 
 2. **Controller Service** (ClusterIP) — operational endpoints only
    - `:8080` → healthz probes and `/debug/*` introspection

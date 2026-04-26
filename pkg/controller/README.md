@@ -65,7 +65,7 @@ The short version:
 
 1. Decide whether it's a pure library (goes to a top-level `pkg/<name>`) or coordination (goes here as an event adapter).
 2. If it's coordination, embed `*component.Base` and implement `HandleEvent`.
-3. Subscribe to the events you need in the constructor — **not** in `Start()` — so buffered events aren't lost when `EventBus.Start()` releases them.
+3. Subscribe to the events you need in the constructor — **not** in `Start()` — so buffered events aren't lost when `EventBus.Start()` releases them. *Exception:* leader-only components subscribe in `Start()` using `SubscribeTypesLeaderOnly()`, which suppresses the late-subscriber warning. The lifecycle registry only invokes `Start()` for those after leadership is held; all-replica components replay their last state on `BecameLeaderEvent` so the late-subscribing leader-only components still see current state. See `renderer/component.go` and `configpublisher/component.go` for the canonical leader-only pattern, and `LEADER_ONLY_COMPONENTS.md` for the contract.
 4. Register with `pkg/lifecycle` (mark leader-only, declare dependencies, add a health source).
 5. Add a log case to `commentator/` for every new event type so it lands in the ring-buffered history.
 
@@ -76,10 +76,11 @@ The short version:
 ```bash
 go test ./pkg/controller/...             # unit + adapter tests
 go test ./pkg/controller/... -race       # race detector
-go test -tags=integration ./pkg/controller/...
 ```
 
 Event adapters are typically tested by wiring up a real `EventBus`, publishing a trigger event, and asserting on the resulting events. See `pkg/controller/renderer/component_test.go` for the canonical pattern; `component.Base` has its own unit tests in `component/base_test.go`.
+
+End-to-end tests that actually spin up controllers against a Kind cluster live under [`tests/integration`](../../tests/integration/) (build-tagged `//go:build integration`), not here. Run them with `make test-integration` or `go test -tags=integration ./tests/integration/...`.
 
 ## See Also
 

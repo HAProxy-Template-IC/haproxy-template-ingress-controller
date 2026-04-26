@@ -23,7 +23,7 @@ Modify this package when:
 
 This package implements a pure test runner component that executes embedded validation tests defined in HAProxyTemplateConfig CRDs. It's designed to be called directly from:
 
-1. **CLI** (`controller validate` command) - For local development and CI/CD
+1. **CLI** (`haptic-controller validate` command) - For local development and CI/CD
 2. **Webhook** (via DryRunValidator) - For admission control validation
 
 **Key Design Principle**: Pure component with no EventBus dependency. This allows direct function calls without event coordination overhead.
@@ -64,40 +64,43 @@ This package implements a pure test runner component that executes embedded vali
 
 **Key Functions:**
 
-- `RunTests()` - Executes all or specific tests
-- `runSingleTest()` - Executes one test with fixtures
-- `renderWithStores()` - Renders config using fixture stores
-- `buildRenderingContext()` - Wraps stores with StoreWrapper
-- `renderAuxiliaryFiles()` - Renders maps, files, certificates
+- `(*Runner).RunTests(ctx, testName)` - Executes all tests, or just `testName` when non-empty
+- `(*Runner).runSingleTest(ctx, name, test, engine, paths)` - Executes one test with its own engine + validation paths
 
-**Follows DryRunValidator Pattern**: The rendering logic mirrors `DryRunValidator.renderWithOverlayStores()` to ensure consistency.
+### rendering.go - Template Rendering for Tests
+
+**Key Functions:**
+
+- `(*Runner).renderWithStores(...)` - Renders the HAProxy config + auxiliary files using fixture stores and a worker-specific engine
+- `(*Runner).buildRenderingContext(...)` - Wraps stores with `StoreWrapper` and assembles the full template context (resources, paths, HTTP store, current config)
+
+**Follows DryRunValidator Pattern**: The rendering logic mirrors `DryRunValidator`'s overlay-store rendering to ensure consistency between admission webhook validation and `haptic-controller validate` runs.
 
 ### fixtures.go - Fixture Store Creation
 
 **Key Functions:**
 
-- `createStoresFromFixtures()` - Converts test fixtures to stores
-- `buildTemplateContext()` - Creates context for backward compatibility
+- `(*Runner).CreateStoresFromFixtures(fixtures)` - Converts test fixtures into typed `stores.Store` instances per resource type
+- `MergeFixtures(global, test)` - Merges global and per-test fixture maps (later overrides earlier when identities collide)
 
 **Implementation Details:**
 
-- Uses `indexer.New()` to create indexers for each resource type
-- Creates `store.NewMemoryStore()` instances for fast in-memory access
-- Extracts index keys using `indexer.ExtractKeys()`
-- Ensures resources have proper TypeMeta (APIVersion, Kind)
+- Creates one `stores.Store` per watched resource type plus the auto-injected `haproxy-pods` store
+- Uses each `WatchedResource`'s configured `IndexBy` paths so fixture lookups exercise the same indexes the controller uses at runtime
+- Ensures resources have proper TypeMeta (APIVersion, Kind) before insertion
 
 ### http_fixtures.go - HTTP Fixture Handling
 
 **Key Types:**
 
-- `FixtureHTTPStoreWrapper` - Template-callable wrapper for HTTP fixtures
+- `FixtureHTTPStoreWrapper` - Template-callable wrapper that satisfies `httpstore.Wrapper`
 
 **Key Functions:**
 
-- `NewFixtureHTTPStoreWrapper()` - Creates wrapper with pre-loaded fixtures
-- `Fetch()` - Returns fixture content or error if URL not found
-- `createHTTPStoreFromFixtures()` - Creates HTTPStore with fixtures pre-loaded
-- `mergeHTTPFixtures()` - Merges global and test-specific HTTP fixtures
+- `NewFixtureHTTPStoreWrapper(store, logger)` - Creates the wrapper around a pre-loaded `*httpstore.HTTPStore`
+- `(*FixtureHTTPStoreWrapper).Fetch(args...)` - Returns fixture content or error if the URL isn't a fixture
+- `CreateHTTPStoreFromFixtures(fixtures, logger)` - Creates an `*httpstore.HTTPStore` with fixtures pre-loaded
+- `MergeHTTPFixtures(global, test)` - Merges global and per-test HTTP-fixture lists (later wins on URL conflict)
 
 **Behavior:**
 
@@ -107,20 +110,27 @@ This package implements a pure test runner component that executes embedded vali
 
 ### assertions.go - Assertion Types
 
-Implements 5 assertion types:
+Implements 8 assertion types (see the dispatch switch in `assertions.go`):
 
-1. **haproxy_valid** - Validates config syntax with HAProxy binary
-2. **contains** - Regex pattern matching in target content
-3. **not_contains** - Ensures pattern is NOT in target content
-4. **equals** - Exact value comparison
-5. **jsonpath** - JSONPath queries against template context
+1. **haproxy_valid** - Three-phase validation (syntax + schema + `haproxy -c`) on the rendered config
+2. **contains** - Regex must match the target at least once
+3. **not_contains** - Regex must not match anywhere
+4. **match_count** - Regex must match exactly `count` times
+5. **equals** - Exact string comparison against `expected`
+6. **jsonpath** - JSONPath query against the template context evaluated to `expected`
+7. **match_order** - Sequence of regexes must match in order within the target
+8. **deterministic** - Renders the template a second time and verifies the output (config + every auxiliary file) is byte-identical to the first render
 
-**Target Resolution:**
+**Target Resolution** (see `assertion_helpers.go:resolveTarget`):
 
-- `haproxy.cfg` - Main HAProxy configuration
-- `map:<name>` - Map file content
-- `file:<name>` - General file content
+- `haproxy.cfg` (or empty) - Main HAProxy configuration
+- `map:<name>` - Map file content; matches by full path or basename
+- `file:<name>` - General file content; matches by filename
 - `cert:<name>` - SSL certificate content
+- `crt-list:<name>` - CRT-list file content (matched against the rendered file's basename or full path; works on any HAProxy version because crt-list files always render into the auxiliary files irrespective of how they're synced — see `pkg/dataplane/auxiliaryfiles/crtlist.go`)
+- `rendering_error` - The simplified render error string when render fails
+
+Unknown targets fall back to the main HAProxy config silently.
 
 ### output.go - Result Formatting
 
@@ -147,21 +157,23 @@ Formats test results in three modes:
 
 ```go
 func TestRunner_Feature(t *testing.T) {
-    // 1. Create test config with CRD spec
-    config := &v1alpha1.HAProxyTemplateConfigSpec{
-        HAProxyConfig: v1alpha1.HAProxyConfig{
-            Template: "...",
+    // 1. Build the internal config (testrunner takes *config.Config from
+    //    pkg/core/config, not the CRD spec — conversion happens upstream).
+    cfg := &config.Config{
+        HAProxyConfig: config.HAProxyConfig{Template: "..."},
+        ValidationTests: map[string]config.ValidationTest{
+            "my-test": {Description: "...", Assertions: []config.ValidationAssertion{...}},
         },
-        ValidationTests: []v1alpha1.ValidationTest{...},
     }
 
     // 2. Create template engine
     engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
-    // 3. Create test runner
-    runner := New(config, engine, validationPaths, Options{})
+    // 3. Create test runner — validationPaths can be nil for tests that don't
+    //    exercise the HAProxy binary; pass real paths for "haproxy -c" assertions.
+    runner := testrunner.New(cfg, engine, nil, testrunner.Options{})
 
-    // 4. Run tests
+    // 4. Run tests ("" = all tests; pass a name to filter)
     results, err := runner.RunTests(ctx, "")
 
     // 5. Verify results
@@ -403,13 +415,13 @@ for _, assertion := range test.Assertions {
 
 ```bash
 # 1. Check what was rendered
-controller validate -f config.yaml --dump-rendered
+haptic-controller validate -f config.yaml --dump-rendered
 
 # 2. See if template executed
-controller validate -f config.yaml --trace-templates
+haptic-controller validate -f config.yaml --trace-templates
 
 # 3. Look for template errors in verbose output
-controller validate -f config.yaml --verbose
+haptic-controller validate -f config.yaml --verbose
 ```
 
 **Common causes:**
@@ -423,7 +435,7 @@ controller validate -f config.yaml --verbose
 
 ```bash
 # See actual content vs expected pattern
-controller validate -f config.yaml --verbose
+haptic-controller validate -f config.yaml --verbose
 ```
 
 **Look for:**
@@ -444,7 +456,7 @@ Got:      " backend foo"  (extra leading space)
 
 ```bash
 # See template render times
-controller validate -f config.yaml --trace-templates
+haptic-controller validate -f config.yaml --trace-templates
 ```
 
 **Templates taking >10ms may need optimization:**
@@ -465,7 +477,7 @@ Rendering: backends.cfg (45.123ms)  ← Needs optimization
 
 ```bash
 # Dump rendered content to see if fixtures loaded correctly
-controller validate -f config.yaml --dump-rendered
+haptic-controller validate -f config.yaml --dump-rendered
 ```
 
 **Common fixture issues:**
@@ -509,15 +521,28 @@ if err != nil {
 
 ### Custom Validation Paths
 
+`testrunner.New` takes `*dataplane.ValidationPaths` (pointer; pass `nil` to skip
+binary-backed assertions). The struct has no `HAProxyBinary` field — the
+binary is discovered from `$PATH` at validation time. The fields it does have
+mirror HAProxy's runtime layout:
+
 ```go
-validationPaths := dataplane.ValidationPaths{
-    HAProxyBinary:    "/usr/local/bin/haproxy",
-    TempDir:          "/tmp/haproxy-validation",
-    AuxiliaryFileDir: "/tmp/haproxy-validation/aux",
+validationPaths := &dataplane.ValidationPaths{
+    TempDir:           "/tmp/haproxy-validation",
+    ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
+    MapsDir:           "/tmp/haproxy-validation/maps",
+    SSLCertsDir:       "/tmp/haproxy-validation/ssl",
+    CRTListDir:        "/tmp/haproxy-validation/ssl",
+    GeneralStorageDir: "/tmp/haproxy-validation/general",
 }
 
 runner := testrunner.New(config, engine, validationPaths, options)
 ```
+
+For HAProxy-binary assertions to actually run, every directory in the struct must
+exist on disk before `RunTests` is called — `pkg/controller/validation/service.go`
+shows the canonical pattern of `os.MkdirAll`-ing each field after picking a temp
+root.
 
 ## Error Handling
 
@@ -543,7 +568,10 @@ if err != nil {
 HAProxy validation errors are simplified using `dataplane.SimplifyValidationError()`:
 
 ```go
-err := dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, r.validationPaths)
+// Real signature: ValidateConfiguration(mainConfig, auxFiles, paths, version, skipDNSValidation)
+// returns (*parser.StructuredConfig, error). The structured config is the cached
+// parse result — callers that just want pass/fail can ignore it.
+_, err := dataplane.ValidateConfiguration(haproxyConfig, auxiliaryFiles, validationPaths, nil, false)
 if err != nil {
     result.Error = dataplane.SimplifyValidationError(err)
 }
@@ -608,7 +636,7 @@ if resource.GetKind() == "" {
 Fixtures are wrapped with `rendercontext.StoreWrapper` for template access:
 
 ```go
-resources := make(map[string]interface{})
+resources := make(map[string]any)
 for resourceTypeName, store := range stores {
     resources[resourceTypeName] = &rendercontext.StoreWrapper{
         Store:        store,
@@ -629,12 +657,12 @@ for resourceTypeName, store := range stores {
 ### Context Structure
 
 ```go
-context := map[string]interface{}{
+context := map[string]any{
     "resources": map[string]*rendercontext.StoreWrapper{
         "services": ...,
         "ingresses": ...,
     },
-    "template_snippets": []string{"snippet1", "snippet2"},
+    "templateSnippets": []string{"snippet1", "snippet2"},
 }
 ```
 
@@ -680,19 +708,26 @@ if actualValue != assertion.Expected {
 
 ## Common Pitfalls
 
-### Using Wrong Store Type
+### Using the Wrong Store Interface
 
-**Problem**: Trying to use `store.ResourceStore` instead of `types.Store`.
+**Problem**: Importing the wrong `Store` type. The codebase has two — they're
+deliberately structurally identical (Go satisfies both implicitly), but the one
+testrunner expects is `pkg/stores.Store`, not `pkg/k8s/types.Store`.
 
 ```go
-// Bad
-var stores map[string]store.ResourceStore
+// Bad — testrunner returns map[string]stores.Store, not this
+var fixtureStores map[string]types.Store
+fixtureStores, _ = runner.CreateStoresFromFixtures(...) // does not compile
 
 // Good
-var stores map[string]types.Store
+var fixtureStores map[string]stores.Store
+fixtureStores, _ = runner.CreateStoresFromFixtures(...)
 ```
 
-**Why**: `types.Store` is the interface; implementations may vary (MemoryStore, CachedStore).
+**Why**: `pkg/stores` is the controller-side store interface used by everything
+that wraps fixtures or overlays for template rendering. `pkg/k8s/types.Store`
+exists only so the watcher layer can stay independent of the controller; both
+interfaces declare the same methods so the same concrete store satisfies both.
 
 ### Forgetting to Extract Index Keys
 
@@ -757,7 +792,7 @@ case "regex_match":
 func (r *Runner) assertRegexMatch(
     haproxyConfig string,
     auxiliaryFiles *dataplane.AuxiliaryFiles,
-    assertion v1alpha1.ValidationAssertion,
+    assertion config.ValidationAssertion,
 ) AssertionResult {
     result := AssertionResult{
         Type:        "regex_match",
@@ -797,22 +832,20 @@ func TestRunner_RegexMatch(t *testing.T) {
 - **Stores**: MemoryStore with O(1) lookups via composite keys
 - **Rendering**: Single render per test (not cached across tests)
 
-### Optimization Opportunities
+### What's Already Optimized
 
-1. **Parallel Test Execution**: Run independent tests concurrently
-2. **Template Caching**: Cache compiled templates across tests
-3. **Store Reuse**: Reuse stores for tests with identical fixtures
+- **Parallel test execution**: A worker pool (`testWorker` in `runner.go`, sized to `Options.Workers` or `runtime.NumCPU()`) processes tests concurrently. Each worker gets its own `ValidationPaths` temp directory so `haproxy -c` runs don't collide.
+- **Template engine reuse**: The pre-compiled `templating.Engine` is shared across workers. Per-render state (filter context, current config) is passed in `additionalDeclarations`, not stored on the engine.
 
-### Current Performance
+### Remaining Opportunities
 
-- Single test execution: <10ms (without HAProxy validation)
-- HAProxy validation adds: 50-200ms per test
-- Memory: ~1-5MB per test depending on fixture size
+- **Store reuse across tests with identical fixtures** — currently each test rebuilds its `stores.Store`s from scratch, even when fixtures match the previous test verbatim.
+- **Validation cache hits** — the dataplane validator has its own three-tuple cache (`configHash`, `auxHash`, `versionHash`), so repeated `haproxy_valid` assertions on identical configs are already cheap; tests that *vary* configs do not benefit.
 
 ## Resources
 
 - API documentation: `pkg/controller/testrunner/README.md`
-- User documentation: `docs/validation-tests.md`
+- User documentation: `docs/controller/docs/validation-tests.md`
 - DryRunValidator pattern: `pkg/controller/dryrunvalidator/CLAUDE.md`
-- StoreWrapper: `pkg/controller/renderer/CLAUDE.md`
+- StoreWrapper: `pkg/controller/rendercontext/CLAUDE.md` (lives there, not in `pkg/controller/renderer/`)
 - Architecture: `/docs/controller/docs/development/design.md`

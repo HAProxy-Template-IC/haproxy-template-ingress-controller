@@ -52,18 +52,30 @@ diff,   err := client.DryRun(ctx, desiredConfig)
 
 ### `SyncOptions`
 
+The `DefaultSyncOptions()` constructor returns the recommended baseline. Behaviour fields:
+
 ```go
 opts := &dataplane.SyncOptions{
-    MaxRetries:       3,                // retries for 409 version conflicts (default 3)
-    Timeout:          2 * time.Minute,  // overall operation deadline (default 2m)
-    ContinueOnError:  false,            // keep going after a failing operation (default false)
-    FallbackToRaw:    true,             // fall back to raw push on non-recoverable failure (default true)
-    RawPushThreshold: 100,              // switch to raw push when > N operations would be applied (0 = disabled, the default)
-    MaxParallel:      0,                // cap concurrent Dataplane API ops (0 = unlimited; not recommended for large configs)
+    MaxRetries:                3,                  // 409-conflict retries (default 3)
+    Timeout:                   2 * time.Minute,    // overall sync deadline (default 2m)
+    ContinueOnError:           false,              // first error stops execution (default false)
+    FallbackToRaw:             true,               // fall back to raw push on non-recoverable failure (default true)
+    VerifyReload:              true,               // poll reload-status until done (default true)
+    ReloadVerificationTimeout: 10 * time.Second,   // upper bound on the reload poll (default 10s)
+    RawPushThreshold:          0,                  // raw push when fine-grained op count exceeds N; 0 = disabled (default). Controller wires this from spec.dataplane.rawPushThreshold (chart default 100).
+    MaxParallel:               0,                  // cap concurrent Dataplane API ops; 0 = unlimited (not recommended for large configs)
 }
 ```
 
-Use `DryRunOptions()` if you want a preview-only variant with safe defaults.
+`SyncOptions` also exposes optimisation fields the controller's pipeline populates between calls — leave them zero unless you're feeding a parser/checksum result you already have:
+
+| Field | What it does |
+|-------|--------------|
+| `PreParsedConfig *parser.StructuredConfig` | Skips parsing `desiredConfig` if non-nil. Set by callers that already parsed the config (e.g. the validation pipeline). |
+| `CachedCurrentConfig *parser.StructuredConfig` + `CachedConfigVersion int64` | Used together: `GetVersion()` is consulted first, and the expensive `GetRawConfiguration()`+parse round-trip is skipped if the live version on the pod matches `CachedConfigVersion`. |
+| `ContentChecksum string` + `LastDeployedChecksum string` | Used together: when both are set and equal, the orchestrator skips the auxiliary-file comparison entirely (no downloads from HAProxy). Drift-prevention syncs should leave `LastDeployedChecksum` empty to force a real check. |
+
+`DryRunOptions()` returns the preview variant — `MaxRetries: 0`, `FallbackToRaw: false`, `VerifyReload: false` (no reload happens), shorter timeout.
 
 ### `AuxiliaryFiles`
 
@@ -84,16 +96,17 @@ aux := &dataplane.AuxiliaryFiles{
 | Purpose | Package |
 |---------|---------|
 | Public types and entry points (`Sync`, `DryRun`, `Diff`, `Client`, `Endpoint`, `SyncOptions`, `AuxiliaryFiles`) | `pkg/dataplane` (top level) |
-| Three-phase sync workflow (orchestrator, comparison, execution) | `orchestrator_*.go` |
-| HAProxy syntax + `haproxy -c` validator | `validator*.go` |
-| Version detection and capability matrix for DP API v3.0 / v3.1 / v3.2 / v3.3 | `version.go`, `capabilities.go` |
-| Dataplane API client (dispatcher pattern, transactions, retries) | `client/` |
-| Config parsing via client-native | `parser/` |
-| Fine-grained diff engine | `comparator/` + `comparator/sections/` |
-| Operation executor | `synchronizer/` |
-| Auxiliary file sync (maps, SSL, general files, crt-list) | `auxiliaryfiles/` |
-| Endpoint discovery helpers | `discovery/` |
+| Three-phase sync workflow (orchestrator + comparison + execution + raw-push fallback + per-version cache + runtime API) | `orchestrator_*.go` |
+| HAProxy three-phase validation (`haproxy -c` + OpenAPI schema + client-native syntax) | `validate_haproxy.go`, `validate_schema.go`, `validate_syntax.go`, `validator.go` |
+| Version detection (local binary + remote API) and capability matrix for DP API v3.0 / v3.1 / v3.2 / v3.3 | `version.go`, `capabilities.go` |
+| Dataplane API client (dispatcher pattern, transactions, retries) | `client/` (+ `client/enterprise/` for ALOHA / WAF / Bot / UDP / Keepalived / git / dynamic-update / logging / misc) |
+| Config parsing via client-native | `parser/` (+ `parser/enterprise/` for Enterprise sections) |
+| Fine-grained diff engine | `comparator/` + `comparator/sections/` (+ `comparator/sections/executors/` for the per-section dispatch) |
+| Priority-grouped operation executor | `synchronizer/` |
+| Auxiliary file sync (maps, SSL, SSL-CA, general files, crt-list) | `auxiliaryfiles/` |
 | Generated per-model OpenAPI validators | `validators/` |
+
+Endpoint discovery (probing HAProxy pods, picking up credentials, etc.) is the controller's job in `pkg/controller/discovery`, not this package's.
 
 ## Versioning and Capabilities
 
@@ -161,8 +174,9 @@ Integration tests that need a real HAProxy instance live under `tests/integratio
 ## See Also
 
 - `pkg/dataplane/CLAUDE.md` — multi-version dispatch, comparator patterns, parser quirks, testing strategies
-- `pkg/dataplane/transform` — client-native ↔ Dataplane API model conversion (used by every section comparator)
+- `pkg/dataplane/comparator/sections/` — section factories + the JSON-marshal trick for converting unified `dataplaneapi.*` models into per-version `v3{0,1,2,3}.*` types
 - `pkg/controller/deployer` — event adapter that wires `Client.Sync` into the controller's reconciliation pipeline
+- `pkg/controller/discovery` — probes HAProxy pods + builds the `*Endpoint` slice that gets handed to `Sync`
 - `docs/controller/docs/supported-configuration.md` — user-facing view of which HAProxy sections / fields are synced
 
 ## License

@@ -23,6 +23,7 @@ annotations:
       platforms:
         - linux/amd64
         - linux/arm64
+        - linux/arm/v7
     - name: haproxy
       image: haproxytech/haproxy-debian:3.2
       platforms:

@@ -90,8 +90,7 @@ r2, _ := client.Sync(ctx, config2, nil, nil)
 ```go
 result, err := client.Sync(ctx, desired, nil, opts)
 if err != nil {
-    var syncErr *dataplane.SyncError
-    if errors.As(err, &syncErr) {
+    if syncErr, ok := errors.AsType[*dataplane.SyncError](err); ok {
         log.Printf("failed at %s: %s", syncErr.Stage, syncErr.Message)
         for _, hint := range syncErr.Hints {
             log.Printf("  hint: %s", hint)
@@ -101,7 +100,9 @@ if err != nil {
 }
 ```
 
-`SyncError.Stage` enumerates the phase that failed (`connect`, `fetch`, `parse-current`, `parse-desired`, `compare`, `apply`, `commit`, `fallback`). `Hints` are actionable suggestions emitted by the library.
+`errors.AsType[T]` is the Go 1.26 generic helper used in `main.go`. The traditional `var syncErr *T; errors.As(err, &syncErr)` two-liner still works if you're targeting an older toolchain.
+
+`SyncError.Stage` indicates where the failure occurred — connection setup (`connect`), config parsing (`parse-current` / `parse-desired`), structural comparison (`compare`, `compare_ssl`, `compare_maps`, …), the per-type pre-config aux upload (`sync_ssl_pre`, `sync_maps_pre`, …), the transactional apply / commit (`apply`, `commit`), reload verification (`reload_verification`), or the raw-config fallback (`fallback`). The full list lives on the `SyncError.Stage` godoc. `Hints` are actionable suggestions emitted by the library.
 
 ### 3. Inspecting the result
 

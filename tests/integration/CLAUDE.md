@@ -255,17 +255,15 @@ frontend http-in
     default_backend servers
 `
 
-    err := client.Sync(context.Background(), dataplane.SyncRequest{
-        Config:          newConfig,
-        AuxiliaryFiles:  &dataplane.AuxiliaryFiles{},
-    })
+    // Real API: Sync(ctx, desiredConfig, *AuxiliaryFiles, *SyncOptions) (*SyncResult, error)
+    result, err := client.Sync(context.Background(), newConfig, nil, nil)
+    require.NoError(t, err)
 
-    assert.NoError(t, err)
-
-    // Verify configuration deployed
-    deployed, err := client.GetDeployedConfig(context.Background())
-    assert.NoError(t, err)
-    assert.Contains(t, deployed, "frontend http-in")
+    // Inspect the SyncResult — there is no GetDeployedConfig method on
+    // *Client; assert against result.AppliedOperations / SyncMode / ReloadTriggered
+    // instead. To re-read the live config use the low-level client (see below).
+    assert.NotEmpty(t, result.AppliedOperations)
+    t.Logf("sync mode=%s reload=%v applied=%d", result.SyncMode, result.ReloadTriggered, len(result.AppliedOperations))
 }
 ```
 
@@ -286,28 +284,21 @@ frontend https-in
     default_backend servers
 `
 
-    // Provide SSL certificate as auxiliary file
+    // Provide SSL certificate as auxiliary file. The real type is
+    // auxiliaryfiles.SSLCertificate{Path, Content} — no Name field.
     auxFiles := &dataplane.AuxiliaryFiles{
-        SSLCertificates: []dataplane.File{
+        SSLCertificates: []auxiliaryfiles.SSLCertificate{
             {
-                Name:    "server.pem",
-                Content: testSSLCertificate,
                 Path:    "/etc/haproxy/ssl/server.pem",
+                Content: testSSLCertificate,
             },
         },
     }
 
-    err := client.Sync(context.Background(), dataplane.SyncRequest{
-        Config:         config,
-        AuxiliaryFiles: auxFiles,
-    })
-
-    assert.NoError(t, err)
-
-    // Verify SSL file deployed
-    deployed, err := client.GetDeployedAuxiliaryFiles(context.Background())
-    assert.NoError(t, err)
-    assert.Len(t, deployed.SSLCertificates, 1)
+    // Sync(ctx, desiredConfig, *AuxiliaryFiles, *SyncOptions) (*SyncResult, error)
+    result, err := client.Sync(context.Background(), config, auxFiles, nil)
+    require.NoError(t, err)
+    assert.NotEmpty(t, result.AppliedOperations)
 }
 ```
 
@@ -538,14 +529,15 @@ frontend http
         t.Run(tt.name, func(t *testing.T) {
             env := fixenv.New(t)
             client := TestDataplaneHighLevelClient(env)
+            lowLevel := TestDataplaneClient(env)
 
-            err := client.Sync(context.Background(), dataplane.SyncRequest{
-                Config: tt.config,
-            })
-            assert.NoError(t, err)
+            _, err := client.Sync(context.Background(), tt.config, nil, nil)
+            require.NoError(t, err)
 
-            deployed, _ := client.GetDeployedConfig(context.Background())
-            tt.check(t, deployed)
+            // To assert against the live config, fetch it via the low-level
+            // client (e.g. lowLevel.Frontend().GetAll(ctx)) — there is no
+            // GetDeployedConfig method on dataplane.Client.
+            tt.check(t, lowLevel)
         })
     }
 }
@@ -574,10 +566,8 @@ func TestParallelSyncs(t *testing.T) {
             client := TestDataplaneHighLevelClient(env)
 
             // Each test gets isolated namespace
-            err := client.Sync(context.Background(), dataplane.SyncRequest{
-                Config: tt.config,
-            })
-            assert.NoError(t, err)
+            _, err := client.Sync(context.Background(), tt.config, nil, nil)
+            require.NoError(t, err)
         })
     }
 }
@@ -794,7 +784,7 @@ func TestNewEnterpriseFeature(t *testing.T) {
 
 - fixenv documentation: <https://github.com/rekby/fixenv>
 - Kind documentation: <https://kind.sigs.k8s.io/>
-- Test examples: `sync_test.go`, `auxiliaryfiles_test.go`
+- Test examples: `sync_*_test.go` (split by section: backends, frontends, servers, global-defaults, sections, observability, auxiliary, idempotency, common), plus `auxiliaryfiles_test.go`
 - Enterprise tests: `enterprise_waf_test.go`, `enterprise_keepalived_test.go`, etc.
 - Fixture definitions: `env.go`
 - Kind cluster management: `kind_cluster.go`

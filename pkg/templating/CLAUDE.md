@@ -53,9 +53,9 @@ Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standa
 
 ```go
 // DON'T: Resource-specific function in templating package
-func scriggoLookupPortName(svc interface{}, portNumber int) string {
+func lookupServicePortName(svc any, portNumber int) string {
     // Navigates Service.spec.ports structure - WRONG!
-    ports := scriggoDig(svc, "spec", "ports")
+    ports := dig(svc, "spec", "ports")
     // ...
 }
 ```
@@ -80,18 +80,38 @@ This separation ensures the template engine remains generic while users can buil
 
 ```
 pkg/templating/
-├── engine_scriggo.go         # Scriggo engine core (constructors, Render, profiling)
-├── engine_scriggo_tracing.go # Tracing and filter debug configuration
-├── engine_scriggo_fs.go      # Virtual filesystem for template compilation
-├── engine_interface.go    # Engine interface definition
-├── filter_names.go        # Filter name constants
-├── filters_scriggo.go     # Scriggo-specific filter implementations
-├── types.go               # Type definitions (EngineType)
-├── errors.go              # Custom error types
-├── engine_scriggo_test.go # Scriggo engine unit tests
-├── filters_scriggo_test.go # Scriggo filter tests
-└── README.md              # User documentation
+├── engine_interface.go         # Engine interface (Render, tracing controls, introspection)
+├── engine_scriggo.go           # Scriggo engine core: constructors, Render, RenderWithProfiling
+├── engine_scriggo_fs.go        # Virtual filesystem for template compilation
+├── engine_scriggo_tracing.go   # Tracing + filter-debug enable/disable plumbing
+├── globals.go                  # buildScriggoGlobals — runtime-variable nil-pointer typedefs
+├── func_types.go               # FilterFunc / GlobalFunc signatures
+├── types.go                    # Type definitions (EngineType, PathResolver, ResourceStore, etc.)
+├── errors.go                   # *CompilationError / *RenderError / *TemplateNotFoundError / *RenderTimeoutError
+├── error_formatter.go          # Pretty-prints Scriggo diagnostics for the CLI
+├── filter_names.go             # Constants for every filter name (one source of truth)
+├── filters.go                  # Filter registration entry point
+├── filters_scriggo.go          # Scriggo-specific filter wiring + custom-filter dispatch
+├── filters_collection.go       # group_by / sort_by / glob_match
+├── filters_navigation.go       # dig / fallback / coalesce / merge / keys
+├── filters_string.go           # toLower / replace / split / join / trim / hasPrefix / hasSuffix
+├── filters_type.go             # tostring / toint / tofloat / toSlice
+├── filters_status.go           # Status-patch helpers for ingress/Gateway status updates
+├── filters_version.go          # semver_gte and friends
+├── filters_guid.go             # first_seen + correlation-ID helpers
+├── postprocessor.go            # Post-processor pipeline runner
+├── postprocessor_indent.go     # Indent post-processor
+├── postprocessor_regex.go      # regex_replace post-processor
+├── postprocessor_template.go   # template post-processor (second Scriggo pass with `input`)
+├── profiling.go                # IncludeStats accumulation for --profile-includes
+├── shared_context.go           # *SharedContext (ComputeIfAbsent / Get) for per-render caching
+├── sorting.go                  # Comparator construction for sort_by
+├── sorting_helpers.go          # Sort-modifier parsing (:desc / :exists / | length)
+├── status_patch.go             # Apply* helpers consumed by filters_status.go
+└── *_test.go                   # Unit tests + benchmark_pool_test.go / benchmark_test.go
 ```
+
+Use `go doc ./pkg/templating` for the authoritative export list — this layout grows.
 
 ## Core Design
 
@@ -122,7 +142,7 @@ for i := 0; i < 1000; i++ {
 
 ### Error Types
 
-Four distinct error types for clear error handling:
+Five distinct error types for clear error handling (`pkg/templating/errors.go` is authoritative):
 
 ```go
 // CompilationError - template has syntax errors
@@ -142,6 +162,14 @@ type RenderError struct {
 type TemplateNotFoundError struct {
     TemplateName       string
     AvailableTemplates []string
+}
+
+// RenderTimeoutError - rendering exceeded the context deadline.
+// Wraps the underlying context error so errors.Is(err, context.DeadlineExceeded)
+// works at the call site.
+type RenderTimeoutError struct {
+    TemplateName string
+    Cause        error
 }
 
 // UnsupportedEngineError - invalid engine type
@@ -183,44 +211,52 @@ decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 | `templateSnippets` | `*[]string` | Available snippet names |
 | `fileRegistry` | `*FileRegistrar` | Dynamic file registration |
 | `shared` | `*SharedContext` | Cross-template shared state |
-| `dataplane` | `*map[string]interface{}` | Dataplane state |
-| `capabilities` | `*map[string]interface{}` | Capability flags |
-| `extraContext` | `*map[string]interface{}` | Custom template variables |
+| `dataplane` | `*map[string]any` | Dataplane state |
+| `capabilities` | `*map[string]any` | Capability flags |
+| `extraContext` | `*map[string]any` | Custom template variables |
 | `http` | `*HTTPFetcher` | HTTP store for fetching remote content |
 | `runtimeEnvironment` | `*RuntimeEnvironment` | Runtime environment info |
 
 ### PathResolver and HAProxy Paths
 
-PathResolver generates file paths for HAProxy auxiliary files (maps, SSL certs, error pages). The paths can be relative or absolute depending on configuration.
+`PathResolver` returns relative paths (e.g. `maps/host.map`, `general/400.http`) so the same rendered config works in production *and* in the validation sandbox without text rewrites of every file reference. Templates that hand-roll absolute paths sidestep this — the resolver also exposes `BaseDir` if you need to construct one yourself.
 
-**CRITICAL**: For relative paths to work, the HAProxy config **MUST** include `default-path config` in the global section:
+**CRITICAL**: For the relative paths to resolve at runtime, the rendered HAProxy
+config must contain a `default-path origin <baseDir>` directive in the global
+section. The chart's `base` library renders one (see
+`charts/haptic/libraries/base.yaml`'s `global-settings-300-paths` snippet) and
+`pkg/controller/validation/service.go` rewrites the `<baseDir>` to a per-call
+temp directory at validation time:
 
 ```haproxy
 global
-    default-path config
+    default-path origin {{ pathResolver.GetBaseDir() }}   # → /etc/haproxy in production
 ```
 
-This directive tells HAProxy to resolve relative paths from the **config file's directory**, not from HAProxy's working directory. Without it, HAProxy cannot find files specified with relative paths.
+Without the directive, HAProxy resolves the relative paths from its own
+working directory (usually `/`) and the file lookups fail.
 
 **Path resolution modes:**
 
-| Mode | PathResolver Config | Template Output | When Used |
-|------|---------------------|-----------------|-----------|
-| Relative | `MapsDir: "maps"` | `maps/host.map` | Local validation, production with `default-path config` |
-| Absolute | `MapsDir: "/etc/haproxy/maps"` | `/etc/haproxy/maps/host.map` | Legacy or special cases |
+| Mode | `PathResolver` config | Template output | When used |
+|------|-----------------------|-----------------|-----------|
+| Relative | `BaseDir: "/etc/haproxy"`, `MapsDir: "maps"`, … | `maps/host.map` | Production + validation; `default-path origin <baseDir>` resolves them |
+| Absolute | `MapsDir: "/etc/haproxy/maps"`, … | `/etc/haproxy/maps/host.map` | Legacy / debugging only — breaks the validation rewrite trick |
 
 **Template usage:**
 
 ```scriggo
 {#- Using PathResolver.GetPath() #}
 errorfile 400 {{ pathResolver.GetPath("400.http", "file") }}
-{#- Output: files/400.http (relative) #}
+{#- Output (chart default): general/400.http #}
 
 use_backend %[path,map({{ pathResolver.GetPath("path.map", "map") }})]
-{#- Output: maps/path.map (relative) #}
+{#- Output: maps/path.map #}
 ```
 
-See `charts/CLAUDE.md` (HAProxy File Path Requirements) for full documentation.
+See `charts/CLAUDE.md` (HAProxy File Path Requirements) for the chart-side
+view, including the validation `strings.Replace` contract that depends on
+this directive being present and matching `pathResolver.GetBaseDir()`.
 
 ### Adding New Runtime Variables
 
@@ -281,26 +317,26 @@ func TestEngine_Render(t *testing.T) {
     tests := []struct {
         name     string
         template string
-        context  map[string]interface{}
+        context  map[string]any
         want     string
         wantErr  bool
     }{
         {
             name:     "simple variable substitution",
             template: "Hello {{ name }}",
-            context:  map[string]interface{}{"name": "World"},
+            context:  map[string]any{"name": "World"},
             want:     "Hello World",
         },
         {
             name:     "missing variable with default",
             template: "Hello {{ name default \"Guest\" }}",
-            context:  map[string]interface{}{},
+            context:  map[string]any{},
             want:     "Hello Guest",
         },
         {
             name:     "complex context",
             template: "{% for _, item := range items %}{{ item }}{% end %}",
-            context:  map[string]interface{}{"items": []string{"a", "b"}},
+            context:  map[string]any{"items": []string{"a", "b"}},
             want:     "ab",
         },
     }
@@ -449,10 +485,10 @@ if err != nil {
 // Unnecessary - Engine is already thread-safe
 var mu sync.Mutex
 
-func render(engine templating.Engine, ctx map[string]interface{}) string {
+func render(engine templating.Engine, tplCtx map[string]any) string {
     mu.Lock()
     defer mu.Unlock()
-    output, _ := engine.Render(ctx, "template", ctx)
+    output, _ := engine.Render(context.Background(), "template", tplCtx)
     return output
 }
 ```
@@ -461,8 +497,8 @@ func render(engine templating.Engine, ctx map[string]interface{}) string {
 
 ```go
 // Good - no lock needed
-func render(engine templating.Engine, ctx map[string]interface{}) string {
-    output, _ := engine.Render(ctx, "template", ctx)
+func render(engine templating.Engine, tplCtx map[string]any) string {
+    output, _ := engine.Render(context.Background(), "template", tplCtx)
     return output
 }
 
@@ -472,7 +508,7 @@ for i := 0; i < 100; i++ {
     wg.Add(1)
     go func() {
         defer wg.Done()
-        render(engine, context)
+        render(engine, tplCtx)
     }()
 }
 wg.Wait()
@@ -557,7 +593,7 @@ if !strings.Contains(trace, "Rendering: backends.cfg") {
 **3. Integration with validation tests:**
 
 ```go
-// In controller validate command
+// In haptic-controller validate command
 engine.EnableTracing()
 
 runner := testrunner.New(config, engine, paths, options)
@@ -589,57 +625,20 @@ type scriggoTracingConfig struct {
 - Tracing enabled/disabled flag snapshot taken at render start to avoid repeated locking
 - Completed traces appended to shared slice under mutex lock
 
-**Render method integration:**
+**How tracing actually works** (see `engine_scriggo.go:259-322` and `engine_scriggo_tracing.go:117-164`):
 
-```go
-func (e *ScriggoEngine) Render(templateName string, context map[string]interface{}) (string, error) {
-    // Take thread-safe snapshot of enabled flag
-    e.tracing.mu.Lock()
-    tracingEnabled := e.tracing.enabled
-    e.tracing.mu.Unlock()
-
-    // If tracing is enabled, attach per-render trace state to context
-    var traceBuilder *strings.Builder
-    if tracingEnabled {
-        traceBuilder = &strings.Builder{}
-        ctx.Set("_trace_depth", 0)
-        ctx.Set("_trace_builder", traceBuilder)
-        ctx.Set("_trace_enabled", true)
-
-        e.tracef(ctx, "Rendering: %s", templateName)
-        // Increment depth in context
-        ctx.Set("_trace_depth", 1)
-
-        startTime := time.Now()
-        defer func() {
-            duration := time.Since(startTime)
-            // Decrement depth in context
-            ctx.Set("_trace_depth", 0)
-            e.tracef(ctx, "Completed: %s (%.3fms)", templateName,
-                float64(duration.Microseconds())/1000.0)
-
-            // Store completed trace thread-safely
-            if traceBuilder != nil && traceBuilder.Len() > 0 {
-                e.tracing.mu.Lock()
-                e.tracing.traces = append(e.tracing.traces, traceBuilder.String())
-                e.tracing.mu.Unlock()
-            }
-        }()
-    }
-
-    // Normal rendering logic
-    return e.render(templateName, context)
-}
-```
+1. `Render` takes a one-time snapshot of `e.tracing.enabled`. If false, no tracing work happens at all.
+2. When enabled, `Render` allocates a per-call `*strings.Builder` and writes `Rendering: <name>\n` to it before executing the template.
+3. If the engine has profiling on (also turns on automatically with tracing), Scriggo populates a `*scriggo.Profile` that includes the call tree — every `render "..."` macro call, with its duration.
+4. After the template runs, `storeTraceOutput` walks the call tree (`writeCallTreeTrace`), emitting indented `Rendering: <child>` / `Completed: <child> (X.XXXms)` pairs for every nested macro call. Without a profile, it falls back to a flat trace with just the top-level template's start/end.
+5. The completed string is appended to `e.tracing.traces` under a mutex; `GetTraceOutput` joins and clears the slice.
 
 **Key design decisions:**
 
-- Per-render isolation: Each `Render()` call gets its own trace builder and depth counter in execution context
-- No shared mutable state during render: Depth and builder are context-local, preventing race conditions
-- Mutex-protected aggregation: Completed traces collected into shared slice under lock
-- Single snapshot: Enabled flag read once per render, stored in context to avoid re-checking shared state
-- Uses `defer` to ensure completion logging even on errors
-- Thread-safe for concurrent renders with race detector validation
+- Per-render isolation: each `Render()` call gets its own builder, so concurrent renders never share mutable trace state.
+- Mutex protects only the small enabled-flag snapshot and the final append/clear — no contention during template execution.
+- Profile-driven nesting: indent depth and child names come from Scriggo's call tree, not from anything in the template context. There is no `_trace_depth` / `_trace_builder` context variable.
+- Tracing only captures **template/macro** boundaries. Filter calls are not in the trace; for filter-level debugging use `EnableFilterDebug()` (slog output, separate channel).
 
 ### Performance Overhead
 
@@ -653,35 +652,15 @@ Tracing overhead is minimal:
 
 **Recommendation**: Safe to leave enabled for debugging, but disable in performance-critical production paths.
 
-### Filter Operations in Traces
+### What Tracing Does *Not* Capture
 
-Template tracing captures filter operations when enabled, showing the data flow through custom filters:
+`EnableTracing()` only emits `Rendering:` / `Completed:` lines for **template / macro boundaries** (anything Scriggo records as `CallKindMacro`). It does **not** record:
 
-```go
-engine.EnableTracing()
-output, _ := engine.Render(ctx, "test", context)
-trace := engine.GetTraceOutput()
+- Filter calls (`sort_by`, `glob_match`, `debug`, …) — use `EnableFilterDebug()` (slog) instead
+- Variable lookups, control-flow nodes, individual expressions
+- Per-node Go-level allocations or CPU samples
 
-// Example trace output:
-// Rendering: test
-//   Filter: sort_by([]interface {}, 3 items) [priority:desc]
-//   Filter: glob_match([]interface {}, 5 items) [backend-*]
-// Completed: test (0.012ms)
-```
-
-**Captured information:**
-
-- Filter name (sort_by, glob_match, debug)
-- Input type ([]interface {}, map[string]interface {})
-- Item count for slice operations
-- Filter parameters in brackets
-
-**Use cases:**
-
-- Understanding which filters are called and in what order
-- Verifying filter parameters are evaluated correctly
-- Debugging unexpected sorting results
-- Performance analysis of filter operations
+If you need filter-level visibility, combine the two: tracing for which templates ran, filter debug for what `sort_by` did inside them.
 
 ### Limitations
 
@@ -751,7 +730,7 @@ func TestTracing_ConcurrentRenders(t *testing.T) {
 
             for j := 0; j < 5; j++ {
                 tmpl := fmt.Sprintf("template%d", (j%2)+1)
-                output, err := engine.Render(context.Background(), tmpl, map[string]interface{}{
+                output, err := engine.Render(context.Background(), tmpl, map[string]any{
                     "value": fmt.Sprintf("goroutine-%d", id),
                 })
                 assert.NoError(t, err)
@@ -814,7 +793,7 @@ INFO SORT comparison criterion=$.priority:desc valA=5 valA_type=int valB=1 valB_
 
 ### CLI Integration
 
-The `controller validate` command supports `--debug-filters` flag:
+The `haptic-controller validate` command supports the `--debug-filters` flag:
 
 ```bash
 # Enable filter debug logging during validation tests
@@ -892,11 +871,11 @@ The template engine provides the `debug` filter for debugging templates by inspe
 
 Dumps variable structure as JSON-formatted HAProxy comments:
 
-```jinja2
-{%- set routes = [
-    {"name": "api", "priority": 10},
-    {"name": "web", "priority": 5}
-] %}
+```scriggo
+{%- var routes = []any{
+    map[string]any{"name": "api", "priority": 10},
+    map[string]any{"name": "web", "priority": 5},
+} %}
 
 {{- routes | debug }}
 
@@ -917,7 +896,7 @@ Dumps variable structure as JSON-formatted HAProxy comments:
 
 **With label:**
 
-```jinja2
+```scriggo
 {{ routes | debug("sorted-routes") }}
 
 {# Output:
@@ -942,14 +921,14 @@ Dumps variable structure as JSON-formatted HAProxy comments:
 
 ### Example Usage
 
-```jinja2
-{%- set items = [...] %}
+```scriggo
+{%- var items = []any{ /* … populate items … */ } %}
 
 {# Before sorting #}
 {{ items | debug("unsorted") }}
 
 {# After sorting #}
-{%- set sorted = items | sort_by(["$.priority:desc"]) %}
+{%- var sorted = items | sort_by([]string{"$.priority:desc"}) %}
 {{ sorted | debug("sorted") }}
 ```
 
@@ -979,8 +958,8 @@ func TestDebugFilter(t *testing.T) {
     }
 
     engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
-    output, _ := engine.Render(context.Background(), "test", map[string]interface{}{
-        "item": map[string]interface{}{"key": "value"},
+    output, _ := engine.Render(context.Background(), "test", map[string]any{
+        "item": map[string]any{"key": "value"},
     })
 
     assert.Contains(t, output, "# DEBUG test-item:")
@@ -993,7 +972,7 @@ func TestDebugFilter(t *testing.T) {
 Use `shared.ComputeIfAbsent()` for compute-once patterns:
 
 ```go
-{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() interface{} {
+{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() any {
     return analyzeRoutes(resources)
 }) -%}
 ```
@@ -1022,11 +1001,11 @@ func BenchmarkEngine_Render(b *testing.B) {
 
     engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
 
-    contexts := map[string]map[string]interface{}{
+    contexts := map[string]map[string]any{
         "simple": {"name": "World"},
         "loop": {"items": []int{1, 2, 3, 4, 5}},
         "complex": {
-            "users": []map[string]interface{}{
+            "users": []map[string]any{
                 {"name": "Alice", "email": "ALICE@EXAMPLE.COM", "admin": true},
                 {"name": "Bob", "email": "BOB@EXAMPLE.COM", "admin": false},
             },
@@ -1055,14 +1034,14 @@ func BenchmarkEngine_Render(b *testing.B) {
 ```go
 // Bad - allocates new map for each render
 for i := 0; i < 1000; i++ {
-    ctx := map[string]interface{}{
+    ctx := map[string]any{
         "name": users[i].Name,
     }
     engine.Render(ctx, "template", ctx)
 }
 
 // Good - reuse context map
-ctx := make(map[string]interface{})
+ctx := make(map[string]any)
 for i := 0; i < 1000; i++ {
     ctx["name"] = users[i].Name
     engine.Render(ctx, "template", ctx)
@@ -1193,10 +1172,10 @@ This project uses a forked version of Scriggo. The fork adds:
 
 2. **Bug fixes and compatibility improvements** for use with this template engine.
 
-The fork is available on GitLab and configured via a replace directive in go.mod:
+The fork is consumed directly as a normal `require` in `go.mod` — no `replace` directive is involved. The pinned pseudo-version drifts as Renovate updates the dep, so check `go.mod` rather than copying a version from this file:
 
-```go
-replace gitlab.com/haproxy-haptic/scriggo => gitlab.com/haproxy-haptic/scriggo v0.0.0-20251212162249-9274cec0fd7b
+```sh
+grep gitlab.com/haproxy-haptic/scriggo go.mod
 ```
 
 ### Include: Static vs Dynamic
@@ -1246,7 +1225,7 @@ Scriggo uses Go template syntax:
 
 - Loops: `{% for x := range items %}...{% end %}`
 - Conditionals: `{% if cond %}...{% end %}`
-- Variables: `{{ .name }}` with leading dot
+- Variables: `{{ name }}` — bare identifier, the way every chart library uses them. Scriggo also accepts `{{ .name }}` with a leading dot (Go template style); both compile, but production templates stick with the bare form, so prefer it for consistency.
 - **Imports**: `{% import "template" for FuncName %}`
 
 **Pipe operator**: Our Scriggo fork supports pipe syntax for filters. The pipe operator passes the left-hand expression as the first argument to the function on the right:
@@ -1304,15 +1283,15 @@ Scriggo provides functions designed to support idiomatic Go patterns:
 **`merge(dict, updates)`** - Merges two maps, returning a new map:
 
 ```go
-{% var config = map[string]interface{}{"a": 1, "b": 2} %}
-{% config = merge(config, map[string]interface{}{"b": 3, "c": 4}) %}
+{% var config = map[string]any{"a": 1, "b": 2} %}
+{% config = merge(config, map[string]any{"b": 3, "c": 4}) %}
 {# Result: {"a": 1, "b": 3, "c": 4} #}
 ```
 
 **`keys(dict)`** - Returns sorted keys from a map:
 
 ```go
-{% var config = map[string]interface{}{"c": 3, "a": 1, "b": 2} %}
+{% var config = map[string]any{"c": 3, "a": 1, "b": 2} %}
 {% for _, key := range keys(config) %}
 {{ key }}: {{ config[key] }}
 {% end %}
@@ -1324,7 +1303,7 @@ Scriggo provides functions designed to support idiomatic Go patterns:
 Use `shared.ComputeIfAbsent()` for compute-once patterns in templates:
 
 ```go
-{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() interface{} {
+{%- var analysis, _ = shared.ComputeIfAbsent("analysis", func() any {
     return analyzeRoutes(resources)
 }) -%}
 ```
@@ -1339,17 +1318,17 @@ Use `shared.ComputeIfAbsent()` for compute-once patterns in templates:
 
 ### Type Assertions
 
-In Scriggo templates, type assertions are needed when working with `interface{}` (any) values in contexts that require concrete types.
+In Scriggo templates, type assertions are needed when working with `any` (`interface{}`) values in contexts that require concrete types. The codebase uses the `any` alias throughout — match that style in new docs and templates.
 
 **When type assertions ARE required:**
 
-1. **Ranging over `coalesce()` results** - `coalesce()` returns `interface{}`:
+1. **Ranging over `coalesce()` results** - `coalesce()` returns `any`:
 
    ```go
    {%- for _, item := range coalesce(map["key"], []any{}).([]any) -%}
    ```
 
-2. **Accessing fields on map values** - map indexing returns `interface{}`:
+2. **Accessing fields on map values** - map indexing returns `any`:
 
    ```go
    {%- var data = secret.(map[string]any)["data"].(map[string]any) -%}
@@ -1369,7 +1348,7 @@ In Scriggo templates, type assertions are needed when working with `interface{}`
    {%- for _, ep := range resources.endpoints.Fetch(svcName) -%}
    ```
 
-   `Fetch()` returns `[]interface{}`, a concrete slice type.
+   `Fetch()` returns `[]any` (see `pkg/templating/types.go:91`), a concrete slice type — you can range it without an outer assertion. Individual elements still need assertion when you index into them.
 
 2. **Simple variable access** - variables already have their type:
 
@@ -1385,9 +1364,9 @@ In Scriggo templates, type assertions are needed when working with `interface{}`
 
 **Rule of thumb:**
 
-- Check function return types in `filters_scriggo.go`
-- If a function returns `interface{}`, assertion is needed for operations
-- If a function returns a concrete type like `[]interface{}`, no assertion needed
+- Check function return types in `filters_scriggo.go`.
+- If a function returns `any`, assertion is needed for operations.
+- If a function returns a concrete type like `[]any` or `map[string]any`, no assertion is needed at the outer level — but elements / values still are.
 
 ### Engine Interface Requirements
 

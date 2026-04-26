@@ -8,16 +8,16 @@ The controller is headless. Operators interact with it through four surfaces:
 | `Secret` (credentialsSecretRef) | Dataplane API credentials (`dataplane_username`, `dataplane_password`) |
 | `/metrics` (default `:9090`) | Prometheus metrics |
 | `/healthz` (default `:8080`) | Liveness/readiness probes |
-| `/debug/vars`, `/debug/pprof/` | Runtime introspection. Off by default when running the binary directly (`--debug-port 0`); the Helm chart turns it on by setting `controller.debugPort: 8080` (same port as `/healthz`). Set `controller.debugPort: 0` to disable in production, or to a non-zero value to move it to a dedicated port. |
+| `/debug/vars`, `/debug/pprof/` | Runtime introspection. Off by default when running the binary directly (`--debug-port 0`); the Helm chart turns it on by setting `controller.debugPort: 8080` (same port as `/healthz`). The two share a single listener — setting `controller.debugPort: 0` drops `/healthz` along with `/debug/*` and breaks Kubernetes probes, so restrict access via NetworkPolicy in production rather than disabling the port. Set `controller.debugPort` to a non-zero value to move both endpoints to a dedicated port. |
 
-Structured JSON logs on stdout round out the operational surface.
+Structured logfmt logs on stdout (via `slog.NewTextHandler`) round out the operational surface — the level is set by `LOG_LEVEL` at startup, then dynamically overridden at runtime by the CRD's `spec.logging.level` once the controller's configloader picks it up.
 
 ## What the CRD Covers
 
 `HAProxyTemplateConfig.spec` is the single source of truth for controller behaviour. It has four top-level groups:
 
 - **Runtime settings** — `controller`, `dataplane`, `logging`, `templatingSettings`, `configPublishing`.
-- **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`. (HTTP fetching is driven by the `http.Fetch()` template function — URLs that appear in templates are auto-registered; there is no top-level `spec.httpResources` field, only `validationTests[].fixtures.httpResources` for mocking responses during tests.)
+- **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`. (HTTP fetching is driven by the `http.Fetch()` template function — URLs that appear in templates are auto-registered; there is no top-level `spec.httpResources` field, only `validationTests[].httpResources` (a sibling of `fixtures`, not nested inside it) for mocking responses during tests.)
 - **Templates** — `haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`.
 - **Validation** — `validationTests` plus the per-resource `enableValidationWebhook` flag.
 

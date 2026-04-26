@@ -36,8 +36,8 @@ all, _       := mem.List()
 Implementation highlights (see `pkg/k8s/store/memory.go`):
 
 - Backing data is `map[string][]any` keyed by the composite-string form of the index. Multiple resources can share a key; `Get` returns them all.
-- `Get` with the full key count is an O(1) map lookup. Prefix scans sort results for deterministic ordering.
-- `List` is cached behind a `dirty` flag — repeated calls between writes return the cached slice without re-iterating the map.
+- `Get` with the full key count is an O(1) map lookup that returns the per-bucket slice as-is (zero-copy — see "Immutability Contract"). Per-bucket slices are kept sorted at insert time so reads are deterministic without runtime sorting; partial-prefix scans aggregate matching buckets and sort the result.
+- `List` rebuilds and sorts the full slice on every call — there's no memoised result. The optimisation is "buckets are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is cached". Caching layers should look at the `modCount` exposed via the optional `stores.ModCounter` interface and rebuild only when it changes.
 - An `RWMutex` protects the data map; concurrent readers don't contend.
 
 ## CachedStore
@@ -92,7 +92,7 @@ This is enforced by convention, not by type — the `Store` interface returns `a
 
 ## Non-Unique Keys
 
-Indexing by labels (e.g. `metadata.labels.kubernetes\\.io/service-name` for EndpointSlices) is expected to collide — many slices share a service. `Add` appends to the slot instead of overwriting, and `Get` with that key returns every match. Resource-identity equality for `Add`/`Update` is UID-based (falling back to namespace+name), so the same object being re-added during a watch replay doesn't duplicate.
+Indexing by labels (e.g. `metadata.labels.kubernetes\\.io/service-name` for EndpointSlices) is expected to collide — many slices share a service. `Add` appends to the slot instead of overwriting, and `Get` with that key returns every match. Resource-identity equality for `Update` (and `Delete`-by-name) is **namespace + name** only, via `extractNamespaceName` — UID is not consulted, so a deleted-and-recreated resource looks identical to its predecessor (which is correct: the watcher fires `Update`, not `Delete`+`Add`, on a re-create). `Add` itself does not dedupe — duplicates are possible if the watcher's delta logic is wrong. That's by design: cheap append, dedupe lives in `Update`.
 
 ## Testing
 

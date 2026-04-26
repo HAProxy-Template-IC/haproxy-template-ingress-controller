@@ -108,11 +108,7 @@ done
 
 (`kubectl get secret … -o jsonpath='{.data}'` alone returns the keys map verbatim — the values come out as base64-encoded strings, which is why each key is decoded individually.)
 
-After updating the Secret, restart the controller:
-
-```bash
-kubectl rollout restart -n haptic deployment haptic-controller
-```
+The controller watches the credentials Secret via `pkg/controller/credentialsloader` and picks up updates live — no pod restart is needed. If 401/403 errors persist after the Secret has been corrected, also confirm that the `dataplaneapi.yaml` mounted into the HAProxy pod was rotated to match (the Dataplane API on the HAProxy side reads its credentials from a sidecar config, not from the controller's Secret).
 
 ## HAProxy Returning 503
 

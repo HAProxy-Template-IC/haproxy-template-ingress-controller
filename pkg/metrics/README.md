@@ -133,10 +133,10 @@ duration := metrics.NewHistogramWithBuckets(registry, "duration_seconds", "Reque
 // Gauges - no suffix, current state
 connections := metrics.NewGauge(registry, "active_connections", "Active connections")
 
-// Add subsystem prefix for clarity
+// Add the subsystem prefix in the name yourself — this package does NOT add one.
 deploymentCounter := metrics.NewCounter(
     registry,
-    "deployment_total",
+    "haptic_deployment_total",
     "Total deployments",
 )
 // Actual metric name: "haptic_deployment_total"
@@ -218,15 +218,15 @@ func TestMetricsServer(t *testing.T) {
     counter := metrics.NewCounter(registry, "test_total", "Test")
     counter.Add(42)
 
-    server := metrics.NewServer(":0", registry)  // Random port
+    server := metrics.NewServer("localhost:0", registry) // random port; Start updates server.Addr() to the listener's actual addr
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
 
     go server.Start(ctx)
     time.Sleep(100 * time.Millisecond)
 
-    // Fetch metrics
-    resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", server.Port()))
+    // Fetch metrics — Addr() returns the bound "host:port" string. There is no Port() method.
+    resp, err := http.Get("http://" + server.Addr() + "/metrics")
     require.NoError(t, err)
     defer resp.Body.Close()
 

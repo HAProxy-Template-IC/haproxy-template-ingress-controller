@@ -569,7 +569,7 @@ frontend test
 			renderedEvent := testutil.WaitForEvent[*events.TemplateRenderedEvent](t, eventChan, testutil.LongTimeout)
 			require.NotNil(t, renderedEvent)
 
-			// Now using relative paths (resolved by HAProxy via default-path config)
+			// Now using relative paths (resolved by HAProxy via default-path origin)
 			if tt.expectSSLDir {
 				assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list ssl/certificate-list.txt",
 					"CRT-list should use SSL directory (relative path)")
@@ -633,7 +633,7 @@ frontend test
 	require.NotNil(t, renderedEvent)
 
 	// CRITICAL: Verify that pathResolver.GetPath("crt-list") returns a relative path with directory prefix
-	// Now using relative paths (resolved by HAProxy via default-path config)
+	// Now using relative paths (resolved by HAProxy via default-path origin)
 	// CRT-list files always use files/ directory to avoid HAProxy reload on create
 	assert.Contains(t, renderedEvent.HAProxyConfig, "crt-list files/certificate-list.txt",
 		"pathResolver.GetPath('certificate-list.txt', 'crt-list') should return relative path with directory prefix")

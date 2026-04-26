@@ -198,7 +198,7 @@ func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.Templat
 // This method is called by handleTemplateRendered after coalescing logic.
 //
 // The validator creates its own temp directory for validation. The config uses relative paths
-// (maps/, ssl/, files/) that work with HAProxy's `default-path config` directive.
+// (maps/, ssl/, files/) that work with HAProxy's `default-path origin` directive.
 func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRenderedEvent) {
 	startTime := time.Now()
 	correlationID := event.CorrelationID()

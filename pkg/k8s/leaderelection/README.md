@@ -18,9 +18,8 @@ import (
     "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
 )
 
-// Create configuration
 config := &leaderelection.Config{
-    Enabled:         true,
+    Enabled:         true, // New() returns an error if this is false
     Identity:        "pod-1",
     LeaseName:       "my-app-leader",
     LeaseNamespace:  "default",
@@ -30,30 +29,33 @@ config := &leaderelection.Config{
     ReleaseOnCancel: true,
 }
 
-// Define callbacks
 callbacks := leaderelection.Callbacks{
     OnStartedLeading: func(ctx context.Context) {
+        // ctx is cancelled the moment leadership is lost — derive any
+        // long-running work from it so it stops naturally.
         log.Println("Became leader")
-        // Start leader-only components
     },
     OnStoppedLeading: func() {
         log.Println("Lost leadership")
-        // Stop leader-only components
     },
     OnNewLeader: func(identity string) {
         log.Printf("New leader: %s", identity)
     },
 }
 
-// Create elector
 elector, err := leaderelection.New(config, clientset, callbacks, logger)
 if err != nil {
     panic(err)
 }
 
-// Start leader election (blocks until context cancelled)
+// Start blocks until the parent context is cancelled or the lease loop
+// errors, so run it on its own goroutine.
 ctx := context.Background()
-elector.Start(ctx)
+go func() {
+    if err := elector.Start(ctx); err != nil {
+        log.Printf("leader election ended: %v", err)
+    }
+}()
 ```
 
 ## API
@@ -83,10 +85,9 @@ Event callbacks:
 
 Main leader election type:
 
-- `New()`: Create new elector
-- `Start(ctx)`: Start leader election loop (blocks)
-- `IsLeader()`: Check if currently leader
-- `GetLeader()`: Get current leader identity
+- `New(*Config, kubernetes.Interface, Callbacks, *slog.Logger) (*Elector, error)` — validates inputs and returns an unstarted elector. Returns an error when `Config.Enabled` is `false`, when `Identity`, `LeaseName`, or `LeaseNamespace` is empty, or when the clientset is `nil`.
+- `Start(ctx) error` — runs the lease loop and blocks until `ctx` is cancelled or the underlying client errors. Run on a goroutine.
+- `IsLeader() bool` and `GetLeader() string` — snapshot accessors for logging and observability. Don't gate hot-path work on them; use the context passed to `OnStartedLeading` instead.
 
 ## Thread Safety
 

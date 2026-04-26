@@ -25,7 +25,13 @@ func ParseSecretData(raw map[string]any) (map[string][]byte, error)
 func ValidateExtraContext(ctx map[string]any) error
 ```
 
-The `Config` struct mirrors the CRD shape (camelCase throughout): `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `HAProxyConfig`, `ValidationTests`. The `types.go` source is the authoritative schema.
+The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `CRTLists`, `HAProxyConfig`, `ValidationTests`. Three serialisation forms exist for the same struct, and they don't all agree:
+
+- **Go field names** — PascalCase (`PodSelector`).
+- **YAML keys consumed by `LoadConfig`** — snake_case at the top level (`pod_selector`, `templating_settings`, `watched_resources`, `haproxy_config`); a few nested fields use camelCase (`httpResources`, `currentConfig`, `extraContext`, `minHAProxyVersion`). `types.go`'s `yaml:` tags are authoritative.
+- **CRD JSON keys (kubectl, ParseCRD)** — camelCase, per Kubernetes convention. The controller never calls `LoadConfig` on CRD JSON; it goes through `pkg/controller/conversion.ParseCRD` which deserialises into the typed CRD first and then maps it onto `*Config` field-by-field.
+
+Use snake_case in YAML files; use camelCase in CRD manifests. The `types.go` source is the authoritative schema for either.
 
 ## Validation Layers
 
@@ -56,7 +62,7 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 - `dataplane.deploymentTimeout`: 30s
 - `dataplane.rawPushThreshold`: 100
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: `/etc/haproxy/...`
-- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 60s, 15s, 5s (chart overrides these to 15s/10s/2s for faster failover)
+- `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 15s, 10s, 2s (matches Kubernetes' recommended fast-failover triplet — defaults.go:54-60)
 - `controller.configPublishing.compressionThreshold`: 1 MiB
 - `templatingSettings.engine`: `scriggo`
 
@@ -67,7 +73,7 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 - `dataplane_username`
 - `dataplane_password`
 
-The same credentials are used for both production and validation Dataplane API instances. `ValidateCredentials` additionally rejects empty strings after base64 decode. No `String()` / `GoString()` methods are defined on `Credentials` — helps prevent accidental password leaks via `%v` or `log.Info("…", creds)`.
+These are used to authenticate against the production HAProxy pods' Dataplane API instances. The controller's local `haproxy -c` validation step does not need credentials — it shells out to the binary directly with the rendered config and auxiliary files. `ValidateCredentials` rejects empty strings after base64 decode. No `String()` / `GoString()` methods are defined on `Credentials` — helps prevent accidental password leaks via `%v` or `log.Info("…", creds)`.
 
 ## See Also
 

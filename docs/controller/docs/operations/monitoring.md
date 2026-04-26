@@ -16,19 +16,19 @@ The controller exposes Prometheus metrics via an HTTP endpoint, providing visibi
 
 ## Enabling Metrics
 
-Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (separate from the debug port). No additional configuration is needed beyond pointing Prometheus at this endpoint.
+Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (separate from the debug port — by default `:9090`). No additional configuration is needed beyond pointing Prometheus at this endpoint.
 
-Configure the metrics port in Helm values:
+The controller reads its metrics port from the `METRICS_PORT` env var (default `9090`). To disable the metrics server, set `METRICS_PORT=0` on the controller container. Via Helm, use `controller.extraEnv`:
 
 ```yaml
-# values.yaml
+# values.yaml — disable the metrics server entirely
 controller:
-  config:
-    controller:
-      metricsPort: 9090  # Default
+  extraEnv:
+    - name: METRICS_PORT
+      value: "0"
 ```
 
-Set to `0` to disable metrics.
+The CRD has a `controller.metricsPort` field, but the chart strips it from the serialized CRD (it's only used for chart-side templating like `NOTES.txt`). Setting `controller.config.controller.metricsPort: 0` in Helm values does *not* disable the metrics server.
 
 ## Accessing Metrics
 
@@ -528,7 +528,7 @@ avg_over_time(haptic_reconciliation_duration_seconds_count[1d])
 
 **Missing metrics:**
 
-1. Verify metrics port is enabled (`controller.config.controller.metricsPort`)
+1. Verify the metrics server is enabled — `METRICS_PORT` env var on the controller container is non-zero (default `9090`; the `metricsPort` field on the CRD is *not* read by the controller)
 2. Check ServiceMonitor selector matches Prometheus configuration
 3. Verify network policies allow scraping
 

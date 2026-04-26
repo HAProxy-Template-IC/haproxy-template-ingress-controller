@@ -39,7 +39,7 @@ func main() {
     registry.Publish("requests", counter)
 
     startTime := time.Now()
-    registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
+    registry.Publish("uptime", introspection.Func(func() (any, error) {
         return time.Since(startTime).Seconds(), nil
     }))
 
@@ -76,28 +76,36 @@ func (r *Registry) Publish(path string, v Var)
 Registers a variable at the given path (e.g., "config", "metrics/requests").
 
 ```go
-func (r *Registry) Get(path string) (interface{}, error)
+func (r *Registry) Get(path string) (any, error)
 ```
 
 Retrieves a variable's value by path.
 
 ```go
-func (r *Registry) GetWithField(path string, field string) (interface{}, error)
+func (r *Registry) GetWithField(path, field string) (any, error)
 ```
 
 Retrieves a variable and extracts a specific field using JSONPath.
 
 ```go
-func (r *Registry) List() []string
+func (r *Registry) Paths() []string
+func (r *Registry) All() (map[string]any, error)
+func (r *Registry) Len() int
+func (r *Registry) Clear()
 ```
 
-Returns all registered variable paths.
+`Paths()` returns the sorted list of registered variable paths (used by the
+`/debug/vars` index handler). `All()` returns a `path → value` map by calling
+`Get()` on every registered variable; the first failure aborts and bubbles up.
+`Len()` is the size of the registry. `Clear()` empties the registry without
+tearing down the HTTP server — used between controller iterations so stale Vars
+from a previous iteration get garbage-collected.
 
 ### Var Interface
 
 ```go
 type Var interface {
-    Get() (interface{}, error)
+    Get() (any, error)
 }
 ```
 
@@ -114,7 +122,7 @@ type IntVar struct {
 
 func (v *IntVar) Add(delta int64)
 func (v *IntVar) Set(value int64)
-func (v *IntVar) Get() (interface{}, error)
+func (v *IntVar) Get() (any, error)
 ```
 
 Thread-safe integer variable.
@@ -127,7 +135,7 @@ type StringVar struct {
 }
 
 func (v *StringVar) Set(value string)
-func (v *StringVar) Get() (interface{}, error)
+func (v *StringVar) Get() (any, error)
 ```
 
 Thread-safe string variable.
@@ -141,7 +149,7 @@ type FloatVar struct {
 }
 
 func (v *FloatVar) Set(value float64)
-func (v *FloatVar) Get() (interface{}, error)
+func (v *FloatVar) Get() (any, error)
 ```
 
 Thread-safe float64 variable.
@@ -151,11 +159,11 @@ Thread-safe float64 variable.
 ```go
 type MapVar struct {
     mu   sync.RWMutex
-    data map[string]interface{}
+    data map[string]any
 }
 
-func (v *MapVar) Set(key string, value interface{})
-func (v *MapVar) Get() (interface{}, error)
+func (v *MapVar) Set(key string, value any)
+func (v *MapVar) Get() (any, error)
 ```
 
 Thread-safe map variable.
@@ -163,9 +171,9 @@ Thread-safe map variable.
 #### Func
 
 ```go
-type Func func() (interface{}, error)
+type Func func() (any, error)
 
-func (f Func) Get() (interface{}, error)
+func (f Func) Get() (any, error)
 ```
 
 Computed variable - value is calculated on-demand when requested.
@@ -173,8 +181,8 @@ Computed variable - value is calculated on-demand when requested.
 Example:
 
 ```go
-registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
-    return map[string]interface{}{
+registry.Publish("uptime", introspection.Func(func() (any, error) {
+    return map[string]any{
         "seconds": time.Since(startTime).Seconds(),
         "started": startTime,
     }, nil
@@ -210,16 +218,16 @@ Exposes endpoints:
 ### HTTP Helpers
 
 ```go
-func WriteJSON(w http.ResponseWriter, data interface{})
+func WriteJSON(w http.ResponseWriter, data any)
 ```
 
 Writes JSON response with proper content-type.
 
 ```go
-func WriteJSONField(w http.ResponseWriter, data interface{}, field string)
+func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data any)
 ```
 
-Extracts field using JSONPath and writes JSON response.
+Writes JSON response with an explicit HTTP status code (for handlers that need 4xx responses).
 
 ```go
 func WriteError(w http.ResponseWriter, code int, message string)
@@ -227,10 +235,12 @@ func WriteError(w http.ResponseWriter, code int, message string)
 
 Writes error response as JSON.
 
+To narrow a payload to a single field, call `ExtractField` (below) and then `WriteJSON`. There is no combined `WriteJSONField` helper.
+
 ### JSONPath
 
 ```go
-func ExtractField(data interface{}, jsonPathExpr string) (interface{}, error)
+func ExtractField(data any, jsonPathExpr string) (any, error)
 ```
 
 Extracts a field from data using JSONPath expression (kubectl syntax).
@@ -329,7 +339,7 @@ type MyVar struct {
     mu   sync.RWMutex
 }
 
-func (v *MyVar) Get() (interface{}, error) {
+func (v *MyVar) Get() (any, error) {
     v.mu.RLock()
     defer v.mu.RUnlock()
 
@@ -337,7 +347,7 @@ func (v *MyVar) Get() (interface{}, error) {
         return nil, fmt.Errorf("data not loaded")
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "field1": v.data.Field1,
         "field2": v.data.Field2,
     }, nil
@@ -355,7 +365,7 @@ registry.Publish("myvar", &MyVar{data: myData})
 
    ```go
    // Good
-   return map[string]interface{}{
+   return map[string]any{
        "has_password": creds.Password != "",
        "username": creds.Username,
    }
@@ -385,7 +395,7 @@ curl http://localhost:6060/debug/pprof/heap
 
 See:
 
-- Controller integration: `pkg/controller/controller.go` (Stage 6)
+- Controller integration: `pkg/controller/controller.go` (`persistentInfra.IntrospectionServer` — the registry and server are created once before the iteration loop and reused; `Registry.Clear()` is called at the top of each iteration so stale references from the previous run drop out)
 - Debug variables: `pkg/controller/debug/`
 - Acceptance tests: `tests/acceptance/debug_client.go`
 

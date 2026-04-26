@@ -46,9 +46,10 @@ Template calls http.Fetch()
 ┌─────────────────────────────────────────────────────────────┐
 │                 Component (component.go)                     │
 │   - Manages refresh timers                                   │
-│   - Handles ValidationCompletedEvent                         │
-│   - Handles ValidationFailedEvent                            │
-│   - Publishes HTTPResourceUpdatedEvent                       │
+│   - Publishes ProposalValidationRequestedEvent on refresh    │
+│   - Subscribes to ProposalValidationCompletedEvent           │
+│     (branches on event.Valid → promote or reject)            │
+│   - Publishes HTTPResourceUpdated/Accepted/RejectedEvent     │
 └─────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -75,65 +76,82 @@ Component.refreshURL()
     │
     └── Content changed
         ├── Store in pending
-        ├── Publish HTTPResourceUpdatedEvent
+        ├── triggerProposalValidation(url):
+        │     ├── Publish ProposalValidationRequestedEvent
+        │     │   (records its ID as pendingValidationID)
+        │     └── Publish HTTPResourceUpdatedEvent (observability sibling)
         └── Reset timer
 ```
 
-### On Validation Complete
+### On Proposal Validation Complete
+
+The component subscribes to a *single* event — `ProposalValidationCompletedEvent`
+— and branches on `event.Valid`. There is no separate "validation failed"
+subscription:
 
 ```
-ValidationCompletedEvent received
-    │
+ProposalValidationCompletedEvent received
+    │  (dropped if event.RequestID doesn't match the component's pendingValidationID)
     ▼
-For each URL with pending content:
-    ├── PromotePending() - pending → accepted
-    └── Publish HTTPResourceAcceptedEvent
-```
-
-### On Validation Failed
-
-```
-ValidationFailedEvent received
+event.Valid?
     │
-    ▼
-For each URL with pending content:
-    ├── RejectPending() - discard pending
-    └── Publish HTTPResourceRejectedEvent
+    ├── true  → handleValidationSuccess()
+    │           For each URL with pending content:
+    │             ├── PromotePending() - pending → accepted
+    │             └── Publish HTTPResourceAcceptedEvent
+    │           Then publish ReconciliationTriggeredEvent("http_content_validated")
+    │
+    └── false → handleValidationFailure(event.Phase, event.Error)
+                For each URL with pending content:
+                  ├── RejectPending() - discard pending
+                  └── Publish HTTPResourceRejectedEvent (reason from event.Error)
 ```
 
 ## Template Usage
 
 The `HTTPStoreWrapper` provides a `Fetch()` method callable from templates:
 
-```jinja2
-{# Basic fetch #}
-{% set content = http.Fetch("https://example.com/blocklist.txt") %}
+```scriggo
+{# Basic fetch — Scriggo declares variables with {% var %} (or {% x := y %}),
+   not Jinja's {% set %}. #}
+{% var content = http.Fetch("https://example.com/blocklist.txt") %}
 
 {# With refresh interval #}
-{% set content = http.Fetch("https://api.example.com/data", {"delay": "5m"}) %}
+{% var content = http.Fetch("https://api.example.com/data", {"delay": "5m"}) %}
 
-{# With authentication #}
-{% set token = secrets.my_api_token | b64decode %}
-{% set content = http.Fetch("https://api.example.com/protected",
+{# With authentication. There is no top-level `secrets` variable — read the
+   Secret like any other watched resource via the `resources` map. The token
+   value comes back base64-encoded from the API server. #}
+{% var apiSecret = resources.secrets.GetSingle("kube-system", "my-api-secret") %}
+{% var token = apiSecret | dig("data", "token") | b64decode %}
+{% var content = http.Fetch("https://api.example.com/protected",
     {"delay": "10m"},
     {"type": "bearer", "token": token}
 ) %}
 
 {# With all options #}
-{% set ips = http.Fetch("https://blocklist.example.com/ips.txt",
+{% var ips = http.Fetch("https://blocklist.example.com/ips.txt",
     {"delay": "1h", "timeout": "30s", "retries": 3, "critical": true},
-    {"type": "basic", "username": "user", "password": pass}
+    {"type": "basic", "username": "user", "password": "pass"}
 ) %}
 ```
 
 ### Validation vs Production Render
 
-The wrapper behaves differently depending on render context:
+The wrapper's behaviour depends on the `overlay stores.HTTPContentOverlay`
+argument passed at construction (`NewHTTPStoreWrapper(ctx, component, logger, overlay)`),
+not a `bool isValidation` flag:
 
-- **Validation render** (`isValidation=true`): Returns pending content if available
-- **Production render** (`isValidation=false`): Returns accepted content only
+- **Validation render** (`overlay != nil`): The wrapper consults the overlay
+  first, then falls back to the store's pending content for URLs the overlay
+  knows about. This lets the dryrun pipeline see content that hasn't been
+  promoted yet, plus any test-fixture overrides.
+- **Production render** (`overlay == nil`): The wrapper returns accepted content
+  only — pending refreshes don't leak into the live HAProxy config until
+  validation has signed off.
 
-This ensures validation tests new content while production uses validated content.
+Both call paths register the URL for periodic refresh when `delay > 0`, so the
+production renderer doesn't need to do anything special to start the timer.
 
 ## Component Lifecycle
 
@@ -155,20 +173,21 @@ The eviction interval runs at the same cadence as `evictionMaxAge`. Entries not 
 
 ## Event Types
 
-Published events (defined in `pkg/controller/events/types.go`):
+Published events (defined in `pkg/controller/events/`):
 
 | Event | When | Purpose |
 |-------|------|---------|
-| `HTTPResourceUpdatedEvent` | Content changed on refresh | Triggers reconciliation |
-| `HTTPResourceAcceptedEvent` | Pending promoted | Observability |
-| `HTTPResourceRejectedEvent` | Pending rejected | Observability |
+| `ProposalValidationRequestedEvent` | Refresh produced new content; before promoting it | Asks the proposal pipeline to validate the pending HTTP content via `HTTPOverlay`. The component records `event.ID` as `pendingValidationID` so it can correlate the response |
+| `HTTPResourceUpdatedEvent` | Same call as above — sibling event for observability | Lets `commentator` / metrics see that content changed without subscribing to validation events |
+| `HTTPResourceAcceptedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == true` | Observability that pending → accepted promotion happened |
+| `HTTPResourceRejectedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == false` | Observability that pending was discarded; carries the reason from the validation error |
+| `ReconciliationTriggeredEvent("http_content_validated", true)` | After a successful promotion (in `handleValidationSuccess`) | Coalescible reconciliation request so HAProxy picks up the new content |
 
 Subscribed events:
 
 | Event | Action |
 |-------|--------|
-| `ValidationCompletedEvent` | Promote all pending content |
-| `ValidationFailedEvent` | Reject all pending content |
+| `ProposalValidationCompletedEvent` | Match against `pendingValidationID`; branch on `event.Valid` to either promote or reject pending content |
 
 ## Common Pitfalls
 

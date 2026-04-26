@@ -8,8 +8,8 @@ Development context for the ConfigLoader component.
 
 Work in this package when:
 
-- Modifying ConfigMap parsing logic
-- Changing how configuration is extracted from Kubernetes resources
+- Modifying HAProxyTemplateConfig CRD parsing logic
+- Changing how configuration is extracted from the CRD's `spec`
 - Adding validation before config parsing
 - Debugging configuration loading issues
 
@@ -17,30 +17,34 @@ Work in this package when:
 
 - Configuration schema definition → Use `pkg/core/config`
 - Configuration validation → Use `pkg/controller/validator`
-- ConfigMap watching → Use `pkg/controller/resourcewatcher` or `pkg/controller/configchange`
+- CRD watching itself → the SingleWatcher is wired in `pkg/controller/iteration.go`; orchestration of validation lives in `pkg/controller/configchange`
 
 ## Package Purpose
 
-Pure event-driven component that subscribes to ConfigResourceChangedEvent and parses ConfigMap data into config.Config structures. This is part of Stage 1 (Config Management) in the controller lifecycle.
+Pure event-driven component that subscribes to `ConfigResourceChangedEvent` and converts the wrapped HAProxyTemplateConfig CRD into the internal `*config.Config`. This is part of Stage 1 (Config Management) in the controller lifecycle.
+
+The controller is CRD-driven, not ConfigMap-driven; this component does **not** read raw ConfigMap data.
 
 Key responsibilities:
 
-- Extract YAML from ConfigMap data field
-- Parse YAML into config.Config
-- Publish ConfigParsedEvent on success
-- Log errors for invalid YAML
+- Type-assert the event payload to `*unstructured.Unstructured`
+- Validate it's `haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig`
+- Run `pkg/controller/conversion.ParseCRD` to produce `*config.Config` and the typed CRD wrapper
+- Publish `ConfigParsedEvent` on success
+- Log errors for unsupported types or conversion failures (no event is published)
 
 ## Architecture
 
 ```
-ConfigResourceChangedEvent (from watcher)
+ConfigResourceChangedEvent (from CRD SingleWatcher)
     ↓
 ConfigLoaderComponent
-    ├─ Extract ConfigMap.Data["config"]
-    ├─ Parse YAML → config.Config
-    └─ Publish ConfigParsedEvent
+    ├─ Type-assert *unstructured.Unstructured
+    ├─ Validate apiVersion=haproxy-haptic.org/v1alpha1, kind=HAProxyTemplateConfig
+    ├─ conversion.ParseCRD → *config.Config + typed CRD
+    └─ Publish ConfigParsedEvent (Version filled, SecretVersion left empty)
             ↓
-    ConfigChangeHandler (Stage 1)
+    pkg/controller/configchange.ConfigChangeHandler  (validation orchestrator)
 ```
 
 Event-driven with no direct Kubernetes or watcher dependencies.
@@ -75,23 +79,15 @@ go loader.Start(ctx)
 ### Event Flow
 
 ```go
-// 1. Watcher publishes ConfigResourceChangedEvent
-bus.Publish(&events.ConfigResourceChangedEvent{
-    Resource: configMap,  // *unstructured.Unstructured
-})
+// 1. CRD SingleWatcher publishes ConfigResourceChangedEvent
+bus.Publish(events.NewConfigResourceChangedEvent(crdResource))  // *unstructured.Unstructured
 
 // 2. ConfigLoader processes event
-// - Extracts data["config"]
-// - Parses YAML
-// - Publishes ConfigParsedEvent
+// - Type-asserts to *unstructured.Unstructured and validates the GVK
+// - Runs conversion.ParseCRD
+// - Publishes ConfigParsedEvent (Version from resourceVersion, SecretVersion empty)
 
-// 3. ConfigChangeHandler receives ConfigParsedEvent
-eventChan := bus.Subscribe("config-validator", 50)
-for event := range eventChan {
-    if parsed, ok := event.(*events.ConfigParsedEvent); ok {
-        // Trigger validation
-    }
-}
+// 3. ConfigChangeHandler receives ConfigParsedEvent and runs scatter-gather validation.
 ```
 
 ## Common Pitfalls
@@ -112,21 +108,18 @@ for event := range eventChan {
 
 Controller creates and starts component in Stage 1:
 
+The real wiring lives in `pkg/controller/iteration.go`; the loader is one of the components constructed during the Stage 1 setup (alongside `configchange.NewConfigChangeHandler`, `credentialsloader.NewCredentialsLoaderComponent`, and the validators) before `bus.Start()` is called.
+
 ```go
-// pkg/controller/controller.go - Stage 1
-func (c *Controller) runIteration(...) {
-    // Stage 1: Config Management
-    logger.Info("Stage 1: Config management")
-
-    configLoader := configloader.NewConfigLoaderComponent(bus, logger)
-    go configLoader.Start(ctx)
-
-    // Component runs until ctx cancelled
-}
+// Sketch — see pkg/controller/iteration.go for actual sequencing.
+configLoader := configloader.NewConfigLoaderComponent(bus, logger)
+// ... other Stage 1 components also constructed here, all subscribing during construction ...
+bus.Start()
+go configLoader.Start(ctx)
 ```
 
 ## Resources
 
-- Configuration schema: `pkg/core/config/CLAUDE.md`
+- Configuration schema and parsing: `pkg/core/CLAUDE.md` (the `config/` subpackage doesn't have its own CLAUDE.md; `pkg/core/config/README.md` covers the public API)
 - Event types: `pkg/controller/events/CLAUDE.md`
 - Controller lifecycle: `pkg/controller/CLAUDE.md`

@@ -41,7 +41,6 @@ The base library defines extension points using the `render_glob "prefix-*"` ope
 | Frontend Filters | `frontend-filters-*` | HTTP frontend, after routing | Request/response filters (header modification, redirects) |
 | Custom Frontends | `frontends-*` | After HTTP frontend | Additional frontend definitions |
 | Custom Backends | `backends-*` | Before default_backend | Backend definitions from resource libraries |
-| Backend Directives | `backend-directives-*` | Within backend blocks | Per-backend directives (auth, rate limiting) |
 | Host Map | `map-host-*` | host.map file | Host-to-group mapping entries |
 | Path Exact Map | `map-path-exact-*` | path-exact.map file | Exact path match entries |
 | Path Prefix Exact Map | `map-pfxexact-*` | path-prefix-exact.map file | Prefix-exact path match entries |
@@ -49,6 +48,9 @@ The base library defines extension points using the `render_glob "prefix-*"` ope
 | Path Regex Map | `map-path-regex-*` | path-regex.map file | Regex path match entries |
 | Weighted Backend Map | `map-weighted-backend-*` | weighted-multi-backend.map file | Weighted routing entries |
 | Status Patches | `status-patches-*` | After features, before backends | Resource status patch registration (side effects only) |
+| Status Extra | `status-extra-*` | Inside the status frontend | Extra status-frontend directives (Prometheus exporter, custom endpoints) |
+
+`backend-directives-*` is **not** a base-library extension point. It is invoked by `ingress.yaml`'s `backends-500-ingress` snippet (with `inherit_context`) so per-backend annotation libraries can extend each backend block; see [haproxytech library](haproxytech.md) for the producer side. Templates outside the ingress backend loop won't see it.
 
 ### How Extension Points Work
 
@@ -271,9 +273,9 @@ global
     # global-settings-200-process
     daemon
     nbthread 2          # auto-calculated from CPU requests
-    # global-settings-300-paths
+    # global-settings-300-paths — emits the BaseDir from pathResolver (chart default /etc/haproxy)
     default-path origin /etc/haproxy
-    crt-base /etc/haproxy/ssl
+    crt-base ssl/                              # relative to default-path origin
     # global-settings-400-ssl
     tune.ssl.default-dh-param 2048
     # global-settings-250-shm-stats (when haproxy.shmStats.enabled=true and HAProxy >= 3.3)
@@ -294,8 +296,8 @@ defaults
     timeout connect 5000
     timeout client 50000
     timeout server 50000
-    # defaults-settings-400-errorfiles
-    errorfile 400 /etc/haproxy/general/400.http
+    # defaults-settings-400-errorfiles — relative paths resolved via default-path origin
+    errorfile 400 general/400.http
     # ... other error files
 
 # global-top-* snippets here (userlists, etc.)

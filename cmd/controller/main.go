@@ -16,9 +16,10 @@
 //
 // The controller accepts configuration via CLI flags, environment variables, or defaults:
 //
-//   - ConfigMap name: --configmap-name flag, CONFIGMAP_NAME env var, or "haproxy-config" default
+//   - HAProxyTemplateConfig CRD name: --crd-name flag, CRD_NAME env var, or "haproxy-config" default
 //   - Secret name: --secret-name flag, SECRET_NAME env var, or "haproxy-credentials" default
 //   - Webhook cert Secret: --webhook-cert-secret-name flag or WEBHOOK_CERT_SECRET_NAME env var (optional, empty disables webhook cert loading)
+//   - Debug HTTP port: --debug-port flag or DEBUG_PORT env var (default 0 = disabled)
 //   - Kubeconfig: --kubeconfig flag (for out-of-cluster development)
 //
 // The controller runs until receiving SIGTERM or SIGINT, at which point it performs

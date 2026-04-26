@@ -65,7 +65,7 @@ registry := introspection.NewRegistry()
 
 // Publish variables
 registry.Publish("config", &ConfigVar{...})
-registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
+registry.Publish("uptime", introspection.Func(func() (any, error) {
     return time.Since(startTime).Seconds(), nil
 }))
 ```
@@ -78,7 +78,7 @@ Extensible interface for debug variables:
 
 ```go
 type Var interface {
-    Get() (interface{}, error)
+    Get() (any, error)
 }
 ```
 
@@ -118,8 +118,8 @@ registry.Publish("request_count", counter)
 
 // Publish computed variables
 startTime := time.Now()
-registry.Publish("uptime", introspection.Func(func() (interface{}, error) {
-    return map[string]interface{}{
+registry.Publish("uptime", introspection.Func(func() (any, error) {
+    return map[string]any{
         "started": startTime,
         "uptime_seconds": time.Since(startTime).Seconds(),
     }, nil
@@ -138,7 +138,7 @@ type ConfigVar struct {
     mu     sync.RWMutex
 }
 
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
     v.mu.RLock()
     defer v.mu.RUnlock()
 
@@ -146,7 +146,7 @@ func (v *ConfigVar) Get() (interface{}, error) {
         return nil, fmt.Errorf("config not loaded")
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "version": v.config.Version,
         "templates": v.config.Templates,
     }, nil
@@ -251,7 +251,7 @@ func runIteration(ctx context.Context) {
 type CredsVar struct {
     creds *Credentials
 }
-func (v *CredsVar) Get() (interface{}, error) {
+func (v *CredsVar) Get() (any, error) {
     return v.creds, nil  // Exposes password!
 }
 ```
@@ -260,8 +260,8 @@ func (v *CredsVar) Get() (interface{}, error) {
 
 ```go
 // Good - metadata only
-func (v *CredsVar) Get() (interface{}, error) {
-    return map[string]interface{}{
+func (v *CredsVar) Get() (any, error) {
+    return map[string]any{
         "username": v.creds.Username,
         "has_password": v.creds.Password != "",
         // DON'T expose actual password
@@ -275,7 +275,7 @@ func (v *CredsVar) Get() (interface{}, error) {
 
 ```go
 // Bad - panics if config == nil
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
     return v.config.Version, nil  // Panic!
 }
 ```
@@ -284,7 +284,7 @@ func (v *ConfigVar) Get() (interface{}, error) {
 
 ```go
 // Good - return error
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
     if v.config == nil {
         return nil, fmt.Errorf("config not loaded yet")
     }
@@ -304,7 +304,7 @@ func TestConfigVar_Get(t *testing.T) {
     configVar := &ConfigVar{config: testConfig}
     data, err := configVar.Get()
     require.NoError(t, err)
-    assert.Equal(t, "v1", data.(map[string]interface{})["version"])
+    assert.Equal(t, "v1", data.(map[string]any)["version"])
 
     // Test with nil config
     nilVar := &ConfigVar{config: nil}
@@ -320,7 +320,7 @@ Test HTTP endpoints:
 ```go
 func TestServer_GetVar(t *testing.T) {
     registry := introspection.NewRegistry()
-    registry.Publish("test", introspection.Func(func() (interface{}, error) {
+    registry.Publish("test", introspection.Func(func() (any, error) {
         return map[string]string{"key": "value"}, nil
     }))
 
@@ -336,7 +336,7 @@ func TestServer_GetVar(t *testing.T) {
     require.NoError(t, err)
     assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-    var data map[string]interface{}
+    var data map[string]any
     json.NewDecoder(resp.Body).Decode(&data)
     assert.Equal(t, "value", data["key"])
 }

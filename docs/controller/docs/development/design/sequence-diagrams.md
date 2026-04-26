@@ -59,7 +59,7 @@ sequenceDiagram
 
 The controller runs iterations that respond to configuration changes:
 
-1. **Initial Config Fetch**: Fetch and validate the `HAProxyTemplateConfig` CRD named by `--config-name` and the credentials `Secret` referenced via `spec.credentialsSecretRef`, synchronously, before starting components.
+1. **Initial Config Fetch**: Fetch and validate the `HAProxyTemplateConfig` CRD named by `--crd-name` (env `CRD_NAME`, default `haproxy-config`) and the credentials `Secret` referenced via `spec.credentialsSecretRef`, synchronously, before starting components.
 2. **Component Setup**: Create EventBus and start config-management components (validators, loaders, commentator).
 3. **Resource Watchers**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
 4. **Config/Secret SingleWatchers**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
@@ -78,11 +78,10 @@ sequenceDiagram
     participant ResourceWatcher as Resource<br/>Watcher
     participant EventBus
     participant Reconciler as Reconciler<br/>(Debouncer)
-    participant Coordinator
-    participant Renderer as Renderer
-    participant Validator as HAProxy<br/>Validator
-    participant Scheduler as Deployment<br/>Scheduler
-    participant Deployer as Deployer
+    participant Coordinator as Coordinator<br/>(leader-only)
+    participant Pipeline as Pipeline<br/>(synchronous)
+    participant Scheduler as Deployment<br/>Scheduler<br/>(leader-only)
+    participant Deployer as Deployer<br/>(leader-only)
     participant HAProxy1 as HAProxy<br/>Instance 1
     participant HAProxy2 as HAProxy<br/>Instance 2
 
@@ -91,36 +90,37 @@ sequenceDiagram
     ResourceWatcher->>EventBus: Publish(ResourceIndexUpdatedEvent)
 
     EventBus->>Reconciler: ResourceIndexUpdatedEvent
-    Note over Reconciler: Start debounce timer
-
-    Note over Reconciler: Wait for quiet period
+    Note over Reconciler: Leading-edge: fire immediately<br/>if no recent reconciliation,<br/>otherwise batch within 5s window
 
     Reconciler->>EventBus: Publish(ReconciliationTriggeredEvent)
 
     EventBus->>Coordinator: ReconciliationTriggeredEvent
     Coordinator->>EventBus: Publish(ReconciliationStartedEvent)
 
-    EventBus->>Renderer: ReconciliationTriggeredEvent
-    Note over Renderer: Query indexed resources<br/>Render templates
-    Renderer->>EventBus: Publish(TemplateRenderedEvent)
+    Coordinator->>Pipeline: Execute(ctx, storeProvider) — synchronous call
+    Note over Pipeline: 1. RenderService.Render (templates → HAProxy config)<br/>2. ComputeContentChecksum<br/>3. ValidationService.Validate (syntax + schema + haproxy -c)
+    Pipeline-->>Coordinator: *PipelineResult or *PipelineError
 
-    EventBus->>Validator: TemplateRenderedEvent
-    Note over Validator: Phase 1: Syntax (parser)<br/>Phase 1.5: OpenAPI schema<br/>Phase 2: Semantics (haproxy -c)
-    Validator->>EventBus: Publish(ValidationCompletedEvent)
+    alt Pipeline succeeded
+        Coordinator->>EventBus: Publish(TemplateRenderedEvent)
+        Coordinator->>EventBus: Publish(ValidationCompletedEvent)
+    else Pipeline failed
+        Coordinator->>EventBus: Publish(ReconciliationFailedEvent)
+    end
 
-    EventBus->>Scheduler: ValidationCompletedEvent
-    Note over Scheduler: Check rate limit<br/>Queue if deployment in progress
+    EventBus->>Scheduler: ValidationCompletedEvent (+ TemplateRenderedEvent + HAProxyPodsDiscoveredEvent)
+    Note over Scheduler: Wait for all three inputs<br/>Apply min interval / latest-wins
     Scheduler->>EventBus: Publish(DeploymentScheduledEvent)
 
     EventBus->>Deployer: DeploymentScheduledEvent
     Deployer->>EventBus: Publish(DeploymentStartedEvent)
 
     par Parallel Deployment
-        Deployer->>HAProxy1: Deploy via Dataplane API
+        Deployer->>HAProxy1: dataplane.Sync via Dataplane API
         HAProxy1-->>Deployer: Success
         Deployer->>EventBus: Publish(InstanceDeployedEvent)
     and
-        Deployer->>HAProxy2: Deploy via Dataplane API
+        Deployer->>HAProxy2: dataplane.Sync via Dataplane API
         HAProxy2-->>Deployer: Success
         Deployer->>EventBus: Publish(InstanceDeployedEvent)
     end
@@ -132,139 +132,125 @@ sequenceDiagram
 
 **Event-Driven Flow:**
 
-1. **Resource Change**: ResourceWatcher receives Kubernetes event, updates local index, publishes ResourceIndexUpdatedEvent
-2. **Debouncing**: Reconciler subscribes to index events, starts debounce timer to batch rapid changes
-3. **Reconciliation Trigger**: After quiet period, Reconciler publishes ReconciliationTriggeredEvent
-4. **Orchestration Start**: Coordinator subscribes to ReconciliationTriggeredEvent and publishes ReconciliationStartedEvent for observability
-5. **Template Rendering**: Renderer component subscribes to ReconciliationTriggeredEvent, queries indexed resources, renders templates using pkg/templating, and publishes TemplateRenderedEvent with rendered configuration and auxiliary files
-6. **Validation**: HAProxyValidator component subscribes to TemplateRenderedEvent, performs three-phase validation (client-native syntax parse, OpenAPI schema check, `haproxy -c` semantic check — all via `pkg/dataplane`), and publishes ValidationCompletedEvent or ValidationFailedEvent
-7. **Deployment Scheduling**: DeploymentScheduler subscribes to ValidationCompletedEvent, enforces minimum deployment interval (default 2s) for rate limiting, implements "latest wins" queueing if deployment is in progress, and publishes DeploymentScheduledEvent when ready
-8. **Deployment Execution**: Deployer component subscribes to DeploymentScheduledEvent, executes parallel deployments to all discovered HAProxy endpoints using pkg/dataplane, publishes InstanceDeployedEvent for each instance and DeploymentCompletedEvent when all complete
-9. **Completion**: Coordinator subscribes to DeploymentCompletedEvent and publishes ReconciliationCompletedEvent with duration metrics
+1. **Resource Change**: ResourceWatcher receives Kubernetes event, updates local index, publishes `ResourceIndexUpdatedEvent`.
+2. **Reconciler debouncing**: Reconciler applies a *leading-edge refractory* (default 5 s, see `pkg/k8s/types.DefaultDebounceInterval`) — the first change in a quiet window fires immediately, subsequent changes inside the window are batched into the next trigger. This is deliberately different from classic trailing-edge debouncing so single ingress flips react with 0 ms delay.
+3. **Reconciliation Trigger**: Reconciler publishes `ReconciliationTriggeredEvent` either after the refractory window expires or immediately for whole-store events (`IndexSynchronizedEvent`, `BecameLeaderEvent`, `DriftPreventionTriggeredEvent`).
+4. **Coordinator (leader-only)**: subscribes to `ReconciliationTriggeredEvent`, publishes `ReconciliationStartedEvent`, then calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` **synchronously** — render and validation are one atomic step, not a multi-hop event chain.
+5. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs `ValidationService.Validate` (syntax via client-native parser → OpenAPI schema → `haproxy -c` semantic).
+6. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.As` to extract the failed phase).
+7. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, and `HAProxyPodsDiscoveredEvent`; only deploys when all three inputs are present. Enforces `minDeploymentInterval` and "latest wins" coalescing.
+8. **Deployer (leader-only)**: executes parallel `dataplane.Sync` calls to every endpoint, publishes per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent` and aggregate `DeploymentCompletedEvent`.
+9. **Completion**: Coordinator subscribes to `DeploymentCompletedEvent` and publishes `ReconciliationCompletedEvent` with duration metrics.
 
-All coordination happens via EventBus pub/sub. Components are fully event-driven with no direct function calls between them, enabling clean separation of concerns and independent testability.
+`pkg/controller/renderer.Component` and `pkg/controller/validator.HAProxyValidatorComponent` exist in the source tree as event-driven adapters but are not constructed in production — the synchronous Pipeline replaced them. Coordination still happens entirely via EventBus pub/sub *between* components; only the render-validate split inside the Coordinator is a direct function call.
 
 ## Configuration Validation Process
 
+This is the inside view of step 5 in the previous diagram — `Pipeline.Execute` runs `ValidationService.Validate` after rendering, all inside the leader-only Coordinator's call stack:
+
 ```mermaid
 sequenceDiagram
-    participant EventBus
-    participant Validator as HAProxy<br/>Validator
+    participant Coord as Coordinator<br/>(leader-only)
+    participant Pipeline
+    participant Render as RenderService
+    participant Validate as ValidationService
     participant Parser as client-native Parser
     participant Schema as OpenAPI Schema
     participant Binary as haproxy Binary
-    participant EventBus2 as EventBus
 
-    EventBus->>Validator: TemplateRenderedEvent
-    Note over Validator: Extract config and<br/>auxiliary files from event
+    Coord->>Pipeline: Execute(ctx, storeProvider)
+    Pipeline->>Render: Render(ctx, storeProvider)
+    Render-->>Pipeline: *RenderResult (config + aux files)
 
-    Validator->>Validator: Acquire validation mutex
-    Note over Validator: Single-threaded validation
+    Pipeline->>Pipeline: ComputeContentChecksum(config, aux)
+    Pipeline->>Validate: ValidateWithChecksum(ctx, config, aux, checksum)
+    Note over Validate: Per-instance cache (cacheMu, RWMutex)<br/>checksum hit → return cached parsed config
 
-    Validator->>Parser: ParseConfiguration(config)
+    Validate->>Validate: os.MkdirTemp("", "haproxy-validation-*")
+    Note over Validate: Per-call sandbox — every Validate gets<br/>its own /tmp/<unique>; file I/O is per-call<br/>but haproxy -c binary is serialised by<br/>a package-global haproxyCheckMutex
 
-    alt Syntax Error
-        Parser-->>Validator: Parse error
-        Validator->>EventBus2: Publish(ValidationFailedEvent)
-    else Valid Syntax
-        Parser-->>Validator: Parsed structure
-        Validator->>Schema: Validate against OpenAPI spec
-
-        alt Schema Error
-            Schema-->>Validator: Field/pattern violation
-            Validator->>EventBus2: Publish(ValidationFailedEvent)
-        else Schema OK
-            Schema-->>Validator: OK
-
-            Validator->>Binary: Execute haproxy -c -f config
-            Note over Binary: Write aux files to directories<br/>Validate with -c flag
-
-            alt Semantic Error
-                Binary-->>Validator: Exit code 1 + error msg
-                Validator->>EventBus2: Publish(ValidationFailedEvent)
-            else Valid Config
-                Binary-->>Validator: Exit code 0
-                Validator->>EventBus2: Publish(ValidationCompletedEvent)
+    Validate->>Parser: validateSyntax(config)
+    alt Syntax error
+        Parser-->>Validate: error
+        Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"syntax"}
+    else
+        Parser-->>Validate: *parser.StructuredConfig
+        Validate->>Schema: validateAPISchema(parsed, version)
+        alt Schema error
+            Schema-->>Validate: error
+            Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"schema"}
+        else
+            Schema-->>Validate: ok
+            Validate->>Binary: haproxy -c -f /tmp/<unique>/haproxy.cfg
+            alt Semantic error
+                Binary-->>Validate: exit 1 + stderr
+                Validate-->>Pipeline: ValidationResult{Valid:false, Phase:"semantic"}
+            else
+                Binary-->>Validate: exit 0
+                Validate->>Validate: cacheResult(checksum, parsedConfig)
+                Validate-->>Pipeline: ValidationResult{Valid:true, ParsedConfig:...}
             end
         end
     end
+
+    Pipeline-->>Coord: *PipelineResult or *PipelineError
 ```
 
 **Validation Steps:**
 
-1. **Event Subscription**: HAProxyValidator component subscribes to TemplateRenderedEvent and receives rendered configuration and auxiliary files
-   - Event-driven trigger - no direct function calls from Renderer
-   - Decouples rendering from validation
-
-2. **Mutex Acquisition**: Acquire validation mutex to ensure single-threaded validation
-   - Prevents concurrent writes to HAProxy directories
-   - Ensures consistent validation state
-
-3. **Syntax Validation (Phase 1)**: client-native library (pkg/dataplane) parses the config structure
-   - Checks grammar and section structure
-   - Returns parsing errors if invalid
-
-4. **OpenAPI Schema Validation (Phase 1.5)**: The parsed model is checked against the version-specific Dataplane API OpenAPI spec via `pkg/generated` validators
-   - Catches out-of-range values, pattern violations, and missing required fields
-   - Cheap (in-memory, no fork) — runs before the more expensive binary check
-
-5. **Semantic Validation (Phase 2)**: haproxy binary performs full validation
-   - Writes auxiliary files to configured HAProxy directories (maps, certs, general files)
-   - Writes main configuration to configured path
-   - Executes `haproxy -c -f /etc/haproxy/haproxy.cfg`
-   - Checks resource availability (files referenced in config must exist)
-   - Validates directive combinations and config coherence
-   - Returns detailed error messages if invalid
-
-6. **Event Publishing**: Validator publishes ValidationCompletedEvent or ValidationFailedEvent
-   - Other components (Coordinator, DeploymentScheduler) subscribe to these events
-   - Event-driven coordination continues the reconciliation workflow
+1. **Pipeline call**: `Coordinator.handleReconciliationTriggered` calls `Pipeline.Execute` synchronously. The pipeline first renders, then validates — both in the same call stack, no event hop.
+2. **Cache check**: `ValidationService` keys its per-instance cache on a SHA-256 of `(config + aux files)` (`pkg/dataplane.ComputeContentChecksum`). Identical content during drift-prevention cycles returns the cached `*parser.StructuredConfig` without running any phase. Failures are *not* cached — every failure retries.
+3. **Sandbox**: each `Validate` call creates its own `os.MkdirTemp("", "haproxy-validation-*")` and rewrites the rendered config's `default-path origin` to point at it. File I/O is fully isolated per call. The `haproxy -c` binary invocation itself is still serialised by a package-global `haproxyCheckMutex` (`pkg/dataplane/validate_haproxy.go`) because concurrent runs of the binary have been observed to interfere even with isolated sandboxes; on top of that, a small per-instance `cacheMu` (`sync.RWMutex`) guards the cached `*parser.StructuredConfig` lookup.
+4. **Phase 1 — Syntax**: client-native parser checks grammar and section structure. Cheap.
+5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against the version-specific Dataplane API OpenAPI spec via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
+6. **Phase 2 — Semantic**: writes the config + auxiliary files into a per-call temp directory, runs `haproxy -c -f <tempdir>/haproxy.cfg`, parses the binary's stderr on failure. The temp directory mirrors the production layout (`maps/`, `ssl/`, `general/`) under `default-path origin <tempdir>` so file references resolve exactly like at runtime.
+7. **Result**: Pipeline wraps the `ValidationResult` into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.As`); the Coordinator then publishes `ValidationCompletedEvent` or `ReconciliationFailedEvent` accordingly.
 
 ## Zero-Reload Deployment Strategy
 
 ```mermaid
 sequenceDiagram
-    participant Sync as Synchronizer
-    participant Client as Dataplane Client
+    participant Deployer as Deployer<br/>(pkg/controller/deployer)
+    participant Client as dataplane.Client
     participant DP as Dataplane API
     participant HAProxy
 
-    Sync->>Client: DeployConfiguration(new_config)
-    Client->>DP: GET /configuration (current)
+    Deployer->>Client: Sync(ctx, desiredConfig, auxFiles, opts)
+    Client->>DP: GET /v3/services/haproxy/configuration/raw
     DP-->>Client: Current config
 
-    Client->>Client: Compare structures
+    Client->>Client: Parse + comparator.Compare
 
     alt Only runtime changes
-        Note over Client: Servers, maps, ACLs only
-        Client->>DP: POST /runtime/servers
+        Note over Client: Server weight/address/port/maintenance only
+        Client->>DP: PUT /v3/services/haproxy/runtime/servers/{name}
         DP->>HAProxy: Runtime API command
         HAProxy-->>DP: Updated
         DP-->>Client: Success (no reload)
     else Mixed changes
-        Note over Client: Runtime + config changes
-        Client->>DP: POST /runtime/servers
-        Client->>DP: POST /configuration
+        Note over Client: Runtime-supported + config changes
+        Client->>DP: PUT /v3/services/haproxy/runtime/servers/{name}
+        Client->>DP: POST /v3/services/haproxy/transactions
         DP->>HAProxy: Apply config
         HAProxy-->>DP: Reload triggered
         DP-->>Client: Success (reload)
     else Structural changes
-        Note over Client: Backends, frontends, etc.
-        Client->>DP: POST /configuration
+        Note over Client: Backends, frontends, binds, ACLs, etc.
+        Client->>DP: POST /v3/services/haproxy/transactions
         DP->>HAProxy: Replace config + reload
         HAProxy-->>DP: Reload complete
         DP-->>Client: Success (reload)
     end
 
-    Client-->>Sync: DeploymentResult
+    Client-->>Deployer: *SyncResult
 ```
 
 **Deployment Optimization:**
 
-The synchronizer analyzes configuration changes to determine the optimal deployment strategy:
+`pkg/dataplane.Client.Sync` analyses configuration changes to determine the optimal deployment strategy:
 
-1. **Runtime-Only Updates**: Server additions/removals, map updates, ACL changes → No reload
-2. **Mixed Updates**: Apply runtime changes first, then config changes → Single reload
-3. **Structural Updates**: Backend/frontend changes → Full reload required
+1. **Runtime-Only Updates**: Server weight/address/port/maintenance changes → no reload
+2. **Mixed Updates**: Apply runtime-supported changes first, then transactional config changes → single reload
+3. **Structural Updates**: Backend/frontend/bind/ACL changes → transactional commit → reload required
 
-This minimizes service disruption by avoiding unnecessary HAProxy process reloads.
+The Dataplane API itself decides per-field whether a change is runtime-eligible (see `dataplaneapi/handlers/runtime.go`), so the controller delegates that decision rather than maintaining its own table. This minimises service disruption by avoiding unnecessary HAProxy process reloads.

@@ -31,6 +31,8 @@ The design documentation is organized into focused documents:
 
 - **[Runtime Introspection](design/introspection.md)** - Debug HTTP endpoints for runtime state inspection, event history tracking, and integration with acceptance testing
 
+- **[Leader Election](design/leader-election.md)** - Lease-based leader election, the leader-only vs all-replica component split, and the bootstrap pattern that prevents missed events on leadership transitions
+
 - **[Configuration](design/configuration.md)** - User interface design showing how you configure the controller through HAProxyTemplateConfig CRD
 
 - **[Appendices](design/appendices.md)** - Definitions, abbreviations, and external references

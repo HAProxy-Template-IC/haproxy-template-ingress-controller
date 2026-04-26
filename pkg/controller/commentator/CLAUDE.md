@@ -35,11 +35,24 @@ EventCommentator
 
 ## Event Correlation
 
+The internal `*RingBuffer` (in `ring_buffer.go`, *not* `pkg/events/ringbuffer`) exposes five lookup methods:
+
+- `FindByType(eventType)` — every entry of the given type, oldest-first.
+- `FindByTypeInWindow(eventType, window)` — entries of the given type whose timestamp falls within `window` of now.
+- `FindRecent(n)` — the last *n* entries, newest first.
+- `FindRecentByPredicate(maxCount, predicate)` — the last `maxCount` entries that satisfy the predicate, newest first.
+- `FindByCorrelationID(correlationID, maxCount)` — entries sharing a correlation ID.
+
+Only two are re-exposed on `*EventCommentator` for outside callers — `FindByCorrelationID` and `FindRecent`. The rest live on the private `ringBuffer` field; insight code inside this package uses them directly. There is no `FindLast` — use `FindByTypeInWindow` and pick the most recent entry instead.
+
 ```go
-// Example: Correlating reconciliation frequency
-lastRecon := ec.ringBuffer.FindLast("reconciliation.started")
-if lastRecon != nil {
-    timeSince := event.Timestamp.Sub(lastRecon.Timestamp)
+// Example: how long since the previous reconciliation started?
+// Inside this package, where ec.ringBuffer is reachable.
+const window = 60 * time.Second
+prior := ec.ringBuffer.FindByTypeInWindow(events.EventTypeReconciliationStarted, window)
+if len(prior) > 0 {
+    last := prior[len(prior)-1]
+    timeSince := event.Timestamp().Sub(last.Timestamp())
     logger.Info("reconciliation started",
         "since_last", timeSince,
         "trigger", event.Trigger)
@@ -65,4 +78,4 @@ When adding new event type:
 ## Resources
 
 - Event types: `pkg/controller/events/CLAUDE.md`
-- Ring buffer: `pkg/events/ringbuffer/CLAUDE.md`
+- Internal ring buffer (the one this component uses): `pkg/controller/commentator/ring_buffer.go` (no separate doc — read the source). The generic `pkg/events/ringbuffer.RingBuffer[T]` is a different type with no `Find*` methods; do not confuse the two.

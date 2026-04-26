@@ -55,12 +55,12 @@ import (
 registry := introspection.NewRegistry()
 
 eventBuffer := debug.NewEventBuffer(1000, eventBus)
-go eventBuffer.Run(ctx)
+go eventBuffer.Start(ctx)
 
 debug.RegisterVariables(registry, stateProvider, eventBuffer)
 
 server := introspection.NewServer(":8080", registry)
-go server.Run(ctx)
+go server.Start(ctx)
 ```
 
 `EventBuffer` subscribes to the `EventBus` separately from the `commentator` so that the debug endpoint has an independent ring-buffered history for `/debug/vars/events` — the two consumers can be tuned and cleaned up in isolation.
@@ -81,8 +81,11 @@ Each of these maps to a `Var` in this package:
 | `/debug/vars/pipeline` | `PipelineVar` | Last pipeline execution metadata (stages, timings) |
 | `/debug/vars/validated` | `ValidatedVar` | Last validation result (syntax + semantic phases) |
 | `/debug/vars/errors` | `ErrorsVar` | Recent per-component errors |
+| `/debug/vars/uptime` | `introspection.Func` (computed on demand, not a struct) | Process uptime: `started` timestamp + `uptime_seconds` + `uptime_string` |
 
 The introspection server supports `?field={...}` JSONPath on every response, so operators can narrow to a specific field without downloading the whole payload.
+
+`pkg/controller/debug` also registers a non-Var endpoint via `RegisterEventsHandler`: `/debug/events` (note: no `/vars/` segment) supports `?limit=N` and `?correlation_id=<id>` for richer event queries than the ring-buffered `/debug/vars/events` Var.
 
 ## Security
 

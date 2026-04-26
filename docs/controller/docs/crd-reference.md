@@ -83,13 +83,13 @@ controller:
   leaderElection:
     enabled: true
     leaseName: ""        # empty = defaults to the CRD name; Helm overrides with the release fullname
-    leaseDuration: 60s
-    renewDeadline: 15s
-    retryPeriod: 5s
+    leaseDuration: 15s   # default (DefaultLeaderElectionLeaseDuration)
+    renewDeadline: 10s   # default (DefaultLeaderElectionRenewDeadline)
+    retryPeriod: 2s      # default (DefaultLeaderElectionRetryPeriod)
 ```
 
 !!! note
-    When installing via the Helm chart, these values are overridden by `values.yaml` (defaults: `leaseDuration: 15s`, `renewDeadline: 10s`, `retryPeriod: 2s`, `leaseName: <release-fullname>`). The values above are the controller's own built-in defaults and only apply when managing the CRD directly without Helm.
+    These are the controller's built-in defaults from `pkg/core/config/defaults.go` — the same values `kube-controller-manager` and `kube-scheduler` ship with. The Helm chart does not override them; setting any of these fields on the CRD only matters if you need different values (e.g. for clusters with significant clock skew or that need slower failover).
 
 See [High Availability](./operations/high-availability.md) for leader election details.
 
@@ -147,7 +147,7 @@ dataplane:
   minDeploymentInterval: 2s          # Minimum gap between deployments (default 2s)
   driftPreventionInterval: 60s       # Periodic redeploy to correct drift (default 60s)
   deploymentTimeout: 30s             # Safety net for lost deployments (default 30s)
-  maxParallel: 0                     # Concurrent Dataplane ops; 0 = auto from dataplane CPU × 10
+  maxParallel: 0                     # Concurrent Dataplane ops; 0 = unlimited (not recommended for large configs)
   rawPushThreshold: 100              # Switch to raw config push when change count exceeds this (default 100)
   mapsDir: /etc/haproxy/maps         # Used for both validation and deployment
   sslCertsDir: /etc/haproxy/ssl
@@ -182,8 +182,8 @@ watchedResources:
     indexBy:
       - metadata.namespace
       - metadata.name
-    labelSelector: "app=myapp"  # Optional
-    namespaceSelector: "environment=production"  # Optional, filters by namespace labels
+    labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
+    namespaceSelector: ""  # CRD field exists but not yet wired up — has no effect; use `namespace:` for a single fixed namespace
     store: full  # or "on-demand" for cached store
 ```
 
@@ -289,7 +289,7 @@ templatingSettings:
 
 | Field          | Type                   | Required | Description                                                              |
 |----------------|------------------------|----------|--------------------------------------------------------------------------|
-| `extraContext` | map[string]interface{} | No       | Custom variables merged into template context (available in all templates) |
+| `extraContext` | `map[string]any` | No       | Custom variables; the whole map is exposed as `extraContext` and each top-level key is also injected as a bare variable in templates |
 
 **Usage in templates:**
 
@@ -353,20 +353,24 @@ See [Validation Tests](./validation-tests.md) for the full test-framework refere
 
 ## Status Subresource
 
-The controller updates the status field with validation results:
+The controller updates the status field with validation results. Real fields are documented in `pkg/apis/haproxytemplate/v1alpha1/types_config.go`:
 
 ```yaml
 status:
-  observedGeneration: 1
-  lastValidated: "2025-01-27T10:00:00Z"
-  validationStatus: Valid  # Valid, Invalid, or Unknown
-  validationMessage: "All validation tests passed"
+  observedGeneration: 1                              # tracks .metadata.generation
+  lastValidated: "2025-01-27T10:00:00Z"              # last successful validation timestamp
+  validationStatus: Valid                            # Valid, Invalid, or Unknown
+  validationMessage: "All validation tests passed"   # human-readable summary
+  validationErrors:                                  # populated when Invalid; each entry names template + error context
+    - "haproxy.cfg: parse error at line 12: …"
   conditions:
     - type: Ready
       status: "True"
       reason: ValidationSucceeded
       lastTransitionTime: "2025-01-27T10:00:00Z"
 ```
+
+`validationStatus` is the printer column shown by `kubectl get htplcfg`.
 
 ## Command-Line Management
 

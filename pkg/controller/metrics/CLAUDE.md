@@ -81,7 +81,7 @@ type Metrics struct {
 }
 
 // Constructor creates all metrics and registers them
-func New(registry *prometheus.Registry) *Metrics {
+func NewMetrics(registry prometheus.Registerer) *Metrics {
     return &Metrics{
         ReconciliationDuration: pkgmetrics.NewHistogram(
             registry,
@@ -92,13 +92,16 @@ func New(registry *prometheus.Registry) *Metrics {
     }
 }
 
-// Helper methods for updating metrics
-func (m *Metrics) RecordReconciliation(durationMs int64, success bool) {
+// Helper methods for updating metrics. Note the duration unit is *seconds*
+// (Prometheus convention), not milliseconds — the event adapter converts the
+// int64 millisecond value from events.ReconciliationCompletedEvent before
+// calling this method.
+func (m *Metrics) RecordReconciliation(durationSeconds float64, success bool) {
     m.ReconciliationTotal.Inc()
     if !success {
         m.ReconciliationErrors.Inc()
     }
-    m.ReconciliationDuration.Observe(float64(durationMs) / 1000.0)
+    m.ReconciliationDuration.Observe(durationSeconds)
 }
 ```
 
@@ -123,30 +126,38 @@ type Component struct {
     resourceCounts map[string]int              // Stateful tracking
 }
 
-// Constructor
-func NewComponent(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
+// Constructor — subscribes during construction, before bus.Start().
+// The subscription uses SubscribeTypes for a typed filter (only the
+// event types the component actually handles), with a buffer of 200.
+func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
+    eventChan := eventBus.SubscribeTypes(ComponentName, 200,
+        events.EventTypeReconciliationCompleted,
+        events.EventTypeReconciliationFailed,
+        // ... and ~12 more types — see component.go for the full list
+    )
+
     return &Component{
         metrics:        metrics,
         eventBus:       eventBus,
+        eventChan:      eventChan,
         resourceCounts: make(map[string]int),
+        triggeredAt:    make(map[string]time.Time),
     }
 }
 
-// Explicit subscription (synchronous, before bus.Start())
-func (c *Component) Start() {
-    c.eventChan = c.eventBus.Subscribe("metrics", 200)  // Large buffer for high volume
-}
-
-// Event processing loop
-func (c *Component) Run(ctx context.Context) error {
-    if c.eventChan == nil {
-        panic("Component.Start() must be called before Run()")
-    }
+// Start runs the event processing loop. Blocks until ctx is cancelled.
+// A periodic ticker also pulls bus / parser-cache stats into gauges.
+func (c *Component) Start(ctx context.Context) error {
+    ticker := time.NewTicker(timeouts.TickerPollInterval)
+    defer ticker.Stop()
 
     for {
         select {
         case event := <-c.eventChan:
             c.handleEvent(event)
+        case <-ticker.C:
+            c.metrics.SetObservabilityDrops(c.eventBus.DroppedEventsObservability())
+            // ... parser cache + subscriber count gauges
         case <-ctx.Done():
             return ctx.Err()
         }
@@ -174,18 +185,21 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 
     switch e := event.(type) {
     case *events.ReconciliationCompletedEvent:
-        c.metrics.RecordReconciliation(e.DurationMs, true)
+        c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), true)
 
     case *events.ReconciliationFailedEvent:
         c.metrics.RecordReconciliation(0, false)
 
     case *events.DeploymentCompletedEvent:
-        success := e.FailedCount == 0
-        c.metrics.RecordDeployment(e.DurationMs, success)
+        // The deployment event reports Total / Succeeded / Failed counts; the
+        // component tracks "did anything succeed" rather than "did everything
+        // succeed" because partial rollouts still register as forward progress.
+        c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
 
     case *events.ValidationCompletedEvent:
-        success := len(e.Warnings) == 0
-        c.metrics.RecordValidation(success)
+        // Warnings are informational; ValidationCompletedEvent itself signals
+        // success. Failure is a separate ValidationFailedEvent.
+        c.metrics.RecordValidation(true)
 
     case *events.IndexSynchronizedEvent:
         // Initialize resource counts
@@ -243,10 +257,10 @@ Test pure metrics without events:
 ```go
 func TestMetrics_RecordReconciliation(t *testing.T) {
     registry := prometheus.NewRegistry()
-    metrics := New(registry)
+    metrics := NewMetrics(registry)
 
-    // Record successful reconciliation
-    metrics.RecordReconciliation(1500, true)
+    // Record successful reconciliation (1.5 seconds)
+    metrics.RecordReconciliation(1.5, true)
 
     // Verify counters
     assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationTotal))
@@ -268,20 +282,17 @@ Test event-driven updates:
 ```go
 func TestComponent_ReconciliationEvents(t *testing.T) {
     registry := prometheus.NewRegistry()
-    metrics := New(registry)
+    metrics := NewMetrics(registry)
     eventBus := pkgevents.NewEventBus(100)
 
-    component := NewComponent(metrics, eventBus)
+    component := New(metrics, eventBus)
 
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
 
-    // Subscribe before starting event bus
-    component.Start()
+    // Subscription happened in New() — just start the bus, then the loop.
     eventBus.Start()
-
-    // Start component event loop
-    go component.Run(ctx)
+    go component.Start(ctx)
 
     // Publish event
     eventBus.Publish(events.NewReconciliationCompletedEvent(1500))
@@ -302,17 +313,16 @@ Test stateful resource count updates:
 ```go
 func TestComponent_ResourceEvents(t *testing.T) {
     registry := prometheus.NewRegistry()
-    metrics := New(registry)
+    metrics := NewMetrics(registry)
     eventBus := pkgevents.NewEventBus(100)
 
-    component := NewComponent(metrics, eventBus)
+    component := New(metrics, eventBus)
 
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
 
-    component.Start()
     eventBus.Start()
-    go component.Run(ctx)
+    go component.Start(ctx)
 
     // Initialize counts
     eventBus.Publish(events.NewIndexSynchronizedEvent(map[string]int{
@@ -344,25 +354,24 @@ func TestComponent_ResourceEvents(t *testing.T) {
 
 ## Common Pitfalls
 
-### Not Calling Start() Before Run()
+### Constructing Subscribers After bus.Start()
 
-**Problem**: Forgetting to subscribe before starting event loop.
+**Problem**: Calling `New(...)` after the bus is already running. Any events published in between are lost.
 
 ```go
 // Bad - race condition
-component := NewComponent(metrics, bus)
-bus.Start()              // Events start flowing
-go component.Run(ctx)    // Component subscribes (may miss events!)
+bus.Start()                     // Events start flowing
+component := New(metrics, bus)  // Subscribes too late, may miss events
+go component.Start(ctx)
 ```
 
-**Solution**: Always call Start() before bus.Start().
+**Solution**: The metrics component subscribes inside `New(...)`. Construct every subscriber before `bus.Start()`.
 
 ```go
-// Good - explicit subscription
-component := NewComponent(metrics, bus)
-component.Start()        // Subscribe synchronously
-bus.Start()              // Now events flow to subscribed component
-go component.Run(ctx)    // Process events
+// Good
+component := New(metrics, bus)  // Subscribes during construction
+bus.Start()                     // Events now reach the existing subscriber
+go component.Start(ctx)         // Process events
 ```
 
 ### Using time.Sleep in Tests
@@ -535,7 +544,7 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 ```go
 func TestMetrics_RecordCacheAccess(t *testing.T) {
     registry := prometheus.NewRegistry()
-    metrics := New(registry)
+    metrics := NewMetrics(registry)
 
     metrics.RecordCacheAccess(true)
     assert.Equal(t, 1.0, testutil.ToFloat64(metrics.CacheHitTotal))
@@ -552,16 +561,15 @@ func TestMetrics_RecordCacheAccess(t *testing.T) {
 ```go
 func TestComponent_CacheEvents(t *testing.T) {
     registry := prometheus.NewRegistry()
-    metrics := New(registry)
+    metrics := NewMetrics(registry)
     eventBus := pkgevents.NewEventBus(100)
-    component := NewComponent(metrics, eventBus)
+    component := New(metrics, eventBus)
 
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
 
-    component.Start()
     eventBus.Start()
-    go component.Run(ctx)
+    go component.Start(ctx)
 
     eventBus.Publish(events.NewCacheAccessEvent(true))
     time.Sleep(100 * time.Millisecond)
@@ -593,12 +601,10 @@ rate(haptic_cache_hit_total[5m]) /
 
 ### Event Buffer Size
 
-Component subscribes with buffer size 200:
+The component subscribes with buffer size 200 (inside `New(...)`):
 
 ```go
-func (c *Component) Start() {
-    c.eventChan = c.eventBus.Subscribe("metrics", 200)
-}
+eventChan := eventBus.SubscribeTypes(ComponentName, 200, /* event-type list */)
 ```
 
 **Why 200?**
@@ -632,28 +638,18 @@ type Component struct {
 ### Controller Startup (pkg/controller/controller.go)
 
 ```go
-// setupComponents creates metrics
-bus, metricsComponent, registry, iterCtx, cancel, configChangeCh := setupComponents(ctx, logger)
-
-// Subscribe before bus.Start()
-metricsComponent.Start()
-
-// Start event bus
+// Sketch — see pkg/controller/iteration.go for the actual sequencing.
+// metricsComponent is constructed (and subscribes) before the bus starts;
+// Start(ctx) blocks on the event loop, so it goes in its own goroutine.
 bus.Start()
 
-// Start metrics event loop
 go func() {
-    if err := metricsComponent.Run(iterCtx); err != nil {
+    if err := metricsComponent.Start(iterCtx); err != nil {
         logger.Error("metrics component failed", "error", err)
     }
 }()
 
-// Start metrics HTTP server
-metricsPort := cfg.Controller.MetricsPort
-if metricsPort > 0 {
-    server := pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), registry)
-    go server.Start(iterCtx)
-}
+// Metrics HTTP server is wired separately in pkg/controller (see infrastructure.go).
 ```
 
 ### Event Types (pkg/controller/events/types.go)
@@ -662,20 +658,31 @@ All event types that trigger metric updates:
 
 ```go
 // Reconciliation
-type ReconciliationCompletedEvent struct { DurationMs int64 }
-type ReconciliationFailedEvent struct { Error string }
+type ReconciliationCompletedEvent struct { DurationMs int64 /* + Correlation, timestamp */ }
+type ReconciliationFailedEvent    struct { Error string  /* + Correlation, timestamp */ }
 
-// Deployment
-type DeploymentCompletedEvent struct { DurationMs int64; FailedCount int }
+// Deployment (real fields — see pkg/controller/events/deployment.go)
+type DeploymentCompletedEvent struct {
+    Total, Succeeded, Failed int
+    DurationMs               int64
+    ReloadsTriggered         int
+    TotalAPIOperations       int
+    OperationBreakdown       map[string]int
+    BackendDiffFields        string
+}
 type InstanceDeploymentFailedEvent struct { Endpoint string; Error string }
 
 // Validation
-type ValidationCompletedEvent struct { Warnings []string; DurationMs int64 }
+type ValidationCompletedEvent struct {
+    Warnings   []string
+    DurationMs int64
+    ParsedConfig *parser.StructuredConfig // pre-parsed so deployer can skip the parse
+}
 type ValidationFailedEvent struct { Errors []string; DurationMs int64 }
 
 // Resources
-type IndexSynchronizedEvent struct { ResourceCounts map[string]int }
-type ResourceIndexUpdatedEvent struct { ResourceTypeName string; ChangeStats types.ChangeStats }
+type IndexSynchronizedEvent     struct { ResourceCounts map[string]int }
+type ResourceIndexUpdatedEvent  struct { ResourceTypeName string; ChangeStats types.ChangeStats }
 ```
 
 ## Resources

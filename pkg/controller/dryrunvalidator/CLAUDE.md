@@ -86,67 +86,66 @@ Create temporary store overlays that:
 
 ### Implementation
 
-The overlay creation is handled by StoreManager (utility component):
+Overlays are built directly by the component via `pkg/stores` constructors —
+there's no `StoreManager` involvement. Each admission request gets a fresh
+`*stores.StoreOverlay` keyed by the resource type derived from the admission
+GVK; the proposal validator merges the overlay with the live stores for the
+duration of the render+validate call only.
 
 ```go
-// pkg/controller/dryrunvalidator/component.go
-func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
-    // Determine operation type
-    operation := overlaystore.OperationCreate
-    if req.OldObject != nil {
-        operation = overlaystore.OperationUpdate
+// pkg/controller/dryrunvalidator/component.go (validateWithOverlay)
+func (c *Component) validateWithOverlay(
+    ctx context.Context,
+    gvk, namespace, name string, object any,
+    operation, requestID string, // operation is the admission verb string
+) (allowed bool, reason string) {
+    resourceType, err := c.mapGVKToResourceType(gvk) // "Ingress" -> "ingresses"
+    if err != nil {
+        return false, fmt.Sprintf("unsupported resource type: %v", err)
     }
 
-    // Create overlay stores with the resource being validated
-    overlayStores, err := c.storeManager.CreateOverlayMap(
-        resourceType,      // e.g., "ingresses"
-        req.Namespace,     // Resource namespace
-        req.Name,          // Resource name
-        req.Object,        // New/updated resource
-        operation,         // CREATE or UPDATE
-    )
+    overlay := c.createOverlay(namespace, name, object, operation, requestID)
+    overlays := map[string]*stores.StoreOverlay{resourceType: overlay}
 
-    // Use overlay stores for template rendering
-    templateContext := map[string]interface{}{
-        "ingresses": overlayStores["ingresses"],  // Includes the test resource
-        "services":  overlayStores["services"],   // References actual store
-        // ... other resource types
+    result := c.proposalValidator.ValidateSync(ctx, overlays)
+    if !result.Valid {
+        return false, c.simplifyError(result.Phase, result.Error)
     }
 
-    // Render template with overlay context
-    haproxyConfig, err := c.engine.Render("haproxy.cfg", templateContext)
-
-    // Validate the resulting configuration
-    // ... (resource is discarded after validation)
+    if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
+        if err := c.runValidationTests(requestID); err != nil {
+            return false, err.Error()
+        }
+    }
+    return true, ""
 }
 ```
 
-### StoreManager Direct Call
+### Direct call, no StoreManager
 
-The DryRunValidator calls StoreManager directly (not via events) because:
+The component talks to `pkg/stores` directly:
 
-1. **Utility Component**: StoreManager is infrastructure, not domain logic
-2. **Synchronous Operation**: Overlay creation is immediate, no async coordination needed
-3. **Performance**: Avoiding event overhead for performance-critical validation path
-4. **Scoped Lifetime**: Overlays are ephemeral, exist only during validation
-
-This is documented in the main CLAUDE.md as an acceptable exception to event-driven patterns.
+1. **No utility wrapper required**: `stores.NewStoreOverlayForCreate/Update/Delete`
+   already covers every admission verb; wrapping it in a `StoreManager` would just
+   add a hop.
+2. **Synchronous**: overlay construction is immediate; no async coordination.
+3. **Performance**: webhook timeouts are tight (10 s), so the path stays event-free.
+4. **Scoped lifetime**: overlays die with the request — they're not registered
+   anywhere global.
 
 ### Operation Types
 
-```go
-type OverlayOperation int
+The component speaks Kubernetes admission verbs, not an enum — `operation` is
+the literal admission string from `AdmissionReview.Request.Operation`:
 
-const (
-    OperationCreate OverlayOperation = iota
-    OperationUpdate
-    OperationDelete  // Not yet implemented
-)
-```
+| String     | Overlay constructor                | Effect on the merged store              |
+|------------|------------------------------------|------------------------------------------|
+| `"CREATE"` | `stores.NewStoreOverlayForCreate`  | Add the new object on top of live data   |
+| `"UPDATE"` | `stores.NewStoreOverlayForUpdate`  | Replace the existing object by ns/name   |
+| `"DELETE"` | `stores.NewStoreOverlayForDelete`  | Remove the object by ns/name (no body)   |
 
-**CREATE**: Add resource to overlay (not in actual store)
-**UPDATE**: Replace existing resource in overlay
-**DELETE**: Remove resource from overlay (future)
+Anything else falls through to a no-op overlay with a warning log — useful for
+detecting future admission verbs we haven't wired up yet.
 
 ### Memory Management
 
@@ -183,75 +182,67 @@ Publish WebhookValidationResponse
 
 The component uses error simplification at component boundaries:
 
-### Template Rendering Errors
+### Phase-Driven Simplification
+
+`ValidateSync` returns a `*validation.ValidationResult` with `Valid` (bool),
+`Error` (the underlying error), and `Phase` (one of `"render"`, `"syntax"`,
+`"schema"`, `"semantic"`). There are no sentinel errors to compare against —
+phase routing happens by string in `simplifyError`:
 
 ```go
-haproxyConfig, err := c.engine.Render("haproxy.cfg", templateContext)
-if err != nil {
-    // Simplify template errors (extract fail() messages)
-    simplified := dataplane.SimplifyRenderingError(err)
-
-    c.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID,
-        "dryrun",
-        false,
-        simplified,  // User-friendly: "Service 'api' not found"
-    ))
-    return
+// pkg/controller/dryrunvalidator/resource_mapping.go
+func (c *Component) simplifyError(phase string, err error) string {
+    if err == nil {
+        return ""
+    }
+    switch phase {
+    case "render":
+        return dataplane.SimplifyRenderingError(err)
+    case "syntax", "schema", "semantic":
+        return dataplane.SimplifyValidationError(err)
+    default:
+        return err.Error()
+    }
 }
 ```
 
-### HAProxy Validation Errors
-
-```go
-_, err := c.validator.ValidateConfig(ctx, haproxyConfig, nil, 0)
-if err != nil {
-    // Simplify HAProxy errors (extract meaningful parts)
-    simplified := dataplane.SimplifyValidationError(err)
-
-    c.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID,
-        "dryrun",
-        false,
-        simplified,  // User-friendly: "maxconn must be >= 1 (got 0)"
-    ))
-    return
-}
-```
+That single helper covers both render-phase failures (template errors,
+`fail()` from a template, missing variables) and validate-phase failures
+(client-native syntax errors, OpenAPI schema violations, `haproxy -c`
+output). The webhook handler in `validateWithOverlay` calls it once and
+returns the result as the admission denial reason — there's no separate
+`if errors.Is(...)` branch per phase.
 
 ## Direct Component Calls Pattern
 
-The DryRunValidator demonstrates the acceptable pattern of calling pure components directly within a reconciliation context:
+The DryRunValidator delegates the render+validate work to a `*proposalvalidator.Component` rather than holding its own engine / validator / store-manager directly. This keeps the validator small (overlay setup + result mapping) and ensures the admission path uses exactly the same pipeline as the leader-driven reconciliation.
 
 ```go
 type Component struct {
-    engine       templating.Engine            // Pure component - called directly
-    validator    *dataplane.Validator        // Pure component - called directly
-    storeManager *resourcestore.Manager      // Utility component - called directly
-    eventBus     *busevents.EventBus         // Event coordination
+    eventBus          *busevents.EventBus
+    eventChan         <-chan busevents.Event
+    proposalValidator *proposalvalidator.Component  // Performs render + 3-phase validation
+    config            *config.Config                // Cached for testRunner construction
+    testRunner        *testrunner.Runner            // Optional: only built if ValidationTests is set
+    logger            *slog.Logger
 }
 
 func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
-    // Direct utility call - acceptable
-    overlayStores, err := c.storeManager.CreateOverlayMap(...)
-
-    // Direct pure component call - acceptable within reconciliation context
-    haproxyConfig, err := c.engine.Render("haproxy.cfg", templateContext)
-
-    // Direct pure component call - acceptable
-    _, err := c.validator.ValidateConfig(ctx, haproxyConfig, nil, 0)
+    // Build overlay stores and a proposal request, then delegate.
+    // The proposalValidator builds the rendering context, runs the template
+    // engine, and feeds the output through HAProxyValidatorComponent's
+    // three-phase validation (syntax + schema + haproxy -c).
 
     // Event publishing - coordination with other components
     c.eventBus.Publish(events.NewWebhookValidationResponse(...))
 }
 ```
 
-**Why direct calls are acceptable here:**
+**Why this delegation is acceptable here:**
 
-1. **Single reconciliation context**: All calls happen within one validation request
-2. **No cross-component coordination**: No other components need to observe these operations
-3. **Performance critical**: Webhook timeouts are tight (10 seconds)
-4. **Stateless**: Each validation is independent
+1. **Same pipeline as reconciliation**: Webhook validation must reject configs that would also fail at deploy time, so reusing the proposal pipeline is required by spec, not just convenient.
+2. **Performance critical**: Webhook timeouts are tight (10 seconds); avoiding extra event hops keeps the path predictable.
+3. **Stateless**: Each validation is independent.
 
 This pattern is documented in `/CLAUDE.md` and `pkg/controller/CLAUDE.md` as an exception to strict event-driven patterns for performance-critical paths.
 
@@ -269,103 +260,88 @@ func TestSimplifyRenderingError(t *testing.T) {
 }
 ```
 
-### Integration Tests (Future)
+### Integration Tests
 
-Test full validation flow with overlay stores:
+The full integration shape is in `component_test.go`. Two things differ from
+what you might guess from the rest of this doc:
 
-```go
-func TestValidateIngress_WithOverlay(t *testing.T) {
-    // Setup actual stores
-    actualStores := setupActualStores(t)
+- The constructor takes a `*ComponentConfig` struct, not positional args:
 
-    // Create test ingress
-    testIngress := &unstructured.Unstructured{...}
+  ```go
+  component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
+      EventBus:          bus,
+      ProposalValidator: proposalValidator,
+      Config:            cfg,
+      Engine:            engine,
+      ValidationPaths:   validationPaths,
+      Capabilities:      capabilities,
+      Logger:            logger,
+  })
+  ```
 
-    // Create validator
-    validator := NewComponent(storeManager, engine, validator, eventBus)
-
-    // Create validation request
-    req := &events.WebhookValidationRequest{
-        Object:    testIngress,
-        Namespace: "default",
-        Name:      "test-ingress",
-    }
-
-    // Validate (should create overlay internally)
-    validator.handleValidationRequest(req)
-
-    // Verify validation result
-    // ... check WebhookValidationResponse event
-}
-```
+- Use `events.NewWebhookValidationRequest(gvk, namespace, name, obj, operation)`
+  to build requests; you can't construct `WebhookValidationRequest` literally
+  because the timestamp mixin is unexported and the constructor stamps the
+  `ID` (UUID).
 
 ## Common Pitfalls
 
 ### Modifying Actual Stores
 
-**Problem**: Accidentally modifying actual stores during validation.
+**Problem**: Accidentally writing to the live store during validation. Anything
+you `Add` to a real `stores.Store` survives the request.
 
 ```go
-// Bad - modifies actual store
-actualStore := c.storeManager.GetStore("ingresses")
-actualStore.Add(req.Object)  // Pollutes actual store!
+// Bad — pollutes the live store
+actualStore.Add(req.Object, []string{namespace, name})
 ```
 
-**Solution**: Always use overlay stores.
+**Solution**: Build a `*stores.StoreOverlay` and let `proposalValidator.ValidateSync`
+merge it on top of the live data for the duration of the call.
 
 ```go
-// Good - uses overlay
-overlayStores, err := c.storeManager.CreateOverlayMap(...)
-// Overlay is discarded after validation
+// Good — overlay dies with the request
+overlay := stores.NewStoreOverlayForCreate(req.Object.(runtime.Object))
+result := proposalValidator.ValidateSync(ctx, map[string]*stores.StoreOverlay{
+    "ingresses": overlay,
+})
 ```
 
 ### Forgetting Error Simplification
 
-**Problem**: Returning raw template/validation errors to webhook.
+**Problem**: Returning a raw error string to the API server.
 
 ```go
-// Bad - raw error exposed to user
-if err != nil {
-    c.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID,
-        "dryrun",
-        false,
-        err.Error(),  // "failed to render haproxy.cfg: ..."
-    ))
-}
+// Bad — raw library error reaches the user
+return false, result.Error.Error() // "failed to render haproxy.cfg: ..."
 ```
 
-**Solution**: Always simplify errors at boundaries.
+**Solution**: Route through `simplifyError(phase, err)` so render and validate
+errors both get the appropriate `dataplane.Simplify*Error` pass.
 
 ```go
-// Good - user-friendly message
-if err != nil {
-    simplified := dataplane.SimplifyRenderingError(err)
-    c.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID,
-        "dryrun",
-        false,
-        simplified,  // "Service 'api' not found"
-    ))
-}
+// Good — phase-aware simplification
+return false, c.simplifyError(result.Phase, result.Error)
 ```
 
-### Not Handling All Operations
+### Bypassing the Admission Verb
 
-**Problem**: Only handling CREATE, ignoring UPDATE.
+**Problem**: Hard-coding the operation instead of using the admission request's
+verb. DELETE arrives with no body — treating it as CREATE will dereference nil.
 
 ```go
-// Bad - UPDATE uses wrong operation type
-operation := overlaystore.OperationCreate  // Always CREATE
+// Bad — assumes CREATE
+overlay := stores.NewStoreOverlayForCreate(req.Object)
 ```
 
-**Solution**: Detect operation from request.
+**Solution**: Switch on the admission verb the way `createOverlay` does.
 
 ```go
-// Good - detect operation type
-operation := overlaystore.OperationCreate
-if req.OldObject != nil {
-    operation = overlaystore.OperationUpdate
+// Good
+switch operation {
+case "CREATE": overlay = stores.NewStoreOverlayForCreate(obj)
+case "UPDATE": overlay = stores.NewStoreOverlayForUpdate(obj)
+case "DELETE": overlay = stores.NewStoreOverlayForDelete(namespace, name)
 }
 ```
 
@@ -402,20 +378,15 @@ The DryRunValidator now integrates the test runner to automatically execute embe
 
 **Configuration**: Add `validationTests` to your HAProxyTemplateConfig CRD to enable automatic webhook validation.
 
-### DELETE Operation Support
-
-Currently DELETE is not fully implemented. To add:
-
-1. Implement OperationDelete in overlay store
-2. Handle DELETE in handleValidationRequest
-3. Test that config is valid after resource removal
+## Future Enhancements
 
 ### Parallel Validation
 
-For performance, could validate multiple resources concurrently:
+Each admission request runs serially through `proposalvalidator.ValidateSync`.
+Webhook calls are independent, so the proposal pipeline could fan them out:
 
 ```go
-// Future: parallel validation
+// Speculative -- not implemented.
 var wg sync.WaitGroup
 results := make(chan *ValidationResult, len(requests))
 
@@ -433,22 +404,23 @@ close(results)
 
 ### Validation Caching
 
-Cache validation results for identical configurations:
+The dataplane validator already caches successful three-phase results by
+(`configHash`, `auxHash`, `versionHash`) tuple (see
+`pkg/dataplane/validator.go`). A request-side cache here would need to key on
+the same tuple to avoid double-caching divergent state.
 
 ```go
-// Future: cache by config hash
+// Speculative -- not implemented.
 configHash := hashConfig(haproxyConfig)
 if cached, ok := c.validationCache.Get(configHash); ok {
     return cached.Valid, cached.Reason
 }
-
-valid, reason := c.validator.ValidateConfig(...)
-c.validationCache.Set(configHash, ValidationResult{valid, reason})
 ```
 
 ## Resources
 
-- StoreManager: `pkg/controller/resourcestore/CLAUDE.md`
+- Overlay primitives: `pkg/stores/README.md`
+- Render-validate pipeline (delegated to): `pkg/controller/proposalvalidator/README.md`
 - Error simplification: `pkg/dataplane/CLAUDE.md`
 - Event-driven patterns: `pkg/controller/CLAUDE.md`
 - Webhook integration: `pkg/controller/webhook/CLAUDE.md`

@@ -11,7 +11,7 @@ kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 curl http://localhost:8080/debug/vars
 ```
 
-Set `controller.debugPort: 0` in Helm values to disable, or change the port via `controller.debugPort: <port>`. In production, pair an enabled debug port with a NetworkPolicy — see [Security](./security.md#network-exposure).
+`/healthz` lives on the same listener, so setting `controller.debugPort: 0` disables both `/debug/*` and `/healthz` and breaks the liveness/readiness probes — restrict access with a NetworkPolicy instead (see [Security](./security.md#network-exposure)). To move both endpoints to a different port, set `controller.debugPort: <port>`.
 
 ## Debug Variables
 
@@ -25,7 +25,7 @@ Set `controller.debugPort: 0` in Helm values to disable, or change the port via 
 | `/debug/vars/rendered` | Last rendered `haproxy.cfg`, its size, and timestamp |
 | `/debug/vars/auxfiles` | Last rendered SSL certs, map files, general files + a summary count |
 | `/debug/vars/resources` | Per-type counts for every `watchedResources` entry |
-| `/debug/vars/pipeline` | Per-phase status (`config_parse`, `validation`, `deployment`) — useful for "is reconciliation stuck?" checks |
+| `/debug/vars/pipeline` | Per-phase status keyed `last_trigger`, `rendering`, `validation`, `deployment` (each carries its own status / timestamp / duration / error) — useful for "is reconciliation stuck?" checks. Config-parse failures don't show up here; they surface on `/debug/vars/errors` as `config_parse_error`. |
 | `/debug/vars/validated` | Last successful render+validate output (`config`, `timestamp`, `config_bytes`, `validation_duration_ms`) |
 | `/debug/vars/errors` | Last error per phase, keyed by `config_parse_error` / `template_render_error` / `haproxy_validation_error` / `deployment_errors`, plus `last_error_timestamp` |
 | `/debug/vars/events` | Ring buffer of the most recent controller events |
@@ -138,8 +138,9 @@ High counts on a `full`-store resource type is usually the answer; see [Watching
 ```bash
 curl 'http://localhost:8080/debug/pprof/profile?seconds=30' > cpu.pprof
 go tool pprof -top cpu.pprof
-# If the hot frames are templating, also:
-curl 'http://localhost:8080/debug/vars/events?field={.last_100}' \
+# If the hot frames are templating, count recent reconciliation triggers.
+# /debug/vars/events returns a JSON list (no wrapper object) so just iterate it.
+curl -s http://localhost:8080/debug/vars/events \
   | jq '[.[] | select(.type == "reconciliation.triggered")] | length'
 ```
 

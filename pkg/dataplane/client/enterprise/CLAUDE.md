@@ -4,28 +4,39 @@ Development context for HAProxy Enterprise DataPlane API operations.
 
 ## Package Purpose
 
-This package provides client operations for HAProxy Enterprise-only endpoints. These endpoints are not available in HAProxy Community edition and will return `ErrEnterpriseRequired` when called against a community instance.
+This package provides client operations for HAProxy Enterprise-only endpoints. These endpoints are not available in HAProxy Community edition; calling them against a Community instance returns `client.ErrEnterpriseRequired`.
 
 ## File Organization
 
-Each file covers a specific enterprise feature domain:
+Each file covers a feature domain. Per-file method counts drift quickly as new endpoints land — for the current count run:
 
-| File | Endpoints | Description |
-|------|-----------|-------------|
-| `common.go` | - | Shared types, Operations struct |
-| `waf.go` | 11 | WAF profiles, body rules, rulesets |
-| `botmgmt.go` | 4 | Bot management profiles, CAPTCHAs |
-| `udp.go` | 12 | UDP load balancers with child resources |
-| `keepalived.go` | 13 | VRRP instances, sync groups, track scripts |
-| `logging.go` | 5 | Log configuration, inputs, outputs |
-| `git.go` | 4 | Git settings, actions |
-| `dynamic_update.go` | 3 | Dynamic update rules and section |
-| `aloha.go` | 3 | ALOHA features and actions |
-| `misc.go` | 4 | Facts, ping, summary, structured config |
+```sh
+for f in pkg/dataplane/client/enterprise/*.go; do
+  case "$f" in *_test.go) continue ;; esac
+  printf '%s: %d methods\n' "$(basename "$f")" "$(grep -cE '^func \(' "$f")"
+done
+```
+
+| File | Description |
+|------|-------------|
+| `common.go` | `Operations` entry point, `IsAvailable`, `Capabilities`, `ErrNotFound` |
+| `response.go` | `decodeResponse[T]`, `decodeResponseOr404[T]`, `decodeSliceResponse[T]`, `checkResponseStatus` — generic JSON decode/error helpers reused across files |
+| `waf.go` | WAF profiles (CRUD, version, replace) |
+| `waf_body_rules.go` | WAF body-inspection rules per profile |
+| `waf_rulesets.go` | WAF rulesets and the rules inside them |
+| `botmgmt.go` | Bot-management profiles and CAPTCHA configuration |
+| `udp.go` | UDP load balancers and their child resources (binds, server templates, ACLs, switching rules) |
+| `keepalived.go` | Keepalived transaction lifecycle and VRRP instances |
+| `keepalived_vrrp_groups.go` | VRRP sync groups and track scripts (split out of `keepalived.go` to keep file size manageable) |
+| `logging.go` | Advanced logging configuration |
+| `git.go` | Git settings and actions |
+| `dynamic_update.go` | Dynamic-update section + rules |
+| `aloha.go` | ALOHA endpoints and actions |
+| `misc.go` | Facts, ping, summary, structured config |
 
 ## Implementation Pattern
 
-All operations use `DispatchEnterpriseOnly` from the parent client package:
+All operations route through `DispatchEnterpriseOnly` from the parent `client` package. `EnterpriseCallFunc[T]` exposes only `V30EE`, `V31EE`, `V32EE` — there is no `V33EE`; the Enterprise generated client does not yet ship a v3.3 variant even though Community does. Pin to `V32EE` when the endpoint is only available in 3.2+ and the dispatcher will return an error on older versions.
 
 ```go
 func (w *WAFOperations) GetAllProfiles(ctx context.Context, txID string) ([]WafProfile, error) {
@@ -48,57 +59,64 @@ func (w *WAFOperations) GetAllProfiles(ctx context.Context, txID string) ([]WafP
     }
     defer resp.Body.Close()
 
-    // Parse response...
-    return profiles, nil
+    return decodeSliceResponse[WafProfile](resp, "GetAllWAFProfiles")
 }
 ```
 
+For decoding the body, prefer the generic helpers in `response.go` rather than hand-rolling `json.NewDecoder(resp.Body).Decode(...)` blocks — the helpers also normalise non-2xx statuses into the package's error model.
+
 ## Keepalived Transaction System
 
-Keepalived has a separate transaction system from HAProxy configuration. Use dedicated transaction methods:
+Keepalived has a separate transaction system from HAProxy configuration. The methods live on `KeepalivedOperations`:
 
 ```go
-keepalived := enterprise.NewKeepalivedOperations(client)
+keepalived := enterprise.NewKeepalivedOperations(dpClient)
 
-// Start Keepalived-specific transaction
-txID, err := keepalived.CreateTransaction(ctx)
+// Open Keepalived-specific transaction (note: StartTransaction, not CreateTransaction).
+txID, err := keepalived.StartTransaction(ctx)
 if err != nil {
     return err
 }
 
 // Make changes
-err = keepalived.CreateVRRPInstance(ctx, txID, instance)
-if err != nil {
-    keepalived.DeleteTransaction(ctx, txID)
+if err := keepalived.CreateVRRPInstance(ctx, txID, instance); err != nil {
+    _ = keepalived.DeleteTransaction(ctx, txID) // abort
     return err
 }
 
 // Commit Keepalived transaction
-err = keepalived.CommitTransaction(ctx, txID)
+if err := keepalived.CommitTransaction(ctx, txID); err != nil {
+    return err
+}
 ```
+
+The HAProxy `client.VersionAdapter` does **not** wrap Keepalived transactions — there is no equivalent retry loop here. Callers own the lifecycle. If you need to extend this, mirror the four entry points (`StartTransaction`, `CommitTransaction`, `DeleteTransaction`, `GetTransaction`) in `keepalived.go`.
 
 ## Error Handling
 
-All operations may return:
+Every operation can surface:
 
-- `client.ErrEnterpriseRequired` - Connected to Community edition
-- API-specific errors (validation, not found, etc.)
-- Network/connection errors
+- `client.ErrEnterpriseRequired` — the endpoint requires HAProxy Enterprise but the underlying `Clientset` reports Community edition. Returned by the dispatcher (`pkg/dataplane/client/dispatcher.go`) before any HTTP call is made.
+- `enterprise.ErrNotFound` — the endpoint returned 404 (mainly used by the `decodeResponseOr404` helper).
+- API-specific errors — schema violations, conflicts, etc.
+- Network / context errors.
 
 ```go
 profiles, err := wafOps.GetAllProfiles(ctx, txID)
-if errors.Is(err, client.ErrEnterpriseRequired) {
+switch {
+case errors.Is(err, client.ErrEnterpriseRequired):
     log.Info("WAF features not available - using Community edition")
     return nil
-}
-if err != nil {
+case errors.Is(err, enterprise.ErrNotFound):
+    return nil // empty result is fine
+case err != nil:
     return fmt.Errorf("failed to get WAF profiles: %w", err)
 }
 ```
 
 ## Testing
 
-Enterprise features require HAProxy Enterprise for integration tests:
+Enterprise features need an Enterprise HAProxy for integration; gate on `IsEnterprise` (or `Operations.IsAvailable`) so the test skips cleanly on Community fixtures:
 
 ```go
 func TestWAFOperations_Integration(t *testing.T) {
@@ -106,14 +124,14 @@ func TestWAFOperations_Integration(t *testing.T) {
         t.Skip("skipping integration test")
     }
 
-    client := setupTestClient(t)
-    if !client.Clientset().IsEnterprise() {
+    dpClient := setupTestClient(t) // *client.DataplaneClient
+    if !dpClient.Clientset().IsEnterprise() {
         t.Skip("WAF tests require HAProxy Enterprise")
     }
 
-    wafOps := enterprise.NewWAFOperations(client)
-    // Test operations...
+    wafOps := enterprise.NewWAFOperations(dpClient)
+    // … exercise the operations
 }
 ```
 
-Unit tests can mock the dispatch functions.
+For unit tests, mock at the dispatch level: build the same `EnterpriseCallFunc[*http.Response]` value but route through a fake `*client.DataplaneClient` whose `Clientset` returns a stub. The per-file `*_test.go` files in this directory show the pattern.

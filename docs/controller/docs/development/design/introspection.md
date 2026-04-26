@@ -97,7 +97,7 @@ graph TB
 
 ## HTTP Endpoints
 
-The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`); set it to `0` to disable the server entirely.
+The debug server exposes controller state via HTTP. The port comes from the `--debug-port` flag or the `DEBUG_PORT` environment variable (the Helm chart sets both via the `controller.debugPort` value, defaulting to `8080`). `/healthz` shares the same listener, so setting the port to `0` disables both `/debug/*` and `/healthz` and breaks Kubernetes probes — restrict `/debug/*` via NetworkPolicy instead of disabling the port.
 
 ```bash
 # List all available variables
@@ -115,15 +115,12 @@ curl http://localhost:8080/debug/vars/rendered
 # Get resource counts
 curl http://localhost:8080/debug/vars/resources
 
-# Get recent events (last 1000)
+# Get the most recent 100 events (the defaultLimit baked into EventsVar)
 curl http://localhost:8080/debug/vars/events
 
-# Get recent 100 events
-curl 'http://localhost:8080/debug/vars/events?field={.last_100}'
-
-# Search events by correlation ID — separate /debug/events endpoint
-curl 'http://localhost:8080/debug/events?correlation_id=<id>'
+# Tune the count or search by correlation ID via the separate /debug/events endpoint
 curl 'http://localhost:8080/debug/events?limit=500'
+curl 'http://localhost:8080/debug/events?correlation_id=<id>'
 
 # Get complete state dump
 curl http://localhost:8080/debug/vars/state
@@ -156,38 +153,45 @@ This separation allows different buffer sizes, retention policies, and use cases
 
 ## Integration with Acceptance Testing
 
-The debug endpoints enable powerful acceptance testing:
+The debug endpoints enable powerful acceptance testing. `tests/acceptance/debug_client.go` provides a `*DebugClient` that talks to the controller via the Kubernetes API server's service-proxy, so tests don't need to manage `kubectl port-forward` themselves:
 
 ```go
-// tests/acceptance/debug_client.go
-type DebugClient struct {
-    podName   string
-    debugPort int
-}
+import "gitlab.com/haproxy-haptic/haptic/tests/acceptance"
 
-// In test
-func TestHAProxyTemplateConfigReload(t *testing.T) {
-    // Create debug client with port-forward
-    debugClient := NewDebugClient(cfg.RESTConfig(), "controller-pod", 8080)
-    debugClient.Start(ctx)
+// Most tests use the helper that waits for the pod and the debug service
+// endpoints before constructing the client (handles pod restarts cleanly).
+debugClient, err := acceptance.EnsureDebugClientReady(
+    ctx, t, client, clientset, namespace, 30*time.Second,
+)
+require.NoError(t, err)
 
-    // Patch the HAProxyTemplateConfig CRD to a new template revision
-    UpdateHAProxyTemplateConfig(ctx, "new-template")
+// Patch the HAProxyTemplateConfig CRD via the dynamic client (real tests
+// use the t.Update / t.Patch helpers from sigs.k8s.io/e2e-framework).
+patchHAProxyTemplateConfig(ctx, /* ... */)
 
-    // Wait for controller to process change
-    err := debugClient.WaitForConfigVersion(ctx, "v2", 30*time.Second)
-    require.NoError(t, err)
+// Wait for the controller to roll over to the new spec.
+err = debugClient.WaitForConfigVersion(ctx, "<new resourceVersion>", 30*time.Second)
+require.NoError(t, err)
 
-    // Verify rendered config includes changes
-    rendered, err := debugClient.GetRenderedConfig(ctx)
-    require.NoError(t, err)
-    assert.Contains(t, rendered, "expected-content")
+// Inspect the rendered config (with retry while the new revision propagates).
+rendered, err := debugClient.GetRenderedConfigWithRetry(ctx, 30*time.Second)
+require.NoError(t, err)
+assert.Contains(t, rendered, "expected-content")
 
-    // Verify event history
-    events, err := debugClient.GetEvents(ctx)
-    require.NoError(t, err)
-    assert.Contains(t, events, "config.validated")
-}
+// Inspect recent events. GetEvents returns []map[string]any; each entry has
+// a "type" key (e.g. "config.validated"). Walk the slice rather than using
+// assert.Contains on the raw slice.
+events, err := debugClient.GetEvents(ctx)
+require.NoError(t, err)
+require.True(t, slices.ContainsFunc(events, func(e map[string]any) bool {
+    return e["type"] == "config.validated"
+}))
+```
+
+If you need to construct the client yourself (typically only inside `EnsureDebugClientReady`), the constructor takes the clientset, the namespace, the *service* name (not a pod name), and the port:
+
+```go
+client := acceptance.NewDebugClient(clientset, namespace, serviceName, acceptance.DebugPort)
 ```
 
 This enables true end-to-end testing without parsing logs or relying on timing heuristics.
@@ -198,13 +202,13 @@ Debug variables implement careful filtering:
 
 ```go
 // CredentialsVar returns metadata only
-func (v *CredentialsVar) Get() (interface{}, error) {
+func (v *CredentialsVar) Get() (any, error) {
     creds, version, err := v.provider.GetCredentials()
     if err != nil {
         return nil, err
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "version":             version,
         "has_dataplane_creds": creds.DataplanePassword != "",
         // NEVER expose actual passwords
@@ -229,7 +233,7 @@ The debug server is configured by the controller binary at startup, not via the 
 | Event-buffer size | Compile-time constant (`pkg/controller/debug`) | Not tunable per-deployment |
 | Go profiling | Always mounted at `/debug/pprof/*` when the debug port is enabled | See [Debugging Guide](../../operations/debugging.md#go-profiling) |
 
-Disable the debug server entirely by setting `controller.debugPort: 0` in Helm values; the `/healthz` endpoint then moves to `controller.ports.healthz` (see [Security — Network Exposure](../../operations/security.md#network-exposure)).
+Setting `controller.debugPort: 0` disables the introspection server entirely. `/healthz` lives on the same listener, so disabling it also drops health-check responses and breaks the Kubernetes liveness/readiness probes — restrict `/debug/*` via NetworkPolicy instead (see [Security — Network Exposure](../../operations/security.md#network-exposure)).
 
 For detailed implementation and API documentation, see:
 

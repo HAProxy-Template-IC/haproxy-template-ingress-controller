@@ -395,7 +395,10 @@ type WatchedResource struct {
 
 	// LabelSelector filters resources by labels (server-side filtering).
 	//
+	// Equality-only: comma-separated "key=value" pairs.
 	// Example: "app=nginx,environment=production"
+	// Set-based syntax (e.g. "tier in (frontend,api)", "!disabled") is NOT supported —
+	// the controller's parseLabelSelector splits on ',' and '=' and silently drops the rest.
 	// +optional
 	LabelSelector string `json:"labelSelector,omitempty"`
 
@@ -410,8 +413,12 @@ type WatchedResource struct {
 
 	// NamespaceSelector filters resources by namespace labels.
 	//
-	// Example: "environment=production"
-	// If empty, watches resources in all namespaces (requires cluster-wide RBAC).
+	// NOT YET IMPLEMENTED: this field is declared on the CRD but the controller
+	// does not read it — pkg/controller/conversion never propagates it to the
+	// internal WatchedResource and pkg/controller/resourcewatcher has no code
+	// path that consumes it. Setting it has no effect today. Use the
+	// `namespace` field for a single fixed namespace, or pre-filter at the RBAC
+	// layer.
 	// +optional
 	NamespaceSelector string `json:"namespaceSelector,omitempty"`
 

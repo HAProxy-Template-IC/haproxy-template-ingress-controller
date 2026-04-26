@@ -33,7 +33,7 @@ There is no `test-all` target — run the three top-level ones in sequence if yo
 Environment knobs used by the integration suite:
 
 - `KEEP_CLUSTER=true` (default) — reuse the Kind cluster across runs; set to `false` to always clean up.
-- `KIND_NODE_VERSION=v1.29.0` — override the node image.
+- `KIND_NODE_IMAGE=kindest/node:v1.32.0` (default) — override the Kind node image.
 
 Integration tests additionally require the `integration` build tag; `make test-integration` adds it automatically. Running `go test ./tests/integration/...` with no tag silently finds no tests.
 

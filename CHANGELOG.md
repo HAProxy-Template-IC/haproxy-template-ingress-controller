@@ -15,7 +15,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 - **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax) with full access to Kubernetes resources, built-in utility functions, and modular template snippets
 - **Embedded validation tests**: Declarative test fixtures and assertions for testing HAProxy configurations within template libraries; run via `haptic-controller validate --test <name>`
-- **Dry-run validation webhook**: Admission webhook for HAProxyTemplateConfig CRD that renders templates with proposed changes and rejects invalid configurations with detailed errors
+- **Dry-run validation webhook**: Admission webhook for opted-in watched resources (Ingress, HTTPRoute, GRPCRoute by default) that re-renders the template set with the proposed change and rejects requests that would produce an invalid HAProxy configuration
 - **Multi-architecture container images**: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
 - **HAProxy version support**: 3.0, 3.1, 3.2, 3.3 — version-specific images tagged accordingly
 - **Supply chain security**: Container images, binaries, and Helm charts signed with Cosign (keyless OIDC); SBOM attestations in SPDX format

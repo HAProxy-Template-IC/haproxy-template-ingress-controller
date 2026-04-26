@@ -168,9 +168,13 @@ This is a **pure generic data structure** with no dependencies on other applicat
 
 Used by:
 
-- `pkg/controller/commentator` - Event history ring buffer
-- `pkg/controller/debug` - Debug event buffer
-- Any component needing bounded event/log storage
+- `pkg/controller/debug` — backs the `/debug/vars/events` endpoint via `EventBuffer` (see `pkg/controller/debug/events.go`).
+- Any component needing bounded event/log storage.
+
+NOT used by `pkg/controller/commentator`. The commentator has its own
+non-generic `RingBuffer` (`pkg/controller/commentator/ring_buffer.go`) with
+`FindByCorrelationID` / `FindByTypeInWindow` / `FindRecent` queries that this
+package doesn't expose. Don't conflate the two.
 
 ## Common Pitfalls
 
@@ -190,32 +194,35 @@ all := buffer.GetAll()  // [2, 3, 4] - item 1 is gone!
 
 **Solution**: Size buffer appropriately for your use case.
 
-### Modifying Returned Slices
+### Reference Semantics for Pointer Element Types
 
-**Problem**: Modifying the returned slice affects internal buffer.
+**Problem**: When `T` is a pointer (or contains pointers), the returned slice
+gives you the same underlying objects the buffer holds. Mutating through a
+pointer mutates whatever else is holding it.
+
+`GetLast` and `GetAll` both allocate a fresh `[]T` and copy elements into it,
+so the **slice itself** is yours to modify (e.g. `result[0] = newEvent` doesn't
+poke the buffer). For value-typed `T`, that's the end of the story — you have
+your own copies. For pointer-typed `T`, the slice contains pointer values; the
+objects they point to are still shared.
 
 ```go
+// Value-typed T: copy is complete, mutation is local.
 buffer := ringbuffer.New[Event](100)
-// ... add events ...
-
 events := buffer.GetAll()
-events[0].Message = "MODIFIED"  // This modifies internal buffer!
+events[0].Message = "MODIFIED" // safe: only this slice's element changes
 ```
-
-**Solution**: GetAll/GetLast return copies, but if T contains pointers, deep copy may be needed:
 
 ```go
-// If deep copy needed
+// Pointer-typed T: the slice is fresh but the events are shared.
+buffer := ringbuffer.New[*Event](100)
 events := buffer.GetAll()
-eventsCopy := make([]Event, len(events))
-for i, e := range events {
-    eventsCopy[i] = Event{
-        Type:    e.Type,
-        Message: e.Message,  // Copy strings/primitives
-        // For pointer fields, create new instances
-    }
-}
+events[0].Message = "MODIFIED" // mutates the same Event the buffer still holds
 ```
+
+**Solution**: For pointer-typed `T`, deep-copy at the read site if you need
+isolation, or store value-typed `T` in the first place — `RingBuffer[Event]`
+costs nothing extra over `RingBuffer[*Event]` for small structs.
 
 ### Wrong Buffer Size
 
@@ -342,5 +349,4 @@ Memory: O(size) - fixed allocation, no growth
 
 - Go generics: <https://go.dev/doc/tutorial/generics>
 - Ring buffer algorithm: <https://en.wikipedia.org/wiki/Circular_buffer>
-- Usage in controller: `pkg/controller/commentator/commentator.go`
-- Usage in debug: `pkg/controller/debug/events.go`
+- Usage in debug: `pkg/controller/debug/events.go` (the only consumer in this repo). The commentator package implements its own ring buffer; this generic one is not imported there.

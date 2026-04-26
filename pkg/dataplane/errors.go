@@ -15,8 +15,12 @@ var ErrValidationCacheHit = errors.New("validation cache hit")
 // It provides detailed information about what stage failed and suggestions
 // for how to fix the problem.
 type SyncError struct {
-	// Stage indicates where the failure occurred:
-	// "connect", "fetch", "parse-current", "parse-desired", "compare", "apply", "commit", "fallback"
+	// Stage indicates where the failure occurred. Common values:
+	//   "connect", "parse-current", "parse-desired",
+	//   "compare", "compare_files", "compare_ssl", "compare_ssl_ca", "compare_maps", "compare_crtlists",
+	//   "sync_ssl_pre", "sync_ssl_ca_pre", "sync_files_pre", "sync_maps_pre",
+	//   "apply", "commit", "reload_verification", "auxiliary_reload_verification",
+	//   "fallback"
 	Stage string
 
 	// Message provides a detailed error description

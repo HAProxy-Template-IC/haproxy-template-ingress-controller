@@ -44,7 +44,7 @@
 //
 // Events are organized into separate files by category:
 //
-//   - config.go:              ConfigMap/Secret changes and validation events
+//   - config.go:              HAProxyTemplateConfig CRD changes and validation events
 //   - resource.go:            Kubernetes resource indexing and synchronization events
 //   - reconciliation.go:      Template rendering and deployment cycle events
 //   - template.go:            Template rendering operation events

@@ -21,7 +21,7 @@ The Helm chart provisions a `ServiceAccount` and `ClusterRole` (names derive fro
 
 Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
 
-Narrow the cluster-wide watch to specific namespaces by pinning `namespace:` or `namespaceSelector:` on each watched-resource entry — see [Watching Resources](../watching-resources.md).
+Narrow the cluster-wide watch to a single namespace by pinning `namespace:` on each watched-resource entry — see [Watching Resources](../watching-resources.md). (`namespaceSelector:` exists on the CRD but is currently unimplemented; for multi-namespace filtering by labels, fall back to per-namespace `Role`/`RoleBinding` instead of a `ClusterRole`.)
 
 ### Credentials
 
@@ -78,8 +78,8 @@ The controller pod exposes three HTTP ports (all chart defaults):
 
 | Port | Endpoint | Notes |
 |------|----------|-------|
-| `8080` | `/healthz`, `/debug/vars`, `/debug/pprof/` | Set `controller.debugPort: 0` in production to drop `/debug/*` — `/healthz` is served on the same port, so disabling it also requires moving healthz via `controller.ports.healthz` |
-| `9090` | `/metrics` | Disable by setting `controller.config.controller.metricsPort: 0` |
+| `8080` | `/healthz`, `/debug/vars`, `/debug/pprof/` | `/healthz` and `/debug/*` share the same listener; setting `controller.debugPort: 0` disables both and breaks the liveness/readiness probes. To shield `/debug/*` in production, restrict access with a NetworkPolicy (example below) instead of disabling the port |
+| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (e.g. `controller.extraEnv` in Helm); the `metricsPort` field on the CRD is *not* read by the controller — the chart strips it before serializing |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
 Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
@@ -165,7 +165,7 @@ Replace `<namespace>`/`<release>` with your Helm release; the SA name is `<relea
 Before exposing a HAPTIC deployment to production traffic:
 
 - [ ] Random, rotated passwords in `credentialsSecretRef`.
-- [ ] `controller.debugPort: 0` — or a NetworkPolicy that pins ingress to trusted namespaces.
+- [ ] NetworkPolicy that pins `/debug/*` ingress to trusted namespaces (the port also serves `/healthz`, so don't set `controller.debugPort: 0`).
 - [ ] Watched-resource selectors scoped to the namespaces you intend to serve.
 - [ ] Release namespace labelled with `pod-security.kubernetes.io/enforce=restricted`.
 - [ ] NetworkPolicy allowing only kube-apiserver + Dataplane-API egress.

@@ -64,7 +64,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | Snippet | Annotations Processed |
 |---------|----------------------|
 | `backend-directives-100-haproxytech-pod-maxconn` | `haproxy.org/pod-maxconn` |
-| `backend-directives-100-haproxytech-timeouts` | `haproxy.org/timeout-server`, `/timeout-connect`, `/timeout-queue`, `/timeout-tunnel`, `/timeout-http-*`, `/timeout-check` |
+| `backend-directives-100-haproxytech-timeouts` | `haproxy.org/timeout-server`, `/timeout-connect`, `/timeout-queue`, `/timeout-tunnel`, `/timeout-check` |
 | `backend-directives-150-haproxytech-load-balance` | `haproxy.org/load-balance` |
 | `backend-directives-200-haproxytech-health-checks` | `haproxy.org/check` |
 | `backend-directives-210-haproxytech-advanced-health-checks` | `haproxy.org/check-http`, `haproxy.org/check-interval` |
@@ -75,7 +75,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 | `backend-directives-400-haproxytech-session-persistence` | `haproxy.org/cookie-persistence` |
 | `backend-directives-401-haproxytech-session-persistence-no-dynamic` | `haproxy.org/cookie-persistence-no-dynamic` |
 | `backend-directives-500-haproxytech-ingress-auth` | `haproxy.org/auth-*` (attaches the userlist per backend) |
-| `backend-directives-900-haproxytech-advanced` | `haproxy.org/backend-config-snippet`, `haproxy.org/server-*`, `haproxy.org/send-proxy-protocol` |
+| `backend-directives-900-haproxytech-advanced` | `haproxy.org/backend-config-snippet`, `haproxy.org/server-*`, `haproxy.org/send-proxy-protocol`, `haproxy.org/scale-server-slots` |
 
 ### Other extension points
 
@@ -1000,13 +1000,11 @@ server pod1 10.0.1.5:8443 ssl ca-file /etc/haproxy/ssl/ca-cert.pem verify requir
 
 ### haproxy.org/check
 
-**Status**: ✅ Supported
+**Status**: ⚠️ Partial — value validated but not honoured
 
-**Description**: Enable health checks for backend servers.
+**Description**: Health checks are emitted unconditionally as `default-server check` by `backends-500-ingress`. This annotation is parsed (it errors on values other than `"true"` / `"false"`) but only adds a `# Note: check annotation value: ...` comment to the rendered config — there is no code path that disables checks when set to `"false"`. To disable health checks for a single backend, supply a `haproxy.org/backend-config-snippet` annotation that overrides `default-server`.
 
-**Default**: `true`
-
-**Usage**:
+**Usage** (informational only):
 
 ```yaml
 haproxy.org/check: "true"
@@ -1015,12 +1013,12 @@ haproxy.org/check: "true"
 **Generated HAProxy Configuration**:
 
 ```haproxy
-server pod1 10.0.1.5:8080 check
+default-server check
+server SRV_1 10.0.1.5:8080 enabled
+# Note: check annotation value: true
 ```
 
-**Dependencies**: None
-
-**Related annotations**: `check-http`, `check-interval`, `timeout-check`
+**Related annotations**: `check-http` (works), `check-interval` (silent no-op — see below), `timeout-check`
 
 ---
 
@@ -1057,26 +1055,15 @@ option httpchk HEAD /health HTTP/1.1
 
 ### haproxy.org/check-interval
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Frequency of health checks. Supports duration format (e.g., `10s`, `1m`).
+**Description**: Intended to set the health-check interval (e.g., `10s`, `1m`), but the library only emits a `# Note: check-interval annotation value: ...` comment — no `inter <duration>` flag is added to `default-server`. The annotation is silently ignored. To set a custom interval today, use `haproxy.org/backend-config-snippet` with an override of `default-server`.
 
-**Default**: `2s`
-
-**Usage**:
+**Usage** (no effect):
 
 ```yaml
-haproxy.org/check: "true"
 haproxy.org/check-interval: "10s"
 ```
-
-**Generated HAProxy Configuration**:
-
-```haproxy
-server pod1 10.0.1.5:8080 check inter 10s
-```
-
-**Dependencies**: Requires `check: "true"`
 
 ---
 
@@ -1144,7 +1131,8 @@ Generated HAProxy configuration (1 ready HAProxy pod):
 
 ```haproxy
 # pod-maxconn: 100 total / 1 ready pods (effective: 1) = 100 per pod
-server SRV_1 10.0.1.5:8080 maxconn 100 check
+default-server check maxconn 100
+server SRV_1 10.0.1.5:8080 enabled
 ```
 
 **Multiple HAProxy pods**: Value divided with power-of-2 quantization
@@ -1161,15 +1149,19 @@ Generated HAProxy configuration (2 ready HAProxy pods, quantized to 2):
 
 ```haproxy
 # pod-maxconn: 100 total / 2 ready pods (effective: 2) = 50 per pod
-server SRV_1 10.0.1.5:8080 maxconn 50 check
+default-server check maxconn 50
+server SRV_1 10.0.1.5:8080 enabled
 ```
 
 Generated HAProxy configuration (3 ready HAProxy pods, quantized to 4):
 
 ```haproxy
 # pod-maxconn: 100 total / 3 ready pods (effective: 4) = 25 per pod
-server SRV_1 10.0.1.5:8080 maxconn 25 check
+default-server check maxconn 25
+server SRV_1 10.0.1.5:8080 enabled
 ```
+
+`maxconn` and `check` live on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Individual server lines carry only `address:port` plus `enabled` (active) or `disabled` (reserved slot).
 
 **Quantization reference** (for `pod-maxconn: 200`):
 
@@ -1189,30 +1181,19 @@ server SRV_1 10.0.1.5:8080 maxconn 25 check
 
 ### haproxy.org/scale-server-slots
 
-**Status**: ✅ Supported
+**Status**: ❌ Not Implemented
 
-**Description**: Number of server slots to pre-allocate for dynamic scaling.
+**Description**: Intended to override the number of pre-allocated server slots, but the annotation is currently a silent no-op. The library reads it in `backend-directives-900-haproxytech-advanced`, validates it (must be a positive integer), and writes the value to `serverOpts["serverSlotsValue"]`. However, `backends-500-ingress` calls `BackendServers(svcName, 0, port, nil, nil, backendKey, ns)` with `nil` instead of `serverOpts`, so the macro never consults the value and falls back to the default 10 slots.
 
-**Default**: `10` (template default; HAProxy Ingress Controller uses `42`)
+**Default**: `10` slots (always — overrides via this annotation are dropped today).
 
-**Usage**:
+**Usage** (no effect):
 
 ```yaml
 haproxy.org/scale-server-slots: "100"
 ```
 
-**Generated HAProxy Configuration**:
-
-```haproxy
-# Pre-allocates 100 server slots for dynamic pod scaling
-server pod1 10.0.1.5:8080
-server pod2 10.0.1.6:8080
-# ... up to 100 slots
-```
-
-**Dependencies**: None
-
-**Note**: Used for runtime server addition/removal without config reload.
+**Workaround**: To change the slot count, replace `backends-500-ingress` with a custom snippet that passes a non-zero `maxServerSlots` argument to `BackendServers`, or restructure `ingress.yaml`'s call to forward `serverOpts` to `BackendServers`.
 
 ---
 

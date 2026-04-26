@@ -14,7 +14,7 @@ watchedResources:
       - metadata.name
     namespace: ""                           # pin to one namespace, or leave empty to watch cluster-wide
     labelSelector: ""                       # "app=myapp" — string, not matchLabels object
-    namespaceSelector: ""                   # "env=watched" — applies to namespace labels
+    namespaceSelector: ""                   # CRD field present but currently a no-op; see Narrowing the Watch below
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
 ```
@@ -80,8 +80,8 @@ Escape dots in JSONPath keys that contain them (`labels.kubernetes\\.io/service-
 Three independent filters narrow what actually lands in the store:
 
 - `namespace:` — hard pin to a single namespace. Drops the need for `metadata.namespace` in `indexBy`.
-- `labelSelector:` — standard label-selector string applied to the resource itself (`"app=myapp"`, `"tier in (frontend,api)"`).
-- `namespaceSelector:` — applied to namespace *labels*. Use this to watch a dynamic set of namespaces (`env=prod`) without cluster-wide RBAC on individual objects.
+- `labelSelector:` — equality-only label-selector string applied to the resource itself (`"app=myapp"` or `"app=nginx,env=prod"`). Comma-separated `key=value` pairs only; set-based syntax (`"tier in (frontend,api)"`, `"!disabled"`) is **not** supported — `pkg/controller/conversion.parseLabelSelector` splits on `,` and `=`, dropping anything else.
+- `namespaceSelector:` — **not yet implemented**. The CRD field exists (`pkg/apis/haproxytemplate/v1alpha1/types_config.go`) but is never read — `pkg/controller/conversion` doesn't propagate it to the internal `WatchedResource`, and `pkg/controller/resourcewatcher` has no code path that uses it. Setting it has no effect today; track its implementation status in the issue tracker before relying on it. Use `namespace:` for a single fixed namespace, or pre-filter at the RBAC layer.
 
 ## Trimming Fields
 
@@ -99,7 +99,7 @@ Applies uniformly to every watched-resource store. Fields that are referenced by
 
 Templates can fetch arbitrary HTTP content via the `http.Fetch(url, opts)` template function — a separate mechanism from Kubernetes watching. The controller auto-registers any URL that appears in an `http.Fetch()` call during template rendering, periodically refreshes it at a per-URL `delay`, and surfaces the cached body back to the template on the next render.
 
-For fixture-based mocking during validation tests, set per-test `httpResources` under `spec.validationTests[].fixtures.httpResources` (see [CRD Reference](./crd-reference.md)); there is no top-level `spec.httpResources` field.
+For fixture-based mocking during validation tests, set per-test `httpResources` directly on the test (`spec.validationTests[].httpResources`, sibling to `fixtures` — not nested inside it); see [CRD Reference](./crd-reference.md). There is no top-level `spec.httpResources` field.
 
 ## Validating Webhook Scope
 
@@ -110,7 +110,7 @@ Setting `enableValidationWebhook: true` on an entry registers that kind with the
 | Symptom | Likely cause |
 |---------|--------------|
 | `.List()` returns empty | Controller hasn't finished initial sync — check `haptic_reconciliation_total` or `kubectl logs … \| grep "initial sync"` |
-| `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector`/`namespaceSelector` is filtering it out |
+| `.Fetch(ns, name)` returns empty for a resource that exists | `indexBy` doesn't match what you passed, or `labelSelector` / `namespace:` is filtering it out (`namespaceSelector` is declared but currently a no-op — see "Narrowing the Watch" above) |
 | OOMKilled on controller | Switch large resources (TLS Secrets, big ConfigMaps) to `store: on-demand`; add `watchedResourcesIgnoreFields` entries |
 | Template rendering slow, many API logs | You're calling `.List()` on an `on-demand` store, or `.Fetch()` consistently missing the cache — profile with `/debug/pprof/profile`, consider `store: full` if the total size is modest |
 | `kubectl apply` on CRD rejected with "watchedResources must be non-empty" | The CRD schema requires at least one entry; see [CRD Reference](./crd-reference.md) |

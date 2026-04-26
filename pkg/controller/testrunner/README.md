@@ -9,7 +9,7 @@ For each test case:
 1. Build a fixture-driven render context (the test's `fixtures` are injected as a parallel resource store, no cluster calls).
 2. Render every template in the config.
 3. Run `haproxy -c` against the rendered output using the supplied `ValidationPaths`.
-4. Evaluate each assertion in the test (`haproxy_valid`, `contains`, `not_contains`, `equals`, `jsonpath`).
+4. Evaluate each assertion in the test (`haproxy_valid`, `contains`, `not_contains`, `match_count`, `equals`, `jsonpath`, `match_order`, `deterministic`).
 5. Collect timing, rendered content, and assertion results into a `TestResult`.
 
 The whole suite runs in a worker pool (`Options.Workers`, defaults to `runtime.NumCPU`). `TestResults` aggregates pass/fail/skip counts and optional summary timings.
@@ -52,7 +52,7 @@ runner := testrunner.New(cfg, engine, paths, testrunner.Options{
 results, err := runner.RunTests(context.Background(), "") // "" = all tests
 
 out, _ := testrunner.FormatResults(results, testrunner.OutputOptions{
-    Format:       testrunner.OutputSummary,   // or OutputJSON / OutputYAML
+    Format:       testrunner.OutputFormatSummary, // or OutputFormatJSON / OutputFormatYAML
     Verbose:      false,
     DumpRendered: false,
 })
@@ -82,11 +82,12 @@ func FormatResults(results *TestResults, options OutputOptions) (string, error)
 
 ```go
 type Options struct {
-    Logger          *slog.Logger            // defaults to slog.Default()
-    Workers         int                     // 0 → NumCPU; 1 → sequential
-    DebugFilters    bool                    // wired to --debug-filters
-    ProfileIncludes bool                    // wired to --profile-includes
-    Capabilities    *dataplane.Capabilities // gates tests that need specific DP API features
+    TestName        string                 // filter; empty = all tests (alternative to RunTests' second arg)
+    Logger          *slog.Logger           // defaults to slog.Default()
+    Workers         int                    // 0 → NumCPU; 1 → sequential
+    DebugFilters    bool                   // wired to --debug-filters
+    ProfileIncludes bool                   // wired to --profile-includes
+    Capabilities    dataplane.Capabilities // value, not pointer; gates tests that need specific DP API features
     HAProxyVersion  *dataplane.Version
 }
 ```
@@ -97,7 +98,7 @@ type Options struct {
 
 - `TestResults` — suite-level: totals, duration, slice of `TestResult`.
 - `TestResult` — per-test: name, pass/fail, duration, skip reason, rendered content (populated for `--dump-rendered`), auxiliary files, assertion results.
-- `AssertionResult` — per-assertion: type, target (`haproxy.cfg`, `map:<name>`, `file:<name>`, `cert:<name>`), pass/fail, human-readable error message, target size in bytes, and a 200-char preview of the target on failure.
+- `AssertionResult` — per-assertion: type, target (`haproxy.cfg`, `map:<name>`, `file:<name>`, `cert:<name>`, `crt-list:<name>`, `rendering_error`), pass/fail, human-readable error message, target size in bytes, and a 200-char preview of the target on failure.
 
 See `pkg/controller/testrunner/types.go` for the full schema; `FormatResults` can render any of them as `summary`, `json`, or `yaml`.
 
