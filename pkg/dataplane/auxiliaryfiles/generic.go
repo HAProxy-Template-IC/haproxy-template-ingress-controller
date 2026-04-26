@@ -8,6 +8,15 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// noFingerprintSentinel is the placeholder content older API versions
+// (or stale storage metadata) return when they have an entry but no
+// content fingerprint. categorizeFile must always route through UPDATE
+// when it sees this value because we can't trust the API's reported
+// content. Kept as a package-level constant (not a literal) so the test
+// suite can reference the same value — a future rename surfaces as a
+// compile error on both sides instead of silent behavioural drift.
+const noFingerprintSentinel = "__NO_FINGERPRINT__"
+
 // isAlreadyExistsError checks whether err indicates that a resource already exists.
 // This is used across file operations to fall back to update when a create fails
 // because the file physically exists but wasn't in the storage listing.
@@ -130,11 +139,11 @@ func categorizeFile[T FileItem](currentMap map[string]T, id string, desiredFile 
 	currentContent := currentFile.GetContent()
 	desiredContent := desiredFile.GetContent()
 
-	// Special case: If current content is __NO_FINGERPRINT__, use UPDATE
+	// Special case: If current content is the no-fingerprint sentinel, use UPDATE.
 	// This happens when the API has metadata but no content fingerprint (older API versions
 	// or stale metadata). UPDATE works whether the file physically exists or not, and is
 	// idempotent. Using CREATE would fail with 409 Conflict if metadata exists.
-	if currentContent == "__NO_FINGERPRINT__" {
+	if currentContent == noFingerprintSentinel {
 		diff.ToUpdate = append(diff.ToUpdate, desiredFile)
 	} else if currentContent != desiredContent {
 		// File exists and content differs → update
