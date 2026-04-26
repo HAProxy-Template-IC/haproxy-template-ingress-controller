@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestScriggoDig(t *testing.T) {
@@ -69,6 +70,97 @@ func TestDigReflect_TypedNil(t *testing.T) {
 	var typedNil *map[string]any
 	got := scriggoDig(typedNil, "any")
 	assert.Nil(t, got)
+}
+
+// digReflect is the slow path scriggoDig falls into when the
+// top-level obj is NOT a literal map[string]any (so the
+// `m, ok := obj.(map[string]any)` fast-path assertion fails).
+// The TypedNil test above covers the isNilValue early return; the
+// remaining load-bearing branches were uncovered. They matter
+// because templates legitimately pass non-standard map types
+// (e.g. map[string]string from K8s metadata.labels) and the
+// dig() filter MUST behave consistently across both:
+//
+//   - Templates use `dig("metadata", "labels", "app")` against
+//     unstructured K8s objects. The labels field is map[string]string;
+//     a regression in the slow path would break every label/annotation
+//     lookup.
+//
+//   - Templates may pass non-map types (e.g. `dig(svcPort, "name")`
+//     where svcPort is an int). The default branch must return nil
+//     gracefully rather than panic — operators rely on dig being
+//     null-safe so they can compose `dig | fallback`.
+func TestDigReflect_TopLevelMapStringStringHit(t *testing.T) {
+	// Single-key lookup on a top-level map[string]string. The
+	// scriggoDig fast-path skips this case (only matches map[string]any),
+	// so this MUST exercise digReflect's `case map[string]string:`.
+	labels := map[string]string{
+		"app":      "haproxy",
+		"version":  "v1.2.3",
+		"instance": "haproxy-pod-1",
+	}
+
+	got := scriggoDig(labels, "app")
+	assert.Equal(t, "haproxy", got,
+		"map[string]string at top level MUST return the matching value via "+
+			"the slow-path branch — without this, every K8s label lookup "+
+			"(metadata.labels[...], metadata.annotations[...]) would silently "+
+			"return nil and break template-based labelsmatching")
+}
+
+func TestDigReflect_TopLevelMapStringStringMiss(t *testing.T) {
+	labels := map[string]string{"app": "haproxy"}
+
+	got := scriggoDig(labels, "missing-key")
+	assert.Nil(t, got,
+		"missing key on a map[string]string MUST return nil (not panic, not "+
+			"return zero value) — template authors compose dig | fallback "+
+			"and expect nil to trigger the fallback")
+}
+
+func TestDigReflect_NonMapTypeFallsToDefaultReturnsNil(t *testing.T) {
+	// Non-map types (ints, strings, structs) hit digReflect's
+	// `default:` case and MUST return nil. A regression that
+	// panicked here would crash every template that tried to
+	// dig() into a non-map value (e.g. a Service port number).
+	tests := []struct {
+		name string
+		obj  any
+	}{
+		{name: "int", obj: 42},
+		{name: "string", obj: "haproxy"},
+		{name: "[]string", obj: []string{"a", "b"}},
+		{name: "struct", obj: struct{ X int }{X: 1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() {
+				got := scriggoDig(tt.obj, "any-key")
+				assert.Nil(t, got,
+					"non-map type %T MUST return nil from the default branch — "+
+						"a panic here would crash any template that dug into a "+
+						"non-map value (extremely common: dig(svcPort, \"name\"))",
+					tt.obj)
+			})
+		})
+	}
+}
+
+func TestDigReflect_MultiKeyAfterStringValueReturnsNil(t *testing.T) {
+	// Multi-key navigation on map[string]string: after fetching
+	// the first key the value is a string, not a map. The next
+	// iteration's switch hits the default branch → return nil.
+	// Without this safety, the function would panic trying to
+	// navigate into a string.
+	labels := map[string]string{"app": "haproxy"}
+
+	got := scriggoDig(labels, "app", "deeper-key")
+	assert.Nil(t, got,
+		"navigating past a string value MUST return nil — the second key "+
+			"can't traverse INTO a string, and silently returning nil lets "+
+			"template authors compose `dig | fallback` without special-casing "+
+			"the depth limit")
 }
 
 func TestIsValueInList_Direct(t *testing.T) {
