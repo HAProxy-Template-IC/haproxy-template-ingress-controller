@@ -4,21 +4,21 @@ This guide explains how to deploy and operate the HAProxy Template Ingress Contr
 
 ## Overview
 
-The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader performs write operations (deploying configurations to HAProxy), while all replicas continue watching resources, rendering templates, and validating configurations to maintain "hot standby" status.
+The controller supports running multiple replicas for high availability using leader election based on Kubernetes Leases. Only the elected leader performs the render-validate-deploy work; all replicas keep their Kubernetes-resource caches warm and serve admission webhook requests so failover is instant.
 
 **Benefits of HA deployment:**
 
 - Zero-downtime during controller upgrades (rolling updates)
 - Automatic failover if leader pod crashes (~15-20 seconds)
-- All replicas ready to take over immediately (hot standby)
+- All replicas ready to take over immediately (hot caches, ready webhooks)
 - Balanced leader distribution across nodes
 
 **How it works:**
 
-1. All replicas watch Kubernetes resources and render HAProxy configurations
-2. Leader election determines which replica can deploy configs to HAProxy
-3. When leader fails, followers automatically elect a new leader
-4. Leadership transitions are logged and tracked via Prometheus metrics
+1. All replicas watch Kubernetes resources, run the admission webhook, and discover HAProxy pods. Only the elected leader runs the render-validate-deploy pipeline. See [Leader Election](../development/design/leader-election.md) for the full all-replica vs leader-only component split.
+2. Leader election determines which replica drives the pipeline and pushes configs via the Dataplane API.
+3. When the leader fails, followers automatically elect a new one. Cached state from all-replica components (validated config, discovered HAProxy pods) is replayed on `BecameLeaderEvent` so the new leader starts with current state; the reconciler also fires immediately so the new leader produces a fresh render.
+4. Leadership transitions are logged and tracked via Prometheus metrics.
 
 ## Configuration
 
@@ -42,7 +42,7 @@ controller:
 ```
 
 !!! note
-    The chart defaults above are more aggressive than the bare CRD defaults (60s / 15s / 5s) to give faster failover in typical Kubernetes environments.
+    These match the controller's built-in defaults (`pkg/core/config/defaults.go`: 15s / 10s / 2s) — the same values `kube-controller-manager` and `kube-scheduler` ship with. Override only if you need slower failover (longer warm-up after election) or have unusual clock-skew requirements.
 
 ### Disable Leader Election
 
@@ -334,7 +334,7 @@ kubectl logs -n haptic <leader-pod> | grep "Started.*Deployer\|DeploymentSchedul
 
 ### Resource Allocation
 
-All replicas perform the same work (watching, rendering, validating), so resource usage is similar across leader and followers — size them all the same. The chart defaults already do this:
+The leader does the heavy lifting (render + validate + deploy + status writes), but every replica still has the full Kubernetes-resource cache loaded in memory. CPU usage is markedly higher on the leader; memory is similar across leader and followers. Size them all the same so a freshly-elected follower handles peak load without resizing — the chart defaults already do this:
 
 ```yaml
 # chart default — sized for the typical 50–200 Ingress range

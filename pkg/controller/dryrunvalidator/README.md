@@ -1,0 +1,72 @@
+# pkg/controller/dryrunvalidator
+
+Webhook-side validator: implements the `DryRunValidator` interface that `pkg/controller/webhook` calls into when an admission request arrives.
+
+## Overview
+
+The validating admission webhook needs a synchronous answer to "would this proposed change render and validate cleanly?" — not via events, just a direct function call returning `allowed bool, reason string`. This component bridges that synchronous call into the controller's render-validate pipeline by:
+
+1. Receiving the proposed object from the webhook adapter (`ValidateDirect`).
+2. Building a `*stores.StoreOverlay` per admission verb (`NewStoreOverlayForCreate` / `…Update` / `…Delete`) and wrapping it in a `map[string]*stores.StoreOverlay` keyed by the resource type.
+3. Delegating render+validate to `pkg/controller/proposalvalidator.Component`'s `ValidateSync(ctx, overlays)`, which merges the overlay on top of the live stores for the duration of the call.
+4. Optionally running the embedded `validationTests` against the proposed config (when the CRD declares them).
+5. Returning a flat allow/deny + simplified reason string for the webhook response.
+
+The component also subscribes to `*events.WebhookValidationRequest` (event-type constant `EventTypeWebhookValidationRequestSG` — the `SG` suffix marks scatter-gather). No production component currently publishes that request — the webhook flows entirely through the synchronous `ValidateDirect` call — so the subscription is dormant infrastructure left in place for future scatter-gather observability. Treat `ValidateDirect` as the only live path today.
+
+## Quick Start
+
+```go
+import (
+    "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
+)
+
+component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
+    EventBus:          bus,
+    ProposalValidator: proposalValidator, // sync-mode *proposalvalidator.Component
+    Config:            cfg,
+    Engine:            templateEngine,    // pre-compiled
+    ValidationPaths:   validationPaths,
+    Capabilities:      caps,
+    Logger:            logger,
+})
+go func() {
+    if err := component.Start(ctx); err != nil {
+        logger.Error("dryrunvalidator exited", "error", err)
+    }
+}()
+
+// pkg/controller/webhook hands this exact component as DryRunValidator
+// and calls ValidateDirect synchronously per admission request.
+```
+
+`ValidationTests` is optional — the validator only constructs an internal `*testrunner.Runner` when the CRD has tests. With `Workers: 1` the runner stays lightweight enough for the webhook timeout window.
+
+## Webhook Wiring
+
+```go
+// In iteration.go (sketch)
+webhookComp := webhook.New(logger, &webhook.Config{
+    // ... TLS material from certloader, rules from ExtractWebhookRules ...
+    DryRunValidator: dryRunComp, // <- this package's *Component
+}, restMapper, metricsRecorder)
+```
+
+The webhook adapter then registers a `webhook.ValidationFunc` per GVK that pulls `(namespace, name, operation)` from the AdmissionRequest and calls `dryRunComp.ValidateDirect(ctx, gvk, namespace, name, object, operation)`.
+
+## Failure Modes
+
+- `(false, reason)` — proposed change failed render or validation; the webhook denies and the API server forwards `reason` to the user.
+- `(true, "")` — proposed change is admissible.
+- `ValidateDirect` only returns `(bool, string)`. Internal errors (e.g. a render panic) are logged and surface as a deny with a descriptive reason — the webhook never returns HTTP 500 from this path. Configure `failurePolicy: Fail` in the `ValidatingWebhookConfiguration` if you want the API server to reject on transport failures (TLS handshake, dial errors); deny-with-reason is for application-level rejections.
+
+## See Also
+
+- [`pkg/controller/webhook`](../webhook/) — HTTPS adapter that calls `ValidateDirect`
+- [`pkg/controller/proposalvalidator`](../proposalvalidator/) — render-validate pipeline driven in sync mode
+- [`pkg/stores`](../../stores/) — `NewStoreOverlayForCreate` / `NewStoreOverlayForUpdate` / `NewStoreOverlayForDelete` are what `createOverlay` actually calls per admission verb
+- `pkg/controller/dryrunvalidator/CLAUDE.md` — design notes (overlay-store pattern, why direct calls are acceptable here)
+
+## License
+
+Apache-2.0 — see root `LICENSE`.

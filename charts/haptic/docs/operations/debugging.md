@@ -14,11 +14,11 @@ The controller exposes:
 - `/debug/vars` - Internal state and runtime variables
 - `/debug/pprof` - Go profiling endpoints
 
-The chart enables the server by default on port 8080 (the same port `/healthz` listens on). Set `controller.debugPort: 0` to disable `/debug/*` in production — `/healthz` then moves to `controller.ports.healthz`. Set it to a non-zero value to move the debug surface to a dedicated port.
+The chart enables the server by default on port 8080. Both `/healthz` and `/debug/*` share that listener — setting `controller.debugPort: 0` disables both and breaks the Kubernetes liveness/readiness probes. To restrict `/debug/*` in production, keep the port enabled and lock it down with a NetworkPolicy (`networkPolicy.enabled: true`) rather than disabling the port.
 
 ```yaml
 controller:
-  debugPort: 8080  # default; 0 disables /debug/*, any other value moves it
+  debugPort: 8080  # default; any non-zero value moves the listener (and /healthz with it) to that port
 ```
 
 ## Accessing Endpoints

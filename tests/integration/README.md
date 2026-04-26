@@ -9,7 +9,7 @@ Grouped by the `*_test.go` files in this directory:
 | File group | Scope |
 |------------|-------|
 | `env_test.go` | Fixture-level smoke tests (cluster comes up, HAProxy responds) |
-| `sync_backends_test.go`, `sync_frontends_test.go`, `sync_global_defaults_test.go`, `sync_sections_test.go`, `sync_observability_test.go`, `sync_auxiliary_test.go`, `sync_idempotency_test.go`, `sync_common_test.go` | Dataplane-sync coverage of every HAProxy section the comparator knows about, plus idempotency (re-sync is a no-op) |
+| `sync_backends_test.go`, `sync_frontends_test.go`, `sync_servers_test.go`, `sync_global_defaults_test.go`, `sync_sections_test.go`, `sync_observability_test.go`, `sync_auxiliary_test.go`, `sync_idempotency_test.go`, `sync_common_test.go` | Dataplane-sync coverage of every HAProxy section the comparator knows about, plus idempotency (re-sync is a no-op) |
 | `auxiliaryfiles_test.go` | Map/SSL/general/crt-list file handling through the three-phase sync |
 | `enterprise_botmgmt_test.go`, `enterprise_keepalived_test.go`, `enterprise_misc_test.go`, `enterprise_udplb_test.go`, `enterprise_waf_test.go` | Enterprise-only sections; skipped via `skipIfNotEnterprise` + capability-specific skips when the test cluster runs community HAProxy |
 

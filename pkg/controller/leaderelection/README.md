@@ -48,11 +48,15 @@ Published before the matching user callback runs, so listeners see the transitio
 | Event | When |
 |-------|------|
 | `LeaderElectionStartedEvent` | At the top of `Start` |
-| `BecameLeaderEvent` | Just before `OnStartedLeading` |
+| `BecameLeaderEvent` | Inside the wrapper for `OnStartedLeading`, while the bus is paused (see below) |
 | `LostLeadershipEvent` | Just before `OnStoppedLeading` |
 | `NewLeaderObservedEvent` | Every time `OnNewLeader` fires (including when this replica loses) |
 
 The publishing happens in the callback wrappers — user callbacks don't need to emit events themselves, and wouldn't be able to guarantee the "before the effect" ordering if they tried.
+
+### Pause/Start contract on becoming leader
+
+The `OnStartedLeading` wrapper runs `EventBus.Pause()` → publish `BecameLeaderEvent` → user callback → `EventBus.Start()`. This is deliberate: the user callback is where leader-only components are constructed and call `Subscribe()`, and the bus must replay the buffered `BecameLeaderEvent` to them *after* they've subscribed. Without the pause, leader-only components miss the very signal meant to wake them up. See "Late Subscriber Problem" in `pkg/controller/CLAUDE.md` for the full rationale.
 
 ## Why an Adapter At All
 

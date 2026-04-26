@@ -30,6 +30,7 @@ The controller supports all configuration sections that can be managed through t
 | **Programs** | External program configurations | 10 | Create/Update/Delete |
 | **LogForwards** | Syslog forwarding sections | 10 | Create/Update/Delete |
 | **LogProfiles** | Log-format profiles (DataPlane API 3.1+) | 10 | Create/Update/Delete |
+| **Traces** | Traces section (singleton, DataPlane API 3.1+) | 10 | Update only |
 | **FCGIApps** | FastCGI application configs | 10 | Create/Update/Delete |
 | **CrtStores** | Certificate store sections | 10 | Create/Update/Delete |
 | **AcmeProviders** | ACME certificate provider configurations | 10 | Create/Update/Delete |
@@ -53,6 +54,7 @@ Frontends support these child component types with individual Create/Update/Dele
 | **Filters** | Data filters (compression, trace, etc.) |
 | **Captures** | Request/response capture declarations |
 | **Log Targets** | Logging destinations |
+| **QUIC Initial Rules** | Per-frontend rules applied to QUIC initial packets (HTTP/3); requires Dataplane API v3.1+ |
 
 ### Backend Child Components
 
@@ -254,10 +256,15 @@ The implementation uses two approaches for optimal performance:
    - **Benefit:** Minimizes API calls and reduces reload frequency
 
 2. **Whole-Section Replacement** (infrequently-changing resources)
-   - Other sections (Resolvers, Mailers, Peers, etc.)
-   - Uses `.Equal()` method to compare entire section including nested components
+   - Sections without exposed child operations: Rings, HTTPErrors, Userlists, Programs, LogForwards, FCGIApps, CrtStores
+   - Uses `.Equal()` method to compare the entire section including nested components
    - If any attribute changes, the entire section is replaced
    - **Benefit:** Simpler code, fewer operations for resources that rarely change
+
+   Resolvers, Mailers, and Peers sit in between — their *child entries*
+   (Nameservers, MailerEntries, PeerEntries) use fine-grained Create/Update/Delete
+   operations like Frontend/Backend children, while the parent section's own
+   attributes are compared with an "Equal-without-children" helper.
 
 ### Operation Ordering
 

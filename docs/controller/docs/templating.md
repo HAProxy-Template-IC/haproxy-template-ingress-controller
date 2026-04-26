@@ -222,19 +222,19 @@ For complete coverage including crypto, encoding, and Scriggo built-ins (`abs`, 
 
 `pathResolver` is a helper available in every template. Its `GetPath(filename, type)` method returns the path that HAProxy should use to reference an auxiliary file (map, error file, certificate, crt-list). Use it instead of writing paths by hand so the controller and HAProxy agree on where files live.
 
-By default `GetPath` returns paths *relative* to HAProxy's `default-path` directive. The chart's `base` template library puts `default-path config` in the global section, which tells HAProxy to resolve relative paths against the directory containing `haproxy.cfg` — the same directory the controller writes maps, files, and certs to. If you replace the base library, keep that directive (or switch to `default-path origin <BaseDir>`) or the relative paths returned by `GetPath` will not resolve.
+By default `GetPath` returns paths *relative* to HAProxy's `default-path` directive. The chart's `base` template library renders `default-path origin {{ pathResolver.GetBaseDir() }}` in the global section (e.g. `default-path origin /etc/haproxy` in production), which tells HAProxy to resolve relative paths against that explicit base directory. The controller writes maps, certs, and general files under the same base, so the relative paths line up at runtime; the validation pipeline rewrites just the `default-path origin` argument to a per-call temp directory so the same rendered config validates against a sandbox tree of identical shape. If you replace the base library, keep that directive (or render an absolute path yourself) — without it HAProxy resolves the relative paths from its own working directory and the file lookups fail.
 
 ```go
 {# Map files — resolves to maps/host.map #}
 use_backend %[req.hdr(host),lower,map({{ pathResolver.GetPath("host.map", "map") }})]
 
-{# General files — resolves to files/504.http #}
+{# General files — resolves to general/504.http (chart default GeneralStorageDir basename) #}
 errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
 
 {# SSL certificates — resolves to ssl/example.com.pem #}
 bind *:443 ssl crt {{ pathResolver.GetPath("example.com.pem", "cert") }}
 
-{# crt-list files — resolves to ssl/cert-list.txt #}
+{# crt-list files — resolves to general/cert-list.txt (CRTListDir defaults to GeneralStorageDir basename) #}
 bind *:443 ssl crt-list {{ pathResolver.GetPath("cert-list.txt", "crt-list") }}
 ```
 
@@ -252,7 +252,7 @@ bind *:443 ssl crt-list {{ pathResolver.GetPath("cert-list.txt", "crt-list") }}
 | `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
 | `debug` | Output as JSON comment | `{{ routes \| debug("routes") }}` |
 | `toJSON` | Convert value to JSON string | `{{ myMap \| toJSON() }}` |
-| `semver_gte` | Compare HAProxy version (major.minor) | `{{ semver_gte(haproxyVersion, "3.3") }}` |
+| `semver_gte` | Compare a semver string (major.minor) against a target | `{{ semver_gte(extraContext.haproxyVersion, "3.3") }}` (the chart auto-populates `extraContext.haproxyVersion`; outside the chart, set it yourself via `templatingSettings.extraContext.haproxyVersion` — see [Custom Template Variables](#custom-template-variables)) |
 
 !!! note "Pipe operator requires parentheses"
     Scriggo's pipe operator requires a function call on the right side. `{{ value \| toLower }}` is a parse error; write `{{ value \| toLower() }}`. For filters that take additional arguments, the pipe passes the left-hand value as the first argument: `{{ items \| join(", ") }}` is equivalent to `{{ join(items, ", ") }}`.
@@ -277,12 +277,20 @@ All templates have access to the following top-level variables:
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config |
+| `resources` | map of stores | Kubernetes resources indexed per `watchedResources` config — entries are wrappers exposing `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)` |
+| `controller` | map of stores | Controller-managed stores; currently only `controller.haproxy_pods` for the discovered HAProxy pod set |
 | `pathResolver` | object | Resolves filenames to HAProxy paths — use `GetPath(name, type)` |
-| `haproxyVersion` | string | HAProxy version string, e.g. `"3.2"` — use with `semver_gte` filter |
-| `currentConfig` | string | The currently deployed HAProxy configuration — used for slot-preserving updates |
+| `capabilities` | map of bools | HAProxy feature flags derived from the local HAProxy version (e.g. `capabilities.SupportsCrtList`). Use for `{% if capabilities.SupportsCrtList %}…{% end %}` branches. |
+| `currentConfig` | parsed config (or nil) | The previously-deployed HAProxy configuration as a `*parser.StructuredConfig`. **Nil on first deployment** — guard with `{% if !isNil(currentConfig) %}`. Used for slot-preserving updates. |
+| `dataplane` | `config.Dataplane` block | The CRD's `spec.dataplane` block — port, max-parallel, timeouts, paths |
 | `shared` | `*SharedContext` | Thread-safe compute-once cache for expensive computations (`shared.ComputeIfAbsent(key, factory)` + `shared.Get(key)`; no `Set` — prevents racy check-then-act patterns) |
 | `templateSnippets` | list | Names of all available template snippets — useful for dynamic `render_glob` patterns |
+| `runtimeEnvironment` | object | Runtime info exposed by the controller (e.g. `runtimeEnvironment.GOMAXPROCS`) |
+| `fileRegistry` | object | Lets templates dynamically register auxiliary files at render time via `fileRegistry.Register("file"/"cert"/"map"/"crt-list", filename, content)`; returns the resolved path. Used by the SSL, haproxytech, and haproxy-ingress libraries to materialise CA bundles, client certs, and SSL crt-lists from Secrets. |
+| `http` | object | HTTP fetcher for `http.Fetch("https://example.com/...")`. Always available — URLs are auto-registered the first time a template calls `http.Fetch()` and refreshed periodically per the call's `delay` option. The CRD has no top-level `spec.httpResources`; mocked responses live under `spec.validationTests[].httpResources` for tests only. |
+| `extraContext` | map | The full `templatingSettings.extraContext` map. Top-level keys are also injected as bare variables — see below. |
+
+Note: the controller doesn't inject a `haproxyVersion` variable on its own. The Helm chart populates `templatingSettings.extraContext.haproxyVersion` from its `haproxyVersion` value, and `MergeExtraContextInto` flattens every `extraContext` key into the top-level context — so chart-deployed templates can use either `{{ haproxyVersion }}` or `{{ extraContext.haproxyVersion }}`. If you bypass the chart, set the value yourself in `templatingSettings.extraContext.haproxyVersion`. For feature checks prefer `capabilities.*` flags, which the controller derives from the local HAProxy probe.
 
 Custom variables defined in `templatingSettings.extraContext` are also available directly by name. See [Custom Template Variables](#custom-template-variables).
 
@@ -370,11 +378,15 @@ Pre-allocate server slots to enable runtime API updates without reloads:
   {%- end %}
 {%- end %}
 
+{# Per-server options like 'check' belong in the surrounding default-server,
+   NOT on individual server lines — see the tip below for why. #}
+default-server check
+
 {# Fixed slots - active endpoints fill first, rest are disabled #}
 {%- for i := 1; i <= initial_slots; i++ %}
   {%- if i-1 < len(active_endpoints) %}
     {%- var ep = active_endpoints[i-1] %}
-server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} check
+server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} enabled
   {%- else %}
 server SRV_{{ i }} 127.0.0.1:1 disabled
   {%- end %}

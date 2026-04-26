@@ -26,7 +26,9 @@ This is a **utility package** with pure functions - no event dependencies, no st
 
 ### NewEngineFromConfig
 
-Creates a template engine from configuration with all standard components.
+Creates a template engine from configuration with all standard filters and the
+`fail()` function pre-registered. Signature is
+`(cfg, globalFunctions, postProcessorConfigs)` — both optional maps may be nil.
 
 **Used by:**
 
@@ -35,8 +37,6 @@ Creates a template engine from configuration with all standard components.
 - `pkg/controller/testrunner` - Validation test execution
 - `cmd/controller/validate.go` - CLI validation command
 
-**Example:**
-
 ```go
 engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
 if err != nil {
@@ -44,20 +44,45 @@ if err != nil {
 }
 ```
 
-### ExtractTemplatesFromConfig
+### NewEngineFromConfigWithOptions
 
-Extracts all templates (haproxy.cfg, snippets, maps, files, certs) from configuration.
-
-**Used when:**
-
-- Logging template count during initialization
-- Needing template list without creating an engine
-
-**Example:**
+Same as above plus two extras: `additionalDeclarations map[string]any` for
+domain-specific Scriggo type declarations (e.g. `currentConfig`), and an
+`EngineOptions` struct that currently only carries `EnableProfiling bool`. Use
+this when you need profile data (`renderer.IncludeStats`) or when a caller
+needs to pass a runtime variable that the templating package shouldn't have to
+know about.
 
 ```go
-templates := helpers.ExtractTemplatesFromConfig(cfg)
-logger.Info("Compiling templates", "count", len(templates))
+engine, err := helpers.NewEngineFromConfigWithOptions(
+    cfg, nil, nil,
+    map[string]any{"currentConfig": (*parserconfig.StructuredConfig)(nil)},
+    helpers.EngineOptions{EnableProfiling: true},
+)
+```
+
+### ExtractTemplatesFromConfig
+
+Returns a `TemplateExtraction` (not a flat slice) summarising every template in
+the config:
+
+```go
+type TemplateExtraction struct {
+    AllTemplates map[string]string // Entry points + snippets, by name
+    EntryPoints  []string          // Names that should be compiled explicitly
+}
+```
+
+Snippets aren't entry points — Scriggo discovers them via
+`render`/`render_glob` with `inherit_context`. Use this when you need the
+template list without paying the cost of compiling an engine.
+
+```go
+extraction := helpers.ExtractTemplatesFromConfig(cfg)
+logger.Info("Compiling templates",
+    "total",        len(extraction.AllTemplates),
+    "entry_points", len(extraction.EntryPoints),
+)
 ```
 
 ## Design Notes
@@ -110,4 +135,4 @@ Tests are in `templating_test.go`. They verify:
 
 - Template engine: `pkg/templating/CLAUDE.md`
 - Configuration types: `pkg/core/CLAUDE.md`
-- Renderer component: `pkg/controller/renderer/CLAUDE.md`
+- Renderer component: `pkg/controller/renderer/README.md` (no CLAUDE.md in that package)

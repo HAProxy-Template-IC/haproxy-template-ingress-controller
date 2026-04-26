@@ -19,11 +19,27 @@ if err != nil {
 
 // cfg exposes Global, Defaults, Frontends, Backends, Peers, Resolvers,
 // Mailers, Caches, Rings, HTTPErrors, Userlists, Programs, LogForwards,
-// LogProfiles, FCGIApps, CrtStores, AcmeProviders, plus the Enterprise
-// sections when present.
+// FCGIApps, CrtStores, LogProfiles (v3.1+), Traces (v3.1+),
+// AcmeProviders (v3.2+), plus the Enterprise sections (UDPLBs,
+// WAFProfiles, BotMgmtProfiles, etc.) when an Enterprise parser is used.
 ```
 
 Creation is not free — `New` constructs a client-native parser and pre-initialises its section registry. Cache the `*Parser` if you're parsing many configurations.
+
+### Pointer-Based Child Indexes
+
+Beyond the section slices, the parser builds pointer-based indexes for child resources that comparators iterate hot:
+
+- `cfg.ServerIndex` — `backend name → server name → *Server`
+- `cfg.ServerTemplateIndex` — `backend name → template prefix → *ServerTemplate`
+- `cfg.BindIndex` — `frontend name → bind name → *Bind`
+- `cfg.PeerEntryIndex` — `peer section name → peer entry name → *PeerEntry`
+- `cfg.NameserverIndex` — `resolver name → nameserver name → *Nameserver`
+- `cfg.MailerEntryIndex` — `mailers section name → mailer entry name → *MailerEntry`
+- `cfg.UserIndex` — `userlist name → username → *User`
+- `cfg.GroupIndex` — `userlist name → group name → *Group`
+
+The corresponding value maps inside the parent models (e.g. `Backend.Servers`) are left nil — callers should use the indexes above to avoid copying large structs (`models.Server` is ~1.5 KB) on every iteration. Comparators in `pkg/dataplane/comparator` already do this; new code that walks servers/binds/etc. should follow the same pattern.
 
 ## What This Package Is Not
 

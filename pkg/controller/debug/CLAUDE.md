@@ -56,18 +56,31 @@ Flow:
 
 ### StateProvider
 
-Interface for accessing controller state in a thread-safe manner:
+Interface for accessing controller state in a thread-safe manner. The
+authoritative declaration lives in `pkg/controller/debug/state.go`:
 
 ```go
 type StateProvider interface {
+    // Core inputs
     GetConfig() (*config.Config, string, error)
     GetCredentials() (*config.Credentials, string, error)
+
+    // Render / aux outputs
     GetRenderedConfig() (string, time.Time, error)
     GetAuxiliaryFiles() (*dataplane.AuxiliaryFiles, time.Time, error)
+
+    // Resource introspection
     GetResourceCounts() (map[string]int, error)
-    GetResourcesByType(resourceType string) ([]interface{}, error)
+    GetResourcesByType(resourceType string) ([]any, error)
+
+    // Pipeline / outcome (back the /debug/vars/{pipeline,validated,errors} variables)
+    GetPipelineStatus() (*PipelineStatus, error)         // last trigger + render + validation + deployment phases
+    GetValidatedConfig() (*ValidatedConfigInfo, error)   // last config that passed three-phase validation
+    GetErrors() (*ErrorSummary, error)                   // aggregated last-error per phase
 }
 ```
+
+The last three methods are what feed `/debug/vars/pipeline`, `/debug/vars/validated`, and `/debug/vars/errors`; if you add a new debug variable that exposes a slice of internal state, this is the interface to extend.
 
 **Implementation Pattern** (in pkg/controller):
 
@@ -97,7 +110,7 @@ func (sc *StateCache) GetConfig() (*config.Config, string, error) {
 }
 
 // State is updated by subscribing to events:
-func (sc *StateCache) handleEvent(event interface{}) {
+func (sc *StateCache) handleEvent(event any) {
     switch e := event.(type) {
     case *events.ConfigValidatedEvent:
         sc.mu.Lock()
@@ -107,7 +120,7 @@ func (sc *StateCache) handleEvent(event interface{}) {
 
     case *events.TemplateRenderedEvent:
         sc.mu.Lock()
-        sc.lastRendered = e.Output
+        sc.lastRendered = e.HAProxyConfig
         sc.lastRenderedTime = time.Now()
         sc.mu.Unlock()
     }
@@ -125,13 +138,13 @@ type ConfigVar struct {
     provider StateProvider
 }
 
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
     cfg, version, err := v.provider.GetConfig()
     if err != nil {
         return nil, err
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "config":  cfg,
         "version": version,
         "updated": time.Now(),
@@ -146,14 +159,14 @@ type CredentialsVar struct {
     provider StateProvider
 }
 
-func (v *CredentialsVar) Get() (interface{}, error) {
+func (v *CredentialsVar) Get() (any, error) {
     creds, version, err := v.provider.GetCredentials()
     if err != nil {
         return nil, err
     }
 
     // Return metadata only - NEVER expose actual passwords
-    return map[string]interface{}{
+    return map[string]any{
         "version":             version,
         "updated":             time.Now(),
         "has_dataplane_creds": creds != nil && creds.DataplaneUsername != "",
@@ -168,13 +181,13 @@ type RenderedVar struct {
     provider StateProvider
 }
 
-func (v *RenderedVar) Get() (interface{}, error) {
+func (v *RenderedVar) Get() (any, error) {
     rendered, timestamp, err := v.provider.GetRenderedConfig()
     if err != nil {
         return nil, err
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "config":    rendered,
         "timestamp": timestamp,
         "size":      len(rendered),
@@ -184,29 +197,33 @@ func (v *RenderedVar) Get() (interface{}, error) {
 
 ### EventBuffer
 
-Separate event tracking for debug purposes:
+Separate event tracking for debug purposes. The real shape (see
+`pkg/controller/debug/events.go`) subscribes in the constructor via
+`SubscribeLossy` — observability drops are tolerable on bursts and shouldn't
+trip the per-subscriber critical-drop alert metric.
 
 ```go
 type EventBuffer struct {
-    buffer *ringbuffer.RingBuffer[Event]
-    bus    *events.EventBus
+    buffer    *ringbuffer.RingBuffer[Event]
+    bus       *busevents.EventBus
+    eventChan <-chan busevents.Event // subscribed in NewEventBuffer
 }
 
-func NewEventBuffer(size int, bus *events.EventBus) *EventBuffer {
+func NewEventBuffer(size int, bus *busevents.EventBus) *EventBuffer {
+    // SubscribeLossy because this is observability — burst drops are fine.
+    eventChan := bus.SubscribeLossy(ComponentName, buffers.Observability())
     return &EventBuffer{
-        buffer: ringbuffer.New[Event](size),
-        bus:    bus,
+        buffer:    ringbuffer.New[Event](size),
+        bus:       bus,
+        eventChan: eventChan,
     }
 }
 
 func (eb *EventBuffer) Start(ctx context.Context) error {
-    eventChan := eb.bus.Subscribe("debug-events", 1000)
-
     for {
         select {
-        case event := <-eventChan:
-            debugEvent := eb.convertEvent(event)
-            eb.buffer.Add(debugEvent)
+        case event := <-eb.eventChan:
+            eb.buffer.Add(eb.convertEvent(event))
 
         case <-ctx.Done():
             return nil
@@ -226,33 +243,38 @@ func (eb *EventBuffer) Start(ctx context.Context) error {
 
 ### Controller Integration
 
-In pkg/controller/controller.go:
+In `pkg/controller/iteration.go` (the entry point is the package-level
+`controller.Run`, which calls `runIteration` once per iteration; there's no
+`Controller` struct):
 
 ```go
-func (c *Controller) runIteration(ctx context.Context, debugPort int) error {
-    // ... setup event bus, components ...
+func runIteration(
+    ctx context.Context,
+    k8sClient *client.Client,
+    crdName, secretName, webhookCertSecretName string,
+    debugPort int,
+    infra *persistentInfra, // holds the persistent IntrospectionRegistry across iterations
+    logger *slog.Logger,
+) error {
+    // The introspection registry is *persistent* (per-process), so we Clear()
+    // at the top of each iteration to drop stale references from the previous run.
+    infra.IntrospectionRegistry.Clear()
 
-    // Create instance-based introspection registry
-    registry := introspection.NewRegistry()
+    bus := busevents.NewEventBus(busBufferSize)
 
-    // Create state cache implementing StateProvider
-    stateCache := NewStateCache(bus, resourceWatcher)
+    // StateCache subscribes to events to keep its cached snapshot fresh.
+    stateCache := NewStateCache(bus, resourceWatcher, logger)
     go stateCache.Start(ctx)
 
-    // Create event buffer
+    // EventBuffer keeps a rolling ring of recent events for /debug/vars/events.
     eventBuffer := debug.NewEventBuffer(1000, bus)
     go eventBuffer.Start(ctx)
 
-    // Register all debug variables
-    debug.RegisterVariables(registry, stateCache, eventBuffer)
+    debug.RegisterVariables(infra.IntrospectionRegistry, stateCache, eventBuffer)
 
-    // Start debug HTTP server
-    if debugPort > 0 {
-        debugServer := introspection.NewServer(fmt.Sprintf(":%d", debugPort), registry)
-        go debugServer.Start(ctx)
-    }
-
-    // ... continue with controller operation ...
+    // The HTTP server itself is also persistent — see pkg/controller/infrastructure.go.
+    // The runIteration code only refreshes the variables it serves.
+    // ...
 }
 ```
 
@@ -288,7 +310,7 @@ type DebugClient struct {
     restConfig   *rest.Config
 }
 
-func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
+func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]any, error) {
     // Sets up port-forward and makes HTTP request
     resp, err := http.Get(dc.buildURL("/debug/vars/config"))
     // ...
@@ -337,7 +359,7 @@ tests/acceptance/ (uses DebugClient to verify state)
 
 ```go
 // Bad - exposes actual password!
-func (v *CredentialsVar) Get() (interface{}, error) {
+func (v *CredentialsVar) Get() (any, error) {
     creds, _, _ := v.provider.GetCredentials()
     return creds, nil  // Contains password field!
 }
@@ -347,13 +369,13 @@ func (v *CredentialsVar) Get() (interface{}, error) {
 
 ```go
 // Good - metadata only
-func (v *CredentialsVar) Get() (interface{}, error) {
+func (v *CredentialsVar) Get() (any, error) {
     creds, version, err := v.provider.GetCredentials()
     if err != nil {
         return nil, err
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "version":             version,
         "has_dataplane_creds": creds.DataplanePassword != "",
         // DON'T include actual password
@@ -367,7 +389,7 @@ func (v *CredentialsVar) Get() (interface{}, error) {
 
 ```go
 // Bad - panics if config is nil
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
     cfg, _, _ := v.provider.GetConfig()
     return cfg.Templates, nil  // Panic if cfg is nil!
 }
@@ -377,13 +399,13 @@ func (v *ConfigVar) Get() (interface{}, error) {
 
 ```go
 // Good - handle errors
-func (v *ConfigVar) Get() (interface{}, error) {
+func (v *ConfigVar) Get() (any, error) {
     cfg, version, err := v.provider.GetConfig()
     if err != nil {
         return nil, err  // Returns "config not loaded yet"
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "config":  cfg,
         "version": version,
     }, nil
@@ -470,7 +492,7 @@ func TestConfigVar_Get(t *testing.T) {
     require.NoError(t, err)
 
     // Verify structure
-    data := value.(map[string]interface{})
+    data := value.(map[string]any)
     assert.Equal(t, testConfig, data["config"])
     assert.Equal(t, "v1", data["version"])
 }
@@ -489,7 +511,7 @@ func TestCredentialsVar_NoPasswordLeak(t *testing.T) {
     require.NoError(t, err)
 
     // Verify password is NOT in response
-    data := value.(map[string]interface{})
+    data := value.(map[string]any)
     assert.NotContains(t, data, "password")
     assert.NotContains(t, fmt.Sprint(data), "secret123")
     assert.True(t, data["has_dataplane_creds"].(bool))
@@ -530,7 +552,7 @@ func TestEventBuffer(t *testing.T) {
 
 ### Integration Testing
 
-See `tests/acceptance/configmap_reload_test.go` for examples of testing debug endpoints from outside the controller pod.
+See `tests/acceptance/error_scenarios_test.go`, `tests/acceptance/leader_election_test.go`, and `tests/acceptance/http_store_test.go` for examples of driving the debug endpoints (via `acceptance.DebugClient`) from outside the controller pod.
 
 ## Adding New Debug Variables
 
@@ -572,13 +594,13 @@ type ComponentStatusVar struct {
     componentName string
 }
 
-func (v *ComponentStatusVar) Get() (interface{}, error) {
+func (v *ComponentStatusVar) Get() (any, error) {
     status, err := v.provider.GetComponentStatus(v.componentName)
     if err != nil {
         return nil, err
     }
 
-    return map[string]interface{}{
+    return map[string]any{
         "component":   v.componentName,
         "running":     status.Running,
         "last_seen":   status.LastSeen,
@@ -591,7 +613,7 @@ func RegisterVariables(registry *introspection.Registry, provider StateProvider,
     // ... existing registrations ...
 
     // Register component status variables
-    for _, component := range []string{"reconciler", "executor", "deployer"} {
+    for _, component := range []string{"reconciler", "coordinator", "deployer"} {
         path := fmt.Sprintf("components/%s", component)
         registry.Publish(path, &ComponentStatusVar{
             provider:      provider,
@@ -622,4 +644,4 @@ Memory:
 - Generic introspection infrastructure: `pkg/introspection/CLAUDE.md`
 - Ring buffer: `pkg/events/ringbuffer/CLAUDE.md`
 - Controller integration: `pkg/controller/CLAUDE.md`
-- Acceptance testing: `tests/acceptance/configmap_reload_test.go`
+- Acceptance testing: `tests/acceptance/debug_client.go` (the `*DebugClient` helper) plus the suites that exercise it (`error_scenarios_test.go`, `leader_election_test.go`, `http_store_test.go`)

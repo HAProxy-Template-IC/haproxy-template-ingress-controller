@@ -27,11 +27,14 @@ Manages a Kind-based local development environment. Subcommands:
 | *(none)* / `up` | Create or attach to the `kind-haptic-dev` cluster, build + deploy the controller |
 | `restart` | Rebuild the controller image, redeploy |
 | `logs` | `kubectl logs -f` the controller |
+| `exec` | Open an interactive shell inside the controller pod |
 | `status` | Show controller/HAProxy pod status + running-vs-local source-hash |
+| `metrics` | Curl the controller's `/metrics` endpoint via port-forward |
+| `port-forward` | Port-forward an HAProxy pod's listener for local curling |
 | `test` | Run the basic ingress smoke test (`test-routes.sh`) |
 | `down` / `clean` | Delete the Kind cluster |
 
-`restart --skip-build` skips image rebuild (useful when iterating on chart-only changes). `status` uses `source-hash.sh` to show whether the cluster is running your latest code — always run it before debugging.
+`up --skip-build` and `restart --skip-build` reuse an existing controller image instead of rebuilding (handy when iterating on chart-only changes). `status` uses `source-hash.sh` to show whether the cluster is running your latest code — always run it before debugging.
 
 ## test-templates.sh
 

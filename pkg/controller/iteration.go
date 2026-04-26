@@ -30,10 +30,10 @@ import (
 // runIteration runs a single controller iteration.
 //
 // This function orchestrates the initialization sequence:
-//  1. Fetches and validates initial ConfigMap and Secret
+//  1. Fetches and validates the initial HAProxyTemplateConfig CRD and credentials Secret
 //  2. Creates and starts all event-driven components
 //  3. Creates and starts resource watchers, waits for sync
-//  4. Creates and starts ConfigMap/Secret watchers, waits for sync
+//  4. Creates and starts SingleWatchers for the CRD and credentials Secret, waits for sync
 //  5. Starts the EventBus (releases buffered events)
 //  6. Starts reconciliation components (Stage 5)
 //  7. Starts debug infrastructure (StateCache, EventBuffer, debug server if enabled)

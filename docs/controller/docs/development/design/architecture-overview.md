@@ -14,17 +14,16 @@ HAPTIC is a Kubernetes operator that manages HAProxy load balancer configuration
 
 **Operational Model:**
 
-The controller operates through event-driven coordination where components communicate exclusively via EventBus pub/sub:
+The controller operates through event-driven coordination, with one synchronous service inside the leader: rendering and validation are *not* a multi-hop event chain, they're a single Pipeline call.
 
-1. **Resource Watchers** monitor Kubernetes resources and publish change events to EventBus
-2. **Reconciler** subscribes to change events, debounces rapid changes, and publishes reconciliation trigger events
-3. **Renderer** subscribes to reconciliation trigger events, queries indexed resources from k8s stores, renders templates using pkg/templating, and publishes rendered configuration events
-4. **HAProxyValidator** subscribes to rendered configuration events, performs three-phase validation (client-native parser syntax + OpenAPI schema + `haproxy -c` semantic, via pkg/dataplane), and publishes validation result events
-5. **DeploymentScheduler** subscribes to validation events, enforces rate limiting, queues deployments if needed, and publishes deployment scheduled events
-6. **Deployer** subscribes to deployment scheduled events, executes parallel deployments to all HAProxy endpoints using pkg/dataplane, and publishes deployment completion events
-7. **Coordinator** (`pkg/controller/reconciler/coordinator.go`, leader-only) subscribes to ReconciliationTriggeredEvent, drives the render-validate pipeline synchronously, and publishes ReconciliationStartedEvent / ReconciliationCompletedEvent / ReconciliationFailedEvent
-8. **EventBus** coordinates all component interactions - no direct component-to-component function calls
-9. All components publish completion/failure events for metrics, logging, and further coordination
+1. **Resource Watchers** (`pkg/k8s/watcher`, all-replica) monitor Kubernetes resources and publish `ResourceIndexUpdatedEvent` / `IndexSynchronizedEvent` to EventBus
+2. **Reconciler** (`pkg/controller/reconciler.Reconciler`, all-replica) subscribes to those events, applies leading-edge refractory debouncing, and publishes `ReconciliationTriggeredEvent` (also fires immediately on `BecameLeaderEvent` to bootstrap the new leader)
+3. **Coordinator** (`pkg/controller/reconciler.Coordinator`, **leader-only**) subscribes to `ReconciliationTriggeredEvent`, calls `Pipeline.Execute` synchronously — no event hop. The pipeline runs `RenderService.Render` + three-phase `ValidationService.Validate` (client-native parser syntax + OpenAPI schema + `haproxy -c` semantic) in one shot. The Coordinator then publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream observers, and finally `ReconciliationCompletedEvent` (or `ReconciliationFailedEvent`) for metrics/commentator.
+4. **DeploymentScheduler** (`pkg/controller/deployer.DeploymentScheduler`, **leader-only**) subscribes to those events plus `HAProxyPodsDiscoveredEvent`, enforces rate limiting (`minDeploymentInterval`), implements latest-wins coalescing, and publishes `DeploymentScheduledEvent`
+5. **Deployer** (`pkg/controller/deployer.Component`, **leader-only**) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls against every HAProxy endpoint, and publishes `DeploymentCompletedEvent` plus per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent`
+6. **All-replica observers** (Discovery, ConfigPublisher, StatusApplier, ProposalValidator, HTTPStore, Metrics, Commentator) subscribe to relevant events for their specific purposes and either react locally or — if leader-only writes are involved — let the leader-only sister component pick up the work
+
+`pkg/controller/renderer.Component` and `pkg/controller/validator.HAProxyValidatorComponent` exist in the source tree as event-driven adapters but are **not constructed in production code**; the leader's synchronous Pipeline replaced them. They remain for test fixtures and historical reference.
 
 **Key Design Principles:**
 
@@ -154,15 +153,16 @@ graph TB
 
 **Event-Driven Data Flow:**
 
+The diagram above shows the conceptual flow; the production reality fuses Renderer + HAProxyValidator into the leader-only Coordinator's synchronous pipeline call.
+
 1. **Config/Resource Watchers** receive Kubernetes changes and publish events to EventBus
-2. **Reconciler** subscribes to change events, applies a leading-edge refractory debouncer (default 5s; see `pkg/k8s/types.DefaultDebounceInterval`), filters initial sync events, and publishes ReconciliationTriggeredEvent
-3. **Renderer** subscribes to ReconciliationTriggeredEvent, queries k8s stores for resources, renders templates via pkg/templating pure library, publishes TemplateRenderedEvent
-4. **HAProxyValidator** subscribes to TemplateRenderedEvent, validates using pkg/dataplane pure validation functions (syntax + semantics), publishes ValidationCompletedEvent or ValidationFailedEvent
-5. **DeploymentScheduler** subscribes to ValidationCompletedEvent and HAProxyPodsDiscoveredEvent, enforces rate limiting (default 2s minimum interval), implements "latest wins" queueing, publishes DeploymentScheduledEvent
-6. **Deployer** subscribes to DeploymentScheduledEvent, executes parallel deployments to all HAProxy endpoints using pkg/dataplane client, publishes InstanceDeployedEvent and DeploymentCompletedEvent
-7. **Coordinator** (in `pkg/controller/reconciler`) subscribes to ReconciliationTriggeredEvent on the leader, drives the synchronous render-validate pipeline, and publishes ReconciliationStartedEvent / ReconciliationCompletedEvent / ReconciliationFailedEvent for downstream observability consumers
-8. **Support Components** (Discovery, Metrics, Commentator) subscribe to relevant events for their specific purposes
-9. All components publish completion/failure events that flow back through EventBus for metrics, logging, and coordination
+2. **Reconciler** subscribes to change events, applies a leading-edge refractory debouncer (default 5s; see `pkg/k8s/types.DefaultDebounceInterval`), filters initial sync events, and publishes `ReconciliationTriggeredEvent`. Also fires on `BecameLeaderEvent` so a freshly-elected leader produces a current render instead of waiting for the next change.
+3. **Coordinator** (leader-only) subscribes to `ReconciliationTriggeredEvent` and calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` synchronously. The pipeline runs `RenderService.Render` + three-phase `ValidationService.Validate` in one atomic step. On success, the Coordinator publishes `TemplateRenderedEvent` + `ValidationCompletedEvent`; on failure, `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.As` to extract the failed phase). Either path ends with `ReconciliationCompletedEvent` for metrics.
+4. **DeploymentScheduler** (leader-only) subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, `HAProxyPodsDiscoveredEvent`, and `ConfigValidatedEvent`; enforces rate limiting (default 2s minimum interval), implements "latest wins" queueing, publishes `DeploymentScheduledEvent`
+5. **Deployer** (leader-only) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls to all HAProxy endpoints, publishes `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent` per endpoint and `DeploymentCompletedEvent` overall
+6. **Discovery** (all-replica) probes HAProxy pods, caches `HAProxyPodsDiscoveredEvent` via `leadership.StateReplayer` so the next leader gets current state on `BecameLeaderEvent`
+7. **ConfigPublisher** (leader-only) subscribes to `TemplateRenderedEvent` + `ValidationCompletedEvent`, writes the rendered config + auxiliary files as observable CRDs (`HAProxyCfg`, `HAProxyMapFile`, …)
+8. **Support Components** (Metrics, Commentator, StatusApplier) subscribe to relevant events for metrics / logs / status patches
 
 **Key Architecture Properties:**
 
@@ -205,6 +205,6 @@ Three phases run in-process, eliminating the need for a separate validation side
 
 1. **Phase 1 — Syntax parsing.** client-native parses the configuration and validates it against the HAProxy config grammar.
 2. **Phase 1.5 — OpenAPI schema check.** The parsed structure is cross-checked against the version-specific DataPlane API OpenAPI spec — catches out-of-range values, pattern violations, and missing required fields before they reach HAProxy.
-3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Auxiliary files are written to the real HAProxy directories under a mutex so file references resolve exactly like at runtime.
+3. **Phase 2 — Semantic validation.** `haproxy -c -f config` performs full semantic validation including resource availability. Each call creates a per-process temp directory mirroring the production layout (`maps/`, `ssl/`, `general/`), writes the auxiliary files there, and rewrites the rendered config's `default-path origin <baseDir>` line to point at the temp dir — so file references resolve exactly like at runtime. File I/O is fully isolated per call, but the actual `haproxy -c` invocation is still serialised by a global `haproxyCheckMutex` (`pkg/dataplane/validate_haproxy.go`) because concurrent binary invocations have been observed to interfere with each other.
 
-Results are cached by `(configHash, auxHash, versionHash)` so repeat validations during drift-prevention cycles are essentially free. This provides the same guarantees as a full HAProxy instance while being lightweight and fast.
+Results are cached by an SHA-256 over (config + auxiliary files) per instance — repeat validations during drift-prevention cycles short-circuit before touching disk. This provides the same guarantees as a full HAProxy instance while being lightweight and fast.

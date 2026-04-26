@@ -21,10 +21,10 @@ The libraries cover the following HAProxy feature areas through their respective
 | Feature | `haproxy.org/` | `haproxy-ingress.github.io/` | `nginx.ingress.kubernetes.io/` |
 |---------|----------------|-------------------------------|--------------------------------|
 | Basic authentication | `auth-type`, `auth-secret`, `auth-realm` | `auth-secret`, `auth-realm` | `auth-type`, `auth-secret`, `auth-realm` |
-| Allowlist / Denylist | `allowlist`, `denylist` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range` |
+| Allowlist / Denylist | `allowlist`, `denylist` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range`, `denylist-source-range` |
 | SSL redirect | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect` |
 | SSL passthrough | `ssl-passthrough` | `ssl-passthrough` | `ssl-passthrough` |
-| Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-sni`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret` | `backend-protocol` |
+| Backend SSL / mTLS | `server-ssl`, `server-proto`, `server-ca`, `server-crt` | `secure-backends`, `backend-protocol`, `secure-sni`, `secure-verify-ca-secret`, `secure-crt-secret` | `backend-protocol` |
 | CORS | `cors-enable`, `cors-allow-origin`, … | `cors-enable`, `cors-allow-origin`, … | `enable-cors`, `cors-allow-origin`, … |
 | Load balancing | `load-balance` | `balance-algorithm` | `load-balance` |
 | Session affinity (cookies) | `cookie-persistence` | `affinity`, `session-cookie-*` | `affinity`, `session-cookie-*` |

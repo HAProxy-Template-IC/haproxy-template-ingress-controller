@@ -4,7 +4,7 @@ This page captures the durable design decisions behind the `HAProxyTemplateConfi
 
 ## Why a CRD Instead of a ConfigMap
 
-The controller originally accepted its configuration via `ConfigMap`. That was replaced with a cluster-scoped API because:
+The controller originally accepted its configuration via `ConfigMap`. That was replaced with a typed, namespaced Kubernetes API (`scope: Namespaced`, defined in `pkg/apis/haproxytemplate/v1alpha1`) because:
 
 - **Schema validation at admission.** OpenAPI rules in the CRD reject malformed YAML before it reaches the controller — a `ConfigMap` accepts any strings.
 - **Embedded test fixtures.** `spec.validationTests` lets users ship assertions alongside templates and run them via the validating webhook or the `haptic-controller validate` CLI without duplicating fixtures elsewhere.
@@ -15,11 +15,11 @@ The controller originally accepted its configuration via `ConfigMap`. That was r
 
 Three layers of validation run in sequence:
 
-1. **OpenAPI schema** (Kubernetes API server). Rejects structural errors the moment `kubectl apply` hits the apiserver — invalid enum values, missing required fields, bad types.
-2. **Validating admission webhook** (the controller itself). Renders templates against the fixtures declared in `spec.validationTests`, runs assertions, and rejects the write if anything fails. Disabled per-resource-kind via `enableValidationWebhook` on each watched-resource entry to avoid exploding the matrix; the CRD itself is always webhook-guarded.
-3. **Runtime validation** (reconciler). The three-phase HAProxy validator (`pkg/dataplane`: client-native syntax parse + OpenAPI schema check + `haproxy -c` semantic check) runs on every reconciliation; results are cached by `(configHash, auxHash, versionHash)` so drift-prevention cycles are cheap. If it fails the previously-deployed config stays in place.
+1. **OpenAPI schema** (Kubernetes API server). Rejects structural errors the moment `kubectl apply` hits the apiserver — invalid enum values, missing required fields, bad types. This layer covers `HAProxyTemplateConfig` itself; there is no admission webhook for the CRD's own writes.
+2. **Validating admission webhook** (the controller itself, served at `/validate`). Applies to *watched resources* — by default the chart libraries opt **Ingresses, HTTPRoutes, and GRPCRoutes** in (`enableValidationWebhook: true` in `charts/haptic/libraries/ingress.yaml` and `gateway.yaml`); Gateways, Services, EndpointSlices, and Secrets are deliberately left out so EndpointSlice churn and large Secret payloads don't put every cluster write on the webhook critical path. The webhook does **not** validate `HAProxyTemplateConfig` itself — that's covered by layer 1. The webhook renders templates with the proposed object overlaid on the live store and rejects the write if rendering or HAProxy validation fails. To validate additional kinds, set `enableValidationWebhook: true` on the matching watched-resource entry in `controller.config.watchedResources`.
+3. **Runtime validation** (reconciler). The three-phase HAProxy validator (`pkg/dataplane`: client-native syntax parse + OpenAPI schema check + `haproxy -c` semantic check) runs on every reconciliation; results are cached by `(configHash, auxHash, versionHash)` so drift-prevention cycles are cheap. If it fails, the previously-deployed config stays in place.
 
-Failure at layer 3 never takes down traffic — the reconciler refuses to deploy invalid output while continuing to serve the last good config. Layer 2 (`failurePolicy: Fail`) does block writes to `HAProxyTemplateConfig` if the webhook endpoint is unreachable; this is deliberate — accepting an unvalidated config is riskier than rejecting a legitimate edit until the operator is back, and `HAProxyTemplateConfig` edits are rare operator actions, not part of the request path.
+Failure at layer 3 never takes down traffic — the reconciler refuses to deploy invalid output while continuing to serve the last good config. Layer 2 ships with `failurePolicy: Fail` (charts/haptic/templates/validatingwebhookconfiguration.yaml), so creates/updates of *opted-in resources* are rejected when the controller is unreachable; that's deliberate, since rendering an admission decision based on an unvalidated overlay is riskier than asking the user to retry.
 
 ## Credentials Stay in a Secret
 
@@ -43,7 +43,7 @@ TLS certificates are provided by cert-manager (recommended) or supplied manually
 
 ### Multi-Controller Isolation
 
-Clusters that run multiple HAPTIC instances in the same namespace must not cross-validate. The webhook's `objectSelector` matches `app.kubernetes.io/instance` against its own release, so each controller only sees configs labelled for it. Users don't have to set labels themselves — the chart does it automatically via the standard Helm labels.
+Each Helm release deploys its own `ValidatingWebhookConfiguration` named `<release>-webhook`, and each entry's `clientConfig.service` points at the controller `Service` for that release. So cross-validation between two HAPTIC instances doesn't happen by accident — the apiserver only invokes the webhook(s) whose `rules` match the resource being admitted, and each release's rules cite a different Service. There is **no** `objectSelector` in the chart today; if you need to scope a webhook to a label-selector subset of objects, add one in `validatingwebhookconfiguration.yaml`.
 
 ## CRD Versioning Posture
 

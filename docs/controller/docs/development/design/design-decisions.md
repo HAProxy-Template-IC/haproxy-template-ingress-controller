@@ -11,45 +11,45 @@
 - **Simplicity**: Single container deployment reduces complexity
 - **Reliability**: Same validation guarantees as full HAProxy instance
 
-**Implementation**:
+**Implementation**: lives in `pkg/dataplane/validator.go` plus `validate_syntax.go` / `validate_schema.go` / `validate_haproxy.go`. The leader-side reconciliation pipeline calls into it through `pkg/controller/validation.ValidationService`, which wraps caching and DNS-strictness on top.
 
 ```go
-// Validation is implemented in pkg/dataplane/validator.go
-// Uses real HAProxy directories with mutex locking to match Dataplane API behavior
-
-// ValidationPaths holds filesystem paths for validation
+// pkg/dataplane/validator.go (real signatures — not just an illustration)
 type ValidationPaths struct {
-    MapsDir           string  // e.g., /etc/haproxy/maps
-    SSLCertsDir       string  // e.g., /etc/haproxy/ssl
-    GeneralStorageDir string  // e.g., /etc/haproxy/general
-    ConfigFile        string  // e.g., /etc/haproxy/haproxy.cfg
+    TempDir           string // root tempdir; cleaned up by the validator
+    MapsDir           string
+    SSLCertsDir       string
+    CRTListDir        string // may differ from SSLCertsDir on HAProxy < 3.2
+    GeneralStorageDir string
+    ConfigFile        string
 }
 
-func ValidateConfiguration(mainConfig string, auxFiles *AuxiliaryFiles, paths ValidationPaths) error {
-    // Acquire mutex to ensure only one validation at a time
-    validationMutex.Lock()
-    defer validationMutex.Unlock()
-
-    // Phase 1: Syntax validation with client-native parser (returns parsed model for phase 1.5)
-    parsed, err := validateSyntax(mainConfig)
-    if err != nil {
-        return &ValidationError{Phase: "syntax", Err: err}
-    }
-
-    // Phase 1.5: OpenAPI schema validation (field patterns, ranges, required fields)
-    if err := validateSchema(parsed); err != nil {
-        return &ValidationError{Phase: "schema", Err: err}
-    }
-
-    // Phase 2: Semantic validation with haproxy binary (-c)
-    // Writes files to real HAProxy directories, then runs `haproxy -c`
-    if err := validateSemantics(mainConfig, auxFiles, paths); err != nil {
-        return &ValidationError{Phase: "semantic", Err: err}
-    }
-
-    return nil
+type ValidationError struct {
+    Phase   string // "syntax" / "schema" / "semantic"
+    Message string
+    Cause   error
 }
+
+// Returns the parsed *StructuredConfig from phase 1 so downstream callers
+// can skip a re-parse. Cache hits return ErrValidationCacheHit (parsed nil).
+func ValidateConfiguration(
+    mainConfig string,
+    auxFiles *AuxiliaryFiles,
+    paths *ValidationPaths,
+    version *Version,           // schema selector; nil falls back to v3.0
+    skipDNSValidation bool,     // true for permissive (leader runtime); false for webhook
+) (*parser.StructuredConfig, error)
 ```
+
+The function checks a `(configHash, auxHash, versionHash)` cache first (so identical inputs during drift-prevention cycles skip every phase), then runs:
+
+1. **Phase 1 — Syntax** via `validateSyntax(mainConfig)`. Returns the parsed `*parser.StructuredConfig` for phase 1.5.
+2. **Phase 1.5 — OpenAPI schema** via `validateAPISchema(parsed, version)`.
+3. **Phase 2 — Semantic** via `validateSemantics(...)`. Clears the supplied `ValidationPaths.{MapsDir, SSLCertsDir, GeneralStorageDir, CRTListDir}`, writes the auxiliary tree there, then calls `runHAProxyCheck` under a package-global mutex (`haproxyCheckMutex`) that serialises every concurrent `haproxy -c` invocation. The mutex protects the binary invocation, not the file writes — concurrent `haproxy -c` runs interfere with each other even with isolated paths.
+
+Successful parses are cached; failures are not cached.
+
+The pipeline-side `pkg/controller/validation.ValidationService` allocates a per-call `os.MkdirTemp` for `ValidationPaths`, rewrites the rendered config's `default-path origin <baseDir>` to point at the temp dir, and *also* keeps its own per-instance content-checksum cache (`SHA-256(config + auxFiles)`) on top of the dataplane-level cache. Net effect: drift-prevention cycles short-circuit twice (controller cache, then dataplane cache) before any file is written.
 
 **Validation Paths Configuration**:
 
@@ -63,7 +63,7 @@ dataplane:
   configFile: /etc/haproxy/haproxy.cfg
 ```
 
-The validator uses mutex locking to ensure only one validation runs at a time, preventing concurrent writes to the HAProxy directories. This approach exactly matches how the Dataplane API performs validation.
+The package-global `haproxyCheckMutex` serialises the `haproxy -c` invocations (without it, concurrent runs interfere with each other even when the temp directories are isolated). It does *not* protect the file writes — those happen before the lock is acquired and against caller-supplied `ValidationPaths`, so callers that share paths across goroutines need their own coordination. In practice the controller wrapper hands every call its own `os.MkdirTemp`, so this only matters for direct library users.
 
 **Parser Improvements**:
 
@@ -189,24 +189,28 @@ The controller implements comprehensive Prometheus metrics through the event ada
 - `pkg/controller/metrics`: Event adapter subscribing to controller lifecycle events
 - Metrics exposed on configurable port (default 9090) at `/metrics` endpoint
 
-**Implementation**:
+**Implementation** (real signatures — see `pkg/controller/controller.go` for the production wiring):
 
 ```go
-// Instance-based registry (not global)
+// Instance-based registry — created fresh each iteration so reinit drops
+// stale state cleanly.
 metricsRegistry := prometheus.NewRegistry()
 
-// Create metrics component
-metricsComponent := metrics.NewMetricsComponent(eventBus, metricsRegistry)
+// Two-step construction: pure metrics struct first, then the event adapter.
+domainMetrics := metrics.NewMetrics(metricsRegistry)               // *Metrics
+metricsComponent := metrics.New(domainMetrics, eventBus)            // *Component
 
-// Start metrics collection (after EventBus.Start())
+// Subscription happened in metrics.New(...). Start() blocks on the event loop.
 go metricsComponent.Start(ctx)
 
-// Start HTTP server
+// HTTP server lives in pkg/metrics; the long-lived Server outlives the
+// per-iteration registry, so it's constructed once at startup with a
+// process-lifetime registry.
 metricsServer := pkgmetrics.NewServer(":9090", metricsRegistry)
 go metricsServer.Start(ctx)
 ```
 
-**Metrics exposed** (31 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue and `TestMetrics_ExpectedNames` for the authoritative list). Key groups:
+**Metrics exposed** (31 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue; `pkg/controller/metrics/metrics.go` itself is the authoritative list. `TestMetrics_AllMetricsRegistered` covers a representative subset, not every metric). Key groups:
 
 1. **Reconciliation**:
    - `haptic_reconciliation_total`, `haptic_reconciliation_errors_total`, `haptic_reconciliation_duration_seconds`
@@ -268,37 +272,35 @@ If the deployment later requires end-to-end trace correlation across controller 
 
 **Decision**: Structured errors with context using standard library errors package and custom error types.
 
-**Pattern**:
+**Pattern** (sketched against the real types in `pkg/dataplane/errors.go`):
 
 ```go
-// Custom error types for different failure modes
+// ValidationError represents semantic validation failure from HAProxy.
 type ValidationError struct {
-    ConfigSize int
-    Line       int
-    Details    string
-    Err        error
+    Phase   string  // "syntax" or "semantic"
+    Message string
+    Cause   error
 }
 
 func (e *ValidationError) Error() string {
-    return fmt.Sprintf("validation failed at line %d: %s", e.Line, e.Details)
+    if e.Phase != "" {
+        return fmt.Sprintf("%s validation failed: %s: %v", e.Phase, e.Message, e.Cause)
+    }
+    return fmt.Sprintf("HAProxy validation failed: %s: %v", e.Message, e.Cause)
 }
 
-func (e *ValidationError) Unwrap() error {
-    return e.Err
-}
+func (e *ValidationError) Unwrap() error { return e.Cause }
 
-// Usage with error wrapping
-func validate(config string) error {
+// Usage at the boundary between parser and caller (see pkg/dataplane/validate_*.go):
+func validateSyntax(config string) error {
     if err := parser.Parse(config); err != nil {
-        return &ValidationError{
-            ConfigSize: len(config),
-            Details:    "syntax error",
-            Err:        err,
-        }
+        return &ValidationError{Phase: "syntax", Message: "parser rejected config", Cause: err}
     }
     return nil
 }
 ```
+
+`pkg/dataplane` also defines `*ParseError` for `client-native` parser failures, and `pkg/templating` defines `*RenderError` / `*CompilationError` / `*RenderTimeoutError` / `*TemplateNotFoundError` for the template engine. Each carries a `Cause`, so `errors.As` and `errors.Is` chains continue to work end-to-end.
 
 ## Event-Driven Architecture
 
@@ -314,7 +316,7 @@ func validate(config string) error {
 
 **Architecture Pattern**:
 
-The architecture uses a **pure libraries + event-driven components** pattern:
+The architecture splits responsibilities into pure libraries, a synchronous render-validate pipeline driven by the leader-only Coordinator, and event-driven components for everything that requires cross-component coordination:
 
 ```
 Component Architecture:
@@ -324,33 +326,38 @@ Component Architecture:
 │   ├── pkg/k8s - Resource watching, indexing, and storage
 │   └── pkg/core - Configuration types and basic validation
 │
-└── Event-Driven Components (event adapters wrapping pure libraries)
-    ├── pkg/controller/renderer - Subscribes to ReconciliationTriggeredEvent, calls pkg/templating
-    ├── pkg/controller/validator - Subscribes to TemplateRenderedEvent, calls pkg/dataplane validation
-    ├── pkg/controller/deployer - DeploymentScheduler + Deployer + DriftMonitor around pkg/dataplane
-    ├── pkg/controller/reconciler - Debounces resource changes; Coordinator drives the pipeline
+├── Synchronous Pipeline (leader-only, called via direct function call — no event hop)
+│   ├── pkg/controller/renderer.RenderService - templates → haproxy.cfg + auxiliary files
+│   ├── pkg/controller/validation.ValidationService - three-phase validation with caching
+│   └── pkg/controller/pipeline.Pipeline - composes the two above + checksum
+│
+└── Event-Driven Components (event adapters wrapping pure libraries / pipeline)
+    ├── pkg/controller/reconciler - Reconciler debounces; Coordinator drives the pipeline (leader-only)
+    ├── pkg/controller/deployer - DeploymentScheduler + Deployer + DriftMonitor around pkg/dataplane (leader-only)
+    ├── pkg/controller/discovery - HAProxy pod probing; caches event for state replay
+    ├── pkg/controller/configpublisher - publishes HAProxyCfg + auxiliary CRDs (leader-only)
+    ├── pkg/controller/dryrunvalidator + proposalvalidator - admission-webhook integration
+    ├── pkg/controller/httpstore - background HTTP refresh + two-version cache
+    ├── pkg/controller/statusapplier - SSA-applies template-driven status patches (leader-only writes)
     ├── pkg/controller/commentator - Domain-aware logging of every event for correlation
-    └── pkg/controller/metrics - Subscribes to lifecycle events, updates Prometheus histograms/counters
+    └── pkg/controller/metrics - Subscribes to lifecycle events, updates Prometheus metrics
 ```
 
 **Key Distinction**:
 
-- **Pure Libraries**: Testable business logic with no EventBus dependencies (pkg/templating, pkg/dataplane, pkg/k8s)
-- **Event-Driven Components**: Controllers that subscribe to events, call pure libraries, and publish result events (pkg/controller/*)
+- **Pure Libraries**: Testable business logic with no EventBus dependencies (`pkg/templating`, `pkg/dataplane`, `pkg/k8s`).
+- **Synchronous Pipeline**: One direct function call inside the leader-only Coordinator. Render + validate is a single atomic step rather than two event-driven hops, because admission decisions and reconciliation decisions must agree.
+- **Event-Driven Components**: Coordination across components, observability, and webhook flows (`pkg/controller/*`). `pkg/controller/renderer.Component` and `pkg/controller/validator.HAProxyValidatorComponent` exist in the source tree as event-driven adapters but are constructed only by tests; the production controller wires the synchronous pipeline instead.
 
-**Homegrown Event Bus Implementation**:
+**Homegrown Event Bus Implementation** (real shape — see `pkg/events/bus.go`):
 
 ```go
 // pkg/events/bus.go
 package events
 
-import "sync"
-
 // Event interface for type safety and immutability
 //
 // All event types MUST use pointer receivers for Event interface methods.
-// This avoids copying large structs (200+ bytes) and follows Go best practices.
-//
 // All event types MUST implement both methods:
 //   - EventType() returns the unique event type string
 //   - Timestamp() returns when the event was created
@@ -362,385 +369,68 @@ type Event interface {
     Timestamp() time.Time
 }
 
-// EventBus provides pub/sub coordination with startup coordination.
-//
-// Startup Coordination:
-// Events published before Start() is called are buffered and replayed after Start().
-// This prevents race conditions during component initialization where events might
-// be published before all subscribers have connected.
+// EventBus provides pub/sub + scatter-gather coordination with startup buffering
+// and a Pause/Resume hook for leadership transitions.
 type EventBus struct {
-    subscribers []chan Event
-    mu          sync.RWMutex
+    subscribers      []subscriber           // universal subs (carries lossy flag, name, channel)
+    typedSubscribers []*typedSubscription   // type-filtered (SubscribeTypes / Subscribe[T])
+    mu               sync.RWMutex
 
-    // Startup coordination
+    // Startup coordination + Pause/Resume.
+    // Pause() returns the bus to buffering mode; Start() flushes the buffer
+    // to all subscribers. Used during leadership transitions so leader-only
+    // components subscribe before the BecameLeaderEvent is replayed.
     started        bool
     startMu        sync.Mutex
     preStartBuffer []Event
-}
 
-// NewEventBus creates a new EventBus.
-//
-// The bus starts in buffering mode - events published before Start() is called
-// will be buffered and replayed when Start() is invoked.
-//
-// The capacity parameter sets the initial buffer size for pre-start events.
-// Recommended: 100 for most applications.
-func NewEventBus(capacity int) *EventBus {
-    return &EventBus{
-        subscribers:    make([]chan Event, 0),
-        started:        false,
-        preStartBuffer: make([]Event, 0, capacity),
-    }
-}
-
-// Publish sends event to all subscribers.
-//
-// If Start() has not been called yet, the event is buffered and will be
-// replayed when Start() is invoked. After Start() is called, this is a
-// non-blocking operation that drops events to lagging subscribers.
-//
-// Returns the number of subscribers that received the event.
-// Returns 0 if event was buffered (before Start()).
-func (b *EventBus) Publish(event Event) int {
-    // Check if bus has started
-    b.startMu.Lock()
-    if !b.started {
-        // Buffer event for replay after Start()
-        b.preStartBuffer = append(b.preStartBuffer, event)
-        b.startMu.Unlock()
-        return 0
-    }
-    b.startMu.Unlock()
-
-    // Bus has started - publish to subscribers
-    b.mu.RLock()
-    defer b.mu.RUnlock()
-
-    sent := 0
-    for _, ch := range b.subscribers {
-        select {
-        case ch <- event:
-            sent++
-        default:
-            // Channel full, subscriber lagging - drop event
-        }
-    }
-    return sent
-}
-
-// Subscribe creates new event channel
-func (b *EventBus) Subscribe(bufferSize int) <-chan Event {
-    b.mu.Lock()
-    defer b.mu.Unlock()
-
-    ch := make(chan Event, bufferSize)
-    b.subscribers = append(b.subscribers, ch)
-    return ch
-}
-
-// Start releases all buffered events and switches the bus to normal operation mode.
-//
-// This method should be called after all components have subscribed to the bus
-// during application startup. It ensures that no events are lost during the
-// initialization phase.
-//
-// Behavior:
-//  1. Marks the bus as started
-//  2. Replays all buffered events to subscribers in order
-//  3. Clears the buffer
-//  4. All subsequent Publish() calls go directly to subscribers
-//
-// This method is idempotent - calling it multiple times has no additional effect.
-func (b *EventBus) Start() {
-    b.startMu.Lock()
-    defer b.startMu.Unlock()
-
-    // Idempotent - return if already started
-    if b.started {
-        return
-    }
-
-    // Mark as started (must be done before replaying to avoid recursion)
-    b.started = true
-
-    // Replay buffered events to subscribers
-    if len(b.preStartBuffer) > 0 {
-        b.mu.RLock()
-        subscribers := b.subscribers
-        b.mu.RUnlock()
-
-        for _, event := range b.preStartBuffer {
-            // Publish each buffered event
-            for _, ch := range subscribers {
-                select {
-                case ch <- event:
-                    // Event sent
-                default:
-                    // Channel full - drop event (same behavior as normal Publish)
-                }
-            }
-        }
-
-        // Clear buffer
-        b.preStartBuffer = nil
-    }
+    // Drop accounting — separated by criticality so observability noise
+    // doesn't trigger the same alerts as real backpressure problems.
+    droppedEventsCritical      uint64       // atomic; SubscribeLossy never increments this
+    droppedEventsObservability uint64       // atomic; from lossy subscribers
+    onDrop                     DropCallback // fires only on critical drops
 }
 ```
+
+`Publish` is non-blocking and returns the number of subscribers that received the event (`int`, not `error`). Pre-start buffered events return `0`. The Pause/Resume contract is documented in `pkg/controller/leaderelection/CLAUDE.md` — it's the mechanism that keeps leader-only components from racing against the very `BecameLeaderEvent` that's supposed to start them.
+
+`Subscribe` is `Subscribe(name string, bufferSize int) <-chan Event` — the `name` shows up in drop-callback diagnostics so a slow subscriber is identifiable. There are also typed (`SubscribeTypes`, `Subscribe[T]`) and lossy (`SubscribeLossy`, `SubscribeTypesLossy`) variants. See `pkg/events/CLAUDE.md` for the full surface.
 
 **Event Type Definitions**:
 
+The full catalog of event-type constants (~50 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `certificate.go`, `webhookobservability.go`, `http.go`, `webhook.go`, `proposal.go`, `status.go`).
+
+Every event type follows the same shape:
+
 ```go
-// pkg/events/types.go
+// pkg/controller/events/<category>.go
 package events
 
-// Event categories covering complete controller lifecycle
-//
-// All events use pointer receivers and include private timestamp fields.
-// Constructor functions (New*Event) perform defensive copying of slices/maps.
-
-// Lifecycle Events
-type ControllerStartedEvent struct {
-    ConfigVersion  string
-    SecretVersion  string
-    timestamp      time.Time
-}
-
-func NewControllerStartedEvent(configVersion, secretVersion string) *ControllerStartedEvent {
-    return &ControllerStartedEvent{
-        ConfigVersion: configVersion,
-        SecretVersion: secretVersion,
-        timestamp:     time.Now(),
-    }
-}
-
-func (e *ControllerStartedEvent) EventType() string    { return "controller.started" }
-func (e *ControllerStartedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ControllerShutdownEvent struct {
-    Reason    string
-    timestamp time.Time
-}
-
-func NewControllerShutdownEvent(reason string) *ControllerShutdownEvent {
-    return &ControllerShutdownEvent{
-        Reason:    reason,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ControllerShutdownEvent) EventType() string    { return "controller.shutdown" }
-func (e *ControllerShutdownEvent) Timestamp() time.Time { return e.timestamp }
-
-// Configuration Events
+// Exported fields for event data; unexported `timestamped` mixes in Timestamp().
 type ConfigParsedEvent struct {
-    Config        interface{}
-    Version       string
-    SecretVersion string
-    timestamp     time.Time
+    Config         any    // parsed config (any to avoid circular deps)
+    TemplateConfig any    // original CRD (for k8s metadata)
+    Version        string // HAProxyTemplateConfig CRD resourceVersion
+    SecretVersion  string // credentials Secret resourceVersion
+    timestamped
 }
 
-func NewConfigParsedEvent(config interface{}, version, secretVersion string) *ConfigParsedEvent {
+// Constructor performs defensive copying of slices/maps where present.
+func NewConfigParsedEvent(config, templateConfig any, version, secretVersion string) *ConfigParsedEvent {
     return &ConfigParsedEvent{
-        Config:        config,
-        Version:       version,
-        SecretVersion: secretVersion,
-        timestamp:     time.Now(),
+        Config:         config,
+        TemplateConfig: templateConfig,
+        Version:        version,
+        SecretVersion:  secretVersion,
+        timestamped:    newTimestamped(),
     }
 }
 
-func (e *ConfigParsedEvent) EventType() string    { return "config.parsed" }
-func (e *ConfigParsedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ConfigValidatedEvent struct {
-    Config        interface{}
-    Version       string
-    SecretVersion string
-    timestamp     time.Time
-}
-
-func NewConfigValidatedEvent(config interface{}, version, secretVersion string) *ConfigValidatedEvent {
-    return &ConfigValidatedEvent{
-        Config:        config,
-        Version:       version,
-        SecretVersion: secretVersion,
-        timestamp:     time.Now(),
-    }
-}
-
-func (e *ConfigValidatedEvent) EventType() string    { return "config.validated" }
-func (e *ConfigValidatedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ConfigInvalidEvent struct {
-    Version          string
-    ValidationErrors map[string][]string // validator name -> errors
-    timestamp        time.Time
-}
-
-// NewConfigInvalidEvent creates a new ConfigInvalidEvent with defensive copying
-func NewConfigInvalidEvent(version string, validationErrors map[string][]string) *ConfigInvalidEvent {
-    // Defensive copy of map with slice values
-    errorsCopy := make(map[string][]string, len(validationErrors))
-    for k, v := range validationErrors {
-        if len(v) > 0 {
-            vCopy := make([]string, len(v))
-            copy(vCopy, v)
-            errorsCopy[k] = vCopy
-        }
-    }
-
-    return &ConfigInvalidEvent{
-        Version:          version,
-        ValidationErrors: errorsCopy,
-        timestamp:        time.Now(),
-    }
-}
-
-func (e *ConfigInvalidEvent) EventType() string    { return "config.invalid" }
-func (e *ConfigInvalidEvent) Timestamp() time.Time { return e.timestamp }
-
-// Resource Events
-type ResourceIndexUpdatedEvent struct {
-    // ResourceTypeName identifies the resource type from config (e.g., "ingresses", "services").
-    ResourceTypeName string
-
-    // ChangeStats provides detailed change statistics including Created, Modified, Deleted counts
-    // and whether this event occurred during initial sync.
-    ChangeStats types.ChangeStats
-
-    timestamp time.Time
-}
-
-func NewResourceIndexUpdatedEvent(resourceTypeName string, changeStats types.ChangeStats) *ResourceIndexUpdatedEvent {
-    return &ResourceIndexUpdatedEvent{
-        ResourceTypeName: resourceTypeName,
-        ChangeStats:      changeStats,
-        timestamp:        time.Now(),
-    }
-}
-
-func (e *ResourceIndexUpdatedEvent) EventType() string    { return "resource.index.updated" }
-func (e *ResourceIndexUpdatedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ResourceSyncCompleteEvent struct {
-    // ResourceTypeName identifies the resource type from config (e.g., "ingresses").
-    ResourceTypeName string
-
-    // InitialCount is the number of resources loaded during initial sync.
-    InitialCount int
-
-    timestamp time.Time
-}
-
-func NewResourceSyncCompleteEvent(resourceTypeName string, initialCount int) *ResourceSyncCompleteEvent {
-    return &ResourceSyncCompleteEvent{
-        ResourceTypeName: resourceTypeName,
-        InitialCount:     initialCount,
-        timestamp:        time.Now(),
-    }
-}
-
-func (e *ResourceSyncCompleteEvent) EventType() string    { return "resource.sync.complete" }
-func (e *ResourceSyncCompleteEvent) Timestamp() time.Time { return e.timestamp }
-
-type IndexSynchronizedEvent struct {
-    // ResourceCounts maps resource types to their counts.
-    ResourceCounts map[string]int
-    timestamp      time.Time
-}
-
-// NewIndexSynchronizedEvent creates a new IndexSynchronizedEvent with defensive copying
-func NewIndexSynchronizedEvent(resourceCounts map[string]int) *IndexSynchronizedEvent {
-    // Defensive copy of map
-    countsCopy := make(map[string]int, len(resourceCounts))
-    for k, v := range resourceCounts {
-        countsCopy[k] = v
-    }
-
-    return &IndexSynchronizedEvent{
-        ResourceCounts: countsCopy,
-        timestamp:      time.Now(),
-    }
-}
-
-func (e *IndexSynchronizedEvent) EventType() string    { return "index.synchronized" }
-func (e *IndexSynchronizedEvent) Timestamp() time.Time { return e.timestamp }
-
-// Reconciliation Events
-type ReconciliationTriggeredEvent struct {
-    Reason    string
-    timestamp time.Time
-}
-
-func NewReconciliationTriggeredEvent(reason string) *ReconciliationTriggeredEvent {
-    return &ReconciliationTriggeredEvent{
-        Reason:    reason,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ReconciliationTriggeredEvent) EventType() string    { return "reconciliation.triggered" }
-func (e *ReconciliationTriggeredEvent) Timestamp() time.Time { return e.timestamp }
-
-type ReconciliationStartedEvent struct {
-    Trigger   string
-    timestamp time.Time
-}
-
-func NewReconciliationStartedEvent(trigger string) *ReconciliationStartedEvent {
-    return &ReconciliationStartedEvent{
-        Trigger:   trigger,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ReconciliationStartedEvent) EventType() string    { return "reconciliation.started" }
-func (e *ReconciliationStartedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ReconciliationCompletedEvent struct {
-    DurationMs int64
-    timestamp  time.Time
-}
-
-func NewReconciliationCompletedEvent(durationMs int64) *ReconciliationCompletedEvent {
-    return &ReconciliationCompletedEvent{
-        DurationMs: durationMs,
-        timestamp:  time.Now(),
-    }
-}
-
-func (e *ReconciliationCompletedEvent) EventType() string    { return "reconciliation.completed" }
-func (e *ReconciliationCompletedEvent) Timestamp() time.Time { return e.timestamp }
-
-type ReconciliationFailedEvent struct {
-    Error     string
-    timestamp time.Time
-}
-
-func NewReconciliationFailedEvent(err string) *ReconciliationFailedEvent {
-    return &ReconciliationFailedEvent{
-        Error:     err,
-        timestamp: time.Now(),
-    }
-}
-
-func (e *ReconciliationFailedEvent) EventType() string    { return "reconciliation.failed" }
-func (e *ReconciliationFailedEvent) Timestamp() time.Time { return e.timestamp }
-
-// Note: All ~50 event types follow the same pattern:
-// - Pointer receivers for EventType() and Timestamp() methods
-// - Private timestamp field set in constructor
-// - Constructor function (New*Event) that performs defensive copying
-// - Exported fields for event data
-//
-// Additional event categories (not shown for brevity):
-// - Template Events (TemplateRenderedEvent, TemplateRenderFailedEvent)
-// - Validation Events (ValidationStartedEvent, ValidationCompletedEvent, ValidationFailedEvent)
-// - Deployment Events (DeploymentStartedEvent, InstanceDeployedEvent, DeploymentCompletedEvent)
-// - Storage Events (StorageSyncStartedEvent, StorageSyncCompletedEvent)
-// - HAProxy Discovery Events (HAProxyPodsDiscoveredEvent)
-//
-// See pkg/controller/events/types.go for complete event catalog.
+// Pointer receiver for the Event interface method.
+func (e *ConfigParsedEvent) EventType() string { return EventTypeConfigParsed }
 ```
+
+Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook certificates, webhook validation (observability + scatter-gather request/response), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
 
 **Event Immutability Contract**:
 
@@ -775,53 +465,49 @@ This approach provides practical immutability while maintaining clean, idiomatic
 
 **Component with Event Adapter Pattern**:
 
+The pure library lives in `pkg/dataplane`; the event adapter lives in `pkg/controller/deployer`. This is mandated by the architecture rule "domain libraries have no EventBus dependency" — `pkg/dataplane` itself never imports `pkg/events`, so the adapter cannot live there.
+
 ```go
-// pkg/dataplane/client.go - Pure component (no event knowledge)
-type DataplaneClient struct {
-    endpoints []DataplaneEndpoint
+// pkg/dataplane (pure library — no event knowledge):
+client, err := dataplane.NewClient(ctx, endpoint)            // *dataplane.Client
+result, err := client.Sync(ctx, config, auxFiles, opts)      // *dataplane.SyncResult
+```
+
+```go
+// pkg/controller/deployer/component.go (event adapter — real shape, see source).
+// Subscribes inside Start() (leader-only contract); calls dataplane.Sync via
+// the per-endpoint clients it constructs from HAProxyPodsDiscoveredEvent.
+type Component struct {
+    eventBus         *busevents.EventBus
+    logger           *slog.Logger
+    maxParallel      int
+    rawPushThreshold int
+    // ... per-endpoint clients, in-flight tracking, ...
 }
 
-func (c *DataplaneClient) DeployConfig(ctx context.Context, config string) error {
-    // Pure business logic
-    // No event publishing here
-    return c.deploy(ctx, config)
-}
+func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPushThreshold int) *Component { ... }
 
-// pkg/dataplane/adapter.go - Event adapter wrapping pure component
-type DataplaneEventAdapter struct {
-    client   *DataplaneClient
-    eventBus *EventBus
-}
-
-func (a *DataplaneEventAdapter) DeployConfig(ctx context.Context, config string) error {
-    // Publish start event
-    a.eventBus.Publish(DeploymentStartedEvent{
-        Endpoints: a.client.endpoints,
+// Sketch of one Sync invocation, distilled from pkg/controller/deployer/component.go:
+func (c *Component) deployToEndpoint(ctx context.Context, ep dataplane.Endpoint, cfg string, aux *dataplane.AuxiliaryFiles) {
+    c.eventBus.Publish(events.NewDeploymentStartedEvent(...))
+    result, err := dataplane.Sync(ctx, &ep, cfg, aux, &dataplane.SyncOptions{
+        MaxParallel:      c.maxParallel,
+        RawPushThreshold: c.rawPushThreshold,
     })
-
-    // Call pure component
-    err := a.client.DeployConfig(ctx, config)
-
-    // Publish result event
     if err != nil {
-        a.eventBus.Publish(DeploymentFailedEvent{Error: err.Error()})
-        return err
+        c.eventBus.Publish(events.NewInstanceDeploymentFailedEvent(ep, err))
+        return
     }
-
-    a.eventBus.Publish(DeploymentCompletedEvent{
-        Total: len(a.client.endpoints),
-        Succeeded: len(a.client.endpoints),
-        Failed: 0,
-    })
-
-    return nil
+    c.eventBus.Publish(events.NewInstanceDeployedEvent(ep, result))
 }
 ```
 
 **Staged Startup with Event Coordination**:
 
 ```go
-// cmd/controller/main.go
+// Sketch — the staged startup actually lives in pkg/controller/iteration.go;
+// cmd/controller/main.go is a thin Cobra wrapper that calls into the
+// controller package. This is the per-iteration shape.
 func main() {
     ctx := context.Background()
 
@@ -841,12 +527,12 @@ func main() {
     validator.NewBasicValidator(eventBus, logger)
     validator.NewTemplateValidator(eventBus, logger)
     validator.NewJSONPathValidator(eventBus, logger)
-    configValidator := configchange.NewHandler(eventBus, logger, configChangeCh,
-        []string{"basic", "template", "jsonpath"})
+    configValidator := configchange.NewConfigChangeHandler(eventBus, logger, configChangeCh,
+        []string{"basic", "template", "jsonpath"}, 0 /* default reinit debounce */)
 
-    go configLoader.Run(ctx)
-    go credentialsLoader.Run(ctx)
-    go configValidator.Run(ctx)
+    go configLoader.Start(ctx)
+    go credentialsLoader.Start(ctx)
+    go configValidator.Start(ctx)
 
     // Start the event bus - ensures all components have subscribed before events flow
     // This prevents race conditions where events are published before subscribers connect
@@ -885,10 +571,10 @@ ConfigReady:
     stores := make(map[string]*ResourceStore)
     resourceWatcher := NewResourceWatcher(client, eventBus, config.WatchedResources, stores)
 
-    go resourceWatcher.Run(ctx)
+    go resourceWatcher.Start(ctx)
 
     indexTracker := NewIndexSynchronizationTracker(eventBus, config.WatchedResources)
-    go indexTracker.Run(ctx)
+    go indexTracker.Start(ctx)
 
     // Stage 4: Wait for Index Sync
     log.Info("Stage 4: Waiting for resource sync")
@@ -927,39 +613,42 @@ IndexReady:
 }
 ```
 
-**Event Multiplexing with `select`**:
+**Event Multiplexing with `select`** (illustrative — see `pkg/controller/reconciler/reconciler.go` for the real `Reconciler.Start` loop, which uses `*timers.SafeTimer` and a typed subscription):
 
 ```go
-// pkg/controller/reconciler.go
-type ReconciliationComponent struct {
-    eventBus *EventBus
-    debouncer *time.Timer
+// pkg/controller/reconciler.go (illustrative)
+type Reconciler struct {
+    eventBus  *EventBus
+    timer     *timers.SafeTimer // leading-edge refractory; not trailing-edge debounce
+    logger    *slog.Logger
 }
 
-func (r *ReconciliationComponent) Run(ctx context.Context) error {
-    events := r.eventBus.Subscribe("reconciler", 100)
+func (r *Reconciler) Start(ctx context.Context) error {
+    events := r.eventBus.SubscribeTypes("reconciler", 100,
+        EventTypeResourceIndexUpdated, EventTypeIndexSynchronized,
+        EventTypeHTTPResourceUpdated, EventTypeHTTPResourceAccepted,
+        EventTypeDriftPreventionTriggered, EventTypeBecameLeader,
+    )
 
     for {
         select {
         case event := <-events:
             switch e := event.(type) {
-            case ResourceIndexUpdatedEvent:
-                // Resource changed, trigger reconciliation after quiet period
-                r.debounce()
+            case *ResourceIndexUpdatedEvent:
+                // Leading-edge: fire immediately if no recent reconciliation,
+                // otherwise arm the refractory timer so coalesced bursts trigger
+                // exactly one reconciliation when the window closes.
+                r.handleDebounceableChange()
 
-            case ConfigValidatedEvent:
-                // Config changed, trigger immediate reconciliation
-                r.triggerImmediately()
-
-            case ReconciliationCompletedEvent:
-                log.Info("Reconciliation completed", "duration_ms", e.DurationMs)
+            case *IndexSynchronizedEvent, *BecameLeaderEvent, *DriftPreventionTriggeredEvent:
+                // Bypass the refractory window — these events represent whole-store
+                // state transitions that should reconcile immediately.
+                r.triggerNow(e.EventType())
             }
 
-        case <-r.debouncer.C:
-            // Quiet period expired, trigger reconciliation
-            r.eventBus.Publish(ReconciliationTriggeredEvent{
-                Reason: "debounce_timer",
-            })
+        case <-r.timer.Chan():
+            r.timer.Fired() // MUST call after channel drain or EnsureRunning becomes a no-op
+            r.eventBus.Publish(NewReconciliationTriggeredEvent("debounce_timer"))
 
         case <-ctx.Done():
             return ctx.Err()
@@ -983,9 +672,9 @@ func (r *OperatorRunner) Run(ctx context.Context) error {
     // Start components
     g, gCtx := errgroup.WithContext(compCtx)
 
-    g.Go(func() error { return configWatcher.Run(gCtx) })
-    g.Go(func() error { return resourceWatcher.Run(gCtx) })
-    g.Go(func() error { return reconciler.Run(gCtx) })
+    g.Go(func() error { return configWatcher.Start(gCtx) })
+    g.Go(func() error { return resourceWatcher.Start(gCtx) })
+    g.Go(func() error { return reconciler.Start(gCtx) })
 
     // Wait for shutdown signal or component error
     select {
@@ -1043,13 +732,15 @@ The scatter-gather pattern broadcasts a request to multiple recipients and aggre
 The EventBus provides both patterns:
 
 ```go
-// pkg/events/bus.go - Extended EventBus
+// pkg/events/bus.go (real signatures)
 
-// Async pub/sub (existing)
+// Async pub/sub
 func (b *EventBus) Publish(event Event) int
-func (b *EventBus) Subscribe(bufferSize int) <-chan Event
+func (b *EventBus) Subscribe(name string, bufferSize int) <-chan Event
+// Plus typed (SubscribeTypes, generic Subscribe[T]) and lossy (SubscribeLossy)
+// variants — see pkg/events/CLAUDE.md for the full surface.
 
-// Sync request-response (new)
+// Sync request-response
 func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOptions) (*RequestResult, error)
 ```
 
@@ -1128,109 +819,70 @@ sequenceDiagram
 All business logic packages remain event-agnostic. Only the `controller` package contains event adapters:
 
 ```
-pkg/templating/
-  validator.go         # Pure: ValidateTemplates(templates map[string]string) []error
+pkg/templating/                      # Pure: engine compiles + renders; no validator function.
+                                     # The controller calls templating.NewScriggoWithDeclarations
+                                     # against the full template set so cross-snippet refs resolve.
 
 pkg/k8s/indexer/
-  validator.go         # Pure: ValidateJSONPath(expr string) error
+  validation.go                      # Pure: ValidateJSONPath(expr string) error
 
 pkg/core/config/
-  validator.go         # Pure: ValidateStructure(cfg Config) error  // OK - same package
+  validator.go                       # Pure: ValidateStructure(cfg *Config) error (same package)
 
-pkg/controller/validator/    # Event adapters (glue layer)
-  template_validator.go      # Adapter: extracts primitives → templating.ValidateTemplates() → events
-  jsonpath_validator.go      # Adapter: extracts strings → indexer.ValidateJSONPath() → events
-  basic_validator.go         # Adapter: events → config.ValidateStructure() → events
-  coordinator.go             # Uses scatter-gather to coordinate validators
+pkg/controller/validator/            # Event-adapter responders for the scatter-gather
+  base.go                            # Shared BaseValidator scaffold (subscription + dispatch)
+  basic.go                           # BasicValidator   → core/config.ValidateStructure
+  template.go                        # TemplateValidator → templating.NewScriggoWithDeclarations
+  jsonpath.go                        # JSONPathValidator → k8s/indexer.ValidateJSONPath
+  haproxy_validator.go               # HAProxyValidator (separate flow: validates rendered output)
+
+pkg/controller/configchange/
+  handler.go                         # ConfigChangeHandler — fans the request out via bus.Request,
+                                     # aggregates responses, publishes ConfigValidatedEvent /
+                                     # ConfigInvalidEvent
 ```
 
-**Pure Function Example**:
+There is no `pkg/controller/validator/coordinator.go`; the orchestrator that drives the scatter-gather lives in `pkg/controller/configchange/handler.go`. Likewise there is no `pkg/templating.ValidateTemplates` — the controller's `TemplateValidator` validates by *compiling the entire template set together* (via `helpers.ExtractTemplatesFromConfig` + `templating.NewScriggoWithDeclarations`), so snippets that reference each other through `render`, `import`, or `inherit_context` resolve correctly.
+
+**Event Adapter Example** (paraphrased from `pkg/controller/validator/template.go` — the production code is the source of truth):
 
 ```go
-// pkg/templating/validator.go - Zero dependencies on other packages
-package templating
+// pkg/controller/validator/template.go (paraphrased; see source for the full body)
+type TemplateValidator struct {
+    *BaseValidator
+    eventBus *busevents.EventBus
+    logger   *slog.Logger
+}
 
-// ValidateTemplates validates a map of template names to their content.
-// Accepts only primitive types - no dependency on config package.
-func ValidateTemplates(templates map[string]string) []error {
-    var errors []error
-    engine, err := New()
+func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *TemplateValidator {
+    v := &TemplateValidator{eventBus: eventBus, logger: logger}
+    // BaseValidator subscribes the component to ConfigValidationRequest and
+    // dispatches to v.HandleRequest below.
+    v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, "Template syntax validator", v)
+    return v
+}
+
+func (v *TemplateValidator) HandleRequest(req *events.ConfigValidationRequest) {
+    cfg, ok := req.Config.(*coreconfig.Config)
+    if !ok { /* publish failure response, return */ }
+
+    // Extract templates + entry points the same way production does
+    extraction := helpers.ExtractTemplatesFromConfig(cfg)
+
+    // Compile the whole set together — cross-snippet refs (render/import/
+    // inherit_context) resolve only when every template is present.
+    _, err := templating.NewScriggoWithDeclarations(
+        extraction.AllTemplates, extraction.EntryPoints, nil, nil, nil,
+        map[string]any{"currentConfig": (*parserconfig.StructuredConfig)(nil)},
+    )
+
+    var errs []string
     if err != nil {
-        return []error{err}
+        errs = []string{templating.FormatCompilationError(err, "templates", "")}
     }
-
-    for name, content := range templates {
-        if err := engine.CompileTemplate(name, content); err != nil {
-            errors = append(errors, fmt.Errorf("template %s: %w", name, err))
-        }
-    }
-
-    return errors
-}
-```
-
-**Event Adapter Example**:
-
-```go
-// pkg/controller/validator/template_validator.go - Event adapter
-package validator
-
-import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
-    "gitlab.com/haproxy-haptic/haptic/pkg/templating"
-)
-
-type TemplateValidatorComponent struct {
-    eventBus *events.EventBus
-}
-
-func (c *TemplateValidatorComponent) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe("template-validator", 100)
-
-    for {
-        select {
-        case event := <-eventChan:
-            if req, ok := event.(events.ConfigValidationRequest); ok {
-                // Controller package knows about config structure
-                cfg := req.Config.(config.Config)
-
-                // Extract templates into map[string]string (primitive types only)
-                // This is the controller's job - converting between package types
-                templates := make(map[string]string)
-                templates["haproxy.cfg"] = cfg.HAProxyConfig.Template
-                for name, snippet := range cfg.TemplateSnippets {
-                    templates[name] = snippet.Template
-                }
-                for name, mapDef := range cfg.Maps {
-                    templates["map:"+name] = mapDef.Template
-                }
-                for name, file := range cfg.Files {
-                    templates["file:"+name] = file.Template
-                }
-
-                // Call pure function with primitives only (no config package dependency)
-                errs := templating.ValidateTemplates(templates)
-
-                // Convert to event response
-                errStrings := make([]string, len(errs))
-                for i, e := range errs {
-                    errStrings[i] = e.Error()
-                }
-
-                // Publish response event
-                c.eventBus.Publish(events.NewConfigValidationResponse(
-                    req.RequestID(),
-                    "template",
-                    len(errs) == 0,
-                    errStrings,
-                ))
-            }
-
-        case <-ctx.Done():
-            return ctx.Err()
-        }
-    }
+    v.eventBus.Publish(events.NewConfigValidationResponse(
+        req.RequestID(), ValidatorNameTemplate, len(errs) == 0, errs,
+    ))
 }
 ```
 
@@ -1257,7 +909,7 @@ func (h *ConfigChangeHandler) handleParsed(ctx context.Context, parsed *events.C
 }
 ```
 
-The three validators that respond — `BasicValidator`, `TemplateValidator`, `JSONPathValidator` — all live in `pkg/controller/validator/` and share a `BaseValidator` that subscribes them to `ConfigValidationRequest`. To add a new validator: drop in a new `*Validator` constructor that wraps `NewBaseValidator(...)`, then add its name to the `validators` slice passed to `configchange.NewHandler`.
+The three validators that respond — `BasicValidator`, `TemplateValidator`, `JSONPathValidator` — all live in `pkg/controller/validator/` and share a `BaseValidator` that subscribes them to `ConfigValidationRequest`. To add a new validator: drop in a new `*Validator` constructor that wraps `NewBaseValidator(...)`, then add its name to the `validators` slice passed to `configchange.NewConfigChangeHandler`.
 
 **Validator Logging Improvements**:
 
@@ -1362,301 +1014,66 @@ EventBus (50+ event types)
         └── Rich Logging (insights, not just data dumps)
 ```
 
-**Implementation**:
+**Implementation** (real source: `pkg/controller/commentator/commentator.go` + `ring_buffer.go`):
 
 ```go
-// pkg/controller/commentator/commentator.go
-package commentator
-
-import (
-    "context"
-    "log/slog"
-    "time"
-
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
-)
-
-// EventCommentator subscribes to all events and produces domain-aware log messages
 type EventCommentator struct {
-    eventBus   *events.EventBus
-    logger     *slog.Logger
-    ringBuffer *RingBuffer
+    *component.Base // shared event-loop scaffold from pkg/controller/component
+    logger          *slog.Logger
+    ringBuffer      *RingBuffer // commentator's own RingBuffer, ring_buffer.go
 }
 
-func NewEventCommentator(eventBus *events.EventBus, logger *slog.Logger, bufferSize int) *EventCommentator {
-    return &EventCommentator{
-        eventBus:   eventBus,
-        logger:     logger,
-        ringBuffer: NewRingBuffer(bufferSize),
-    }
-}
-
-func (c *EventCommentator) Run(ctx context.Context) error {
-    events := c.eventBus.SubscribeLossy("commentator", 1000)
-
-    for {
-        select {
-        case event := <-events:
-            c.ringBuffer.Add(event)
-            c.commentate(ctx, event)
-        case <-ctx.Done():
-            return ctx.Err()
-        }
-    }
-}
-
-func (c *EventCommentator) commentate(ctx context.Context, event events.Event) {
-    switch e := event.(type) {
-    case events.ReconciliationStartedEvent:
-        // Apply domain knowledge: Find what triggered this reconciliation
-        trigger := c.ringBuffer.FindMostRecent(func(ev events.Event) bool {
-            _, isConfig := ev.(events.ConfigValidatedEvent)
-            _, isResource := ev.(events.ResourceIndexUpdatedEvent)
-            return isConfig || isResource
-        })
-
-        var triggerType string
-        var debounceMs int64
-        if trigger != nil {
-            triggerType = trigger.EventType()
-            debounceMs = time.Since(trigger.Timestamp()).Milliseconds()
-        }
-
-        c.logger.InfoContext(ctx, "Reconciliation started",
-            "trigger_event", triggerType,
-            "debounce_duration_ms", debounceMs,
-            "trigger_source", e.Trigger,
-        )
-
-    case events.ValidationCompletedEvent:
-        // Count recent validation attempts for insight
-        recentValidations := c.ringBuffer.CountRecent(1*time.Minute, func(ev events.Event) bool {
-            _, ok := ev.(events.ValidationStartedEvent)
-            return ok
-        })
-
-        c.logger.InfoContext(ctx, "Configuration validated successfully",
-            "endpoints", len(e.Endpoints),
-            "warnings", len(e.Warnings),
-            "recent_validations", recentValidations,
-        )
-
-        if len(e.Warnings) > 0 {
-            for _, warning := range e.Warnings {
-                c.logger.WarnContext(ctx, "Validation warning",
-                    "warning", warning,
-                )
-            }
-        }
-
-    case events.DeploymentCompletedEvent:
-        // Correlate with reconciliation start for end-to-end timing
-        reconStart := c.ringBuffer.FindMostRecent(func(ev events.Event) bool {
-            _, ok := ev.(events.ReconciliationStartedEvent)
-            return ok
-        })
-
-        var totalDurationMs int64
-        if reconStart != nil {
-            totalDurationMs = time.Since(reconStart.Timestamp()).Milliseconds()
-        }
-
-        successRate := float64(e.Succeeded) / float64(e.Total) * 100
-
-        c.logger.InfoContext(ctx, "Deployment completed",
-            "total_instances", e.Total,
-            "succeeded", e.Succeeded,
-            "failed", e.Failed,
-            "success_rate_percent", successRate,
-            "total_duration_ms", totalDurationMs,
-        )
-
-        if e.Failed > 0 {
-            // Look for failed instance events
-            failures := c.ringBuffer.FindAll(func(ev events.Event) bool {
-                failEv, ok := ev.(events.InstanceDeploymentFailedEvent)
-                return ok && failEv.Timestamp().After(reconStart.Timestamp())
-            })
-
-            c.logger.ErrorContext(ctx, "Deployment had failures",
-                "failed_count", e.Failed,
-                "failure_details", failures,
-            )
-        }
-
-    case events.ConfigInvalidEvent:
-        // Apply domain knowledge about configuration validation
-        c.logger.ErrorContext(ctx, "Configuration validation failed",
-            "version", e.Version,
-            "error", e.Error,
-        )
-
-        // Suggest what might be wrong based on recent activity
-        recentConfigChanges := c.ringBuffer.CountRecent(5*time.Minute, func(ev events.Event) bool {
-            _, ok := ev.(events.ConfigParsedEvent)
-            return ok
-        })
-
-        if recentConfigChanges > 3 {
-            c.logger.WarnContext(ctx, "Multiple recent config changes detected - consider reviewing all recent changes",
-                "recent_changes_count", recentConfigChanges,
-            )
-        }
-
-    case events.ResourceIndexUpdatedEvent:
-        c.logger.DebugContext(ctx, "Resource index updated",
-            "resource_type", e.ResourceType,
-            "count", e.Count,
-        )
-
-    case events.HAProxyPodsDiscoveredEvent:
-        // Domain insight: Significant event worthy of INFO level
-        previousDiscovery := c.ringBuffer.FindMostRecent(func(ev events.Event) bool {
-            _, ok := ev.(events.HAProxyPodsDiscoveredEvent)
-            return ok
-        })
-
-        var change string
-        if previousDiscovery != nil {
-            prevEv := previousDiscovery.(events.HAProxyPodsDiscoveredEvent)
-            if len(e.Endpoints) > len(prevEv.Endpoints) {
-                change = "scaled_up"
-            } else if len(e.Endpoints) < len(prevEv.Endpoints) {
-                change = "scaled_down"
-            } else {
-                change = "endpoints_changed"
-            }
-        } else {
-            change = "initial_discovery"
-        }
-
-        c.logger.InfoContext(ctx, "HAProxy pods discovered",
-            "endpoint_count", len(e.Endpoints),
-            "change_type", change,
-        )
-    }
-}
+// Buffer size is hardcoded at the call site (pkg/controller/controller.go
+// uses 500); there is no CRD field for it. SubscribeLossy is critical —
+// commentator is observability, not business logic, so dropping events
+// under backpressure is preferable to slowing down publishers.
+func NewEventCommentator(bus *busevents.EventBus, logger *slog.Logger, bufferSize int) *EventCommentator
 ```
 
-**Ring Buffer for Event Correlation**:
+The event loop dispatches each event to two helpers: `determineLogLevel(event)` (in `log_levels.go`, picks Error / Warn / Info / Debug per event type) and `generateInsight(event)` (in `insights*.go`, builds the structured `slog` attribute list using the ring buffer for correlation).
+
+A typical commentary site looks like this — note that the ring buffer methods are named after their query shape (`FindByCorrelationID`, `FindByTypeInWindow`, `FindRecentByPredicate`, `FindRecent`, `FindByType`), and timestamps live on the event itself via the `timestamped` mixin (no `EventWithTimestamp` wrapper):
 
 ```go
-// pkg/controller/commentator/ringbuffer.go
-package commentator
-
-import (
-    "sync"
-    "time"
-
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
-)
-
-// EventWithTimestamp wraps an event with its occurrence time
-type EventWithTimestamp struct {
-    Event     events.Event
-    Timestamp time.Time
-}
-
-// RingBuffer maintains a circular buffer of recent events for correlation
-type RingBuffer struct {
-    events []EventWithTimestamp
-    size   int
-    index  int
-    mu     sync.RWMutex
-}
-
-func NewRingBuffer(size int) *RingBuffer {
-    return &RingBuffer{
-        events: make([]EventWithTimestamp, size),
-        size:   size,
+// Sketch — for an actual case, see pkg/controller/commentator/insights_*.go
+case *events.ReconciliationStartedEvent:
+    // What triggered us? FindRecentByPredicate scans newest-first and returns
+    // at most maxCount matches in that order, so candidates[0] is the most
+    // recent qualifying event.
+    candidates := ec.ringBuffer.FindRecentByPredicate(1, func(ev busevents.Event) bool {
+        return ev.EventType() == events.EventTypeConfigValidated ||
+               ev.EventType() == events.EventTypeResourceIndexUpdated
+    })
+    var since time.Duration
+    if len(candidates) > 0 {
+        since = e.Timestamp().Sub(candidates[0].Timestamp())
     }
-}
-
-// Add inserts an event into the ring buffer
-func (rb *RingBuffer) Add(event events.Event) {
-    rb.mu.Lock()
-    defer rb.mu.Unlock()
-
-    rb.events[rb.index] = EventWithTimestamp{
-        Event:     event,
-        Timestamp: time.Now(),
+    return "Reconciliation started", []any{
+        "trigger", e.Trigger, // .Trigger on Started; .Reason is on Triggered
+        "since_last_change", since,
     }
-    rb.index = (rb.index + 1) % rb.size
-}
-
-// FindMostRecent searches backwards from newest to oldest for an event matching the predicate
-func (rb *RingBuffer) FindMostRecent(predicate func(events.Event) bool) *EventWithTimestamp {
-    rb.mu.RLock()
-    defer rb.mu.RUnlock()
-
-    // Search backwards from most recent
-    for i := 0; i < rb.size; i++ {
-        idx := (rb.index - 1 - i + rb.size) % rb.size
-        evt := rb.events[idx]
-        if evt.Event != nil && predicate(evt.Event) {
-            return &evt
-        }
-    }
-    return nil
-}
-
-// FindAll returns all events matching the predicate (newest first)
-func (rb *RingBuffer) FindAll(predicate func(events.Event) bool) []EventWithTimestamp {
-    rb.mu.RLock()
-    defer rb.mu.RUnlock()
-
-    var matches []EventWithTimestamp
-    for i := 0; i < rb.size; i++ {
-        idx := (rb.index - 1 - i + rb.size) % rb.size
-        evt := rb.events[idx]
-        if evt.Event != nil && predicate(evt.Event) {
-            matches = append(matches, evt)
-        }
-    }
-    return matches
-}
-
-// CountRecent counts events matching predicate within the time window
-func (rb *RingBuffer) CountRecent(duration time.Duration, predicate func(events.Event) bool) int {
-    rb.mu.RLock()
-    defer rb.mu.RUnlock()
-
-    cutoff := time.Now().Add(-duration)
-    count := 0
-
-    for i := 0; i < rb.size; i++ {
-        idx := (rb.index - 1 - i + rb.size) % rb.size
-        evt := rb.events[idx]
-        if evt.Event == nil || evt.Timestamp.Before(cutoff) {
-            break
-        }
-        if predicate(evt.Event) {
-            count++
-        }
-    }
-
-    return count
-}
 ```
+
+**Ring Buffer for Event Correlation** lives in `pkg/controller/commentator/ring_buffer.go`. It stores plain `busevents.Event` values (no wrapper struct) and exposes:
+
+| Method | Purpose |
+|--------|---------|
+| `Add(event)` | Append, evicting the oldest entry when full. |
+| `FindByType(eventType)` | All events with the given type, oldest first. |
+| `FindByTypeInWindow(eventType, window)` | Same, restricted to events newer than `now-window`. |
+| `FindRecent(n)` | The last `n` events, oldest first. |
+| `FindRecentByPredicate(maxCount, predicate)` | First `maxCount` matches when scanning newest-first. |
+| `FindByCorrelationID(id, maxCount)` | All events propagating the same `correlation_id`. |
+
+There is no `FindMostRecent`, `FindAll`, or `CountRecent`. The `EventCommentator` re-exports `FindByCorrelationID` and `FindRecent` for tests and the `/debug/events` endpoint.
 
 **Integration**:
 
 ```go
-// cmd/controller/main.go - Startup integration
-func main() {
-    // ... create eventBus ...
-
-    // Create dynamic logger from pkg/core/logging
-    // LOG_LEVEL env var used at startup; can be overridden at runtime by the
-    // HAProxyTemplateConfig CRD field spec.logging.level
-    logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
-
-    // Start event commentator early (Stage 1)
-    commentator := commentator.NewEventCommentator(eventBus, logger, 100)
-    go commentator.Run(ctx)
-
-    // ... start other components ...
-}
+// pkg/controller/controller.go (real wiring)
+logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))     // dynamic — CRD spec.logging.level overrides at runtime
+eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
+go eventCommentator.Start(ctx)
 ```
 
 **Benefits**:
@@ -1669,17 +1086,7 @@ func main() {
 6. **Performance**: Logging is completely asynchronous, no performance impact on business logic
 7. **Maintainability**: Domain knowledge about event relationships lives in one place
 
-**Configuration**:
-
-The event commentator can be configured via controller configuration:
-
-```yaml
-controller:
-  event_commentator:
-    enabled: true
-    buffer_size: 100  # Number of events to keep for correlation
-    log_level: info   # Minimum level for commentator (debug shows all events)
-```
+**Configuration**: the commentator has no CRD-side toggles — it is always on, and its ring-buffer size is hardcoded at the call site (currently 500 in `pkg/controller/controller.go`). The log level it produces is the global level set by `LOG_LEVEL` at startup and overridable at runtime via `spec.logging.level`; it doesn't have a separate threshold.
 
 **Example Log Output**:
 

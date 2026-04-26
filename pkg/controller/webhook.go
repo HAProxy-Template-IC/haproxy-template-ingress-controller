@@ -240,7 +240,7 @@ func setupReconciliation(
 	// Publish initial config and credentials events
 	// These events are buffered by EventBus until Start() is called in the main controller loop
 	// This ensures reconciliation components (especially Discovery) receive the initial state
-	// even though they were created after the initial ConfigMap/Secret watcher events
+	// even though they were created after the initial CRD/Secret watcher events
 	// Note: We pass the actual CRD (not nil) so ConfigPublisher can cache it for creating HAProxyCfg resources
 	bus.Publish(events.NewConfigValidatedEvent(cfg, crd, "initial", "initial"))
 	logger.Debug("Published initial ConfigValidatedEvent (buffered until EventBus.Start())")

@@ -40,7 +40,7 @@ kubectl describe pod -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.i
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Missing HAProxyTemplateConfig | `kubectl get haproxytemplateconfig` | Reinstall Helm chart |
-| Invalid credentials Secret | `kubectl get secret haproxy-credentials -o jsonpath='{.data}'` | Recreate secret with correct keys |
+| Invalid credentials Secret | `kubectl get secret -n haptic haptic-credentials -o jsonpath='{.data}'` (Helm names it `<release>-credentials`) | Recreate secret with correct keys |
 | RBAC permissions | `kubectl auth can-i list ingresses --all-namespaces --as=system:serviceaccount:<ns>:<sa>` | Verify ClusterRole/ClusterRoleBinding |
 
 ### Controller Running But Not Processing
@@ -136,7 +136,7 @@ curl -u admin:<password> http://localhost:5555/v3/info
 | Cause | Check | Solution |
 |-------|-------|----------|
 | Dataplane not running | `kubectl logs $HAPROXY_POD -c dataplane` | Verify container started, check port conflicts |
-| Wrong credentials | Compare secret vs dataplaneapi.yaml | Update credentials secret, restart controller |
+| Wrong credentials | Compare secret vs dataplaneapi.yaml | Update the credentials Secret — `credentialsloader` picks it up live; also rotate the matching `dataplaneapi.yaml` on the HAProxy sidecar |
 | Network policy | `kubectl get networkpolicy` | Update egress rules for controller → HAProxy |
 
 ### Configuration Not Updating
@@ -158,6 +158,9 @@ kubectl logs -n haptic -l app.kubernetes.io/name=haptic,app.kubernetes.io/compon
 | HAProxy not reloading | `kubectl logs $HAPROXY_POD -c dataplane` | Check reload command, master socket access |
 
 ### Shared Memory Stats Limit
+
+!!! note "Opt-in feature"
+    This only applies when `haproxy.shmStats.enabled: true` is set in Helm values (the default is `false`) and HAProxy is 3.3+ — the shm-stats file is gated by `semver_gte` in the chart templates. If you're on the default config you will not see these errors; this section is for operators who turned shm-stats on for performance.
 
 **Symptoms**: 100% deployment error rate, HAProxy reload failures with `shm-stats-file-max-objects` errors
 
@@ -307,7 +310,7 @@ The controller supports multiple log levels via the `LOG_LEVEL` environment vari
 | Level | Description |
 |-------|-------------|
 | ERROR | Errors only |
-| WARN | Warnings and errors |
+| WARN (or WARNING) | Warnings and errors |
 | INFO | Important state changes (default) |
 | DEBUG | Detailed debugging information |
 | TRACE | Very verbose, per-item iteration logs |
@@ -342,7 +345,7 @@ The Helm chart enables the debug server on port `8080` by default (same port as 
 kubectl port-forward -n haptic deployment/haptic-controller 8080:8080
 ```
 
-To disable it in production, set `controller.debugPort: 0`. To move it to a dedicated port, set `controller.debugPort: <port>` (and update the forward accordingly).
+`/healthz` and `/debug/*` share the same listener, so setting `controller.debugPort: 0` disables both and breaks the Kubernetes liveness/readiness probes — restrict access via NetworkPolicy instead. To move both endpoints to a different port, set `controller.debugPort: <port>` (and update the forward accordingly).
 
 **Available endpoints**:
 

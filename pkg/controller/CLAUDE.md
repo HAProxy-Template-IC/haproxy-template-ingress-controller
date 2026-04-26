@@ -30,7 +30,7 @@ Modify this package when:
 pkg/controller/
 ├── commentator/          # Event observability (logs all events)
 ├── configchange/         # Configuration change handler
-├── configloader/         # ConfigMap parsing and loading
+├── configloader/         # HAProxyTemplateConfig CRD parsing and loading
 ├── credentialsloader/    # Secret parsing and loading
 ├── events/               # Domain event type catalog (~50 types)
 ├── indextracker/         # Index synchronization tracker
@@ -43,11 +43,12 @@ pkg/controller/
 │   ├── coordinator.go   # Orchestrates pipeline execution
 │   └── *_test.go        # Tests
 ├── resourcewatcher/      # Resource watcher lifecycle management
-├── validator/            # Config validation components
+├── validator/            # Config validation responders (scatter-gather participants)
+│   ├── base.go          # Shared BaseValidator that subscribes to ConfigValidationRequest
 │   ├── basic.go         # Structural validation
 │   ├── template.go      # Template syntax validation
 │   ├── jsonpath.go      # JSONPath expression validation
-│   └── coordinator.go   # Scatter-gather coordinator
+│   └── haproxy_validator.go  # Three-phase HAProxy validation (syntax + schema + binary)
 └── controller.go         # Main controller with staged startup
 
 ```
@@ -58,19 +59,23 @@ This package wraps pure components in event adapters to coordinate them:
 
 ```
 Pure Component              Event Adapter
-(pkg/templating)           (pkg/controller/renderer)
+(pkg/templating)            (pkg/controller/configloader, etc.)
      ↓                            ↓
-Engine          ────wraps──→  RendererComponent
-  .Render()                    - Subscribes in constructor
-                               - Calls .Render()
+Engine          ────wraps──→  ConfigLoaderComponent
+  .Render()                    - Subscribes via component.Base
+                               - Calls into the pure component
                                - Publishes result events
 ```
 
 ### Example Event Adapter
 
+The skeleton below illustrates the pattern with a hypothetical adapter. For the production scaffold every adapter embeds, see `pkg/controller/component.Base` (subscribes in the constructor, dispatches one event at a time, recovers from panics). Live examples include `pkg/controller/configloader.ConfigLoaderComponent` and `pkg/controller/credentialsloader.CredentialsLoaderComponent`.
+
+Note: `pkg/controller/renderer.Component` exists with the seven-arg `renderer.New` shape, but it is a *test-only* legacy adapter. The production renderer is the synchronous `renderer.RenderService` (driven by `pkg/controller/pipeline.Pipeline`, no event hop), so don't model new adapters on it.
+
 ```go
-// pkg/controller/renderer/component.go
-package renderer
+// Illustrative — not a real package. Shows the event-adapter shape.
+package examplerenderer
 
 import (
     "haptic/pkg/controller/events"
@@ -88,33 +93,27 @@ func New(bus *busevents.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("examplerenderer", 100),  // Subscribe in constructor, before bus.Start()
     }
 }
 
-func (c *Component) Run(ctx context.Context) error {
+func (c *Component) Start(ctx context.Context) error {
     for {
         select {
         case event := <-c.eventChan:
             switch e := event.(type) {
-            case events.ReconciliationTriggeredEvent:
+            case *events.ReconciliationTriggeredEvent:
                 // Extract primitives for pure component
-                templates := c.extractTemplates(e.Config)
-                context := c.buildContext(e.Resources)
+                renderCtx := c.buildContext(e)
 
                 // Call pure component
-                output, err := c.engine.Render(ctx, "haproxy.cfg", context)
+                output, err := c.engine.Render(ctx, "haproxy.cfg", renderCtx)
 
                 // Publish result event
                 if err != nil {
-                    c.eventBus.Publish(events.RenderFailedEvent{
-                        Error: err.Error(),
-                    })
+                    c.eventBus.Publish(events.NewTemplateRenderFailedEvent("haproxy.cfg", err.Error(), ""))
                 } else {
-                    c.eventBus.Publish(events.RenderCompletedEvent{
-                        Output: output,
-                        Size:   len(output),
-                    })
+                    c.publishRendered(output)
                 }
             }
         case <-ctx.Done():
@@ -275,11 +274,13 @@ func (c *EventCommentator) Run(ctx context.Context) error {
                     "templates", len(e.Config.Templates),
                 )
 
-            case ReconciliationStartedEvent:
-                // Add contextual insights
-                lastRecon := c.ringBuffer.FindLast("reconciliation.started")
-                if lastRecon != nil {
-                    timeSince := e.Timestamp.Sub(lastRecon.Timestamp)
+            case *ReconciliationStartedEvent:
+                // Add contextual insights -- there's no FindLast helper,
+                // pull the most recent matching event out of FindByTypeInWindow.
+                prior := c.ringBuffer.FindByTypeInWindow(EventTypeReconciliationStarted, time.Minute)
+                if len(prior) > 0 {
+                    last := prior[len(prior)-1]
+                    timeSince := e.Timestamp().Sub(last.Timestamp())
                     c.logger.Info("reconciliation started",
                         "trigger", e.Trigger,
                         "since_last", timeSince,
@@ -332,38 +333,43 @@ Debounces resource changes and triggers reconciliation events (Stage 5 component
 // pkg/controller/reconciler/reconciler.go
 type Reconciler struct {
     eventBus         *busevents.EventBus
+    eventChan        <-chan busevents.Event // Subscribed in New()
     logger           *slog.Logger
     debounceInterval time.Duration
-    debounceTimer    *time.Timer
+    debounceTimer    timers.SafeTimer
+}
+
+func New(eventBus *busevents.EventBus, logger *slog.Logger, cfg *Config) *Reconciler {
+    // Subscribe BEFORE bus.Start() runs, narrowed to the event types we handle
+    // so the buffer doesn't fill with traffic for other components.
+    eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
+        events.EventTypeResourceIndexUpdated,
+        events.EventTypeIndexSynchronized,
+        events.EventTypeHTTPResourceUpdated,
+        events.EventTypeHTTPResourceAccepted,
+        events.EventTypeDriftPreventionTriggered,
+        events.EventTypeBecameLeader,
+    )
+    return &Reconciler{eventBus: eventBus, eventChan: eventChan, logger: logger /* … */}
 }
 
 func (r *Reconciler) Start(ctx context.Context) error {
-    eventChan := r.eventBus.Subscribe("reconciler", EventBufferSize)
-
     for {
         select {
-        case event := <-eventChan:
-            switch e := event.(type) {
-            case *events.ResourceIndexUpdatedEvent:
-                // Skip initial sync events
-                if e.ChangeStats.IsInitialSync {
-                    continue
-                }
-                // Reset debounce timer for resource changes
-                r.resetDebounceTimer()
+        case event := <-r.eventChan:
+            // handleEvent dispatches on the concrete event type and either
+            // fires immediately (IndexSynchronized, HTTPResourceAccepted,
+            // DriftPrevention, BecameLeader) or arms the refractory timer.
+            r.handleEvent(event)
 
-            case *events.IndexSynchronizedEvent:
-                // Initial sync complete - trigger immediate reconciliation
-                r.stopDebounceTimer()
-                r.triggerReconciliation("index_synchronized")
+        case <-r.debounceTimer.Chan():
+            r.debounceTimer.Fired()
+            if r.pendingTrigger {
+                r.triggerReconciliation("debounce_timer")
             }
 
-        case <-r.getDebounceTimerChan():
-            // Debounce timer expired - trigger reconciliation
-            r.triggerReconciliation("debounce_timer")
-
         case <-ctx.Done():
-            return ctx.Err()
+            return nil
         }
     }
 }
@@ -416,7 +422,7 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 ## Staged Startup Pattern
 
-The controller uses a 5-stage startup sequence coordinated via events. The entry point is the package-level function `controller.Run` (no `Controller` struct); each iteration is `pkg/controller/iteration.go`. Below is the *shape* — read `iteration.go` for the canonical wiring (constructor signatures, error handling, leader-only gating).
+The controller uses a six-stage startup sequence coordinated via events (Stage 5 = reconciliation + observability, Stage 6 = leader election; both stage labels are logged in `iteration.go`). The entry point is the package-level function `controller.Run` (no `Controller` struct); each iteration is `pkg/controller/iteration.go`. Below is the *shape* — read `iteration.go` for the canonical wiring (constructor signatures, error handling, leader-only gating).
 
 ```go
 // pkg/controller/iteration.go (sketch — see source for the real thing)
@@ -424,36 +430,51 @@ func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
     bus := busevents.NewEventBus(busBufferSize)
 
     // Stage 1: Config management — every component subscribes to its events
-    // *during construction*, before bus.Start() releases the pre-start buffer.
+    // *during construction*. bus.Start() does NOT happen here — it's deferred
+    // until the very end so all components (including the Stage 5 ones below)
+    // are subscribed before the pre-start buffer is released.
     configLoader := configloader.NewConfigLoaderComponent(bus, logger)
     credentialsLoader := credentialsloader.NewCredentialsLoaderComponent(bus, logger)
     validator.NewBasicValidator(bus, logger)      // BaseValidator subscribes
     validator.NewTemplateValidator(bus, logger)
     validator.NewJSONPathValidator(bus, logger)
-    handler := configchange.NewHandler(bus, logger, configChangeCh,
-        []string{"basic", "template", "jsonpath"})
+    handler := configchange.NewConfigChangeHandler(bus, logger, configChangeCh,
+        []string{"basic", "template", "jsonpath"}, 0 /* default reinit debounce */)
 
-    bus.Start()
-    go configLoader.Run(iterCtx)
-    go credentialsLoader.Run(iterCtx)
-    go handler.Run(iterCtx)
+    // Launch the Stage 1 background loops *now*, well before bus.Start().
+    // Each Start() blocks on its own pre-subscribed channel, which the bus
+    // doesn't drain until bus.Start() runs — so these goroutines park
+    // harmlessly until then. In the real code (controller.go:setupComponents)
+    // they're spawned through an errgroup so a failed Start() cancels the
+    // iteration; this sketch elides the errgroup for brevity.
+    go configLoader.Start(iterCtx)
+    go credentialsLoader.Start(iterCtx)
+    go handler.Start(iterCtx)
 
     // Stage 2: synchronously fetch + validate the CRD/Secret before continuing.
     cfg, creds := fetchAndValidate(ctx, k8sClient, ...)
 
     // Stage 3: watch each spec.watchedResources entry; wait for initial sync.
     rw := resourcewatcher.New(bus, cfg, ...)
-    go rw.Run(iterCtx)
+    go rw.Start(iterCtx)
     rw.WaitForAllSync(ctx)
 
     // Stage 4 sits inside Stage 3's WaitForAllSync.
 
-    // Stage 5: reconciliation + observability components.
+    // Stage 5: reconciliation + observability components — also subscribe
+    // during construction.
     reconciler.New(bus, logger, nil)
     reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
         EventBus: bus, Pipeline: pipeline, StoreProvider: storeProvider, Logger: logger,
     })
     // … plus deployer, discovery, metrics, commentator, debug HTTP server …
+
+    // Now release the pre-start buffer — every subscriber is in place.
+    bus.Start()
+
+    // Stage 6: leader election (sets up the leader-only components, which
+    // subscribe inside their Start methods after BecameLeaderEvent).
+    setupLeaderElection(...)
 
     <-iterCtx.Done()  // until config change cancels the iteration or shutdown signal
     return nil
@@ -477,12 +498,13 @@ Key non-obvious points:
 ### Testing Event Adapters
 
 ```go
-func TestRendererComponent(t *testing.T) {
-    bus := events.NewEventBus(100)
+// Illustrative — using the examplerenderer skeleton from above.
+func TestExampleRenderer(t *testing.T) {
+    bus := busevents.NewEventBus(100)
     engine, _ := templating.New(templating.EngineTypeScriggo, testTemplates, nil, nil, nil)
-    renderer := NewRendererComponent(bus, engine)
+    component := examplerenderer.New(bus, engine)
 
-    // Subscribe to output events
+    // Subscribe to output events BEFORE starting the bus
     eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
@@ -490,21 +512,18 @@ func TestRendererComponent(t *testing.T) {
     defer cancel()
 
     // Start component
-    go renderer.Run(ctx)
+    go component.Start(ctx)
 
     // Trigger event
-    bus.Publish(ReconciliationTriggeredEvent{
-        Config:    testConfig,
-        Resources: testResources,
-    })
+    bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
 
     // Verify response event
     select {
     case event := <-eventChan:
-        if completed, ok := event.(RenderCompletedEvent); ok {
-            assert.Contains(t, completed.Output, "expected haproxy config")
+        if rendered, ok := event.(*events.TemplateRenderedEvent); ok {
+            assert.Contains(t, rendered.HAProxyConfig, "expected haproxy config")
         } else {
-            t.Fatalf("expected RenderCompletedEvent, got %T", event)
+            t.Fatalf("expected *TemplateRenderedEvent, got %T", event)
         }
     case <-time.After(1 * time.Second):
         t.Fatal("timeout waiting for render event")
@@ -527,11 +546,11 @@ func TestConfigChangeHandler_ScatterGather(t *testing.T) {
 
     // The orchestrator that fans out the request and aggregates responses.
     configChangeCh := make(chan *coreconfig.Config, 1)
-    handler := configchange.NewHandler(bus, logger, configChangeCh,
-        []string{"basic", "template", "jsonpath"})
+    handler := configchange.NewConfigChangeHandler(bus, logger, configChangeCh,
+        []string{"basic", "template", "jsonpath"}, 0 /* default reinit debounce */)
 
     bus.Start()
-    go handler.Run(ctx)
+    go handler.Start(ctx)
 
     // Trigger validation
     bus.Publish(events.NewConfigParsedEvent(validConfig, templateConfig, "v1", ""))
@@ -554,7 +573,7 @@ func TestConfigChangeHandler_ScatterGather(t *testing.T) {
 
 ```go
 // Bad - business logic in adapter
-func (c *Component) Run(ctx context.Context) error {
+func (c *Component) Start(ctx context.Context) error {
     for event := range eventChan {
         if req, ok := event.(ReconciliationTriggeredEvent); ok {
             // Complex template processing logic (50 lines)
@@ -569,7 +588,7 @@ func (c *Component) Run(ctx context.Context) error {
 
 ```go
 // Good - delegate to pure component
-func (c *Component) Run(ctx context.Context) error {
+func (c *Component) Start(ctx context.Context) error {
     for event := range eventChan {
         if req, ok := event.(ReconciliationTriggeredEvent); ok {
             // Adapter just coordinates
@@ -705,7 +724,7 @@ type CacheWarmerComponent struct {
     eventBus *events.EventBus
 }
 
-func (c *CacheWarmerComponent) Run(ctx context.Context) error {
+func (c *CacheWarmerComponent) Start(ctx context.Context) error {
     eventChan := c.eventBus.Subscribe("cache-warmer", 50)
 
     for {
@@ -729,7 +748,7 @@ func (c *CacheWarmerComponent) Run(ctx context.Context) error {
 
 // Step 4: Add to controller.go startup
 warmer := cache.NewCacheWarmerComponent(c.cache, c.eventBus)
-go warmer.Run(ctx)
+go warmer.Start(ctx)
 
 // Step 5: Update commentator
 case CacheWarmingCompletedEvent:
@@ -747,7 +766,7 @@ type ReconciliationComponent struct {
     interval  time.Duration
 }
 
-func (r *ReconciliationComponent) Run(ctx context.Context) error {
+func (r *ReconciliationComponent) Start(ctx context.Context) error {
     eventChan := r.eventBus.Subscribe("reconciliation", 100)
 
     for {
@@ -806,65 +825,50 @@ for event := range eventChan {
 
 ### Scatter-Gather Pattern
 
-The EventBus.Request() method implements scatter-gather for operations requiring coordinated responses from multiple components.
+The `EventBus.Request()` method implements scatter-gather for operations requiring coordinated responses from multiple components.
 
-**Current Usage:**
+**Current production usage:**
 
-- Webhook validation (DryRunValidator responds to validation requests)
+- **Config validation** — `pkg/controller/configchange.ConfigChangeHandler` fans `ConfigValidationRequest` out to `BasicValidator`, `TemplateValidator`, and `JSONPathValidator` (all under `pkg/controller/validator`) and aggregates the `ConfigValidationResponse` events into `ConfigValidatedEvent` / `ConfigInvalidEvent`.
+
+The admission webhook does **not** use scatter-gather despite the `WebhookValidationRequest` / `EventTypeWebhookValidationRequestSG` types existing in the catalogue — production calls `dryrunvalidator.Component.ValidateDirect` synchronously to keep the request path tight (see `pkg/controller/dryrunvalidator/README.md`). The dormant scatter-gather plumbing is kept around for future observability fan-out.
 
 **When to Use Scatter-Gather:**
 
-1. **Need responses from multiple components** - Validation where multiple validators must respond
-2. **Responses must be correlated** - Matching responses to the original request
-3. **Timeout handling required** - Can't wait forever for responses
-4. **Parallel processing** - All responders process the request simultaneously
+1. **Need responses from multiple components** - validation where multiple validators must respond
+2. **Responses must be correlated** - matching responses to the original request
+3. **Timeout handling required** - can't wait forever for responses
+4. **Parallel processing** - all responders process the request simultaneously
 
 **When NOT to Use Scatter-Gather:**
 
 - Fire-and-forget notifications (use Publish)
 - Single responder (use direct function call)
-- High-frequency operations (overhead too high)
+- High-frequency operations on the request hot path (the per-request synchronisation overhead is real — webhook chose `ValidateDirect` for this reason)
 - Uncoordinated observers (use regular Subscribe)
 
-**Example - Validation Request:**
+**Example — config validation (the live scatter-gather caller):**
 
 ```go
-// Requester: WebhookComponent sends validation request
-func (w *WebhookComponent) validate(ctx context.Context, resource runtime.Object) error {
-    req := events.NewWebhookValidationRequest(resource, operation, namespace, name)
+// Requester: configchange.ConfigChangeHandler fans the request out
+req := events.NewConfigValidationRequest(cfg, version)
 
-    result, err := w.eventBus.Request(ctx, req, busevents.RequestOptions{
-        Timeout:            10 * time.Second,
-        ExpectedResponders: []string{"dry-run-validator"},
-    })
-    if err != nil {
-        return fmt.Errorf("validation request failed: %w", err)
+result, err := bus.Request(ctx, req, busevents.RequestOptions{
+    Timeout:            10 * time.Second,
+    ExpectedResponders: []string{"basic", "template", "jsonpath"},
+})
+if err != nil {
+    return err
+}
+for _, resp := range result.Responses {
+    if r, ok := resp.(*events.ConfigValidationResponse); ok && !r.Valid {
+        return fmt.Errorf("validator %s: %s", r.ValidatorName, strings.Join(r.Errors, "; "))
     }
-
-    // Check all responses
-    for _, resp := range result.Responses {
-        if valResp, ok := resp.(*events.WebhookValidationResponse); ok {
-            if !valResp.Allowed {
-                return errors.New(valResp.Message)
-            }
-        }
-    }
-    return nil
 }
 
-// Responder: DryRunValidator responds to requests
-func (v *DryRunValidator) handleValidationRequest(req *events.WebhookValidationRequest) {
-    // Perform validation...
-    allowed, message := v.validateResource(req.Object)
-
-    // Respond with matching request ID
-    v.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID(),
-        "dry-run-validator",
-        allowed,
-        message,
-    ))
-}
+// Responder: each validator subscribes via the shared BaseValidator,
+// runs its check, then publishes a ConfigValidationResponse with the
+// matching request ID.
 ```
 
 **Potential Future Usage:**
@@ -954,11 +958,13 @@ func (c *Component) handleWork(event *events.WorkEvent) {
 }
 ```
 
-**Implemented in:**
+**Implemented in** (see `pkg/controller/leadership.NewStateReplayer[T]` for the helper they all use; line numbers drift, grep for `handleBecameLeader`):
 
-- `pkg/controller/discovery/component.go:278` - Re-publishes HAProxyPodsDiscoveredEvent
-- `pkg/controller/renderer/component.go:230` - Re-publishes TemplateRenderedEvent
-- `pkg/controller/validator/haproxy_validator.go:186` - Re-publishes ValidationCompletedEvent
+- `pkg/controller/discovery/handlers.go` — re-publishes `HAProxyPodsDiscoveredEvent`
+- `pkg/controller/validator/haproxy_validator.go` — re-publishes `ValidationCompletedEvent`
+- `pkg/controller/configchange/handler.go` — re-publishes `ConfigValidatedEvent`
+
+The renderer does **not** re-publish `TemplateRenderedEvent` — it's leader-only itself. The reconciler instead triggers a fresh reconciliation on `BecameLeaderEvent` so the new leader's pipeline produces a current render rather than replaying a stale one.
 
 ### Solution 2: State Cleanup on LostLeadershipEvent
 
@@ -1010,10 +1016,10 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 }
 ```
 
-**Implemented in:**
+**Implemented in** (line numbers drift; grep for `handleLostLeadership`):
 
-- `pkg/controller/deployer/scheduler.go:421` - Clears deployment state
-- `pkg/controller/deployer/driftmonitor.go:205` - Stops drift timer
+- `pkg/controller/deployer/scheduler_handlers.go` (`(*DeploymentScheduler).handleLostLeadership`) — clears in-progress flags and pending deployment work
+- `pkg/controller/deployer/drift_monitor.go` (`(*DriftPreventionMonitor).handleLostLeadership`) — stops the drift timer
 
 ### Checklist for New Components
 

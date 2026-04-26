@@ -27,20 +27,34 @@ Modify this package when:
 
 ```
 pkg/dataplane/
-├── auxiliaryfiles/      # Auxiliary file management (maps, SSL, general files)
-├── client/              # Dataplane API client with transactions
-├── comparator/          # Fine-grained configuration comparison
-│   └── sections/        # 30+ section-specific comparators
-├── parser/              # Config parsing using client-native
-├── synchronizer/        # Operation execution with retries
-├── transform/           # Model transformation (client-native ↔ Dataplane API)
-├── types/               # Public types (Endpoint, SyncOptions)
-├── config.go            # Public configuration types
-├── dataplane.go         # Public API (Sync, DryRun, Diff)
-├── errors.go            # Structured error types
-├── orchestrator.go      # Sync workflow coordination
-└── result.go            # Result types
+├── auxiliaryfiles/             # Auxiliary file management (maps, SSL, general, crt-list, SSL-CA)
+├── client/                     # Dataplane API client + transactions + multi-version dispatch
+│   └── enterprise/             # Enterprise-only operations (WAF, Bot Mgmt, ALOHA, Keepalived, ...)
+├── comparator/                 # Fine-grained configuration comparison
+│   └── sections/               # Per-section comparators (frontends, backends, rules, ...)
+├── parser/                     # Config parsing using client-native
+│   └── enterprise/             # Enterprise section parsing
+├── synchronizer/               # Priority-grouped parallel operation execution
+├── validators/                 # OpenAPI schema validators with cached-result wrapping
+├── capabilities.go             # HAProxy version → Capabilities (CRT lists, WAF, ...)
+├── checksum.go                 # ComputeContentChecksum (config + auxFiles → SHA-256)
+├── config.go                   # Public Endpoint / SyncOptions / SyncResult types
+├── dataplane.go                # Public API (NewClient, Sync, DryRun, Diff)
+├── errors.go                   # ParseError / ValidationError / ...
+├── orchestrator.go             # Sync workflow coordination + result aggregation
+│   orchestrator_*.go           #   (split across auxiliary / comparison / execution /
+│                               #    rawpush / results / runtime files)
+├── paths.go                    # ValidationPaths / DefaultValidationPaths
+├── phases.go                   # Phase string constants
+├── result.go                   # SyncResult + diagnostic helpers
+├── validate_haproxy.go         # Three-phase validation
+│   validate_schema.go          #   (haproxy -c, OpenAPI schema, syntax via client-native)
+│   validate_syntax.go
+├── validator.go                # ValidateConfiguration entry point
+└── version.go                  # Version detection + parsing
 ```
+
+There is no `transform/` or `types/` subpackage — earlier versions of this doc listed them but those directories never existed (or were removed). Use `go doc ./pkg/dataplane/...` for the authoritative export list as the layout grows.
 
 ## Key Concepts
 
@@ -98,17 +112,18 @@ Some changes can be applied without HAProxy reload:
 
 **Runtime operations (no reload):**
 
-- Server add/remove
-- Server state changes (enable/disable)
-- Map updates
-- ACL updates
-- SSL certificate updates
+- Server **field** updates limited to `weight`, `address`, `port`, `maintenance`, `agent-check`, `agent-addr`, `agent-send`, `health_check_port` (the canonical list lives in `serverRuntimeSupportedJSONFields` in `pkg/dataplane/comparator/sections/factory_server.go`). Server `enabled`/`disabled` is the `maintenance` field, so flipping reserved slots between active and disabled is reload-free.
+- Frontend `Maxconn` updates
+- Map file content updates (Storage API)
+- SSL certificate content updates (Storage API + `set ssl cert`)
 
 **Structural changes (requires reload):**
 
-- Frontend/backend creation/deletion
+- Server **creation** and **deletion** (adding or removing a server triggers a reload — only field updates on existing servers are runtime-eligible)
+- Frontend / backend creation, deletion, or attribute changes outside the runtime allow-list
 - Bind address changes
-- Global/defaults modifications
+- Global / defaults modifications
+- ACLs, HTTP / TCP rules, filters, captures, stick rules, health checks (no runtime API support)
 
 The comparator detects which type of changes occurred and optimizes deployment strategy.
 
@@ -242,8 +257,8 @@ type Capabilities = client.Capabilities
 When the controller runs alongside HAProxy (e.g., in sidecar mode), use `CapabilitiesFromVersion()` to detect capabilities from the local HAProxy binary:
 
 ```go
-// Detect local HAProxy version
-localVersion, err := dataplane.GetLocalVersion(ctx)
+// Detect local HAProxy version (shells out to `haproxy -v`; no context arg).
+localVersion, err := dataplane.DetectLocalVersion()
 if err != nil {
     return fmt.Errorf("failed to detect local HAProxy: %w", err)
 }
@@ -282,14 +297,14 @@ caps := dataplane.CapabilitiesFromVersion(version)
 
 ### Dispatcher Pattern
 
-All client methods use a centralized dispatcher to route calls to the appropriate version-specific client. This eliminates repetitive switch-case logic across 26+ methods.
+All client methods use a centralized dispatcher to route calls to the appropriate version-specific client. This eliminates repetitive switch-case logic across the ~60 public `*DataplaneClient` methods (`grep -E "^func \(c \*DataplaneClient\)" pkg/dataplane/client/*.go` for the current count).
 
 **Architecture:**
 
 ```
 ┌─────────────────────┐
 │  Public Methods     │  GetAllMapFiles(), CreateSSLCertificate(), etc.
-│  (26 methods)       │
+│  (~60 methods)      │
 └──────────┬──────────┘
            │ All delegate to
            ▼
@@ -300,7 +315,7 @@ All client methods use a centralized dispatcher to route calls to the appropriat
            │ Routes based on detected version
            ▼
 ┌─────────────────────┐
-│  Version Clients    │  v30.Client, v31.Client, v32.Client
+│  Version Clients    │  v30.Client, v31.Client, v32.Client, v33.Client
 │  (Generated code)   │
 └─────────────────────┘
 ```
@@ -552,102 +567,23 @@ comparators["mycustomsection"] = &MyCustomSectionComparator{}
 
 **Comparator Section Implementation:**
 
-All section operations (Create, Delete, Update) use the Dispatch pattern to support multiple HAProxy versions. There are two implementation approaches:
+All section operations (Create, Delete, Update) use generic operation types defined in `operations_generic.go` and section-specific factories in `factory_*.go`. The current generation does **not** generate one struct per `(section, op)` pair — there is no `CreateBackendOperation` type. Instead each section's factory wires up the right generic type with closures that supply the section-specific dispatch.
 
-**Helper-based pattern** (for backend, frontend, defaults):
+The two top-level shapes:
 
-Uses generic helper functions from `execute_helpers.go` to reduce boilerplate. Helpers handle validation, transformation, JSON marshaling, response checking, and error wrapping. Callers provide version-specific dispatch logic as inline callbacks.
+| Type | Use for | Wiring |
+|------|---------|--------|
+| `TopLevelOp[TModel, TAPI]` | Single-name resources: backend, frontend, defaults, peer, resolver, mailers, ... | `transformFn func(TModel) TAPI` + `nameFn func(TModel) string` + `executeFn ExecuteTopLevelFunc[TAPI]` |
+| `IndexChildOp[TModel, TAPI]` | Index-keyed children inside a parent: binds, ACLs, HTTP/TCP rules, captures, ... | similar shape plus a `parentName string` and an index |
+| `ContainerChildOp[TModel, TAPI]` | Named children inside a container (servers, server templates, peer entries, mailer entries) | shape plus `containerName string` + `childName string` |
 
-```go
-// comparator/sections/backend.go
-func (op *CreateBackendOperation) Execute(ctx context.Context, c *client.DataplaneClient, transactionID string) error {
-    return executeCreateTransactionOnlyHelper(
-        ctx, c, transactionID,
-        op.Backend,                                           // Model to create
-        func(m *models.Backend) string { return m.Name },     // Name extractor
-        transform.ToAPIBackend,                               // Transform function
-        func(ctx context.Context, c *client.DataplaneClient, jsonData []byte, txID string) (*http.Response, error) {
-            params := &dataplaneapi.CreateBackendParams{TransactionId: &txID}
-            return c.Dispatch(ctx, client.CallFunc[*http.Response]{
-                V32: func(c *v32.Client) (*http.Response, error) {
-                    var backend v32.Backend
-                    json.Unmarshal(jsonData, &backend)
-                    return c.CreateBackend(ctx, (*v32.CreateBackendParams)(params), backend)
-                },
-                V31: func(c *v31.Client) (*http.Response, error) {
-                    var backend v31.Backend
-                    json.Unmarshal(jsonData, &backend)
-                    return c.CreateBackend(ctx, (*v31.CreateBackendParams)(params), backend)
-                },
-                V30: func(c *v30.Client) (*http.Response, error) {
-                    var backend v30.Backend
-                    json.Unmarshal(jsonData, &backend)
-                    return c.CreateBackend(ctx, (*v30.CreateBackendParams)(params), backend)
-                },
-            })
-        },
-        "backend",  // Resource type for error messages
-    )
-}
-```
+Each section file (`factory_backend.go`-equivalent inside `factory_sections.go`, plus `factory_acl.go`, `factory_bind.go`, `factory_server.go`, `factory_http_rules.go`, `factory_filter_log.go`, `factory_switching.go`, `factory_tcp.go`, `factory_quic.go`, `factory_ee.go`) calls one of the generic constructors with:
 
-**Direct Dispatch pattern** (for most other sections):
+- The model from `client-native` (e.g. `*models.Backend`)
+- A transform that turns it into the unified `dataplaneapi.*` shape
+- An executor closure from `executors/` that knows which `Dispatch` / `DispatchEnterpriseOnly` call to make for the relevant API version
 
-Implements full dispatch logic inline. Used for operations that require additional parameters (parent names, custom validation) or don't fit the helper pattern.
-
-```go
-// comparator/sections/binds.go
-func (op *CreateBindFrontendOperation) Execute(ctx context.Context, c *client.DataplaneClient, transactionID string) error {
-    // Marshal to JSON for version-specific unmarshaling
-    jsonData, err := json.Marshal(op.Bind)
-    if err != nil {
-        return fmt.Errorf("failed to marshal bind: %w", err)
-    }
-
-    params := &dataplaneapi.CreateBindFrontendParams{
-        TransactionId: &transactionID,
-    }
-
-    resp, err := c.Dispatch(ctx, client.CallFunc[*http.Response]{
-        V32: func(c *v32.Client) (*http.Response, error) {
-            var bind v32.Bind
-            if err := json.Unmarshal(jsonData, &bind); err != nil {
-                return nil, fmt.Errorf("failed to unmarshal bind for v3.2: %w", err)
-            }
-            return c.CreateBindFrontend(ctx, op.FrontendName, (*v32.CreateBindFrontendParams)(params), bind)
-        },
-        V31: func(c *v31.Client) (*http.Response, error) {
-            var bind v31.Bind
-            if err := json.Unmarshal(jsonData, &bind); err != nil {
-                return nil, fmt.Errorf("failed to unmarshal bind for v3.1: %w", err)
-            }
-            return c.CreateBindFrontend(ctx, op.FrontendName, (*v31.CreateBindFrontendParams)(params), bind)
-        },
-        V30: func(c *v30.Client) (*http.Response, error) {
-            var bind v30.Bind
-            if err := json.Unmarshal(jsonData, &bind); err != nil {
-                return nil, fmt.Errorf("failed to unmarshal bind for v3.0: %w", err)
-            }
-            return c.CreateBindFrontend(ctx, op.FrontendName, (*v30.CreateBindFrontendParams)(params), bind)
-        },
-    })
-    if err != nil {
-        return fmt.Errorf("failed to create bind '%s' in frontend '%s': %w", op.BindName, op.FrontendName, err)
-    }
-    defer resp.Body.Close()
-
-    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-        return fmt.Errorf("create bind failed with status %d", resp.StatusCode)
-    }
-
-    return nil
-}
-```
-
-**When to use each pattern:**
-
-- **Helper-based**: Transaction-only operations (backend, frontend, defaults) where API calls follow standard pattern: `Create<Type>(params, object)`, `Replace<Type>(name, params, object)`, `Delete<Type>(name, params)`
-- **Direct Dispatch**: Operations requiring parent identifiers (binds need frontend name), custom parameters, or API calls with non-standard signatures
+The executors live under `comparator/sections/executors/` — `container.go`, `indexed_child*.go`, `named_child.go`, plus topic-specific files (`certificate.go`, `enterprise.go`, `observability.go`, `quic.go`, `server_update_test.go`, ...). They hold the per-section `Dispatch` / `DispatchEnterpriseOnly` switch statements that select between v3.0 / v3.1 / v3.2 / v3.3 / Enterprise client methods. Read one executor to see the pattern; all sections follow the same shape.
 
 **Why JSON marshaling is required:**
 
@@ -659,82 +595,6 @@ HAProxy DataPlane API version-specific types (v30.Backend, v31.Backend, v32.Back
 4. Extra fields in newer versions get zero values when converting from older formats
 
 This pattern trades ~10µs per operation for type safety and compatibility across all HAProxy versions.
-
-### transform/ - Model Transformation
-
-Converts client-native parser models to Dataplane API models using JSON marshaling:
-
-```go
-// Transform client-native model to API model
-import "haptic/pkg/dataplane/transform"
-
-// Client-native model from parser
-clientACL := &models.ACL{
-    ACLName:   "is_api",
-    Criterion: "path_beg",
-    Value:     "/api",
-}
-
-// Transform to Dataplane API model
-apiACL := transform.ToAPIACL(clientACL)
-
-// Now apiACL is *dataplaneapi.Acl, ready for API calls
-err := client.CreateACL(tx, apiACL)
-```
-
-**Why this package exists:**
-
-Before the transform package, every section comparator had inline conversions:
-
-```go
-// Old approach (duplicated 77 times)
-data, _ := json.Marshal(clientModel)
-var apiModel dataplaneapi.ACL
-json.Unmarshal(data, &apiModel)
-```
-
-Now we have centralized, tested transformations:
-
-```go
-// New approach
-apiModel := transform.ToAPIACL(clientModel)
-```
-
-**Design:**
-
-- Generic `transform[T]` function handles JSON marshaling/unmarshaling
-- 35+ type-specific wrapper functions for each HAProxy section
-- Nil-safe (returns nil for nil input)
-- Performance: ~10µs per transformation (acceptable for reconciliation)
-
-**When to modify:**
-
-- Adding support for new HAProxy configuration sections
-- Client-native or Dataplane API models change structure
-- Fixing transformation bugs
-
-**Usage in comparators:**
-
-```go
-// comparator/sections/backend.go
-func (c *BackendComparator) Compare(current, desired *models.Backend) []Operation {
-    // Transform to API models for comparison
-    currentAPI := transform.ToAPIBackend(current)
-    desiredAPI := transform.ToAPIBackend(desired)
-
-    // Compare and generate operations
-    if !reflect.DeepEqual(currentAPI, desiredAPI) {
-        return []Operation{{
-            Type:     OperationUpdate,
-            Resource: desiredAPI,
-        }}
-    }
-
-    return nil
-}
-```
-
-See `pkg/dataplane/transform/README.md` for complete API reference and `pkg/dataplane/transform/CLAUDE.md` for development context.
 
 ### synchronizer/ - Operation Execution
 
@@ -817,28 +677,28 @@ err := syncer.SyncPostConfig(ctx, files, endpoints)
 
 ### Main Entry Points
 
+All public entry points are per-endpoint — there's no built-in fan-out across endpoints in this package. Parallel deployment is the deployer's job in `pkg/controller/deployer`.
+
 ```go
-// Synchronize configuration to endpoints
-result, err := dataplane.Sync(ctx, config, endpoints, options)
+// Synchronize configuration against a single endpoint (one-shot, opens a client internally)
+result, err := dataplane.Sync(ctx, endpoint, desiredConfig, auxFiles, opts)
 
 // Dry run (compare only, no changes)
-diff, err := dataplane.DryRun(ctx, config, endpoints)
+diff, err := dataplane.DryRun(ctx, endpoint, desiredConfig)
 
-// Get detailed diff
-diff, err := dataplane.Diff(ctx, currentConfig, desiredConfig)
+// Diff against the live HAProxy config on the endpoint
+diff, err := dataplane.Diff(ctx, endpoint, desiredConfig)
 ```
 
 ### Client Interface
 
 ```go
-// Create client for multiple endpoints
-client := dataplane.NewClient(endpoints, options)
+// Create a long-lived client for an endpoint
+client, err := dataplane.NewClient(ctx, endpoint)
+defer client.Close()
 
-// Sync configuration
-result, err := client.Sync(ctx, renderedConfig)
-
-// Fetch current configuration
-currentConfig, err := client.FetchConfiguration(ctx, endpoint)
+// Sync configuration with auxiliary files and per-call options
+result, err := client.Sync(ctx, desiredConfig, auxFiles, &dataplane.SyncOptions{...})
 ```
 
 ## Testing Strategies
@@ -848,22 +708,30 @@ currentConfig, err := client.FetchConfiguration(ctx, endpoint)
 Test individual components in isolation:
 
 ```go
-func TestComparator_CompareBackends(t *testing.T) {
-    current := &models.Backend{
-        Name:    "api",
-        Balance: "roundrobin",
-    }
+// The comparator works over full *parser.StructuredConfig values; there is
+// no CompareBackends helper. Parsing goes through *parser.Parser (no
+// top-level parser.Parse function). Operation is an interface
+// (Type / Section / Execute / Describe), not a struct with SectionName /
+// Field fields.
+func TestComparator_BackendBalanceUpdate(t *testing.T) {
+    p, err := parser.New()
+    require.NoError(t, err)
+    current, err := p.ParseFromString(currentRaw)
+    require.NoError(t, err)
+    desired, err := p.ParseFromString(desiredRaw)
+    require.NoError(t, err)
 
-    desired := &models.Backend{
-        Name:    "api",
-        Balance: "leastconn",
-    }
+    cmp := comparator.New()
+    diff, err := cmp.Compare(current, desired)
+    require.NoError(t, err)
 
-    ops := comparator.CompareBackends(current, desired)
-
-    require.Len(t, ops, 1)
-    assert.Equal(t, OperationUpdate, ops[0].Type)
-    assert.Equal(t, "balance", ops[0].Field)
+    require.NotEmpty(t, diff.Operations)
+    op := diff.Operations[0]
+    assert.Equal(t, sections.OperationUpdate, op.Type())
+    assert.Contains(t, op.Section(), "backend")
+    // For per-backend reasoning, the DiffSummary is more ergonomic than
+    // walking the operations slice:
+    assert.Contains(t, diff.Summary.BackendsModified, "api")
 }
 ```
 
@@ -877,9 +745,12 @@ func TestSync_Integration(t *testing.T) {
         t.Skip("skipping integration test")
     }
 
-    // Requires running HAProxy with Dataplane API
-    endpoint := types.Endpoint{
-        URL:      "http://localhost:5555",
+    // Requires running HAProxy with Dataplane API. Endpoint lives on
+    // pkg/dataplane (not a 'types' subpackage), and Sync takes one
+    // endpoint at a time; cross-endpoint fan-out is the deployer's
+    // job in pkg/controller/deployer.
+    endpoint := &dataplane.Endpoint{
+        URL:      "http://localhost:5555/v3",
         Username: "admin",
         Password: "adminpass",
     }
@@ -895,7 +766,7 @@ func TestSync_Integration(t *testing.T) {
         bind :80
     `
 
-    result, err := dataplane.Sync(ctx, config, []types.Endpoint{endpoint}, nil)
+    result, err := dataplane.Sync(t.Context(), endpoint, config, nil, nil)
 
     require.NoError(t, err)
     assert.True(t, result.Success)
@@ -904,26 +775,24 @@ func TestSync_Integration(t *testing.T) {
 
 ### Mock Testing
 
-Mock Dataplane API for controller tests:
+`pkg/dataplane` does not export a `Syncer`/`Deployer` interface for mocking; the consumer (typically `pkg/controller/deployer`) declares its own narrow interface at the use site and the test passes in a stub. The fake's `Sync` must mirror the real `(*Client).Sync` signature so the interface assertion compiles:
 
 ```go
-type MockDataplaneClient struct {
-    SyncFunc func(ctx context.Context, config string) error
+// Define the interface where it's consumed (deployer-side, not here).
+type DataplaneSyncer interface {
+    Sync(ctx context.Context, desiredConfig string, auxFiles *dataplane.AuxiliaryFiles, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error)
 }
 
-func (m *MockDataplaneClient) Sync(ctx context.Context, config string) error {
-    if m.SyncFunc != nil {
-        return m.SyncFunc(ctx, config)
-    }
-    return nil
+type fakeSyncer struct {
+    sync func(ctx context.Context, desiredConfig string, auxFiles *dataplane.AuxiliaryFiles, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error)
 }
 
-// Wire the mock into a Deployer or similar component (whichever consumes
-// the dataplane Sync surface), then trigger reconciliation through the
-// EventBus. There's no `NewController` constructor and no `Reconcile`
-// method to call directly — coordination is event-driven; see
-// `pkg/controller/deployer/component_test.go` for a real example.
+func (f *fakeSyncer) Sync(ctx context.Context, cfg string, aux *dataplane.AuxiliaryFiles, opts *dataplane.SyncOptions) (*dataplane.SyncResult, error) {
+    return f.sync(ctx, cfg, aux, opts)
+}
 ```
+
+Wire the fake into the consuming component, then trigger reconciliation through the `EventBus`. The controller has no `NewController` constructor and no `Reconcile` method to call directly — coordination is event-driven. See `pkg/controller/deployer/component_test.go` for the real wiring.
 
 ## Error Simplification Pattern
 
@@ -965,19 +834,14 @@ func SimplifyValidationError(err error) string {
 **Usage example:**
 
 ```go
-// pkg/controller/dryrunvalidator/component.go
-_, err := c.validator.ValidateConfig(ctx, haproxyConfig, nil, 0)
+// Called at the boundary between validation pipeline and the webhook
+// response. The pipeline returns *PipelineError (with Phase + Cause);
+// SimplifyValidationError unwraps and prettifies the underlying
+// HAProxy / schema error for the user.
+result, err := proposalValidator.ValidateSync(ctx, request)
 if err != nil {
-    // Extract user-friendly message for webhook response
     simplified := dataplane.SimplifyValidationError(err)
-
-    c.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID,
-        "dryrun",
-        false,  // denied
-        simplified,  // User-friendly error message
-    ))
-    return
+    return false, simplified // (allowed, reason) for the webhook
 }
 ```
 
@@ -1023,19 +887,15 @@ func SimplifyRenderingError(err error) string {
 **Usage example:**
 
 ```go
-// pkg/controller/dryrunvalidator/component.go
-haproxyConfig, err := c.engine.Render("haproxy.cfg", templateContext)
+// Same boundary as SimplifyValidationError, but for *PipelineError
+// where Phase == "render". The fail() function inside templates is
+// the most useful signal here — operators can put domain-specific
+// messages in their templates and have them surface verbatim in the
+// webhook response.
+output, err := engine.Render(ctx, "haproxy.cfg", templateContext)
 if err != nil {
-    // Extract user-friendly message for webhook response
     simplified := dataplane.SimplifyRenderingError(err)
-
-    c.eventBus.Publish(events.NewWebhookValidationResponse(
-        req.RequestID,
-        "dryrun",
-        false,
-        simplified,
-    ))
-    return
+    return false, simplified
 }
 ```
 
@@ -1306,28 +1166,23 @@ adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction
 
 ### Parallel Endpoint Sync
 
+`pkg/dataplane.Sync` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, look at `pkg/controller/deployer.Component` (uses `errgroup` with `SetLimit(maxParallel)`) for the production pattern. For one-off scripts that need to push to multiple HAProxies in parallel, the same shape applies:
+
 ```go
-// Sync multiple endpoints in parallel
-var wg sync.WaitGroup
-results := make(chan EndpointResult, len(endpoints))
+g, gCtx := errgroup.WithContext(ctx)
+g.SetLimit(maxParallel)
 
-for _, endpoint := range endpoints {
-    wg.Add(1)
-    go func(ep Endpoint) {
-        defer wg.Done()
-        result := syncEndpoint(ctx, config, ep)
-        results <- result
-    }(endpoint)
+results := make([]*dataplane.SyncResult, len(endpoints))
+for i, endpoint := range endpoints {
+    i, endpoint := i, endpoint
+    g.Go(func() error {
+        result, err := dataplane.Sync(gCtx, endpoint, config, auxFiles, nil)
+        results[i] = result
+        return err
+    })
 }
-
-wg.Wait()
-close(results)
-
-// Collect results
-for result := range results {
-    if result.Error != nil {
-        log.Error("sync failed", "endpoint", result.Endpoint, "error", result.Error)
-    }
+if err := g.Wait(); err != nil {
+    return err
 }
 ```
 

@@ -51,25 +51,24 @@ Registration happens once at `Start`:
 
 1. For each `Rule`, resolve `Kind` via `restMapper` and build a `group/version.Kind` key.
 2. Register a thin wrapper `ValidationFunc` that:
-   - Extracts `namespace`, `name`, `operation` from the `AdmissionRequest`.
-   - Performs basic structural sanity (`validateBasicStructure`).
-   - Delegates to `DryRunValidator.ValidateDirect`.
+   - Performs basic structural sanity (`validateBasicStructure`) and short-circuits on failure before touching the validator.
+   - Wraps the call in a 5-second `context.WithTimeout` — kept shorter than the chart's `timeoutSeconds: 10` so a stuck render returns a structured deny rather than an HTTP transport failure.
+   - Delegates to `DryRunValidator.ValidateDirect(ctx, gvk, namespace, name, object, operation)`.
    - Records metrics and logs the outcome.
 
-`ValidateDirect` renders the config against an overlay store that includes the proposed change (via `pkg/stores.StoreOverlay`) and runs `haproxy -c`. If either fails, the webhook denies with the simplified error message; if both pass, it allows.
+`ValidateDirect` renders the config against an overlay store that includes the proposed change (via `pkg/stores.StoreOverlay`) and runs the full three-phase HAProxy validation. If any phase fails, the webhook denies with the simplified error message; if all pass, it allows.
 
 ## Integration Points
 
-- **Upstream** — `pkg/controller/certloader` emits `CertParsedEvent` with `CertPEM`/`KeyPEM`. The controller iterates on cert updates by restarting this component.
-- **Downstream** — `pkg/controller/dryrunvalidator` is the only implementation of the `DryRunValidator` interface in the tree.
-- **Sibling** — `pkg/controller/proposalvalidator` handles validation for the CRD itself (the `HAProxyTemplateConfig` kind) rather than user resources.
-- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration`, including `failurePolicy: Fail`, `objectSelector` matching `app.kubernetes.io/instance`, and cert-manager's `cert-manager.io/inject-ca-from` annotation for CA bundle injection.
+- **Upstream** — `pkg/controller/certloader` watches the cert-manager-provisioned Secret and publishes `CertParsedEvent` with `CertPEM`/`KeyPEM`. The controller iterates on cert updates by restarting this component with the new bytes.
+- **Downstream** — `pkg/controller/dryrunvalidator` is the only implementation of the `DryRunValidator` interface in the tree. It in turn delegates the actual render+validate to `pkg/controller/proposalvalidator`, which is the same pipeline the leader-side reconciler uses — so anything that passes admission will also pass at deploy time.
+- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration`: `failurePolicy: Fail`, `timeoutSeconds: 10`, and (when `webhook.certManager.enabled`) cert-manager's `cert-manager.io/inject-ca-from` annotation for CA bundle injection. The chart does **not** set an `objectSelector`; multi-controller isolation comes from each release deploying its own webhook configuration whose `clientConfig.service` points at that release's controller `Service`.
 
 ## See Also
 
 - [`pkg/webhook`](../../webhook/) — pure HTTPS server + AdmissionReview protocol
 - [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — the `DryRunValidator` implementation this component calls into
-- [`pkg/controller/proposalvalidator`](../proposalvalidator/) — validates the controller's own CRD (complementary webhook path)
+- [`pkg/controller/proposalvalidator`](../proposalvalidator/) — the speculative render+validate pipeline shared by `dryrunvalidator` (synchronous, this webhook path) and the background HTTP-content refresh in `pkg/controller/httpstore` (asynchronous)
 - [`pkg/controller/certloader`](../certloader/) — supplies `CertPEM`/`KeyPEM`
 - `docs/controller/docs/development/crd-validation-design.md` — why the webhook fails closed, lives in the controller pod, and runs the same render/validate code as the reconciler
 

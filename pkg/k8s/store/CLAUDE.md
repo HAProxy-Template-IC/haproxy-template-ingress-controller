@@ -41,13 +41,13 @@ This separation allows:
 Both stores implement `types.Store` interface for transparent switching:
 
 ```go
-// pkg/k8s/types/store.go
+// pkg/k8s/types/types.go
 type Store interface {
-    Add(resource interface{}, keys []string) error
-    Get(keys ...string) ([]interface{}, error)
-    Update(resource interface{}, keys []string) error
+    Get(keys ...string) ([]any, error)
+    List() ([]any, error)
+    Add(resource any, keys []string) error
+    Update(resource any, keys []string) error
     Delete(keys ...string) error
-    List() ([]interface{}, error)
     Clear() error
 }
 ```
@@ -105,19 +105,25 @@ resources, _ := store.Get("default", "common-label")
 ```go
 type MemoryStore struct {
     mu       sync.RWMutex
-    data     map[string][]interface{}  // Composite key -> resources
-    numKeys  int                       // Expected key count
-    allItems []interface{}             // Cached List() result
-    dirty    bool                      // allItems needs rebuild
+    data     map[string][]any // Composite key -> pre-sorted resource slice
+    numKeys  int              // Expected key count
+    modCount uint64           // Incremented on every mutation; used by ModCounter
 }
 ```
 
 **Why this structure:**
 
-- `map[string][]interface{}`: Handles non-unique keys naturally
-- `allItems` cache: List() doesn't rebuild on every call
-- `dirty` flag: Lazy rebuilding of List() cache
-- `sync.RWMutex`: Multiple concurrent readers, single writer
+- `map[string][]any`: handles non-unique keys naturally; per-bucket slice is kept
+  sorted at insert time so reads can return a direct reference (zero-copy).
+- `modCount`: lets caching layers detect mutations without re-walking the store.
+  Stores that expose this counter implement the optional `stores.ModCounter`
+  interface.
+- `sync.RWMutex`: multiple concurrent readers, single writer.
+
+There is **no** `allItems` cache or `dirty` flag — `List()` walks the data map
+on every call and sorts the aggregated result. The optimization is "buckets
+are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is
+memoized".
 
 ### CachedStore Design
 
@@ -130,28 +136,31 @@ type resourceRef struct {
     indexKeys []string // For key matching
 }
 
-type cacheEntry struct {
-    resource  interface{}
-    expiresAt time.Time
-}
-
 type CachedStore struct {
     mu        sync.RWMutex
-    refs      map[string][]resourceRef    // Composite key -> references
-    cache     map[string]*cacheEntry      // "namespace/name" -> cached resource
+    refs      map[string][]resourceRef            // Composite key -> references
+    cache     *lru.Cache[string, *cacheEntry]     // LRU cache: "ns/name" -> cached resource
+    numKeys   int
     cacheTTL  time.Duration
     client    dynamic.Interface
     gvr       schema.GroupVersionResource
-    // ...
+    namespace string
+    indexer   *indexer.Indexer
+    logger    *slog.Logger
+    modCount  uint64
 }
 ```
 
 **Why this structure:**
 
-- `refs` map: Stores only metadata (200 bytes vs 1-5 KB per resource)
-- `cache` map: Separate cache keyed by namespace/name
-- TTL-based expiration: Automatic cache invalidation
-- Dynamic client: Fetches any resource type
+- `refs` map: stores only metadata (`namespace + name + index keys`) so the
+  in-memory footprint per resource is tiny compared to a full Secret body.
+- `cache` is an actual `lru.Cache`, not a plain map — entries beyond
+  `MaxCacheSize` (default `DefaultMaxCacheSize = 256`) are evicted LRU. TTL
+  (`cfg.CacheTTL`, default `2m10s`) is checked on read.
+- `dynamic.Interface`: fetches any resource type without compiled-in schemas.
+- `modCount`: same role as in `MemoryStore` — a monotonic counter for downstream
+  cache invalidation.
 
 **Cache key vs Index key:**
 
@@ -170,14 +179,14 @@ This separation allows:
 
 ```go
 // Read operations (concurrent)
-func (s *MemoryStore) Get(keys ...string) ([]interface{}, error) {
+func (s *MemoryStore) Get(keys ...string) ([]any, error) {
     s.mu.RLock()
     defer s.mu.RUnlock()
     // Read from data map
 }
 
 // Write operations (exclusive)
-func (s *MemoryStore) Add(resource interface{}, keys []string) error {
+func (s *MemoryStore) Add(resource any, keys []string) error {
     s.mu.Lock()
     defer s.mu.Unlock()
     // Write to data map
@@ -203,86 +212,103 @@ If profiling shows lock contention, consider:
 
 ## Common Patterns
 
-### MemoryStore Add Pattern
+### MemoryStore Add / Update Pattern
+
+`Add` is a pure append — it does **not** dedupe. The dedupe (replace-by-namespace+name)
+lives in `Update`, which keeps the per-key bucket sorted so subsequent `Get`s
+can return the slice as-is. The shared key-validation helper is `validateKeyCount`,
+not an inline check, and the `StoreError` field is `Cause`, not `Err`.
 
 ```go
-func (s *MemoryStore) Add(resource interface{}, keys []string) error {
+func (s *MemoryStore) Add(resource any, keys []string) error {
     s.mu.Lock()
     defer s.mu.Unlock()
 
-    if len(keys) != s.numKeys {
-        return &StoreError{
-            Operation: "add",
-            Keys:      keys,
-            Err:       fmt.Errorf("expected %d keys, got %d", s.numKeys, len(keys)),
-        }
+    if err := validateKeyCount("add", keys, s.numKeys); err != nil {
+        return err  // *StoreError{Operation, Keys, Cause}
     }
 
     keyStr := makeKeyString(keys)
+    s.data[keyStr] = append(s.data[keyStr], resource)
+    sortResourceSlice(s.data[keyStr]) // zero-copy reads later
+    s.modCount++
+    return nil
+}
 
-    // Check if resource already exists
-    for i, existing := range s.data[keyStr] {
-        if resourcesEqual(existing, resource) {
-            // Replace existing
-            s.data[keyStr][i] = resource
-            s.dirty = true
+func (s *MemoryStore) Update(resource any, keys []string) error {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+
+    if err := validateKeyCount("update", keys, s.numKeys); err != nil {
+        return err
+    }
+
+    keyStr := makeKeyString(keys)
+    bucket, ok := s.data[keyStr]
+    if !ok {
+        s.data[keyStr] = []any{resource}
+        s.modCount++
+        return nil
+    }
+
+    ns, name := extractNamespaceName(resource)
+    for i, existing := range bucket {
+        existingNs, existingName := extractNamespaceName(existing)
+        if existingNs == ns && existingName == name {
+            bucket[i] = resource // ns/name unchanged → sort order preserved
+            s.modCount++
             return nil
         }
     }
 
-    // Add new resource
-    s.data[keyStr] = append(s.data[keyStr], resource)
-    s.dirty = true
-
+    s.data[keyStr] = append(bucket, resource)
+    sortResourceSlice(s.data[keyStr])
+    s.modCount++
     return nil
 }
 ```
 
 **Key points:**
 
-- Validates key count
-- Checks for duplicates using `resourcesEqual`
-- Appends to slice for non-unique keys
-- Marks List() cache as dirty
+- `Add` is unconditional append — duplicates are possible if the watcher's
+  delta logic is wrong. That's by design: cheap insert, dedupe lives in `Update`.
+- Per-bucket sort happens at write time so `Get(exact-key)` can return the
+  internal slice directly (see the Immutability Contract in `MemoryStore.Get`).
+- Mutation increments `modCount` so cached layers can invalidate without polling.
 
 ### CachedStore Fetch Pattern
 
 ```go
-func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
+func (s *CachedStore) Get(keys ...string) ([]any, error) {
     // 1. Find matching references (under read lock)
     s.mu.RLock()
     keyStr := makeKeyString(keys)
     refs := s.refs[keyStr]
     s.mu.RUnlock()
 
-    var results []interface{}
+    var results []any
     for _, ref := range refs {
-        // 2. Check cache (under read lock)
-        s.mu.RLock()
         cacheKey := ref.namespace + "/" + ref.name
-        entry, cached := s.cache[cacheKey]
-        s.mu.RUnlock()
 
-        if cached && time.Now().Before(entry.expiresAt) {
-            // Cache hit
+        // 2. Check cache via LRU API (Peek doesn't bump recency; Get does)
+        if entry, ok := s.cache.Peek(cacheKey); ok && time.Now().Before(entry.expiresAt) {
             results = append(results, entry.resource)
             continue
         }
 
-        // 3. Fetch from API (no lock held)
+        // 3. Fetch from API (no lock held — fetchResource does its own
+        //    locking around s.cache.Add).
         resource, err := s.fetchResource(ref)
         if err != nil {
             s.logger.Warn("failed to fetch resource", "ref", ref, "error", err)
             continue
         }
 
-        // 4. Update cache (under write lock)
-        s.mu.Lock()
-        s.cache[cacheKey] = &cacheEntry{
+        // 4. Cache (LRU's Add evicts the oldest entry if over MaxCacheSize)
+        s.cache.Add(cacheKey, &cacheEntry{
             resource:  resource,
             expiresAt: time.Now().Add(s.cacheTTL),
-        }
-        s.mu.Unlock()
+        })
 
         results = append(results, resource)
     }
@@ -298,34 +324,20 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 - TTL check before using cached entry
 - Silent failures on fetch errors (logged as warnings)
 
-### Resource Equality Check
+### Resource Identity
+
+There is no `resourcesEqual` helper. The store identifies "same resource" by
+`(namespace, name)` via `extractNamespaceName` (see `common.go:55`) and uses
+that comparison inside `Update` and `Delete`. UID is **not** consulted, so a
+deleted-and-recreated resource looks identical to its predecessor as far as
+this store is concerned — that's correct, because the watcher generates
+`Update` (not `Add`+`Delete`) on a re-create.
 
 ```go
-func resourcesEqual(a, b interface{}) bool {
-    // Try GetUID() method first (fastest)
-    type uidGetter interface {
-        GetUID() types.UID
-    }
-
-    if aUID, ok := a.(uidGetter); ok {
-        if bUID, ok := b.(uidGetter); ok {
-            return aUID.GetUID() == bUID.GetUID()
-        }
-    }
-
-    // Fall back to namespace/name comparison
-    nsA, nameA := extractNamespaceName(a)
-    nsB, nameB := extractNamespaceName(b)
-
-    return nsA == nsB && nameA == nameB
-}
+nsA, nameA := extractNamespaceName(a)
+nsB, nameB := extractNamespaceName(b)
+sameResource := nsA == nsB && nameA == nameB
 ```
-
-**Why UID first:**
-
-- UID is unique across cluster lifetime
-- Faster than namespace/name extraction
-- Handles edge cases (deleted and recreated resources)
 
 ## Testing Strategies
 
@@ -335,8 +347,8 @@ func resourcesEqual(a, b interface{}) bool {
 func TestMemoryStore_AddGet(t *testing.T) {
     store := NewMemoryStore(2)
 
-    resource := map[string]interface{}{
-        "metadata": map[string]interface{}{
+    resource := map[string]any{
+        "metadata": map[string]any{
             "namespace": "default",
             "name":      "test",
         },
@@ -361,8 +373,8 @@ func TestMemoryStore_NonUniqueKeys(t *testing.T) {
     store := NewMemoryStore(2)
 
     // Add two resources with same keys
-    resource1 := map[string]interface{}{"id": "1"}
-    resource2 := map[string]interface{}{"id": "2"}
+    resource1 := map[string]any{"id": "1"}
+    resource2 := map[string]any{"id": "2"}
 
     store.Add(resource1, []string{"default", "label"})
     store.Add(resource2, []string{"default", "label"})
@@ -439,7 +451,7 @@ func TestMemoryStore_ConcurrentAccess(t *testing.T) {
         wg.Add(1)
         go func(id int) {
             defer wg.Done()
-            resource := map[string]interface{}{"id": id}
+            resource := map[string]any{"id": id}
             if err := store.Add(resource, []string{"default", fmt.Sprintf("res-%d", id)}); err != nil {
                 errors <- err
             }
@@ -575,14 +587,14 @@ cfg := &CachedStoreConfig{
 
 ```go
 // Bad - don't do this!
-func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
+func (s *CachedStore) Get(keys ...string) ([]any, error) {
     s.mu.Lock()
     defer s.mu.Unlock()
 
     // API call while holding lock - blocks everything!
     resource, _ := s.client.Resource(s.gvr).Get(ctx, name, metav1.GetOptions{})
 
-    return []interface{}{resource}, nil
+    return []any{resource}, nil
 }
 ```
 
@@ -590,88 +602,44 @@ func (s *CachedStore) Get(keys ...string) ([]interface{}, error) {
 
 ## Performance Optimization
 
-### MemoryStore List() Caching
+### Zero-copy reads, not memoized List()
 
-List() rebuilds result only when `dirty` flag is set:
+Per-bucket slices are kept sorted at insert time, so `Get(exactKey)` returns
+the internal slice directly — callers must respect the Immutability Contract
+(no mutation, no append, no aliasing past the call). `List()` does **not**
+memoize across calls; it rebuilds the aggregate slice every time and sorts it
+by namespace/name. That's an explicit choice — the watcher path is the hot
+path, and it almost never calls `List()`. The cache that benefits from
+modCount lives one layer up in `pkg/k8s/store/cached.go`, not inside
+`MemoryStore` itself.
 
-```go
-func (s *MemoryStore) List() ([]interface{}, error) {
-    s.mu.RLock()
-
-    if !s.dirty {
-        // Return cached result (fast path)
-        defer s.mu.RUnlock()
-        return s.allItems, nil
-    }
-
-    s.mu.RUnlock()
-
-    // Rebuild cache (slow path)
-    s.mu.Lock()
-    defer s.mu.Unlock()
-
-    // Double-check dirty flag (might have been rebuilt)
-    if !s.dirty {
-        return s.allItems, nil
-    }
-
-    // Rebuild allItems from data map
-    s.allItems = make([]interface{}, 0)
-    for _, resources := range s.data {
-        s.allItems = append(s.allItems, resources...)
-    }
-
-    s.dirty = false
-    return s.allItems, nil
-}
-```
-
-**Why this matters:**
-
-- List() called frequently during template rendering
-- Rebuilding from map every time is expensive O(N)
-- Cache makes List() O(1) when no changes occurred
+If you find yourself wanting a memoized `List()`, look at `CachedStoreWrapper`
+or read the modCount via `(stores.ModCounter).ModCount()` and rebuild only
+when the counter changes — don't add a `dirty` flag inside `MemoryStore`.
 
 ### CachedStore Memory Bounds
 
-Cache size is unbounded currently. For production use, consider adding eviction:
+The cache is an `lru.Cache[string, *cacheEntry]`, sized by `CachedStoreConfig.MaxCacheSize`
+(default `DefaultMaxCacheSize = 256`). Entries beyond the limit are evicted in
+LRU order automatically, so memory is bounded by `MaxCacheSize × per-resource-size`.
 
-```go
-// TODO: Potential improvement
-type CachedStore struct {
-    // ...
-    maxCacheSize int
-}
+Tuning:
 
-func (s *CachedStore) evictOldest() {
-    if len(s.cache) <= s.maxCacheSize {
-        return
-    }
-
-    // Find and remove oldest entry
-    var oldest string
-    var oldestTime time.Time
-
-    for key, entry := range s.cache {
-        if oldestTime.IsZero() || entry.expiresAt.Before(oldestTime) {
-            oldest = key
-            oldestTime = entry.expiresAt
-        }
-    }
-
-    delete(s.cache, oldest)
-}
-```
+- Increase `MaxCacheSize` if your hot working set is larger than 256 entries
+  (cache thrash shows up as repeated API fetches in the watcher logs).
+- Lower `CacheTTL` if you need fresher reads at the cost of more API traffic;
+  raise it to soak more reads against the in-memory copy.
 
 ## Future Improvements
 
 ### Potential Enhancements
 
-1. **LRU Cache for CachedStore**: Bounded cache with least-recently-used eviction
-2. **Metrics**: Cache hit/miss rates, API latency, memory usage
-3. **Sharded Maps**: Reduce lock contention for high-concurrency scenarios
-4. **Batch Fetch**: Fetch multiple resources in single API call
-5. **Predictive Caching**: Pre-fetch resources likely to be accessed
+1. **Metrics**: Cache hit/miss rates, API latency, memory usage (CachedStore
+   already keeps internal hit/miss counters — wire them to Prometheus).
+2. **Sharded Maps**: Reduce lock contention for high-concurrency scenarios.
+3. **Batch Fetch**: Fetch multiple resources in a single API call instead of
+   per-reference Get loops.
+4. **Predictive Caching**: Pre-fetch resources likely to be accessed.
 
 ### When to Refactor
 
@@ -708,21 +676,24 @@ for _, res := range resources {
 
 **Diagnosis:**
 
-1. Check TTL configuration
-2. Verify cache isn't being cleared
-3. Check for clock skew
+1. Check TTL configuration — defaults to ~2m10s; if zero is being passed in
+   somewhere upstream, every read will look stale.
+2. Verify the LRU isn't undersized (`MaxCacheSize` defaults to 256). If the
+   working set is larger, entries get evicted before they can be reused.
+3. Check for clock skew (TTL is wall-clock based).
 
 ```go
-// Debug cache state
-hits, misses := cachedStore.GetCacheStats()
-log.Info("cache stats", "hits", hits, "misses", misses)
-
-// Check if cache is being populated
-s.mu.RLock()
-cacheSize := len(s.cache)
-s.mu.RUnlock()
-log.Info("cache size", "entries", cacheSize)
+// Inspect via the actual CachedStore API (no GetCacheStats() helper exists).
+log.Info("cache state",
+    "size",        cachedStore.Size(),       // total references the store knows about
+    "cached",      cachedStore.CacheSize(),  // entries currently in the LRU cache
+    "max",         cfg.MaxCacheSize,         // configured upper bound
+    "ttl_seconds", cfg.CacheTTL.Seconds(),
+)
 ```
+
+If you need hit/miss counters, add them as Prometheus metrics on the
+`CachedStore` itself — there's no built-in stats accessor today.
 
 ### Race Conditions
 
@@ -745,5 +716,5 @@ go test -race -tags=integration ./tests/...
 - API documentation: `pkg/k8s/store/README.md`
 - Watcher integration: `pkg/k8s/watcher/README.md`
 - Indexer usage: `pkg/k8s/indexer/README.md`
-- User guide: `/docs/watching-resources.md`
-- Store interface: `pkg/k8s/types/store.go`
+- User guide: `docs/controller/docs/watching-resources.md`
+- Store interface: `pkg/k8s/types/types.go` (search for `type Store interface`)

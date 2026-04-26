@@ -1,42 +1,46 @@
 # pkg/controller/validator
 
-Configuration validation components using scatter-gather pattern.
+Configuration validators (scatter-gather participants).
 
 ## Overview
 
-Validates controller configuration using multiple independent validators coordinated via scatter-gather EventBus pattern.
+Three validators run as the responder side of the scatter-gather validation pattern. Each one wraps a shared `BaseValidator`, subscribes to `ConfigValidationRequest` on the EventBus, and responds with a `ConfigValidationResponse` flagged valid or invalid. The orchestrator that fans the request out and aggregates responses is **not** in this package — it lives in `pkg/controller/configchange.ConfigChangeHandler`. The same package also hosts `HAProxyValidatorComponent`, which performs the three-phase HAProxy validation (syntax + OpenAPI schema + `haproxy -c`) for rendered configs as part of the deployment pipeline.
 
 ## Validators
 
-- **BasicValidator**: Structural validation
-- **TemplateValidator**: Template syntax
-- **JSONPathValidator**: JSONPath expressions
+- **BasicValidator** — Structural validation (required fields, type checks, basic schema sanity).
+- **TemplateValidator** — Calls `helpers.ExtractTemplatesFromConfig` to collect every template defined under `haproxyConfig`, `templateSnippets`, `maps`, `files`, and `sslCertificates`, then compiles them with `templating.NewScriggoWithDeclarations` to surface syntax errors before they reach the render pipeline.
+- **JSONPathValidator** — Evaluates the `indexBy` JSONPath expressions on every entry under `spec.watchedResources` against a synthetic resource.
+- **HAProxyValidatorComponent** — Three-phase validation of a rendered HAProxy config (used by the render-validate pipeline, not the config-validation scatter-gather).
 
 ## Quick Start
 
 ```go
-// Start all validators
-basicValidator := validator.NewBasicValidator(bus, logger)
-templateValidator := validator.NewTemplateValidator(bus, logger, engine)
-jsonpathValidator := validator.NewJSONPathValidator(bus, logger)
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 
-go basicValidator.Start(ctx)
-go templateValidator.Start(ctx)
-go jsonpathValidator.Start(ctx)
+basic := validator.NewBasicValidator(bus, logger)
+tmpl := validator.NewTemplateValidator(bus, logger)
+jp := validator.NewJSONPathValidator(bus, logger)
+
+go basic.Start(ctx)
+go tmpl.Start(ctx)
+go jp.Start(ctx)
 ```
+
+The validators take only `(eventBus, logger)` — no engine, no validator-name list. Their internal name (`"basic"`, `"template"`, `"jsonpath"`) is what the orchestrator uses in its `ExpectedResponders` list.
 
 ## Events
 
-### Subscribes To
+### Subscribed
 
-- **ConfigValidationRequest**: Scatter-gather validation request
+- `ConfigValidationRequest` — scatter-gather validation request (handled by all three validators)
 
-### Publishes
+### Published
 
-- **ConfigValidationResponse**: Individual validator response
-- **ConfigValidatedEvent**: All validators passed (from coordinator)
-- **ConfigInvalidEvent**: Any validator failed (from coordinator)
+- `ConfigValidationResponse` — one per validator, per request
+
+`ConfigValidatedEvent` and `ConfigInvalidEvent` are published by the orchestrator (`configchange.ConfigChangeHandler`) after collecting all three responses, not by these validators directly.
 
 ## License
 
-See main repository for license information.
+Apache-2.0 — see root `LICENSE`.

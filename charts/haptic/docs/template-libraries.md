@@ -192,8 +192,8 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 | Ingress | `features-*`, `backends-*`, `map-host-*`, `map-path-*`, `status-patches-*` |
 | Gateway | `features-*`, `backends-*`, `map-*`, `frontend-matchers-advanced-*`, `frontend-filters-*`, `status-patches-*` |
 | haproxytech | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
-| haproxy-ingress | `map-path-regex-*` |
-| nginx-ingress | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
+| haproxy-ingress | `features-*`, `map-path-*`, `map-pfxexact-*`, `backend-directives-*`, `frontend-filters-*`, `global-top-*`, `backends-*` |
+| nginx-ingress | `features-*`, `backends-*`, `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | Path Regex Last | Overrides `frontend-routing-logic` (not an extension point pattern) |
 
 ## Custom Libraries

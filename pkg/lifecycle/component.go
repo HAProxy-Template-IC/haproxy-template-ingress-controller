@@ -79,8 +79,8 @@ type HealthChecker interface {
 // By implementing this interface, the component can signal after subscription:
 //
 //	func (c *Component) Start(ctx context.Context) error {
-//	    c.eventChan = c.eventBus.Subscribe(100)  // Subscribe
-//	    close(c.subscriptionReady)               // Signal ready
+//	    c.eventChan = c.eventBus.Subscribe(ComponentName, 100)  // Subscribe (name, buffer)
+//	    close(c.subscriptionReady)                                // Signal ready
 //	    // ... event loop
 //	}
 //

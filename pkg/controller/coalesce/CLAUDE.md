@@ -68,9 +68,14 @@ func (c *Component) handleTrigger(event *events.TriggerEvent) {
 
 | Component | Event Type | Purpose |
 |-----------|------------|---------|
-| Renderer | `ReconciliationTriggeredEvent` | Skip intermediate triggers during rendering |
-| Validator | `TemplateRenderedEvent` | Skip intermediate renders during validation |
-| Deployer | `DeploymentScheduledEvent` | Deploy only latest config |
+| Renderer (`pkg/controller/renderer`) | `ReconciliationTriggeredEvent` | Skip intermediate triggers while rendering is in flight |
+| HAProxyValidator (`pkg/controller/validator`) | `TemplateRenderedEvent` | Skip intermediate renders while validation is in flight |
+| DeploymentScheduler (`pkg/controller/deployer`) | `HAProxyPodsDiscoveredEvent` | Use only the most recent pod-discovery snapshot per scheduling decision |
+| Deployer (`pkg/controller/deployer`) | `DeploymentScheduledEvent` | Deploy only the latest config when several land back-to-back |
+
+Grep for `coalesce.DrainLatest[` to find every call site — adding a new one is
+the canonical sign you should also update this table and consider whether the
+event type should implement `CoalescibleEvent`.
 
 ## Design Principles
 

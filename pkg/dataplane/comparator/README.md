@@ -27,7 +27,12 @@ if !diff.Summary.HasChanges() {
 }
 
 for _, op := range diff.Operations {
-    fmt.Printf("[%s] %s\n", op.Type(), op.Describe())
+    // op.Describe() already includes the verb ("Create backend 'api'",
+    // "Update server 'srv' in backend 'api'", "Delete frontend 'http'",
+    // ...). op.Type() returns sections.OperationType (an int with no
+    // String method); compare it against sections.OperationCreate /
+    // OperationUpdate / OperationDelete if you need the category.
+    fmt.Println(op.Describe())
 }
 ```
 

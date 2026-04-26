@@ -8,24 +8,40 @@ The codebase follows clean architecture with clear separation of concerns:
 
 ```
 pkg/
+├── apis/              # CRD type definitions (haproxytemplate/v1alpha1)
+├── compression/       # zstd + base64 helper used by output CRDs
 ├── core/              # Shared primitives (config, logging)
 ├── events/            # Generic event bus (domain-agnostic)
-├── templating/        # Pure template engine library
+├── generated/         # Code-generation output (clientset, DataPlane API clients, validators)
+├── httpstore/         # Pure HTTP resource cache (two-version pending/accepted)
+├── introspection/     # Generic /debug/vars HTTP server
+├── lifecycle/         # Component registry, dependency ordering, leader-only gating
+├── metrics/           # Prometheus registry/server primitives
+├── stores/            # Store overlay/provider used for webhook dry-run
+├── templating/        # Pure template engine library (Scriggo)
 ├── k8s/               # Kubernetes integration library
 ├── dataplane/         # HAProxy integration library
-└── controller/        # Orchestration and coordination
+├── webhook/           # Pure admission-webhook HTTPS server
+└── controller/        # Orchestration and coordination (the only event-bus consumer)
 ```
+
+For the canonical layout (with sub-packages), see [`docs/controller/docs/development/design/package-structure.md`](../docs/controller/docs/development/design/package-structure.md).
 
 ## Dependency Hierarchy
 
-### Layer 1: Infrastructure (No Dependencies)
+### Layer 1: Infrastructure (No Dependencies on Other pkg/ Packages)
 
-**pkg/events/**
+**pkg/events/** — Generic pub/sub + request/response. NO domain knowledge. Imported by: everything else.
 
-- Generic pub/sub and request-response infrastructure
-- NO business logic, NO domain knowledge
-- Could be extracted as standalone library
-- Imported by: everything else
+**pkg/introspection/** — Generic `/debug/vars` HTTP server (registry + JSONPath + pprof).
+
+**pkg/metrics/** — Generic Prometheus registry + `/metrics` server.
+
+**pkg/lifecycle/** — Component registry, dependency ordering, leader-only gating, health tracking.
+
+**pkg/compression/** — zstd + base64 helper used by output-CRD content.
+
+**pkg/apis/** and **pkg/generated/** — CRD type definitions and code-generation output (clientset, informers, listers, DataPlane API clients per HAProxy version, OpenAPI validators). Authored by `controller-gen` / `oapi-codegen`; treated as pure data shapes.
 
 ### Layer 2: Pure Libraries (Minimal Dependencies)
 
@@ -52,6 +68,24 @@ pkg/
 
 - HAProxy configuration sync
 - Depends on: client-native, events (for observability)
+- Imported by: controller package
+
+**pkg/httpstore/**
+
+- Pure HTTP resource store (two-version pending/accepted)
+- Depends on: standard library
+- Imported by: controller package
+
+**pkg/webhook/**
+
+- HTTPS server speaking Kubernetes AdmissionReview v1
+- Depends on: net/http, k8s.io/api, k8s.io/apimachinery, k8s.io/client-go
+- Imported by: controller package
+
+**pkg/stores/**
+
+- `Store` overlay/provider used to inject hypothetical resources during webhook dry-run validation
+- Depends on: pkg/k8s/types via the `TypesStoreAdapter` bridge (no direct import — `arch-go.yml` enforces isolation)
 - Imported by: controller package
 
 ### Layer 3: Coordination (Depends on Everything)
@@ -99,9 +133,10 @@ Packages like `templating`, `k8s`, `dataplane` provide pure business logic:
 // pkg/templating/engine.go
 package templating
 
-// No event dependencies - pure library
-type Renderer interface {
-    Render(ctx context.Context, name string, templateContext map[string]interface{}) (string, error)
+// No event dependencies - pure library (real type is templating.Engine)
+type Engine interface {
+    Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error)
+    // ... HasTemplate, TemplateNames, EnableTracing, etc.
 }
 ```
 
@@ -109,9 +144,19 @@ type Renderer interface {
 
 Only `pkg/controller` contains event coordination:
 
+A typical event-adapter wraps a pure component (e.g. `pkg/templating.Engine`)
+in a constructor that subscribes to the bus before returning so events
+buffered during startup aren't lost, then runs a single goroutine that
+dispatches one event at a time. The skeleton below is illustrative; for the
+shared scaffold every controller component embeds, see
+`pkg/controller/component`. Note that not every "renderer-ish" surface is an
+event adapter — the production renderer is in fact a synchronous
+`renderer.RenderService` called from the pipeline, with no event hop. Look
+at `pkg/controller/renderer/README.md` for the real shape.
+
 ```go
-// pkg/controller/renderer/component.go
-package renderer
+// Illustrative — not a real package. Shows the event-adapter shape.
+package examplerenderer
 
 import (
     "haptic/pkg/events"
@@ -129,11 +174,14 @@ func New(bus *events.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor, before Start()
+        eventChan: bus.Subscribe("examplerenderer", 100),  // Subscribe in constructor, before bus.Start()
     }
 }
 
-func (c *Component) Run(ctx context.Context) error {
+// Method name is Start (not Run) — that's what the lifecycle.Component
+// interface requires; every controller component in pkg/controller/*/component.go
+// follows the same shape.
+func (c *Component) Start(ctx context.Context) error {
     for {
         select {
         case event := <-c.eventChan:
@@ -237,7 +285,7 @@ func TestEngine_Render(t *testing.T) {
         "test": "Hello {{ name }}",
     }, nil, nil, nil)
 
-    output, err := engine.Render(context.Background(), "test", map[string]interface{}{
+    output, err := engine.Render(context.Background(), "test", map[string]any{
         "name": "World",
     })
 
@@ -251,21 +299,22 @@ func TestEngine_Render(t *testing.T) {
 Test package interactions:
 
 ```go
-// pkg/controller/executor_test.go
-package executor
+// Illustrative — real cross-package wiring lives in
+// pkg/controller/reconciler/coordinator_test.go and similar files.
+package examplecoordinator
 
 import (
     "haptic/pkg/events"
     "haptic/pkg/templating"
 )
 
-func TestExecutor_Integration(t *testing.T) {
+func TestCoordinator_Integration(t *testing.T) {
     bus := events.NewEventBus(100)
     engine, _ := templating.New(...)
-    exec := NewExecutor(bus, engine, ...)
+    coord := New(bus, engine, ...)  // hypothetical adapter
 
     // Test cross-package interaction
-    bus.Publish(ReconciliationTriggeredEvent{})
+    bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
     // Verify expected behavior
 }
 ```
@@ -342,14 +391,30 @@ func (c *Client) ParseConfig(cfg string) (*ParsedConfig, error) { ... }
 
 ### Example: Adding Custom Template Filters
 
+`pkg/templating` has no `RegisterFilter` method — filters are registered at engine
+construction by passing a `map[string]templating.FilterFunc`. The engine is
+immutable after `New()` returns. To add a filter:
+
 ```go
-// Step 1: Add to pure library (pkg/templating)
-func (e *ScriggoEngine) RegisterFilter(name string, fn FilterFunc) error {
-    // Pure business logic
+// Step 1: Define the filter in pkg/templating (or wherever the filter lives).
+// Filters take the piped value as `in` and any extra positional args.
+var base64DecodeFilter templating.FilterFunc = func(in any, args ...any) (any, error) {
+    s, ok := in.(string)
+    if !ok {
+        return nil, fmt.Errorf("b64decode: want string, got %T", in)
+    }
+    return base64.StdEncoding.DecodeString(s)
 }
 
-// Step 2: Use from controller (no event adapter needed, pure function call)
-engine.RegisterFilter("b64decode", base64DecodeFilter)
+// Step 2: Pass the filter map at engine construction (callers usually
+// merge built-in and CRD-provided filters here).
+engine, err := templating.New(
+    templating.EngineTypeScriggo,
+    templates,
+    map[string]templating.FilterFunc{"b64decode": base64DecodeFilter}, // customFilters
+    nil,                                                                // customFunctions
+    nil,                                                                // postProcessorConfigs
+)
 ```
 
 ## Resources

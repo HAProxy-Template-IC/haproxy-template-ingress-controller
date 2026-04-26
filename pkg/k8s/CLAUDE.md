@@ -26,12 +26,17 @@ Modify this package when:
 
 ```
 pkg/k8s/
-├── types/           # Core interfaces (Store, WatcherConfig)
-├── client/          # Kubernetes client wrapper
-├── indexer/         # JSONPath evaluation and field filtering
-├── store/           # MemoryStore and CachedStore implementations
-├── watcher/         # Resource watching (Watcher and SingleWatcher)
-└── leaderelection/  # Pure leader election component (no events)
+├── types/             # Core interfaces (Store, WatcherConfig)
+├── client/            # Kubernetes client wrapper
+├── indexer/           # JSONPath evaluation and field filtering
+├── store/             # MemoryStore and CachedStore implementations
+├── watcher/           # Resource watching (Watcher and SingleWatcher)
+├── configpublisher/   # Publishes rendered config + aux files as observable CRDs
+│                      # (HAProxyCfg, HAProxyMapFile, HAProxyGeneralFile,
+│                      # HAProxyCRTListFile) plus SSL Secrets — for
+│                      # `kubectl describe`, GitOps diffs, and audit trails.
+│                      # Does NOT push to HAProxy pods; that's pkg/dataplane.
+└── leaderelection/    # Pure leader election component (no events)
 ```
 
 ## Key Concepts
@@ -74,7 +79,7 @@ Distinguishes between initial bulk load and real-time changes:
 
 ```go
 // Watcher tracks sync state
-watcher.IsSynced()  // Returns bool
+w.IsSynced()  // Returns bool
 
 // Callbacks receive context
 func onChange(store Store, stats ChangeStats) {
@@ -96,12 +101,12 @@ func onChange(store Store, stats ChangeStats) {
 Defines interfaces used across k8s package:
 
 ```go
-// Store interface for indexed resource storage
+// Store interface for indexed resource storage (declared in pkg/k8s/types/types.go)
 type Store interface {
-    Get(keys ...string) ([]interface{}, error)
-    List() ([]interface{}, error)
-    Add(resource interface{}, keys []string) error
-    Update(resource interface{}, keys []string) error
+    Get(keys ...string) ([]any, error)
+    List() ([]any, error)
+    Add(resource any, keys []string) error
+    Update(resource any, keys []string) error
     Delete(keys ...string) error
     Clear() error
 }
@@ -190,35 +195,35 @@ err := indexer.ValidateJSONPath("invalid..path")       // Error
 
 ### store/ - Storage Implementations
 
-**MemoryStore** - Default choice:
+**MemoryStore** - Default choice. Constructor takes the number of index keys
+the indexer will produce — the store uses it to validate every Add/Update call.
 
 ```go
-store := store.NewMemoryStore()
+// Two index keys (e.g. namespace + name)
+s := store.NewMemoryStore(2)
 
-// Add with index keys
-keys := []string{"default", "myapp"}
-store.Add(resource, keys)
+s.Add(resource, []string{"default", "myapp"})
 
-// O(1) lookup using any combination of keys
-resources, _ := store.Get("default")          // All in namespace
-resources, _ := store.Get("default", "myapp") // Specific resource
+// O(1) lookup using any prefix of the configured key set
+all, _ := s.Get("default")            // All resources in namespace
+single, _ := s.Get("default", "myapp") // Specific resource
 ```
 
-**CachedStore** - For large resources:
+**CachedStore** - For large resources. Construct via the config struct, not a
+positional constructor:
 
 ```go
-store := store.NewCachedStore(
-    client,
-    schema.GroupVersionResource{...},
-    10*time.Minute,  // TTL
-    100,             // Max cache size
-)
+s, err := store.NewCachedStore(&store.CachedStoreConfig{
+    NumKeys:      2,
+    CacheTTL:     10 * time.Minute, // optional; default 2m10s
+    MaxCacheSize: 100,              // optional; default 256 (bounded LRU)
+    Client:       dynamicClient,
+    GVR:          schema.GroupVersionResource{Group: "", Version: "v1", Resource: "secrets"},
+    Indexer:      idx,
+})
 
-// First access: fetches from API
-resource, _ := store.Get("default", "my-secret")
-
-// Subsequent accesses within TTL: uses cache
-resource, _ := store.Get("default", "my-secret")  // Cached
+// First access: fetches from API; subsequent within TTL: serves from LRU cache
+resource, _ := s.Get("default", "my-secret")
 ```
 
 **When to use CachedStore:**
@@ -235,68 +240,67 @@ resource, _ := store.Get("default", "my-secret")  // Cached
 
 ### watcher/ - Resource Watching
 
-**Watcher** - Bulk resource watching:
+**Watcher** - Bulk resource watching. Configs live in `pkg/k8s/types`; constructors
+in `pkg/k8s/watcher`. `LabelSelector` is a real `*metav1.LabelSelector`, not the
+serialized string form.
 
 ```go
-config := k8s.WatcherConfig{
-    GVR: schema.GroupVersionResource{
-        Group:    "networking.k8s.io",
-        Version:  "v1",
-        Resource: "ingresses",
-    },
-    Namespace:     "",  // All namespaces
-    LabelSelector: "app=myapp",
-    IndexBy: []string{
-        "metadata.namespace",
-        "metadata.name",
-    },
-    StoreType: k8s.StoreTypeMemory,
-    DebounceInterval: 500 * time.Millisecond,
+import (
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
+)
 
-    OnChange: func(store Store, stats ChangeStats) {
+cfg := types.WatcherConfig{
+    GVR: schema.GroupVersionResource{
+        Group: "networking.k8s.io", Version: "v1", Resource: "ingresses",
+    },
+    Namespace: "", // empty = all namespaces (NamespacedWatch overrides this)
+    LabelSelector: &metav1.LabelSelector{
+        MatchLabels: map[string]string{"app": "myapp"},
+    },
+    IndexBy: []string{"metadata.namespace", "metadata.name"},
+    StoreType: types.StoreTypeMemory,
+    // DebounceInterval omitted → defaults to types.DefaultDebounceInterval (5s, leading-edge)
+
+    OnChange: func(store types.Store, stats types.ChangeStats) {
         if !stats.IsInitialSync {
-            // Real-time change
             handleChange(stats)
         }
     },
-
-    OnSyncComplete: func(store Store, count int) {
+    OnSyncComplete: func(store types.Store, count int) {
         log.Info("initial sync complete", "count", count)
     },
-
-    CallOnChangeDuringSync: false,  // Wait for full sync before calling OnChange
+    CallOnChangeDuringSync: false, // wait for full sync before OnChange fires
 }
 
-watcher := watcher.NewWatcher(client, config)
-go watcher.Run(ctx)
+w, err := watcher.New(cfg, k8sClient, logger)
+go w.Start(ctx)
 
-// Wait for initial sync
-watcher.WaitForSync(ctx)
+// WaitForSync returns the count of resources loaded; pass through if you don't need it.
+count, err := w.WaitForSync(ctx)
 ```
 
-**SingleWatcher** - Single resource watching:
+**SingleWatcher** - Single resource watching. `NewSingle` takes a *pointer* to
+the config; `WaitForSync` here returns just an error.
 
 ```go
-config := k8s.SingleWatcherConfig{
-    GVR: schema.GroupVersionResource{
-        Group:    "",
-        Version:  "v1",
-        Resource: "configmaps",
-    },
+cfg := &types.SingleWatcherConfig{
+    GVR:       schema.GroupVersionResource{Version: "v1", Resource: "configmaps"},
     Namespace: "default",
     Name:      "haproxy-config",
 
-    OnResourceChange: func(resource interface{}) {
-        // Immediate callback (no debouncing)
-        handleConfigChange(resource)
+    // SingleWatcherConfig.OnChange is typed as types.OnResourceChangeCallback —
+    // distinct from the bulk watcher's OnChangeCallback. It returns an error so
+    // the watcher can log and continue rather than crash on a bad payload.
+    OnChange: func(resource any) error {
+        return handleConfigChange(resource)
     },
 }
 
-watcher := watcher.NewSingleWatcher(client, config)
-go watcher.Run(ctx)
-
-// Wait for initial load
-watcher.WaitForSync(ctx)
+w, err := watcher.NewSingle(cfg, k8sClient)
+go w.Start(ctx)
+err = w.WaitForSync(ctx)
 ```
 
 **Debouncing:**
@@ -330,12 +334,12 @@ func TestWatcher(t *testing.T) {
     fakeClient.NetworkingV1().Ingresses("default").Create(ctx, ingress, metav1.CreateOptions{})
 
     // Create watcher with fake client
-    config := k8s.WatcherConfig{...}
-    watcher := k8s.NewWatcher(fakeClient, config)
+    cfg := types.WatcherConfig{...}
+    w, err := watcher.New(cfg, k8sClient, logger)
 
     // Test watcher behavior
-    go watcher.Run(ctx)
-    watcher.WaitForSync(ctx)
+    go w.Start(ctx)
+    _, err = w.WaitForSync(ctx) // returns (count, error)
 
     // Verify resource was indexed
     resources, _ := store.Get("default", "test-ingress")
@@ -351,27 +355,27 @@ func TestWatcher_InitialSync(t *testing.T) {
     var changesDuringSync []ChangeStats
     var changesAfterSync []ChangeStats
 
-    config := k8s.WatcherConfig{
-        OnChange: func(store Store, stats ChangeStats) {
+    cfg := types.WatcherConfig{
+        OnChange: func(store types.Store, stats types.ChangeStats) {
             if !syncCompleted {
                 changesDuringSync = append(changesDuringSync, stats)
             } else {
                 changesAfterSync = append(changesAfterSync, stats)
             }
         },
-        OnSyncComplete: func(store Store, count int) {
+        OnSyncComplete: func(store types.Store, count int) {
             syncCompleted = true
         },
         CallOnChangeDuringSync: true,  // Test incremental processing
     }
 
-    watcher := k8s.NewWatcher(fakeClient, config)
-    go watcher.Run(ctx)
+    w, err := watcher.New(cfg, k8sClient, logger)
+    go w.Start(ctx)
 
     // Add resources before sync completes
     addTestResource()
 
-    watcher.WaitForSync(ctx)
+    _, err = w.WaitForSync(ctx)
 
     // Add resources after sync
     addTestResource()
@@ -390,8 +394,8 @@ func TestWatcher_InitialSync(t *testing.T) {
 
 ```go
 // Bad
-watcher := k8s.NewWatcher(client, config)
-go watcher.Run(ctx)
+w, err := watcher.New(config, client, logger)
+go w.Start(ctx)
 
 // Immediately access store - might be empty!
 resources, _ := store.List()
@@ -402,11 +406,11 @@ reconcile(resources)  // Missing resources!
 
 ```go
 // Good
-watcher := k8s.NewWatcher(client, config)
-go watcher.Run(ctx)
+w, err := watcher.New(cfg, k8sClient, logger)
+go w.Start(ctx)
 
-// Wait for initial sync
-if err := watcher.WaitForSync(ctx); err != nil {
+// Wait for initial sync (returns the count of resources loaded)
+if _, err := w.WaitForSync(ctx); err != nil {
     return err
 }
 
@@ -436,7 +440,7 @@ for _, expr := range config.IndexBy {
     }
 }
 
-watcher := k8s.NewWatcher(client, config)
+w, err := watcher.New(config, client, logger)
 ```
 
 ### Blocking in Callbacks
@@ -475,46 +479,50 @@ go func() {
 
 ### Using Watcher for Single Resources
 
-**Problem**: Overhead from indexing and debouncing for single resource.
+**Problem**: Overhead from indexing and debouncing for a single resource.
 
 ```go
 // Bad - unnecessary complexity
-config := k8s.WatcherConfig{
+cfg := types.WatcherConfig{
     GVR:       configMapGVR,
     Namespace: "default",
-    IndexBy:   []string{"metadata.name"},  // Only one resource
-    OnChange:  func(store Store, stats ChangeStats) { ... },
+    IndexBy:   []string{"metadata.name"},
+    OnChange:  func(store types.Store, stats types.ChangeStats) { /* … */ },
 }
-watcher := k8s.NewWatcher(client, config)
+w, err := watcher.New(cfg, k8sClient, logger)
 ```
 
-**Solution**: Use SingleWatcher.
+**Solution**: Use SingleWatcher (note: takes a *pointer* to the config).
 
 ```go
 // Good - optimized for single resource
-config := k8s.SingleWatcherConfig{
+cfg := &types.SingleWatcherConfig{
     GVR:       configMapGVR,
     Namespace: "default",
     Name:      "haproxy-config",
-    OnResourceChange: func(resource interface{}) { ... },
+    OnChange:  func(resource any) error { return nil },
 }
-watcher := k8s.NewSingleWatcher(client, config)
+w, err := watcher.NewSingle(cfg, k8sClient)
 ```
 
-### Field Selector Limitations
+### Picking Selectors
 
-**Problem**: Not all fields support field selectors.
+`WatcherConfig.LabelSelector` is a `*metav1.LabelSelector` (the structured form),
+not the serialized `"app=myapp"` string. `WatcherConfig.FieldSelector` does
+**not** go through Kubernetes' native field-selector machinery — the watcher
+evaluates JSONPath expressions client-side, so `metadata.labels['app']=myapp`
+works fine, just at the cost of fetching matching resources first and filtering
+afterwards. Prefer `LabelSelector` whenever the predicate fits the selector
+grammar; the API server will do the filtering for you.
 
 ```go
-// Bad - field selector not supported
-config.FieldSelector = "metadata.labels['app']=myapp"  // Won't work!
-```
+// Server-side filter — preferred when possible
+cfg.LabelSelector = &metav1.LabelSelector{
+    MatchLabels: map[string]string{"app": "myapp"},
+}
 
-**Solution**: Use label selectors instead.
-
-```go
-// Good
-config.LabelSelector = "app=myapp"
+// Client-side JSONPath filter — supports anything, but pulls more data
+cfg.FieldSelector = "spec.ingressClassName=haproxy-internal"
 ```
 
 ## Adding New Resource Types
@@ -550,29 +558,31 @@ indexBy := []string{
 // ConfigMaps can be large, but we need fast access → MemoryStore
 
 // Step 4: Create config
-config := k8s.WatcherConfig{
-    GVR:              configMapGVR,
-    Namespace:        "",  // All namespaces
-    LabelSelector:    "app=myapp",
-    IndexBy:          indexBy,
-    StoreType:        k8s.StoreTypeMemory,
-    DebounceInterval: 500 * time.Millisecond,
-    OnChange: func(store Store, stats ChangeStats) {
+cfg := types.WatcherConfig{
+    GVR:       configMapGVR,
+    Namespace: "", // All namespaces
+    LabelSelector: &metav1.LabelSelector{
+        MatchLabels: map[string]string{"app": "myapp"},
+    },
+    IndexBy:   indexBy,
+    StoreType: types.StoreTypeMemory,
+    // DebounceInterval omitted → uses types.DefaultDebounceInterval (5s)
+    OnChange: func(store types.Store, stats types.ChangeStats) {
         if !stats.IsInitialSync {
             handleConfigMapChange(stats)
         }
     },
-    OnSyncComplete: func(store Store, count int) {
+    OnSyncComplete: func(store types.Store, count int) {
         log.Info("configmaps synced", "count", count)
     },
 }
 
 // Step 5: Create and start watcher
-watcher := k8s.NewWatcher(client, config)
-go watcher.Run(ctx)
+w, err := watcher.New(cfg, k8sClient, logger)
+go w.Start(ctx)
 
-// Step 6: Wait for sync
-if err := watcher.WaitForSync(ctx); err != nil {
+// Step 6: Wait for sync — returns (count, error)
+if _, err := w.WaitForSync(ctx); err != nil {
     return err
 }
 ```

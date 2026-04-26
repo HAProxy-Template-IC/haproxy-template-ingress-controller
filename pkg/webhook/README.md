@@ -28,7 +28,7 @@ func main() {
     })
 
     srv.RegisterValidator("networking.k8s.io/v1.Ingress", validateIngress)
-    srv.RegisterValidator("haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig", validateConfig)
+    srv.RegisterValidator("gateway.networking.k8s.io/v1.HTTPRoute", validateHTTPRoute)
 
     ctx, cancel := context.WithCancel(context.Background())
     defer cancel()
@@ -52,7 +52,7 @@ func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
 - **`ServerConfig`** — port (default `9443`), bind address, path (default `/validate`), read/write timeouts, and the PEM-encoded server cert + key. Cert and key bytes are read once in `Start`; to rotate, restart the server with new bytes.
 - **`Server`** — wraps an `http.Server`, maintains a GVK → `ValidationFunc` map under an `RWMutex`.
 - **`ValidationContext`** — everything the server extracts from an `AdmissionRequest`: `Object`, `OldObject`, `Operation`, `Namespace`, `Name`, `UID`, `UserInfo`. `Object` and `OldObject` are `*unstructured.Unstructured` so validators don't need their own typed decoders.
-- **`ValidationFunc`** — `func(*ValidationContext) (allowed bool, reason string, err error)`. Returning a non-nil error responds with HTTP 500 (treated as an internal webhook error by the API server); the `allowed`/`reason` pair maps to `AdmissionResponse.Allowed` and `.Status.Message`.
+- **`ValidationFunc`** — `func(*ValidationContext) (allowed bool, reason string, err error)`. The `allowed`/`reason` pair maps to `AdmissionResponse.Allowed` and `.Status.Message`. A non-nil error is treated as a *denied* decision (`Allowed: false`, `Result.Code: 500`, `Result.Message: "validation error: <err>"`) — *not* a transport-layer HTTP 500. The HTTP response itself is always 200 OK with a well-formed `AdmissionReview`. The API server's `failurePolicy` only kicks in when the webhook fails to *respond* (TLS handshake failure, malformed body, etc.); a `ValidationFunc` returning an error never triggers it.
 
 ## GVK Keys
 
@@ -63,7 +63,7 @@ Keys are `version.Kind` for core types and `group/version.Kind` otherwise:
 "v1.ConfigMap"
 "apps/v1.Deployment"
 "networking.k8s.io/v1.Ingress"
-"haproxy-haptic.org/v1alpha1.HAProxyTemplateConfig"
+"gateway.networking.k8s.io/v1.HTTPRoute"
 ```
 
 Unknown GVKs are rejected with a denial message — the server never calls an unregistered validator.
@@ -85,12 +85,10 @@ Deliberate omissions — and where to look instead in this repo:
 |---------|----------|
 | Issuing/rotating the TLS cert | cert-manager (chart provisions a `Certificate`), loaded via `pkg/controller/certloader` |
 | Creating / updating `ValidatingWebhookConfiguration` | `charts/haptic/templates/validatingwebhookconfiguration.yaml` |
-| `objectSelector` to scope the webhook per-release | Helm chart's standard `app.kubernetes.io/instance` label |
+| Multi-controller isolation | Each Helm release deploys its own `ValidatingWebhookConfiguration` whose `clientConfig.service` points at that release's controller `Service`. The chart does **not** set `objectSelector` — add one if you need label-based scoping on top of that. |
 | Fail-policy, scope, operations on each rule | Chart values + `validatingwebhookconfiguration.yaml` |
 | Registering validators that render templates with overlay stores | `pkg/controller/dryrunvalidator`, `pkg/controller/proposalvalidator` |
 | Metrics / events for webhook activity | `pkg/controller/webhook`, `pkg/controller/metrics` |
-
-The `CLAUDE.md` for this package still talks about a bundled `CertificateManager` and `ConfigManager`. That design was cut — the library is pure HTTPS + AdmissionReview today. Prefer the source over the `CLAUDE.md` if they conflict.
 
 ## Testing
 

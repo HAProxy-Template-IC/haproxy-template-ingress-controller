@@ -51,24 +51,39 @@ haproxy:
 
 ## Keeping Patches Up to Date
 
-The chart ships with `haproxyPatchVersions` defaults that are updated with each chart release. If you manage your values in a GitOps repository, you can automate patch updates with Renovate.
+The chart ships with a `haproxyPatchVersions` map whose entries are kept current by the project's own Renovate setup. Each chart release picks up the latest patch within every series and ships it as the new default. If you do not override `haproxy.image.tag`, you inherit those patches automatically when you bump the chart.
 
-Add a `renovate.json` (or update your existing one):
+If you pin `haproxy.image.tag` yourself in a GitOps repository and want Renovate to track patches **within the pinned series**, add a regex custom manager to your `renovate.json`. The trick is to extract the major.minor from the current value and bake it back into the versioning regex so Renovate stays inside the series:
 
 ```json
 {
-  "packageRules": [
+  "customManagers": [
     {
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["haproxytech/haproxy-debian"],
-      "matchFileNames": ["**/values.yaml"],
-      "versioning": "semver"
+      "customType": "regex",
+      "fileMatch": ["values\\.ya?ml$"],
+      "matchStrings": [
+        "# renovate:\\s*datasource=docker\\s+depName=haproxytech/haproxy-debian[^\\n]*\\n\\s*tag:\\s*\"(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "haproxy-debian {{{seriesMajor}}}.{{{seriesMinor}}}.x",
+      "packageNameTemplate": "haproxytech/haproxy-debian",
+      "versioningTemplate": "regex:^(?<major>{{{seriesMajor}}})\\.(?<minor>{{{seriesMinor}}})\\.(?<patch>\\d+)$"
     }
   ]
 }
 ```
 
-Renovate will detect the `# renovate:` annotation on `haproxy.image.tag` in your values file and propose patch updates within the selected series.
+And annotate the override in your values file so the manager can find it:
+
+```yaml
+haproxyVersion: "3.2"
+haproxy:
+  image:
+    # renovate: datasource=docker depName=haproxytech/haproxy-debian
+    tag: "3.2.10"
+```
+
+The chart's own `renovate.json` ([source](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/renovate.json)) uses the same pattern against `haproxyPatchVersions` — it's the working reference if you need a more elaborate setup (e.g. handling multiple series in one file).
 
 ## HAProxy Enterprise
 

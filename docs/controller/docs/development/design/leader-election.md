@@ -32,47 +32,61 @@ Use `k8s.io/client-go/tools/leaderelection` with Lease-based resource locks, the
 - **Reliable**: Used by core Kubernetes components (kube-controller-manager, kube-scheduler)
 - **Clock skew tolerant**: Configurable tolerance for node clock differences
 
-### Recommended Configuration
+### Default Configuration
+
+The defaults applied by `pkg/core/config` (used unless the CRD's
+`spec.controller.leaderElection` overrides them):
 
 ```go
 LeaderElectionConfig{
-    LeaseDuration: 60 * time.Second,  // How long leader holds lock
-    RenewDeadline: 15 * time.Second,  // Renewal deadline before losing leadership
-    RetryPeriod:   5 * time.Second,   // Interval between renewal attempts
-    ReleaseOnCancel: true,            // Cleanup on graceful shutdown
+    LeaseDuration: 15 * time.Second, // DefaultLeaderElectionLeaseDuration
+    RenewDeadline: 10 * time.Second, // DefaultLeaderElectionRenewDeadline
+    RetryPeriod:   2 * time.Second,  // DefaultLeaderElectionRetryPeriod
+    // ReleaseOnCancel is enabled by the controller during graceful shutdown
 }
 ```
 
+These match the values `kube-controller-manager` and `kube-scheduler` ship with — short enough to fail over quickly when a leader pod is killed, long enough to absorb brief etcd hiccups.
+
 **Tolerance formula**: `LeaseDuration / RenewDeadline = clock skew tolerance ratio`
 
-With 60s/15s settings, the system tolerates nodes progressing 4x faster than others.
+With 15s/10s the system tolerates nodes progressing 1.5× faster than others. Workloads on hosts with large clock skew should override these via the CRD; controllers that need a longer warm-up after election can raise both numbers proportionally so the ratio stays close to 1.5.
 
 ## Architecture Changes
 
 ### Component Classification
 
+The actual classification lives in `pkg/controller/reconciliation.go` (search for `registry.Build().AllReplica(...).LeaderOnly(...)`); this section reflects that registration list.
+
 **All replicas run** (read-only or validation operations):
 
-- ConfigLoader (`pkg/controller/configloader`) - Parses `HAProxyTemplateConfig` CRD updates from a SingleWatcher
-- CredentialsLoader (`pkg/controller/credentialsloader`) - Parses credentials Secret updates from a SingleWatcher
-- ResourceWatcher - Watches Kubernetes resources (Ingress, Service, etc.)
-- Reconciler - Debounces changes and triggers reconciliation
-- Renderer - Generates HAProxy configurations from templates
-- HAProxyValidator - Validates generated configurations
-- Discovery - Discovers HAProxy pod endpoints
-- Validators (`pkg/controller/validator`) - Validate controller configuration via scatter-gather
-- DryRunValidator (`pkg/controller/dryrunvalidator`) - Validates admission webhook requests
-- Commentator - Logs events for observability
-- Metrics - Records Prometheus metrics
-- StateCache (`pkg/controller/statecache.go`) - Maintains live state snapshot for debug introspection
-- DebugServer (`pkg/introspection`) - Serves /debug/vars and /debug/pprof endpoints
+- ConfigLoader (`pkg/controller/configloader`) — Parses `HAProxyTemplateConfig` CRD updates from a SingleWatcher
+- CredentialsLoader (`pkg/controller/credentialsloader`) — Parses credentials Secret updates from a SingleWatcher
+- CertLoader (`pkg/controller/certloader`) — Parses the webhook TLS Secret
+- ResourceWatcher (`pkg/controller/resourcewatcher`) — Watches Kubernetes resources (Ingress, Service, etc.)
+- Reconciler (`pkg/controller/reconciler`) — Debounces changes and publishes `ReconciliationTriggeredEvent`
+- HAProxyValidator (`pkg/controller/validator`) — Three-phase HAProxy validation; caches `ValidationCompletedEvent` for replay on `BecameLeaderEvent`
+- Discovery (`pkg/controller/discovery`) — Discovers HAProxy pod endpoints; caches `HAProxyPodsDiscoveredEvent` for replay
+- HTTPStore (`pkg/controller/httpstore`) — Periodic HTTP refresh + two-version cache for content used in templates
+- ProposalValidator (`pkg/controller/proposalvalidator`) — Speculative render+validate driven by HTTPStore (async) and DryRunValidator (sync)
+- StatusApplier (`pkg/controller/statusapplier`) — Applies template-driven status patches via SSA (only the leader actually writes; followers cache state to take over instantly)
+- Validators (`pkg/controller/validator`) — Basic / Template / JSONPath validators participating in the config-validation scatter-gather
+- DryRunValidator (`pkg/controller/dryrunvalidator`) — Bridges admission-webhook requests into the proposal validator
+- Commentator (`pkg/controller/commentator`) — Logs events for observability
+- Metrics (`pkg/controller/metrics`) — Records Prometheus metrics
+- StateCache (`pkg/controller/statecache.go`) — Maintains live state snapshot for debug introspection
+- DebugServer (`pkg/introspection`) — Serves `/debug/vars` and `/debug/pprof` endpoints
 
-**Leader-only components** (subscribe only on the elected leader; cleanup on `LostLeadershipEvent`):
+The renderer is **not** a registered component. It lives in `pkg/controller/renderer` as the synchronous `RenderService` that the leader-only Coordinator drives via `pkg/controller/pipeline`; rendering therefore runs only on the leader, even though the engine itself is a pure library.
 
-- **Coordinator** (`pkg/controller/reconciler`) - Drives the render-validate pipeline
-- **Deployer** - Deploys configurations to HAProxy instances
-- **DeploymentScheduler** - Rate-limits and queues deployments
-- **DriftMonitor** - Monitors and corrects configuration drift via periodic re-deployments
+**Leader-only components** (lifecycle registry's `LeaderOnly(...)` group; only constructed and started while leadership is held, torn down on `LostLeadershipEvent`):
+
+- **Coordinator** (`pkg/controller/reconciler`) — Drives the render-validate pipeline (calls `Pipeline.Execute` which in turn calls `RenderService.Render`)
+- **Deployer** (`pkg/controller/deployer`) — Pushes the validated config to every HAProxy endpoint in parallel via `pkg/dataplane.Client`
+- **DeploymentScheduler** (`pkg/controller/deployer`) — Rate-limits and queues deployments; coalesces back-to-back deployment requests via `pkg/controller/coalesce`
+- **DriftMonitor** (`pkg/controller/deployer`) — Periodic redeploy when nothing has changed for `driftPreventionInterval`, so out-of-band Dataplane API edits get overwritten by the controller's last-known-good config
+- **ConfigPublisher** (`pkg/controller/configpublisher`) — Publishes rendered config + per-pod status as `HAProxyCfg` / `HAProxyMapFile` / `HAProxyGeneralFile` / `HAProxyCRTListFile` CRDs
+- **StatusUpdater** (`pkg/controller/configchange`) — Writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource
 
 ### New Component: LeaderElector
 
@@ -88,61 +102,60 @@ With 60s/15s settings, the system tolerates nodes progressing 4x faster than oth
 
 **Event integration**:
 
-```go
-type LeaderElector struct {
-    eventBus *events.EventBus
-    elector  *leaderelection.LeaderElector
-    isLeader atomic.Bool
-}
+The real adapter wraps callbacks to publish events *before* invoking the user-supplied callback (see `pkg/controller/leaderelection/component.go`); below is a sketch of the publish side:
 
-// Callbacks publish events
+```go
+// Inside the event-adapter's wrapped callbacks (real signatures):
 OnStartedLeading: func(ctx context.Context) {
-    e.isLeader.Store(true)
-    e.eventBus.Publish(events.NewBecameLeaderEvent())
+    e.eventBus.Publish(events.NewBecameLeaderEvent(identity))
+    // then invoke the user OnStartedLeading
 }
 
 OnStoppedLeading: func() {
-    e.isLeader.Store(false)
-    e.eventBus.Publish(events.NewLostLeadershipEvent())
+    e.eventBus.Publish(events.NewLostLeadershipEvent(identity, reason))
+    // then invoke the user OnStoppedLeading
 }
 
-OnNewLeader: func(identity string) {
-    e.eventBus.Publish(events.NewNewLeaderObservedEvent(identity))
+OnNewLeader: func(observed string) {
+    e.eventBus.Publish(events.NewNewLeaderObservedEvent(observed, observed == identity))
 }
 ```
 
 ### New Events
 
-**Leader election events** (`pkg/controller/events/types.go`):
+**Leader election events** (`pkg/controller/events/leader.go`):
 
 ```go
 // LeaderElectionStartedEvent is published when leader election begins
 type LeaderElectionStartedEvent struct {
-    Identity      string
-    LeaseName     string
+    Identity       string
+    LeaseName      string
     LeaseNamespace string
+    timestamped    // shared mixin: provides Timestamp() time.Time
 }
 
 // BecameLeaderEvent is published when this replica becomes leader
 type BecameLeaderEvent struct {
-    Identity   string
-    Timestamp  time.Time
+    Identity string
+    timestamped
 }
 
 // LostLeadershipEvent is published when this replica loses leadership
 type LostLeadershipEvent struct {
-    Identity   string
-    Timestamp  time.Time
-    Reason     string  // graceful_shutdown, lease_expired, etc.
+    Identity string
+    Reason   string  // graceful_shutdown, lease_expired, etc.
+    timestamped
 }
 
 // NewLeaderObservedEvent is published when a new leader is observed
 type NewLeaderObservedEvent struct {
     NewLeaderIdentity string
-    PreviousLeader    string
-    Timestamp         time.Time
+    IsSelf            bool  // true if this replica is the new leader
+    timestamped
 }
 ```
+
+`Timestamp()` is supplied by the embedded `timestamped` mixin, not by an exported field — so `evt.Timestamp` in code is a method call, not a struct read. There is no `PreviousLeader` field on `NewLeaderObservedEvent`; the adapter only knows the *new* leader's identity.
 
 These events enable:
 
@@ -222,9 +235,10 @@ OnStartedLeading: func(ctx context.Context) {
     // Create fresh context for leader components
     leaderComponents.cancel = leaderCancel
 
-    // Create and start leader-only components
-    leaderComponents.deployer = deployer.New(bus, logger)
-    leaderComponents.deploymentScheduler = deployer.NewDeploymentScheduler(bus, logger, minInterval)
+    // Create and start leader-only components (real signatures take more knobs;
+    // see pkg/controller/deployer for the production constructors).
+    leaderComponents.deployer = deployer.New(bus, logger, maxParallel, rawPushThreshold)
+    leaderComponents.deploymentScheduler = deployer.NewDeploymentScheduler(bus, logger, minInterval, deploymentTimeout)
     leaderComponents.driftMonitor = deployer.NewDriftPreventionMonitor(bus, logger, driftInterval)
 
     go leaderComponents.deployer.Start(leaderCtx)
@@ -254,7 +268,7 @@ OnStoppedLeading: func() {
 
 ## Configuration
 
-**New configuration section** (`pkg/core/config/config.go`):
+**New configuration section** (`LeaderElectionConfig` in `pkg/core/config/types.go`, defaults in `pkg/core/config/defaults.go`):
 
 ```yaml
 controller:
@@ -262,10 +276,10 @@ controller:
 
   leaderElection:
     enabled: true   # Enable leader election (default: true)
-    leaseName: ""   # Empty = defaults to the CRD name; Helm injects the release fullname
-    leaseDuration: 60s
-    renewDeadline: 15s
-    retryPeriod: 5s
+    leaseName: ""   # Empty = controller default "haptic-leader"; Helm rewrites empty to the release fullname
+    leaseDuration: 15s   # chart default; matches client-go's recommended value
+    renewDeadline: 10s   # must be < leaseDuration
+    retryPeriod: 2s      # must be < renewDeadline
 ```
 
 **Backwards compatibility**:
@@ -275,7 +289,7 @@ controller:
 
 ## RBAC Requirements
 
-**New permissions** (`charts/haptic/templates/rbac.yaml`):
+**New permissions** (`charts/haptic/templates/clusterrole.yaml`, bound by `clusterrolebinding.yaml`):
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -374,10 +388,10 @@ case LostLeadershipEvent:
         "identity", e.Identity,
         "reason", e.Reason)
 
-case NewLeaderObservedEvent:
+case *NewLeaderObservedEvent:
     c.logger.Info("new leader observed",
-        "new_leader", e.NewLeaderIdentity,
-        "previous_leader", e.PreviousLeader)
+        "leader_identity", e.NewLeaderIdentity,
+        "is_self", e.IsSelf)
 ```
 
 ### Debug Endpoints
@@ -404,7 +418,7 @@ GET /debug/vars
 
 ### Unit Tests
 
-**LeaderElector tests** (`pkg/controller/leaderelection/elector_test.go`):
+**LeaderElector tests** — pure-component tests live in `pkg/k8s/leaderelection/elector_test.go`; the event-adapter wrapping is covered by `pkg/controller/leaderelection/component_test.go`:
 
 ```go
 // Test leader election configuration
@@ -422,7 +436,7 @@ func TestLeaderElector_GracefulShutdown(t *testing.T)
 
 ### Integration Tests
 
-**Multi-replica tests** (`tests/integration/leader_election_test.go`):
+**Multi-replica tests** (`tests/acceptance/leader_election_test.go` — these run against a real Kind cluster, not the unit-style fixtures in `tests/integration/`):
 
 ```go
 // Deploy 2 replicas, verify only one deploys configs
@@ -511,7 +525,7 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 
 **Tolerance**: Configured ratio of LeaseDuration/RenewDeadline
 
-- With 60s/15s: Tolerates 4x clock speed difference
+- With the default 15s/10s: Tolerates a 1.5× clock-speed difference between nodes
 - If exceeded: May experience frequent leadership changes
 
 **Mitigation**: Run NTP on cluster nodes (Kubernetes best practice)

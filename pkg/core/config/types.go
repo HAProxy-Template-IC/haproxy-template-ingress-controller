@@ -14,8 +14,9 @@
 
 // Package config provides data models for the controller configuration.
 //
-// These models represent the structure of the configuration YAML loaded
-// from the Kubernetes ConfigMap and credentials from the Secret.
+// These models represent the structure of the configuration YAML produced
+// by pkg/controller/conversion.ParseCRD from a HAProxyTemplateConfig CRD,
+// plus the credentials loaded from the referenced Secret.
 package config
 
 import "time"
@@ -27,7 +28,9 @@ const DefaultCompressionThreshold int64 = 1048576 // 1 MiB
 // DefaultRenderTimeout is the default maximum duration for rendering a single template.
 const DefaultRenderTimeout = 30 * time.Second
 
-// Config is the root configuration structure loaded from the ConfigMap.
+// Config is the root configuration structure that pkg/core/config.LoadConfig
+// produces from the YAML serialised by pkg/controller/conversion.ParseCRD
+// (which converts a HAProxyTemplateConfig CRD into this internal shape).
 type Config struct {
 	// PodSelector identifies HAProxy pods to configure.
 	PodSelector PodSelector `yaml:"pod_selector"`
@@ -473,7 +476,10 @@ func (t *TemplatingSettings) GetRenderTimeout() time.Duration {
 
 // Credentials contains HAProxy Dataplane API credentials.
 //
-// This is loaded from the Kubernetes Secret, not the ConfigMap.
+// Loaded by pkg/core/config.LoadCredentials from the Secret referenced by
+// spec.credentialsSecretRef on the HAProxyTemplateConfig CRD — kept out of
+// the CRD itself so the CRD can be stored in Git / Helm values without
+// leaking secrets.
 type Credentials struct {
 	// DataplaneUsername is the username for production HAProxy instances.
 	DataplaneUsername string

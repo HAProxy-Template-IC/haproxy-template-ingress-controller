@@ -47,7 +47,7 @@ The full values reference lives in [`docs/reference.md`](./docs/reference.md). T
 | `controller.templateLibraries.haproxytech.enabled` | `true` | `haproxy.org/*` annotation compatibility |
 | `controller.templateLibraries.haproxyIngress.enabled` | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| `controller.debugPort` | `8080` | `/healthz` + `/debug/vars` + `/debug/pprof`; set to `0` to disable |
+| `controller.debugPort` | `8080` | Listener for `/healthz` + `/debug/vars` + `/debug/pprof`. Setting to `0` disables both `/debug/*` and `/healthz` (and breaks Kubernetes probes) — restrict `/debug/*` via NetworkPolicy instead |
 | `controller.logLevel` | `INFO` | Initial level — `TRACE` / `DEBUG` / `INFO` / `WARN` / `ERROR` (case-insensitive); runtime-adjustable via the `HAProxyTemplateConfig` CRD's `spec.logging.level` |
 | `monitoring.serviceMonitor.enabled` | `false` | Prometheus Operator `ServiceMonitor` |
 | `networkPolicy.enabled` | `true` | NetworkPolicy allowing controller ↔ HAProxy ↔ API server |

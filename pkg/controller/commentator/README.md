@@ -10,8 +10,9 @@ Key property: the commentator owns its own ring buffer (separate from the generi
 import "gitlab.com/haproxy-haptic/haptic/pkg/controller/commentator"
 
 // bufferSize is the ring-buffer capacity (how many recent events
-// to keep for correlation). 1000 is the controller's default.
-c := commentator.NewEventCommentator(bus, logger, 1000)
+// to keep for correlation). 500 is the controller's default
+// (hardcoded in pkg/controller/controller.go; not a CRD field).
+c := commentator.NewEventCommentator(bus, logger, 500)
 go c.Start(ctx)
 ```
 

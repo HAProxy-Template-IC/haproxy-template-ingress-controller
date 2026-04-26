@@ -36,6 +36,7 @@ go r.Start(ctx)
 | `IndexSynchronizedEvent` | Immediate — first reconciliation always runs with a complete store |
 | `HTTPResourceAcceptedEvent` | Immediate — content is only promoted from pending to accepted after validation |
 | `DriftPreventionTriggeredEvent` | Immediate — periodic redeploy path, no debounce |
+| `BecameLeaderEvent` | Immediate — bootstraps the new leader's pipeline so the (leader-only) renderer produces fresh `TemplateRenderedEvent` instead of relying on a stale replay |
 
 The refractory-period design is deliberately different from classic trailing-edge debouncing: the *first* change in a quiet period fires with 0ms delay (so single ingress flips react fast), and only further changes arriving within the refractory window are batched. This removes the multi-second latency that a trailing-edge debouncer introduces during rolling deployments where many `ResourceIndexUpdatedEvent`s arrive in sequence. 5s default is shared with `pkg/k8s/types.DefaultDebounceInterval`.
 
@@ -67,7 +68,7 @@ The pipeline is called directly, not through another event hop. That's deliberat
 - [`pkg/controller/pipeline`](../pipeline/) — `Pipeline.Execute` implementation driven by this coordinator
 - [`pkg/controller/renderer`](../renderer/) / [`validator`](../validator/) — pure stages composed into the pipeline
 - [`pkg/controller/deployer`](../deployer/) — downstream consumer of `TemplateRenderedEvent` + `ValidationCompletedEvent`
-- [`pkg/controller/timers`](../timers/) — `DriftPreventionTriggeredEvent` source
+- [`pkg/controller/deployer`](../deployer/) — the `DriftPreventionMonitor` here is the actual `DriftPreventionTriggeredEvent` source (see `drift_monitor.go`); `pkg/controller/timers` is just a `SafeTimer` wrapper, not an event publisher
 - `pkg/controller/reconciler/CLAUDE.md` — developer context (leading-edge triggering design, leadership-transition patterns)
 
 ## License

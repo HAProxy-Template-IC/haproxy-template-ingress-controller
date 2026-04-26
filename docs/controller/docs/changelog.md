@@ -15,7 +15,7 @@ For Helm chart changes, see the [Chart CHANGELOG](/helm-chart/latest/changelog/)
 
 - **Template-driven HAProxy configuration**: Generate HAProxy configs using Scriggo templates (Go-based, Jinja2-like syntax) with full access to Kubernetes resources, built-in utility functions, and modular template snippets
 - **Embedded validation tests**: Declarative test fixtures and assertions for testing HAProxy configurations within template libraries; run via `haptic-controller validate --test <name>`
-- **Dry-run validation webhook**: Admission webhook for HAProxyTemplateConfig CRD that renders templates with proposed changes and rejects invalid configurations with detailed errors
+- **Dry-run validation webhook**: Admission webhook that intercepts CREATE/UPDATE on opted-in watched resources (Ingress, HTTPRoute, GRPCRoute by default), renders templates with the proposed object overlaid on the live store, and rejects the write if rendering or HAProxy validation fails
 - **Multi-architecture container images**: `linux/amd64`, `linux/arm64`, `linux/arm/v7`
 - **HAProxy version support**: 3.0, 3.1, 3.2, 3.3 — version-specific images tagged accordingly
 - **Supply chain security**: Container images, binaries, and Helm charts signed with Cosign (keyless OIDC); SBOM attestations in SPDX format
@@ -31,6 +31,7 @@ For Helm chart changes, see the [Chart CHANGELOG](/helm-chart/latest/changelog/)
 - **HAProxyCRTListFile CRD**: Publish crt-list files as Kubernetes custom resources with compression support
 - **`semver_gte` template filter**: Version comparison for gating features on HAProxy version (e.g., `semver_gte(haproxyVersion, "3.3")`)
 - **Template-driven status patches**: Templates can register status patches for any Kubernetes resource via `statusPatch()` function, with outcome-keyed variants (`rendered`, `deployed`, `renderFailed`, `deployFailed`) applied automatically based on pipeline phase
+- **Backend diff field diagnostics**: Reconciliation log now includes which BackendBase fields caused backend updates, aiding diagnosis of false diffs from parser round-trip asymmetries
 - **Status patch helper functions**: `condition()`, `transitionTime()`, and `toJSON()` template functions for building Kubernetes status conditions with stable transition timestamps
 
 ### Changed

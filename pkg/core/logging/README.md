@@ -21,7 +21,13 @@ current := logging.GetLevel()  // "ERROR" | "WARN" | "INFO" | "DEBUG" | "TRACE"
 
 Level parsing is case-insensitive. `WARNING` is accepted as an alias for `WARN`. Empty or unknown strings fall back to `INFO`.
 
-`TRACE` is not a native slog level; this package maps it to `slog.Level(-8)` (below `DEBUG`), matching what the rest of the controller passes through to filter-debug / per-resource-iteration logging.
+`TRACE` is not a native slog level; this package maps it to `slog.Level(-8)` (below `DEBUG`), matching what the rest of the controller passes through to filter-debug / per-resource-iteration logging. The value is exported as `logging.LevelTrace` so callers can emit trace lines without spelling out the magic number:
+
+```go
+logger.Log(ctx, logging.LevelTrace, "store list called", "resource_type", t)
+```
+
+`logging.LevelNameTrace` (`"TRACE"`) is exported alongside it for symmetry with `slog.LevelInfo` etc.
 
 ## Runtime Rewiring
 
@@ -29,7 +35,7 @@ The controller wires up a `NewDynamicLogger` at startup using the `LOG_LEVEL` en
 
 ## Log-Line Style
 
-This package doesn't enforce anything beyond "logfmt via slog". The conventions the codebase follows (lowercase messages, structured `key=value` attributes, component-tagged child loggers) live in `pkg/core/CLAUDE.md`.
+This package doesn't enforce anything beyond "logfmt via slog". The conventions the codebase follows (messages start with a capital letter, structured `key=value` attributes, component-tagged child loggers) live in `pkg/core/CLAUDE.md`.
 
 ## See Also
 

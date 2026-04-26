@@ -17,12 +17,14 @@ import (
 bus := events.NewEventBus(100)
 loader := configloader.NewConfigLoaderComponent(bus, logger)
 
-go loader.Start(ctx)
-bus.Start()
+bus.Start()              // release buffered events to subscribers
+go loader.Start(ctx)     // then run the event loop
 
 // Upstream: a SingleWatcher for the HAProxyTemplateConfig CRD emits
 // ConfigResourceChangedEvent{Resource: *unstructured.Unstructured}.
-// Downstream: the validation coordinator consumes ConfigParsedEvent.
+// Downstream: pkg/controller/configchange.ConfigChangeHandler consumes
+// ConfigParsedEvent, runs the scatter-gather validation, and publishes
+// ConfigValidatedEvent / ConfigInvalidEvent.
 ```
 
 Subscription happens in `NewConfigLoaderComponent`, **before** `bus.Start()`, so any buffered `ConfigResourceChangedEvent` from the watcher's initial sync is delivered once the bus is released.
@@ -33,19 +35,20 @@ Subscription happens in `NewConfigLoaderComponent`, **before** `bus.Start()`, so
 
 ```go
 type ConfigResourceChangedEvent struct {
-    Resource *unstructured.Unstructured  // HAProxyTemplateConfig CRD
-    Version  string                      // resourceVersion
-    // ... see pkg/controller/events
+    Resource any  // *unstructured.Unstructured pointing at the HAProxyTemplateConfig CRD
 }
 ```
+
+The `resourceVersion` is read off the unstructured resource by the loader itself; there's no `Version` field on the event.
 
 **Out — on successful parse**
 
 ```go
 type ConfigParsedEvent struct {
-    Config         *config.Config                  // internal struct
-    TemplateConfig *v1alpha1.HAProxyTemplateConfig // typed CRD (metadata + spec)
-    ConfigVersion  string                          // CRD resourceVersion
+    Config         any    // *config.Config — internal struct (any to avoid circular deps)
+    TemplateConfig any    // typed CRD (metadata + spec) — used by ConfigPublisher for k8s metadata
+    Version        string // CRD resourceVersion
+    SecretVersion  string // empty here; populated later by ConfigChangeHandler when correlating with credentials
 }
 ```
 
@@ -60,7 +63,8 @@ type ConfigParsedEvent struct {
 - [`pkg/controller/conversion`](../conversion/) — `ParseCRD` and `ConvertSpec` implementation
 - [`pkg/controller/resourceloader`](../resourceloader/) — shared event-loop scaffold
 - [`pkg/controller/credentialsloader`](../credentialsloader/) / [`pkg/controller/certloader`](../certloader/) — sibling loaders built on the same base
-- [`pkg/controller/validator`](../validator/) — scatter-gather validators that consume `ConfigParsedEvent`
+- [`pkg/controller/configchange`](../configchange/) — orchestrator that consumes `ConfigParsedEvent` and runs scatter-gather validation
+- [`pkg/controller/validator`](../validator/) — scatter-gather validation responders
 - [`pkg/core/config`](../../core/config/) — target struct for `ParseCRD`'s conversion
 
 ## License

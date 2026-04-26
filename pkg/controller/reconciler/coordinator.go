@@ -190,7 +190,7 @@ func (c *Coordinator) handlePipelineSuccess(
 	c.lastStatusPatches = result.StatusPatches
 
 	// Publish TemplateRenderedEvent for DeploymentScheduler
-	// Config uses relative paths that work everywhere with `default-path config`
+	// Config uses relative paths that work everywhere with `default-path origin`
 	templateEvent := events.NewTemplateRenderedEvent(
 		result.HAProxyConfig,
 		result.AuxiliaryFiles,

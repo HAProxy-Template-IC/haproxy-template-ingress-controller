@@ -37,17 +37,33 @@ Pure Component                Event Adapter
 
 ### Event Wrapping
 
-The component wraps user-provided callbacks to publish events before execution:
+The component wraps user-provided callbacks to do three things in the right
+order during a leadership transition: pause the bus, publish the
+`BecameLeaderEvent`, run the user callback (which constructs leader-only
+components and starts them — those subscribe inside their constructors), and
+then resume the bus so the buffered `BecameLeaderEvent` is replayed to the
+newly subscribed components. Without the pause/resume, leader-only components
+would race against the event and miss the very signal that's supposed to
+launch them.
 
 ```go
 wrappedCallbacks := k8sleaderelection.Callbacks{
     OnStartedLeading: func(ctx context.Context) {
-        // Publish event BEFORE callback
-        c.eventBus.Publish(events.NewBecameLeaderEvent(config.Identity))
-
-        // Execute user callback
+        c.eventBus.Pause()                                            // buffer events
+        c.eventBus.Publish(events.NewBecameLeaderEvent(config.Identity)) // buffered
         if callbacks.OnStartedLeading != nil {
-            callbacks.OnStartedLeading(ctx)
+            callbacks.OnStartedLeading(ctx) // construct & subscribe leader-only comps
+        }
+        c.eventBus.Start()                                            // replay buffer
+    },
+    OnStoppedLeading: func() {
+        // No pause/resume on the way down: leader-only components are torn
+        // down by their context cancellation, not by an event subscription.
+        c.eventBus.Publish(events.NewLostLeadershipEvent(
+            config.Identity, "lease_lost", // generic reason; specifics live elsewhere
+        ))
+        if callbacks.OnStoppedLeading != nil {
+            callbacks.OnStoppedLeading()
         }
     },
 }
@@ -55,9 +71,11 @@ wrappedCallbacks := k8sleaderelection.Callbacks{
 
 **Why wrap callbacks?**
 
-- Ensures events always published regardless of user callback behavior
-- Decouples observability from business logic
-- User callbacks can fail without affecting event publishing
+- Ensures events always published regardless of user callback behavior.
+- Decouples observability from business logic.
+- The Pause/Start pair is the contract that makes leader-only late-subscribers
+  safe — see "Late Subscriber Problem" in `pkg/controller/CLAUDE.md`.
+- User callbacks can fail without affecting event publishing.
 
 ### Pure Component Delegation
 
@@ -85,7 +103,7 @@ func (c *Component) IsLeader() bool {
 
 The event adapter publishes four event types:
 
-1. **LeaderElectionStartedEvent** - When Run() starts
+1. **LeaderElectionStartedEvent** - When Start() starts
 2. **BecameLeaderEvent** - Before OnStartedLeading callback
 3. **LostLeadershipEvent** - Before OnStoppedLeading callback
 4. **NewLeaderObservedEvent** - When any leader observed
@@ -120,8 +138,8 @@ callbacks := k8sleaderelection.Callbacks{
 // Create event adapter
 component, _ := leaderelection.New(config, clientset, eventBus, callbacks, logger)
 
-// Run (blocks until context cancelled)
-go component.Run(ctx)
+// Start (blocks until context cancelled)
+go component.Start(ctx)
 ```
 
 ## Testing
@@ -140,7 +158,7 @@ func TestComponent_PublishesEvents(t *testing.T) {
     eventChan := bus.Subscribe("test", 10)
     bus.Start()
 
-    go component.Run(ctx)
+    go component.Start(ctx)
 
     // Verify LeaderElectionStartedEvent published
     event := <-eventChan

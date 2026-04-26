@@ -2,7 +2,7 @@
 
 End-to-end regression tests. A full controller image is built and loaded into a Kind cluster; tests exercise user-facing behaviour by creating `HAProxyTemplateConfig` CRDs, waiting for reconciliation, and asserting via the controller's debug / metrics / webhook endpoints.
 
-Unlike `tests/integration`, these don't carry a build tag — `make test-acceptance` runs them directly. The trade-off is setup cost: every `test-acceptance` invocation builds the controller image (`docker-build-test`, tagged `haptic:test`) before exercising the suite.
+Like `tests/integration`, every file is tagged `//go:build acceptance` — a plain `go test` finds nothing here. `make test-acceptance` adds `-tags=acceptance` for you, and additionally builds the controller image (`docker-build-test`, tagged `haptic:test`) and loads it into the cluster before exercising the suite.
 
 ## What's Tested
 
@@ -10,9 +10,9 @@ Unlike `tests/integration`, these don't carry a build tag — `make test-accepta
 |------|-------|
 | `compression_test.go` | `configPublishing.compressionThreshold` and zstd-compressed `HAProxyCfg` content |
 | `error_scenarios_test.go` | Template/validation failures stay visible in status + events, do not deploy broken config |
-| `http_store_test.go` | `httpResources`: fetch scheduling, caching, and template visibility via `http.Fetch` |
+| `http_store_test.go` | HTTP Store: templates calling `http.Fetch(...)` auto-register URLs; the controller fetches, caches, and re-renders on content change. (No top-level `spec.httpResources` field — see `pkg/controller/httpstore/README.md`.) |
 | `leader_election_test.go` | Two-replica failover — deleting the leader pod; `haptic_leader_election_*` metrics reflect the transition |
-| `metrics_test.go` | `/metrics` exposes every name asserted by `pkg/controller/metrics.TestMetrics_ExpectedNames` |
+| `metrics_test.go` | `/metrics` exposes every name in the file's local `expectedMetrics` slice (analogous to `pkg/controller/metrics.TestMetrics_AllMetricsRegistered`) |
 | `parallel_test.go` | `test-acceptance-parallel` safety — multiple test cases share a cluster without interference |
 
 Framework-bits files (`env.go`, `fixtures.go`, `debug_client.go`, `constants.go`, `main_test.go`) are shared by every test file.
@@ -50,10 +50,10 @@ Kind context: `kind-haproxy-test` (shared with integration).
 
 ## Adding a Test
 
+`testEnv` is a package-scope `env.Environment` initialised in `TestMain` (env.go:119). There is no per-test `Setup(t)` constructor — each test calls `testEnv.Test(t, feature)` directly. `SetupDebugClient` / `SetupMetricsAccess` need both the e2e-framework `klient.Client` and a typed `kubernetes.Interface` (they reach the controller via the API-server proxy):
+
 ```go
 func TestMyFeature(t *testing.T) {
-    testEnv := Setup(t)
-
     feat := features.New("my feature").
         Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
             client, err := cfg.NewClient()
@@ -65,13 +65,15 @@ func TestMyFeature(t *testing.T) {
         }).
         Assess("the observable thing happens", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
             client, _ := cfg.NewClient()
+            clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
+            require.NoError(t, err)
 
-            metrics, err := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
+            metrics, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
             require.NoError(t, err)
             _, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metrics, 2*time.Minute)
             require.NoError(t, err)
 
-            debug, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+            debug, err := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
             require.NoError(t, err)
 
             // Poll the debug endpoint with debug.WaitFor* rather than sleeping.

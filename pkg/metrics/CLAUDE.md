@@ -132,19 +132,20 @@ mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{
 
 ### helpers.go - Metric Creation Helpers
 
-Convenience functions with consistent naming.
+Thin wrappers around `promauto.With(registry).New*` so callers don't have to
+remember the option-struct boilerplate.
 
 **Naming Convention:**
 
-All metrics are prefixed with `haptic_`:
+This package does **not** add a prefix — `NewCounter(registry, "x", "...")`
+registers a metric literally named `x`. Callers in `pkg/controller/metrics`
+embed the `haptic_` prefix in the name they pass in (see
+`pkg/controller/metrics/metrics.go` — every name is spelled out:
+`"haptic_reconciliation_total"`, `"haptic_deployment_duration_seconds"`, etc.).
 
-```go
-const metricPrefix = "haptic_"
-
-func metricName(name string) string {
-    return metricPrefix + name
-}
-```
+If you change the prefix, you have to grep for it; there's no central constant
+to flip. Keeping it explicit avoids confusion when reading metric names in
+Prometheus or Grafana — what you see in the dashboard is what's in the source.
 
 **Helper Types:**
 
@@ -162,19 +163,18 @@ NewGaugeVec(registry, name, help, labels)
 **Bucket Presets:**
 
 ```go
-// DurationBuckets returns buckets for latency metrics (10ms to 10s)
+// DurationBuckets — general latency: 10ms .. 10s.
+// Pass into NewHistogramWithBuckets for anything where the tail
+// shouldn't reasonably exceed 10 seconds.
 func DurationBuckets() []float64 {
-    return []float64{
-        0.01,  // 10ms
-        0.05,  // 50ms
-        0.1,   // 100ms
-        0.25,  // 250ms
-        0.5,   // 500ms
-        1,     // 1s
-        2.5,   // 2.5s
-        5,     // 5s
-        10,    // 10s
-    }
+    return []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0}
+}
+
+// DeploymentDurationBuckets — long-tail latency for Dataplane-API
+// deployments that may wait on HAProxy reloads. Top bucket is 60s
+// rather than 10s so reload-bound deployments don't all pile into +Inf.
+func DeploymentDurationBuckets() []float64 {
+    return []float64{0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0}
 }
 ```
 
@@ -220,11 +220,12 @@ func TestNewCounter(t *testing.T) {
     counter := NewCounter(registry, "test_total", "Test counter")
     counter.Inc()
 
-    // Verify registration
+    // Verify registration — pkg/metrics doesn't add a prefix, so the
+    // gathered name matches what we passed in verbatim.
     gathered, err := registry.Gather()
     require.NoError(t, err)
     assert.Len(t, gathered, 1)
-    assert.Equal(t, "haptic_test_total", gathered[0].GetName())
+    assert.Equal(t, "test_total", gathered[0].GetName())
 
     // Verify value
     assert.Equal(t, 1.0, testutil.ToFloat64(counter))
@@ -368,34 +369,37 @@ httpCounter.WithLabelValues("POST", "201").Inc()
 
 ```go
 // Bad - is this seconds? milliseconds?
-latency := metrics.NewHistogram(registry, "request_latency", "Request latency")
+latency := metrics.NewHistogramWithBuckets(registry, "request_latency", "Request latency", prometheus.DefBuckets)
 ```
 
 **Solution**: Include unit in metric name.
 
 ```go
 // Good - clearly in seconds
-latency := metrics.NewHistogram(
+latency := metrics.NewHistogramWithBuckets(
     registry,
     "request_duration_seconds",
     "Request duration in seconds",
+    prometheus.DefBuckets,
 )
 ```
+
+There is no `metrics.NewHistogram(...)` helper without explicit buckets — pick `prometheus.DefBuckets` (latency) or one of the typed bucket presets in `helpers.go` and pass it explicitly.
 
 ## Adding New Helpers
 
 When adding new helper functions:
 
-1. **Follow naming pattern**
+1. **Follow naming pattern** — keep the wrapper thin and use
+   `promauto.With(registry)` so registration happens in one expression. Names
+   are passed through verbatim; the caller decides the prefix.
 
 ```go
 func NewMetricType(registry prometheus.Registerer, name, help string) MetricType {
-    metric := prometheus.NewMetricType(prometheus.MetricTypeOpts{
-        Name: metricName(name),
+    return promauto.With(registry).NewMetricType(prometheus.MetricTypeOpts{
+        Name: name,
         Help: help,
     })
-    registry.MustRegister(metric)
-    return metric
 }
 ```
 
@@ -406,11 +410,10 @@ func TestNewMetricType(t *testing.T) {
     registry := prometheus.NewRegistry()
     metric := NewMetricType(registry, "test", "Test metric")
 
-    // Verify registration
     gathered, err := registry.Gather()
     require.NoError(t, err)
     assert.Len(t, gathered, 1)
-    assert.Equal(t, "haptic_test", gathered[0].GetName())
+    assert.Equal(t, "test", gathered[0].GetName()) // no implicit prefix
 }
 ```
 
@@ -454,8 +457,8 @@ errors := metrics.NewCounter(registry, "errors_total", "Total errors")
 Suffix with unit:
 
 ```go
-duration := metrics.NewHistogram(registry, "duration_seconds", "Duration in seconds")
-size := metrics.NewHistogram(registry, "size_bytes", "Size in bytes")
+duration := metrics.NewHistogramWithBuckets(registry, "duration_seconds", "Duration in seconds", prometheus.DefBuckets)
+size := metrics.NewHistogramWithBuckets(registry, "size_bytes", "Size in bytes", prometheus.ExponentialBuckets(1024, 2, 10))
 ```
 
 ### Gauge Metrics
@@ -553,17 +556,20 @@ type Metrics struct {
     // ... more domain metrics
 }
 
-func New(registry *prometheus.Registry) *Metrics {
+func NewMetrics(registry prometheus.Registerer) *Metrics {
+    // Names are passed verbatim — pkg/metrics adds no prefix, so the
+    // haptic_ prefix is part of every name spelled out at the call site.
     return &Metrics{
         ReconciliationTotal: pkgmetrics.NewCounter(
             registry,
-            "reconciliation_total",
+            "haptic_reconciliation_total",
             "Total reconciliation cycles",
         ),
-        ReconciliationDuration: pkgmetrics.NewHistogram(
+        ReconciliationDuration: pkgmetrics.NewHistogramWithBuckets(
             registry,
-            "reconciliation_duration_seconds",
+            "haptic_reconciliation_duration_seconds",
             "Reconciliation duration",
+            prometheus.DefBuckets,
         ),
         // ... create more metrics
     }

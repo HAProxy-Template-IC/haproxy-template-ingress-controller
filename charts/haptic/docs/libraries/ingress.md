@@ -167,26 +167,20 @@ backend default_my-app_svc_api-service_http
     balance roundrobin
     option httpchk GET /api
     default-server check
-    server SRV_1 10.0.0.1:8080 check  # Pod: api-pod-1
-    server SRV_2 10.0.0.2:8080 check  # Pod: api-pod-2
+    server SRV_1 10.0.0.1:8080 enabled    # Pod: api-pod-1
+    server SRV_2 10.0.0.2:8080 enabled    # Pod: api-pod-2
+    server SRV_3 127.0.0.1:1 disabled     # Reserved slot for future scale-up
 ```
+
+`check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Reserved `disabled` slots get filled in at runtime when the backend scales up.
 
 ### Backend Config Snippet
 
-Inject custom HAProxy directives into backends using the `haproxy.org/backend-config-snippet` annotation:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: custom-backend
-  annotations:
-    haproxy.org/backend-config-snippet: |
-      http-request set-header X-Custom-Header "value"
-      timeout server 120s
-spec:
-  # ...
-```
+Custom HAProxy backend directives can be injected per-Ingress via the
+`haproxy.org/backend-config-snippet` annotation. Processing of `haproxy.org/*`
+annotations lives in the [haproxytech library](haproxytech.md), so the
+annotation is honoured whenever `haproxytech` is enabled (default). See that
+library's docs for the complete annotation reference.
 
 ## Status Reporting
 
@@ -223,12 +217,16 @@ The Ingress library includes these validation tests:
 
 | Test | Description |
 |------|-------------|
-| `test-ingress-duplicate-backend-different-ports` | Multiple paths to same service with different ports |
+| `test-ingress-duplicate-backend-different-ports` | Multiple paths to same service with different ports (deduplication) |
+| `test-ingress-tls-basic` | `spec.tls` registers TLS certificates into the SSL crt-list |
+| `test-ingress-slot-preservation` | Existing pod slots survive a rolling deployment when `currentConfig` is provided |
+| `test-ingress-slot-preservation-lower-ip` | Slot preservation is order-independent (new pod with a lower IP still gets the freed slot) |
+| `test-ingress-status-patches` | LoadBalancer addresses from the controller Service propagate to `status.loadBalancer.ingress` |
 
-Run tests with:
+Run a specific test with:
 
 ```bash
-./scripts/test-templates.sh --test test-ingress-duplicate-backend-different-ports
+./scripts/test-templates.sh --test test-ingress-tls-basic
 ```
 
 ## See Also

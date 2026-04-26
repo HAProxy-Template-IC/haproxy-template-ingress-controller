@@ -198,7 +198,7 @@ func (sc *StateCache) handleConfigValidated(e *events.ConfigValidatedEvent) {
 	sc.currentConfigVersion = e.Version
 	sc.mu.Unlock()
 
-	// Update log level dynamically if configured in ConfigMap
+	// Update log level dynamically if configured in spec.logging.level on the CRD
 	// Empty Level means use LOG_LEVEL env var (don't change)
 	if cfg.Logging.Level != "" {
 		oldLevel := logging.GetLevel()

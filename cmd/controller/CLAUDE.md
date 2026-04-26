@@ -25,21 +25,41 @@ Modify this package when:
 
 ```
 cmd/controller/
-├── main.go            # Main entry point (controller daemon)
-├── validate.go        # Validate command (CLI tool)
-├── flags.go           # Command-line flags (if separated)
-└── CLAUDE.md          # This file
+├── main.go              # Cobra root command + init wiring (registers run, validate, benchmark)
+├── run.go               # `run` subcommand (controller daemon)
+├── validate.go          # `validate` subcommand (CLI for embedded tests)
+├── benchmark.go         # `benchmark` subcommand entry point
+├── benchmark_render.go  # benchmark: render-only path
+├── benchmark_output.go  # benchmark output formatting
+├── config.go            # `config view` subcommand + CRD loading helpers shared by run/validate/benchmark
+├── shared.go            # Shared flag definitions and bootstrap helpers
+├── version.go           # `version` subcommand (registers itself in init())
+└── CLAUDE.md            # This file
 ```
+
+`config.go` and `version.go` register their cobra subcommands via their own `init()` functions, so they don't appear in `main.go`'s `init()` block — grep for `rootCmd.AddCommand` to find every wire-up site.
 
 ## Commands
 
-### Main Controller (main.go)
+### `run` — Controller Daemon (run.go)
 
-The primary controller daemon that watches Kubernetes resources and manages HAProxy configuration.
+The primary controller daemon that watches Kubernetes resources and manages HAProxy configuration. Wired through Cobra in main.go; the actual iteration loop lives in `pkg/controller/iteration.go`.
 
-### Validate Command (validate.go)
+### `validate` — CLI (validate.go)
 
-CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation tests.
+CLI tool for validating HAProxyTemplateConfig CRDs with embedded validation tests. Used both by humans (`haptic-controller validate -f config.yaml`) and CI/CD pipelines.
+
+### `benchmark` — Render Performance (benchmark*.go)
+
+Renders the templates in a HAProxyTemplateConfig repeatedly against fixture data and reports timings. Useful for spotting template regressions before they hit reconciliation.
+
+### `config` — Inspect Live HAProxy Config (config.go)
+
+`haptic-controller config view` fetches the published `HAProxyCfg` CRD from the cluster (the rendered HAProxy configuration the controller deployed last), decompresses it if needed, and prints the raw config to stdout. It is a **live-cluster** command — it talks to the API server, not a local file. Flags: `--crd-name`, `--namespace`, `--kubeconfig` (no `-f`). The CRD name defaults via `--crd-name` → `CRD_NAME` env → `haproxy-config`. Useful for `haptic-controller config view | bat -l haproxy` style inspection on a running deployment.
+
+### `version` — Build Info (version.go)
+
+Prints the build's `version`, `commit`, and `buildDate` (set via ldflags at build time).
 
 **Usage:**
 
@@ -193,57 +213,41 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 | `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
 | — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |
 
-The controller's namespace is auto-detected from the in-cluster service-account token mount; there is no `CONTROLLER_NAMESPACE` env var. There is no `LOG_FORMAT`, `METRICS_PORT`, `HEALTH_PORT`, or `ENABLE_PPROF` env var either — log output is always structured slog (logfmt-ish in the default handler), and the metrics / healthz / pprof ports come from the CRD (`spec.controller.metricsPort`, `spec.controller.healthzPort`) and the `--debug-port` flag respectively.
+The controller's namespace is auto-detected from the in-cluster service-account token mount; there is no `CONTROLLER_NAMESPACE` env var. Other surfaces:
+
+- **Log output** — always structured slog (logfmt-ish text on stdout); no `LOG_FORMAT` env var.
+- **Metrics port** — read from the `METRICS_PORT` env var (default `9090`; set to `0` to disable). The CRD has a `controller.metricsPort` field but the controller does **not** read it; the chart strips it before serialising the CRD. To change the port, set `METRICS_PORT` (via `controller.extraEnv` in Helm).
+- **Healthz port** — runs on the same listener as `--debug-port` (default `0` = disabled when running the binary directly; the chart sets `8080`). There is no separate healthz listener: setting `--debug-port` / `controller.debugPort` to `0` disables both `/debug/*` and `/healthz` (and breaks Kubernetes probes). The chart's `controller.ports.healthz` only configures the Service port and the container-port declaration used by probes — the actual listener is still the introspection server.
+- **Webhook port** — hardcoded `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag for it. Disabled entirely when `--webhook-cert-secret-name` is empty.
+- **pprof** — always mounted at `/debug/pprof/*` whenever the introspection server is enabled; no `ENABLE_PPROF` env var.
 
 ## Signal Handling
 
+`cmd/controller/main.go` is a thin Cobra wrapper — it just calls `rootCmd.Execute()`.
+The signal-to-context bridge lives in `cmd/controller/run.go` (`runRun`); the
+errgroup / per-component goroutines are inside `pkg/controller/iteration.go`,
+not here. The shape in `runRun` is intentionally minimal:
+
 ```go
-// main.go
-func main() {
-    // Create context that cancels on signals
-    ctx, stop := signal.NotifyContext(context.Background(),
-        os.Interrupt,    // SIGINT (Ctrl+C)
-        syscall.SIGTERM, // SIGTERM (Kubernetes pod termination)
-    )
-    defer stop()
+// cmd/controller/run.go (runRun, paraphrased)
+ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+defer cancel()
 
-    // Start components with context
-    g, gCtx := errgroup.WithContext(ctx)
-
-    g.Go(func() error { return component1.Run(gCtx) })
-    g.Go(func() error { return component2.Run(gCtx) })
-
-    // Wait for signal or component error
-    select {
-    case <-ctx.Done():
-        log.Info("Shutdown signal received")
-    case <-gCtx.Done():
-        log.Error("Component error", "error", gCtx.Err())
+if err := controller.Run(ctx, k8sClient,
+    runCRDName, runSecretName, runWebhookCertSecretName, runDebugPort,
+); err != nil {
+    // Only surface the error if it's not just the signal-driven cancellation
+    if ctx.Err() == nil {
+        return fmt.Errorf("controller failed: %w", err)
     }
-
-    // Graceful shutdown with timeout
-    shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-
-    done := make(chan error)
-    go func() {
-        done <- g.Wait()
-    }()
-
-    select {
-    case err := <-done:
-        if err != nil {
-            log.Error("Shutdown error", "error", err)
-            os.Exit(1)
-        }
-    case <-shutdownCtx.Done():
-        log.Error("Shutdown timeout exceeded")
-        os.Exit(1)
-    }
-
-    log.Info("Controller stopped")
 }
 ```
+
+`controller.Run` owns the per-iteration lifecycle: each iteration constructs an
+`errgroup`, fans out `Run`/`Start` calls for every component, and exits when
+either the parent context cancels (signal) or the iteration context cancels
+(config change, leader change, etc.). The shutdown deadline lives there too —
+don't add another shutdown-timeout layer in `cmd/controller`.
 
 ## Health and Metrics
 
@@ -251,9 +255,9 @@ func main() {
 
 The controller doesn't hand-roll its HTTP servers — three reusable infra packages own the surfaces:
 
-- **`pkg/introspection`** — `/healthz` (also aliased as `/health`), `/debug/vars`, `/debug/vars/<name>?field={…}`, `/debug/events`, `/debug/pprof/*`. Backed by an instance-based registry of `Var` implementations. Listening port comes from `--debug-port` / `DEBUG_PORT` (default 0 = disabled; the Helm chart sets 8080). Setting it to 0 disables `/debug/*` and moves `/healthz` to the port specified by `controller.ports.healthz`. There is no separate `/readyz` — Kubernetes readiness probes hit `/healthz` too.
-- **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from `spec.controller.metricsPort` (default 9090, set to 0 to disable). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
-- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-secret-name` is empty. Port comes from `spec.controller.webhookPort` (default 9443).
+- **`pkg/introspection`** — `/healthz` (also aliased as `/health`), `/debug/vars`, `/debug/vars/<name>?field={…}`, `/debug/events`, `/debug/pprof/*`. Backed by an instance-based registry of `Var` implementations. Listening port comes from `--debug-port` / `DEBUG_PORT` (default 0 = disabled; the Helm chart sets 8080). Setting it to 0 disables both `/debug/*` and `/healthz` (no separate healthz listener exists), so probes break — restrict access via NetworkPolicy instead. The chart's `controller.ports.healthz` only configures the Service port and container-port declaration used by probes; it doesn't open an extra listener. There is no separate `/readyz` — Kubernetes readiness probes hit `/healthz` too.
+- **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from the `METRICS_PORT` env var (default 9090, set to 0 to disable; the CRD's `controller.metricsPort` field is **not** read by the controller — the chart strips it before serialising). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
+- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-secret-name` is empty. Port is **hardcoded** `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag override.
 
 Don't add new HTTP surfaces in `cmd/controller`. Add a `Var` to `pkg/introspection`, a metric to `pkg/controller/metrics`, or a handler on the existing webhook server.
 
@@ -401,27 +405,30 @@ case <-shutdownCtx.Done():
 
 ### Logging Before Logger Initialized
 
-**Problem**: Using logger before setup.
+**Problem**: Using `slog` before the controller's logger is installed as the
+default — early lines render with the stdlib default handler (text on stderr,
+INFO threshold) instead of the configured one.
 
 ```go
-// Bad - logger not initialized
-slog.Info("starting")  // Might not use configured format/level
-
-logger := logging.New(config)
+// Bad — relies on whatever the package-level default happens to be
+slog.Info("starting")
+logger := logging.NewLogger(os.Getenv("LOG_LEVEL"))
 slog.SetDefault(logger)
 ```
 
-**Solution**: Initialize logger early.
+**Solution**: Build and install the logger before the first `slog` call. The
+real API is `logging.NewLogger(level string)` for a fixed level or
+`logging.NewDynamicLogger(level)` for one whose level can be bumped at runtime
+via `logging.SetLevel(...)`. There's no `logging.New(...)`, no
+`logging.Config`, and no JSON output (everything is logfmt to stdout).
 
 ```go
-// Good - logger first
-logger := logging.New(logging.Config{
-    Level:  slog.LevelInfo,
-    Format: logging.FormatJSON,
-})
+// Good
+logger := logging.NewDynamicLogger(os.Getenv("LOG_LEVEL")) // case-insensitive
 slog.SetDefault(logger)
-
-slog.Info("controller starting")  // Uses configured logger
+slog.Info("controller starting") // uses configured logger
+// ... later, e.g. when CRD spec.logging.level changes:
+logging.SetLevel("DEBUG")
 ```
 
 ### Ignoring Component Errors
@@ -460,29 +467,35 @@ If you need to add a new stage:
 5. Update tests
 6. Document new stage
 
-### Example: Adding Metrics Initialization Stage
+### Example: Wiring an Extra Component into Stage 5
+
+There's no `Controller` struct or `(c *Controller).Run` method — `runIteration`
+in `pkg/controller/iteration.go` is the canonical wiring point. Add new
+components there, alongside the existing Stage-5 constructors. The pattern
+mirrors the metrics component already wired into the iteration:
 
 ```go
-// Add before Stage 5 (reconciliation)
-func (c *Controller) Run(ctx context.Context) error {
-    // ... Stages 1-4 ...
+// Inside runIteration (pkg/controller/iteration.go, Stage 5).
+// Construct first so the subscription happens before bus.Start() releases
+// the pre-start buffer; only then spin up the goroutine.
+domainMetrics := pkgmetrics.NewMetrics(infra.MetricsRegistry)
+metricsComponent := metricsadapter.New(domainMetrics, bus)
 
-    // New Stage 5: Metrics
-    log.Info("Stage 5: Metrics initialization")
-    domainMetrics := metrics.NewMetrics(registry)
-    metricsCollector := metrics.New(domainMetrics, c.eventBus)
-    go metricsCollector.Start(ctx)
+bus.Start() // pre-start buffer flushes to every existing subscriber
 
-    // Wait for metrics ready (optional)
-    if err := metricsCollector.WaitForReady(ctx); err != nil {
-        return fmt.Errorf("metrics initialization failed: %w", err)
+go func() {
+    if err := metricsComponent.Start(iterCtx); err != nil {
+        logger.Error("metrics component failed", "error", err)
     }
-
-    // Original Stage 5 becomes Stage 6
-    log.Info("Stage 6: Reconciliation components")
-    // ... reconciliation setup ...
-}
+}()
 ```
+
+There is no `WaitForReady()` on the metrics component — readiness is signaled
+by the `*component.ReadySignal` embedded in components that need it (renderer,
+validator, …); cross-iteration ordering instead relies on the
+"subscribe-before-Start" contract. If you need the new component to publish a
+state event on `BecameLeaderEvent`, see the leadership-transition pattern in
+`pkg/controller/CLAUDE.md`.
 
 ## Debugging Startup Issues
 
@@ -541,7 +554,7 @@ go tool pprof http://localhost:8080/debug/pprof/profile?seconds=30
 go tool pprof http://localhost:8080/debug/pprof/heap
 ```
 
-To disable profiling in production, set `controller.debugPort: 0` (the chart then moves `/healthz` to `controller.ports.healthz`). To move it to a dedicated port, set `controller.debugPort: <port>`.
+`/debug/pprof/*` and `/healthz` share the same listener, so setting `controller.debugPort: 0` would also drop `/healthz` and break Kubernetes probes. To shield profiling endpoints in production, restrict access via NetworkPolicy rather than disabling the port. To move both endpoints to a dedicated port, set `controller.debugPort: <port>`.
 
 ## Kubernetes Deployment
 

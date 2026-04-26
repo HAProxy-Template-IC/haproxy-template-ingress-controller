@@ -40,38 +40,41 @@ Dependencies: Only standard library (encoding/json, log/slog, etc.)
 
 ### config/ - Configuration Management
 
-Defines configuration types and provides parsing functions:
+Defines configuration types and provides loading functions:
 
 ```go
-// Parse configuration from ConfigMap data
-config, err := config.ParseConfig(configMapData)
+// Parse a YAML string (the controller's CRD parser pre-extracts spec to YAML)
+config, err := config.LoadConfig(yamlString)
 
 // Load credentials from Secret data
 creds, err := config.LoadCredentials(secretData)
 ```
 
+There's no `ParseConfig(configMapData)` function — the controller is CRD-driven. The `pkg/controller/conversion` package converts an `*unstructured.Unstructured` `HAProxyTemplateConfig` to the wire YAML and then calls `LoadConfig`.
+
 **Responsibilities:**
 
-- Define Config struct and all nested types
+- Define `Config` struct and all nested types
 - Parse YAML configuration
 - Basic structural validation (required fields, port ranges)
 - Credentials loading and validation
-- NOT: Template validation (done in pkg/controller/validators)
-- NOT: JSONPath validation (done in pkg/controller/validators)
-- NOT: Watching ConfigMap/Secret (done in pkg/k8s)
+- NOT: Template validation (done in `pkg/controller/validator.TemplateValidator`)
+- NOT: JSONPath validation (done in `pkg/controller/validator.JSONPathValidator`)
+- NOT: Watching the CRD/Secret (done in `pkg/k8s/watcher` via `SingleWatcher`)
 
 ### logging/ - Structured Logging
 
-Sets up structured logging with slog:
+Sets up structured logging with slog. The package only exposes a handful of plain functions — there's no `Config` struct, no `Format` option, and no JSON output (everything is logfmt to stdout):
 
 ```go
-// Initialize logger
-logger := logging.New(logging.Config{
-    Level:  slog.LevelInfo,
-    Format: logging.FormatJSON,
-})
-
+// Static logger (level set once)
+logger := logging.NewLogger("INFO")
 slog.SetDefault(logger)
+
+// Or: dynamic logger whose level can be bumped at runtime
+logger = logging.NewDynamicLogger(os.Getenv("LOG_LEVEL"))
+slog.SetDefault(logger)
+logging.SetLevel("DEBUG") // updates the package-global slog.LevelVar
 
 // Use throughout application
 slog.Info("controller started",
@@ -79,60 +82,59 @@ slog.Info("controller started",
     "watched_resources", len(watchedResources))
 ```
 
+Levels are case-insensitive strings (`TRACE`, `DEBUG`, `INFO`, `WARN`/`WARNING`, `ERROR`); unknown values fall back to `INFO`. `TRACE` is a non-standard `slog.Level(-8)` used by filter-debug logging.
+
 ## Configuration Schema
 
 ### Core Types
 
+The full surface lives in `pkg/core/config/types.go`; the most important shapes are:
+
 ```go
-// Main configuration
+// Main configuration (selected fields — see types.go for the full list)
 type Config struct {
-    WatchedResources map[string]WatchedResource
-    HAProxyConfig    HAProxyConfigSpec
-    TemplateSnippets map[string]TemplateSnippet
-    Maps             map[string]MapDefinition
-    Files            map[string]FileDefinition
-    DataplaneAPI     DataplaneAPIConfig
+    PodSelector          PodSelector
+    Controller           ControllerConfig
+    Logging              LoggingConfig
+    Dataplane            DataplaneConfig
+    TemplatingSettings   TemplatingSettings
+    WatchedResources     map[string]WatchedResource
+    TemplateSnippets     map[string]TemplateSnippet
+    Maps                 map[string]MapFile
+    Files                map[string]GeneralFile
+    SSLCertificates      map[string]SSLCertificate
+    CRTLists             map[string]CRTListFile
+    HAProxyConfig        HAProxyConfig          // single template, not "Spec"
+    ValidationTests      map[string]ValidationTest
 }
 
 // Watched resource definition
 type WatchedResource struct {
-    APIVersion              string            `yaml:"api_version"`
-    Resources               string            `yaml:"resources"`
-    EnableValidationWebhook bool              `yaml:"enable_validation_webhook"`
-    IndexBy                 []string          `yaml:"index_by"`
-    LabelSelector           map[string]string `yaml:"label_selector,omitempty"`
-    FieldSelector           string            `yaml:"field_selector,omitempty"`
-    Store                   string            `yaml:"store"`
+    APIVersion       string            `yaml:"api_version"`
+    Kind             string            `yaml:"kind"`
+    Resources        string            `yaml:"resources"`
+    IndexBy          []string          `yaml:"index_by"`
+    LabelSelector    map[string]string `yaml:"label_selector,omitempty"`
+    FieldSelector    string            `yaml:"field_selector,omitempty"`
+    DebounceInterval string            `yaml:"debounce_interval,omitempty"`
+    // ... see types.go for the complete shape including ignore-fields and store options
 }
 
-// HAProxy configuration
-type HAProxyConfigSpec struct {
-    Template string
-}
-
-// Template snippets
-type TemplateSnippet struct {
-    Template string
-}
-
-// Map definitions
-type MapDefinition struct {
-    Template string
-}
-
-// File definitions
-type FileDefinition struct {
-    Template string
-    Path     string
-}
-
-// Dataplane API configuration
-type DataplaneAPIConfig struct {
-    DiscoveryMode string
-    StaticURLs    []string
-    PodSelector   map[string]string
-}
+// Auxiliary file definitions — every "file template" type carries the same
+// two fields. There is no Path field, no embedded cert/key block, and no
+// per-type variant; the shape is uniform on purpose so the auxiliary-file
+// pipeline in pkg/dataplane/auxiliaryfiles can dispatch on a single FileItem
+// generic.
+type (
+    MapFile        struct{ Template string; PostProcessing []PostProcessorConfig }
+    GeneralFile    struct{ Template string; PostProcessing []PostProcessorConfig }
+    SSLCertificate struct{ Template string; PostProcessing []PostProcessorConfig }
+    CRTListFile    struct{ Template string; PostProcessing []PostProcessorConfig }
+)
+type HAProxyConfig struct{ Template string; PostProcessing []PostProcessorConfig }
 ```
+
+There is no `HAProxyConfigSpec`, `MapDefinition`, `FileDefinition`, or `DataplaneAPIConfig` — those names appeared in older drafts of this doc and never matched the source. Use the real types above.
 
 ### Validation Layers
 
@@ -155,11 +157,12 @@ type DataplaneAPIConfig struct {
 ### Test Parsing and Basic Validation
 
 ```go
-func TestParseConfig_Valid(t *testing.T) {
+func TestLoadConfig_Valid(t *testing.T) {
     configYAML := `
 watched_resources:
   ingresses:
     api_version: networking.k8s.io/v1
+    kind: Ingress
     resources: ingresses
     index_by:
       - metadata.namespace
@@ -169,34 +172,13 @@ haproxy_config:
   template: |
     global
         daemon
-    `
+`
 
-    configMapData := map[string][]byte{
-        "config.yaml": []byte(configYAML),
-    }
-
-    config, err := config.ParseConfig(configMapData)
+    cfg, err := config.LoadConfig(configYAML)
 
     require.NoError(t, err)
-    assert.Len(t, config.WatchedResources, 1)
-    assert.Equal(t, "ingresses", config.WatchedResources["ingresses"].Resources)
-}
-
-func TestParseConfig_InvalidPortRange(t *testing.T) {
-    configYAML := `
-dataplane_api:
-  static_urls:
-    - "http://haproxy:99999"  # Invalid port
-    `
-
-    configMapData := map[string][]byte{
-        "config.yaml": []byte(configYAML),
-    }
-
-    _, err := config.ParseConfig(configMapData)
-
-    require.Error(t, err)
-    assert.Contains(t, err.Error(), "invalid port")
+    assert.Len(t, cfg.WatchedResources, 1)
+    assert.Equal(t, "ingresses", cfg.WatchedResources["ingresses"].Resources)
 }
 ```
 
@@ -433,7 +415,7 @@ func TestConfig_GetReconciliationInterval(t *testing.T) {
 **DON'T:**
 
 - Log credentials
-- Store credentials in ConfigMap
+- Store credentials in the CRD spec or any non-Secret resource
 - Hardcode credentials
 - Pass credentials as environment variables (use Secret instead)
 
@@ -538,7 +520,7 @@ When adding new fields, consider backward compatibility:
 // Good - optional new field with default
 type Config struct {
     // Existing fields
-    HAProxyConfig HAProxyConfigSpec
+    HAProxyConfig HAProxyConfig // real name; HAProxyConfigSpec doesn't exist
 
     // New optional field (v1.1.0+)
     NewFeature *NewFeatureConfig `yaml:"new_feature,omitempty"`
@@ -587,37 +569,36 @@ func ParseConfig(data map[string][]byte) (*Config, error) {
 
 **Diagnosis:**
 
-1. Check ConfigMap exists and has correct name
-2. Verify YAML syntax
+1. Check the `HAProxyTemplateConfig` CRD exists and matches `spec.podSelector`
+2. Verify YAML inside `spec` parses (the CRD validation only does shallow checks)
 3. Check for required fields
-4. Review parsing errors
+4. Review controller logs
 
 ```bash
-# Verify ConfigMap
-kubectl get configmap haptic-config -o yaml
+# Verify CRD instance
+kubectl get haproxytemplateconfig -A
 
 # Check controller logs
-kubectl logs deployment/haptic-controller | grep "config"
+kubectl logs deployment/haptic-controller | grep -i "config"
 ```
 
 ### Credentials Not Loading
 
 **Diagnosis:**
 
-1. Check Secret exists
-2. Verify all required keys present
-3. Check for empty values
-4. Review controller RBAC permissions
+1. Check Secret referenced by `spec.credentialsSecretRef` exists
+2. Verify both `dataplane_username` and `dataplane_password` keys are present and non-empty
+3. Review controller RBAC permissions
 
 ```bash
 # Verify Secret exists (don't print values)
-kubectl get secret haptic-credentials
+kubectl get secret <credentialsSecretRef.name>
 
 # Check Secret keys
-kubectl get secret haptic-credentials -o json | jq '.data | keys'
+kubectl get secret <credentialsSecretRef.name> -o json | jq '.data | keys'
 
 # Verify RBAC
-kubectl auth can-i get secrets --as=system:serviceaccount:default:haptic
+kubectl auth can-i get secrets --as=system:serviceaccount:<ns>:<controller-sa>
 ```
 
 ### Validation Errors
@@ -631,13 +612,9 @@ kubectl auth can-i get secrets --as=system:serviceaccount:default:haptic
 
 ```go
 // Debug validation
-config, err := config.ParseConfig(configMapData)
+cfg, err := config.LoadConfig(yamlString)
 if err != nil {
-    log.Error("config validation failed", "error", err)
-
-    // Print config structure for debugging (without credentials)
-    configJSON, _ := json.MarshalIndent(config, "", "  ")
-    log.Debug("config structure", "json", string(configJSON))
+    slog.Error("config validation failed", "error", err)
 }
 ```
 

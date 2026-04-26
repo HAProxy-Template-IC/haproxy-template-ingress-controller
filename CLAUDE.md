@@ -184,7 +184,8 @@ func NewRendererComponent(bus *events.EventBus, engine templating.Engine) *Rende
     }
 }
 
-func (r *RendererComponent) Run(ctx context.Context) error {
+// Method name is Start (not Run) — matches the lifecycle.Component contract.
+func (r *RendererComponent) Start(ctx context.Context) error {
     for {
         select {
         case event := <-r.eventChan:
@@ -403,8 +404,8 @@ func TestRendererComponent(t *testing.T) {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    // Start component
-    go renderer.Run(ctx)
+    // Start component (method is Start, matching the lifecycle.Component contract)
+    go renderer.Start(ctx)
 
     // Trigger reconciliation
     bus.Publish(ReconciliationTriggeredEvent{Context: testContext})
@@ -628,8 +629,9 @@ logger.Error("reconciliation failed",
 ```go
 // Component constructor subscribes immediately
 func New(eventBus *EventBus, ...) *Component {
-    // Subscribe BEFORE returning the component
-    eventChan := eventBus.Subscribe(EventBufferSize)
+    // Subscribe BEFORE returning the component.
+    // Subscribe(name, bufferSize) — name is required for drop accounting.
+    eventChan := eventBus.Subscribe(ComponentName, EventBufferSize)
 
     return &Component{
         eventBus:  eventBus,
@@ -661,7 +663,7 @@ startAllComponents()                  // Start goroutines
 ```go
 // BAD - subscribes in Start()
 func (c *Component) Start(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe(EventBufferSize)  // TOO LATE!
+    eventChan := c.eventBus.Subscribe(ComponentName, EventBufferSize)  // TOO LATE!
     // May miss events published before this subscription
 }
 ```

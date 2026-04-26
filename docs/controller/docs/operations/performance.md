@@ -355,14 +355,6 @@ spec:
       resources: ingresses
       namespace: production
 
-# Watch multiple namespaces by label (e.g. label namespaces with `env=prod`)
-spec:
-  watchedResources:
-    ingresses:
-      apiVersion: networking.k8s.io/v1
-      resources: ingresses
-      namespaceSelector: "env=prod"
-
 # Or narrow by label selector on the resources themselves
 spec:
   watchedResources:
@@ -372,7 +364,7 @@ spec:
       labelSelector: "managed-by=haptic"
 ```
 
-All selector fields are simple Kubernetes label-selector strings — the `matchLabels`/`matchExpressions` object form is not supported here.
+`labelSelector` is a comma-separated equality-only string (`k=v[,k=v]`) — the `matchLabels`/`matchExpressions` object form and set-based syntax (`in`, `notin`, `!`) are not supported. The `namespaceSelector` field is declared on the CRD but currently unimplemented; for label-based namespace filtering, fall back to per-namespace `Role`/`RoleBinding`s and watch each namespace explicitly.
 
 ## Deployment Performance
 
@@ -500,7 +492,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 - Check for memory leaks: growing heap over time (`/debug/pprof/heap`)
 - Switch large, infrequently-accessed resources (e.g. TLS Secrets) to `store: on-demand`
 - Trim noisy fields with `watchedResourcesIgnoreFields`
-- Narrow watch scope via `namespace` / `namespaceSelector` / `labelSelector`
+- Narrow watch scope via `namespace` or `labelSelector` (`namespaceSelector` is declared but unimplemented)
 
 **High CPU usage:**
 

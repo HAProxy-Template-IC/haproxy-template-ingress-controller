@@ -32,18 +32,27 @@ This directory serves as the root for all non-unit tests and contains:
 ```
 tests/
 ├── architecture_test.go          # Architecture rule validation (arch-go)
-├── integration/                  # Integration tests (fixenv + Kind)
-│   ├── env.go                   # Test fixtures (cluster, HAProxy, clients)
-│   ├── kind_cluster.go          # Kind cluster management
-│   ├── haproxy.go              # HAProxy deployment helpers
-│   ├── sync_test.go            # HAProxy sync integration tests
-│   ├── auxiliaryfiles_test.go  # Auxiliary file tests
-│   └── testdata/               # Test configuration files
+├── kindutil/                     # Kind cluster helpers shared by integration & acceptance
+├── testutil/                     # Generic helpers (fixtures, assertions) shared across suites
+├── integration/                  # Integration tests (fixenv + Kind, //go:build integration)
+│   ├── env.go                   # fixenv fixtures: shared cluster, HAProxy, clients
+│   ├── kind_cluster.go          # Kind cluster management for the integration suite
+│   ├── haproxy.go               # HAProxy deployment helpers
+│   ├── testutil.go              # Suite-internal helpers
+│   ├── sync_*_test.go           # 9 sync test files (auxiliary, backends, common, frontends,
+│   │                            # global_defaults, idempotency, observability, sections, servers)
+│   ├── auxiliaryfiles_test.go   # Auxiliary file (maps, SSL, general) sync tests
+│   ├── enterprise_*_test.go     # 5 Enterprise-edition feature test files (WAF, Bot Mgmt, UDP LB, Keepalived, misc)
+│   └── testdata/                # Test configuration files
 └── acceptance/                   # Acceptance tests (e2e-framework)
+    ├── main_test.go             # TestMain — Kind setup/teardown
     ├── env.go                   # E2E framework setup
+    ├── constants.go             # Shared timing/port constants
     ├── fixtures.go              # Test resource factories
     ├── debug_client.go          # Debug HTTP client
-    └── configmap_reload_test.go # ConfigMap reload test
+    ├── parallel_test.go         # Shared-cluster parallel test driver
+    └── *_test.go                # Per-feature tests: compression, error_scenarios,
+                                 # http_store, leader_election, metrics
 ```
 
 ## Test Types
@@ -184,8 +193,8 @@ This runs:
 # Force cleanup after tests
 KEEP_CLUSTER=false make test-integration
 
-# Use specific Kubernetes version
-KIND_NODE_VERSION=v1.29.0 make test-integration
+# Use specific Kind node image (default: kindest/node:v1.32.0)
+KIND_NODE_IMAGE=kindest/node:v1.31.0 make test-integration
 ```
 
 ### Acceptance Tests Only
@@ -203,18 +212,13 @@ This runs:
 
 ### All Tests (Including Integration and Acceptance)
 
+There is no single `make test-all` target -- run the three top-level targets in sequence when you need full coverage:
+
 ```bash
-make test-all
+make test && make test-integration && make test-acceptance
 ```
 
-This runs:
-
-- Unit tests
-- Architecture tests
-- Integration tests
-- Acceptance tests
-
-**Duration**: ~5-10 minutes depending on cluster state
+**Duration**: ~5-10 minutes depending on cluster state. Use `make test-acceptance-parallel` to share a single Kind cluster across acceptance test cases (~half the wall-clock time).
 
 ## Common Patterns
 
@@ -265,8 +269,14 @@ tests/integration/
 
 ```
 tests/acceptance/
-    env.go                   # E2E framework setup
-    configmap_reload_test.go # Feature tests
+    main_test.go         # TestMain wires Kind setup/teardown
+    env.go               # Per-test helpers (GetControllerPod, SetupDebugClient, ...)
+    leader_election_test.go
+    metrics_test.go
+    http_store_test.go
+    error_scenarios_test.go
+    compression_test.go
+    parallel_test.go
 ```
 
 ## Common Pitfalls
@@ -461,9 +471,13 @@ func TestHAProxy(env fixenv.Env) *HAProxyInstance
 **Acceptance** (e2e-framework):
 
 ```go
-// tests/acceptance/env.go
-func Setup(t *testing.T) env.Environment
+// tests/acceptance/main_test.go drives the cluster lifecycle via TestMain;
+// individual tests use the shared env.Environment exposed by e2e-framework.
+
+// tests/acceptance/env.go provides the per-test helpers:
 func GetControllerPod(ctx context.Context, client klient.Client, namespace string) (*corev1.Pod, error)
+func SetupDebugClient(ctx context.Context, client klient.Client, clientset kubernetes.Interface, namespace string, timeout time.Duration) (*DebugClient, error)
+func SetupMetricsAccess(ctx context.Context, client klient.Client, clientset kubernetes.Interface, namespace string, timeout time.Duration) (*MetricsClient, error)
 ```
 
 ### Test Data

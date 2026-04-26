@@ -24,7 +24,7 @@ scheduler := deployer.NewDeploymentScheduler(
     2*time.Second,   // minDeploymentInterval
     30*time.Second,  // deploymentTimeout
 )
-exec := deployer.New(bus, logger, 0, 100)       // maxParallel (0 = auto), rawPushThreshold
+exec := deployer.New(bus, logger, 0, 100)       // maxParallel (0 = unlimited — passed through to dataplane.SyncOptions), rawPushThreshold
 monitor := deployer.NewDriftPreventionMonitor(bus, logger, 60*time.Second)
 
 go scheduler.Start(ctx)
@@ -73,7 +73,12 @@ Notable details:
 
 ## Leadership Transitions
 
-On `LostLeadershipEvent` the scheduler drops any pending deployment and clears its in-progress flag (otherwise a new leader would wait on a deployment the dead leader was handling); the drift monitor stops its timer. On `BecameLeaderEvent` upstream components re-publish their last state (`HAProxyPodsDiscoveredEvent`, `TemplateRenderedEvent`, `ValidationCompletedEvent`) so the newly-leading scheduler can assemble the inputs without waiting for the next reconciliation.
+On `LostLeadershipEvent` the scheduler drops any pending deployment and clears its in-progress flag (otherwise a new leader would wait on a deployment the dead leader was handling); the drift monitor stops its timer.
+
+On `BecameLeaderEvent` the scheduler is bootstrapped from two sides:
+
+- All-replica components that maintain state replay their last event so the new leader's scheduler doesn't have to wait. Currently that's `HAProxyPodsDiscoveredEvent` (from `pkg/controller/discovery`), `ValidationCompletedEvent` (from `pkg/controller/validator`), and `ConfigValidatedEvent` (from `pkg/controller/configchange`). Grep for `leadership.NewStateReplayer[` to see the canonical list.
+- `TemplateRenderedEvent` is *not* replayed — the renderer is itself leader-only and only starts on the new leader. Instead, the reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (see `pkg/controller/reconciler/reconciler.go:handleBecameLeader`), which produces a fresh render rather than a stale replay. The new leader's scheduler then assembles all three inputs naturally.
 
 See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full replay/clear contract every leader-only component implements.
 

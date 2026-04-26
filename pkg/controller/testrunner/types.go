@@ -57,7 +57,7 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Workers is the number of parallel workers for test execution.
-	// Default: 4
+	// Default (0): runtime.NumCPU().
 	// Set to 1 for sequential execution.
 	Workers int
 

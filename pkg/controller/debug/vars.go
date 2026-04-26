@@ -22,7 +22,7 @@ import (
 //
 // Returns a JSON object containing:
 //   - config: the full Config struct
-//   - version: the ConfigMap resource version
+//   - version: the HAProxyTemplateConfig CRD resource version
 //   - updated: timestamp when the config was last updated
 //
 // Example response:

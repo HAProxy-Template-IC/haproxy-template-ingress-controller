@@ -24,11 +24,12 @@ Stage 5 component that debounces resource changes and triggers reconciliation ev
 ## Architecture
 
 ```
-ResourceIndexUpdatedEvent → Debounce (5s default, leading-edge)
-IndexSynchronizedEvent → Immediate Trigger (initial reconciliation)
-HTTPResourceUpdatedEvent → Debounce (5s default, leading-edge)
-HTTPResourceAcceptedEvent → Immediate Trigger
+ResourceIndexUpdatedEvent  → Debounce (5s default, leading-edge)
+IndexSynchronizedEvent     → Immediate Trigger (initial reconciliation)
+HTTPResourceUpdatedEvent   → Debounce (5s default, leading-edge)
+HTTPResourceAcceptedEvent  → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
+BecameLeaderEvent          → Immediate Trigger (bootstraps the new leader)
 
     ↓
 ReconciliationTriggeredEvent → Coordinator

@@ -142,7 +142,18 @@ Verifies target content matches a regex pattern:
   description: Must create backend for API service
 ```
 
-**Targets**: `haproxy.cfg`, `map:<name>`, `file:<name>`, `cert:<name>`
+**Targets** (resolved by `pkg/controller/testrunner/assertion_helpers.go`, shared by `contains` / `not_contains` / `match_count` / `equals` / `match_order`):
+
+| Target | What's checked |
+|--------|----------------|
+| `haproxy.cfg` (or empty) | The rendered main HAProxy configuration |
+| `map:<name>` | A rendered map file. `<name>` matches against either the full path or the basename |
+| `file:<name>` | A rendered general file (error pages, etc.), matched by filename |
+| `cert:<name>` | A rendered SSL certificate, matched by basename |
+| `crt-list:<name>` | A rendered crt-list file, matched by basename. Requires HAProxy 3.2+ |
+| `rendering_error` | The simplified render error string, populated only when the render itself failed. Use this on negative tests where you expect rendering to be rejected |
+
+Unknown targets fall back to `haproxy.cfg` silently — typos in `target:` won't error, they'll just match the wrong content. Sanity-check via `--dump-rendered` if an assertion behaves unexpectedly.
 
 ### not_contains
 
@@ -302,13 +313,30 @@ Completed: path-prefix.map (3.347ms)
     haptic-controller validate -f config.yaml --trace-templates --profile-includes
     ```
 
+### --profile-includes
+
+Lists the slowest 20 `render` / `render_glob` / macro invocations with cumulative timing — useful when `--trace-templates` shows a slow top-level template and you need to find which include is responsible:
+
+```bash
+haptic-controller validate -f config.yaml --profile-includes
+```
+
+### --debug-filters
+
+Logs every comparison made by sort filters (`sort_by`) and similar operations, with the input types and the comparison result. Useful when route precedence or map ordering doesn't match what you expected:
+
+```bash
+haptic-controller validate -f config.yaml --debug-filters
+```
+
 ### Combining Flags
 
 ```bash
-haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates
+# Comprehensive end-to-end debugging
+haptic-controller validate -f config.yaml --verbose --dump-rendered --trace-templates --profile-includes
 ```
 
-**Workflow**: Start with `--verbose`, add `--dump-rendered` for full content, add `--trace-templates` for execution flow.
+**Workflow**: start with `--verbose` to see *what* failed, add `--dump-rendered` to see the *full content* you produced, add `--trace-templates` (and optionally `--profile-includes`) to see *where* time is spent, and reach for `--debug-filters` only when sort behaviour itself is suspect.
 
 ## Testing Strategies
 

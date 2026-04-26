@@ -89,7 +89,15 @@ controller:
         fieldSelector: ""
 ```
 
-The field selector uses Kubernetes server-side filtering for efficient resource watching. Only ingresses matching the specified `spec.ingressClassName` will be processed by the controller.
+`fieldSelector` here is client-side JSONPath filtering, not the Kubernetes
+server-side `fieldSelector` (which only supports a handful of fields like
+`metadata.name`). The controller fetches all Ingresses the API server returns
+and drops the ones whose `spec.ingressClassName` doesn't match before adding
+them to the store. To narrow the watch *server-side* — the cheaper option
+when you can use it — also set `namespace` or `labelSelector` on the same
+entry (`namespaceSelector` is declared on the CRD but currently unimplemented).
+See [Watching Resources →
+Narrowing the Watch](https://haproxy-haptic.org/controller/latest/watching-resources/#narrowing-the-watch).
 
 ## Template Libraries
 

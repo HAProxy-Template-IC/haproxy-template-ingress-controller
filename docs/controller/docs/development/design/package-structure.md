@@ -38,15 +38,19 @@ haptic/
 │   ├── stores/              # Store overlays/providers used for webhook dry-run validation
 │   ├── templating/          # Scriggo-based template engine (pure)
 │   ├── dataplane/           # HAProxy Dataplane API integration (pure)
-│   │   ├── auxiliaryfiles/  # 3-phase sync of general files, SSL, map files
-│   │   ├── client/          # HTTP client with transaction lifecycle
+│   │   ├── auxiliaryfiles/  # 3-phase sync of general files, SSL, SSL-CA, maps, crt-list
+│   │   ├── client/          # HTTP client with transaction lifecycle + per-version dispatcher
+│   │   │   └── enterprise/  # Enterprise-only operations (WAF, Bot, ALOHA, Keepalived, ...)
 │   │   ├── comparator/      # Fine-grained config comparison (per-section logic)
-│   │   │   └── sections/    # Section-specific comparators
-│   │   ├── discovery/       # Endpoint discovery helpers
+│   │   │   └── sections/    # Section factories
+│   │   │       └── executors/ # Per-section Dispatch/DispatchEnterpriseOnly closures
 │   │   ├── parser/          # client-native wrapper for syntax parsing
+│   │   │   └── enterprise/  # Enterprise section extensions
 │   │   ├── synchronizer/    # Operation execution with retries
-│   │   ├── types/           # Endpoint, SyncOptions, Result
 │   │   └── validators/      # Per-model validators generated from OpenAPI specs
+│   │   # Public types (Endpoint, SyncOptions, AuxiliaryFiles, SyncResult,
+│   │   # Capabilities, Version, ValidationPaths) live at the top level —
+│   │   # there is no pkg/dataplane/types subpackage.
 │   ├── webhook/             # HTTP server shared by validating webhook and health probes
 │   └── controller/          # Event-driven orchestration (adapters + components)
 │       ├── component/       # Shared event-loop scaffold embedded by most components
@@ -61,11 +65,14 @@ haptic/
 │       ├── credentialsloader/ # Parses dataplane credentials from Secret
 │       ├── currentconfigstore/ # Caches the last-deployed HAProxy config for templates
 │       ├── debug/           # Controller-specific introspection Vars
-│       ├── deployer/        # Scheduler, executor, drift-prevention monitor
+│       ├── deployer/        # Scheduler + per-instance deployer + drift-prevention monitor
 │       ├── discovery/       # HAProxy pod discovery
 │       ├── dryrunvalidator/ # Webhook dry-run validator
 │       ├── events/          # Domain event type catalog
-│       ├── executor/        # Reconciliation orchestrator
+│       ├── helpers/         # Template engine factories (NewEngineFromConfig +
+│       │                    #   ExtractTemplatesFromConfig) shared by renderer / dryrun /
+│       │                    #   testrunner / cmd validate
+│       ├── httpstore/       # HTTP resource fetcher + watcher
 │       ├── indextracker/    # Tracks initial-sync completion across resources
 │       ├── leaderelection/  # Event adapter around pkg/k8s/leaderelection
 │       ├── leadership/      # Gating utilities for leader-only components
@@ -116,7 +123,7 @@ The packages form a DAG, enforced at build time by `arch-go.yml`:
 
 **Single-resource vs. bulk watching.** `pkg/k8s/watcher` provides `Watcher` (collections, debounced) and `SingleWatcher` (one named resource, immediate callbacks) so the `HAProxyTemplateConfig` CRD and credentials Secret don't pay indexing overhead.
 
-**Three-phase HAProxy validation.** `pkg/dataplane` exposes `ValidateConfiguration(mainConfig, auxFiles, paths, version, skipDNSValidation)` which runs (1) the client-native parser for syntax, (2) OpenAPI schema validation against the version-specific DataPlane API spec, and (3) the `haproxy -c` binary check for semantics. Results are cached by `(configHash, auxHash, versionHash)` so the same rendered output isn't re-validated during drift-prevention. Writes auxiliary files to the real HAProxy paths under a mutex (`haproxyCheckMutex` in `validate_haproxy.go`) so file references resolve exactly like at runtime.
+**Three-phase HAProxy validation.** `pkg/dataplane` exposes `ValidateConfiguration(mainConfig, auxFiles, paths *ValidationPaths, version *Version, skipDNSValidation bool) (*parser.StructuredConfig, error)` which runs (1) the client-native parser for syntax, (2) OpenAPI schema validation against the version-specific DataPlane API spec, and (3) the `haproxy -c` binary check for semantics. Results are cached by `(configHash, auxHash, versionHash)` so the same rendered output isn't re-validated during drift-prevention. The caller supplies `*ValidationPaths` (Maps/SSL/General/CRTList directories); `validateSemantics` clears those directories, writes the auxiliary files there, and serialises the `haproxy -c` invocation through a package-global mutex (concurrent `haproxy -c` runs interfere with each other even with isolated temp dirs). The `pkg/controller/validation.ValidationService` wrapper additionally allocates a per-call `os.MkdirTemp` and rewrites the rendered config's `default-path origin <baseDir>` to point at it before delegating, so the production HAProxy directories are never touched.
 
 **Component lifecycle.** `pkg/lifecycle` centralises registration, dependency ordering, leader-only flags, and health tracking; the controller registers every component there instead of starting goroutines directly.
 

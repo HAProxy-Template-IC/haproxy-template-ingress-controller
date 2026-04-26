@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// ConfigParsedEvent is published when the configuration ConfigMap/Secret has been.
+// ConfigParsedEvent is published when the HAProxyTemplateConfig CRD has been
 // successfully parsed into a Config structure.
 //
 // This event does not mean the config is valid - only that it could be parsed.
@@ -35,7 +35,7 @@ type ConfigParsedEvent struct {
 	// Needed by ConfigPublisher to extract Kubernetes metadata (name, namespace, UID).
 	TemplateConfig any
 
-	// Version is the resourceVersion of the ConfigMap.
+	// Version is the resourceVersion of the HAProxyTemplateConfig CRD.
 	Version string
 
 	// SecretVersion is the resourceVersion of the credentials Secret.
@@ -156,8 +156,8 @@ func (e *ConfigValidatedEvent) EventType() string { return EventTypeConfigValida
 
 // ConfigInvalidEvent is published when config validation fails.
 //
-// The controller will continue running with the previous valid config and wait.
-// for the next ConfigMap update.
+// The controller will continue running with the previous valid config and wait
+// for the next HAProxyTemplateConfig CRD update.
 type ConfigInvalidEvent struct {
 	Version string
 
@@ -185,14 +185,14 @@ func NewConfigInvalidEvent(version string, templateConfig any, validationErrors 
 
 func (e *ConfigInvalidEvent) EventType() string { return EventTypeConfigInvalid }
 
-// ConfigResourceChangedEvent is published when the ConfigMap resource is added, updated, or deleted.
+// ConfigResourceChangedEvent is published when the HAProxyTemplateConfig CRD resource is added, updated, or deleted.
 //
 // This is a low-level event published directly by the SingleWatcher callback in the controller package.
 // The ConfigLoaderComponent subscribes to this event and handles parsing.
 type ConfigResourceChangedEvent struct {
-	// Resource contains the raw ConfigMap resource.
+	// Resource contains the raw HAProxyTemplateConfig CRD resource.
 	// Type: any to avoid circular dependencies.
-	// Consumers should type-assert to *unstructured.Unstructured or *corev1.ConfigMap.
+	// Consumers should type-assert to *unstructured.Unstructured.
 	Resource any
 
 	timestamped

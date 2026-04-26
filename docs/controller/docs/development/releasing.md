@@ -26,7 +26,7 @@ There are two separate changelog files, one per release artifact:
 | `CHANGELOG.md` | Controller-facing changes (CLI, metrics, CRD behaviour, controller bug fixes) |
 | `charts/haptic/CHANGELOG.md` | Helm chart changes (values, templates, chart defaults) |
 
-Changes that touch both belong in both files. Each file follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format with an `## [Unreleased]` header at the top; release scripts promote that header to a versioned entry.
+Changes that touch both belong in both files. Each file follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format with an `## [Unreleased]` header at the top. The release scripts do **not** rewrite the changelog for you — you rename `[Unreleased]` to `[<version>] - <date>` and add a fresh empty `[Unreleased]` above it manually, and the script aborts if it doesn't find an entry for the version you're releasing.
 
 ## Prerequisites
 
@@ -43,53 +43,54 @@ The main branch is protected, so releases are made via merge requests. CI automa
 
 ### Step 1: Update CHANGELOG.md
 
-Prepare the changelog for release:
+Promote the existing `[Unreleased]` block to a versioned entry, then leave a fresh empty `[Unreleased]` above it. The order matters — `[Unreleased]` must stay at the top:
 
 ```markdown
-# Change from:
 ## [Unreleased]
-### Added
-- New feature X
 
-# To:
-## [0.1.0-alpha.1] - 2025-01-15
-### Added
-- New feature X
+## [0.1.0-alpha.1] - 2026-04-25
 
-## [Unreleased]
+### Added
+
+- New feature X
 ```
 
-### Step 2: Run the Release Script
+### Step 2: Cut a Release Branch
+
+`main` is protected, so the release commit lands via merge request. Branch first; the script commits to whatever branch is currently checked out.
+
+```bash
+git checkout -b release/controller-v<version>
+```
+
+### Step 3: Run the Release Script
 
 ```bash
 make release-controller VERSION=<version>
 # or directly: ./scripts/release-controller.sh <version>
 ```
 
-The script will:
+The script:
 
-- Validate version format (SemVer)
-- Check `CHANGELOG.md` has the version entry
-- Update the `VERSION` file
-- Update `Chart.yaml` `appVersion` and image annotation
-- Create a release commit
+- Validates the version format (`X.Y.Z` or `X.Y.Z-suffix.N`)
+- Aborts unless `CHANGELOG.md` already contains a `## [<version>]` entry from Step 1
+- Writes `<version>` to the `VERSION` file
+- Updates `Chart.yaml` `appVersion` and the `artifacthub.io/images` annotation (the latter is rewritten to `haptic:<version>-haproxy<DEFAULT_HAPROXY>` from `versions.env`)
+- Stages and commits those three files as `release: haptic-controller v<version>`
 
-### Step 3: Create and Merge Release MR
+The script does **not** create a tag — that happens in CI after the MR merges.
+
+### Step 4: Push and Open the MR
 
 ```bash
-# Create release branch
-git checkout -b release/controller-v<version>
-
-# Push branch
 git push -u origin release/controller-v<version>
 
-# Create merge request
 glab mr create --title "release: haptic-controller v<version>" \
   --description "Release haptic-controller v<version>" \
   --target-branch main
 ```
 
-Review and merge the MR through GitLab.
+Review and merge through GitLab.
 
 ### Automatic Tag Creation
 
@@ -140,39 +141,50 @@ When a `v*` tag is pushed, CI will:
 
 ### Step 1: Update the chart CHANGELOG
 
-Move `## [Unreleased]` entries into a versioned section in `charts/haptic/CHANGELOG.md`:
+Same shape as the controller changelog — keep `[Unreleased]` at the top and add the versioned entry below it in `charts/haptic/CHANGELOG.md`:
 
 ```markdown
-## [0.2.0] - 2025-01-20
+## [Unreleased]
+
+## [0.2.0] - 2026-04-25
+
 ### Changed
+
 - Updated default resource limits
 ```
 
-### Step 2: Run the Release Script
+### Step 2: Cut a Release Branch
+
+```bash
+git checkout -b release/haptic-chart-v<version>
+```
+
+### Step 3: Run the Release Script
 
 ```bash
 make release-chart CHART_VERSION=<version>
 # or directly: ./scripts/release-chart.sh <version>
 ```
 
-The script will:
+The script:
 
-- Validate version format (SemVer)
-- Check `charts/haptic/CHANGELOG.md` has the version entry
-- Update `Chart.yaml` `version`
-- Create a release commit
+- Validates the version format
+- Aborts unless `charts/haptic/CHANGELOG.md` already contains a `## [<version>]` entry from Step 1
+- Updates `Chart.yaml` `version`
+- Updates the `helm install ... --version <version>` examples in the root and chart `README.md`
+- Commits those changes as `release: chart v<version>`
 
-### Step 3: Create and Merge Release MR
+### Step 4: Push and Open the MR
 
 ```bash
-git checkout -b release/haptic-chart-v<version>
 git push -u origin release/haptic-chart-v<version>
+
 glab mr create --title "release: chart v<version>" \
   --description "Release chart v<version>" \
   --target-branch main
 ```
 
-Review and merge the MR through GitLab.
+Review and merge through GitLab.
 
 ### Automatic Tag Creation
 

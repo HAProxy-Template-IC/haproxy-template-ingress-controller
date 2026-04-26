@@ -41,7 +41,7 @@ type WebhookCertificates struct {
 	Version string
 }
 
-// fetchAndValidateInitialConfig fetches, parses, and validates the initial ConfigMap and Secret.
+// fetchAndValidateInitialConfig fetches, parses, and validates the initial HAProxyTemplateConfig CRD and credentials Secret.
 //
 // Returns the validated configuration and credentials, or an error if any step fails.
 func fetchAndValidateInitialConfig(

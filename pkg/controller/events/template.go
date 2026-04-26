@@ -22,7 +22,7 @@ import (
 // TemplateRenderedEvent is published when template rendering completes successfully.
 //
 // This event carries a single rendered HAProxy configuration using relative paths
-// (maps/, ssl/, files/) that work with HAProxy's `default-path config` directive.
+// (maps/, ssl/, files/) that work with HAProxy's `default-path origin` directive.
 // The same config works in any directory where the config file is placed.
 //
 // This event propagates the correlation ID from ReconciliationTriggeredEvent.
@@ -31,7 +31,7 @@ import (
 // ReconciliationTriggeredEvent to enable coalescing throughout the reconciliation pipeline.
 type TemplateRenderedEvent struct {
 	// HAProxyConfig is the rendered main HAProxy configuration.
-	// Uses relative paths (maps/, ssl/, files/) that work with HAProxy's `default-path config`.
+	// Uses relative paths (maps/, ssl/, files/) that work with HAProxy's `default-path origin`.
 	HAProxyConfig string
 
 	// AuxiliaryFiles contains all rendered auxiliary files (maps, certificates, general files).

@@ -49,7 +49,7 @@ cfg := types.WatcherConfig{
 
 w, err := watcher.New(cfg, k8sClient, logger)
 if err != nil { /* ... */ }
-if err := w.Start(ctx); err != nil { /* ... */ }
+go w.Start(ctx)                                 // Start blocks; run in its own goroutine.
 if _, err := w.WaitForSync(ctx); err != nil { /* ... */ }
 ```
 
@@ -59,7 +59,7 @@ Key `WatcherConfig` fields (see `pkg/k8s/types/types.go` for full docs):
 - `StoreType` — `StoreTypeMemory` (default) or `StoreTypeCached`. `CacheTTL` only applies to the cached store and defaults to ~2 min (auto-derived from drift prevention at the controller layer).
 - `DebounceInterval` — default `types.DefaultDebounceInterval` (5s). Set to 0 for default, or a positive duration to override.
 - `CallOnChangeDuringSync` — when true, `OnChange` fires during initial bulk load with `stats.IsInitialSync == true`; when false, only `OnSyncComplete` fires for the initial set.
-- `LabelSelector` / `FieldSelector` — server-side filters. `LabelSelector` is a `*metav1.LabelSelector`, not a string — convert from the CRD string form with `metav1.ParseToLabelSelector` before passing it in.
+- `LabelSelector` / `FieldSelector` — server-side filters. `LabelSelector` is a `*metav1.LabelSelector` here at the watcher layer, not a string. Two earlier conversions land its value: the CRD's `labelSelector` is a *string* like `"app=foo,env=prod"` (see `pkg/apis/haproxytemplate/v1alpha1/types_config.go`), `pkg/controller/conversion.parseLabelSelector` turns it into a `map[string]string` on the internal `config.WatchedResource`, and `pkg/controller/resourcewatcher/watcher.go:134` finally wraps that map as `&metav1.LabelSelector{MatchLabels: m}` for this layer. For richer selectors (`MatchExpressions`) construct the `*metav1.LabelSelector` directly when bypassing the CRD path.
 
 **`watcher.SingleWatcher`** — for one specific named resource (the controller's own `HAProxyTemplateConfig`, its credentials `Secret`, etc.). No indexing, no debounce, immediate callbacks.
 
@@ -68,7 +68,10 @@ cfg := &types.SingleWatcherConfig{
     GVR:       schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"},
     Namespace: "haptic",
     Name:      "haptic-config",
-    OnChange:  func(obj any) { /* ... */ },
+    // OnChange is types.OnResourceChangeCallback — `func(obj any) error`,
+    // distinct from the bulk watcher's `func(types.Store, types.ChangeStats)`.
+    // Returning an error logs it and keeps the watcher alive.
+    OnChange:  func(obj any) error { return nil },
 }
 w, err := watcher.NewSingle(cfg, k8sClient)
 ```

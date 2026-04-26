@@ -39,7 +39,7 @@ type singleRenderResult struct {
 }
 
 // performRender renders all templates for a reconciliation event.
-// Uses single render with relative paths that work with HAProxy's `default-path config`.
+// Uses single render with relative paths that work with HAProxy's `default-path origin`.
 // Propagates correlation ID from the triggering event to the rendered event.
 // This method is called by handleReconciliationTriggered after coalescing logic.
 func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
@@ -54,7 +54,7 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 		"correlation_id", correlationID)
 
 	// Create path resolver with fixed relative paths.
-	// These paths work with HAProxy's `default-path config` directive.
+	// These paths work with HAProxy's `default-path origin` directive.
 	// CRT-list files always use the general files directory to avoid triggering
 	// HAProxy reloads when creating CRT-list files through the native API.
 	pathResolver := &templating.PathResolver{

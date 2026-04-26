@@ -23,41 +23,58 @@ When leadership transitions occur, leader-only components start subscribing to e
 
 ## Leader-Only Components
 
-Components that only run on the elected leader (controller.go:783-790):
+Components that only run on the elected leader (registered via `registry.Build().LeaderOnly(...)` in `pkg/controller/reconciliation.go`):
 
 | Component | Purpose | Event Dependencies | State Replay | Cleanup |
 |-----------|---------|-------------------|--------------|---------|
+| **Coordinator** | Drives the synchronous render-validate pipeline | `ReconciliationTriggeredEvent` | N/A (subscribes via `SubscribeTypesLeaderOnly` after lease acquired) | N/A (context cancellation tears down) |
 | **DeploymentScheduler** | Schedules HAProxy deployments with rate limiting | `ValidationCompletedEvent`<br>`HAProxyPodsDiscoveredEvent` | N/A (receives replayed events) | ✅ `LostLeadershipEvent` |
 | **Deployer** | Executes deployments to HAProxy pods | `DeploymentScheduledEvent` | N/A (stateless) | N/A (stateless) |
 | **DriftPreventionMonitor** | Triggers periodic drift prevention deployments | `DeploymentCompletedEvent` | N/A (timer-based) | ✅ `LostLeadershipEvent` |
 | **ConfigPublisher** | Creates and updates HAProxyCfg and auxiliary file resources | `ConfigValidatedEvent`<br>`TemplateRenderedEvent`<br>`ValidationCompletedEvent`<br>`ConfigAppliedToPodEvent`<br>`HAProxyPodTerminatedEvent` | N/A (caches state from events) | ✅ `LostLeadershipEvent` |
+| **StatusUpdater** | Writes validation results back to the `HAProxyTemplateConfig` CRD's status subresource | `ConfigValidatedEvent`, `ConfigInvalidEvent` | N/A | N/A (context cancellation tears down) |
 
 ## All-Replica Components with State Replay
 
-Components that run on all replicas but replay state on leadership transitions:
+Components that run on all replicas and replay state on leadership transitions via `leadership.NewStateReplayer[T]`. Grep for `leadership.NewStateReplayer[` to confirm the canonical list:
 
 | Component | Purpose | Replays On Leadership | Handler |
 |-----------|---------|----------------------|---------|
-| **Discovery** | Discovers HAProxy pod endpoints | `BecameLeaderEvent` → `HAProxyPodsDiscoveredEvent` | ✅ discovery/component.go:278 |
-| **Renderer** | Renders HAProxy config templates | `BecameLeaderEvent` → `TemplateRenderedEvent` | ✅ renderer/component.go:230 |
-| **HAProxyValidator** | Validates rendered configurations | `BecameLeaderEvent` → `ValidationCompletedEvent` | ✅ validator/haproxy_validator.go:186 |
+| **ConfigChangeHandler** | Validation orchestrator + reinit signaller | `BecameLeaderEvent` → `ConfigValidatedEvent` | `configchange/handler.go` (`configReplayer`) |
+| **Discovery** | Discovers HAProxy pod endpoints | `BecameLeaderEvent` → `HAProxyPodsDiscoveredEvent` | `discovery/component.go` (`discoveredReplayer`) |
+| **HAProxyValidator** | Validates rendered configurations | `BecameLeaderEvent` → `ValidationCompletedEvent` | `validator/haproxy_validator.go` (`validationReplayer`) |
+
+The renderer is leader-only itself, so it has *no* `StateReplayer` — instead, the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (`pkg/controller/reconciler/reconciler.go`), so the new leader's pipeline produces a current `TemplateRenderedEvent` rather than replaying a stale one.
 
 ## Solution Architecture
 
 ### Pattern 1: State Replay on BecameLeaderEvent
 
-All-replica components that maintain state (config, validation results, endpoints) must re-publish their last state when a new leader is elected.
+All-replica components that maintain state (config, validation results, endpoints) must re-publish their last state when a new leader is elected. Use the `leadership.NewStateReplayer[T]` helper rather than rolling your own `sync.RWMutex` + `lastState`/`hasState` triple — the helper owns the mutex, the single-slot cache, and the `Cache` / `Get` / `HasState` / `Replay` API.
 
 **Implementation pattern:**
 
 ```go
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
+
 type Component struct {
     // ... existing fields ...
 
-    // State protected by mutex (for leadership transition replay)
-    mu           sync.RWMutex
-    lastState    State
-    hasState     bool
+    // Single-slot replayer for the leader-only late-subscriber problem.
+    stateReplayer *leadership.StateReplayer[*events.MyStateEvent]
+}
+
+func New(bus *busevents.EventBus, ...) *Component {
+    return &Component{
+        // ... existing wiring ...
+        stateReplayer: leadership.NewStateReplayer[*events.MyStateEvent](bus),
+    }
+}
+
+// On every successful state production, cache for replay:
+func (c *Component) onStateProduced(event *events.MyStateEvent) {
+    c.eventBus.Publish(event)
+    c.stateReplayer.Cache(event)
 }
 
 func (c *Component) handleEvent(event busevents.Event) {
@@ -69,20 +86,13 @@ func (c *Component) handleEvent(event busevents.Event) {
 }
 
 func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
-    c.mu.RLock()
-    hasState := c.hasState
-    state := c.lastState
-    c.mu.RUnlock()
-
-    if !hasState {
+    if !c.stateReplayer.Replay() {
         c.logger.Debug("became leader but no state available yet, skipping state replay")
-        return
     }
-
-    c.logger.Info("became leader, re-publishing last state for leader-only components")
-    c.eventBus.Publish(events.NewStateEvent(state))
 }
 ```
+
+The hand-rolled `sync.RWMutex` + `lastState` + `hasState` triple is the older pre-StateReplayer pattern and shouldn't be used in new code; grep `leadership.NewStateReplayer[` for the canonical examples (`configchange/handler.go`, `discovery/component.go`, `validator/haproxy_validator.go`).
 
 ### Pattern 2: State Cleanup on LostLeadershipEvent
 

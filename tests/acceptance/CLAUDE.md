@@ -156,7 +156,7 @@ func NewDebugClient(clientset kubernetes.Interface, namespace, serviceName strin
     }
 }
 
-func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]interface{}, error) {
+func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]any, error) {
     // Uses ProxyGet to fetch /debug/vars/config
 }
 
@@ -193,14 +193,21 @@ Factory functions for creating test resources:
 ```go
 // fixtures.go
 
-// NewConfigMap creates ConfigMap with given configuration
+// NewConfigMap creates a ConfigMap with given content (used for HTTP-store fixtures
+// and similar, NOT the controller's own configuration — that lives on a CRD).
 func NewConfigMap(namespace, name, configYAML string) *corev1.ConfigMap
 
-// NewSecret creates Secret with HAProxy credentials
+// NewSecret creates a Secret with HAProxy Dataplane API credentials.
 func NewSecret(namespace, name string) *corev1.Secret
 
-// NewControllerDeployment creates controller deployment
-func NewControllerDeployment(namespace, configMapName, secretName string, debugPort int32) *appsv1.Deployment
+// NewHAProxyTemplateConfigBuilder constructs the controller's primary CRD with
+// fluent setters; NewHAProxyTemplateConfig is the simpler all-defaults variant.
+func NewHAProxyTemplateConfigBuilder(namespace, name, secretName string) *HAProxyTemplateConfigBuilder
+func NewHAProxyTemplateConfig(namespace, name, secretName string, leaderElection bool) *haproxyv1alpha1.HAProxyTemplateConfig
+
+// NewControllerDeployment creates the controller Deployment. Six args including
+// a serviceAccountName and explicit replica count.
+func NewControllerDeployment(namespace, crdName, secretName, serviceAccountName string, debugPort int32, replicas int32) *appsv1.Deployment
 
 // NewDebugService creates a ClusterIP Service for accessing the debug endpoint via API proxy
 func NewDebugService(namespace, deploymentName string, debugPort int32) *corev1.Service
@@ -226,17 +233,18 @@ import (
     "sigs.k8s.io/e2e-framework/pkg/features"
 )
 
+// testEnv is a package-scope env.Environment initialised in TestMain
+// (env.go:119). There is no per-test Setup(t) constructor — each test calls
+// testEnv.Test(t, feature) directly.
 func TestMyFeature(t *testing.T) {
-    testEnv := Setup(t)
-
     feature := features.New("My Feature").
         Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
             client, err := cfg.NewClient()
             require.NoError(t, err)
 
             // Create test resources
-            cm := NewConfigMap(namespace, "my-config", InitialConfigYAML)
-            err = client.Resources().Create(ctx, cm)
+            htplCfg := NewHAProxyTemplateConfigBuilder(namespace, ControllerCRDName, ControllerSecretName).Build()
+            err = client.Resources().Create(ctx, htplCfg)
             require.NoError(t, err)
 
             // ... create Secret, Deployment
@@ -245,12 +253,16 @@ func TestMyFeature(t *testing.T) {
         }).
         Assess("Feature works", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
             client, _ := cfg.NewClient()
-
-            // Setup debug and metrics access via API proxy
-            debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+            clientset, err := kubernetes.NewForConfig(cfg.Client().RESTConfig())
             require.NoError(t, err)
 
-            metricsClient, err := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
+            // Setup debug and metrics access via API proxy. Both helpers need
+            // the typed *kubernetes.Clientset *and* the e2e-framework
+            // klient.Client because the proxy lookup goes through CoreV1().
+            debugClient, err := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
+            require.NoError(t, err)
+
+            metricsClient, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
             require.NoError(t, err)
 
             // Wait for controller to complete startup reconciliation
@@ -287,8 +299,11 @@ require.NoError(t, err)
 ### Using Debug Endpoints
 
 ```go
-// Setup debug client via API proxy - no Start() needed
-debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+// Setup debug client via API proxy - no Start() needed.
+// The clientset is required because the helper looks up the debug Service
+// through CoreV1() before constructing the proxy URL.
+clientset, _ := kubernetes.NewForConfig(cfg.Client().RESTConfig())
+debugClient, err := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
 require.NoError(t, err)
 
 // Get full config
@@ -317,18 +332,23 @@ require.NoError(t, err)
 ```go
 client, _ := cfg.NewClient()
 
-// Create ConfigMap
-cm := NewConfigMap(namespace, "config", configYAML)
-err := client.Resources().Create(ctx, cm)
+// Create the primary HAProxyTemplateConfig CRD (the controller is CRD-driven;
+// the older ConfigMap-based path no longer exists).
+htplConfig := NewHAProxyTemplateConfigBuilder(namespace, ControllerCRDName, ControllerSecretName).Build()
+err := client.Resources().Create(ctx, htplConfig)
 require.NoError(t, err)
 
 // Create Secret
-secret := NewSecret(namespace, "credentials")
+secret := NewSecret(namespace, ControllerSecretName)
 err = client.Resources().Create(ctx, secret)
 require.NoError(t, err)
 
-// Create Deployment
-deployment := NewControllerDeployment(namespace, "config", "credentials", 6060)
+// Create Deployment — note the six-arg signature.
+deployment := NewControllerDeployment(
+    namespace,
+    ControllerCRDName, ControllerSecretName, ControllerServiceAccountName,
+    DebugPort, 1, // replicas
+)
 err = client.Resources().Create(ctx, deployment)
 require.NoError(t, err)
 ```
@@ -341,7 +361,8 @@ require.NoError(t, err)
 
 ```go
 // Bad - controller might not be ready
-debugClient, _ := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+clientset, _ := kubernetes.NewForConfig(cfg.Client().RESTConfig())
+debugClient, _ := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
 config, _ := debugClient.GetConfig(ctx)  // Might fail or return incomplete data!
 ```
 
@@ -349,11 +370,12 @@ config, _ := debugClient.GetConfig(ctx)  // Might fail or return incomplete data
 
 ```go
 // Good - wait for controller ready using metrics
-metricsClient, _ := SetupMetricsAccess(ctx, client, namespace, 30*time.Second)
+clientset, _ := kubernetes.NewForConfig(cfg.Client().RESTConfig())
+metricsClient, _ := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
 _, err := WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, 2*time.Minute)
 require.NoError(t, err)
 
-debugClient, _ := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+debugClient, _ := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
 config, _ := debugClient.GetConfig(ctx)  // Works!
 ```
 
@@ -375,7 +397,8 @@ debugClient := NewDebugClient(nodeHost, nodePort)  // OLD PATTERN
 
 ```go
 // Good - API proxy is reliable in all environments
-debugClient, err := SetupDebugClient(ctx, client, namespace, 30*time.Second)
+clientset, _ := kubernetes.NewForConfig(cfg.Client().RESTConfig())
+debugClient, err := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
 require.NoError(t, err)
 // No Start() or Stop() needed - client uses API proxy
 ```
@@ -407,7 +430,7 @@ config, _ := debugClient.GetConfig(ctx)  // New version!
 
 ```go
 // Bad - hardcoded field paths
-maxconn := config["config"].(map[string]interface{})["templates"].(map[string]interface{})["main"]
+maxconn := config["config"].(map[string]any)["templates"].(map[string]any)["main"]
 ```
 
 **Solution**: Use string matching or JSONPath via debug client.
@@ -511,21 +534,26 @@ E2E framework manages cluster lifecycle. To inspect during test execution:
 
 ```bash
 # Run test
-go test -v ./tests/acceptance
+make test-acceptance
 
-# While test is running or failed, inspect
+# While test is running or failed, inspect (the namespace name is the per-test
+# value, not the static "haproxy-test"; use KEEP_NAMESPACE=true to keep it
+# around — see "Keep Namespace After Test" above).
 kubectl config use-context kind-haproxy-test
-kubectl get pods -n haproxy-test
-kubectl logs -n haproxy-test haptic-xxx
+NS=$(kubectl get namespaces -o name | grep test- | head -1)
+kubectl get pods -n ${NS#namespace/}
+kubectl logs -n ${NS#namespace/} -l app=haptic-controller
 
-# Access debug endpoint via NodePort (tests create the service automatically)
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-NODE_PORT=$(kubectl get svc -n haproxy-test haptic-debug -o jsonpath='{.spec.ports[0].nodePort}')
-curl http://$NODE_IP:$NODE_PORT/debug/vars/config
+# For ad-hoc debug access *outside* tests, port-forward works fine (the test
+# framework avoids it because parallel SPDY connections are unstable, but a
+# single manual session is OK):
+POD=$(kubectl get pod -n ${NS#namespace/} -l app=haptic-controller -o name | head -1)
+kubectl port-forward -n ${NS#namespace/} $POD 8080:8080
+curl http://localhost:8080/debug/vars/config
 
-# Or for quick manual testing, use port-forward (not used in actual tests)
-kubectl port-forward -n haproxy-test pod/haptic-xxx 6060:6060
-curl http://localhost:6060/debug/vars/config
+# Note: tests create ClusterIP Services (not NodePort) and reach them via the
+# API-server proxy; the older NodePort instructions in this section have been
+# removed because Kind/DinD doesn't expose NodePorts without extraPortMappings.
 ```
 
 ### View Controller Logs

@@ -135,27 +135,50 @@ config := &leaderelection.Config{
 
 ## Common Pitfalls
 
-### Not Checking IsLeader Before Acting
+### Ignoring the Callback's Context
 
-**Problem**: Assuming callbacks guarantee exclusive access.
+**Problem**: Long-running work in `OnStartedLeading` keeps going after the
+elector has lost the lease. Leadership *is* exclusive at the instant the
+callback fires — the race is between "leadership lost" and "in-flight work
+keeps writing as if it's still leader".
 
 ```go
-// Bad - race condition possible
+// Bad — the goroutine outlives leadership
 callbacks.OnStartedLeading = func(ctx context.Context) {
-    deployToHAProxy()  // Might not be leader yet!
+    go func() {
+        for {
+            deployToHAProxy() // blissfully unaware leadership was lost
+            time.Sleep(time.Minute)
+        }
+    }()
 }
 ```
 
-**Solution**: Check `IsLeader()` in critical sections.
+**Solution**: Respect the context the callback receives. The elector cancels
+it as soon as leadership is lost, so any work that derives from it stops
+naturally.
 
 ```go
-// Good - verify leadership
+// Good — work tied to the leadership-scoped context
 callbacks.OnStartedLeading = func(ctx context.Context) {
-    if elector.IsLeader() {
-        deployToHAProxy()
-    }
+    go func() {
+        ticker := time.NewTicker(time.Minute)
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ticker.C:
+                deployToHAProxy()
+            case <-ctx.Done(): // fires the moment leadership is lost
+                return
+            }
+        }
+    }()
 }
 ```
+
+`IsLeader()` and `GetLeader()` are useful for logging/observability, but
+spamming them inside hot paths instead of using the context is a smell —
+they're snapshot accessors, not synchronisation primitives.
 
 ### Forgetting to Handle OnStoppedLeading
 
@@ -199,4 +222,4 @@ RetryPeriod:   2 * time.Second,
 
 - Kubernetes leader election: <https://pkg.go.dev/k8s.io/client-go/tools/leaderelection>
 - Controller event adapter: `pkg/controller/leaderelection/CLAUDE.md`
-- Configuration: `pkg/core/config/types.go` (LeaderElection struct)
+- Configuration: `pkg/core/config/types.go` — `LeaderElectionConfig` struct, exposed on `Config.Controller.LeaderElection` (CRD path `spec.controller.leaderElection`; the snake_case `leader_election` form is the internal YAML the controller round-trips through, not what users put in the CR)
