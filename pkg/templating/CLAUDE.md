@@ -1178,37 +1178,35 @@ The fork is consumed directly as a normal `require` in `go.mod` — no `replace`
 grep gitlab.com/haproxy-haptic/scriggo go.mod
 ```
 
-### Include: Static vs Dynamic
+### Include: Static and Glob
 
 The Scriggo engine provides two ways to include templates:
 
 | Pattern | Syntax | Evaluation | Use Case |
 |---------|--------|------------|----------|
-| Static render | `{{ render "literal/path" }}` | Runtime | Fixed template paths |
-| Dynamic render | `{{ render(variable) }}` | Runtime | Computed template names |
-| Glob render | `{{ render_glob "pattern-*" }}` | Runtime | Pattern-matched templates |
+| Static render | `{{ render "literal/path" }}` | Compile-time expansion + runtime render | Fixed template paths |
+| Glob render | `{{ render_glob "pattern-*" }}` | Compile-time expansion + runtime render | Pattern-matched templates |
 
-**Static renders** (`render` function with string literal):
+**Both `render` and `render_glob` require a string literal** — the path / pattern is expanded against the template filesystem at compile time so the engine can validate paths exist, expand globs into their matching templates, and emit each as a parallelisable render. Variables / computed expressions are not accepted; the parser will reject them with `unexpected X, expecting string`.
 
-- Path is a string literal
-- Template is resolved at runtime
+**Static renders** (`render` with string literal):
 
 ```go
 {{ render "header" }}      {# Valid - literal path #}
 {{ render "partials/footer" }} {# Valid - literal path #}
 ```
 
-**Dynamic renders** (`render` function with variable):
-
-- Path can be a variable or expression
-- Template is resolved at runtime
-- Required for computed template names
+If you need to dispatch on a runtime value, use an explicit `if` ladder with literal `render` calls:
 
 ```go
-{% for _, name := range glob_match(templateSnippets, "backend-*") %}
-  {{ render(name) }}  {# Dynamic - name is a variable #}
+{% if name == "check-auth" %}
+  {{ render "spoe-message-check-auth-body" }}
+{% else if name == "fingerprint" %}
+  {{ render "spoe-message-fingerprint-body" }}
 {% end %}
 ```
+
+This keeps compile-time path validation; the trade-off is that the dispatch is not data-driven (every new branch requires a code change).
 
 **Glob renders** (`render_glob` function):
 

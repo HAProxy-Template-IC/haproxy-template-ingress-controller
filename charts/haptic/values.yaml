@@ -1451,7 +1451,13 @@ spoaHub:
         detect_only = false
         transaction_ttl_ms = 10000
     external-auth:
-      enabled: '{{ false }}'
+      # Auto-enabled when any ingress library that consumes external-auth
+      # annotations is enabled. Currently nginx-ingress is the only
+      # library wired to the auth-url annotation (cycle 4 part A); the
+      # haproxy-ingress and haproxytech libraries will join the OR when
+      # their auth handlers ship in part B. Override with 'true'/'false'
+      # here to force the plugin on or off regardless of library state.
+      enabled: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
       timeoutMs: 6000
       messages: ["check-auth"]
       dependsOn: []

@@ -16,19 +16,24 @@
 # controller stays generic — it never sees a "spoaHub" field in the CRD
 # spec.
 #
-# Extension points for plugin libraries (cycle 4):
+# Extension points for plugin libraries:
 #
-#   spoe-agents-*           — extra directives inside spoe-agent block
-#                             (e.g. additional `option` lines)
-#   spoe-messages-*         — `spoe-message <name>` blocks defining the
-#                             per-plugin args/event bindings; when no
-#                             snippet contributes, this library auto-stubs
-#                             a minimal block per message in the union so
-#                             HAProxy still validates the agent reference.
-#   frontend-spoe-filters-* — extra lines after the filter directive
-#                             (e.g. `http-request set-var(...)` to bind
-#                             ingress annotation values to SPOE message
-#                             args).
+#   spoe-agents-*                    — extra directives inside spoe-agent
+#                                      block (e.g. additional `option` lines).
+#   spoe-messages-<message-name>-*   — `spoe-message <name>` block defining
+#                                      one message's args/fetches. Resolved
+#                                      per-message: contributing libraries
+#                                      replace the auto-stub for their own
+#                                      messages, and untouched messages still
+#                                      get a minimal stub so HAProxy accepts
+#                                      the agent's group references.
+#   frontend-spoe-filters-*          — directives in frontend, after the
+#                                      filter spoe directive (e.g. set-var
+#                                      for SPOE args, send-spoe-group to
+#                                      trigger a check, deny rules on the
+#                                      plugin's response var).
+#   map-auth-url-*                   — per-ingress entries for auth-url.map
+#                                      (cycle 4 external-auth flow).
 #
 # Usage:
 #   controller:
@@ -77,7 +82,12 @@ templateSnippets:
       [spoa-hub]
 
       spoe-agent spoa-hub-agent
-          messages {{ join(messages, " ") }}
+      {%- if len(messages) > 0 %}
+          groups
+            {%- for _, msg := range messages -%}
+              {{ " " + msg + "-group" }}
+            {%- end %}
+      {%- end %}
           option var-prefix       hub
           option pipelining
           option async
@@ -85,23 +95,46 @@ templateSnippets:
           timeout idle       {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
           timeout processing {{ extraContext | dig("spoaHub", "timeoutProcessing") | fallback("500ms") }}
           use-backend spoa-hub
-      {{- render_glob "spoe-agents-*" }}
-
-      {#- Per-plugin SPOE message bodies. Plugin libraries (cycle 4)
-          contribute named snippets `spoe-messages-<plugin>` that define
-          `spoe-message <name>` blocks bound to ingress annotations. When
-          no library contributes, each message in the chart-supplied
-          union still needs a body so HAProxy accepts the agent's
-          `messages` reference — emit a minimal stub. -#}
-      {%- if len(glob_match(templateSnippets, "spoe-messages-*")) > 0 %}
-      {{ render_glob "spoe-messages-*" }}
-      {%- else %}
+      {{ render_glob "spoe-agents-*" }}
+      {#- Per-message SPOE-message bodies. Each known plugin message
+          gets its canonical body via a literal `render`; everything
+          else falls back to a minimal stub so HAProxy accepts the
+          group's reference. This dispatch is hard-coded because the
+          Scriggo fork's `render` requires a string literal — adding
+          a new plugin with a real body means adding a branch here.
+          The leading blank line before each block is required: the
+          HAProxy SPOE config parser uses blank lines as block
+          separators. -#}
       {%- for _, msg := range messages %}
 
+      {% if msg == "check-auth" -%}
+      {{ render "spoe-message-check-auth-body" }}
+      {%- else -%}
       spoe-message {{ msg }}
           args ip=src
       {%- end %}
       {%- end %}
+
+      {#- Per-message group definitions. Each message becomes a singleton
+          group (`<msg>-group`) so frontends can trigger it explicitly
+          via `http-request send-spoe-group spoa-hub-agent <msg>-group`. -#}
+      {%- for _, msg := range messages %}
+
+      spoe-group {{ msg }}-group
+          messages {{ msg }}
+      {%- end %}
+
+  # Canonical spoe-message check-auth body. Rendered by name from
+  # spoe-conf-content's per-message dispatch when "check-auth" is in
+  # the messages union. Args follow the haproxy-spoa-hub external-auth
+  # plugin's documented contract: auth_url=var(txn.auth_url) plus a
+  # fixed set of forward headers. The plugin reads txn.auth_url, makes
+  # an HTTP subrequest, and writes back the response variables
+  # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
+  spoe-message-check-auth-body:
+    template: |-
+      spoe-message check-auth
+          args auth_url=var(txn.auth_url) path=path hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
 
   frontend-filters-100-spoa-hub:
     template: |
@@ -109,6 +142,29 @@ templateSnippets:
       filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
       {{- render_glob "frontend-spoe-filters-*" }}
       {%- end %}
+
+  # External-auth wiring: looks up the per-ingress auth URL in
+  # auth-url.map (populated by ingress libraries from their auth-url
+  # annotation), triggers the SPOE check, and denies on failure.
+  # Conditional on `check-auth` being in the chart's messages union —
+  # only emits when the external-auth plugin is enabled.
+  frontend-spoe-filters-100-external-auth:
+    template: |
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- if messages contains "check-auth" %}
+      http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
+      http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
+      http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
+      {%- end %}
+
+maps:
+  auth-url.map:
+    template: |
+      # External-auth: per-ingress auth-url annotation values.
+      # Keyed by host+path (matching the routing-logic key in base.yaml).
+      # Populated by ingress libraries' map-auth-url-* contributions.
+      {{- render_glob "map-auth-url-*" -}}
 
 validationTests:
   test-spoa-hub-disabled:
@@ -134,11 +190,11 @@ validationTests:
 
   test-spoa-hub-rendering:
     description: |
-      With extraContext.spoaHub.enabled=true and a non-empty messages
-      list, the library emits the spoa-hub backend, the SPOE filter
-      directive in frontends, and registers spoe.conf with the agent
-      block plus auto-stubbed message bodies (cycle 4 plugin libraries
-      replace the stubs by contributing `spoe-messages-*` snippets).
+      With extraContext.spoaHub.enabled=true and `check-auth` in the
+      messages union, the library emits the spoa-hub backend, the SPOE
+      filter directive, the per-message group + canonical message body,
+      and the external-auth frontend wiring (auth-url lookup, group
+      trigger, deny rule).
     extraContext:
       spoaHub:
         enabled: true
@@ -172,14 +228,30 @@ validationTests:
         pattern: "filter spoe engine spoa-hub config"
         description: Frontends include the SPOE filter directive
       - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+        description: Frontend explicitly triggers the auth group when auth_url is set
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 401"
+        description: Frontend denies on auth failure
+      - type: contains
         target: file:spoe.conf
         pattern: "spoe-agent spoa-hub-agent"
         description: spoe.conf declares the spoa-hub agent
       - type: contains
         target: file:spoe.conf
-        pattern: "messages check-auth"
-        description: Agent's messages line lists the configured message
+        pattern: "groups check-auth-group"
+        description: Agent's groups line references the auth group
       - type: contains
         target: file:spoe.conf
         pattern: "spoe-message check-auth"
-        description: Auto-stub spoe-message block exists for each message
+        description: Canonical spoe-message check-auth body is emitted
+      - type: contains
+        target: file:spoe.conf
+        pattern: "args auth_url=var\\(txn.auth_url\\)"
+        description: Message args include the auth_url binding
+      - type: contains
+        target: file:spoe.conf
+        pattern: "spoe-group check-auth-group"
+        description: Group definition references the message
