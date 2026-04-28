@@ -488,6 +488,275 @@ publish-chart-snapshot:
       echo "Published chart snapshot: haptic:${SNAPSHOT_VERSION}"
 
 # =============================================================================
+# SPOA Hub Image (sidecar for the HAProxy pod)
+# =============================================================================
+#
+# Builds a multi-arch container image that layers six plugin shared
+# libraries on top of registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub.
+# Lifecycle rides with the controller VERSION; the image is HAProxy-version
+# independent (the hub speaks SPOP at the wire level, no link-time HAProxy
+# dep). Plugin .so files come from the upstream projects' Generic Package
+# Registries — every download is sha256-checked against the project's
+# SHA256SUMS manifest and cosign-verified against the project's tag identity.
+
+.rules-spoa:
+  rules:
+    - changes:
+        - versions-spoa.env
+        - Dockerfile.spoa-hub
+        - scripts/prep-spoa-plugins.sh
+        - scripts/smoke-spoa-image.sh
+        - scripts/render-spoa-bundle.sh
+        - docs/controller/docs/operations/spoa-hub.md
+        - .gitlab-ci.yml
+
+# Drift guard: the bundled-versions table in spoa-hub.md is auto-rendered
+# from versions-spoa.env. Fail CI if the doc and the env file disagree.
+docs-spoa-versions:
+  stage: lint
+  image: alpine:latest
+  tags:
+    - saas-linux-small-amd64
+  needs: []
+  rules:
+    - !reference [.rules-spoa, rules]
+  interruptible: true
+  before_script:
+    - apk add --no-cache bash
+  script:
+    - bash scripts/render-spoa-bundle.sh --check
+
+# Download upstream plugin .so files for every architecture, verify each
+# against its project's SHA256SUMS manifest and cosign-attested keyless
+# signature, and stage them under plugins/<arch>/ for the build job. The
+# CI image already ships cosign; alpine is enough here since we only need
+# bash (for associative arrays in the prep script), curl, jq, and cosign.
+prep-spoa-plugins:
+  stage: build
+  image: alpine:latest
+  tags:
+    - saas-linux-small-amd64
+  needs: []
+  rules:
+    - !reference [.rules-spoa, rules]
+  interruptible: true
+  before_script:
+    - apk add --no-cache bash curl cosign jq
+  script:
+    - bash scripts/prep-spoa-plugins.sh
+  artifacts:
+    paths:
+      - plugins/
+    expire_in: 1 week
+
+# Multi-arch image build template. The Dockerfile pulls plugin .so files
+# from the prep stage via --build-context plugins=plugins.
+.build-spoa-image-base:
+  stage: build
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  extends:
+    - .docker-dind
+  tags:
+    - saas-linux-large-amd64
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+    - job: prep-spoa-plugins
+  variables:
+    SPOA_IMAGE: "${CI_REGISTRY_IMAGE}/spoa-hub"
+  before_script:
+    - source versions-spoa.env
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker context create builder-context
+    - docker buildx create --use --name multiarch --bootstrap builder-context
+    - docker run --rm --privileged tonistiigi/binfmt --install arm64,arm
+  script:
+    # Upstream hub image tags are stripped of the leading `v` (e.g. tag
+    # v0.2.2 publishes as :0.2.2), matching the upstream CI's IMAGE_TAG=
+    # ${CI_COMMIT_TAG#v} convention. Dockerfile ARG substitution can't do
+    # the prefix-strip itself (`${VAR#v}` is bash, not Dockerfile syntax),
+    # so we strip in CI before passing as a build-arg.
+    - HUB_TAG="${SPOA_HUB_VERSION#v}"
+    - |
+      docker buildx build \
+        --platform "${PLATFORMS}" \
+        --build-arg "SPOA_HUB_VERSION=${HUB_TAG}" \
+        --build-context plugins=plugins \
+        --label "org.opencontainers.image.source=${CI_PROJECT_URL}" \
+        --label "org.opencontainers.image.revision=${CI_COMMIT_SHA}" \
+        --label "org.opencontainers.image.version=${SPOA_TAG}" \
+        --tag "${SPOA_IMAGE}:${SPOA_TAG}" \
+        --metadata-file metadata.json \
+        --push \
+        -f Dockerfile.spoa-hub \
+        .
+  artifacts:
+    paths:
+      - metadata.json
+    expire_in: 1 week
+
+# Single-arch snapshot for MR pipelines (smoke-tested then discarded).
+build-spoa-image-snapshot:
+  extends: .build-spoa-image-base
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-spoa, rules]
+  interruptible: true
+  variables:
+    PLATFORMS: "linux/amd64"
+    SPOA_TAG: "ci-${CI_PIPELINE_ID}"
+
+# Multi-arch publish from main branch.
+build-spoa-image-main:
+  extends: .build-spoa-image-base
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
+    SPOA_TAG: "main-${CI_COMMIT_SHORT_SHA}"
+  after_script:
+    - docker buildx imagetools create --tag "${CI_REGISTRY_IMAGE}/spoa-hub:main-latest"
+        "${CI_REGISTRY_IMAGE}/spoa-hub:main-${CI_COMMIT_SHORT_SHA}"
+
+# Multi-arch release on version tags. Sign + attest jobs depend on this.
+build-spoa-image-release:
+  extends: .build-spoa-image-base
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+  variables:
+    PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
+    SPOA_TAG: "${CI_COMMIT_TAG#v}"
+  after_script:
+    - |
+      if ! echo "$CI_COMMIT_TAG" | grep -qE -- '-(alpha|beta|rc)'; then
+        docker buildx imagetools create \
+          --tag "${CI_REGISTRY_IMAGE}/spoa-hub:latest" \
+          "${CI_REGISTRY_IMAGE}/spoa-hub:${CI_COMMIT_TAG#v}"
+      fi
+
+# Cosign keyless sign-by-digest of the released image.
+sign-spoa-image:
+  stage: build
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  tags:
+    - saas-linux-small-amd64
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+    - job: build-spoa-image-release
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+  variables:
+    COSIGN_YES: "true"
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - DIGEST=$(jq -r '."containerimage.digest"' metadata.json)
+    - cosign sign --yes "${CI_REGISTRY_IMAGE}/spoa-hub@${DIGEST}"
+
+# CycloneDX SBOM via syft, attached as a cosign attestation.
+attest-spoa-sbom:
+  stage: build
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
+  tags:
+    - saas-linux-small-amd64
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+    - job: build-spoa-image-release
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+  variables:
+    COSIGN_YES: "true"
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - DIGEST=$(jq -r '."containerimage.digest"' metadata.json)
+    - syft scan "${CI_REGISTRY_IMAGE}/spoa-hub@${DIGEST}" -o cyclonedx-json=spoa-sbom.cdx.json
+    - cosign attest --yes --type cyclonedx --predicate spoa-sbom.cdx.json
+        "${CI_REGISTRY_IMAGE}/spoa-hub@${DIGEST}"
+  artifacts:
+    paths:
+      - spoa-sbom.cdx.json
+    expire_in: 1 month
+
+# Boot the snapshot image and verify all six plugins load. amd64 only on
+# MR pipelines (snapshot build is single-arch); arm64 smoke gates to main
+# and release where the multi-arch manifest is published.
+.smoke-spoa-base:
+  stage: integration
+  image: docker:${DOCKER_VERSION}
+  extends:
+    - .docker-dind
+  interruptible: true
+  timeout: 5 minutes
+  before_script:
+    - apk add --no-cache bash
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+
+  script:
+    - |
+      if [ -n "${CI_COMMIT_TAG}" ]; then
+        SPOA_SMOKE_TAG="${CI_COMMIT_TAG#v}"
+      elif [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+        SPOA_SMOKE_TAG="main-${CI_COMMIT_SHORT_SHA}"
+      else
+        SPOA_SMOKE_TAG="ci-${CI_PIPELINE_ID}"
+      fi
+    - bash scripts/smoke-spoa-image.sh "${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_SMOKE_TAG}"
+
+smoke-spoa-amd64:
+  extends: .smoke-spoa-base
+  tags:
+    - saas-linux-small-amd64
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+      when: never
+    - !reference [.rules-spoa, rules]
+  needs:
+    - job: build-spoa-image-snapshot
+      optional: true
+    - job: build-spoa-image-main
+      optional: true
+    - job: build-spoa-image-release
+      optional: true
+
+# arm64 smoke needs a multi-arch manifest, so it only runs on main and on
+# release tags where build-spoa-image-{main,release} produces one. MR
+# pipelines build snapshot as amd64 only, so arm64 smoke is unreachable
+# there by design.
+smoke-spoa-arm64:
+  extends: .smoke-spoa-base
+  tags:
+    - saas-linux-small-arm64
+  # Workaround for MTU mismatch on hosted arm64 dind runners
+  services:
+    - name: docker:${DOCKER_VERSION}-dind
+      alias: docker
+      command: ["--mtu=1400"]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v.*/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  needs:
+    - job: build-spoa-image-main
+      optional: true
+    - job: build-spoa-image-release
+      optional: true
+
+# =============================================================================
 # Integration Stage
 # =============================================================================
 

@@ -39,6 +39,16 @@
       "depNameTemplate": "haproxy-debian {{{seriesMajor}}}.{{{seriesMinor}}}.x",
       "packageNameTemplate": "haproxytech/haproxy-debian",
       "versioningTemplate": "regex:^(?<major>{{{seriesMajor}}})\\.(?<minor>{{{seriesMinor}}})\\.(?<patch>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "SPOA hub bundle versions in versions-spoa.env. Each entry has a `# renovate:` comment naming the upstream GitLab Generic Package, then a `<NAME>_VERSION=\"vX.Y.Z\"` assignment. The shipped customManagers:gitlabPipelineVersions preset only matches .gitlab-ci.yml so we need a dedicated manager for this file.",
+      "fileMatch": [
+        "^versions-spoa\\.env$"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) packageName=(?<packageName>\\S+) registryUrl=(?<registryUrl>\\S+) depName=(?<depName>\\S+)\\s*\\n[A-Z_]+_VERSION=\"(?<currentValue>[^\"]+)\""
+      ]
     }
   ],
   "packageRules": [
@@ -118,6 +128,13 @@
         "haproxy/haproxy"
       ],
       "extractVersion": "^v(?<version>\\d+\\.\\d+)\\."
+    },
+    {
+      "description": "Group all SPOA hub bundle bumps (hub + 6 plugins) into a single MR per run so the bundle moves forward atomically. No auto-merge: these bumps re-validate the supply-chain prep job and the smoke test, so a human should review at least until the bundle has been stable for a release cycle.",
+      "matchFileNames": [
+        "versions-spoa.env"
+      ],
+      "groupName": "spoa hub bundle"
     }
   ]
 }

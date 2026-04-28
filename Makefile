@@ -2,6 +2,7 @@
         test test-integration test-acceptance test-acceptance-parallel build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
+        spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
         release-controller release-chart goreleaser-snapshot \
         pgo-profile pgo-merge
@@ -326,6 +327,31 @@ docker-clean: ## Remove Docker images and build cache
 	@echo "Pruning build cache..."
 	-docker builder prune -f
 	@echo "✓ Docker cleanup complete"
+
+## SPOA hub image targets
+
+spoa-prep: ## Download and verify plugin .so files into plugins/<arch>/ (uses cosign)
+	@bash scripts/prep-spoa-plugins.sh
+
+spoa-bundle-render: ## Render docs/.../spoa-hub.md bundled-versions table from versions-spoa.env
+	@bash scripts/render-spoa-bundle.sh
+
+spoa-bundle-check: ## Verify docs/.../spoa-hub.md is in sync with versions-spoa.env (CI guard)
+	@bash scripts/render-spoa-bundle.sh --check
+
+spoa-hub-image: spoa-prep ## Build spoa-hub image locally (single-arch amd64, tagged spoa-hub:dev)
+	@set -a; . ./versions-spoa.env; set +a; \
+	HUB_TAG="$${SPOA_HUB_VERSION#v}"; \
+	echo "Building spoa-hub:dev (linux/amd64, FROM hub $$HUB_TAG)"; \
+	docker buildx build \
+		--platform linux/amd64 \
+		--build-arg "SPOA_HUB_VERSION=$$HUB_TAG" \
+		--build-context plugins=plugins \
+		--load \
+		-f Dockerfile.spoa-hub \
+		-t spoa-hub:dev \
+		.
+	@echo "Built spoa-hub:dev"
 
 ## Dependency management
 

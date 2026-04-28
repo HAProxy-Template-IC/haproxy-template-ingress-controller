@@ -81,3 +81,4 @@ charts/haptic/docs/stylesheets/colors.css
 
 # Claude Code working files
 .claude/
+plugins/

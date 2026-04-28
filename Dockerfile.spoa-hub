@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1.6
+# HAPTIC SPOA hub image: layers all six plugin shared libraries on top of
+# the upstream haproxy-spoa-hub container so they're loaded at hub startup.
+#
+# Plugins/ is staged by CI's prep-spoa-plugins job (downloads, verifies
+# upstream sha256 + cosign signatures, strips the per-arch suffix so the
+# *.so glob below picks up the bare libname).
+
+ARG SPOA_HUB_VERSION
+FROM registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION}
+
+# Plugin runtime dependencies the upstream debian:bookworm-slim base doesn't
+# carry. sso-auth links against libxmlsec1-openssl for SAML2 signature
+# verification. Add others here as upstream plugins acquire native deps.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libxmlsec1-openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+COPY --from=plugins ${TARGETARCH}${TARGETVARIANT}/ /etc/haproxy-spoa-hub/plugins/
+
+LABEL org.opencontainers.image.title="haptic-spoa-hub"
+LABEL org.opencontainers.image.description="HAProxy SPOA hub bundled with HAPTIC plugins (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth)"
+LABEL org.opencontainers.image.source="https://gitlab.com/haproxy-haptic/haptic"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
