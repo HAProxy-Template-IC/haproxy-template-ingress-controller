@@ -1349,4 +1349,183 @@ networkPolicy:
 #         endpoints:
 #           - port: stats
 #             path: /metrics
+# SPOA hub sidecar
+# Bundles the haproxy-spoa-hub binary plus six plugin shared libraries
+# (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth) inside
+# the HAProxy pod. Communicates with HAProxy over a Unix-domain socket.
+# The sidecar is rendered conditionally — absent when no plugin is
+# enabled, automatically present when at least one is.
+spoaHub:
+  # Master enable. Leave as null to auto-derive from plugins.*.enabled
+  # (the typical case). Set to false to force the sidecar off even when a
+  # plugin is enabled (rare; mostly for migrations or chart testing).
+  # Set to true to render the sidecar even with no plugins enabled (useful
+  # for chart-rendering tests).
+  enabled: null
+
+  image:
+    repository: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub
+    pullPolicy: IfNotPresent
+    # Override the tag. Leave empty to use .Chart.AppVersion (recommended).
+    tag: ""
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  # Hub-side runtime knobs (rendered into /etc/haproxy-spoa-hub/config.toml).
+  hub:
+    # info | debug | warn | error
+    logLevel: "info"
+    # Tokio worker thread count. Leave null for the default (CPU count).
+    workerThreads: null
+    maxConnections: 1000
+    blockingThreadKeepAliveSecs: 30
+
+  # HAProxy-side wiring. Cycle 2 part 2 / cycle 4 will surface these into
+  # the rendered haproxy.cfg via the controller's templating engine.
+  haproxy:
+    socketPath: /run/spoa/hub.sock
+    # `mode spop` uses HAProxy 3.0+'s native SPOP backend mode, skipping
+    # the SPOE filter framework's per-message overhead. All HAPTIC-supported
+    # HAProxy versions (3.0+) understand it.
+    modeSpop: true
+    timeoutHello: 2s
+    timeoutIdle: 5m
+    timeoutProcessing: 500ms
+    poolMaxConn: 100
+    poolPurgeDelay: 30s
+
+  # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
+  # messages, dependsOn) plus a free-form `params:` TOML string blob spliced
+  # verbatim under the hub's `[plugins.params]` table. The chart never parses
+  # `params:` — see each upstream plugin's README for the schema and copy
+  # the recommended block in.
+  #
+  # `enabled` is templatable: the default value is a `tpl`-evaluated string
+  # so a plugin can auto-enable itself when the template libraries that
+  # rely on it are turned on. Operator override is via a literal bool
+  # (`--set spoaHub.plugins.<X>.enabled=true|false`); explicit bools always
+  # win over the templated default. Cycle 4 will replace each plugin's
+  # default with an OR over the libraries that need it (e.g. external-auth
+  # auto-enables when the nginx-ingress library is enabled and consumes
+  # nginx.ingress.kubernetes.io/auth-url).
+  #
+  # IMPORTANT: `params:` is rendered *inside* the `[plugins.params]` scope,
+  # so any bare table header in it (e.g. `[instrumentation]`) would close
+  # that scope and be parsed as a top-level table. Use either:
+  #   - dotted keys for nested values:  `instrumentation.name = "..."`
+  #   - or fully-qualified headers:     `[plugins.params.instrumentation]`
+  # Bare `[xxx]` headers inside `params:` will break the plugin's config.
+  plugins:
+    coraza:
+      enabled: '{{ false }}'
+      timeoutMs: 15
+      messages: ["check-request"]
+      dependsOn: []
+      params: |
+        directives = """
+        SecRuleEngine On
+        Include @coraza.conf-recommended
+        Include @crs-setup.conf.example
+        Include @owasp_crs/*.conf
+        """
+        request_body_limit = 131072
+        request_body_in_memory_limit = 131072
+        response_body_limit = 131072
+        response_check = false
+        detect_only = false
+        transaction_ttl_ms = 10000
+    external-auth:
+      enabled: '{{ false }}'
+      timeoutMs: 6000
+      messages: ["check-auth"]
+      dependsOn: []
+      params: |
+        timeout_ms = 5000
+        fail_open = false
+        method = "GET"
+        allow_plaintext = false
+        forward_headers = [
+          "authorization", "cookie",
+          "x-forwarded-for", "x-forwarded-proto",
+          "x-forwarded-host", "x-forwarded-uri"
+        ]
+        extract_headers = ["x-auth-user", "x-auth-roles"]
+    fingerprinting:
+      enabled: '{{ false }}'
+      timeoutMs: 5
+      messages: ["get-fingerprint"]
+      dependsOn: []
+      params: |
+        sort_extensions = true
+        exclude_extensions = [41]
+        ja4 = true
+    maxmind:
+      enabled: '{{ false }}'
+      timeoutMs: 10
+      messages: ["geoip-enrich"]
+      dependsOn: []
+      # Site-specific: supply MMDB paths and lookup definitions.
+      # See https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-maxmind
+      params: |
+        # [databases]
+        # city = { path = "/data/GeoLite2-City.mmdb" }
+        # asn  = { path = "/data/GeoLite2-ASN.mmdb" }
+        #
+        # [[lookups]]
+        # name       = "country_code"
+        # message    = "geoip-enrich"
+        # database   = "city"
+        # path       = ["country", "iso_code"]
+        # output_var = "geo_country"
+    otel:
+      enabled: '{{ false }}'
+      timeoutMs: 50
+      messages: ["otel-on-request", "otel-on-response"]
+      dependsOn: []
+      # Dotted keys (instead of an `[instrumentation]` header) keep these
+      # values inside the `[plugins.params]` scope. For richer configs with
+      # arrays of tables (tracer_pipelines, exporters, …), use
+      # `[plugins.params.tracer_pipelines]` etc. — see the upstream README.
+      params: |
+        instrumentation.name = "haproxy-edge"
+        instrumentation.scopes = ["request", "response"]
+    sso-auth:
+      enabled: '{{ false }}'
+      timeoutMs: 6000
+      messages: ["auth-request"]
+      dependsOn: []
+      params: |
+        max_providers = 10
+        max_session_age_seconds = 3600
+
+  # Pod-level securityContext additions. Merged into the existing
+  # haproxy.podSecurityContext at render time.
+  podSecurityContext: {}
+
+  # Container-level securityContext for the spoa-hub container. runAsUser=99
+  # matches the pod's existing fsGroup (99) so the unix socket the hub
+  # creates under /run/spoa is accessible to the haproxy container without
+  # extra plumbing.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 99
+    runAsGroup: 99
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+
+  # Extra volume mounts added to the spoa-hub container only. Useful for
+  # mounting MMDB files (maxmind), OIDC client secrets (sso-auth), etc.
+  # Example:
+  #   - name: maxmind-data
+  #     mountPath: /data
+  #     readOnly: true
+  extraVolumeMounts: []
+
 extraDeploy: {}

@@ -11,6 +11,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Added
 
+- `spoaHub` values block plus a conditionally-rendered SPOA hub sidecar in the HAProxy pod. The sidecar runs `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub` (built in cycle 1) and bundles six plugin shared libraries (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth). It is absent by default, auto-rendered when any plugin is enabled, and exposes a Unix-domain socket at `/run/spoa/hub.sock` shared with the HAProxy container. Per-plugin `params:` values are a free-form TOML string blob so chart upgrades don't require values-schema churn when upstream plugins evolve. HAProxy-side SPOE wiring (the controller-rendered `spoe.conf` and the `spoa-hub` backend block) lands in a follow-up MR.
 - nginx-ingress template library for `nginx.ingress.kubernetes.io/*` annotation compatibility (disabled by default)
 
 ### Fixed

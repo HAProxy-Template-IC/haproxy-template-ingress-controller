@@ -1,0 +1,53 @@
+{{/*
+ConfigMap projecting the SPOA hub's config.toml. Mounted read-only at
+/etc/haproxy-spoa-hub/config.toml inside the sidecar container. Rendered
+conditionally — empty when no plugin is enabled and the sidecar isn't
+deployed.
+
+Plugin `params:` from values.yaml is a free-form TOML string blob spliced
+verbatim under `[plugins.params]`. Whitespace and quoting are preserved.
+The chart never parses or validates the blob — see each upstream plugin's
+README for the schema.
+*/}}
+{{- if include "haptic.spoaHub.enabled" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "haptic.fullname" . }}-spoa-hub
+  labels:
+    {{- include "haptic.labels" . | nindent 4 }}
+    app.kubernetes.io/component: spoa-hub
+data:
+  config.toml: |
+    plugin_dir = "/etc/haproxy-spoa-hub/plugins"
+    default_timeout_ms = 500
+    log_level = {{ .Values.spoaHub.hub.logLevel | quote }}
+    max_connections = {{ .Values.spoaHub.hub.maxConnections }}
+    blocking_thread_keep_alive_secs = {{ .Values.spoaHub.hub.blockingThreadKeepAliveSecs }}
+    {{- with .Values.spoaHub.hub.workerThreads }}
+    worker_threads = {{ . }}
+    {{- end }}
+
+    [[listeners]]
+    type = "unix"
+    path = {{ .Values.spoaHub.haproxy.socketPath | quote }}
+
+    {{- range $name, $plugin := .Values.spoaHub.plugins }}
+    {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
+
+    [[plugins]]
+    name = {{ $name | quote }}
+    library = {{ include "haptic.spoaHub.libName" (dict "name" $name) | quote }}
+    messages = {{ $plugin.messages | toJson }}
+    timeout_ms = {{ $plugin.timeoutMs }}
+    {{- with $plugin.dependsOn }}
+    depends_on = {{ . | toJson }}
+    {{- end }}
+    {{- with $plugin.params }}
+
+    [plugins.params]
+    {{ . | nindent 4 | trim }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}

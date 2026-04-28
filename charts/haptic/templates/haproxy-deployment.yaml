@@ -146,6 +146,12 @@ spec:
             - name: devshm
               mountPath: /dev/shm
             {{- end }}
+            {{- if include "haptic.spoaHub.enabled" . }}
+            # Shared with the spoa-hub sidecar; HAProxy connects via a
+            # unix socket the hub creates here at startup.
+            - name: spoa-socket
+              mountPath: /run/spoa
+            {{- end }}
             {{- with .Values.haproxy.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
@@ -304,6 +310,32 @@ spec:
           resources:
             {{- toYaml .Values.haproxy.dataplane.resources | nindent 12 }}
 
+        {{- if include "haptic.spoaHub.enabled" . }}
+        # SPOA hub sidecar — bundles the haproxy-spoa-hub binary plus the
+        # plugin .so files. Conditional on at least one plugin being
+        # enabled. Communicates with HAProxy over /run/spoa/hub.sock.
+        - name: spoa-hub
+          image: {{ include "haptic.spoaHub.image" . }}
+          imagePullPolicy: {{ .Values.spoaHub.image.pullPolicy }}
+          args:
+            - --config
+            - /etc/haproxy-spoa-hub/config.toml
+          securityContext:
+            {{- toYaml .Values.spoaHub.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.spoaHub.resources | nindent 12 }}
+          volumeMounts:
+            - name: spoa-config
+              mountPath: /etc/haproxy-spoa-hub/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: spoa-socket
+              mountPath: /run/spoa
+            {{- with .Values.spoaHub.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+        {{- end }}
+
         {{- with .Values.haproxy.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
@@ -323,6 +355,13 @@ spec:
           emptyDir: {}
         - name: dataplane-tmp
           emptyDir: {}
+        {{- if include "haptic.spoaHub.enabled" . }}
+        - name: spoa-config
+          configMap:
+            name: {{ include "haptic.fullname" . }}-spoa-hub
+        - name: spoa-socket
+          emptyDir: {}
+        {{- end }}
         {{- with .Values.haproxy.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
