@@ -1,0 +1,74 @@
+# External-Auth Demo Backend
+# nginx serving fixed 200/401 responses by path, used as the auth service
+# the SPOA hub external-auth plugin calls when an Ingress has the
+# nginx.ingress.kubernetes.io/auth-url annotation set.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-server-config
+  namespace: echo
+data:
+  default.conf: |
+    server {
+        listen 80;
+        access_log /dev/stdout;
+        # NOTE: prefix locations (no `=`) — the haproxy-spoa-hub
+        # external-auth plugin concatenates auth_url + the original
+        # request path, so the URL it calls is e.g. "/allow/" or
+        # "/deny/something". Exact-match locations (`location =`)
+        # would only catch the bare endpoint.
+        location /allow {
+            add_header X-Auth-User "alice" always;
+            add_header X-Auth-Roles "admin,viewer" always;
+            return 200 "OK\n";
+        }
+        location /deny {
+            return 401 "Unauthorized\n";
+        }
+        # default / fallback for unmatched paths — return 500 so it's
+        # obvious in test logs if the plugin hits an unexpected path.
+        location / {
+            return 500 "auth-server: unknown path\n";
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-server
+  namespace: echo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-server
+  template:
+    metadata:
+      labels:
+        app: auth-server
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx/conf.d
+          readOnly: true
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: auth-server-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-server
+  namespace: echo
+spec:
+  selector:
+    app: auth-server
+  ports:
+  - port: 80
+    targetPort: 80

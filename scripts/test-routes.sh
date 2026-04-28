@@ -1326,6 +1326,38 @@ test_ingress_auth() {
         "password"
 }
 
+# External-auth E2E: exercises the SPOA hub external-auth plugin via the
+# nginx.ingress.kubernetes.io/auth-url annotation. Three demo ingresses
+# (in ingress-demo.yaml) point at the auth-server fixture's /allow,
+# /deny, and (no annotation) endpoints. HAProxy should pass-through,
+# 401, and pass-through respectively.
+test_ingress_external_auth() {
+    if ! should_test "echo-auth-allowed"; then
+        return 0
+    fi
+
+    print_section "Testing Ingress: external-auth (auth-allowed/denied/noannotation)"
+
+    # Auth service returns 200 → request passes through to backend.
+    assert_response_ok \
+        "external-auth: auth-server returns 200, request must pass through" \
+        "auth-allowed.localdev.me" \
+        "/" \
+        ""
+
+    # Auth service returns 401 → HAProxy denies with 401 before reaching backend.
+    assert_auth_required \
+        "external-auth: auth-server returns 401, request must be rejected" \
+        "auth-denied.localdev.me"
+
+    # No auth-url annotation → SPOE plugin not triggered, request passes through.
+    assert_response_ok \
+        "external-auth: no annotation, request must pass through unchanged" \
+        "auth-noannotation.localdev.me" \
+        "/" \
+        ""
+}
+
 test_ingress_cors() {
     if ! should_test "echo-cors"; then
         return 0
@@ -2301,6 +2333,7 @@ main() {
     if [[ "$HTTPROUTE_ONLY" != "true" ]]; then
         test_ingress_basic
         test_ingress_auth
+        test_ingress_external_auth
         test_ingress_cors
         test_ingress_rate_limit
         test_ingress_allowlist

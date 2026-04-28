@@ -30,13 +30,24 @@ data:
 
     [[listeners]]
     type = "unix"
-    path = {{ .Values.spoaHub.haproxy.socketPath | quote }}
+    address = {{ .Values.spoaHub.haproxy.socketPath | quote }}
 
     {{- range $name, $plugin := .Values.spoaHub.plugins }}
     {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
 
+    {{- /* The hub builds SPOP response variable names as `<plugin>.<var>`,
+           so the plugin name shows up directly in HAProxy's variable namespace
+           (e.g. `txn.<var-prefix>.<plugin>.allowed`). HAProxy variable names
+           are restricted identifiers — dashes aren't allowed mid-identifier
+           the same way they are in YAML keys, so a TOML name of `external-auth`
+           produces a var like `external-auth.allowed` which the deny rule
+           can't match. The upstream plugin's example hub.toml uses the
+           snake_case form for this reason. Convert dashes to underscores
+           here to keep the YAML key kebab-case (idiomatic) while emitting
+           a HAProxy-friendly identifier. */}}
+    {{- $tomlName := regexReplaceAll "-" $name "_" }}
     [[plugins]]
-    name = {{ $name | quote }}
+    name = {{ $tomlName | quote }}
     library = {{ include "haptic.spoaHub.libName" (dict "name" $name) | quote }}
     messages = {{ $plugin.messages | toJson }}
     timeout_ms = {{ $plugin.timeoutMs }}

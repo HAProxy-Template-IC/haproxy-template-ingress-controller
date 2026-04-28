@@ -1400,9 +1400,11 @@ spoaHub:
   # the rendered haproxy.cfg via the controller's templating engine.
   haproxy:
     socketPath: /run/spoa/hub.sock
-    # `mode spop` uses HAProxy 3.0+'s native SPOP backend mode, skipping
-    # the SPOE filter framework's per-message overhead. All HAPTIC-supported
-    # HAProxy versions (3.0+) understand it.
+    # `mode spop` is the native SPOP backend mode, introduced in HAProxy
+    # 3.1. The chart auto-falls back to `mode tcp` on HAProxy 3.0 (where
+    # this proxy mode doesn't exist) — both work with the SPOE filter,
+    # mode spop is just the more efficient transport. Set this to false
+    # to force tcp on 3.1+ as well (rare; mostly for compat testing).
     modeSpop: true
     timeoutHello: 2s
     timeoutIdle: 5m
