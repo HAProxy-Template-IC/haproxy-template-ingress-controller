@@ -134,6 +134,17 @@ controller:
     # Enable for HAProxy-optimized performance (exact/prefix faster than regex)
     pathRegexLast:
       enabled: false
+    # SPOA hub library: HAProxy-side wiring for the bundled spoa-hub sidecar
+    # Provides the `backend spoa-hub` block, the `filter spoe engine` directive
+    # in frontends, and registers the `spoe.conf` general file so plugin
+    # libraries (cycle 4) can plug into the SPOE message lifecycle.
+    # Reads its config from templatingSettings.extraContext.spoaHub, which the
+    # chart populates from the values.yaml `spoaHub:` block.
+    # Auto-enabled by haptic.mergeLibraries when the sidecar is on (any plugin
+    # enabled, or `spoaHub.enabled: true` set explicitly). Set to true here to
+    # force-include the library even with no plugins enabled.
+    spoaHub:
+      enabled: false
   # Default SSL Certificate Configuration
   # A default SSL certificate is required for HTTPS traffic.
   #

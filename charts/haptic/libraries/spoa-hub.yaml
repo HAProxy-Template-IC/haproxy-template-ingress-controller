@@ -1,0 +1,185 @@
+# SPOA hub template library for HAPTIC
+#
+# Provides the HAProxy-side wiring for the bundled `spoa-hub` sidecar:
+#   - `backend spoa-hub` with `mode spop` (or `mode tcp` on HAProxy 2.x)
+#   - `filter spoe engine spoa-hub config <path>` directive in frontends
+#   - `spoe.conf` registered as a general file via fileRegistry, containing
+#     the agent block and per-plugin spoe-message bodies
+#
+# This library is opt-in via `controller.templateLibraries.spoaHub.enabled`.
+# The chart auto-enables it when the SPOA hub sidecar is on (i.e. any
+# plugin under `spoaHub.plugins.*` is enabled, or the operator sets
+# `spoaHub.enabled=true` directly).
+#
+# Configuration is delivered via templatingSettings.extraContext.spoaHub
+# (set by templates/haproxytemplateconfig.yaml from values.yaml). The
+# controller stays generic — it never sees a "spoaHub" field in the CRD
+# spec.
+#
+# Extension points for plugin libraries (cycle 4):
+#
+#   spoe-agents-*           — extra directives inside spoe-agent block
+#                             (e.g. additional `option` lines)
+#   spoe-messages-*         — `spoe-message <name>` blocks defining the
+#                             per-plugin args/event bindings; when no
+#                             snippet contributes, this library auto-stubs
+#                             a minimal block per message in the union so
+#                             HAProxy still validates the agent reference.
+#   frontend-spoe-filters-* — extra lines after the filter directive
+#                             (e.g. `http-request set-var(...)` to bind
+#                             ingress annotation values to SPOE message
+#                             args).
+#
+# Usage:
+#   controller:
+#     templateLibraries:
+#       spoaHub:
+#         enabled: true   # auto-enabled when spoaHub.enabled is truthy
+
+templateSnippets:
+  # features-* runs early in haproxyConfig.template (side-effect render).
+  # We use it to register spoe.conf as a general file so the HAProxy
+  # `filter spoe ... config <path>` directive resolves at validation
+  # and runtime.
+  # util-spoa-hub-enabled returns "true"/"false" so callers can test
+  # truthiness with a cheap string compare. Scriggo's `if` requires a
+  # bool, and `extraContext | dig(...)` returns `any`; tostring() routes
+  # the value through Go's fmt and gives us a stable boolean string.
+  util-spoa-hub-enabled:
+    template: |-
+      {{- extraContext | dig("spoaHub", "enabled") | fallback(false) | tostring() -}}
+
+  features-spoa-hub:
+    template: |
+      {%- if (render "util-spoa-hub-enabled") == "true" -%}
+        {%- var spoeContent = render "spoe-conf-content" -%}
+        {%- var _, regErr = fileRegistry.Register("file", "spoe.conf", spoeContent) -%}
+        {%- if regErr != nil %}
+          {%- fail("failed to register spoe.conf: " + regErr.Error()) %}
+        {%- end -%}
+      {%- end -%}
+
+  backends-100-spoa-hub:
+    template: |
+      {%- if (render "util-spoa-hub-enabled") == "true" %}
+      {%- var modeSpop = extraContext | dig("spoaHub", "modeSpop") | fallback(true) | tostring() %}
+      backend spoa-hub
+          mode {%- if modeSpop == "true" %} spop{%- else %} tcp{%- end %}
+          timeout connect 5s
+          timeout server  {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
+          server hub {{ extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "poolPurgeDelay") | fallback("30s") }}
+      {%- end %}
+
+  spoe-conf-content:
+    template: |
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      [spoa-hub]
+
+      spoe-agent spoa-hub-agent
+          messages {{ join(messages, " ") }}
+          option var-prefix       hub
+          option pipelining
+          option async
+          timeout hello      {{ extraContext | dig("spoaHub", "timeoutHello") | fallback("2s") }}
+          timeout idle       {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
+          timeout processing {{ extraContext | dig("spoaHub", "timeoutProcessing") | fallback("500ms") }}
+          use-backend spoa-hub
+      {{- render_glob "spoe-agents-*" }}
+
+      {#- Per-plugin SPOE message bodies. Plugin libraries (cycle 4)
+          contribute named snippets `spoe-messages-<plugin>` that define
+          `spoe-message <name>` blocks bound to ingress annotations. When
+          no library contributes, each message in the chart-supplied
+          union still needs a body so HAProxy accepts the agent's
+          `messages` reference — emit a minimal stub. -#}
+      {%- if len(glob_match(templateSnippets, "spoe-messages-*")) > 0 %}
+      {{ render_glob "spoe-messages-*" }}
+      {%- else %}
+      {%- for _, msg := range messages %}
+
+      spoe-message {{ msg }}
+          args ip=src
+      {%- end %}
+      {%- end %}
+
+  frontend-filters-100-spoa-hub:
+    template: |
+      {%- if (render "util-spoa-hub-enabled") == "true" %}
+      filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
+      {{- render_glob "frontend-spoe-filters-*" }}
+      {%- end %}
+
+validationTests:
+  test-spoa-hub-disabled:
+    description: |
+      With extraContext.spoaHub.enabled=false (or missing), the
+      library must not emit the `backend spoa-hub` block, the SPOE
+      filter, or any spoe.conf reference.
+    extraContext:
+      spoaHub:
+        enabled: false
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid when spoaHub is disabled
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend spoa-hub"
+        description: spoa-hub backend must not appear when spoaHub.enabled is false
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "filter spoe engine spoa-hub"
+        description: SPOE filter must not appear when spoaHub.enabled is false
+
+  test-spoa-hub-rendering:
+    description: |
+      With extraContext.spoaHub.enabled=true and a non-empty messages
+      list, the library emits the spoa-hub backend, the SPOE filter
+      directive in frontends, and registers spoe.conf with the agent
+      block plus auto-stubbed message bodies (cycle 4 plugin libraries
+      replace the stubs by contributing `spoe-messages-*` snippets).
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with spoaHub enabled
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend spoa-hub"
+        description: spoa-hub backend must appear when spoaHub is enabled
+      - type: contains
+        target: haproxy.cfg
+        pattern: "mode spop"
+        description: Backend uses native SPOP mode by default
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server hub /run/spoa/hub.sock"
+        description: Server points at the hub's Unix-domain socket
+      - type: contains
+        target: haproxy.cfg
+        pattern: "filter spoe engine spoa-hub config"
+        description: Frontends include the SPOE filter directive
+      - type: contains
+        target: file:spoe.conf
+        pattern: "spoe-agent spoa-hub-agent"
+        description: spoe.conf declares the spoa-hub agent
+      - type: contains
+        target: file:spoe.conf
+        pattern: "messages check-auth"
+        description: Agent's messages line lists the configured message
+      - type: contains
+        target: file:spoe.conf
+        pattern: "spoe-message check-auth"
+        description: Auto-stub spoe-message block exists for each message

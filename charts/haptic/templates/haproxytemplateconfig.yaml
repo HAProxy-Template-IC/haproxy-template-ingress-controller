@@ -65,6 +65,38 @@ spec:
     {{- $_ := set $config.templatingSettings "extraContext" dict }}
   {{- end }}
   {{- $_ := set $config.templatingSettings.extraContext "haproxyVersion" .Values.haproxyVersion }}
+  {{- /* Pass spoaHub wiring through extraContext when the sidecar is
+         enabled AND at least one plugin contributes a SPOE message.
+         The spoa-hub template library reads this to render spoe.conf
+         and the spoa-hub backend block. We compute the union of
+         enabled-plugin messages once here rather than asking Scriggo
+         to recompute it on every render. The controller stays generic
+         — it never learns the word "spoaHub". An empty messages list
+         (sidecar forced on with no plugins enabled) leaves the library
+         dormant; HAProxy rejects an spoe-agent with no `messages`,
+         so emitting nothing is the only safe behaviour. */ -}}
+  {{- if include "haptic.spoaHub.enabled" . }}
+    {{- $messages := list }}
+    {{- range $name, $plugin := .Values.spoaHub.plugins }}
+      {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
+        {{- $messages = concat $messages $plugin.messages }}
+      {{- end }}
+    {{- end }}
+    {{- $messages = uniq $messages }}
+    {{- if $messages }}
+      {{- $_ := set $config.templatingSettings.extraContext "spoaHub" (dict
+          "enabled" true
+          "socketPath" .Values.spoaHub.haproxy.socketPath
+          "modeSpop" .Values.spoaHub.haproxy.modeSpop
+          "messages" $messages
+          "timeoutHello" (toString .Values.spoaHub.haproxy.timeoutHello)
+          "timeoutIdle" (toString .Values.spoaHub.haproxy.timeoutIdle)
+          "timeoutProcessing" (toString .Values.spoaHub.haproxy.timeoutProcessing)
+          "poolMaxConn" (int .Values.spoaHub.haproxy.poolMaxConn)
+          "poolPurgeDelay" (toString .Values.spoaHub.haproxy.poolPurgeDelay)
+      ) }}
+    {{- end }}
+  {{- end }}
   {{- /* Add shmStats settings to extraContext when enabled */ -}}
   {{- if .Values.haproxy.shmStats.enabled }}
     {{- $_ := set $config.templatingSettings.extraContext "shmStatsEnabled" true }}
