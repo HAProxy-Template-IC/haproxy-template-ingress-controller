@@ -157,13 +157,17 @@ Uses mustMergeOverwrite for deep merging of all nested structures
 {{- /* Load haproxy-ingress library if enabled */ -}}
 {{- if $context.Values.controller.templateLibraries.haproxyIngress.enabled }}
   {{- $haproxyIngressLibrary := $context.Files.Get "libraries/haproxy-ingress.yaml" | fromYaml }}
-  {{- $merged = mustMergeOverwrite $merged $haproxyIngressLibrary }}
+  {{- /* Filter tests based on _helm_skip_test conditions */ -}}
+  {{- $filteredLibrary := include "haptic.filterTests" (list $haproxyIngressLibrary $context) | fromYaml }}
+  {{- $merged = mustMergeOverwrite $merged $filteredLibrary }}
 {{- end }}
 
 {{- /* Load nginx-ingress library if enabled */ -}}
 {{- if $context.Values.controller.templateLibraries.nginxIngress.enabled }}
   {{- $nginxIngressLibrary := $context.Files.Get "libraries/nginx-ingress.yaml" | fromYaml }}
-  {{- $merged = mustMergeOverwrite $merged $nginxIngressLibrary }}
+  {{- /* Filter tests based on _helm_skip_test conditions */ -}}
+  {{- $filteredLibrary := include "haptic.filterTests" (list $nginxIngressLibrary $context) | fromYaml }}
+  {{- $merged = mustMergeOverwrite $merged $filteredLibrary }}
 {{- end }}
 
 {{- /* Load path-regex-last library if enabled (overrides routing order) */ -}}

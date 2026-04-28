@@ -969,3 +969,82 @@ spec:
                 name: echo-server
                 port:
                   number: 80
+
+---
+##############################################################################
+# EXTERNAL-AUTH (nginx.ingress.kubernetes.io/auth-url)
+#
+# Routes traffic through the SPOA hub external-auth plugin, which makes
+# an HTTP subrequest to auth-server.echo.svc and gates the request based
+# on the response status (2xx → allow, anything else → 401).
+#
+# auth-server.yaml deploys a fixture nginx that returns 200 on /allow
+# and 401 on /deny.
+#
+# Test:
+#   curl -H 'Host: auth-allowed.localdev.me' http://localhost:30080      # 200
+#   curl -H 'Host: auth-denied.localdev.me' http://localhost:30080       # 401
+#   curl -H 'Host: auth-noannotation.localdev.me' http://localhost:30080 # 200 (no auth)
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-allowed
+  namespace: echo
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-server.echo.svc.cluster.local/allow"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: auth-allowed.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-denied
+  namespace: echo
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-server.echo.svc.cluster.local/deny"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: auth-denied.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-noannotation
+  namespace: echo
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: auth-noannotation.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80

@@ -2609,6 +2609,14 @@ validationTests:
         description: Must pass client subject DN
 
   test-nginx-ingress-external-auth:
+    # The auth-url.map and SPOE wiring this test asserts on are
+    # contributed by the spoa-hub library, which only auto-loads when
+    # the chart's haptic.spoaHub.enabled helper is truthy (any plugin
+    # enabled, or operator forces it). When the test renders against
+    # default chart values (no plugins), spoa-hub library is absent —
+    # auth-url.map doesn't exist and the frontend snippets don't
+    # render. Skip in that case so validate-helm-libraries is green.
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
     description: |
       Nginx Ingress auth-url annotation populates auth-url.map and the
       spoa-hub frontend wiring (set-var, send-spoe-group, deny rule).
@@ -2692,6 +2700,10 @@ validationTests:
         description: Frontend denies on auth failure
 
   test-nginx-ingress-external-auth-hostless-rejected:
+    # Same as test-nginx-ingress-external-auth: needs the spoa-hub
+    # library loaded for the auth-url.map definition (the fail() is
+    # triggered while rendering that map's contributions).
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
     description: |
       Ingress with auth-url annotation AND a host-less rule must fail
       loudly at template-render time. The auth-url map is keyed by

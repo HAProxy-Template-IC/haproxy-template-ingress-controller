@@ -972,10 +972,15 @@ test-acceptance:
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
+    - job: build-spoa-image-snapshot
   variables:
     # Controller namespace and release name - must match scripts/start-dev-env.sh defaults
     CTRL_NAMESPACE: haptic
     RELEASE_NAME: haptic
+    # Pin the spoa-hub image to the freshly-built MR snapshot so the
+    # external-auth E2E test runs against the code in this MR (rather
+    # than main-latest, which lags). Consumed by start-dev-env.sh.
+    SPOA_TAG: "ci-${CI_PIPELINE_ID}"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -1015,6 +1020,16 @@ test-acceptance:
         echo "Waiting for API server... (attempt $i/30)"
         sleep 2
       done
+    - |
+      # Pre-load spoa-hub snapshot into kind so the haproxy pod's sidecar
+      # doesn't need to pull from registry.gitlab.com (kind nodes have no
+      # registry credentials). The image was built by build-spoa-image-snapshot
+      # earlier in this pipeline; the runner is logged in via the docker
+      # login above. SPOA_TAG and the registry path match what the chart
+      # renders when start-dev-env.sh passes --set spoaHub.image.tag.
+      SPOA_IMAGE="${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_TAG}"
+      docker pull ${SPOA_IMAGE}
+      kind load docker-image ${SPOA_IMAGE} --name haptic-dev
   script:
     - HAPROXY_VERSION=${HAPROXY_VERSION} ./scripts/start-dev-env.sh --skip-build --timeout 240
     - ./scripts/test-routes.sh
@@ -1032,19 +1047,52 @@ test-acceptance:
         done
         [ -f debug-logs/controller.log ] || echo "Failed to get controller logs" > debug-logs/controller.log
 
-        # HAProxy and Dataplane logs - ALL pods
+        # HAProxy, Dataplane, and SPOA-hub logs - ALL pods
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> debug-logs/haproxy.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/haproxy.log 2>&1 || true
           echo "=== Dataplane: $pod ===" >> debug-logs/dataplane.log
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> debug-logs/dataplane.log 2>&1 || true
+          # spoa-hub sidecar (may not be present if no plugin enabled)
+          echo "=== spoa-hub: $pod (current) ===" >> debug-logs/spoa-hub.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> debug-logs/spoa-hub.log 2>&1 || true
+          echo "=== spoa-hub: $pod (previous) ===" >> debug-logs/spoa-hub.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub --previous >> debug-logs/spoa-hub.log 2>&1 || true
+          # spoa-hub config.toml from the mounted ConfigMap (lets us check
+          # the rendered TOML matches expectations when the container is
+          # crashing with a config error).
+          echo "=== spoa-hub config.toml: $pod ===" >> debug-logs/spoa-hub-config.log
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c spoa-hub -- cat /etc/haproxy-spoa-hub/config.toml >> debug-logs/spoa-hub-config.log 2>&1 || true
         done
         [ -f debug-logs/haproxy.log ] || echo "Failed to get HAProxy logs" > debug-logs/haproxy.log
         [ -f debug-logs/dataplane.log ] || echo "Failed to get dataplane logs" > debug-logs/dataplane.log
+        [ -f debug-logs/spoa-hub.log ] || echo "Failed to get spoa-hub logs (or sidecar not present)" > debug-logs/spoa-hub.log
 
         # HAProxy configuration (useful for debugging routing issues)
         kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
           cat /etc/haproxy/haproxy.cfg > debug-logs/haproxy.cfg 2>&1 || echo "Failed to get HAProxy config"
+
+        # SPOE config (registered as a general file by the spoa-hub library)
+        # plus the auth-url map. Both are needed to debug external-auth flow
+        # failures — without them the spoa-hub container has no incoming
+        # work and the SPOE traffic looks invisible from the haproxy side.
+        kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
+          cat /etc/haproxy/general/spoe.conf > debug-logs/spoe.conf 2>&1 || echo "Failed to get spoe.conf (may not be present)"
+        kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
+          cat /etc/haproxy/maps/auth-url.map > debug-logs/auth-url.map 2>&1 || echo "Failed to get auth-url.map (may not be present)"
+
+        # NetworkPolicy across all relevant namespaces (the dev chart
+        # enables one; if it's blocking spoa-hub egress to auth-server
+        # the external-auth plugin's HTTP call fails and allowed=false).
+        kubectl get networkpolicy -A -o yaml > debug-logs/networkpolicies.yaml 2>&1 || echo "Failed to get NetworkPolicies"
+
+        # DNS check from inside the spoa-hub container — confirms whether
+        # auth-server.echo.svc.cluster.local resolves at request time.
+        # spoa-hub is alpine-based; nslookup is provided by busybox so
+        # the binary should be available even on the slim image.
+        kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c spoa-hub -- \
+          sh -c "nslookup auth-server.echo.svc.cluster.local 2>&1; echo '---'; getent hosts auth-server.echo.svc.cluster.local 2>&1" \
+          > debug-logs/spoa-hub-dns.log 2>&1 || echo "Failed to run DNS check from spoa-hub"
 
         # Pod status summary
         kubectl get pods -A -o wide > debug-logs/pod-status.log 2>&1 || true

@@ -145,7 +145,7 @@ tests:
     asserts:
       - matchRegex:
           path: data["config.toml"]
-          pattern: 'path = "/run/spoa/hub\.sock"'
+          pattern: 'address = "/run/spoa/hub\.sock"'
 
   - it: should render multiple plugins in one ConfigMap
     template: spoa-hub-configmap.yaml

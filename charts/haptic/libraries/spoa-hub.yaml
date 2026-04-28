@@ -67,9 +67,17 @@ templateSnippets:
   backends-100-spoa-hub:
     template: |
       {%- if (render "util-spoa-hub-enabled") == "true" %}
-      {%- var modeSpop = extraContext | dig("spoaHub", "modeSpop") | fallback(true) | tostring() %}
+      {#- mode spop is the native SPOP backend mode introduced in HAProxy 3.1.
+          On HAProxy 3.0 the proxy mode doesn't exist and the parser rejects
+          it ("unknown proxy mode 'spop'"); fall back to mode tcp, which is
+          the legacy SPOE transport. The filter spoe directive in the
+          frontend handles the protocol either way. Operators can force tcp
+          on 3.1+ by setting spoaHub.haproxy.modeSpop: false. -#}
+      {%- var modeSpopRequested = extraContext | dig("spoaHub", "modeSpop") | fallback(true) | tostring() %}
+      {%- var hapVersion = extraContext | dig("haproxyVersion") | fallback("") | tostring() %}
+      {%- var spopSupported = semver_gte(hapVersion, "3.1") %}
       backend spoa-hub
-          mode {%- if modeSpop == "true" %} spop{%- else %} tcp{%- end %}
+          mode {%- if modeSpopRequested == "true" && spopSupported %} spop{%- else %} tcp{%- end %}
           timeout connect 5s
           timeout server  {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
           server hub {{ extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "poolPurgeDelay") | fallback("30s") }}
@@ -137,8 +145,9 @@ templateSnippets:
           args auth_url=var(txn.auth_url) path=path hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
 
   frontend-filters-100-spoa-hub:
-    template: |
+    template: |-
       {%- if (render "util-spoa-hub-enabled") == "true" %}
+
       filter spoe engine spoa-hub config {{ pathResolver.GetPath("spoe.conf", "file") }}
       {{- render_glob "frontend-spoe-filters-*" }}
       {%- end %}
@@ -196,6 +205,12 @@ validationTests:
       and the external-auth frontend wiring (auth-url lookup, group
       trigger, deny rule).
     extraContext:
+      # Pin the HAProxy version to 3.1+ so the rendered backend uses
+      # `mode spop` (the assertion below requires it). Native SPOP
+      # was introduced in HAProxy 3.1; on 3.0 the chart falls back to
+      # `mode tcp`. test-spoa-hub-rendering-mode-tcp-on-haproxy30
+      # covers that fallback path.
+      haproxyVersion: "3.2"
       spoaHub:
         enabled: true
         socketPath: /run/spoa/hub.sock
@@ -255,3 +270,117 @@ validationTests:
         target: file:spoe.conf
         pattern: "spoe-group check-auth-group"
         description: Group definition references the message
+
+  # Regression: an Ingress with haproxy.org/forwarded-for=true triggers
+  # the haproxytech library to emit `option forwardfor` in the frontend
+  # at priority 100. The spoa-hub library's frontend-filters-100-* runs
+  # next (alphabetical tie-break), so its output must start on a new
+  # line — otherwise we get `option forwardforfilter spoe engine ...`
+  # (a real bug found in CI when both snippets co-rendered).
+  test-spoa-hub-frontend-filters-newline-after-forwardfor:
+    description: |
+      When haproxytech's option-forwardfor and the spoa-hub filter spoe
+      directive both render at frontend-filters priority 100, they must
+      be on separate lines. Catches the cycle 4 part C bug where the
+      `{%- if` in spoa-hub's snippet stripped the separating newline.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: ff-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: ff-svc-abc
+            labels:
+              kubernetes.io/service-name: ff-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ff-ingress
+            annotations:
+              haproxy.org/forwarded-for: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ff.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ff-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy must validate (the concat bug produces invalid syntax)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "forwardforfilter"
+        description: option forwardfor and filter spoe must not concatenate
+
+  test-spoa-hub-mode-tcp-on-haproxy-3-0:
+    description: |
+      On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced
+      in 3.1). The chart must auto-fall-back the spoa-hub backend to
+      `mode tcp` — both transports work with the SPOE filter; mode
+      spop is just the more efficient one on newer versions. This
+      test pins haproxyVersion=3.0 and asserts the fallback.
+    extraContext:
+      haproxyVersion: "3.0"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: Rendered config must validate (mode tcp is valid on 3.0)
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend spoa-hub"
+        description: spoa-hub backend present
+      - type: contains
+        target: haproxy.cfg
+        pattern: "mode tcp"
+        description: Backend uses mode tcp on HAProxy 3.0
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend spoa-hub\\n    mode spop"
+        description: Backend must NOT use mode spop on HAProxy 3.0

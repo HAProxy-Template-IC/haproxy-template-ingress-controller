@@ -728,6 +728,14 @@ deploy_controller() {
         debug "Added Enterprise Helm values"
     fi
 
+    # Override the spoa-hub image tag if SPOA_TAG is set (used by CI to
+    # point at the freshly-built ci-${CI_PIPELINE_ID} snapshot). Defaults
+    # in dev-values.yaml to main-latest for local devs.
+    if [[ -n "${SPOA_TAG:-}" ]]; then
+        helm_args+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
+        debug "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
+    fi
+
     # Add webhook CA bundle if set
     if [[ -n "${WEBHOOK_CA_BUNDLE:-}" ]]; then
         helm_args+=("--set" "webhook.caBundle=${WEBHOOK_CA_BUNDLE}")
@@ -916,6 +924,28 @@ deploy_blocklist_server() {
 	ok "Blocklist server is ready."
 }
 
+# Deploy auth-server fixture (used by the external-auth demo ingresses).
+# Must be running before HAProxy can serve the auth-allowed/auth-denied
+# routes — the spoa-hub external-auth plugin calls into it at request time.
+deploy_auth_server() {
+	log INFO "Deploying auth-server for external-auth demo..."
+
+	kubectl get ns "${ECHO_NAMESPACE}" >/dev/null 2>&1 || kubectl create ns "${ECHO_NAMESPACE}" >/dev/null
+
+	kubectl apply -f "${ASSETS_DIR}/auth-server.yaml" >/dev/null || {
+		err "Failed to deploy auth server"
+		return 1
+	}
+
+	log INFO "Waiting for auth-server to become ready..."
+	if ! kubectl -n "${ECHO_NAMESPACE}" rollout status deployment/auth-server --timeout=60s >/dev/null 2>&1; then
+		warn "auth-server deployment did not become ready in time"
+		return 0
+	fi
+
+	ok "Auth server is ready."
+}
+
 deploy_ingress_demo() {
 	log INFO "Deploying Ingress demo resources..."
 
@@ -1044,6 +1074,14 @@ dev_restart() {
         helm_args+=("--set" "haproxy.enterprise.enabled=true")
         helm_args+=("--set" "haproxy.enterprise.version=${HAPROXY_ENTERPRISE_VERSION}")
         debug "Added Enterprise Helm values"
+    fi
+
+    # Override the spoa-hub image tag if SPOA_TAG is set (used by CI to
+    # point at the freshly-built ci-${CI_PIPELINE_ID} snapshot). Defaults
+    # in dev-values.yaml to main-latest for local devs.
+    if [[ -n "${SPOA_TAG:-}" ]]; then
+        helm_args+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
+        debug "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
     fi
 
     # Add webhook CA bundle if set
@@ -1572,6 +1610,14 @@ dev_up() {
     if [[ "$SKIP_ECHO" != "true" ]]; then
         deploy_blocklist_server || {
             err "Blocklist server deployment failed"
+            return 1
+        }
+        # auth-server fixture for the external-auth demo. The spoa-hub
+        # external-auth plugin makes HTTP requests to auth-server.echo.svc
+        # at runtime, so it must be reachable when the auth-allowed /
+        # auth-denied ingresses are exercised.
+        deploy_auth_server || {
+            err "Auth server deployment failed"
             return 1
         }
     fi

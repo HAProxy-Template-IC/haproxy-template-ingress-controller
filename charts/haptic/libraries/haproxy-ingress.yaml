@@ -2548,6 +2548,12 @@ validationTests:
         description: User must be in config
 
   test-haproxy-ingress-external-auth:
+    # The auth-url.map and SPOE wiring this test asserts on are
+    # contributed by the spoa-hub library, which only auto-loads when
+    # the chart's haptic.spoaHub.enabled helper is truthy. Skip when
+    # the library isn't loaded (e.g. validate-helm-libraries default
+    # render).
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
     description: |
       HAProxy-Ingress auth-url annotation populates auth-url.map and
       the spoa-hub frontend wiring (set-var, send-spoe-group, deny
@@ -2630,6 +2636,9 @@ validationTests:
         description: Frontend denies on auth failure
 
   test-haproxy-ingress-external-auth-hostless-rejected:
+    # Same as test-haproxy-ingress-external-auth: needs the spoa-hub
+    # library loaded.
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
     description: |
       Ingress with haproxy-ingress.github.io/auth-url AND a host-less
       rule must fail loudly at template-render time. Same security
