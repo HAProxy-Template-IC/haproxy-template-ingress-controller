@@ -163,7 +163,13 @@ templateSnippets:
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-auth" %}
       http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
+      http-request set-var(txn.auth_signin) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
       http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
+      {#- Browser-friendly sign-in redirect on auth failure: if the
+          ingress has `auth-signin`, redirect to it (302) instead of
+          denying. The deny rule below still fires when auth-signin
+          isn't configured, preserving the API-friendly default. -#}
+      http-request redirect location %[var(txn.auth_signin)] code 302 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.auth_signin) -m found }
       http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
       {%- end %}
 
@@ -174,6 +180,16 @@ maps:
       # Keyed by host+path (matching the routing-logic key in base.yaml).
       # Populated by ingress libraries' map-auth-url-* contributions.
       {{- render_glob "map-auth-url-*" -}}
+
+  auth-signin.map:
+    template: |
+      # External-auth: per-ingress sign-in URL for browser redirect on
+      # auth failure. When set for a route, an auth failure produces a
+      # 302 to this URL instead of a 401 — the standard pattern for
+      # OIDC / SAML browser flows where the auth service redirects
+      # unauthenticated users to a login page.
+      # Populated by ingress libraries' map-auth-signin-* contributions.
+      {{- render_glob "map-auth-signin-*" -}}
 
 validationTests:
   test-spoa-hub-disabled:
