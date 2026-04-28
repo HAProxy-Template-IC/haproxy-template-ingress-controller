@@ -18,10 +18,11 @@ Merge Order (lowest to highest priority):
 6. haproxy-ingress.yaml  - haproxy-ingress.github.io/* annotation compatibility
 7. nginx-ingress.yaml    - nginx.ingress.kubernetes.io/* compat (disabled by default)
 8. path-regex-last.yaml  - Optional: regex paths matched last (disabled by default)
-9. controller.config.*   - User overrides from values.yaml (highest priority)
+9. spoa-hub.yaml         - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
+10. controller.config.*  - User overrides from values.yaml (highest priority)
 ```
 
-Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. Layers 5-8 are pure plugin libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up.
+Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are pure plugin libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up.
 
 **Merge Logic** (`templates/_helpers.tpl`, `define "haptic.mergeLibraries"`):
 

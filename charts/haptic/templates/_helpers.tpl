@@ -172,6 +172,13 @@ Uses mustMergeOverwrite for deep merging of all nested structures
   {{- $merged = mustMergeOverwrite $merged $pathRegexLastLibrary }}
 {{- end }}
 
+{{- /* Load spoa-hub library if explicitly enabled OR auto-enabled because the
+       SPOA hub sidecar is on (any plugin enabled, or spoaHub.enabled=true). */ -}}
+{{- if or $context.Values.controller.templateLibraries.spoaHub.enabled (include "haptic.spoaHub.enabled" $context) }}
+  {{- $spoaHubLibrary := $context.Files.Get "libraries/spoa-hub.yaml" | fromYaml }}
+  {{- $merged = mustMergeOverwrite $merged $spoaHubLibrary }}
+{{- end }}
+
 {{- /* Merge user-provided config from values.yaml (highest priority) */ -}}
 {{- $userConfig := dict }}
 {{- if $context.Values.controller.config.templateSnippets }}

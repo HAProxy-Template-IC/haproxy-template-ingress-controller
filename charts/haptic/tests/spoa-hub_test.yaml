@@ -3,6 +3,7 @@ suite: spoa-hub sidecar
 templates:
   - haproxy-deployment.yaml
   - spoa-hub-configmap.yaml
+  - haproxytemplateconfig.yaml
 
 tests:
   - it: should render no spoa-hub sidecar with default values
@@ -158,6 +159,43 @@ tests:
       - matchRegex:
           path: data["config.toml"]
           pattern: 'name = "fingerprinting"'
+
+  - it: should not surface a spoaHub extraContext entry with default values
+    template: haproxytemplateconfig.yaml
+    asserts:
+      - isNull:
+          path: spec.templatingSettings.extraContext.spoaHub
+
+  - it: should surface spoaHub config under extraContext when a plugin is enabled
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.enabled
+          value: true
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.socketPath
+          value: /run/spoa/hub.sock
+      - equal:
+          path: spec.templatingSettings.extraContext.spoaHub.modeSpop
+          value: true
+      - contains:
+          path: spec.templatingSettings.extraContext.spoaHub.messages
+          content: get-fingerprint
+
+  - it: should union messages from multiple enabled plugins in extraContext
+    template: haproxytemplateconfig.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.plugins.coraza.enabled: true
+    asserts:
+      - contains:
+          path: spec.templatingSettings.extraContext.spoaHub.messages
+          content: get-fingerprint
+      - contains:
+          path: spec.templatingSettings.extraContext.spoaHub.messages
+          content: check-request
 
   - it: should preserve a user-supplied params blob verbatim
     template: spoa-hub-configmap.yaml
