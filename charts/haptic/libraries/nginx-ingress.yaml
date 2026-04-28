@@ -324,6 +324,48 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
+  # External-auth (auth-url) map contribution. The spoa-hub library
+  # defines auth-url.map and the SPOE wiring; this snippet feeds the
+  # map with one entry per ingress+path that has the auth-url
+  # annotation set. The frontend then looks up the URL by host+path
+  # (matching the existing routing key) and triggers the SPOE plugin.
+  #
+  # Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#external-authentication
+  #
+  # Annotation:
+  #   nginx.ingress.kubernetes.io/auth-url: "https://auth-svc.example/check"
+  #
+  # Out of scope for cycle 4 part A (will be added separately):
+  #   - auth-method (defaults to plugin's GET)
+  #   - auth-signin (browser sign-in redirect on 401)
+  #   - auth-response-headers (per-ingress upstream header forwarding)
+  #   - auth-proxy-set-headers (per-ingress headers sent to auth service)
+  map-auth-url-500-nginx-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authUrl = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-url") | fallback("") | tostring() -%}
+        {%- if authUrl != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
+            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
+            {#- Host-less ingress rules (rule without `host`) match all hosts in
+                Kubernetes, but the frontend lookup key here is `host_match+path`
+                — there's no way to derive the matching map key without
+                enumerating every possible host. Fail loud rather than silently
+                dropping auth: skipping auth on a route the operator marked as
+                protected is a security failure mode. -#}
+            {%- if host == "" -%}
+              {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-url set but a rule without a host. The auth-url map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end -%}
+            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
+              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
+      {{ "\n" }}{{ host }}{{ pathStr }} {{ authUrl }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   backend-directives-760-nginx-ingress-auth:
     template: |
       {#-
@@ -2565,3 +2607,160 @@ validationTests:
         target: haproxy.cfg
         pattern: "ssl_c_s_dn"
         description: Must pass client subject DN
+
+  test-nginx-ingress-external-auth:
+    description: |
+      Nginx Ingress auth-url annotation populates auth-url.map and the
+      spoa-hub frontend wiring (set-var, send-spoe-group, deny rule).
+      Runs in a render where spoaHub is enabled with the external-auth
+      plugin, simulating the auto-enable that nginxIngress=true triggers
+      via the OR-expression in spoaHub.plugins.external-auth.enabled.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-url annotation
+      - type: contains
+        target: map:auth-url.map
+        pattern: "protected.example.com/ https://auth.example/check"
+        description: auth-url.map must contain the host+path → URL entry
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn.auth_url\\).*auth-url\\.map"
+        description: Frontend looks up auth_url from the map after routing
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+        description: Frontend triggers the SPOE check when auth_url is found
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 401"
+        description: Frontend denies on auth failure
+
+  test-nginx-ingress-external-auth-hostless-rejected:
+    description: |
+      Ingress with auth-url annotation AND a host-less rule must fail
+      loudly at template-render time. The auth-url map is keyed by
+      host+path; host-less rules can't be enforced (the frontend
+      lookup uses txn.host_match which is always non-empty for matched
+      requests, so the empty-host map entry would never match).
+      Silently skipping auth on a route the operator marked protected
+      is a security failure mode — fail-loud is the right behaviour.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hostless-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "auth-url set but a rule without a host"
+        description: Template render must fail with the host-less error message
+      - type: contains
+        target: rendering_error
+        pattern: "default/hostless-protected"
+        description: Error must identify the offending Ingress
