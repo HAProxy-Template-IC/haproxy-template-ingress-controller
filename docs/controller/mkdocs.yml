@@ -77,6 +77,7 @@ nav:
     - Supported Configuration: supported-configuration.md
   - Operations:
     - HAProxy Versions: operations/haproxy-versions.md
+    - SPOA Hub: operations/spoa-hub.md
     - High Availability: operations/high-availability.md
     - Monitoring: operations/monitoring.md
     - Security: operations/security.md
