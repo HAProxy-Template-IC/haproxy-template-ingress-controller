@@ -1,0 +1,176 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: spoa-hub sidecar
+templates:
+  - haproxy-deployment.yaml
+  - spoa-hub-configmap.yaml
+
+tests:
+  - it: should render no spoa-hub sidecar with default values
+    template: haproxy-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers
+          content:
+            name: spoa-hub
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: spoa-socket
+          any: true
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: spoa-config
+          any: true
+
+  - it: should render no spoa-hub ConfigMap with default values
+    template: spoa-hub-configmap.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render the spoa-hub sidecar when a plugin is enabled
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers
+          content:
+            name: spoa-hub
+          any: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: spoa-config
+          any: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: spoa-socket
+          any: true
+
+  - it: should mount the spoa-socket volume on the haproxy container when enabled
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: spoa-socket
+            mountPath: /run/spoa
+          any: true
+
+  - it: should render the spoa-hub ConfigMap when a plugin is enabled
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ConfigMap
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'name = "fingerprinting"'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'library = "libfingerprinting_plugin\.so"'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'messages = \["get-fingerprint"\]'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'ja4 = true'
+
+  - it: should map the sso-auth plugin to its quirk lib filename
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.sso-auth.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'library = "libhaproxy_spoa_hub_plugin_sso_auth\.so"'
+
+  - it: should let spoaHub.enabled=false force the sidecar off even when a plugin is enabled
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.enabled: false
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers
+          content:
+            name: spoa-hub
+          any: true
+
+  - it: should let spoaHub.enabled=true force the sidecar on with no plugin enabled
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers
+          content:
+            name: spoa-hub
+          any: true
+
+  - it: should default the spoa-hub image tag to .Chart.AppVersion
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].image
+          pattern: 'registry\.gitlab\.com/haproxy-haptic/haptic/spoa-hub:0\.1\.0'
+
+  - it: should respect spoaHub.image.tag override
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.image.tag: "v0.9.9-test"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].image
+          value: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:v0.9.9-test
+
+  - it: should render the SPOP listener with the configured socketPath
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'path = "/run/spoa/hub\.sock"'
+
+  - it: should render multiple plugins in one ConfigMap
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.plugins.coraza.enabled: true
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'name = "coraza"'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'name = "fingerprinting"'
+
+  - it: should preserve a user-supplied params blob verbatim
+    template: spoa-hub-configmap.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+      spoaHub.plugins.fingerprinting.params: |
+        # this is a user comment
+        sort_extensions = false
+        ja4 = false
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: '# this is a user comment'
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'sort_extensions = false'
