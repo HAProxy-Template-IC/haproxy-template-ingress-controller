@@ -1359,11 +1359,12 @@ templateSnippets:
   #
   # Header names are stored verbatim in the map; the plugin lower-cases
   # them when matching against the incoming request headers, so casing
-  # in the annotation value does not matter. Headers must already be
-  # arriving as `hdr_<name>` SPOE args (the spoe-message body forwards
-  # a fixed allowlist that operators extend by editing
-  # spoe-message-check-auth-body); a header not in that allowlist
-  # cannot be forwarded regardless of this annotation.
+  # in the annotation value does not matter. The companion snippet
+  # `spoe-message-check-auth-extra-args-500-haproxy-ingress` auto-extends
+  # the SPOE check-auth message body so it captures every header listed
+  # across the union of `auth-headers-request` annotations — operators
+  # don't have to edit `spoe-message-check-auth-body` themselves to
+  # forward custom headers.
   map-auth-forward-headers-500-haproxy-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -1379,6 +1380,62 @@ templateSnippets:
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
       {{ "\n" }}{{ host }}{{ pathStr }} {{ authHeaders }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # Auto-extends the SPOE check-auth message body's `args=` line with
+  # additional `hdr_<name>=req.hdr(<Name>)` captures based on the union
+  # of `auth-headers-request` annotations across all ingresses. The
+  # spoe-hub library's spoe-message-check-auth-body template hardcodes
+  # the six standard auth headers (Authorization, Cookie,
+  # X-Forwarded-{For,Proto,Host,Uri}); this contribution adds anything
+  # else operators ask for via the annotation, deduped per header
+  # (multiple ingresses listing the same header → one capture). The
+  # plugin's per-route `forward_headers` SPOE arg then narrows which of
+  # the captured headers actually flow to the auth service.
+  #
+  # Output format: a sequence of ` hdr_<argname>=req.hdr(<Name>)`
+  # tokens with a leading space, on the same line as the existing
+  # `args=` directive. Whitespace control on every block boundary
+  # ensures no newlines leak in (a stray newline would terminate the
+  # SPOE `args` directive at parse time).
+  spoe-message-check-auth-extra-args-500-haproxy-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Pre-seed `seen` with the six headers spoa-hub.yaml already
+          captures, so we don't emit a duplicate `hdr_*` arg for one
+          of them. Lower-cased because we dedupe on toLower(name). -#}
+      {%- var seen = map[string]bool{} -%}
+      {%- seen["authorization"] = true -%}
+      {%- seen["cookie"] = true -%}
+      {%- seen["x-forwarded-for"] = true -%}
+      {%- seen["x-forwarded-proto"] = true -%}
+      {%- seen["x-forwarded-host"] = true -%}
+      {%- seen["x-forwarded-uri"] = true -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-request") | fallback("") | tostring() -%}
+        {%- if authHeaders != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, h := range split(authHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-request", ns, ingressName) -}}
+              {#- Dedupe on the argName (after dash→underscore) — not
+                  the lowercased original — because that's what
+                  appears as the SPOE arg key. Two header spellings
+                  like `X-Foo-Bar` and `X_Foo_Bar` produce different
+                  lower-case names but the same argName, and emitting
+                  both would put two `hdr_x_foo_bar=...` tokens on
+                  the same args= line, which SPOE parses as malformed
+                  / undefined-order. -#}
+              {%- var argName = replace(toLower(name), "-", "_") -%}
+              {%- if !seen[argName] -%}
+                {%- seen[argName] = true -%}
+                {{- " hdr_" + argName + "=req.hdr(" + name + ")" -}}
+              {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -1442,9 +1499,14 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-pass", ns, ingressName) -}}
-              {%- var lname = toLower(name) -%}
-              {%- if first_seen("haproxy-ingress-pass-header", lname) -%}
-                {%- var varName = replace(lname, "-", "_") -%}
+              {#- Dedupe on varName so spellings that differ only in
+                  dashes vs underscores (e.g. `X-Foo` vs `X_Foo`,
+                  both → `x_foo`) collapse to a single set-header
+                  directive — the plugin produces the same txn var
+                  for both, so the second directive would just
+                  duplicate the first. -#}
+              {%- var varName = replace(toLower(name), "-", "_") -%}
+              {%- if first_seen("haproxy-ingress-pass-header", varName) -%}
       {{ "\n" }}      http-request set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.hub.external_auth.{{ varName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
               {%- end -%}
             {%- end -%}
@@ -1481,9 +1543,11 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-fail", ns, ingressName) -}}
-              {%- var lname = toLower(name) -%}
-              {%- if first_seen("haproxy-ingress-fail-header", lname) -%}
-                {%- var varName = replace(lname, "-", "_") -%}
+              {#- Dedupe on varName (after dash→underscore) so
+                  spellings that collapse to the same plugin txn var
+                  produce one set-header directive, not two. -#}
+              {%- var varName = replace(toLower(name), "-", "_") -%}
+              {%- if first_seen("haproxy-ingress-fail-header", varName) -%}
       {{ "\n" }}      http-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
               {%- end -%}
             {%- end -%}
@@ -3188,6 +3252,217 @@ validationTests:
         target: file:spoe.conf
         pattern: "forward_headers=var\\(txn.auth_forward_headers\\)"
         description: SPOE message body threads txn.auth_forward_headers into the plugin's forward_headers arg
+
+  test-haproxy-ingress-external-auth-headers-request-extends-spoe-message:
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    description: |
+      haproxy-ingress.github.io/auth-headers-request listing a custom
+      header (one not in the hardcoded six) must auto-extend the SPOE
+      check-auth message body with a `hdr_<name>=req.hdr(<Name>)`
+      capture, so the plugin actually sees the header. Headers that
+      ARE in the hardcoded six must NOT be re-emitted (would produce
+      a duplicate SPOE arg). Multiple ingresses listing the same
+      custom header must dedupe to a single capture.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: tenant-a
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              # Mix of hardcoded (Authorization) and custom (X-Tenant-ID, X-Request-ID).
+              haproxy-ingress.github.io/auth-headers-request: "Authorization, X-Tenant-ID, X-Request-ID"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: tenant-a.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: tenant-b
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              # Repeats X-Tenant-ID — must dedupe across ingresses.
+              haproxy-ingress.github.io/auth-headers-request: "X-Tenant-ID, X-Trace-Id"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: tenant-b.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with custom auth-headers-request entries
+      - type: contains
+        target: file:spoe.conf
+        pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
+        description: Custom header X-Tenant-ID is captured as a SPOE arg
+      - type: contains
+        target: file:spoe.conf
+        pattern: "hdr_x_request_id=req\\.hdr\\(X-Request-ID\\)"
+        description: Custom header X-Request-ID from tenant-a is captured
+      - type: contains
+        target: file:spoe.conf
+        pattern: "hdr_x_trace_id=req\\.hdr\\(X-Trace-Id\\)"
+        description: Custom header X-Trace-Id from tenant-b is captured
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\) .*hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
+        description: Duplicate X-Tenant-ID across ingresses must collapse to one capture
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: "hdr_authorization=req\\.hdr\\(Authorization\\) .*hdr_authorization=req\\.hdr"
+        description: Hardcoded Authorization header must not be re-emitted by the auto-extend snippet
+
+  test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    description: |
+      Two header spellings that differ only in dashes vs underscores
+      (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to
+      different strings but collapse to the same SPOE arg name
+      after dash→underscore replacement (`hdr_x_request_id`).
+      Without dedup on the post-replacement name, the chart would
+      emit two `hdr_x_request_id=...` tokens on the same args= line
+      — SPOE doesn't allow duplicate arg keys, so the parser's
+      handling becomes undefined. Regression test for that.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: dashes
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-request: "X-Request-Id"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: dashes.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: underscores
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-request: "X_Request_Id"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: underscores.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid even when both spellings appear
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: "hdr_x_request_id=req\\.hdr\\([^)]+\\) .*hdr_x_request_id=req\\.hdr"
+        description: Only one hdr_x_request_id capture must appear on the SPOE args line; first writer wins
 
   test-haproxy-ingress-external-auth-headers-pass-fail:
     _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'

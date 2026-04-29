@@ -186,12 +186,21 @@ templateSnippets:
   #     plugin builds (and caches) a per-cert ureq Agent for the
   #     duration of the request.
   #
+  # The hardcoded `hdr_*` args at the end of the line capture the six
+  # standard auth headers (Authorization, Cookie, X-Forwarded-*).
+  # Ingress libraries can extend the captured set via the
+  # `spoe-message-check-auth-extra-args-*` glob — e.g. haproxy-ingress
+  # contributes one `hdr_<name>=req.hdr(<Name>)` per unique header
+  # listed in any ingress's `auth-headers-request` annotation, so the
+  # annotation alone determines what headers reach the auth service
+  # (the plugin's `forward_headers` arg then narrows per-route).
+  #
   # The plugin writes back the response variables
   # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
   spoe-message-check-auth-body:
     template: |-
       spoe-message check-auth
-          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) client_cert=var(txn.auth_client_cert) client_key=var(txn.auth_client_key) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) client_cert=var(txn.auth_client_cert) client_key=var(txn.auth_client_key) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri){{- render_glob "spoe-message-check-auth-extra-args-*" -}}
 
   frontend-filters-100-spoa-hub:
     template: |-
