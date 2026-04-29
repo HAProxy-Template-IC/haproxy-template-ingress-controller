@@ -336,13 +336,11 @@ templateSnippets:
   #   nginx.ingress.kubernetes.io/auth-url: "https://auth-svc.example/check"
   #
   # Out of scope (need upstream plugin / chart-architecture work):
-  #   - auth-response-headers (per-ingress upstream header forwarding —
-  #     plugin v0.3.0+ supports per-request extract_headers, but the
-  #     chart side still needs to enumerate per-header `set-header`
-  #     directives so HAProxy actually forwards the extracted vars to
-  #     the backend; tracked as a separate MR)
   #   - auth-proxy-set-headers (plugin v0.3.0+ supports per-request
-  #     forward_headers; chart-side wiring tracked separately)
+  #     forward_headers, but nginx-ingress's `auth-snippet` is
+  #     freeform HAProxy config injection — not parseable into a
+  #     header allowlist; haproxy-ingress flavour wires this via
+  #     auth-headers-request)
   map-auth-url-500-nginx-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
@@ -432,6 +430,75 @@ templateSnippets:
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
       {{ "\n" }}{{ host }}{{ pathStr }} {{ authMethod }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth response-headers allowlist. Per-ingress comma-list of
+  # response header names the SPOA hub should extract from the auth
+  # reply and forward to the upstream backend on successful auth.
+  # Lands in auth-extract-headers.map (which the spoa-hub library
+  # threads into the SPOE message's `extract_headers` arg) and the
+  # frontend-spoe-set-pass-headers-* extension point below emits one
+  # `http-request set-header` per unique header.
+  #
+  # Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#external-authentication
+  #
+  # Annotation:
+  #   nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-User, X-Auth-Roles"
+  #
+  # Plugin v0.3.0+ extracts headers on every reply path (2xx, 3xx,
+  # 4xx, 5xx) and exposes each as a transaction variable
+  # `txn.hub.external_auth.<name>` (lower-cased, dashes → underscores).
+  # The set-header directives are gated on `allowed -m bool` so they
+  # only fire on auth success.
+  map-auth-extract-headers-500-nginx-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-response-headers") | fallback("") | tostring() -%}
+        {%- if passHeaders != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
+            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
+            {%- if host == "" -%}
+              {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-response-headers set but a rule without a host. The auth-extract-headers map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end -%}
+            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
+              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
+      {{ "\n" }}{{ host }}{{ pathStr }} {{ passHeaders }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # Companion to map-auth-extract-headers-500-nginx-ingress: emit one
+  # `http-request set-header` line per UNIQUE header across all
+  # ingresses with auth-response-headers, so the plugin's extracted
+  # txn vars get forwarded to the upstream backend on successful
+  # auth. Per-route gating happens implicitly: the plugin only sets a
+  # txn var when the header is in that route's per-ingress
+  # extract_headers SPOE arg AND the auth response actually included
+  # it. Routes that didn't ask for the header just see the
+  # set-header skipped via `var ... -m found`.
+  frontend-spoe-set-pass-headers-500-nginx-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-response-headers") | fallback("") | tostring() -%}
+        {%- if passHeaders != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, h := range split(passHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "nginx.ingress.kubernetes.io/auth-response-headers", ns, ingressName) -}}
+              {%- var lname = toLower(name) -%}
+              {%- if first_seen("nginx-ingress-pass-header", lname) -%}
+                {%- var varName = replace(lname, "-", "_") -%}
+      {{ "\n" }}      http-request set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.hub.external_auth.{{ varName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+              {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -2937,6 +3004,91 @@ validationTests:
         target: file:spoe.conf
         pattern: "method=var\\(txn.auth_method\\)"
         description: SPOE message body threads txn.auth_method into the plugin's method arg
+
+  test-nginx-ingress-external-auth-response-headers:
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    description: |
+      Nginx Ingress auth-response-headers annotation populates
+      auth-extract-headers.map and emits one
+      `http-request set-header` per unique header in any ingress's
+      pass list, gated on `allowed -m bool` so the headers only flow
+      through to the upstream backend on auth success.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-User, X-Auth-Roles"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-response-headers annotation
+      - type: contains
+        target: map:auth-extract-headers.map
+        pattern: "protected.example.com/api X-Auth-User, X-Auth-Roles"
+        description: auth-extract-headers.map must contain the host+path → comma-list entry
+      - type: contains
+        target: file:spoe.conf
+        pattern: "extract_headers=var\\(txn.auth_extract_headers\\)"
+        description: SPOE message body threads txn.auth_extract_headers into the plugin's extract_headers arg
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_user\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
+        description: First pass header gets a set-header line gated on allowed=true and var found
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-Roles %\\[var\\(txn.hub.external_auth.x_auth_roles\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_roles\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
+        description: Second pass header gets its own set-header line
 
   test-nginx-ingress-external-auth-hostless-rejected:
     # Same as test-nginx-ingress-external-auth: needs the spoa-hub
