@@ -621,6 +621,122 @@ backend my-backend
 
 ---
 
+## External Authentication
+
+The library wires the `nginx.ingress.kubernetes.io/auth-*` family to the SPOA hub's `external-auth` plugin (v0.3.0+). When set, each request hits an HTTP auth subrequest before reaching the backend; the auth service's status code decides whether HAProxy forwards the request, redirects to a sign-in URL, or returns 401.
+
+### Prerequisites
+
+The SPOA hub sidecar with the `external-auth` plugin must be enabled:
+
+```yaml
+spoaHub:
+  plugins:
+    external-auth:
+      enabled: true
+```
+
+The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. Note: enabling `controller.templateLibraries.nginxIngress.enabled` ALSO auto-enables `external-auth` (the nginx-ingress library is opt-in for this reason). See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/operations/spoa-hub/) for the full deployment surface.
+
+!!! warning "Host-less rules error at render time"
+    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` cannot be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress.
+
+---
+
+### nginx.ingress.kubernetes.io/auth-url
+
+**Status**: ✅ Supported
+
+**Description**: Auth service URL the SPOA hub calls per request. The plugin appends the original request path, sends a GET (overridable via `auth-method`), and gates the request based on the response status: 2xx allows, 3xx with `auth-signin` redirects, anything else returns 401.
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map(maps/auth-url.map)
+http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
+http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
+```
+
+---
+
+### nginx.ingress.kubernetes.io/auth-signin
+
+**Status**: ✅ Supported
+
+**Description**: Browser-flow sign-in URL. When set, an auth failure produces a 302 redirect instead of a 401 — the standard pattern for OIDC / SAML flows. The deny rule still emits, so routes without `auth-signin` keep the API-friendly 401.
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
+  nginx.ingress.kubernetes.io/auth-signin: "https://login.example.com/oauth2/start?rd=$escaped_request_uri"
+```
+
+!!! note "nginx variables in the URL are not expanded"
+    HAProxy doesn't substitute `$escaped_request_uri` and friends at redirect time; the URL is used verbatim. Operators wanting the original-request preservation pattern should either set the param via the auth service (e.g. oauth2-proxy handles it server-side) or extend the SPOE message body with the bits they need.
+
+---
+
+### nginx.ingress.kubernetes.io/auth-method
+
+**Status**: ✅ Supported
+
+**Description**: HTTP method for the auth subrequest. Defaults to `GET` (or whatever the plugin's TOML config sets); set this to override per-route.
+
+**Valid values**: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
+  nginx.ingress.kubernetes.io/auth-method: "POST"
+```
+
+!!! note "Body-having methods carry an empty body"
+    `POST` / `PUT` / `PATCH` go to the auth service with an empty body — the plugin does not forward the original request payload.
+
+---
+
+### nginx.ingress.kubernetes.io/auth-response-headers
+
+**Status**: ✅ Supported
+
+**Description**: Comma-separated list of response header names from the auth service to forward to the upstream backend on auth success. Common pattern: the auth service returns `X-Auth-User: alice` on 200, this annotation makes that header available to the backend application.
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-url: "https://auth.example.com/check"
+  nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-User, X-Auth-Roles"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request set-header X-Auth-User %[var(txn.hub.external_auth.x_auth_user)] if { var(txn.hub.external_auth.x_auth_user) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+http-request set-header X-Auth-Roles %[var(txn.hub.external_auth.x_auth_roles)] if { var(txn.hub.external_auth.x_auth_roles) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+```
+
+One `set-header` directive per unique header across all ingresses; per-route gating happens via the plugin's per-ingress `extract_headers` SPOE arg — routes that didn't list a header have its txn var unset, so the `var ... -m found` gate skips them.
+
+!!! note "Failure-path response headers"
+    nginx-ingress doesn't expose an annotation for "headers to send back to the client on auth failure" (the haproxy-ingress equivalent is `auth-headers-fail`). If you need that — e.g. `WWW-Authenticate` for Bearer challenges — switch to or add the haproxy-ingress library and use its annotation prefix.
+
+!!! note "auth-snippet not wired"
+    `nginx.ingress.kubernetes.io/auth-snippet` (used in nginx-ingress for arbitrary nginx config injection in the auth subrequest) is freeform nginx syntax with no parsable structure, so it cannot be templated to HAProxy. The haproxy-ingress prefix has a typed `auth-headers-request` annotation that covers the most common use case.
+
+---
+
 ## SSL Features
 
 ### nginx.ingress.kubernetes.io/ssl-passthrough
@@ -761,7 +877,6 @@ The following nginx-ingress annotations are not supported:
 
 | Annotation | Reason |
 |------------|--------|
-| `auth-url`, `auth-signin`, `auth-response-headers` | External auth requires Lua, not achievable with pure templates |
 | `enable-modsecurity`, `modsecurity-*` | ModSecurity integration requires SPOE agent |
 | `mirror-*` | Traffic mirroring has no native HAProxy equivalent |
 | `enable-opentelemetry`, `opentelemetry-*` | Requires OpenTelemetry module |
@@ -782,9 +897,9 @@ This library watches the following additional resources:
 
 ## Implementation Status Summary
 
-**Total annotations**: 48
+**Total annotations**: 52
 
-- ✅ **Fully Supported**: 48
+- ✅ **Fully Supported**: 52
   - Timeouts: 3 annotations
   - Load Balancing: 1 annotation
   - Body Size Limit: 1 annotation
@@ -803,6 +918,7 @@ This library watches the following additional resources:
   - App Root: 1 annotation
   - Redirects: 2 annotations
   - Authentication: 3 annotations
+  - External Authentication: 4 annotations (`auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` — requires SPOA hub `external-auth` plugin)
   - SSL Passthrough: 1 annotation
   - Canary: 6 annotations
   - mTLS: 2 annotations

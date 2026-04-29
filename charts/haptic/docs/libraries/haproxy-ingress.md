@@ -656,13 +656,222 @@ htpasswd -nbB admin mypassword | cut -d: -f2 | base64 -w0
 
 ---
 
+## External Authentication
+
+The library wires the `haproxy-ingress.github.io/auth-*` annotation family to the SPOA hub's `external-auth` plugin (v0.3.0+). When set, each request hits an HTTP auth subrequest before reaching the backend; the auth service's status code decides whether HAProxy forwards the request, redirects to a sign-in URL, or returns 401.
+
+### Prerequisites
+
+The SPOA hub sidecar with the `external-auth` plugin must be enabled:
+
+```yaml
+spoaHub:
+  plugins:
+    external-auth:
+      enabled: true
+```
+
+The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/operations/spoa-hub/) for the full deployment surface.
+
+!!! warning "Host-less rules error at render time"
+    All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` cannot be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress; add a `host:` to the rule to fix.
+
+---
+
+### haproxy-ingress.github.io/auth-url
+
+**Status**: ✅ Supported
+
+**Description**: Auth service URL the SPOA hub calls per request. The plugin appends the original request path, sends a GET (overridable via `auth-method`), and gates the request based on the response status: 2xx allows, 3xx with `auth-signin` redirects, anything else returns 401.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map(maps/auth-url.map)
+http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
+http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
+```
+
+The matching `auth-url.map` entry:
+
+```
+app.example.com/api https://auth.example.com/check
+```
+
+---
+
+### haproxy-ingress.github.io/auth-signin
+
+**Status**: ✅ Supported
+
+**Description**: Browser-flow sign-in URL. When set, an auth failure produces a 302 redirect instead of a 401 — the standard pattern for OIDC / SAML flows where unauthenticated users go to a login page. The deny rule still emits, so routes without `auth-signin` keep the API-friendly 401.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+  haproxy-ingress.github.io/auth-signin: "https://login.example.com/oauth2/start"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request redirect location %[var(txn.auth_signin)] code 302 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.auth_signin) -m found }
+http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
+```
+
+---
+
+### haproxy-ingress.github.io/auth-method
+
+**Status**: ✅ Supported
+
+**Description**: HTTP method for the auth subrequest. Defaults to `GET` (or whatever the plugin's TOML config sets); set this to override per-route.
+
+**Valid values**: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+  haproxy-ingress.github.io/auth-method: "POST"
+```
+
+!!! note "Body-having methods carry an empty body"
+    `POST` / `PUT` / `PATCH` go to the auth service with an empty body — the plugin does not forward the original request payload. Auth services that need the body should read it via sample-fetch args (see [SPOA hub operations](https://haproxy-haptic.org/controller/operations/spoa-hub/)) or use header-based auth.
+
+---
+
+### haproxy-ingress.github.io/auth-headers-request
+
+**Status**: ✅ Supported
+
+**Description**: Comma-separated list of request header names to forward to the auth service. The chart auto-extends the SPOE message body to capture every header listed across ingresses (deduped, the six standard headers — Authorization, Cookie, X-Forwarded-{For,Proto,Host,Uri} — are always captured), and the plugin then narrows the per-route forwarded set to exactly the headers the annotation lists.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+  haproxy-ingress.github.io/auth-headers-request: "Authorization, X-Tenant-Id, X-Request-Id"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request set-var(txn.auth_forward_headers) var(txn.host_match),concat(,txn.path,),map(maps/auth-forward-headers.map)
+```
+
+The corresponding entries in the SPOE message:
+
+```
+spoe-message check-auth
+    args ... forward_headers=var(txn.auth_forward_headers) ... hdr_authorization=req.hdr(Authorization) hdr_x_tenant_id=req.hdr(X-Tenant-Id) hdr_x_request_id=req.hdr(X-Request-Id)
+```
+
+Header names are validated against the RFC 7230 token grammar; values containing whitespace, fetch syntax (`%[var(...)]`), or other non-tchar characters fail the Helm render.
+
+---
+
+### haproxy-ingress.github.io/auth-headers-succeed
+
+**Status**: ✅ Supported
+
+**Description**: Comma-separated list of response header names from the auth service to forward to the upstream backend on auth success. Common pattern: the auth service returns `X-Auth-User: alice` on 200, this annotation makes that header available to the backend application.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+  haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, X-Auth-Roles"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request set-header X-Auth-User %[var(txn.hub.external_auth.x_auth_user)] if { var(txn.hub.external_auth.x_auth_user) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+http-request set-header X-Auth-Roles %[var(txn.hub.external_auth.x_auth_roles)] if { var(txn.hub.external_auth.x_auth_roles) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+```
+
+One `set-header` directive per unique header across all ingresses; the per-route gating happens via the plugin's per-ingress `extract_headers` SPOE arg — routes that didn't list a header have its txn var unset, so the `var ... -m found` gate skips them.
+
+---
+
+### haproxy-ingress.github.io/auth-headers-fail
+
+**Status**: ✅ Supported
+
+**Description**: Comma-separated list of response header names from the auth service to forward to the *client* on auth failure. Drives e.g. `WWW-Authenticate` for Bearer challenges or `X-Error-Reason` for diagnostics on 401 / 5xx.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+  haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-response set-header WWW-Authenticate %[var(txn.hub.external_auth.www_authenticate)] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.www_authenticate) -m found }
+http-response set-header X-Error-Reason %[var(txn.hub.external_auth.x_error_reason)] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.x_error_reason) -m found }
+```
+
+The conditions ensure the directive only fires on the deny response (auth path ran, not allowed, plugin actually extracted the header). The plugin v0.3.0+ extracts headers on every reply path (2xx, 3xx, 4xx, 5xx, fail-policy), so 401 and 5xx replies populate the txn vars too.
+
+---
+
+### Combined example
+
+End-to-end: a protected API route with browser sign-in, custom request header forwarding, identity propagation to the backend, and a Bearer challenge on failure.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: protected-api
+  annotations:
+    haproxy-ingress.github.io/auth-url: "https://auth.example.com/check"
+    haproxy-ingress.github.io/auth-signin: "https://login.example.com/oauth2/start"
+    haproxy-ingress.github.io/auth-method: "GET"
+    haproxy-ingress.github.io/auth-headers-request: "Authorization, X-Tenant-Id"
+    haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, X-Auth-Roles"
+    haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: api-backend
+                port:
+                  number: 80
+```
+
+---
+
 ## Watched Resources
 
 This library does not add additional watched resources. It uses Ingress resources already watched by the [Ingress library](ingress.md).
 
 ## Implementation Status Summary
 
-The library processes **56** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress.yaml`).
+The library processes **62** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress.yaml`).
 
 **Supported by category:**
 
@@ -685,6 +894,7 @@ The library processes **56** `haproxy-ingress.github.io/*` annotations (verified
 | Headers | 2 | `headers`, `forwardfor` |
 | SSL passthrough | 1 | `ssl-passthrough` |
 | Basic auth | 2 | `auth-secret`, `auth-realm` |
+| External auth | 6 | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` (requires SPOA hub `external-auth` plugin) |
 | Backend config | 1 | `config-backend` |
 
 All annotations are fully supported.
