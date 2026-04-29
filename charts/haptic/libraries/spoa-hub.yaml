@@ -42,6 +42,21 @@
 #         enabled: true   # auto-enabled when spoaHub.enabled is truthy
 
 templateSnippets:
+  # RFC 7230 token guard for HTTP header field names from annotation
+  # values. Ingress libraries call this before embedding a header
+  # name into a HAProxy `set-header` / `set-var` directive — defence
+  # in depth for operator typos and against any future code path
+  # where annotation editing isn't strictly RBAC-gated. The regex
+  # mirrors RFC 7230 `tchar`; values containing whitespace, `;`,
+  # fetch syntax like `%[var(...)]`, etc. fail-loud at render time.
+  util-auth-validate-header-name:
+    template: |-
+      {%- macro ValidateAuthHeaderName(name string, annotation string, ns string, ingressName string) %}
+        {%- if !regex_search(name, "^[A-Za-z0-9!#$&'*+.^_`|~-]+$") -%}
+          {{- fail("Invalid HTTP header name '" + name + "' in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ". Header names must be RFC 7230 tokens (1*tchar): no whitespace, no special characters, no fetch syntax.") -}}
+        {%- end -%}
+      {%- end %}
+
   # features-* runs early in haproxyConfig.template (side-effect render).
   # We use it to register spoe.conf as a general file so the HAProxy
   # `filter spoe ... config <path>` directive resolves at validation
@@ -150,13 +165,22 @@ templateSnippets:
   #     annotation via auth-forward-headers.map. The plugin replaces
   #     its plugin-level forward_headers list with this when the arg
   #     is non-empty; empty (no annotation) falls back to the default.
+  #   - extract_headers (optional, v0.3.0+) — comma-separated list of
+  #     response header names to extract from the auth reply (on every
+  #     reply path: 2xx, 3xx, 4xx, 5xx). Each extracted header becomes
+  #     a transaction variable `txn.hub.external_auth.<name>` (with
+  #     dashes → underscores). Populated as the union of pass + fail
+  #     headers per ingress from auth-extract-headers.map; the
+  #     ingress libraries themselves emit per-route per-header
+  #     `set-header` (pass) and `deny ... hdr` (fail) directives that
+  #     consume those vars.
   #
   # The plugin writes back the response variables
   # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
   spoe-message-check-auth-body:
     template: |-
       spoe-message check-auth
-          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
 
   frontend-filters-100-spoa-hub:
     template: |-
@@ -180,13 +204,29 @@ templateSnippets:
       http-request set-var(txn.auth_signin) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
       http-request set-var(txn.auth_method) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
       http-request set-var(txn.auth_forward_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
+      http-request set-var(txn.auth_extract_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-extract-headers.map", "map") }}) unless { var(txn.auth_extract_headers) -m found }
       http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
+      {#- Pass-headers extension point: ingress libraries emit one
+          `http-request set-header` per unique header in any
+          ingress's auth-response-headers / auth-headers-pass union.
+          Each line is gated on `allowed -m bool` (only on auth
+          success) and `var ... -m found` (only when the plugin
+          actually extracted that header). Empty when no ingress
+          uses the annotation. -#}
+      {{- render_glob "frontend-spoe-set-pass-headers-*" -}}
       {#- Browser-friendly sign-in redirect on auth failure: if the
           ingress has `auth-signin`, redirect to it (302) instead of
           denying. The deny rule below still fires when auth-signin
           isn't configured, preserving the API-friendly default. -#}
       http-request redirect location %[var(txn.auth_signin)] code 302 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.auth_signin) -m found }
       http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
+      {#- Fail-headers extension point: ingress libraries emit one
+          `http-response set-header` per unique header in any
+          ingress's auth-headers-fail union. Runs on the deny
+          response (and only that — the conditions gate on the
+          auth path having run AND not allowed AND the per-header
+          var being set). Empty when no ingress uses the annotation. -#}
+      {{- render_glob "frontend-spoe-set-fail-headers-*" -}}
       {%- end %}
 
 maps:
@@ -219,6 +259,24 @@ maps:
       # as a comma-separated list. Empty value (no annotation) → the
       # plugin falls back to its plugin-level forward_headers config.
       {{- render_glob "map-auth-forward-headers-*" -}}
+
+  auth-extract-headers.map:
+    template: |
+      # External-auth: per-ingress union of response header names the
+      # plugin should extract from the auth reply. Populated by ingress
+      # libraries' map-auth-extract-headers-* contributions; each entry
+      # is the comma-separated union of that ingress's
+      # `auth-response-headers` / `auth-headers-pass` and
+      # `auth-headers-fail` annotation values. The value flows into the
+      # SPOE message's `extract_headers` arg as a comma list; the
+      # plugin then publishes each extracted header as a transaction
+      # variable `txn.hub.external_auth.<name>` (with dashes →
+      # underscores) and the ingress libraries' frontend
+      # `set-header` (pass) / `deny ... hdr` (fail) snippets consume
+      # those vars per-route. Empty value (no annotation) → no
+      # per-route extraction; the plugin uses its plugin-level
+      # extract_headers config.
+      {{- render_glob "map-auth-extract-headers-*" -}}
 
   auth-method.map:
     template: |

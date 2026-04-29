@@ -1261,16 +1261,7 @@ templateSnippets:
   # Annotation:
   #   haproxy-ingress.github.io/auth-url: "https://auth-svc.example/check"
   #
-  # Out of scope (need chart-architecture work — plugin v0.3.0+ now
-  # supports the SPOE-side machinery, so these are chart-only follow-ups):
-  #   - auth-headers-pass (per-ingress upstream header forwarding —
-  #     plugin v0.3.0+ supports per-request extract_headers, but the
-  #     chart still needs to enumerate per-header `set-header`
-  #     directives so HAProxy actually forwards the extracted vars to
-  #     the backend; tracked as a separate MR)
-  #   - auth-headers-fail (plugin v0.3.0+ extracts response headers on
-  #     every reply path; chart-side `http-request deny ... hdr ...`
-  #     enumeration tracked separately)
+  # Out of scope (need chart-architecture work):
   #   - auth-tls-cert-secret (plugin v0.3.0+ accepts client_cert /
   #     client_key SPOE args, but the chart needs to watch Secrets and
   #     inline PEM into haproxy.cfg — tracked as a separate MR)
@@ -1392,6 +1383,113 @@ templateSnippets:
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
       {{ "\n" }}{{ host }}{{ pathStr }} {{ authHeaders }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth response-headers allowlist (success path). Lands in
+  # auth-extract-headers.map as the union of pass + fail headers per
+  # ingress. The frontend-spoe-set-pass-headers-* glob below emits one
+  # `http-request set-header` per unique pass header, gated on
+  # `allowed -m bool` and `var ... -m found`.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-pass
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-headers-pass: "X-Auth-User, X-Auth-Roles"
+  #
+  # The companion annotation `auth-headers-fail` (failure path) shares
+  # the same auth-extract-headers.map — the plugin extracts the union
+  # so each var is available for whichever path runs.
+  map-auth-extract-headers-500-haproxy-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-pass") | fallback("") | tostring() -%}
+        {%- var failHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") | fallback("") | tostring() -%}
+        {%- var union = passHeaders -%}
+        {%- if passHeaders != "" && failHeaders != "" -%}
+          {%- union = passHeaders + ", " + failHeaders -%}
+        {%- else if failHeaders != "" -%}
+          {%- union = failHeaders -%}
+        {%- end -%}
+        {%- if union != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
+            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
+            {%- if host == "" -%}
+              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-headers-pass or auth-headers-fail set but a rule without a host. The auth-extract-headers map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end -%}
+            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
+              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
+      {{ "\n" }}{{ host }}{{ pathStr }} {{ union }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # One `http-request set-header` per unique header across all
+  # ingresses with auth-headers-pass. Per-route gating happens
+  # implicitly via the plugin's per-route extract_headers SPOE arg —
+  # routes that didn't ask for a header have its txn var unset, so
+  # the `var ... -m found` gate skips them.
+  frontend-spoe-set-pass-headers-500-haproxy-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-pass") | fallback("") | tostring() -%}
+        {%- if passHeaders != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, h := range split(passHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-pass", ns, ingressName) -}}
+              {%- var lname = toLower(name) -%}
+              {%- if first_seen("haproxy-ingress-pass-header", lname) -%}
+                {%- var varName = replace(lname, "-", "_") -%}
+      {{ "\n" }}      http-request set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.hub.external_auth.{{ varName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth fail-headers allowlist. Per-ingress comma-list of
+  # response header names from the auth reply that should surface in
+  # the response to the *client* on auth failure (e.g.
+  # WWW-Authenticate to drive a Bearer challenge, X-Error-Reason for
+  # diagnostics). Plugin v0.3.0+ extracts these on every reply path
+  # (so 401 / 5xx replies populate the txn vars too).
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-fail
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
+  #
+  # The frontend-spoe-set-fail-headers-* glob emits one
+  # `http-response set-header` per unique fail header, gated on the
+  # auth path having run, !allowed, and the var being set. The
+  # extract_headers SPOE arg union is built in
+  # map-auth-extract-headers-500-haproxy-ingress.
+  frontend-spoe-set-fail-headers-500-haproxy-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var failHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") | fallback("") | tostring() -%}
+        {%- if failHeaders != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, h := range split(failHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-fail", ns, ingressName) -}}
+              {%- var lname = toLower(name) -%}
+              {%- if first_seen("haproxy-ingress-fail-header", lname) -%}
+                {%- var varName = replace(lname, "-", "_") -%}
+      {{ "\n" }}      http-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
+              {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -2990,6 +3088,179 @@ validationTests:
         target: file:spoe.conf
         pattern: "forward_headers=var\\(txn.auth_forward_headers\\)"
         description: SPOE message body threads txn.auth_forward_headers into the plugin's forward_headers arg
+
+  test-haproxy-ingress-external-auth-headers-pass-fail:
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    description: |
+      haproxy-ingress.github.io/auth-headers-pass and auth-headers-fail
+      annotations both populate auth-extract-headers.map (their union
+      per ingress) and produce per-unique-header HAProxy directives:
+      `http-request set-header` for pass (fires on success, allowed=true)
+      and `http-response set-header` for fail (fires on auth failure,
+      after the deny rule, gated on `auth_url -m found` and
+      `!allowed`).
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-pass: "X-Auth-User, X-Auth-Roles"
+              haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-headers-pass and auth-headers-fail annotations
+      - type: contains
+        target: map:auth-extract-headers.map
+        pattern: "protected.example.com/api X-Auth-User, X-Auth-Roles, WWW-Authenticate, X-Error-Reason"
+        description: auth-extract-headers.map must hold the union of pass and fail headers per ingress (with consistent comma+space spacing)
+      - type: contains
+        target: file:spoe.conf
+        pattern: "extract_headers=var\\(txn.auth_extract_headers\\)"
+        description: SPOE message body threads txn.auth_extract_headers into the plugin's extract_headers arg
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_user\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
+        description: First pass header gets a set-header line gated on allowed=true and var found
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-Roles %\\[var\\(txn.hub.external_auth.x_auth_roles\\)\\]"
+        description: Second pass header gets its own set-header line
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-response set-header WWW-Authenticate %\\[var\\(txn.hub.external_auth.www_authenticate\\)\\] if \\{ var\\(txn.auth_url\\) -m found \\} !\\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\} \\{ var\\(txn.hub.external_auth.www_authenticate\\) -m found \\}"
+        description: First fail header gets an http-response set-header gated on the auth path having run, !allowed, and var found
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-response set-header X-Error-Reason %\\[var\\(txn.hub.external_auth.x_error_reason\\)\\]"
+        description: Second fail header gets its own http-response set-header line
+
+  test-haproxy-ingress-external-auth-bad-header-name-rejected:
+    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    description: |
+      A header name in auth-headers-pass / auth-headers-fail that
+      doesn't match the RFC 7230 token grammar (e.g. contains
+      whitespace, fetch syntax, or other special characters) must
+      fail loudly at template-render time. Defence in depth against
+      malformed annotation values being embedded into HAProxy
+      directives.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-header
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              # Contains an HAProxy fetch-syntax injection attempt:
+              haproxy-ingress.github.io/auth-headers-pass: "X-Auth-User, %[var(txn.injected)]"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bad.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid HTTP header name"
+        description: Render must fail loudly when a header name violates RFC 7230 token grammar
+      - type: contains
+        target: rendering_error
+        pattern: "default/bad-header"
+        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-external-auth-hostless-rejected:
     # Same as test-haproxy-ingress-external-auth: needs the spoa-hub
