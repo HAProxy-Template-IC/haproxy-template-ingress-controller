@@ -865,13 +865,120 @@ spec:
 
 ---
 
+## Client Certificate Auth (mTLS)
+
+The library wires the haproxy-ingress.github.io/auth-tls-* annotations for incoming client-cert verification. The CA bundle from the referenced Secret is written to the SSL cert dir and referenced from the HAProxy `crt-list` line for the matching SNI as `[ca-file <path> verify <mode>]` — HAProxy verifies incoming client certs at the TLS layer. Companion annotations react to the verification result via `ssl_c_verify` and `ssl_fc_has_crt`.
+
+### haproxy-ingress.github.io/auth-tls-secret
+
+**Status**: ✅ Supported
+
+**Description**: Reference to a `kubernetes.io/tls` Secret whose `ca.crt` field contains the CA bundle that signs the clients' certificates. The chart writes the CA to `ssl/<ns>-<secret>-client-ca.pem` and adds `[ca-file <path> verify <mode>]` to the crt-list line for every host on the annotated Ingress.
+
+**Format**: `name` (resolves in the Ingress namespace) or `namespace/name`.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-tls-secret: "client-ca"
+```
+
+The Secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: client-ca
+type: kubernetes.io/tls
+data:
+  ca.crt: <base64 PEM CA bundle>
+```
+
+!!! warning "Host-less rules error at render time"
+    SNI-keyed verification can't be enforced on Ingress rules without a `host:`. The chart fails the Helm render with a descriptive error.
+
+---
+
+### haproxy-ingress.github.io/auth-tls-verify-client
+
+**Status**: ✅ Supported
+
+**Description**: Client certificate verification mode. Same value semantics as the nginx-ingress flavour; see the [nginx-ingress documentation for auth-tls-verify-client](nginx-ingress.md#nginxingresskubernetesioauth-tls-verify-client) for the value mapping table.
+
+**Valid values**: `on` (default), `off`, `optional`, `optional_no_ca`.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-tls-secret: "client-ca"
+  haproxy-ingress.github.io/auth-tls-verify-client: "optional"
+```
+
+!!! note "auth-tls-strict not separately wired"
+    haproxy-ingress's `auth-tls-strict` annotation overlaps with `auth-tls-verify-client: optional` — operators wanting "soft" verification (allow connections without cert, defer to backend header inspection) should use `auth-tls-verify-client: optional` directly.
+
+---
+
+### haproxy-ingress.github.io/auth-tls-error-page
+
+**Status**: ✅ Supported
+
+**Description**: URL to redirect to (302) when client certificate verification fails.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-tls-secret: "client-ca"
+  haproxy-ingress.github.io/auth-tls-error-page: "https://example.com/cert-required"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request redirect location https://example.com/cert-required code 302 if { ssl_c_verify gt 0 } { hdr(host) -i example.com }
+```
+
+The `ssl_c_verify gt 0` condition matches any verification error (including missing cert when `verify required` is set).
+
+---
+
+### haproxy-ingress.github.io/auth-tls-cert-header
+
+**Status**: ✅ Supported
+
+**Description**: When `"true"`, forwards the verified client certificate (base64-encoded DER), subject CN, and full subject DN to the upstream backend as HTTP headers.
+
+**Usage**:
+
+```yaml
+annotations:
+  haproxy-ingress.github.io/auth-tls-secret: "client-ca"
+  haproxy-ingress.github.io/auth-tls-cert-header: "true"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
+http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } { hdr(host) -i example.com }
+http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } { hdr(host) -i example.com }
+http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } { hdr(host) -i example.com }
+```
+
+The `ssl_fc_has_crt` gate ensures the headers only flow when a cert was actually presented (relevant when `auth-tls-verify-client: optional` is in effect — connections without a cert get no headers rather than empty ones).
+
+---
+
 ## Watched Resources
 
 This library does not add additional watched resources. It uses Ingress resources already watched by the [Ingress library](ingress.md).
 
 ## Implementation Status Summary
 
-The library processes **62** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress.yaml`).
+The library processes **66** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress.yaml`).
 
 **Supported by category:**
 
@@ -895,6 +1002,7 @@ The library processes **62** `haproxy-ingress.github.io/*` annotations (verified
 | SSL passthrough | 1 | `ssl-passthrough` |
 | Basic auth | 2 | `auth-secret`, `auth-realm` |
 | External auth | 6 | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` (requires SPOA hub `external-auth` plugin) |
+| Client mTLS | 4 | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` (incoming client-cert verification via crt-list per-line ca-file/verify options) |
 | Backend config | 1 | `config-backend` |
 
 All annotations are fully supported.

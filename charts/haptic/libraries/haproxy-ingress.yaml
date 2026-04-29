@@ -1118,6 +1118,60 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
+  frontend-filters-690-haproxy-ingress-mtls-error:
+    template: |
+      {#-
+        HAProxy-Ingress mTLS Error Page and Certificate Passthrough
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-tls-error-page
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-tls-error-page: "<url>" (optional)
+          - haproxy-ingress.github.io/auth-tls-cert-header: "true|false" (optional)
+
+        Generated HAProxy Config:
+          http-request redirect location <url> code 302 if { ssl_c_verify gt 0 } <host-match>
+          http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if <host-match>
+          http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if <host-match>
+          http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if <host-match>
+
+        Mirrors `frontend-filters-790-nginx-ingress-mtls-error` but uses the
+        haproxy-ingress.github.io/* annotation prefix and the haproxy-ingress
+        community's chosen header naming (X-SSL-Client-{CN,DN,Cert}). Runs
+        at priority 690 so haproxy-ingress directives compose with the
+        nginx-ingress equivalents at 790 — distinct hosts can mix prefixes.
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-auth-validate-url" for ValidateAuthURL -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- if first_seen("hi_mtls", key) %}
+          {%- var hosts = []any{} %}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- var h = rule | dig("host") %}
+            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- end %}
+          {%- if len(hosts) > 0 %}
+            {%- var errorPage = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-error-page") | fallback("") | tostring() %}
+            {%- var certHeader = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-cert-header") | fallback("") | tostring() %}
+            {%- var cond = HostMatchCondition(hosts) %}
+            {%- if errorPage != "" %}
+              {{- ValidateAuthURL(errorPage, "haproxy-ingress.github.io/auth-tls-error-page", ns, name) -}}
+      # haproxy-ingress/auth-tls-error-page ({{ key }})
+      http-request redirect location {{ errorPage }} code 302 if { ssl_c_verify gt 0 } {{ cond }}
+            {%- end %}
+            {%- if certHeader == "true" %}
+      # haproxy-ingress/auth-tls-cert-header ({{ key }})
+      http-request set-header X-SSL-Client-CN %[ssl_c_s_dn(CN)] if { ssl_fc_has_crt } {{ cond }}
+      http-request set-header X-SSL-Client-DN %[ssl_c_s_dn] if { ssl_fc_has_crt } {{ cond }}
+      http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } {{ cond }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
   features-100-haproxy-ingress-ssl-passthrough:
     template: |
       {#-
@@ -1141,6 +1195,88 @@ templateSnippets:
           {%- var hiBackends = hiVal.(map[string]any)["backends"].([]any) %}
           {%- for _, backend := range hiBackends %}
             {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  features-110-haproxy-ingress-mtls:
+    template: |
+      {#-
+        HAProxy-Ingress Client-Cert Verification Registration
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-tls-secret: "<name>" or "<ns>/<name>"
+            (kubernetes.io/tls Secret with `ca.crt` containing the CA bundle
+            that signed the clients' certificates)
+          - haproxy-ingress.github.io/auth-tls-verify-client: "on" | "off" |
+            "optional" | "optional_no_ca" (default: "on")
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-tls-secret
+
+        Mirrors features-110-nginx-ingress-mtls — same Secret format,
+        same verify-client value mapping, same emission into
+        `gf["clientCertVerifyHosts"]`. ssl.yaml's
+        features-150-ssl-crtlist owns the actual `[ca-file ... verify ...]`
+        crt-list line emission, so both ingress libraries can stack on
+        the same SNI-keyed map without coordinating.
+
+        haproxy-ingress's `auth-tls-strict` (when false, accepts unverified
+        connections and relies on backend header inspection) overlaps with
+        `auth-tls-verify-client: optional` and is intentionally not wired
+        as a separate axis — operators wanting "soft" verification should
+        use `auth-tls-verify-client: optional` directly.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var secretRef = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-secret") | fallback("") | tostring() %}
+        {%- if secretRef != "" %}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {%- var verifyClient = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-verify-client") | fallback("on") | tostring() | toLower() %}
+          {%- if verifyClient == "off" %}
+            {%- continue %}
+          {%- end %}
+          {%- var verifyMode = "" %}
+          {%- if verifyClient == "on" %}
+            {%- verifyMode = "required" %}
+          {%- else if verifyClient == "optional" || verifyClient == "optional_no_ca" %}
+            {%- verifyMode = "optional" %}
+          {%- else %}
+            {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-verify-client=" + verifyClient + " which is not one of 'on', 'off', 'optional', 'optional_no_ca'.") -}}
+          {%- end %}
+
+          {%- var secretNs = ns %}
+          {%- var secretName = secretRef %}
+          {%- if strings_contains(secretRef, "/") %}
+            {%- var parts = split(secretRef, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {%- if secret == nil %}
+            {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by haproxy-ingress.github.io/auth-tls-secret on Ingress " + ns + "/" + name + " not found. Create the Secret (kubernetes.io/tls with a `ca.crt` field) or update the annotation.") -}}
+          {%- end %}
+          {%- var caBundleB64 = secret | dig("data", "ca.crt") | fallback("") | tostring() %}
+          {%- if caBundleB64 == "" %}
+            {{- fail("Secret '" + secretNs + "/" + secretName + "' (referenced by haproxy-ingress.github.io/auth-tls-secret on Ingress " + ns + "/" + name + ") is missing data.ca.crt. The Secret must contain a `ca.crt` entry with the CA bundle that signed the clients' certificates.") -}}
+          {%- end %}
+          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
+          {%- var _, regErr = fileRegistry.Register("cert", caFilename, caBundle) -%}
+          {%- if regErr != nil -%}
+            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
+          {%- end -%}
+          {%- var caPath, _ = pathResolver.GetPath(caFilename, "cert") %}
+
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- var host = rule | dig("host") | fallback("") | tostring() %}
+            {%- if host == "" %}
+              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end %}
+            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
+              "ca_path": caPath,
+              "verify_mode": verifyMode,
+            } %}
           {%- end %}
         {%- end %}
       {%- end %}
@@ -2811,6 +2947,163 @@ validationTests:
         target: haproxy.cfg
         pattern: "user admin password"
         description: User must be in config
+
+  test-haproxy-ingress-auth-tls-secret:
+    description: |
+      haproxy-ingress.github.io/auth-tls-secret references a
+      kubernetes.io/tls Secret whose `ca.crt` is written to the SSL
+      cert dir and used in the crt-list line for the matching SNI as
+      `ca-file <path> verify required`. Combined with auth-tls-error-page
+      (302 redirect on verification failure) and auth-tls-cert-header
+      (forward client cert as headers to the backend on success).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mtls-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mtls-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mtls-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: client-ca
+          type: kubernetes.io/tls
+          data:
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: server-tls
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-protected
+            annotations:
+              haproxy-ingress.github.io/auth-tls-secret: "client-ca"
+              haproxy-ingress.github.io/auth-tls-verify-client: "on"
+              haproxy-ingress.github.io/auth-tls-error-page: "https://login.example.com/cert-required"
+              haproxy-ingress.github.io/auth-tls-cert-header: "true"
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts:
+                  - api.example.com
+                secretName: server-tls
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mtls-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with the auth-tls-* annotation set
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: "ca-file [^ ]*default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
+        description: crt-list line carries the per-host ca-file path, verify mode, and SNI
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location https://login\\.example\\.com/cert-required code 302 if \\{ ssl_c_verify gt 0 \\}"
+        description: auth-tls-error-page emits a 302 redirect gated on the cert-verify-failure ACL
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-SSL-Client-Cert %\\[ssl_c_der,base64\\] if \\{ ssl_fc_has_crt \\}"
+        description: auth-tls-cert-header forwards the client cert (base64 DER) on requests that presented a cert
+
+  test-haproxy-ingress-auth-tls-error-page-injection-rejected:
+    description: |
+      An auth-tls-error-page value containing whitespace (or
+      newlines, tabs, etc.) must fail loudly — without validation,
+      the value would be interpolated into a `http-request redirect
+      location <url>` directive where whitespace is significant and
+      could be used to inject arbitrary HAProxy directives. Defence
+      in depth against any future code path where Ingress-write RBAC
+      isn't strictly scoped.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mtls-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mtls-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mtls-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bad-redirect
+            annotations:
+              # Whitespace + injected `http-request deny` after the legitimate URL.
+              haproxy-ingress.github.io/auth-tls-error-page: "https://evil.example.com code 301\n      http-request deny if TRUE"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mtls-service
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid URL"
+        description: Render must fail loudly when the URL contains whitespace
+      - type: contains
+        target: rendering_error
+        pattern: "default/bad-redirect"
+        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-external-auth:
     # The auth-url.map and SPOE wiring this test asserts on are

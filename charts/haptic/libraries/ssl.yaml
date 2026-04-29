@@ -50,6 +50,7 @@ templateSnippets:
           "sslPassthroughBackends": []any{},
           "tlsCertificates": []any{},
           "sslRedirectHosts": []any{},
+          "clientCertVerifyHosts": map[string]any{},
         }
       }) -%}
       {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
@@ -62,6 +63,9 @@ templateSnippets:
       {%- end -%}
       {%- if gf["sslRedirectHosts"] == nil -%}
         {%- gf["sslRedirectHosts"] = []any{} -%}
+      {%- end -%}
+      {%- if gf["clientCertVerifyHosts"] == nil -%}
+        {%- gf["clientCertVerifyHosts"] = map[string]any{} -%}
       {%- end -%}
 
   features-150-ssl-crtlist:
@@ -86,23 +90,69 @@ templateSnippets:
 
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var crtlistLines = []any{} -%}
+      {%- var clientCertVerifyHosts = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) -%}
 
-      {# Generate entries for each registered TLS certificate #}
+      {# Generate entries for each registered TLS certificate.
+         Per-host client-cert verification (driven by the ingress
+         libraries' auth-tls-secret machinery) means the SNIs covered
+         by a single cert may need different per-line ssl-options
+         in the crt-list. We therefore group each cert's SNIs by
+         their (ca_path, verify_mode) tuple and emit one crt-list
+         line per group — the same cert can appear multiple times
+         in a crt-list with different options, which is supported. #}
       {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
       {%- for _, tlsCert := range tlsCerts -%}
         {%- var tc map[string]any = tlsCert -%}
         {# Use sanitized_filename from the registration (set by ingress.yaml/gateway.yaml) #}
         {# This ensures the crt-list references the actual filename on disk after HAProxy sanitization #}
         {%- var certFilename = tc["sanitized_filename"] | fallback(tc["secret_namespace"] + "_" + tc["secret_name"] + ".pem") -%}
-        {# Paths in crt-list are relative to crt-base, so just use filename #}
-        {%- var sslOptions = "[ocsp-update on]" -%}
-        {%- var sniList = tc["sni_patterns"] | toStringSlice() | join(" ") -%}
-        {%- var line = tostring(certFilename) + " " + sslOptions + " " + sniList -%}
-        {%- crtlistLines = append(crtlistLines, line) -%}
+        {%- var snis []any = coalesce(tc["sni_patterns"], []any{}).([]any) -%}
+
+        {# Group SNIs by client-cert verify config. Empty key = no verify. #}
+        {%- var snisByConfig = map[string][]any{} -%}
+        {%- var configForKey = map[string]any{} -%}
+        {%- for _, sni := range snis -%}
+          {%- var cfgRaw = clientCertVerifyHosts[tostring(sni)] -%}
+          {%- var key = "" -%}
+          {%- if cfgRaw != nil -%}
+            {%- var cfg = cfgRaw.(map[string]any) -%}
+            {%- key = tostring(cfg["ca_path"]) + ":" + tostring(cfg["verify_mode"]) -%}
+            {%- configForKey[key] = cfg -%}
+          {%- end -%}
+          {%- if snisByConfig[key] == nil -%}
+            {%- snisByConfig[key] = []any{} -%}
+          {%- end -%}
+          {%- snisByConfig[key] = append(snisByConfig[key], sni) -%}
+        {%- end -%}
+
+        {# Emit one crt-list line per (config) group. Sort by key for
+           deterministic output — Scriggo map iteration order is not
+           guaranteed stable across renders, and a reordered crt-list
+           triggers an HAProxy reload even when the underlying inputs
+           are identical. #}
+        {%- var keyList = []any{} -%}
+        {%- for k := range snisByConfig -%}
+          {%- keyList = append(keyList, k) -%}
+        {%- end -%}
+        {%- var sortedKeys = sort_strings(keyList) -%}
+        {%- for _, key := range sortedKeys -%}
+          {%- var groupSnis = snisByConfig[key] -%}
+          {%- var sslOptions = "[ocsp-update on" -%}
+          {%- if key != "" -%}
+            {%- var cfg = configForKey[key].(map[string]any) -%}
+            {%- sslOptions = sslOptions + " ca-file " + tostring(cfg["ca_path"]) + " verify " + tostring(cfg["verify_mode"]) -%}
+          {%- end -%}
+          {%- sslOptions = sslOptions + "]" -%}
+          {%- var sniList = groupSnis | toStringSlice() | join(" ") -%}
+          {%- var line = tostring(certFilename) + " " + sslOptions + " " + sniList -%}
+          {%- crtlistLines = append(crtlistLines, line) -%}
+        {%- end -%}
       {%- end -%}
 
-      {# Default certificate (no SNI filter = matches everything not matched above) #}
-      {# Paths in crt-list are relative to crt-base, so just use filename #}
+      {# Default certificate (no SNI filter = matches everything not matched above).
+         The default never gets client-cert verification — per-host verify rules
+         only apply when a request matches a specific SNI. Requests that fall
+         through to the default land on a cert with verify=none implicitly. #}
       {%- var defaultLine = "default.pem [ocsp-update on]" -%}
       {%- crtlistLines = append(crtlistLines, defaultLine) -%}
 
