@@ -174,13 +174,24 @@ templateSnippets:
   #     ingress libraries themselves emit per-route per-header
   #     `set-header` (pass) and `deny ... hdr` (fail) directives that
   #     consume those vars.
+  #   - client_cert / client_key (optional, v0.3.0+) — PEM-encoded
+  #     mTLS client certificate and key for the auth subrequest,
+  #     populated from the haproxy-ingress.github.io/auth-tls-cert-secret
+  #     annotation. Both must be present together to enable mTLS.
+  #     The chart stores the values base64-encoded in the
+  #     auth-tls-client-cert.map / auth-tls-client-key.map files
+  #     (PEM is multi-line and would otherwise break HAProxy map
+  #     line parsing); the frontend `set-var` chains a `,b64dec`
+  #     converter so the SPOE message arg ends up as raw PEM. The
+  #     plugin builds (and caches) a per-cert ureq Agent for the
+  #     duration of the request.
   #
   # The plugin writes back the response variables
   # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
   spoe-message-check-auth-body:
     template: |-
       spoe-message check-auth
-          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) client_cert=var(txn.auth_client_cert) client_key=var(txn.auth_client_key) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
 
   frontend-filters-100-spoa-hub:
     template: |-
@@ -205,6 +216,12 @@ templateSnippets:
       http-request set-var(txn.auth_method) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
       http-request set-var(txn.auth_forward_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
       http-request set-var(txn.auth_extract_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-extract-headers.map", "map") }}) unless { var(txn.auth_extract_headers) -m found }
+      {#- mTLS client cert / key are stored in the maps as base64-encoded
+          PEM (multi-line PEM would otherwise break HAProxy map parsing),
+          so the lookup chains a `,b64dec` converter to land raw PEM in
+          the txn var that the SPOE message arg references. -#}
+      http-request set-var(txn.auth_client_cert) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-tls-client-cert.map", "map") }}),b64dec unless { var(txn.auth_client_cert) -m found }
+      http-request set-var(txn.auth_client_key) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-tls-client-key.map", "map") }}),b64dec unless { var(txn.auth_client_key) -m found }
       http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
       {#- Pass-headers extension point: ingress libraries emit one
           `http-request set-header` per unique header in any
@@ -277,6 +294,32 @@ maps:
       # per-route extraction; the plugin uses its plugin-level
       # extract_headers config.
       {{- render_glob "map-auth-extract-headers-*" -}}
+
+  auth-tls-client-cert.map:
+    template: |
+      # External-auth: per-ingress mTLS client certificate (PEM,
+      # base64-encoded) for the auth subrequest. Populated by ingress
+      # libraries' map-auth-tls-client-cert-* contributions from the
+      # `haproxy-ingress.github.io/auth-tls-cert-secret` annotation.
+      # The value is base64-encoded so multi-line PEM fits on the
+      # single map-entry line; the frontend `set-var` chains a
+      # `,b64dec` converter to land raw PEM in txn.auth_client_cert,
+      # which then flows into the SPOE message's `client_cert` arg.
+      # Empty value (no annotation) → no mTLS for that route; the
+      # plugin's HTTP client uses plain TLS (or the plugin-level
+      # default agent).
+      {{- render_glob "map-auth-tls-client-cert-*" -}}
+
+  auth-tls-client-key.map:
+    template: |
+      # External-auth: per-ingress mTLS client key (PEM,
+      # base64-encoded) matching auth-tls-client-cert.map. Populated
+      # by ingress libraries' map-auth-tls-client-key-* contributions
+      # from the same `haproxy-ingress.github.io/auth-tls-cert-secret`
+      # annotation. Both cert and key must be present for the plugin
+      # to enable mTLS; supplying only one is a no-op (plugin falls
+      # back to the default agent).
+      {{- render_glob "map-auth-tls-client-key-*" -}}
 
   auth-method.map:
     template: |
