@@ -494,9 +494,11 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "nginx.ingress.kubernetes.io/auth-response-headers", ns, ingressName) -}}
-              {%- var lname = toLower(name) -%}
-              {%- if first_seen("nginx-ingress-pass-header", lname) -%}
-                {%- var varName = replace(lname, "-", "_") -%}
+              {#- Dedupe on varName (after dash→underscore) so
+                  spellings that collapse to the same plugin txn var
+                  produce one set-header directive, not two. -#}
+              {%- var varName = replace(toLower(name), "-", "_") -%}
+              {%- if first_seen("nginx-ingress-pass-header", varName) -%}
       {{ "\n" }}      http-request set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.hub.external_auth.{{ varName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
               {%- end -%}
             {%- end -%}
