@@ -1447,10 +1447,10 @@ templateSnippets:
   # `http-request set-header` per unique pass header, gated on
   # `allowed -m bool` and `var ... -m found`.
   #
-  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-pass
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-succeed
   #
   # Annotation:
-  #   haproxy-ingress.github.io/auth-headers-pass: "X-Auth-User, X-Auth-Roles"
+  #   haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, X-Auth-Roles"
   #
   # The companion annotation `auth-headers-fail` (failure path) shares
   # the same auth-extract-headers.map — the plugin extracts the union
@@ -1458,7 +1458,7 @@ templateSnippets:
   map-auth-extract-headers-500-haproxy-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-pass") | fallback("") | tostring() -%}
+        {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") | fallback("") | tostring() -%}
         {%- var failHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") | fallback("") | tostring() -%}
         {%- var union = passHeaders -%}
         {%- if passHeaders != "" && failHeaders != "" -%}
@@ -1472,7 +1472,7 @@ templateSnippets:
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
             {%- var host = rule | dig("host") | fallback("") | tostring() -%}
             {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-headers-pass or auth-headers-fail set but a rule without a host. The auth-extract-headers map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-headers-succeed or auth-headers-fail set but a rule without a host. The auth-extract-headers map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
@@ -1483,7 +1483,7 @@ templateSnippets:
       {%- end -%}
 
   # One `http-request set-header` per unique header across all
-  # ingresses with auth-headers-pass. Per-route gating happens
+  # ingresses with auth-headers-succeed. Per-route gating happens
   # implicitly via the plugin's per-route extract_headers SPOE arg —
   # routes that didn't ask for a header have its txn var unset, so
   # the `var ... -m found` gate skips them.
@@ -1491,14 +1491,14 @@ templateSnippets:
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-pass") | fallback("") | tostring() -%}
+        {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") | fallback("") | tostring() -%}
         {%- if passHeaders != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var ingressName = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
           {%- for _, h := range split(passHeaders, ",") -%}
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
-              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-pass", ns, ingressName) -}}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-succeed", ns, ingressName) -}}
               {#- Dedupe on varName so spellings that differ only in
                   dashes vs underscores (e.g. `X-Foo` vs `X_Foo`,
                   both → `x_foo`) collapse to a single set-header
@@ -1550,110 +1550,6 @@ templateSnippets:
               {%- if first_seen("haproxy-ingress-fail-header", varName) -%}
       {{ "\n" }}      http-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
               {%- end -%}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
-
-  # External-auth mTLS client certificate. Per-ingress reference to a
-  # K8s Secret of type kubernetes.io/tls (data fields `tls.crt` and
-  # `tls.key`) whose PEM contents the SPOA hub presents to the auth
-  # service. The K8s Secret stores both fields already base64-encoded;
-  # the chart passes that base64 verbatim into the map (saving a
-  # decode/encode roundtrip), and the spoa-hub frontend chains a
-  # `,b64dec` converter when it sets txn.auth_client_cert /
-  # txn.auth_client_key, so the SPOE plugin sees raw PEM.
-  #
-  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-tls-cert-secret
-  #
-  # Annotation:
-  #   haproxy-ingress.github.io/auth-tls-cert-secret: "namespace/name"
-  #   haproxy-ingress.github.io/auth-tls-cert-secret: "name"   # defaults to ingress namespace
-  #
-  # Both `tls.crt` and `tls.key` must be present in the Secret; the
-  # plugin needs the pair to enable mTLS. A missing Secret or missing
-  # data fields fail loud at template render time — silently skipping
-  # mTLS on a route the operator marked for it would let traffic out
-  # without the expected client cert.
-  map-auth-tls-client-cert-500-haproxy-ingress:
-    template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var secretRef = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-cert-secret") | fallback("") | tostring() -%}
-        {%- if secretRef != "" -%}
-          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
-          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- var secretNs = ns -%}
-          {%- var secretName = secretRef -%}
-          {%- if strings_contains(secretRef, "/") -%}
-            {%- var parts = split(secretRef, "/") -%}
-            {%- secretNs = parts[0] -%}
-            {%- secretName = parts[1] -%}
-          {%- end -%}
-          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) -%}
-          {%- if secret == nil -%}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by haproxy-ingress.github.io/auth-tls-cert-secret on Ingress " + ns + "/" + name + " not found. Create the Secret (kubernetes.io/tls) or update the annotation.") -}}
-          {%- end -%}
-          {%- var tlsCrtB64 = secret | dig("data", "tls.crt") | fallback("") | tostring() -%}
-          {%- var tlsKeyB64 = secret | dig("data", "tls.key") | fallback("") | tostring() -%}
-          {%- if tlsCrtB64 == "" || tlsKeyB64 == "" -%}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' (referenced by haproxy-ingress.github.io/auth-tls-cert-secret on Ingress " + ns + "/" + name + ") is missing data.tls.crt or data.tls.key. Both must be present to enable mTLS.") -}}
-          {%- end -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-cert-secret set but a rule without a host. The auth-tls-client-cert map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ tlsCrtB64 }}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
-
-  # Companion to map-auth-tls-client-cert-500-haproxy-ingress; same
-  # ingresses, same secrets, key (tls.key) instead of cert. Kept as a
-  # separate snippet so the map files line up cleanly: cert and key
-  # land in their own files, both contribute to the same `host+path`
-  # key, and HAProxy's `set-var ... ,b64dec` chain decodes each.
-  map-auth-tls-client-key-500-haproxy-ingress:
-    template: |-
-      {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var secretRef = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-cert-secret") | fallback("") | tostring() -%}
-        {%- if secretRef != "" -%}
-          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
-          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- var secretNs = ns -%}
-          {%- var secretName = secretRef -%}
-          {%- if strings_contains(secretRef, "/") -%}
-            {%- var parts = split(secretRef, "/") -%}
-            {%- secretNs = parts[0] -%}
-            {%- secretName = parts[1] -%}
-          {%- end -%}
-          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) -%}
-          {#- The cert snippet runs first and fail()s loudly on a
-              missing Secret or missing data fields, so by the time
-              this snippet executes either both fields are present
-              or rendering has already been aborted. The redundant
-              guards here are belt-and-braces for the case where the
-              cert snippet is somehow disabled (e.g. an operator
-              comments it out): we still want a clear error from the
-              key path rather than emitting a half-populated map. -#}
-          {%- if secret == nil -%}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by haproxy-ingress.github.io/auth-tls-cert-secret on Ingress " + ns + "/" + name + " not found.") -}}
-          {%- end -%}
-          {%- var tlsKeyB64 = secret | dig("data", "tls.key") | fallback("") | tostring() -%}
-          {%- if tlsKeyB64 == "" -%}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' is missing data.tls.key (auth-tls-cert-secret on Ingress " + ns + "/" + name + ").") -}}
-          {%- end -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-cert-secret set but a rule without a host. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ tlsKeyB64 }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -3464,10 +3360,10 @@ validationTests:
         pattern: "hdr_x_request_id=req\\.hdr\\([^)]+\\) .*hdr_x_request_id=req\\.hdr"
         description: Only one hdr_x_request_id capture must appear on the SPOE args line; first writer wins
 
-  test-haproxy-ingress-external-auth-headers-pass-fail:
+  test-haproxy-ingress-external-auth-headers-succeed-fail:
     _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
     description: |
-      haproxy-ingress.github.io/auth-headers-pass and auth-headers-fail
+      haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail
       annotations both populate auth-extract-headers.map (their union
       per ingress) and produce per-unique-header HAProxy directives:
       `http-request set-header` for pass (fires on success, allowed=true)
@@ -3517,7 +3413,7 @@ validationTests:
             name: protected
             annotations:
               haproxy-ingress.github.io/auth-url: "https://auth.example/check"
-              haproxy-ingress.github.io/auth-headers-pass: "X-Auth-User, X-Auth-Roles"
+              haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, X-Auth-Roles"
               haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
           spec:
             ingressClassName: haproxy
@@ -3534,7 +3430,7 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with auth-headers-pass and auth-headers-fail annotations
+        description: HAProxy config must be valid with auth-headers-succeed and auth-headers-fail annotations
       - type: contains
         target: map:auth-extract-headers.map
         pattern: "protected.example.com/api X-Auth-User, X-Auth-Roles, WWW-Authenticate, X-Error-Reason"
@@ -3563,7 +3459,7 @@ validationTests:
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
     _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
     description: |
-      A header name in auth-headers-pass / auth-headers-fail that
+      A header name in auth-headers-succeed / auth-headers-fail that
       doesn't match the RFC 7230 token grammar (e.g. contains
       whitespace, fetch syntax, or other special characters) must
       fail loudly at template-render time. Defence in depth against
@@ -3613,7 +3509,7 @@ validationTests:
             annotations:
               haproxy-ingress.github.io/auth-url: "https://auth.example/check"
               # Contains an HAProxy fetch-syntax injection attempt:
-              haproxy-ingress.github.io/auth-headers-pass: "X-Auth-User, %[var(txn.injected)]"
+              haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, %[var(txn.injected)]"
           spec:
             ingressClassName: haproxy
             rules:
@@ -3635,193 +3531,6 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "default/bad-header"
-        description: Error must identify the offending Ingress
-
-  test-haproxy-ingress-external-auth-tls-cert-secret:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
-    description: |
-      haproxy-ingress.github.io/auth-tls-cert-secret annotation
-      references a kubernetes.io/tls Secret whose tls.crt and tls.key
-      contents become per-route mTLS credentials for the auth
-      subrequest. The chart looks up the Secret, passes the already-
-      base64'd PEM verbatim into auth-tls-client-cert.map and
-      auth-tls-client-key.map, and the spoa-hub frontend chains a
-      `,b64dec` converter on lookup so the SPOE message args land as
-      raw PEM. Plugin v0.3.0+ builds (and caches) a per-cert ureq
-      Agent.
-    extraContext:
-      spoaHub:
-        enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
-    fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
-      secrets:
-        - apiVersion: v1
-          kind: Secret
-          metadata:
-            namespace: default
-            name: auth-client-tls
-          type: kubernetes.io/tls
-          # Sentinel base64 values — the chart passes them verbatim
-          # through to the map; HAProxy's `,b64dec` converter never
-          # runs at validation time (would error on non-PEM payload),
-          # but we never call it in `haproxy_valid` mode either —
-          # validation just parses the config grammar, not the runtime
-          # converter behaviour.
-          data:
-            tls.crt: Q0VSVF9TRU5USU5FTA==
-            tls.key: S0VZX1NFTlRJTkVM
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: protected
-            annotations:
-              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
-              haproxy-ingress.github.io/auth-tls-cert-secret: "auth-client-tls"
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: protected.example.com
-                http:
-                  paths:
-                    - path: /api
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: protected-svc
-                          port:
-                            number: 80
-    assertions:
-      - type: haproxy_valid
-        description: HAProxy config must be valid with auth-tls-cert-secret annotation
-      - type: contains
-        target: map:auth-tls-client-cert.map
-        pattern: "protected.example.com/api Q0VSVF9TRU5USU5FTA=="
-        description: auth-tls-client-cert.map must hold the host+path → base64 cert from the Secret
-      - type: contains
-        target: map:auth-tls-client-key.map
-        pattern: "protected.example.com/api S0VZX1NFTlRJTkVM"
-        description: auth-tls-client-key.map must hold the host+path → base64 key from the Secret
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-var\\(txn.auth_client_cert\\) var\\(txn.host_match\\),concat\\(,txn.path,\\),map\\(.*auth-tls-client-cert\\.map\\),b64dec"
-        description: Frontend chains b64dec on the cert map lookup
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-request set-var\\(txn.auth_client_key\\) var\\(txn.host_match\\),concat\\(,txn.path,\\),map\\(.*auth-tls-client-key\\.map\\),b64dec"
-        description: Frontend chains b64dec on the key map lookup
-      - type: contains
-        target: file:spoe.conf
-        pattern: "client_cert=var\\(txn.auth_client_cert\\)"
-        description: SPOE message body threads txn.auth_client_cert into the plugin's client_cert arg
-      - type: contains
-        target: file:spoe.conf
-        pattern: "client_key=var\\(txn.auth_client_key\\)"
-        description: SPOE message body threads txn.auth_client_key into the plugin's client_key arg
-
-  test-haproxy-ingress-external-auth-tls-cert-secret-missing-secret:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
-    description: |
-      auth-tls-cert-secret pointing at a non-existent Secret must
-      fail loudly at template-render time. Silently dropping mTLS on
-      a route the operator marked for it would let traffic out
-      without the expected client cert.
-    extraContext:
-      spoaHub:
-        enabled: true
-        socketPath: /run/spoa/hub.sock
-        modeSpop: true
-        messages:
-          - check-auth
-        timeoutHello: 2s
-        timeoutIdle: 5m
-        timeoutProcessing: 500ms
-        poolMaxConn: 100
-        poolPurgeDelay: 30s
-    fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata:
-            namespace: default
-            name: protected-svc
-          spec:
-            ports:
-              - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
-      ingresses:
-        - apiVersion: networking.k8s.io/v1
-          kind: Ingress
-          metadata:
-            namespace: default
-            name: missing-secret
-            annotations:
-              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
-              haproxy-ingress.github.io/auth-tls-cert-secret: "nonexistent"
-          spec:
-            ingressClassName: haproxy
-            rules:
-              - host: protected.example.com
-                http:
-                  paths:
-                    - path: /
-                      pathType: Prefix
-                      backend:
-                        service:
-                          name: protected-svc
-                          port:
-                            number: 80
-    assertions:
-      - type: contains
-        target: rendering_error
-        pattern: "default/nonexistent.*not found"
-        description: Render must fail loudly identifying the missing Secret
-      - type: contains
-        target: rendering_error
-        pattern: "default/missing-secret"
         description: Error must identify the offending Ingress
 
   test-haproxy-ingress-external-auth-hostless-rejected:
