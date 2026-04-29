@@ -1125,6 +1125,7 @@ templateSnippets:
           http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if <host-match>
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-auth-validate-url" for ValidateAuthURL -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
@@ -1140,6 +1141,7 @@ templateSnippets:
             {%- var passCert = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream") | fallback("") | tostring() %}
             {%- var cond = HostMatchCondition(hosts) %}
             {%- if errorPage != "" %}
+              {{- ValidateAuthURL(errorPage, "nginx.ingress.kubernetes.io/auth-tls-error-page", ns, name) -}}
       # nginx-ingress/auth-tls-error-page ({{ key }})
       http-request redirect location {{ errorPage }} code 302 if { ssl_c_verify gt 0 } {{ cond }}
             {%- end %}
@@ -1216,6 +1218,100 @@ templateSnippets:
           {%- var niBackends = niVal.(map[string]any)["backends"].([]any) %}
           {%- for _, backend := range niBackends %}
             {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  features-110-nginx-ingress-mtls:
+    template: |
+      {#-
+        Nginx Ingress Client-Cert Verification Registration
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/auth-tls-secret: "<name>" or "<ns>/<name>"
+            (kubernetes.io/tls Secret with `ca.crt` containing the CA bundle
+            that signed the clients' certificates)
+          - nginx.ingress.kubernetes.io/auth-tls-verify-client: "on" | "off" |
+            "optional" | "optional_no_ca" (default: "on")
+
+        Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#client-certificate-authentication
+
+        Looks up each referenced Secret, writes its `ca.crt` to the SSL
+        cert dir via fileRegistry (path becomes `ssl/<ns>-<name>-client-ca.pem`),
+        and registers per-host config in `gf["clientCertVerifyHosts"]`.
+        ssl.yaml's `features-150-ssl-crtlist` reads that map and emits a
+        crt-list line with `[ca-file <path> verify <mode>]` for each
+        affected host, so HAProxy verifies incoming client certs against
+        the configured CA.
+
+        nginx-ingress's `auth-tls-verify-depth` is intentionally NOT
+        wired: HAProxy's crt-list does not expose a per-line verify-depth
+        option (depth is global, controlled at the bind level). Operators
+        needing a strict depth can rely on the CA bundle scope: only
+        certs signed within the bundle's chain depth are accepted.
+
+        Verify-client value mapping (nginx → HAProxy):
+          - on               → verify required
+          - off              → no entry registered (host falls through to
+                               default crt-list line, no client-cert verify)
+          - optional         → verify optional
+          - optional_no_ca   → verify optional (HAProxy doesn't have a
+                               distinct mode for "verify but accept invalid";
+                               operators wanting to accept self-signed
+                               certs should set verify=optional and inspect
+                               ssl_c_used in their auth-tls-error-page logic)
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var secretRef = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-secret") | fallback("") | tostring() %}
+        {%- if secretRef != "" %}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {%- var verifyClient = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-verify-client") | fallback("on") | tostring() | toLower() %}
+          {%- if verifyClient == "off" %}
+            {%- continue %}
+          {%- end %}
+          {%- var verifyMode = "" %}
+          {%- if verifyClient == "on" %}
+            {%- verifyMode = "required" %}
+          {%- else if verifyClient == "optional" || verifyClient == "optional_no_ca" %}
+            {%- verifyMode = "optional" %}
+          {%- else %}
+            {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-tls-verify-client=" + verifyClient + " which is not one of 'on', 'off', 'optional', 'optional_no_ca'.") -}}
+          {%- end %}
+
+          {%- var secretNs = ns %}
+          {%- var secretName = secretRef %}
+          {%- if strings_contains(secretRef, "/") %}
+            {%- var parts = split(secretRef, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {%- if secret == nil %}
+            {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by nginx.ingress.kubernetes.io/auth-tls-secret on Ingress " + ns + "/" + name + " not found. Create the Secret (kubernetes.io/tls with a `ca.crt` field) or update the annotation.") -}}
+          {%- end %}
+          {%- var caBundleB64 = secret | dig("data", "ca.crt") | fallback("") | tostring() %}
+          {%- if caBundleB64 == "" %}
+            {{- fail("Secret '" + secretNs + "/" + secretName + "' (referenced by nginx.ingress.kubernetes.io/auth-tls-secret on Ingress " + ns + "/" + name + ") is missing data.ca.crt. The Secret must contain a `ca.crt` entry with the CA bundle that signed the clients' certificates.") -}}
+          {%- end %}
+          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
+          {%- var _, regErr = fileRegistry.Register("cert", caFilename, caBundle) -%}
+          {%- if regErr != nil -%}
+            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
+          {%- end -%}
+          {%- var caPath, _ = pathResolver.GetPath(caFilename, "cert") %}
+
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- var host = rule | dig("host") | fallback("") | tostring() %}
+            {%- if host == "" %}
+              {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end %}
+            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
+              "ca_path": caPath,
+              "verify_mode": verifyMode,
+            } %}
           {%- end %}
         {%- end %}
       {%- end %}
@@ -2747,6 +2843,89 @@ validationTests:
         target: haproxy.cfg
         pattern: "ssl_c_s_dn"
         description: Must pass client subject DN
+
+  test-nginx-ingress-auth-tls-secret:
+    description: |
+      nginx.ingress.kubernetes.io/auth-tls-secret references a
+      kubernetes.io/tls Secret whose `ca.crt` is written to the SSL
+      cert dir and used in the crt-list line for the matching SNI as
+      `ca-file <path> verify required`. HAProxy then verifies incoming
+      client certs against that CA bundle.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mtls-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mtls-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mtls-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: client-ca
+          type: kubernetes.io/tls
+          # Self-signed CA test fixture (re-used from echo demo).
+          data:
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: server-tls
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+              nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts:
+                  - api.example.com
+                secretName: server-tls
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mtls-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-tls-secret annotation
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: "ca-file [^ ]*default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
+        description: crt-list line carries the per-host ca-file path, verify mode, and SNI
 
   test-nginx-ingress-external-auth:
     # The auth-url.map and SPOE wiring this test asserts on are

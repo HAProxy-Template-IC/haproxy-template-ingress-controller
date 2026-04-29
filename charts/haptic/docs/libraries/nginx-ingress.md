@@ -839,32 +839,115 @@ use_backend default_my-app-canary_svc_my-app-canary_http if { rand(100) lt 20 } 
 
 ## Client Certificate Auth (mTLS)
 
-### mTLS Certificate Passthrough
+The library wires the four `auth-tls-*` annotations that nginx-ingress uses for incoming client-cert verification. The CA bundle from the referenced Secret lands in the SSL cert dir and is referenced from the HAProxy `crt-list` line for the matching SNI as `[ca-file <path> verify <mode>]`, so HAProxy verifies incoming client certs at the TLS layer. The error-page and cert-passthrough annotations then react to the verification result via `ssl_c_verify`.
+
+### nginx.ingress.kubernetes.io/auth-tls-secret
 
 **Status**: ✅ Supported
 
-**Annotations**:
+**Description**: Reference to a `kubernetes.io/tls` Secret whose `ca.crt` field contains the CA bundle that signs the clients' certificates. The chart writes the CA to `ssl/<ns>-<secret>-client-ca.pem` and adds `[ca-file <path> verify <mode>]` to the crt-list line for every host on the annotated Ingress.
 
-| Annotation | Description |
-|------------|-------------|
-| `auth-tls-pass-certificate-to-upstream` | Pass client certificate and subject DN as headers |
-| `auth-tls-error-page` | Redirect URL on client certificate verification failure |
-
-!!! note "Partial mTLS Support"
-    `auth-tls-secret`, `auth-tls-verify-client`, and `auth-tls-verify-depth` are supported via crt-list per-entry options but are not yet implemented.
+**Format**: `name` (resolves in the Ingress namespace) or `namespace/name`.
 
 **Usage**:
 
 ```yaml
 annotations:
-  nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
-  nginx.ingress.kubernetes.io/auth-tls-error-page: "https://example.com/auth-error"
+  nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+```
+
+The Secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: client-ca
+type: kubernetes.io/tls
+data:
+  ca.crt: <base64 PEM CA bundle>
+```
+
+**Generated crt-list entry**:
+
+```
+default_server-tls.pem [ocsp-update on ca-file ssl/default-client-ca-client-ca.pem verify required] api.example.com
+```
+
+!!! warning "Host-less rules error at render time"
+    SNI-keyed verification can't be enforced on Ingress rules without a `host:`. The chart fails the Helm render with a descriptive error.
+
+---
+
+### nginx.ingress.kubernetes.io/auth-tls-verify-client
+
+**Status**: ✅ Supported
+
+**Description**: Client certificate verification mode.
+
+**Valid values**:
+
+| nginx value | HAProxy verify mode | Behaviour |
+|-------------|---------------------|-----------|
+| `on` (default) | `required` | Reject connections without a valid client cert |
+| `off` | (no-op) | Don't enable verification on this host — the entry is skipped, falling through to the default crt-list line |
+| `optional` | `optional` | Verify when a cert is presented; allow connections without |
+| `optional_no_ca` | `optional` | Same as `optional` — HAProxy doesn't have a distinct mode for "verify but accept invalid"; operators wanting to accept self-signed certs should set `optional` and inspect `ssl_c_used` in their `auth-tls-error-page` logic |
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+  nginx.ingress.kubernetes.io/auth-tls-verify-client: "optional"
+```
+
+!!! note "auth-tls-verify-depth not wired"
+    HAProxy's `crt-list` exposes per-line `ca-file` and `verify` but no per-line verify-depth — depth is global. Operators needing strict depth control should rely on the CA bundle scope instead (only certs signed within the bundle's chain depth will validate).
+
+---
+
+### nginx.ingress.kubernetes.io/auth-tls-error-page
+
+**Status**: ✅ Supported
+
+**Description**: URL to redirect to (302) when client certificate verification fails.
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+  nginx.ingress.kubernetes.io/auth-tls-error-page: "https://example.com/cert-required"
 ```
 
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-request redirect location https://example.com/auth-error code 302 if { ssl_c_verify gt 0 } { hdr(host) -i example.com }
+http-request redirect location https://example.com/cert-required code 302 if { ssl_c_verify gt 0 } { hdr(host) -i example.com }
+```
+
+The `ssl_c_verify gt 0` condition matches any verification error (including missing cert when `verify required` is set). Hosts without `auth-tls-error-page` fall through to HAProxy's default behaviour for failed verification (connection drop).
+
+---
+
+### nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream
+
+**Status**: ✅ Supported
+
+**Description**: When `"true"`, forwards the verified client certificate and subject DN to the upstream backend as HTTP headers.
+
+**Usage**:
+
+```yaml
+annotations:
+  nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+  nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+```
+
+**Generated HAProxy Configuration**:
+
+```haproxy
 http-request set-header ssl-client-cert %[ssl_c_der,base64] if { hdr(host) -i example.com }
 http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i example.com }
 ```
@@ -897,9 +980,9 @@ This library watches the following additional resources:
 
 ## Implementation Status Summary
 
-**Total annotations**: 52
+**Total annotations**: 54
 
-- ✅ **Fully Supported**: 52
+- ✅ **Fully Supported**: 54
   - Timeouts: 3 annotations
   - Load Balancing: 1 annotation
   - Body Size Limit: 1 annotation
@@ -921,7 +1004,7 @@ This library watches the following additional resources:
   - External Authentication: 4 annotations (`auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` — requires SPOA hub `external-auth` plugin)
   - SSL Passthrough: 1 annotation
   - Canary: 6 annotations
-  - mTLS: 2 annotations
+  - mTLS: 4 annotations (`auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream`)
 
 ## See Also
 

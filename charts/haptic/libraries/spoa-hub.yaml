@@ -57,6 +57,24 @@ templateSnippets:
         {%- end -%}
       {%- end %}
 
+  # URL guard for annotation values that get interpolated into
+  # HAProxy directives (e.g. `http-request redirect location <url>`).
+  # An unsanitised URL with whitespace, newlines, or HAProxy
+  # metacharacters could let an Ingress-write RBAC holder inject
+  # arbitrary directives into the shared frontend (e.g. closing the
+  # current rule and opening a `http-request deny if TRUE`). The
+  # check is intentionally strict — RFC 3986 URIs are constrained
+  # enough that disallowing whitespace and newlines covers every
+  # realistic injection vector while passing every legitimate
+  # https://... value operators care about.
+  util-auth-validate-url:
+    template: |-
+      {%- macro ValidateAuthURL(url string, annotation string, ns string, ingressName string) %}
+        {%- if strings_contains(url, "\n") || strings_contains(url, "\r") || strings_contains(url, " ") || strings_contains(url, "\t") -%}
+          {{- fail("Invalid URL in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ": value contains whitespace or newlines. URLs must not contain whitespace — they are interpolated into HAProxy directives where whitespace is significant and could be used to inject arbitrary config.") -}}
+        {%- end -%}
+      {%- end %}
+
   # features-* runs early in haproxyConfig.template (side-effect render).
   # We use it to register spoe.conf as a general file so the HAProxy
   # `filter spoe ... config <path>` directive resolves at validation
@@ -230,8 +248,12 @@ templateSnippets:
           Each line is gated on `allowed -m bool` (only on auth
           success) and `var ... -m found` (only when the plugin
           actually extracted that header). Empty when no ingress
-          uses the annotation. -#}
-      {{- render_glob "frontend-spoe-set-pass-headers-*" -}}
+          uses the annotation. The `{{ "\n" }}` after the glob
+          emits a literal newline regardless of whether the glob
+          matched anything — without it, when the glob is empty the
+          adjacent `{#- ... -#}` trim markers collapse the
+          send-spoe-group line into the redirect line. -#}
+      {{- render_glob "frontend-spoe-set-pass-headers-*" }}{{ "\n" }}
       {#- Browser-friendly sign-in redirect on auth failure: if the
           ingress has `auth-signin`, redirect to it (302) instead of
           denying. The deny rule below still fires when auth-signin
@@ -243,8 +265,9 @@ templateSnippets:
           ingress's auth-headers-fail union. Runs on the deny
           response (and only that — the conditions gate on the
           auth path having run AND not allowed AND the per-header
-          var being set). Empty when no ingress uses the annotation. -#}
-      {{- render_glob "frontend-spoe-set-fail-headers-*" -}}
+          var being set). Empty when no ingress uses the annotation.
+          Same trailing-newline trick as the pass-headers glob. -#}
+      {{- render_glob "frontend-spoe-set-fail-headers-*" }}{{ "\n" }}
       {%- end %}
 
 maps:

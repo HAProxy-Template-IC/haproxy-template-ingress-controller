@@ -22,6 +22,7 @@ The libraries cover the following HAProxy feature areas through their respective
 |---------|----------------|-------------------------------|--------------------------------|
 | Basic authentication | `auth-type`, `auth-secret`, `auth-realm` | `auth-secret`, `auth-realm` | `auth-type`, `auth-secret`, `auth-realm` |
 | External authentication ([SPOA hub](https://haproxy-haptic.org/controller/operations/spoa-hub/)) | — | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` | `auth-url`, `auth-signin`, `auth-method`, `auth-response-headers` |
+| Client certificate (incoming mTLS) | — | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-pass-certificate-to-upstream` |
 | Allowlist / Denylist | `allowlist`, `denylist` | `allowlist-source-range`, `denylist-source-range` | `whitelist-source-range`, `denylist-source-range` |
 | SSL redirect | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect`, `ssl-redirect-code` | `ssl-redirect` |
 | SSL passthrough | `ssl-passthrough` | `ssl-passthrough` | `ssl-passthrough` |
