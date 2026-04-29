@@ -144,13 +144,19 @@ templateSnippets:
   #     annotations via auth-method.map. The plugin treats an empty
   #     value as "no override" and falls back to its plugin-level
   #     config, so routes without the annotation behave unchanged.
+  #   - forward_headers (optional, v0.3.0+) — comma-separated list of
+  #     request header names to forward to the auth service, populated
+  #     from the haproxy-ingress.github.io/auth-headers-request
+  #     annotation via auth-forward-headers.map. The plugin replaces
+  #     its plugin-level forward_headers list with this when the arg
+  #     is non-empty; empty (no annotation) falls back to the default.
   #
   # The plugin writes back the response variables
   # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
   spoe-message-check-auth-body:
     template: |-
       spoe-message check-auth
-          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)
 
   frontend-filters-100-spoa-hub:
     template: |-
@@ -173,6 +179,7 @@ templateSnippets:
       http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
       http-request set-var(txn.auth_signin) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
       http-request set-var(txn.auth_method) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
+      http-request set-var(txn.auth_forward_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
       http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
       {#- Browser-friendly sign-in redirect on auth failure: if the
           ingress has `auth-signin`, redirect to it (302) instead of
@@ -199,6 +206,19 @@ maps:
       # unauthenticated users to a login page.
       # Populated by ingress libraries' map-auth-signin-* contributions.
       {{- render_glob "map-auth-signin-*" -}}
+
+  auth-forward-headers.map:
+    template: |
+      # External-auth: per-ingress allowlist of request headers to
+      # forward to the auth service. Populated by ingress libraries'
+      # map-auth-forward-headers-* contributions from the
+      # `haproxy-ingress.github.io/auth-headers-request` annotation
+      # (no nginx-ingress equivalent — `auth-snippet` is freeform
+      # HAProxy config injection, out of scope for templated wiring).
+      # The value flows into the SPOE message's `forward_headers` arg
+      # as a comma-separated list. Empty value (no annotation) → the
+      # plugin falls back to its plugin-level forward_headers config.
+      {{- render_glob "map-auth-forward-headers-*" -}}
 
   auth-method.map:
     template: |
