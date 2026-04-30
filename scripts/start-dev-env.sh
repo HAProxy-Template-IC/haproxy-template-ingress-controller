@@ -946,6 +946,87 @@ deploy_auth_server() {
 	ok "Auth server is ready."
 }
 
+# Generate test certificates and create the Secrets the auth-tls
+# E2E demo ingress depends on. Runs the openssl chain for:
+#   - a self-signed CA + matching server cert (CN auth-tls.localdev.me)
+#   - a client cert signed by that CA (the "valid client" for the test)
+#   - a separate untrusted CA + a client cert it signed (the "wrong
+#     client" — sent by curl to verify the rejection path)
+#
+# Server cert lands in `auth-tls-server-tls` (kubernetes.io/tls);
+# the trusted CA bundle lands in `auth-tls-client-ca` as Opaque
+# with a single `ca.crt` field, which is what nginx-ingress and
+# haproxy-ingress operators conventionally use (the chart only
+# reads `data.ca.crt` regardless of secret type).
+#
+# Cert files stay on disk at /tmp/haptic-auth-tls-test/ for the
+# test-routes E2E tests to consume via curl --cacert/--cert/--key.
+deploy_auth_tls_fixtures() {
+	local cert_dir="${TMPDIR:-/tmp}/haptic-auth-tls-test"
+	log INFO "Generating auth-tls E2E certificates in ${cert_dir}..."
+	rm -rf "$cert_dir"
+	mkdir -p "$cert_dir"
+	chmod 700 "$cert_dir"
+
+	# Trusted CA + server cert (signed by it).
+	openssl req -x509 -newkey rsa:2048 -nodes \
+		-keyout "$cert_dir/ca.key" -out "$cert_dir/ca.crt" \
+		-days 36500 -subj "/CN=HAPTIC E2E Trusted CA" 2>/dev/null
+
+	openssl req -newkey rsa:2048 -nodes \
+		-keyout "$cert_dir/server.key" -out "$cert_dir/server.csr" \
+		-subj "/CN=auth-tls.localdev.me" 2>/dev/null
+	cat > "$cert_dir/server.ext" <<-EOF
+		authorityKeyIdentifier=keyid,issuer
+		basicConstraints=CA:FALSE
+		subjectAltName = @alt_names
+		[alt_names]
+		DNS.1 = auth-tls.localdev.me
+	EOF
+	openssl x509 -req -in "$cert_dir/server.csr" \
+		-CA "$cert_dir/ca.crt" -CAkey "$cert_dir/ca.key" -CAcreateserial \
+		-out "$cert_dir/server.crt" -days 36500 \
+		-extfile "$cert_dir/server.ext" 2>/dev/null
+
+	# Valid client cert (signed by trusted CA → HAProxy will accept).
+	openssl req -newkey rsa:2048 -nodes \
+		-keyout "$cert_dir/client.key" -out "$cert_dir/client.csr" \
+		-subj "/CN=test-client" 2>/dev/null
+	openssl x509 -req -in "$cert_dir/client.csr" \
+		-CA "$cert_dir/ca.crt" -CAkey "$cert_dir/ca.key" -CAcreateserial \
+		-out "$cert_dir/client.crt" -days 36500 2>/dev/null
+
+	# Untrusted CA + a client cert it signed (HAProxy will reject —
+	# the trusted CA bundle in the K8s Secret doesn't contain this CA).
+	openssl req -x509 -newkey rsa:2048 -nodes \
+		-keyout "$cert_dir/wrong-ca.key" -out "$cert_dir/wrong-ca.crt" \
+		-days 36500 -subj "/CN=HAPTIC E2E Untrusted CA" 2>/dev/null
+	openssl req -newkey rsa:2048 -nodes \
+		-keyout "$cert_dir/wrong-client.key" -out "$cert_dir/wrong-client.csr" \
+		-subj "/CN=untrusted-client" 2>/dev/null
+	openssl x509 -req -in "$cert_dir/wrong-client.csr" \
+		-CA "$cert_dir/wrong-ca.crt" -CAkey "$cert_dir/wrong-ca.key" -CAcreateserial \
+		-out "$cert_dir/wrong-client.crt" -days 36500 2>/dev/null
+
+	log INFO "Creating K8s Secrets for auth-tls fixtures..."
+	kubectl get ns "${ECHO_NAMESPACE}" >/dev/null 2>&1 || \
+		kubectl create ns "${ECHO_NAMESPACE}" >/dev/null
+
+	kubectl -n "${ECHO_NAMESPACE}" create secret tls auth-tls-server-tls \
+		--cert="$cert_dir/server.crt" --key="$cert_dir/server.key" \
+		--dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+	# Trusted CA bundle. Use Opaque (not kubernetes.io/tls) — the K8s
+	# API enforces tls.crt + tls.key presence on TLS-typed Secrets,
+	# and we only want to ship a CA bundle here. The chart's snippet
+	# reads `data.ca.crt` regardless of secret type.
+	kubectl -n "${ECHO_NAMESPACE}" create secret generic auth-tls-client-ca \
+		--from-file=ca.crt="$cert_dir/ca.crt" \
+		--dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+	ok "Auth-TLS fixtures deployed (cert files at ${cert_dir})"
+}
+
 deploy_ingress_demo() {
 	log INFO "Deploying Ingress demo resources..."
 
@@ -1634,6 +1715,7 @@ dev_up() {
 
     if [[ "$SKIP_ECHO" != "true" ]]; then
         deploy_echo_server
+        deploy_auth_tls_fixtures
         deploy_ingress_demo
         deploy_gateway_demo
     fi
