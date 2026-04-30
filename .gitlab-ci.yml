@@ -510,6 +510,16 @@ publish-chart-snapshot:
         - scripts/render-spoa-bundle.sh
         - docs/controller/docs/operations/spoa-hub.md
         - .gitlab-ci.yml
+        # Go-source paths. `test-routes` triggers on these (its own
+        # `changes:` lists **/*.go, go.mod, go.sum) and `needs:`
+        # `build-spoa-image-snapshot` non-optionally — so the build
+        # job MUST trigger on the same paths or GitLab refuses to
+        # create the pipeline ("does not exist in the pipeline ...
+        # use needs:optional"). MR !859 (a go.mod-only renovate bump)
+        # was rejected at creation for exactly this reason.
+        - "**/*.go"
+        - go.mod
+        - go.sum
         # Chart files that drive SPOE wiring. Without these in the
         # change list, MRs that touch only chart YAML never trigger
         # `build-spoa-image-snapshot`, which `test-routes` `needs:` —
