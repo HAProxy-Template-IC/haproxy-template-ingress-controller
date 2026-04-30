@@ -1142,7 +1142,6 @@ templateSnippets:
         nginx-ingress equivalents at 790 — distinct hosts can mix prefixes.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- import "util-auth-validate-url" for ValidateAuthURL -%}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
@@ -1158,7 +1157,14 @@ templateSnippets:
             {%- var certHeader = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-tls-cert-header") | fallback("") | tostring() %}
             {%- var cond = HostMatchCondition(hosts) %}
             {%- if errorPage != "" %}
-              {{- ValidateAuthURL(errorPage, "haproxy-ingress.github.io/auth-tls-error-page", ns, name) -}}
+              {#- Inline URL guard: this snippet renders via the
+                  always-compiled `frontend-filters-*` glob, so it can't
+                  import util macros from spoa-hub.yaml (that library
+                  is opt-in and absent under default values, which would
+                  break Scriggo's compile-time import resolution). -#}
+              {%- if strings_contains(errorPage, "\n") || strings_contains(errorPage, "\r") || strings_contains(errorPage, " ") || strings_contains(errorPage, "\t") -%}
+                {{- fail("Invalid URL in annotation 'haproxy-ingress.github.io/auth-tls-error-page' on Ingress " + ns + "/" + name + ": value contains whitespace or newlines. URLs must not contain whitespace — they are interpolated into HAProxy directives where whitespace is significant and could be used to inject arbitrary config.") -}}
+              {%- end %}
       # haproxy-ingress/auth-tls-error-page ({{ key }})
       http-request redirect location {{ errorPage }} code 302 if { ssl_c_verify gt 0 } {{ cond }}
             {%- end %}
