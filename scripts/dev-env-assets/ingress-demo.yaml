@@ -1048,3 +1048,99 @@ spec:
                 name: echo-server
                 port:
                   number: 80
+
+---
+##############################################################################
+# v0.3.0 EXTERNAL-AUTH ANNOTATIONS
+#
+# These ingresses exercise the per-request override SPOE args that the
+# external-auth plugin v0.3.0 added (auth-method, auth-headers-succeed,
+# auth-headers-fail). All point at the same auth-server fixture in
+# scripts/dev-env-assets/auth-server.yaml — different paths drive
+# different auth-server behaviours.
+##############################################################################
+
+# auth-method: forces the auth subrequest to go out as POST. The
+# auth-server's /allow-post location 405s any non-POST method, so the
+# test verifying this annotation works will only pass if the chart
+# actually threaded `method=POST` through to the plugin's SPOE arg
+# (default GET would 405 at the auth-server and HAProxy would then
+# return 401 to the client).
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-method
+  namespace: echo
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-server.echo.svc.cluster.local/allow-post"
+    nginx.ingress.kubernetes.io/auth-method: "POST"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: auth-method.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80
+
+---
+# auth-headers-succeed: extracts X-Auth-User from the auth-server's
+# response and forwards it as a request header to the upstream
+# backend. The echo-server backend echoes its received request
+# headers in its JSON response body, so the test grep's that JSON for
+# "x-auth-user":"alice".
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-headers-succeed
+  namespace: echo
+  annotations:
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-server.echo.svc.cluster.local/allow"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-User"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: auth-headers-succeed.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80
+
+---
+# auth-headers-fail: extracts WWW-Authenticate and X-Error-Reason from
+# the auth-server's 401 response and forwards them to the client on the
+# deny response. Uses the haproxy-ingress.github.io/* prefix because
+# nginx-ingress doesn't have a fail-headers equivalent annotation.
+# Points at /deny-with-fail-headers which 401s with both headers set.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-headers-fail
+  namespace: echo
+  annotations:
+    haproxy-ingress.github.io/auth-url: "http://auth-server.echo.svc.cluster.local/deny-with-fail-headers"
+    haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
+spec:
+  ingressClassName: haptic
+  rules:
+    - host: auth-headers-fail.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80

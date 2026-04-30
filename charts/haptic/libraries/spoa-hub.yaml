@@ -261,12 +261,17 @@ templateSnippets:
       http-request redirect location %[var(txn.auth_signin)] code 302 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.auth_signin) -m found }
       http-request deny deny_status 401 if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool }
       {#- Fail-headers extension point: ingress libraries emit one
-          `http-response set-header` per unique header in any
+          `http-after-response set-header` per unique header in any
           ingress's auth-headers-fail union. Runs on the deny
           response (and only that — the conditions gate on the
           auth path having run AND not allowed AND the per-header
-          var being set). Empty when no ingress uses the annotation.
-          Same trailing-newline trick as the pass-headers glob. -#}
+          var being set). `http-after-response` rather than
+          `http-response` because HAProxy's `http-request deny`
+          short-circuits the request flow, generating its 401 reply
+          internally; `http-response` rules only fire on responses
+          received from a backend, so they'd silently skip the deny
+          path. Empty when no ingress uses the annotation. Same
+          trailing-newline trick as the pass-headers glob. -#}
       {{- render_glob "frontend-spoe-set-fail-headers-*" }}{{ "\n" }}
       {%- end %}
 

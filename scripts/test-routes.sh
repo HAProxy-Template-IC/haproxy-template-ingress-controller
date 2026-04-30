@@ -1358,6 +1358,98 @@ test_ingress_external_auth() {
         ""
 }
 
+# External-auth method override (v0.3.0+): the auth-method annotation
+# forces the SPOA hub's auth subrequest to go out as POST. The
+# auth-server's /allow-post location 405s anything except POST, so a
+# 200 from the protected ingress proves the plugin actually used the
+# overridden method (default GET would have 405'd at /allow-post and
+# HAProxy would have returned 401 to the client).
+test_ingress_auth_method() {
+    if ! should_test "echo-auth-method"; then
+        return 0
+    fi
+
+    print_section "Testing Ingress: auth-method (POST override)"
+
+    assert_response_ok \
+        "auth-method: chart threads method=POST → auth-server 200 → request reaches backend" \
+        "auth-method.localdev.me" \
+        "/" \
+        ""
+}
+
+# External-auth pass-headers (v0.3.0+, nginx alias auth-response-headers):
+# auth-server returns X-Auth-User: alice on /allow; the chart's
+# extract_headers + frontend set-header machinery should propagate
+# that header to the upstream backend on auth success. echo-server's
+# JSON response includes the request headers it received, so we
+# grep the body for "x-auth-user":"alice".
+test_ingress_auth_headers_succeed() {
+    if ! should_test "echo-auth-headers-succeed"; then
+        return 0
+    fi
+
+    print_section "Testing Ingress: auth-headers-succeed (X-Auth-User → backend)"
+
+    local host="auth-headers-succeed.localdev.me"
+    local response
+    local max_retries=8
+    local retry_delay=2
+    local attempt=1
+    local last_error=""
+
+    while [[ $attempt -le $max_retries ]]; do
+        if response=$(curl -s --max-time 5 -H "Host: $host" "${BASE_URL}/" 2>&1); then
+            if [[ "$response" == *"503 Service Unavailable"* ]]; then
+                last_error="Backend not ready (503)"
+            elif [[ "$response" != *'"http":'* ]]; then
+                last_error="Invalid echo-server response (no \"http\":)"
+            elif [[ "$response" == *'"x-auth-user":"alice"'* ]]; then
+                ok "auth-headers-succeed: backend received forwarded X-Auth-User: alice"
+                return 0
+            else
+                last_error="X-Auth-User header missing from echo-server's reflected request headers"
+            fi
+        else
+            last_error="curl failed: $response"
+        fi
+        debug "  Attempt $attempt/$max_retries: $last_error"
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$retry_delay"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "auth-headers-succeed: $last_error after $max_retries attempts"
+    debug "  Last response: ${response:0:500}"
+    return 1
+}
+
+# External-auth fail-headers (v0.3.0+): auth-server's 401 reply on
+# /deny-with-fail-headers includes WWW-Authenticate and X-Error-Reason;
+# the chart's frontend-spoe-set-fail-headers-* snippet should forward
+# them to the *client* on the deny response. Verifies the fail-path
+# header machinery (gated on `auth_url -m found` + `!allowed`).
+test_ingress_auth_headers_fail() {
+    if ! should_test "echo-auth-headers-fail"; then
+        return 0
+    fi
+
+    print_section "Testing Ingress: auth-headers-fail (WWW-Authenticate → client)"
+
+    assert_header_value \
+        "auth-headers-fail: WWW-Authenticate forwarded on 401" \
+        "auth-headers-fail.localdev.me" \
+        "WWW-Authenticate" \
+        'Bearer realm="api"'
+
+    assert_header_value \
+        "auth-headers-fail: X-Error-Reason forwarded on 401" \
+        "auth-headers-fail.localdev.me" \
+        "X-Error-Reason" \
+        "token-expired"
+}
+
 test_ingress_cors() {
     if ! should_test "echo-cors"; then
         return 0
@@ -2334,6 +2426,9 @@ main() {
         test_ingress_basic
         test_ingress_auth
         test_ingress_external_auth
+        test_ingress_auth_method
+        test_ingress_auth_headers_succeed
+        test_ingress_auth_headers_fail
         test_ingress_cors
         test_ingress_rate_limit
         test_ingress_allowlist

@@ -1669,10 +1669,20 @@ templateSnippets:
   #   haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
   #
   # The frontend-spoe-set-fail-headers-* glob emits one
-  # `http-response set-header` per unique fail header, gated on the
-  # auth path having run, !allowed, and the var being set. The
+  # `http-after-response set-header` per unique fail header, gated on
+  # the auth path having run, !allowed, and the var being set. The
   # extract_headers SPOE arg union is built in
   # map-auth-extract-headers-500-haproxy-ingress.
+  #
+  # `http-after-response` (rather than the more obvious
+  # `http-response`) is required because HAProxy's `http-request deny`
+  # short-circuits the request flow: the deny response is generated
+  # internally, so `http-response` rules — which fire only on
+  # responses received from a backend — never apply to it.
+  # `http-after-response` runs unconditionally on every response,
+  # whether it came from a backend or HAProxy generated it via a
+  # deny / errorfile / redirect, which is exactly what we need for
+  # auth-headers-fail to surface in the 401 sent back to the client.
   frontend-spoe-set-fail-headers-500-haproxy-ingress:
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
@@ -1690,7 +1700,7 @@ templateSnippets:
                   produce one set-header directive, not two. -#}
               {%- var varName = replace(toLower(name), "-", "_") -%}
               {%- if first_seen("haproxy-ingress-fail-header", varName) -%}
-      {{ "\n" }}      http-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
+      {{ "\n" }}      http-after-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -3748,12 +3758,12 @@ validationTests:
         description: Second pass header gets its own set-header line
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response set-header WWW-Authenticate %\\[var\\(txn.hub.external_auth.www_authenticate\\)\\] if \\{ var\\(txn.auth_url\\) -m found \\} !\\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\} \\{ var\\(txn.hub.external_auth.www_authenticate\\) -m found \\}"
-        description: First fail header gets an http-response set-header gated on the auth path having run, !allowed, and var found
+        pattern: "http-after-response set-header WWW-Authenticate %\\[var\\(txn.hub.external_auth.www_authenticate\\)\\] if \\{ var\\(txn.auth_url\\) -m found \\} !\\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\} \\{ var\\(txn.hub.external_auth.www_authenticate\\) -m found \\}"
+        description: First fail header uses http-after-response (fires on deny-generated responses, unlike http-response which only runs on backend responses)
       - type: contains
         target: haproxy.cfg
-        pattern: "http-response set-header X-Error-Reason %\\[var\\(txn.hub.external_auth.x_error_reason\\)\\]"
-        description: Second fail header gets its own http-response set-header line
+        pattern: "http-after-response set-header X-Error-Reason %\\[var\\(txn.hub.external_auth.x_error_reason\\)\\]"
+        description: Second fail header gets its own http-after-response set-header line
 
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
     _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'

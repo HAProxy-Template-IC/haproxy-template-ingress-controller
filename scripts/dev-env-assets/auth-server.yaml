@@ -22,8 +22,28 @@ data:
             add_header X-Auth-Roles "admin,viewer" always;
             return 200 "OK\n";
         }
+        # /allow-post: 200 only on POST, 405 otherwise. Used by the
+        # auth-method E2E test — verifies the chart actually sent the
+        # method override (default GET would 405 here, POST passes).
+        location /allow-post {
+            limit_except POST {
+                deny all;
+            }
+            add_header X-Auth-User "alice" always;
+            return 200 "OK (POST)\n";
+        }
         location /deny {
             return 401 "Unauthorized\n";
+        }
+        # /deny-with-fail-headers: 401 plus WWW-Authenticate +
+        # X-Error-Reason. Used by the auth-headers-fail E2E test —
+        # plugin v0.3.0+ extracts these on the failure path and the
+        # chart's frontend-spoe-set-fail-headers-* snippet forwards
+        # them to the client.
+        location /deny-with-fail-headers {
+            add_header WWW-Authenticate 'Bearer realm="api"' always;
+            add_header X-Error-Reason "token-expired" always;
+            return 401 "Unauthorized (with challenge)\n";
         }
         # default / fallback for unmatched paths — return 500 so it's
         # obvious in test logs if the plugin hits an unexpected path.
