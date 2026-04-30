@@ -1144,3 +1144,47 @@ spec:
                 name: echo-server
                 port:
                   number: 80
+
+---
+##############################################################################
+# CLIENT-MTLS (haproxy-ingress.github.io/auth-tls-secret)
+#
+# Incoming-client mTLS verification: HAProxy verifies a client cert
+# the caller presents on the TLS handshake against a CA bundle stored
+# in the `auth-tls-client-ca` Secret (created at deploy time by
+# scripts/start-dev-env.sh's `deploy_auth_tls_fixtures`). The chart's
+# ssl.yaml renders the per-host `[ca-file <path> verify required]`
+# options into the crt-list line for the matching SNI.
+#
+# Test:
+#   curl --cacert <ca> --cert client.crt --key client.key \
+#        --resolve auth-tls.localdev.me:30443:<NodePortIP>           \
+#        https://auth-tls.localdev.me:30443/             # 200
+#   curl --cacert <ca> --resolve ... https://auth-tls.localdev.me:30443/  # 401 / connection-fail
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-auth-tls
+  namespace: echo
+  annotations:
+    haproxy-ingress.github.io/auth-tls-secret: "auth-tls-client-ca"
+    haproxy-ingress.github.io/auth-tls-verify-client: "on"
+    haproxy-ingress.github.io/auth-tls-cert-header: "true"
+spec:
+  ingressClassName: haptic
+  tls:
+    - hosts:
+        - auth-tls.localdev.me
+      secretName: auth-tls-server-tls
+  rules:
+    - host: auth-tls.localdev.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80

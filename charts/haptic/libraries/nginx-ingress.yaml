@@ -1302,12 +1302,16 @@ templateSnippets:
             {{- fail("Secret '" + secretNs + "/" + secretName + "' (referenced by nginx.ingress.kubernetes.io/auth-tls-secret on Ingress " + ns + "/" + name + ") is missing data.ca.crt. The Secret must contain a `ca.crt` entry with the CA bundle that signed the clients' certificates.") -}}
           {%- end %}
           {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).
+              The Dataplane API's SSL cert endpoint validates ssl/ uploads as
+              cert+key bundles ("file should contain both certificate and
+              private key" / 500), but a CA bundle has no private key. -#}
           {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
-          {%- var _, regErr = fileRegistry.Register("cert", caFilename, caBundle) -%}
+          {%- var _, regErr = fileRegistry.Register("file", caFilename, caBundle) -%}
           {%- if regErr != nil -%}
             {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
           {%- end -%}
-          {%- var caPath, _ = pathResolver.GetPath(caFilename, "cert") %}
+          {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
 
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
             {%- var host = rule | dig("host") | fallback("") | tostring() %}
@@ -2853,8 +2857,9 @@ validationTests:
   test-nginx-ingress-auth-tls-secret:
     description: |
       nginx.ingress.kubernetes.io/auth-tls-secret references a
-      kubernetes.io/tls Secret whose `ca.crt` is written to the SSL
-      cert dir and used in the crt-list line for the matching SNI as
+      Secret whose `ca.crt` is written to the general file dir
+      (not ssl/ — Dataplane validates ssl/ uploads as cert+key)
+      and used in the crt-list line for the matching SNI as
       `ca-file <path> verify required`. HAProxy then verifies incoming
       client certs against that CA bundle.
     fixtures:
@@ -2930,8 +2935,8 @@ validationTests:
         description: HAProxy config must be valid with auth-tls-secret annotation
       - type: contains
         target: crt-list:certificate-list.txt
-        pattern: "ca-file [^ ]*default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
-        description: crt-list line carries the per-host ca-file path, verify mode, and SNI
+        pattern: "ca-file [^ ]*general/default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
+        description: crt-list line carries the per-host ca-file path (general/, not ssl/ — Dataplane SSL endpoint validates ssl/ uploads as cert+key), verify mode, and SNI
 
   test-nginx-ingress-external-auth:
     # The auth-url.map and SPOE wiring this test asserts on are

@@ -570,40 +570,6 @@ publish-chart-snapshot:
         - scripts/test-routes.sh
         - scripts/dev-env-assets/**
 
-# Chart-side trigger for the SPOA image-build pipeline. Composed with
-# `.rules-spoa` (via `!reference`) on `prep-spoa-plugins` and
-# `build-spoa-image-snapshot` so chart YAML edits that affect SPOE
-# wiring rebuild the image — `test-routes` needs that image and was
-# silently skipping for every chart-only change before this MR.
-# !849-!854 each merged with broken SPOE output (render_glob
-# trim-marker bug collapsing send-spoe-group + redirect onto one
-# line) because the integration test wasn't running.
-#
-# Deliberately NOT applied to `smoke-spoa-amd64` or
-# `docs-spoa-versions`: chart edits don't change image bytes (so
-# smoking the rebuilt image is wasted work) and don't touch
-# spoa-hub.md (so the docs drift guard has nothing to check).
-# Listed individually rather than `charts/**` so unrelated chart
-# docs / values changes don't pay the ~10-minute test-routes cost.
-.rules-spoa-chart:
-  rules:
-    - changes:
-        - charts/haptic/libraries/base.yaml
-        - charts/haptic/libraries/ssl.yaml
-        - charts/haptic/libraries/ingress.yaml
-        - charts/haptic/libraries/gateway.yaml
-        - charts/haptic/libraries/haproxytech.yaml
-        - charts/haptic/libraries/haproxy-ingress.yaml
-        - charts/haptic/libraries/nginx-ingress.yaml
-        - charts/haptic/libraries/spoa-hub.yaml
-        - charts/haptic/values.yaml
-        - charts/haptic/templates/_helpers.tpl
-        - charts/haptic/templates/haproxytemplateconfig.yaml
-        - charts/haptic/templates/spoa-hub-configmap.yaml
-        - scripts/start-dev-env.sh
-        - scripts/test-routes.sh
-        - scripts/dev-env-assets/**
-
 # Drift guard: the bundled-versions table in spoa-hub.md is auto-rendered
 # from versions-spoa.env. Fail CI if the doc and the env file disagree.
 docs-spoa-versions:

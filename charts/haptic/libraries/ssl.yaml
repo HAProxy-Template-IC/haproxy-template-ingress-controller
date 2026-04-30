@@ -89,7 +89,15 @@ templateSnippets:
       -#}
 
       {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var crtlistLines = []any{} -%}
+      {#- The default cert MUST be the first line of the crt-list. HAProxy
+          uses the first entry as the implicit default for unmatched SNIs
+          (and for clients that don't send SNI), and inherits THAT line's
+          options — including `verify`. If a per-host auth-tls-secret line
+          (verify required) ends up first instead, every unmatched-SNI
+          handshake demands a client cert and fails with
+          PEER_DID_NOT_RETURN_A_CERTIFICATE. Putting default.pem first
+          (with no verify) gives unmatched SNIs a permissive fallback. -#}
+      {%- var crtlistLines = []any{"default.pem [ocsp-update on]"} -%}
       {%- var clientCertVerifyHosts = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) -%}
 
       {# Generate entries for each registered TLS certificate.
@@ -148,13 +156,6 @@ templateSnippets:
           {%- crtlistLines = append(crtlistLines, line) -%}
         {%- end -%}
       {%- end -%}
-
-      {# Default certificate (no SNI filter = matches everything not matched above).
-         The default never gets client-cert verification — per-host verify rules
-         only apply when a request matches a specific SNI. Requests that fall
-         through to the default land on a cert with verify=none implicitly. #}
-      {%- var defaultLine = "default.pem [ocsp-update on]" -%}
-      {%- crtlistLines = append(crtlistLines, defaultLine) -%}
 
       {# Register the crt-list file with file_registry #}
       {# Add trailing newline to satisfy HAProxy's parser #}
