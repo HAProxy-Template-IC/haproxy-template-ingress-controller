@@ -824,11 +824,14 @@ annotations:
 **Generated HAProxy Configuration**:
 
 ```haproxy
-http-response set-header WWW-Authenticate %[var(txn.hub.external_auth.www_authenticate)] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.www_authenticate) -m found }
-http-response set-header X-Error-Reason %[var(txn.hub.external_auth.x_error_reason)] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.x_error_reason) -m found }
+http-after-response set-header WWW-Authenticate %[var(txn.hub.external_auth.www_authenticate)] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.www_authenticate) -m found }
+http-after-response set-header X-Error-Reason %[var(txn.hub.external_auth.x_error_reason)] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.x_error_reason) -m found }
 ```
 
 The conditions ensure the directive only fires on the deny response (auth path ran, not allowed, plugin actually extracted the header). The plugin v0.3.0+ extracts headers on every reply path (2xx, 3xx, 4xx, 5xx, fail-policy), so 401 and 5xx replies populate the txn vars too.
+
+!!! note "Why `http-after-response` rather than `http-response`"
+    HAProxy's `http-request deny` short-circuits the request flow — the 401 response is generated internally, so `http-response` rules (which fire only on responses *received from a backend*) never apply to it. `http-after-response` runs after every response, including HAProxy-generated ones, and is the only directive that lets the extracted fail-path headers reach the client.
 
 ---
 
