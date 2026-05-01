@@ -118,6 +118,25 @@ func (dc *debugClient) getPipelineStatus(ctx context.Context) (*pipelineStatus, 
 	return &st, nil
 }
 
+// getRenderedConfig returns the current rendered haproxy.cfg as the
+// controller sees it. The /debug/vars/rendered response wraps the config in
+// a {"config": "..."} envelope; we unwrap it to a plain string.
+func (dc *debugClient) getRenderedConfig(ctx context.Context) (string, error) {
+	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
+		"http", dc.serviceName, dc.port, DebugPathRendered, nil,
+	).DoRaw(ctx)
+	if err != nil {
+		return "", err
+	}
+	var envelope struct {
+		Config string `json:"config"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", fmt.Errorf("decode rendered config: %w (body=%s)", err, body)
+	}
+	return envelope.Config, nil
+}
+
 // newClientsetForE2E builds a clientset with rate-limiting disabled. The
 // e2e suite's parallel tests would otherwise saturate the default rate
 // limiter against the API server.
@@ -149,4 +168,3 @@ func waitForLabelledPodReady(ctx context.Context, client klient.Client, namespac
 			return false, fmt.Errorf("pod present but not Ready")
 		})
 }
-
