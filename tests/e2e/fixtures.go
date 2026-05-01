@@ -33,6 +33,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/e2e-framework/klient"
@@ -311,6 +312,23 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 	if err := client.Resources(namespace).Create(ctx, ing); err != nil {
 		t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, err)
 	}
+
+	// Delete the Ingress explicitly before the namespace teardown
+	// cascades, so the controller observes the Ingress disappear before
+	// any Secrets/ConfigMaps it referenced. Without this, a parallel test's
+	// webhook validation can fire while this Ingress is still in the
+	// controller's resource store but its referenced Secret has already
+	// been removed by the cascade — the dry-run render then fails because
+	// of the orphaned reference, denying admission for the unrelated
+	// resource. t.Cleanup runs in LIFO order, so this runs before
+	// NamespaceForTest's namespace-delete cleanup that was registered
+	// earlier in the test setup.
+	t.Cleanup(func() {
+		bg := context.Background()
+		if err := client.Resources(namespace).Delete(bg, ing); err != nil && !apierrors.IsNotFound(err) {
+			t.Logf("delete Ingress %s/%s: %v (best-effort)", namespace, spec.Name, err)
+		}
+	})
 	return ing
 }
 

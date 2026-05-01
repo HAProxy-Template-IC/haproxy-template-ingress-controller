@@ -35,6 +35,10 @@ const (
 
 	// StatusUpdaterEventBufferSize is the size of the event subscription buffer.
 	StatusUpdaterEventBufferSize = busevents.StandardSubscriberBuffer
+
+	// Validation status values written to HAProxyTemplateConfig.Status.ValidationStatus.
+	statusValid   = "Valid"
+	statusInvalid = "Invalid"
 )
 
 // StatusUpdater updates HAProxyTemplateConfig status based on validation results.
@@ -158,7 +162,7 @@ func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events
 		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
 			now := metav1.NewTime(time.Now())
 			status.LastValidated = &now
-			status.ValidationStatus = "Valid"
+			status.ValidationStatus = statusValid
 			status.ValidationMessage = "Configuration validated successfully"
 			status.ValidationErrors = nil // Clear any previous errors
 		},
@@ -188,7 +192,7 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
 			now := metav1.NewTime(time.Now())
 			status.LastValidated = &now
-			status.ValidationStatus = "Invalid"
+			status.ValidationStatus = statusInvalid
 			status.ValidationMessage = fmt.Sprintf("%d validation error(s)", len(allErrors))
 			status.ValidationErrors = allErrors
 		},
@@ -216,7 +220,7 @@ func (u *StatusUpdater) handleHAProxyValidationFailed(ctx context.Context, event
 		func(status *v1alpha1.HAProxyTemplateConfigStatus) {
 			now := metav1.NewTime(time.Now())
 			status.LastValidated = &now
-			status.ValidationStatus = "Invalid"
+			status.ValidationStatus = statusInvalid
 			status.ValidationMessage = "HAProxy configuration validation failed"
 			status.ValidationErrors = event.Errors
 		},
