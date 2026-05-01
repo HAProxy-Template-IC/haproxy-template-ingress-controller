@@ -64,7 +64,7 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 		jq empty "$$f" || exit 1; \
 	done
 	@echo "Linting Markdown files..."
-	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude" "#vendor"
+	markdownlint-cli2 "**/*.md" "#node_modules" "#.claude" "#vendor" "#.cache"
 	@echo "Running golangci-lint..."
 ifdef CI
 	$(GOLANGCI_LINT) run --output.code-climate.path=gl-code-quality-report.json \

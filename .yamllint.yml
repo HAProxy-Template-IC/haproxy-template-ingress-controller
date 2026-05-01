@@ -23,3 +23,4 @@ ignore:
   - node_modules/
   - vendor/
   - debug-logs/               # Test failure artifacts (tests/e2e/cleanup.go), captured for CI
+  - .cache/                   # CI go module/build cache; contains 3rd-party YAML
