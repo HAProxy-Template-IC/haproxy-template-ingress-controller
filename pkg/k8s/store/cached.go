@@ -132,7 +132,7 @@ func NewCachedStore(cfg *CachedStoreConfig) (*CachedStore, error) {
 func (s *CachedStore) Get(keys ...string) ([]any, error) {
 	if len(keys) == 0 {
 		return nil, &StoreError{
-			Operation: "get",
+			Operation: opGet,
 			Keys:      keys,
 			Cause:     errors.New("at least one key required"),
 		}
@@ -140,7 +140,7 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 
 	if len(keys) > s.numKeys {
 		return nil, &StoreError{
-			Operation: "get",
+			Operation: opGet,
 			Keys:      keys,
 			Cause:     fmt.Errorf("too many keys: got %d, expected %d", len(keys), s.numKeys),
 		}

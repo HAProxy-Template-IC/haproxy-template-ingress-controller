@@ -10,6 +10,8 @@ import (
 // Compile-time assertion: StoreOverlay implements ContentOverlay.
 var _ ContentOverlay = (*StoreOverlay)(nil)
 
+const opAdd = "Add"
+
 // StoreOverlay represents proposed changes to a store.
 //
 // This enables "what if" scenarios: validate configurations with proposed
@@ -204,7 +206,7 @@ func (s *CompositeStore) List() ([]any, error) {
 // Add is not supported on CompositeStore.
 // CompositeStore is read-only; modifications should be made through the overlay.
 func (s *CompositeStore) Add(_ any, _ []string) error {
-	return &ReadOnlyStoreError{Operation: "Add"}
+	return &ReadOnlyStoreError{Operation: opAdd}
 }
 
 // Update is not supported on CompositeStore.

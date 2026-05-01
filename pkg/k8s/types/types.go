@@ -24,6 +24,12 @@ const (
 	DefaultDebounceInterval = 5 * time.Second
 )
 
+const (
+	fieldGVRResource = "GVR.Resource"
+	fieldIndexBy     = "IndexBy"
+	fieldOnChange    = "OnChange"
+)
+
 // Store defines the interface for storing and retrieving indexed Kubernetes resources.
 //
 // Implementations must be thread-safe for concurrent access.
@@ -322,13 +328,13 @@ func (c *WatcherConfig) SetDefaults() {
 // Returns an error if any required field is missing or invalid.
 func (c *WatcherConfig) Validate() error {
 	if c.GVR.Resource == "" {
-		return &ConfigError{Field: "GVR.Resource", Message: "resource is required"}
+		return &ConfigError{Field: fieldGVRResource, Message: "resource is required"}
 	}
 	if len(c.IndexBy) == 0 {
-		return &ConfigError{Field: "IndexBy", Message: "at least one index key is required"}
+		return &ConfigError{Field: fieldIndexBy, Message: "at least one index key is required"}
 	}
 	if c.OnChange == nil {
-		return &ConfigError{Field: "OnChange", Message: "callback is required"}
+		return &ConfigError{Field: fieldOnChange, Message: "callback is required"}
 	}
 	return nil
 }
@@ -408,7 +414,7 @@ func (c *SingleWatcherConfig) SetDefaults() {
 // Returns an error if any required field is missing or invalid.
 func (c *SingleWatcherConfig) Validate() error {
 	if c.GVR.Resource == "" {
-		return &ConfigError{Field: "GVR.Resource", Message: "resource is required"}
+		return &ConfigError{Field: fieldGVRResource, Message: "resource is required"}
 	}
 	if c.Namespace == "" {
 		return &ConfigError{Field: "Namespace", Message: "namespace is required"}
@@ -417,7 +423,7 @@ func (c *SingleWatcherConfig) Validate() error {
 		return &ConfigError{Field: "Name", Message: "resource name is required"}
 	}
 	if c.OnChange == nil {
-		return &ConfigError{Field: "OnChange", Message: "callback is required"}
+		return &ConfigError{Field: fieldOnChange, Message: "callback is required"}
 	}
 	return nil
 }

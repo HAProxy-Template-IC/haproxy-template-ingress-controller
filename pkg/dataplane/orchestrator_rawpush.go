@@ -65,7 +65,7 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 			Cause:   err,
 			Hints: []string{
 				"The configuration may have fundamental issues",
-				"Validate the configuration with: haproxy -c -f <config>",
+				hintValidateConfig,
 				"Check HAProxy logs for detailed validation errors",
 			},
 		}
@@ -117,7 +117,7 @@ func (o *orchestrator) executeRawPush(ctx context.Context, desiredConfig string,
 				Cause:   err,
 				Hints: []string{
 					"HAProxy reload failed, config may have been reverted",
-					"Check HAProxy logs for detailed error information",
+					hintCheckHAProxyLogs,
 				},
 			}
 		}

@@ -11,6 +11,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
+const sslCAFileType = "SSL CA file"
+
 // sslStorageOps provides a generic FileOperations implementation for SSL storage files.
 type sslStorageOps[T FileItem] struct {
 	getAll     func(ctx context.Context) ([]string, error)
@@ -213,7 +215,7 @@ func newSSLCaOps(c *client.DataplaneClient) *sslStorageOps[SSLCaFile] {
 // newSSLCaConfig creates configuration for SSL CA file operations.
 func newSSLCaConfig(c *client.DataplaneClient) sslStorageConfig {
 	return sslStorageConfig{
-		fileType:        "SSL CA file",
+		fileType:        sslCAFileType,
 		isSupported:     func() bool { return c.Capabilities().SupportsSslCaFiles },
 		detectedVersion: c.DetectedVersion,
 	}

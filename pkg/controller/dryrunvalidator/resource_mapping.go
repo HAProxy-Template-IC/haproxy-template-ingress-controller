@@ -25,6 +25,17 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
+const (
+	operationCreate = "CREATE"
+	operationUpdate = "UPDATE"
+	operationDelete = "DELETE"
+
+	phaseRender = "render"
+
+	resourceTypeIngresses = "ingresses"
+	resourceTypeEndpoints = "endpoints"
+)
+
 // createOverlay builds the StoreOverlay that represents the admission
 // request's hypothetical state. DELETE yields an overlay with only the
 // deletion recorded, CREATE/UPDATE wrap the incoming object.
@@ -38,7 +49,7 @@ import (
 //   - requestID: Request ID for logging (can be empty for direct validation)
 func (c *Component) createOverlay(namespace, name string, object any, operation, requestID string) *stores.StoreOverlay {
 	// Handle DELETE first - it doesn't need an object
-	if operation == "DELETE" {
+	if operation == operationDelete {
 		return stores.NewStoreOverlayForDelete(namespace, name)
 	}
 
@@ -54,9 +65,9 @@ func (c *Component) createOverlay(namespace, name string, object any, operation,
 	}
 
 	switch operation {
-	case "CREATE":
+	case operationCreate:
 		return stores.NewStoreOverlayForCreate(obj)
-	case "UPDATE":
+	case operationUpdate:
 		return stores.NewStoreOverlayForUpdate(obj)
 	default:
 		c.logger.Warn("unknown operation type",
@@ -72,7 +83,7 @@ func (c *Component) simplifyError(phase string, err error) string {
 		return ""
 	}
 	switch phase {
-	case "render":
+	case phaseRender:
 		return dataplane.SimplifyRenderingError(err)
 	case "syntax", "schema", "semantic":
 		return dataplane.SimplifyValidationError(err)
@@ -110,7 +121,7 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 	// - Words that are already plural (endpoints)
 	irregularPlurals := map[string]string{
 		// -ss ending needs -es suffix
-		"ingress":       "ingresses",
+		"ingress":       resourceTypeIngresses,
 		"ingressclass":  "ingressclasses",
 		"storageclass":  "storageclasses",
 		"priorityclass": "priorityclasses",
@@ -119,7 +130,7 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 		"networkpolicy":     "networkpolicies",
 		"podsecuritypolicy": "podsecuritypolicies",
 		// Already plural (no change needed)
-		"endpoints": "endpoints",
+		resourceTypeEndpoints: resourceTypeEndpoints,
 	}
 
 	if plural, ok := irregularPlurals[kindLower]; ok {

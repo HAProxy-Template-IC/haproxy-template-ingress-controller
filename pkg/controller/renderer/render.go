@@ -30,6 +30,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
+const filesDir = "files"
+
 // singleRenderResult holds the output of a single render (production or validation).
 type singleRenderResult struct {
 	haproxyConfig  string
@@ -60,8 +62,8 @@ func (c *Component) performRender(event *events.ReconciliationTriggeredEvent) {
 	pathResolver := &templating.PathResolver{
 		MapsDir:    "maps",
 		SSLDir:     "ssl",
-		CRTListDir: "files",
-		GeneralDir: "files",
+		CRTListDir: filesDir,
+		GeneralDir: filesDir,
 	}
 
 	// Render templates

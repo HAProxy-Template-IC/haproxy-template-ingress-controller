@@ -59,6 +59,8 @@ const (
 
 	// fieldManager is the SSA field manager name used for status patches.
 	fieldManager = "haptic"
+
+	statusKey = "status"
 )
 
 // GVRResolver resolves apiVersion + kind to a GroupVersionResource.
@@ -326,7 +328,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 				"namespace": patch.Namespace,
 				"name":      patch.Name,
 			},
-			"status": statusPayload,
+			statusKey: statusPayload,
 		}
 
 		ssaBytes, err := json.Marshal(ssaPayload)
@@ -348,7 +350,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 				FieldManager: fieldManager,
 				Force:        new(true),
 			},
-			"status",
+			statusKey,
 		)
 		if err != nil {
 			c.logger.Error("failed to apply status patch",

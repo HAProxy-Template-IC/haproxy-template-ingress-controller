@@ -30,6 +30,11 @@ const (
 	discoveryLookbackWindow      = 30 * time.Second
 )
 
+const (
+	attrKeyEventType = "event_type"
+	statusFailed     = "FAILED"
+)
+
 // generateInsight creates a contextual message and structured attributes for the event.
 //
 // This applies domain knowledge and uses the ring buffer for event correlation.
@@ -39,7 +44,7 @@ const (
 func (ec *EventCommentator) generateInsight(event busevents.Event) (insight string, args []any) {
 	eventType := event.EventType()
 	attrs := []any{
-		"event_type", eventType,
+		attrKeyEventType, eventType,
 		"timestamp", event.Timestamp(),
 	}
 

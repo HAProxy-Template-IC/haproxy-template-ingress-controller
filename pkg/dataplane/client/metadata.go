@@ -16,6 +16,8 @@ package client
 
 import "encoding/json"
 
+const metadataValueKey = "value"
+
 // ConvertClientMetadataToAPI converts client-native flat metadata to Dataplane API nested format.
 //
 // The client-native library uses a flat map structure for metadata:
@@ -33,7 +35,7 @@ func ConvertClientMetadataToAPI(clientMetadata map[string]any) map[string]map[st
 	nested := make(map[string]map[string]any)
 	for key, value := range clientMetadata {
 		nested[key] = map[string]any{
-			"value": value,
+			metadataValueKey: value,
 		}
 	}
 
@@ -59,7 +61,7 @@ func ConvertAPIMetadataToClient(apiMetadata map[string]map[string]any) map[strin
 
 	flat := make(map[string]any)
 	for key, nested := range apiMetadata {
-		if value, ok := nested["value"]; ok {
+		if value, ok := nested[metadataValueKey]; ok {
 			flat[key] = value
 		}
 	}
@@ -133,7 +135,7 @@ func needsMetadataTransformation(metadata map[string]any) bool {
 	for _, v := range metadata {
 		// If any value is not a map with a "value" key, it needs transformation
 		if nested, ok := v.(map[string]any); ok {
-			if _, hasValue := nested["value"]; hasValue {
+			if _, hasValue := nested[metadataValueKey]; hasValue {
 				// Already in API format
 				return false
 			}

@@ -45,7 +45,7 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 		statusText := "OK"
 		if !e.Valid {
 			statusSymbol = "✗"
-			statusText = "FAILED"
+			statusText = statusFailed
 		}
 
 		// Build metrics message based on validator type

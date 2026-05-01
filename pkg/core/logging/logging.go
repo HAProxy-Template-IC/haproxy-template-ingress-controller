@@ -26,6 +26,8 @@ const (
 	LevelNameTrace = "TRACE"
 )
 
+const levelNameWarning = "WARNING"
+
 // globalLevel is a package-level LevelVar that enables dynamic log level updates.
 // Used by NewDynamicLogger and SetLevel.
 var globalLevel = new(slog.LevelVar)
@@ -97,15 +99,15 @@ func GetLevel() string {
 // Supported levels (case-insensitive): ERROR, WARNING/WARN, INFO, DEBUG, TRACE.
 func ParseLogLevel(level string) slog.Level {
 	switch strings.ToUpper(strings.TrimSpace(level)) {
-	case "ERROR":
+	case LevelNameError:
 		return slog.LevelError
-	case "WARNING", "WARN":
+	case levelNameWarning, LevelNameWarn:
 		return slog.LevelWarn
-	case "INFO":
+	case LevelNameInfo:
 		return slog.LevelInfo
-	case "DEBUG":
+	case LevelNameDebug:
 		return slog.LevelDebug
-	case "TRACE":
+	case LevelNameTrace:
 		return LevelTrace
 	default:
 		// Default to INFO for invalid or empty levels

@@ -148,7 +148,7 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 				Hints: []string{
 					"HAProxy auxiliary file reload failed",
 					"Map file or SSL certificate update may not have been applied",
-					"Check HAProxy logs for detailed error information",
+					hintCheckHAProxyLogs,
 				},
 			}
 		}
@@ -280,7 +280,7 @@ func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffRes
 		if len(snippet) > 200 {
 			snippet = snippet[:200]
 		}
-		return nil, NewParseError("current", snippet, err)
+		return nil, NewParseError(configTypeCurrent, snippet, err)
 	}
 
 	// Note: Normalization of metadata format is now done automatically by the parser

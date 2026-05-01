@@ -25,6 +25,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
+const haproxyConfigPath = "/etc/haproxy/haproxy.cfg"
+
 // buildPublishRequest assembles the PublishRequest fields shared by both the
 // happy-path publish and the validation-failed publish. Callers layer the
 // extra fields (NameSuffix, ValidationError) on top.
@@ -34,7 +36,7 @@ func (c *Component) buildPublishRequest(templateConfig *v1alpha1.HAProxyTemplate
 		TemplateConfigNamespace: templateConfig.Namespace,
 		TemplateConfigUID:       templateConfig.UID,
 		Config:                  entry.config,
-		ConfigPath:              "/etc/haproxy/haproxy.cfg",
+		ConfigPath:              haproxyConfigPath,
 		AuxiliaryFiles:          c.convertAuxiliaryFiles(entry.auxFiles),
 		Checksum:                entry.contentChecksum,
 		CompressionThreshold:    c.getCompressionThreshold(templateConfig),

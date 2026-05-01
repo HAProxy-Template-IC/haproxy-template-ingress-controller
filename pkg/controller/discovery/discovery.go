@@ -36,6 +36,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
+const (
+	stateRunning = "running"
+	phaseRunning = "Running"
+)
+
 // Discovery discovers HAProxy pod endpoints from Kubernetes resources.
 //
 // This is a pure component that takes a pod store and credentials and returns
@@ -222,8 +227,8 @@ func logContainerStatus(logger *slog.Logger, podName, containerName string, stat
 	var stateType string
 	if stateFound {
 		switch {
-		case hasKey(state, "running"):
-			stateType = "running"
+		case hasKey(state, stateRunning):
+			stateType = stateRunning
 		case hasKey(state, "waiting"):
 			stateType = "waiting"
 		case hasKey(state, "terminated"):
@@ -366,7 +371,7 @@ func (d *Discovery) evaluatePod(
 	if err != nil {
 		return zero, false, err
 	}
-	if phase != "Running" {
+	if phase != phaseRunning {
 		return zero, false, nil
 	}
 
@@ -419,7 +424,7 @@ func extractPodPhase(pod *unstructured.Unstructured, logger *slog.Logger) (strin
 	if err != nil {
 		return "", fmt.Errorf("extracting pod phase from %s: %w", pod.GetName(), err)
 	}
-	if !found || phase != "Running" {
+	if !found || phase != phaseRunning {
 		traceIf(logger, "Skipping pod - not in Running phase",
 			"pod", pod.GetName(),
 			"phase", phase)
