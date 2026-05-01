@@ -283,12 +283,60 @@ func runHAProxyCheck(configPath, configContent string, skipDNSValidation bool) e
 	// Capture both stdout and stderr
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Parse and format HAProxy error output with config file context
-		errorMsg := parseHAProxyError(string(output), configContent)
-		return fmt.Errorf("haproxy validation failed: %s", errorMsg)
+		return interpretHAProxyExitError(output, err, configContent)
 	}
 
 	return nil
+}
+
+// interpretHAProxyExitError classifies a non-zero `haproxy -c` exit. Three
+// outcomes:
+//
+//  1. Empty output (segfault, OOM-kill, signal, binary-not-found) → return a
+//     wrapped error. We must NOT treat this as success: there's no advisory
+//     information to evaluate, just an unexplained crash.
+//
+//  2. Output contains only advisory lines ([WARNING]/[NOTICE]/[INFO]/[DEBUG])
+//     → return nil. Some HAProxy builds (notably AWS-LC variants) exit
+//     non-zero when an ignored-keyword warning triggers, even though the
+//     config loads fine; failing webhook validation on those would block
+//     resource admission for an advisory message.
+//
+//  3. Output contains real failure lines ([ALERT]/[EMERG]/[CRIT]/[ERR]) →
+//     return a validation error parsed via parseHAProxyError so the caller
+//     gets a user-facing message with config-file context.
+//
+// Extracted so the decision logic is unit-testable without invoking the
+// haproxy binary.
+func interpretHAProxyExitError(output []byte, exitErr error, configContent string) error {
+	trimmedOutput := strings.TrimSpace(string(output))
+	if trimmedOutput == "" {
+		return fmt.Errorf("haproxy exited with error but produced no output: %w", exitErr)
+	}
+	if !hasFailureLines(string(output)) {
+		slog.Warn("haproxy emitted advisory output (no [ALERT]) — treating validation as success",
+			"output", trimmedOutput)
+		return nil
+	}
+	return fmt.Errorf("haproxy validation failed: %s", parseHAProxyError(string(output), configContent))
+}
+
+// hasFailureLines reports whether output contains any HAProxy log line at or
+// above the [ALERT] severity. HAProxy uses standard syslog severity levels in
+// its `-c` output; lines like [WARNING] or [NOTICE] are advisory and don't
+// indicate the config is unusable. The check is line-prefix based after
+// trimming leading whitespace.
+func hasFailureLines(output string) bool {
+	failurePrefixes := []string{"[EMERG]", "[ALERT]", "[CRIT]", "[ERR]"}
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		for _, prefix := range failurePrefixes {
+			if strings.HasPrefix(trimmed, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseHAProxyError parses HAProxy's error output to extract meaningful error messages with context.

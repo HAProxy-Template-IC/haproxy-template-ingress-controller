@@ -320,14 +320,24 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 	// controller's resource store but its referenced Secret has already
 	// been removed by the cascade — the dry-run render then fails because
 	// of the orphaned reference, denying admission for the unrelated
-	// resource. t.Cleanup runs in LIFO order, so this runs before
-	// NamespaceForTest's namespace-delete cleanup that was registered
-	// earlier in the test setup.
+	// resource.
+	//
+	// After the apiserver-side Delete returns we additionally wait until
+	// the controller's rendered config no longer references the test's
+	// namespace. The apiserver Delete is synchronous but the controller's
+	// watcher has its own latency; the wait closes that residual window.
+	// Without it we still see flakes where another parallel test's webhook
+	// fires between Delete-acknowledged and watcher-caught-up.
+	//
+	// t.Cleanup runs in LIFO order, so this runs before NamespaceForTest's
+	// namespace-delete cleanup that was registered earlier in the test
+	// setup.
 	t.Cleanup(func() {
 		bg := context.Background()
 		if err := client.Resources(namespace).Delete(bg, ing); err != nil && !apierrors.IsNotFound(err) {
 			t.Logf("delete Ingress %s/%s: %v (best-effort)", namespace, spec.Name, err)
 		}
+		waitForControllerForgetNamespace(bg, t, client, namespace)
 	})
 	return ing
 }
