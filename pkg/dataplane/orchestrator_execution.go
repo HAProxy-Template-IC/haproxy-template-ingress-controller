@@ -118,7 +118,7 @@ func (o *orchestrator) executeFineGrainedSync(
 				Cause:   err,
 				Hints: []string{
 					"HAProxy reload failed, config may have been reverted",
-					"Check HAProxy logs for detailed error information",
+					hintCheckHAProxyLogs,
 				},
 			}
 		}
@@ -346,12 +346,12 @@ func (o *orchestrator) executeConfigOperations(
 
 		// Other errors - return with details
 		return nil, false, "", retries, &SyncError{
-			Stage:   "apply",
+			Stage:   stageApply,
 			Message: "failed to apply configuration changes",
 			Cause:   err,
 			Hints: []string{
 				"Review the error message for specific operation failures",
-				"Check HAProxy logs for detailed error information",
+				hintCheckHAProxyLogs,
 				"Verify all resource references are valid",
 			},
 		}

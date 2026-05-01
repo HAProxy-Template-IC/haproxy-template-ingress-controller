@@ -24,6 +24,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
+const (
+	expectedKind       = "HAProxyTemplateConfig"
+	expectedAPIVersion = "haproxy-haptic.org/v1alpha1"
+)
+
 // ParseCRD converts an unstructured HAProxyTemplateConfig CRD to typed structs.
 //
 // This function validates the resource type, converts the unstructured resource
@@ -39,12 +44,12 @@ func ParseCRD(resource *unstructured.Unstructured) (*config.Config, *v1alpha1.HA
 	apiVersion := resource.GetAPIVersion()
 	kind := resource.GetKind()
 
-	if kind != "HAProxyTemplateConfig" {
-		return nil, nil, fmt.Errorf("expected HAProxyTemplateConfig, got %s", kind)
+	if kind != expectedKind {
+		return nil, nil, fmt.Errorf("expected %s, got %s", expectedKind, kind)
 	}
 
-	if apiVersion != "haproxy-haptic.org/v1alpha1" {
-		return nil, nil, fmt.Errorf("expected apiVersion haproxy-haptic.org/v1alpha1, got %s", apiVersion)
+	if apiVersion != expectedAPIVersion {
+		return nil, nil, fmt.Errorf("expected apiVersion %s, got %s", expectedAPIVersion, apiVersion)
 	}
 
 	// Convert unstructured to typed CRD

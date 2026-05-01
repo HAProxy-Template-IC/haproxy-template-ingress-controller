@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	statusSuccess     = "SUCCESS"
+	noChangesDetected = "No changes detected"
+)
+
 // SyncMode indicates which sync strategy was used.
 type SyncMode string
 
@@ -199,7 +204,7 @@ func (r *SyncResult) String() string {
 	var parts []string
 
 	// Status
-	status := "SUCCESS"
+	status := statusSuccess
 	if !r.Success {
 		status = "FAILED"
 	}
@@ -264,7 +269,7 @@ func (r *SyncResult) String() string {
 // String returns a human-readable summary of the diff details.
 func (d *DiffDetails) String() string {
 	if d.TotalOperations == 0 {
-		return "No changes detected"
+		return noChangesDetected
 	}
 
 	var parts []string
@@ -351,7 +356,7 @@ func (d *DiffDetails) appendSimpleCountChanges(parts []string, added, modified, 
 // String returns a human-readable summary of the diff result.
 func (r *DiffResult) String() string {
 	if !r.HasChanges {
-		return "No changes detected"
+		return noChangesDetected
 	}
 
 	parts := make([]string, 0, 2)

@@ -18,6 +18,13 @@ import (
 	"time"
 )
 
+const (
+	keyConfig    = "config"
+	keyVersion   = "version"
+	keyTimestamp = "timestamp"
+	keyEvents    = "events"
+)
+
 // ConfigVar exposes the current controller configuration.
 //
 // Returns a JSON object containing:
@@ -47,9 +54,9 @@ func (v *ConfigVar) Get() (any, error) {
 	}
 
 	return map[string]any{
-		"config":  cfg,
-		"version": version,
-		"updated": time.Now(),
+		keyConfig:  cfg,
+		keyVersion: version,
+		"updated":  time.Now(),
 	}, nil
 }
 
@@ -81,7 +88,7 @@ func (v *CredentialsVar) Get() (any, error) {
 
 	// Don't expose actual credentials - only metadata
 	return map[string]any{
-		"version":             version,
+		keyVersion:            version,
 		"updated":             time.Now(),
 		"has_dataplane_creds": creds != nil && creds.DataplaneUsername != "" && creds.DataplanePassword != "",
 	}, nil
@@ -113,9 +120,9 @@ func (v *RenderedVar) Get() (any, error) {
 	}
 
 	return map[string]any{
-		"config":    rendered,
-		"timestamp": timestamp,
-		"size":      len(rendered),
+		keyConfig:    rendered,
+		keyTimestamp: timestamp,
+		"size":       len(rendered),
 	}, nil
 }
 
@@ -159,9 +166,9 @@ func (v *AuxFilesVar) Get() (any, error) {
 	}
 
 	return map[string]any{
-		"files":     auxFiles,
-		"timestamp": timestamp,
-		"summary":   summary,
+		"files":      auxFiles,
+		keyTimestamp: timestamp,
+		"summary":    summary,
 	}, nil
 }
 
@@ -216,17 +223,17 @@ func (v *FullStateVar) Get() (any, error) {
 	}
 
 	return map[string]any{
-		"config": map[string]any{
-			"config":  cfg,
-			"version": cfgVer,
+		keyConfig: map[string]any{
+			keyConfig:  cfg,
+			keyVersion: cfgVer,
 		},
 		"rendered": map[string]any{
-			"config":    rendered,
-			"timestamp": renderedTime,
+			keyConfig:    rendered,
+			keyTimestamp: renderedTime,
 		},
 		"auxfiles": map[string]any{
-			"files":     auxFiles,
-			"timestamp": auxTime,
+			"files":      auxFiles,
+			keyTimestamp: auxTime,
 		},
 		"resources":     resources,
 		"recent_events": recentEvents,

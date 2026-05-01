@@ -10,6 +10,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
+const opGet = "get"
+
 // MemoryStore stores complete Kubernetes resources in memory using nested maps.
 //
 // This provides O(1) lookup performance at the cost of higher memory usage.
@@ -65,7 +67,7 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 
 	if len(keys) == 0 {
 		return nil, &StoreError{
-			Operation: "get",
+			Operation: opGet,
 			Keys:      keys,
 			Cause:     errors.New("at least one key required"),
 		}
@@ -73,7 +75,7 @@ func (s *MemoryStore) Get(keys ...string) ([]any, error) {
 
 	if len(keys) > s.numKeys {
 		return nil, &StoreError{
-			Operation: "get",
+			Operation: opGet,
 			Keys:      keys,
 			Cause:     fmt.Errorf("too many keys: got %d, expected %d", len(keys), s.numKeys),
 		}

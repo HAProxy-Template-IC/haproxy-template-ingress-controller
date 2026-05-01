@@ -29,6 +29,8 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
+const runtimeConfigLabelKey = "haproxy-haptic.org/runtime-config"
+
 // runtimeConfigOwnerRefs builds the OwnerReferences slice that ties an
 // auxiliary-file CRD (or Secret) to its parent HAProxyCfg. All four
 // createOrUpdate* helpers in this file use the same shape.
@@ -49,7 +51,7 @@ func runtimeConfigOwnerRefs(owner *haproxyv1alpha1.HAProxyCfg) []metav1.OwnerRef
 // resource to its parent HAProxyCfg via the runtime-config label.
 func runtimeConfigLabels(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
 	return map[string]string{
-		"haproxy-haptic.org/runtime-config": owner.Name,
+		runtimeConfigLabelKey: owner.Name,
 	}
 }
 

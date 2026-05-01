@@ -11,6 +11,16 @@ import (
 // cache to obtain the parsed configuration if needed.
 var ErrValidationCacheHit = errors.New("validation cache hit")
 
+const (
+	phaseNameSyntax   = "syntax"
+	phaseNameSemantic = "semantic"
+	configTypeCurrent = "current"
+	stageApply        = "apply"
+
+	hintCheckHAProxyLogs = "Check HAProxy logs for detailed error information"
+	hintValidateConfig   = "Validate the configuration with: haproxy -c -f <config>"
+)
+
 // SyncError represents a synchronization failure with actionable context.
 // It provides detailed information about what stage failed and suggestions
 // for how to fix the problem.
@@ -123,9 +133,9 @@ type validationPhase struct {
 }
 
 var (
-	phaseSyntax   = validationPhase{name: "syntax", message: "configuration has syntax errors"}
+	phaseSyntax   = validationPhase{name: phaseNameSyntax, message: "configuration has syntax errors"}
 	phaseSchema   = validationPhase{name: "schema", message: "configuration violates API schema constraints"}
-	phaseSemantic = validationPhase{name: "semantic", message: "configuration has semantic errors"}
+	phaseSemantic = validationPhase{name: phaseNameSemantic, message: "configuration has semantic errors"}
 )
 
 // wrap builds a ValidationError attributing the failure to this phase.
@@ -217,10 +227,10 @@ func NewConnectionError(endpoint string, cause error) *SyncError {
 func NewParseError(configType, configSnippet string, cause error) *SyncError {
 	hints := []string{
 		"Check the HAProxy configuration syntax",
-		"Validate the configuration with: haproxy -c -f <config>",
+		hintValidateConfig,
 	}
 
-	if configType == "current" {
+	if configType == configTypeCurrent {
 		hints = append(hints, "The current config from dataplane API may be corrupted")
 	} else {
 		hints = append(hints, "Review the desired configuration for syntax errors")
@@ -237,9 +247,9 @@ func NewParseError(configType, configSnippet string, cause error) *SyncError {
 // NewValidationError creates a ValidationError.
 func NewValidationError(message string, cause error) *SyncError {
 	return &SyncError{
-		Stage:   "apply",
+		Stage:   stageApply,
 		Message: "HAProxy rejected the configuration",
-		Cause:   &ValidationError{Phase: "semantic", Message: message, Cause: cause},
+		Cause:   &ValidationError{Phase: phaseNameSemantic, Message: message, Cause: cause},
 		Hints: []string{
 			"Review the validation error message from HAProxy",
 			"Check for references to non-existent backends or servers",
@@ -267,7 +277,7 @@ func NewConflictError(retries int, expectedVersion int64, actualVersion string) 
 // NewOperationError creates an OperationError.
 func NewOperationError(opType, section, resource string, cause error) *SyncError {
 	return &SyncError{
-		Stage:   "apply",
+		Stage:   stageApply,
 		Message: fmt.Sprintf("%s %s '%s'", opType, section, resource),
 		Cause:   &OperationError{OperationType: opType, Section: section, Resource: resource, Cause: cause},
 		Hints: []string{
@@ -287,7 +297,7 @@ func NewFallbackError(originalErr, fallbackCause error) *SyncError {
 		Hints: []string{
 			"The desired configuration may have fundamental issues",
 			"Check HAProxy logs for detailed error messages",
-			"Validate the configuration with: haproxy -c -f <config>",
+			hintValidateConfig,
 			"Review both the fine-grained sync error and fallback error",
 		},
 	}

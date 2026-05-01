@@ -111,7 +111,7 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 			if len(snippet) > 200 {
 				snippet = snippet[:200]
 			}
-			return nil, NewParseError("current", snippet, err)
+			return nil, NewParseError(configTypeCurrent, snippet, err)
 		}
 	}
 

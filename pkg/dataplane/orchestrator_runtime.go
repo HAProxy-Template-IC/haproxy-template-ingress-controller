@@ -24,6 +24,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
+const (
+	stateEnabled  = "enabled"
+	stateDisabled = "disabled"
+)
+
 // buildRuntimeActions converts server update operations into the semicolon-separated
 // X-Runtime-Actions string expected by the DataPlane API's skip_reload endpoint.
 // Covers all fields from DataPlane API's RuntimeSupportedFields["server"] (handlers/runtime.go).
@@ -52,9 +57,9 @@ func buildRuntimeActions(operations []comparator.Operation) string {
 
 		// Admin state: maintenance "enabled" → maint, "disabled" → ready
 		switch s.Maintenance {
-		case "enabled":
+		case stateEnabled:
 			actions = append(actions, fmt.Sprintf("SetServerState %s %s maint", b, n))
-		case "disabled":
+		case stateDisabled:
 			actions = append(actions, fmt.Sprintf("SetServerState %s %s ready", b, n))
 		}
 
@@ -70,9 +75,9 @@ func buildRuntimeActions(operations []comparator.Operation) string {
 
 		// Agent check enable/disable
 		switch s.AgentCheck {
-		case "enabled":
+		case stateEnabled:
 			actions = append(actions, fmt.Sprintf("EnableAgentCheck %s %s", b, n))
-		case "disabled":
+		case stateDisabled:
 			actions = append(actions, fmt.Sprintf("DisableAgentCheck %s %s", b, n))
 		}
 

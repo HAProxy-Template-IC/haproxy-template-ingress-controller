@@ -90,6 +90,9 @@ linters:
         # Intentional shadowing (e.g., tc := tc for closures) is idiomatic Go.
         # Shadow check was removed from stable go vet (#29260, #34053).
         - shadow
+        # Inline analyzer flags calls to small helper functions like ptrInt64.
+        # Inlining test convenience helpers hurts readability without benefit.
+        - inline
 
     revive:
       rules:
@@ -237,6 +240,23 @@ linters:
         linters:
           - gosec
         text: "G108"
+
+      # goconst exclusions: strings that look duplicated but are inherent API
+      # identifiers (HAProxy parser keywords, template variable names, k8s
+      # field names, assertion-DSL types). Extracting them into constants
+      # adds indirection without making the contract clearer to readers.
+      - path: pkg/dataplane/parser/enterprise/
+        linters:
+          - goconst
+      - path: pkg/controller/rendercontext/
+        linters:
+          - goconst
+      - path: pkg/controller/testrunner/
+        linters:
+          - goconst
+      - path: pkg/templating/filters(_status|_string)?\.go
+        linters:
+          - goconst
 
       # G101: Kubernetes Secret name constant, not actual credentials
       - path: tests/acceptance/env\.go

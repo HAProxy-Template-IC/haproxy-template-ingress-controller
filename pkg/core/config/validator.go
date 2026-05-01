@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+const logLevelInfo = "INFO"
+
 // ValidateStructure performs basic structural validation on the configuration.
 // Validates required fields, value ranges, and non-empty slices.
 // Does NOT validate template syntax or JSONPath expressions.
@@ -78,7 +80,7 @@ func validateLoggingConfig(lc *LoggingConfig) error {
 	}
 
 	validLevels := map[string]bool{
-		"TRACE": true, "DEBUG": true, "INFO": true, "WARN": true, "ERROR": true,
+		"TRACE": true, "DEBUG": true, logLevelInfo: true, "WARN": true, "ERROR": true,
 		"trace": true, "debug": true, "info": true, "warn": true, "error": true,
 		"WARNING": true, "warning": true, // Also accept WARNING as alias for WARN
 	}

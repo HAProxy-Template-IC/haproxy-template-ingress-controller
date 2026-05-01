@@ -61,7 +61,7 @@ func RegisterVariables(
 	registry.Publish("resources", &ResourcesVar{provider: provider})
 
 	// Events
-	registry.Publish("events", &EventsVar{
+	registry.Publish(keyEvents, &EventsVar{
 		buffer:       eventBuffer,
 		defaultLimit: 100,
 	})
@@ -113,7 +113,7 @@ func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffe
 			events := eventBuffer.FindByCorrelationID(correlationID)
 			introspection.WriteJSON(w, map[string]any{
 				"correlation_id": correlationID,
-				"events":         events,
+				keyEvents:        events,
 				"count":          len(events),
 			})
 			return
@@ -129,9 +129,9 @@ func RegisterEventsHandler(server *introspection.Server, eventBuffer *EventBuffe
 
 		events := eventBuffer.GetLast(limit)
 		introspection.WriteJSON(w, map[string]any{
-			"events": events,
-			"count":  len(events),
-			"limit":  limit,
+			keyEvents: events,
+			"count":   len(events),
+			"limit":   limit,
 		})
 	})
 }

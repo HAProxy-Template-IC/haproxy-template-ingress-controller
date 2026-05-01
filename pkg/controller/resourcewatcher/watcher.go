@@ -45,6 +45,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 )
 
+const (
+	resourcePods            = "pods"
+	indexFieldMetaNamespace = "metadata.namespace"
+)
+
 // ResourceWatcherComponent creates and manages watchers for all configured resources.
 type ResourceWatcherComponent struct {
 	watchers  map[string]*watcher.Watcher // resourceTypeName -> watcher
@@ -106,10 +111,10 @@ func New(
 	// Add haproxy-pods watcher (or override if user configured it)
 	resourcesWithHAProxyPods[names.HAProxyPodsResourceType] = coreconfig.WatchedResource{
 		APIVersion:    "v1",
-		Resources:     "pods",
+		Resources:     resourcePods,
 		LabelSelector: cfg.PodSelector.MatchLabels,
 		IndexBy: []string{
-			"metadata.namespace",
+			indexFieldMetaNamespace,
 			"metadata.name",
 		},
 	}

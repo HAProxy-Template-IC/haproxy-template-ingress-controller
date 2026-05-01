@@ -21,6 +21,13 @@ import (
 	"sync"
 )
 
+const (
+	statusPhaseRendered     = "rendered"
+	statusPhaseDeployed     = "deployed"
+	statusPhaseRenderFailed = "renderFailed"
+	statusPhaseDeployFailed = "deployFailed"
+)
+
 // StatusPatch represents a status update to apply to a Kubernetes resource.
 // Templates register patches via the statusPatch() function during rendering.
 // Each patch targets a specific resource and contains outcome-keyed variants
@@ -85,7 +92,7 @@ func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string
 	// Validate phase keys
 	for phase := range variants {
 		switch phase {
-		case "rendered", "deployed", "renderFailed", "deployFailed":
+		case statusPhaseRendered, statusPhaseDeployed, statusPhaseRenderFailed, statusPhaseDeployFailed:
 			// valid
 		default:
 			return fmt.Errorf("statusPatch: invalid phase %q, must be one of: rendered, deployed, renderFailed, deployFailed", phase)

@@ -18,6 +18,11 @@ const (
 	EventBufferSize = busevents.StandardSubscriberBuffer
 )
 
+const (
+	expectedKind       = "HAProxyTemplateConfig"
+	expectedAPIVersion = "haproxy-haptic.org/v1alpha1"
+)
+
 // ConfigLoaderComponent subscribes to ConfigResourceChangedEvent and parses config data.
 //
 // This component is responsible for:
@@ -77,7 +82,7 @@ func (c *ConfigLoaderComponent) processConfigChange(event *events.ConfigResource
 		"version", version)
 
 	// Validate resource type
-	if apiVersion != "haproxy-haptic.org/v1alpha1" || kind != "HAProxyTemplateConfig" {
+	if apiVersion != expectedAPIVersion || kind != expectedKind {
 		c.Logger().Error("Unsupported resource type for config",
 			"api_version", apiVersion,
 			"kind", kind,
