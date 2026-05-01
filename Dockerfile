@@ -8,7 +8,7 @@ ARG GO_VERSION=1.26
 # point at a dev release before the first `X.Y.Z` patch ships, so the rule
 # derives the tracked version from patch tags only).
 # renovate: datasource=docker depName=haproxytech/haproxy-debian versioning=loose
-ARG HAPROXY_VERSION=3.3
+ARG HAPROXY_VERSION=3.2
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
 ARG SOURCE_HASH=unknown

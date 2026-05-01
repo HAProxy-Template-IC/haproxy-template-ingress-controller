@@ -95,6 +95,18 @@ type ComponentConfig struct {
 
 	// Logger is the structured logger.
 	Logger *slog.Logger
+
+	// SkipValidationTests disables the embedded `validationTests` runner
+	// for this validator. Set true for the admission-webhook caller —
+	// `validationTests` are CHART-AUTHOR tests with their own fixtures
+	// (e.g. expecting a `default-ssl-cert` Secret in their fixture set);
+	// running them on every admission request both wastes work (the same
+	// 130+ tests run for every Ingress, regardless of what the
+	// submission contains) and surfaces fixture-vs-cluster mismatches as
+	// admission denials. The chart's own CI / `haptic-controller validate`
+	// path runs those tests; the webhook should only validate the
+	// proposal itself.
+	SkipValidationTests bool
 }
 
 // New creates a new DryRunValidator component.
@@ -110,10 +122,13 @@ func New(cfg *ComponentConfig) *Component {
 		logger = slog.Default()
 	}
 
-	// Create test runner for validation tests
-	// Use Workers: 1 for webhook context (sequential execution, faster for small test counts)
+	// Create test runner for validation tests.
+	// SkipValidationTests is honoured first: the admission webhook caller
+	// passes true so chart-author tests (which run against their own
+	// fixtures, not the live cluster) don't get re-executed for every
+	// admission request — see the field doc on ComponentConfig.
 	var testRunnerInstance *testrunner.Runner
-	if len(cfg.Config.ValidationTests) > 0 {
+	if !cfg.SkipValidationTests && len(cfg.Config.ValidationTests) > 0 {
 		testRunnerInstance = testrunner.New(
 			cfg.Config,
 			cfg.Engine,

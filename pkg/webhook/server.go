@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -48,17 +49,35 @@ func init() {
 // should be admitted.
 //
 // The server is thread-safe and can handle multiple concurrent requests.
+//
+// The server reads CertPEM/KeyPEM at construction time and validates them
+// eagerly so a malformed cert surfaces in NewServer rather than at the
+// first TLS handshake. The cert lifetime equals the server lifetime —
+// rotation is the controller's job: when the underlying Secret changes,
+// the controller's iteration-restart path constructs a new Server with
+// the fresh PEM bytes (same pattern used for CRD/credentials changes).
 type Server struct {
 	config     ServerConfig
 	validators map[string]ValidationFunc
 	mu         sync.RWMutex
 	httpServer *http.Server
+	cert       tls.Certificate
+
+	// listening is closed once the TLS listener has been bound to the
+	// configured port. Callers that need to know the server is actually
+	// accepting connections (e.g., an iteration sequencer that wants the
+	// controller's readiness probe to wait for admission to be reachable)
+	// can read from Listening() — until then connection attempts fail with
+	// "connection refused" because Go's net.Listen hasn't returned yet.
+	listening chan struct{}
 }
 
 // NewServer creates a new webhook server with the given configuration.
 //
-// The server will not start until Start() is called.
-func NewServer(config *ServerConfig) *Server {
+// The server will not start until Start() is called. The CertPEM/KeyPEM in
+// config are parsed eagerly so configuration errors surface here rather
+// than at the first TLS handshake.
+func NewServer(config *ServerConfig) (*Server, error) {
 	// Apply defaults
 	if config.Port == 0 {
 		config.Port = 9443
@@ -76,10 +95,26 @@ func NewServer(config *ServerConfig) *Server {
 		config.WriteTimeout = 10 * time.Second
 	}
 
+	cert, err := tls.X509KeyPair(config.CertPEM, config.KeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("loading initial TLS certificate: %w", err)
+	}
+
 	return &Server{
 		config:     *config,
 		validators: make(map[string]ValidationFunc),
-	}
+		cert:       cert,
+		listening:  make(chan struct{}),
+	}, nil
+}
+
+// Listening returns a channel that is closed once the TLS listener has
+// been bound to the configured port. Until this channel is closed,
+// admission requests sent to the server's address fail with "connection
+// refused". The controller uses this signal so its Pod readiness probe
+// only flips healthy after the webhook is actually reachable.
+func (s *Server) Listening() <-chan struct{} {
+	return s.listening
 }
 
 // RegisterValidator registers a validation function for a specific resource type.
@@ -98,45 +133,56 @@ func (s *Server) RegisterValidator(gvk string, fn ValidationFunc) {
 
 // Start starts the HTTPS webhook server.
 //
-// The server will listen on the configured port and handle AdmissionReview requests.
-// The server will gracefully shut down when the context is cancelled.
+// The server binds to the configured port synchronously, closes the
+// channel returned by Listening() to signal readiness, and then serves
+// in a background goroutine. The method blocks until the server is shut
+// down (context cancellation) or the serve loop returns an error.
 //
-// This method blocks until the server is shut down.
+// Splitting bind from serve matters because the Pod readiness probe
+// must not flip healthy until admission is reachable — otherwise the
+// API server starts routing AdmissionReview requests at the controller
+// before net.Listen has returned, and every request bounces with
+// "connection refused" until the listener finally binds. Callers that
+// need to gate on the bind read Listening().
 func (s *Server) Start(ctx context.Context) error {
-	// Create TLS certificate
-	cert, err := tls.X509KeyPair(s.config.CertPEM, s.config.KeyPEM)
-	if err != nil {
-		return fmt.Errorf("loading TLS certificate: %w", err)
-	}
-
-	// Create HTTP server
 	mux := http.NewServeMux()
 	mux.HandleFunc(s.config.Path, s.handleValidation)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 
+	addr := fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port)
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{s.cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port),
-		Handler: mux,
-		TLSConfig: &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			MinVersion:   tls.VersionTLS12,
-		},
+		Addr:         addr,
+		Handler:      mux,
+		TLSConfig:    tlsConfig,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 	}
 
-	// Start server in goroutine
+	// Bind synchronously so callers can observe success before any
+	// admission request is routed at us.
+	tcpListener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	tlsListener := tls.NewListener(tcpListener, tlsConfig)
+	close(s.listening)
+
+	// Serve in a goroutine so Start() can still block on context
+	// cancellation for graceful shutdown handling.
 	errChan := make(chan error, 1)
 	go func() {
-		if err := s.httpServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.Serve(tlsListener); err != nil && err != http.ErrServerClosed {
 			errChan <- err
 		}
 	}()
 
-	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
-		// Graceful shutdown
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return s.httpServer.Shutdown(shutdownCtx)

@@ -9,6 +9,11 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- ConfigChangeHandler now triggers iteration restart on credentials-Secret and webhook-cert Secret rotation, not only on CRD changes. Previously the certloader / credentialsloader would publish `CertParsedEvent` / `CredentialsUpdatedEvent` into the void — components held references to whichever PEM bytes they parsed at startup, so rotating the underlying Secret silently left the running pod serving the stale cert (or stale credentials) until it was manually restarted. The handler now records each Secret's resourceVersion at iteration startup and signals reinitialization through the existing `configChangeCh` path the moment a watcher event reports a different version. The next iteration re-fetches the rotated Secret as part of `fetchAndValidateInitialConfig` and constructs a fresh webhook server / dataplane client with the new bytes — no per-component hot-rotation, just one reload path that already covers CRD changes too.
+- Renderer now fails fast when the rendered HAProxy config references map files the renderer did not register. Previously, a chart-side inconsistency could ship a config that referenced a missing map; the orchestrator's post-config-delete phase would then delete the file as "unreferenced" and every subsequent reload would fail until the offending Ingress was removed.
+
 ### Added
 
 - New multi-arch `spoa-hub` container image at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<version>` bundling [`haproxy-spoa-hub`](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus the six plugin shared libraries (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth). Cosign-signed by digest with a CycloneDX SBOM attestation. See `docs/controller/docs/operations/spoa-hub.md` for the bundled component list.

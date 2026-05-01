@@ -85,7 +85,13 @@ templateSnippets:
           {%- var cookiePath = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/session-cookie-path") | fallback("") | tostring() %}
           {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
           {%- if cookiePath != "" %}
-            {%- cookieDir = cookieDir + " path " + cookiePath %}
+            {#- HAProxy's `cookie` directive does not accept a bare `path`
+                keyword (unlike nginx). The supported set is rewrite /
+                insert / prefix / indirect / nocache / postonly / domain /
+                maxidle / dynamic / maxlife / attr. Use `attr Path=<path>`
+                to surface the cookie path attribute on the Set-Cookie
+                header HAProxy emits. -#}
+            {%- cookieDir = cookieDir + " attr Path=" + cookiePath %}
           {%- end %}
       # nginx-ingress/session-affinity ({{ key }})
       {{ cookieDir }}
@@ -692,7 +698,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_access_control", key) %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
             {%- var h = rule | dig("host") %}
@@ -714,7 +719,6 @@ templateSnippets:
 
       http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-710-nginx-ingress-ssl-redirect:
@@ -738,7 +742,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_ssl_redirect", key) %}
           {%- var sslRedirect = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/ssl-redirect") | fallback("") | tostring() %}
           {%- var forceSslRedirect = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/force-ssl-redirect") | fallback("") | tostring() %}
           {%- var code = "" %}
@@ -758,7 +761,6 @@ templateSnippets:
       http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-720-nginx-ingress-hsts:
@@ -782,7 +784,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_hsts", key) %}
           {%- var hstsEnabled = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/hsts") | fallback("") | tostring() %}
           {%- if hstsEnabled == "true" %}
             {%- var hosts = []any{} %}
@@ -801,7 +802,6 @@ templateSnippets:
       http-response set-header Strict-Transport-Security "{{ hstsValue }}" if { ssl_fc } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-730-nginx-ingress-cors:
@@ -830,7 +830,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_cors", key) %}
           {%- var corsEnabled = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/enable-cors") | fallback("") | tostring() %}
           {%- if corsEnabled == "true" %}
             {%- var hosts = []any{} %}
@@ -859,7 +858,6 @@ templateSnippets:
               {% end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-740-nginx-ingress-custom-headers:
@@ -884,7 +882,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_custom_headers", key) %}
           {%- var reqHeaders = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/custom-request-headers") | fallback("") | tostring() %}
           {%- var respHeaders = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/custom-response-headers") | fallback("") | tostring() %}
           {%- var hosts = []any{} %}
@@ -922,7 +919,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-750-nginx-ingress-app-root:
@@ -944,7 +940,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_app_root", key) %}
           {%- var appRoot = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/app-root") | fallback("") | tostring() %}
           {%- if appRoot != "" %}
             {%- var hosts = []any{} %}
@@ -957,7 +952,6 @@ templateSnippets:
       http-request redirect location {{ appRoot }} code 302 if { path / } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-760-nginx-ingress-permanent-redirect:
@@ -979,7 +973,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_permanent_redirect", key) %}
           {%- var url = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/permanent-redirect") | fallback("") | tostring() %}
           {%- if url != "" %}
             {%- var hosts = []any{} %}
@@ -992,7 +985,6 @@ templateSnippets:
       http-request redirect location {{ url }} code 301 if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-770-nginx-ingress-temporal-redirect:
@@ -1014,7 +1006,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_temporal_redirect", key) %}
           {%- var url = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/temporal-redirect") | fallback("") | tostring() %}
           {%- if url != "" %}
             {%- var hosts = []any{} %}
@@ -1027,7 +1018,6 @@ templateSnippets:
       http-request redirect location {{ url }} code 302 if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-780-nginx-ingress-canary:
@@ -1063,7 +1053,6 @@ templateSnippets:
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
           {%- var key = ns + "/" + name %}
-          {%- if first_seen("ni_canary", key) %}
             {#- Extract hosts and find the first backend name from this canary ingress -#}
             {%- var hosts = []any{} %}
             {%- var canaryBackend = "" %}
@@ -1104,7 +1093,6 @@ templateSnippets:
       use_backend {{ canaryBackend }} if { rand(100) lt {{ canaryWeight }} } {{ cond }}
               {%- end %}
             {%- end %}
-          {%- end %}
         {%- end %}
       {%- end -%}
 
@@ -1129,7 +1117,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("ni_mtls", key) %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
             {%- var h = rule | dig("host") %}
@@ -1157,7 +1144,6 @@ templateSnippets:
       http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if {{ cond }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   # ============================================================================
@@ -1295,11 +1281,17 @@ templateSnippets:
           {%- end %}
           {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
           {%- if secret == nil %}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by nginx.ingress.kubernetes.io/auth-tls-secret on Ingress " + ns + "/" + name + " not found. Create the Secret (kubernetes.io/tls with a `ca.crt` field) or update the annotation.") -}}
+            {#- See the matching block in haproxy-ingress.yaml for why we
+                skip-and-continue rather than fail() here: a missing
+                referenced Secret on one Ingress should not cascade to
+                webhook-rejection of every other Ingress in the cluster. -#}
+            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            {%- continue %}
           {%- end %}
           {%- var caBundleB64 = secret | dig("data", "ca.crt") | fallback("") | tostring() %}
           {%- if caBundleB64 == "" %}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' (referenced by nginx.ingress.kubernetes.io/auth-tls-secret on Ingress " + ns + "/" + name + ") is missing data.ca.crt. The Secret must contain a `ca.crt` entry with the CA bundle that signed the clients' certificates.") -}}
+            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            {%- continue %}
           {%- end %}
           {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).

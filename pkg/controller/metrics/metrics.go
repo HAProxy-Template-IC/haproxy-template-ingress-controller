@@ -77,6 +77,13 @@ type Metrics struct {
 	ParserCacheHits   prometheus.Counter
 	ParserCacheMisses prometheus.Counter
 
+	// Discovery metrics — surfaces rejection of HAProxy pods that the
+	// controller refuses to talk to (most commonly version-incompatible).
+	// Without this counter, a misconfigured cluster (e.g., controller image
+	// bundling HAProxy 3.3 while chart deploys 3.2) presents only as
+	// "deployment.skipped" in the pipeline status, masking a real fault.
+	HAProxyPodsRejectedTotal *prometheus.CounterVec
+
 	// Build info metric
 	BuildInfo *prometheus.GaugeVec
 }
@@ -277,6 +284,14 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"Total number of parser cache misses",
 		),
 
+		// Discovery metrics
+		HAProxyPodsRejectedTotal: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_haproxy_pods_rejected_total",
+			"Total number of HAProxy pods refused admission by the discovery component, labelled by reason. Persistent non-zero growth indicates the controller cannot talk to the deployed HAProxy pods (e.g., bundled HAProxy major.minor differs from the chart's haproxyVersion).",
+			[]string{"reason"},
+		),
+
 		// Build info metric
 		BuildInfo: pkgmetrics.NewGaugeVec(
 			registry,
@@ -378,6 +393,14 @@ func (m *Metrics) SetWebhookCertExpiry(expiryTime int64) {
 // RecordWebhookCertRotation records a webhook certificate rotation.
 func (m *Metrics) RecordWebhookCertRotation() {
 	m.WebhookCertRotations.Inc()
+}
+
+// RecordHAProxyPodRejected increments the rejection counter for a stable
+// reason label (e.g. "version_mismatch_older", "version_check_failed").
+// Discovery publishes HAProxyPodRejectedEvent; the metrics component
+// translates each event into a counter increment.
+func (m *Metrics) RecordHAProxyPodRejected(reason string) {
+	m.HAProxyPodsRejectedTotal.WithLabelValues(reason).Inc()
 }
 
 // SetIsLeader sets whether this replica is the leader.

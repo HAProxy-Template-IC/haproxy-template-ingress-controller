@@ -205,6 +205,17 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	dynamicFiles := fileRegistry.GetFiles()
 	auxiliaryFiles := rendercontext.MergeAuxiliaryFiles(staticFiles, dynamicFiles)
 
+	// Defensive consistency check: fail the render if the config references
+	// map files the renderer did not register. Without this, a chart-side
+	// inconsistency where a snippet emits a map_str(...) reference but
+	// skips its fileRegistry.Register call would silently push a config
+	// whose post-config-delete phase deletes the missing map, breaking
+	// every subsequent HAProxy reload until the offending Ingress is
+	// removed.
+	if err := validateAuxiliaryFilesConsistency(haproxyConfig, auxiliaryFiles); err != nil {
+		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+	}
+
 	auxFileCount := len(auxiliaryFiles.MapFiles) +
 		len(auxiliaryFiles.GeneralFiles) +
 		len(auxiliaryFiles.SSLCertificates) +

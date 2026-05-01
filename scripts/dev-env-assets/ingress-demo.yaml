@@ -1,7 +1,7 @@
 # HAProxy Template Ingress Controller - Comprehensive Annotation Examples
 # This file demonstrates all supported haproxy.org/* annotations
 # Deploy with: kubectl apply -f ingress-demo.yaml
-# Test with: ./scripts/test-routes.sh
+# Test with: make test-e2e (Go e2e suite under tests/e2e/)
 
 ---
 # Supporting Resources - Basic Auth Secret

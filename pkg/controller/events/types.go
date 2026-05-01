@@ -106,6 +106,7 @@ const (
 	// HAProxy pod event types.
 	EventTypeHAProxyPodsDiscovered = "haproxy.pods.discovered"
 	EventTypeHAProxyPodTerminated  = "haproxy.pod.terminated"
+	EventTypeHAProxyPodRejected    = "haproxy.pod.rejected"
 
 	// Config publishing event types.
 	EventTypeConfigPublished     = "config.published"

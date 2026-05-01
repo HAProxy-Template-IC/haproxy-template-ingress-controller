@@ -510,7 +510,7 @@ publish-chart-snapshot:
         - scripts/render-spoa-bundle.sh
         - docs/controller/docs/operations/spoa-hub.md
         - .gitlab-ci.yml
-        # Go-source paths. `test-routes` triggers on these (its own
+        # Go-source paths. `test-e2e` triggers on these (its own
         # `changes:` lists **/*.go, go.mod, go.sum) and `needs:`
         # `build-spoa-image-snapshot` non-optionally — so the build
         # job MUST trigger on the same paths or GitLab refuses to
@@ -522,14 +522,14 @@ publish-chart-snapshot:
         - go.sum
         # Chart files that drive SPOE wiring. Without these in the
         # change list, MRs that touch only chart YAML never trigger
-        # `build-spoa-image-snapshot`, which `test-routes` `needs:` —
+        # `build-spoa-image-snapshot`, which `test-e2e` `needs:` —
         # so the SPOE-rendering integration test silently skips for
         # every chart-only change. !849-!854 each merged with broken
         # SPOE output (render_glob trim-marker bug collapsing
         # send-spoe-group + redirect onto one line) because none of
         # them touched any of the files above. Listed individually
         # rather than `charts/**` so unrelated chart docs / values
-        # changes don't pay the ~10-minute test-routes cost.
+        # changes don't pay the ~10-minute test-e2e cost.
         - charts/haptic/libraries/base.yaml
         - charts/haptic/libraries/ssl.yaml
         - charts/haptic/libraries/ingress.yaml
@@ -543,13 +543,13 @@ publish-chart-snapshot:
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
         - scripts/start-dev-env.sh
-        - scripts/test-routes.sh
+        - tests/e2e/**
         - scripts/dev-env-assets/**
 
 # Chart-side trigger for the SPOA image-build pipeline. Composed with
 # `.rules-spoa` (via `!reference`) on `prep-spoa-plugins` and
 # `build-spoa-image-snapshot` so chart YAML edits that affect SPOE
-# wiring rebuild the image — `test-routes` needs that image and was
+# wiring rebuild the image — `test-e2e` needs that image and was
 # silently skipping for every chart-only change before this MR.
 # !849-!854 each merged with broken SPOE output (render_glob
 # trim-marker bug collapsing send-spoe-group + redirect onto one
@@ -560,7 +560,7 @@ publish-chart-snapshot:
 # smoking the rebuilt image is wasted work) and don't touch
 # spoa-hub.md (so the docs drift guard has nothing to check).
 # Listed individually rather than `charts/**` so unrelated chart
-# docs / values changes don't pay the ~10-minute test-routes cost.
+# docs / values changes don't pay the ~10-minute test-e2e cost.
 .rules-spoa-chart:
   rules:
     - changes:
@@ -577,7 +577,7 @@ publish-chart-snapshot:
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
         - scripts/start-dev-env.sh
-        - scripts/test-routes.sh
+        - tests/e2e/**
         - scripts/dev-env-assets/**
 
 # Drift guard: the bundled-versions table in spoa-hub.md is auto-rendered
@@ -676,7 +676,7 @@ build-spoa-image-snapshot:
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-spoa, rules]
-    # Trigger on chart YAML changes too — `test-routes` `needs:`
+    # Trigger on chart YAML changes too — `test-e2e` `needs:`
     # this job, and chart-only MRs should still run integration
     # against a fresh image. .rules-spoa-chart is documented above.
     - !reference [.rules-spoa-chart, rules]
@@ -1039,7 +1039,14 @@ test-acceptance:
     when: always
     expire_in: 1 week
 
-.test-routes-base:
+# Go-based full-stack E2E suite. Replaces the (now-deleted) bash
+# scripts/test-routes.sh — same coverage, real per-test isolation,
+# parallel execution, structured failure dumps.
+#
+# Self-contained: TestMain creates its own kind cluster (kind-haptic-e2e),
+# helm-installs the chart, deploys backend fixtures, and runs tests with
+# per-test namespace isolation. No start-dev-env.sh dependency.
+.test-e2e-base:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
@@ -1052,13 +1059,14 @@ test-acceptance:
     - job: build-snapshot
     - job: build-spoa-image-snapshot
   variables:
-    # Controller namespace and release name - must match scripts/start-dev-env.sh defaults
     CTRL_NAMESPACE: haptic
     RELEASE_NAME: haptic
-    # Pin the spoa-hub image to the freshly-built MR snapshot so the
-    # external-auth E2E test runs against the code in this MR (rather
-    # than main-latest, which lags). Consumed by start-dev-env.sh.
     SPOA_TAG: "ci-${CI_PIPELINE_ID}"
+    # The Makefile target re-tags from haptic:test → haptic:test-haproxyX.Y
+    # so the chart's image-tag composition resolves locally. SKIP_DOCKER_BUILD
+    # tells the Makefile NOT to run docker-build-test; we pulled the
+    # registry image instead.
+    SKIP_DOCKER_BUILD: "1"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
@@ -1073,117 +1081,105 @@ test-acceptance:
         - .gitlab-ci.yml
   before_script:
     - |
-      # Pull pre-built test image from registry and tag for start-dev-env.sh
+      # Pull pre-built controller image from the matrix-build job and tag
+      # under the haptic:test alias the Makefile expects. The Makefile then
+      # re-tags to haptic:test-haproxy${HAPROXY_VERSION} (the chart's
+      # composed image tag).
       TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
       docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
       docker pull ${TEST_IMAGE}
-      docker tag ${TEST_IMAGE} haptic:dev
+      docker tag ${TEST_IMAGE} haptic:test
     - |
-      # Pre-create kind cluster with DinD-compatible networking
-      # start-dev-env.sh will detect the existing cluster and skip creation
-      kind create cluster --name haptic-dev --image kindest/node:${KIND_NODE_VERSION} \
-        --config .gitlab/ci/kind-config-dind.yaml --wait 120s
-    - |
-      # Fix kubeconfig to use "docker" hostname instead of 0.0.0.0
-      mkdir -p ~/.kube
-      kind get kubeconfig --name haptic-dev > ~/.kube/config
-      sed -i 's|https://0\.0\.0\.0:|https://docker:|g' ~/.kube/config
-    - |
-      # Wait for API server to be ready
-      for i in $(seq 1 30); do
-        if kubectl get nodes &>/dev/null; then
-          echo "API server is ready"
-          break
-        fi
-        echo "Waiting for API server... (attempt $i/30)"
-        sleep 2
-      done
-    - |
-      # Pre-load spoa-hub snapshot into kind so the haproxy pod's sidecar
-      # doesn't need to pull from registry.gitlab.com (kind nodes have no
-      # registry credentials). The image was built by build-spoa-image-snapshot
-      # earlier in this pipeline; the runner is logged in via the docker
-      # login above. SPOA_TAG and the registry path match what the chart
-      # renders when start-dev-env.sh passes --set spoaHub.image.tag.
+      # Pull the freshly-built SPOA hub snapshot and re-tag as the chart's
+      # default upstream reference (registry.gitlab.com/.../spoa-hub:main-latest).
+      # kind nodes have no registry credentials, so without this the
+      # spoa-hub container would fail ImagePullBackOff. The chart's
+      # imagePullPolicy is IfNotPresent — kubelet uses the locally-loaded
+      # image.
       SPOA_IMAGE="${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_TAG}"
       docker pull ${SPOA_IMAGE}
-      kind load docker-image ${SPOA_IMAGE} --name haptic-dev
+      docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
   script:
-    - HAPROXY_VERSION=${HAPROXY_VERSION} ./scripts/start-dev-env.sh --skip-build --timeout 240
-    - ./scripts/test-routes.sh
+    - make test-e2e
   after_script:
-    # Extract debug logs on failure for troubleshooting
+    # On failure, the per-test t.Cleanup hooks already wrote
+    # debug-logs/<test-name>/ inside the test process (controller logs,
+    # haproxy logs, HAProxyCfg, namespace events, applied manifests).
+    # Add suite-level context for cases where the failure is in TestMain /
+    # setup rather than in a single test body, and for cluster-wide
+    # diagnostics (NetworkPolicy, services, DNS, port connectivity) that
+    # only make sense at suite level. This mirrors what the old
+    # scripts/test-routes.sh after_script captured.
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
-        echo "Job failed - extracting debug logs..."
-        mkdir -p debug-logs
+        echo "Job failed - extracting suite-level diagnostics..."
+        mkdir -p debug-logs/_suite
 
-        # Controller logs - ALL pods (not just one from deployment)
+        export KUBECONFIG=/tmp/haproxy-e2e-kubeconfig
+
+        # Per-pod controller logs (all containers). Catches replicas that
+        # failed differently from the leader.
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-          echo "=== Controller: $pod ===" >> debug-logs/controller.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/controller.log 2>&1 || true
+          echo "=== Controller: $pod ===" >> debug-logs/_suite/controller.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/_suite/controller.log 2>&1 || true
         done
-        [ -f debug-logs/controller.log ] || echo "Failed to get controller logs" > debug-logs/controller.log
 
-        # HAProxy, Dataplane, and SPOA-hub logs - ALL pods
+        # Per-pod haproxy / dataplane / spoa-hub logs (current + previous
+        # for spoa-hub, which crashloops on config errors).
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-          echo "=== HAProxy: $pod ===" >> debug-logs/haproxy.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/haproxy.log 2>&1 || true
-          echo "=== Dataplane: $pod ===" >> debug-logs/dataplane.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> debug-logs/dataplane.log 2>&1 || true
-          # spoa-hub sidecar (may not be present if no plugin enabled)
-          echo "=== spoa-hub: $pod (current) ===" >> debug-logs/spoa-hub.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> debug-logs/spoa-hub.log 2>&1 || true
-          echo "=== spoa-hub: $pod (previous) ===" >> debug-logs/spoa-hub.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub --previous >> debug-logs/spoa-hub.log 2>&1 || true
-          # spoa-hub config.toml from the mounted ConfigMap (lets us check
-          # the rendered TOML matches expectations when the container is
-          # crashing with a config error).
-          echo "=== spoa-hub config.toml: $pod ===" >> debug-logs/spoa-hub-config.log
-          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c spoa-hub -- cat /etc/haproxy-spoa-hub/config.toml >> debug-logs/spoa-hub-config.log 2>&1 || true
+          echo "=== HAProxy: $pod ===" >> debug-logs/_suite/haproxy.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/_suite/haproxy.log 2>&1 || true
+          echo "=== Dataplane: $pod ===" >> debug-logs/_suite/dataplane.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> debug-logs/_suite/dataplane.log 2>&1 || true
+          echo "=== spoa-hub: $pod (current) ===" >> debug-logs/_suite/spoa-hub.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> debug-logs/_suite/spoa-hub.log 2>&1 || true
+          echo "=== spoa-hub: $pod (previous) ===" >> debug-logs/_suite/spoa-hub.log
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub --previous >> debug-logs/_suite/spoa-hub.log 2>&1 || true
+          echo "=== spoa-hub config.toml: $pod ===" >> debug-logs/_suite/spoa-hub-config.log
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c spoa-hub -- cat /etc/haproxy-spoa-hub/config.toml >> debug-logs/_suite/spoa-hub-config.log 2>&1 || true
         done
-        [ -f debug-logs/haproxy.log ] || echo "Failed to get HAProxy logs" > debug-logs/haproxy.log
-        [ -f debug-logs/dataplane.log ] || echo "Failed to get dataplane logs" > debug-logs/dataplane.log
-        [ -f debug-logs/spoa-hub.log ] || echo "Failed to get spoa-hub logs (or sidecar not present)" > debug-logs/spoa-hub.log
 
-        # HAProxy configuration (useful for debugging routing issues)
+        # Deployed haproxy.cfg + auxiliary files (SPOE pipeline + auth-url
+        # routing map). Useful when a route / deny / external-auth flow
+        # surprises the test.
         kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
-          cat /etc/haproxy/haproxy.cfg > debug-logs/haproxy.cfg 2>&1 || echo "Failed to get HAProxy config"
-
-        # SPOE config (registered as a general file by the spoa-hub library)
-        # plus the auth-url map. Both are needed to debug external-auth flow
-        # failures — without them the spoa-hub container has no incoming
-        # work and the SPOE traffic looks invisible from the haproxy side.
+          cat /etc/haproxy/haproxy.cfg > debug-logs/_suite/haproxy.cfg 2>&1 || true
         kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
-          cat /etc/haproxy/general/spoe.conf > debug-logs/spoe.conf 2>&1 || echo "Failed to get spoe.conf (may not be present)"
+          cat /etc/haproxy/general/spoe.conf > debug-logs/_suite/spoe.conf 2>&1 || true
         kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
-          cat /etc/haproxy/maps/auth-url.map > debug-logs/auth-url.map 2>&1 || echo "Failed to get auth-url.map (may not be present)"
+          cat /etc/haproxy/maps/auth-url.map > debug-logs/_suite/auth-url.map 2>&1 || true
 
-        # NetworkPolicy across all relevant namespaces (the dev chart
-        # enables one; if it's blocking spoa-hub egress to auth-server
-        # the external-auth plugin's HTTP call fails and allowed=false).
-        kubectl get networkpolicy -A -o yaml > debug-logs/networkpolicies.yaml 2>&1 || echo "Failed to get NetworkPolicies"
+        # CRD-side desired state (what the controller wants HAProxy to be).
+        kubectl -n ${CTRL_NAMESPACE} get haproxycfg -o yaml \
+          > debug-logs/_suite/haproxycfg.yaml 2>&1 || true
 
-        # DNS check from inside the spoa-hub container — confirms whether
-        # auth-server.echo.svc.cluster.local resolves at request time.
-        # spoa-hub is alpine-based; nslookup is provided by busybox so
-        # the binary should be available even on the slim image.
+        # NetworkPolicy across all namespaces — if the chart's NP is
+        # blocking spoa-hub egress to auth-server / blocklist-server,
+        # external-auth and HTTP-store tests fail with allowed=false /
+        # blocked-by-default behavior that's hard to debug without this.
+        kubectl get networkpolicy -A -o yaml \
+          > debug-logs/_suite/networkpolicies.yaml 2>&1 || true
+
+        # In-cluster DNS check from the spoa-hub container. Confirms
+        # auth-server and blocklist-server resolve at request time —
+        # NetworkPolicy and CoreDNS regressions both surface here.
         kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c spoa-hub -- \
-          sh -c "nslookup auth-server.echo.svc.cluster.local 2>&1; echo '---'; getent hosts auth-server.echo.svc.cluster.local 2>&1" \
-          > debug-logs/spoa-hub-dns.log 2>&1 || echo "Failed to run DNS check from spoa-hub"
+          sh -c "echo '--- auth-server ---'; nslookup auth-server.echo.svc.cluster.local 2>&1; getent hosts auth-server.echo.svc.cluster.local 2>&1; echo '--- blocklist-server ---'; nslookup blocklist-server.echo.svc.cluster.local 2>&1; getent hosts blocklist-server.echo.svc.cluster.local 2>&1" \
+          > debug-logs/_suite/spoa-hub-dns.log 2>&1 || true
 
-        # Pod status summary
-        kubectl get pods -A -o wide > debug-logs/pod-status.log 2>&1 || true
+        # Cluster-wide pod state + events.
+        kubectl get pods -A -o wide > debug-logs/_suite/pods.log 2>&1 || true
+        kubectl get events -A --sort-by=.lastTimestamp \
+          > debug-logs/_suite/events.log 2>&1 || true
 
-        # Events (useful for deployment issues)
-        kubectl get events -n ${CTRL_NAMESPACE} --sort-by=.lastTimestamp \
-          > debug-logs/events.log 2>&1 || true
-
-        # Service details (including NodePorts) - critical for port connectivity issues
+        # Service details — NodePort allocation issues block all tests.
         kubectl get svc -n ${CTRL_NAMESPACE} -o yaml \
-          > debug-logs/services.yaml 2>&1 || true
+          > debug-logs/_suite/services.yaml 2>&1 || true
 
-        # Network connectivity diagnostics
+        # Network connectivity diagnostics from the CI job → kind nodeport.
+        # The e2e cluster's host ports are 31080/31443/31404 (shifted from
+        # the dev cluster's 30080/30443/30404 — see kind-config in
+        # tests/e2e/main_test.go).
         {
           echo "=== Network Diagnostics ==="
           echo "DOCKER_HOST: ${DOCKER_HOST:-not set}"
@@ -1191,31 +1187,34 @@ test-acceptance:
           echo "=== Docker host resolution ==="
           DOCKER_HOSTNAME=$(echo "$DOCKER_HOST" | sed 's|tcp://||' | cut -d: -f1)
           getent hosts "$DOCKER_HOSTNAME" 2>&1 || echo "Failed to resolve docker hostname"
-          echo ""
-          echo "=== Port 30443 connectivity test ==="
           NODEPORT_IP=$(getent hosts "$DOCKER_HOSTNAME" | awk '{print $1}' | head -1)
-          echo "Testing connection to ${NODEPORT_IP}:30443..."
-          timeout 5 curl -vsk --max-time 5 "https://${NODEPORT_IP}:30443/" 2>&1 || echo "Connection failed"
           echo ""
-          echo "=== Port 30080 connectivity test (reference) ==="
-          echo "Testing connection to ${NODEPORT_IP}:30080..."
-          timeout 5 curl -vs --max-time 5 -H "Host: echo.localdev.me" "http://${NODEPORT_IP}:30080/" 2>&1 | head -50 || echo "Connection failed"
-        } > debug-logs/network-diagnostics.log 2>&1
+          echo "=== Port 31080 connectivity test (HTTP NodePort) ==="
+          echo "Testing connection to ${NODEPORT_IP}:31080..."
+          timeout 5 curl -vs --max-time 5 -H "Host: echo.localdev.me" "http://${NODEPORT_IP}:31080/" 2>&1 | head -50 || echo "Connection failed"
+          echo ""
+          echo "=== Port 31443 connectivity test (HTTPS NodePort) ==="
+          echo "Testing connection to ${NODEPORT_IP}:31443..."
+          timeout 5 curl -vsk --max-time 5 "https://${NODEPORT_IP}:31443/" 2>&1 | head -50 || echo "Connection failed"
+          echo ""
+          echo "=== Port 31404 connectivity test (stats) ==="
+          timeout 5 curl -vs --max-time 5 "http://${NODEPORT_IP}:31404/healthz" 2>&1 | head -20 || echo "Connection failed"
+        } > debug-logs/_suite/network-diagnostics.log 2>&1
 
-        echo "Debug logs extracted to debug-logs/"
+        echo "Suite diagnostics in debug-logs/_suite/; per-test diagnostics in debug-logs/<test>/"
         ls -la debug-logs/
       fi
     # Clean up cluster
-    - kind delete cluster --name haptic-dev || true
+    - kind delete cluster --name haptic-e2e || true
   artifacts:
     paths:
       - debug-logs/
     when: on_failure
     expire_in: 1 week
 
-test-routes:
+test-e2e:
   extends:
-    - .test-routes-base
+    - .test-e2e-base
     - .haproxy-version-matrix
 
 # Helm chart default values test with cert-manager

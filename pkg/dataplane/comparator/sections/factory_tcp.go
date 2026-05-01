@@ -63,6 +63,10 @@ var (
 		"http_after_response_rule", "HTTP after response rule", "backend", PriorityHTTPAfterRule, httpAfterResponseRuleIdentifier,
 		executors.HTTPAfterResponseRuleBackendCreate(), executors.HTTPAfterResponseRuleBackendUpdate(), executors.HTTPAfterResponseRuleBackendDelete(),
 	)
+	httpAfterResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPAfterResponseRule](
+		"http_after_response_rule", "HTTP after response rule", "frontend", PriorityHTTPAfterRule, httpAfterResponseRuleIdentifier,
+		executors.HTTPAfterResponseRuleFrontendCreate(), executors.HTTPAfterResponseRuleFrontendUpdate(), executors.HTTPAfterResponseRuleFrontendDelete(),
+	)
 	httpCheckBackendOps = NewIndexChildCRUD[*models.HTTPCheck](
 		"http_check", "HTTP check", "backend", PriorityHTTPCheck, httpCheckIdentifier,
 		executors.HTTPCheckBackendCreate(), executors.HTTPCheckBackendUpdate(), executors.HTTPCheckBackendDelete(),
@@ -150,6 +154,21 @@ func NewHTTPAfterResponseRuleBackendUpdate(backendName string, rule *models.HTTP
 // NewHTTPAfterResponseRuleBackendDelete creates an operation to delete an HTTP after-response rule from a backend.
 func NewHTTPAfterResponseRuleBackendDelete(backendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
 	return httpAfterResponseRuleBackendOps.Delete(backendName, rule, index)
+}
+
+// NewHTTPAfterResponseRuleFrontendCreate creates an operation to create an HTTP after-response rule in a frontend.
+func NewHTTPAfterResponseRuleFrontendCreate(frontendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
+	return httpAfterResponseRuleFrontendOps.Create(frontendName, rule, index)
+}
+
+// NewHTTPAfterResponseRuleFrontendUpdate creates an operation to update an HTTP after-response rule in a frontend.
+func NewHTTPAfterResponseRuleFrontendUpdate(frontendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
+	return httpAfterResponseRuleFrontendOps.Update(frontendName, rule, index)
+}
+
+// NewHTTPAfterResponseRuleFrontendDelete creates an operation to delete an HTTP after-response rule from a frontend.
+func NewHTTPAfterResponseRuleFrontendDelete(frontendName string, rule *models.HTTPAfterResponseRule, index int) Operation {
+	return httpAfterResponseRuleFrontendOps.Delete(frontendName, rule, index)
 }
 
 // NewHTTPCheckBackendCreate creates an operation to create an HTTP check in a backend.

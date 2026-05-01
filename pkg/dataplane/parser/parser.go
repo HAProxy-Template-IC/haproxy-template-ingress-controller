@@ -227,7 +227,23 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	// Parse directly from string - NO file I/O
 	// This keeps all config data in memory as required
 	// Syntax validation happens automatically during parsing
-	if err := p.parser.Process(strings.NewReader(config)); err != nil {
+	//
+	// Defensive recover: client-native v6.3.5 has a known panic in
+	// `parsers.ConfigSnippet.Parse` (nil-pointer deref when a comment
+	// containing "config-snippet" reaches the parser without a preceding
+	// `##_config-snippet_### BEGIN` marker — both the `commentParts[1]`
+	// and `p.data.Value` accesses skip the prerequisite checks). We catch
+	// it here so the controller surfaces a clean parse error instead of
+	// crashing the whole pod, which used to take ~30s to recover and
+	// snowballed into cascading test failures under heavy churn.
+	if err := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("client-native parser panicked: %v", r)
+			}
+		}()
+		return p.parser.Process(strings.NewReader(config))
+	}(); err != nil {
 		return nil, fmt.Errorf("parsing configuration: %w", err)
 	}
 

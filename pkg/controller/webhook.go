@@ -18,6 +18,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/discovery/cached/memory"
@@ -28,6 +31,7 @@ import (
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
@@ -100,7 +104,26 @@ func setupWebhook(
 
 	// Start webhook component (tracked by errgroup for graceful shutdown)
 	startInErrGroup(errGroup, iterCtx, logger, cancel, "webhook component", webhookComponent.Start)
-	logger.Info("Webhook component started")
+
+	// Block here until the underlying TLS listener has bound. This
+	// ensures that by the time iteration setup advances and the
+	// controller's readiness probe transitions to healthy, admission
+	// requests are actually answerable. Without this gate, the API
+	// server's first AdmissionReview races the listener and bounces
+	// with "connection refused" — the chart's failurePolicy=Fail then
+	// rejects every Ingress create until enough time passes for kubelet
+	// retries to land on a bound listener. We bound the wait so a
+	// genuine startup failure (cert error, port already in use) doesn't
+	// block iteration setup forever; the errgroup still surfaces the
+	// underlying error.
+	select {
+	case <-webhookComponent.Listening():
+		logger.Info("Webhook component listening", "port", 9443)
+	case <-iterCtx.Done():
+		logger.Info("Iteration cancelled while waiting for webhook bind")
+	case <-time.After(30 * time.Second):
+		logger.Warn("Webhook component did not bind within 30s; proceeding (errgroup will surface any error)")
+	}
 }
 
 // createDryRunValidator creates a DryRunValidator component for webhook validation.
@@ -108,13 +131,20 @@ func setupWebhook(
 // This function is called BEFORE EventBus.Start() to ensure the validator subscribes
 // to events before any buffered events are released.
 //
-// Returns (nil, nil) if webhook rules are empty (no resources to validate).
+// The iterCtx argument is used solely to clean up the per-iteration scratch
+// directory (`os.MkdirTemp(...)`) when the iteration ends — without that hook,
+// each CRD/credentials/cert rotation that triggers a fresh iteration would leak
+// another `haptic-webhook-validation-*` directory into the pod's /tmp.
+//
+// Returns (nil, errNoWebhookRules) if webhook rules are empty (no resources to validate).
 // Returns (nil, error) if engine creation fails.
 func createDryRunValidator(
+	iterCtx context.Context,
 	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
 	storeManager *resourcestore.Manager,
 	capabilities dataplane.Capabilities,
+	httpStoreComponent *ctrlhttpstore.Component,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	// Check if there are any webhook rules - if not, no validator needed
@@ -137,25 +167,69 @@ func createDryRunValidator(
 		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
 
-	// Create validation paths (still needed for validation tests)
+	// Create validation paths for the embedded test runner.
+	//
+	// IMPORTANT: We deliberately do NOT reuse cfg.Dataplane.* here. Those
+	// paths point at the production HAProxy directory (`/etc/haproxy/...`),
+	// which is mounted read-only on the controller pod for security. The
+	// test runner derives its scratch base from `filepath.Dir(ConfigFile)`
+	// and tries to `mkdir <base>/worker-N/test-M/...` — that fails with
+	// EROFS the moment the webhook handles its first admission request.
+	//
+	// Instead, allocate a fresh directory under os.TempDir() that the
+	// pod has write access to. The test runner will create per-worker /
+	// per-test subdirectories inside it. Using just a basename (`maps`,
+	// `ssl`, `general`) for the subdir parts mirrors how production
+	// tooling shapes ValidationPaths from real Dataplane paths.
+	//
+	// Each iteration creates its own scratch directory so a CRD reload,
+	// credentials rotation, or webhook-cert rotation doesn't see stale
+	// files from the previous iteration. The directory is cleaned up
+	// when iterCtx ends — without that, every iteration restart would
+	// leak another tempdir into the pod's /tmp until the pod itself
+	// restarts.
+	webhookValidationTempDir, err := os.MkdirTemp("", "haptic-webhook-validation-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating webhook validation temp directory: %w", err)
+	}
+	go func() {
+		<-iterCtx.Done()
+		if err := os.RemoveAll(webhookValidationTempDir); err != nil {
+			logger.Warn("Failed to remove webhook validation temp directory",
+				"path", webhookValidationTempDir, "error", err)
+		}
+	}()
 	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:           cfg.Dataplane.MapsDir,
-		SSLCertsDir:       cfg.Dataplane.SSLCertsDir,
-		GeneralStorageDir: cfg.Dataplane.GeneralStorageDir,
-		ConfigFile:        cfg.Dataplane.ConfigFile,
+		MapsDir:           filepath.Join(webhookValidationTempDir, "maps"),
+		SSLCertsDir:       filepath.Join(webhookValidationTempDir, "ssl"),
+		GeneralStorageDir: filepath.Join(webhookValidationTempDir, "general"),
+		ConfigFile:        filepath.Join(webhookValidationTempDir, "haproxy.cfg"),
 	}
 
 	// Create base store provider from resourcestore.Manager
 	baseStoreProvider := newStoreProviderFromManager(storeManager)
 
-	// Create RenderService (pure service for rendering)
+	// Create RenderService (pure service for rendering).
+	//
+	// HTTPStoreComponent is wired in so chart templates that use
+	// `{{ http.Fetch(...) }}` (e.g. an HTTP-store-driven blocklist) render
+	// successfully during webhook dry-run. Without it, calling http.Fetch
+	// from a template panics on a nil receiver and the webhook rejects
+	// every Ingress with a render error — even Ingresses that have nothing
+	// to do with HTTP fetching, since the rendering pass happens against
+	// the whole merged config. Reusing the cluster's accepted content for
+	// dry-run is safe: validation overlays are only applied for the actual
+	// proposal-validation pipeline, not for sync webhook calls.
+	//
+	// HAProxyPodStore and CurrentConfigStore intentionally remain nil:
+	// the webhook validates hypothetical future state, not what's
+	// currently deployed.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine:       engine,
-		Config:       cfg,
-		Logger:       logger,
-		Capabilities: capabilities,
-		// Note: No HTTPStoreComponent, HAProxyPodStore, or CurrentConfigStore
-		// DryRunValidator operates on proposed changes without HTTP fetching or current config
+		Engine:             engine,
+		Config:             cfg,
+		Logger:             logger,
+		Capabilities:       capabilities,
+		HTTPStoreComponent: httpStoreComponent,
 	})
 
 	// Create ValidationService (pure service for validation)
@@ -188,15 +262,26 @@ func createDryRunValidator(
 		SyncOnly:          true, // Webhook only uses ValidateSync(), no event subscription
 	})
 
-	// Create DryRunValidator (subscribes in constructor)
+	// Create DryRunValidator (subscribes in constructor).
+	//
+	// SkipValidationTests is true: the admission webhook only validates
+	// the *submitted* Ingress / HTTPRoute / etc. by rendering with an
+	// overlay store. The chart's embedded `validationTests` are
+	// chart-author scenarios with their own fixtures (often referencing
+	// secrets / ingresses that exist only in the fixture set, not the
+	// live cluster) — running them per-admission both wastes work and
+	// surfaces fixture-vs-cluster mismatches as admission denials.
+	// Those tests still run in CI via `haptic-controller validate` and
+	// the `make test-templates` Makefile target.
 	return dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidatorInstance,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      capabilities,
-		Logger:            logger,
+		EventBus:            bus,
+		ProposalValidator:   proposalValidatorInstance,
+		Config:              cfg,
+		Engine:              engine,
+		ValidationPaths:     validationPaths,
+		Capabilities:        capabilities,
+		Logger:              logger,
+		SkipValidationTests: true,
 	}), nil
 }
 

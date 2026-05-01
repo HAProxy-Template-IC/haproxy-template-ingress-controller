@@ -108,6 +108,129 @@ func HTTPAfterResponseRuleBackendUpdate() func(ctx context.Context, c *client.Da
 	}
 }
 
+// HTTPAfterResponseRuleFrontendCreate returns an executor for creating HTTP after response rules in frontends.
+//
+// Frontend-side after-response rules surface in the chart for SPOA-driven
+// auth-failure header forwarding (e.g. WWW-Authenticate, X-Error-Reason
+// from haproxy-ingress.github.io/auth-headers-fail). Without this executor
+// the comparator silently drops the rule and the auth-failure path returns
+// the bare 401 errorfile with no challenge or diagnostic headers.
+func HTTPAfterResponseRuleFrontendCreate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPAfterResponseRule) error {
+	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPAfterResponseRule) error {
+		clientset := c.Clientset()
+
+		resp, err := client.DispatchCreateChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v33.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v32.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v32.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V32().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v31.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v31.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V31().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v30.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v30.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V30().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v32ee.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v32ee.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V32EE().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v31ee.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v31ee.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V31EE().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v30ee.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v30ee.CreateHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V30EE().CreateHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+		)
+		return dispatchAndCheck(resp, err, "HTTP after response rule creation in frontend")
+	}
+}
+
+// HTTPAfterResponseRuleFrontendUpdate returns an executor for updating HTTP after response rules in frontends.
+func HTTPAfterResponseRuleFrontendUpdate() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPAfterResponseRule) error {
+	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, model *models.HTTPAfterResponseRule) error {
+		clientset := c.Clientset()
+
+		resp, err := client.DispatchReplaceChild(ctx, c, parent, index, model,
+			func(p string, idx int, m v33.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v33.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v32.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v32.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V32().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v31.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v31.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V31().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v30.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v30.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V30().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v32ee.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v32ee.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V32EE().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v31ee.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v31ee.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V31EE().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+			func(p string, idx int, m v30ee.HttpAfterResponseRule) (*http.Response, error) {
+				params := &v30ee.ReplaceHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V30EE().ReplaceHTTPAfterResponseRuleFrontend(ctx, p, idx, params, m)
+			},
+		)
+		return dispatchAndCheck(resp, err, "HTTP after response rule update in frontend")
+	}
+}
+
+// HTTPAfterResponseRuleFrontendDelete returns an executor for deleting HTTP after response rules from frontends.
+func HTTPAfterResponseRuleFrontendDelete() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, _ *models.HTTPAfterResponseRule) error {
+	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, _ *models.HTTPAfterResponseRule) error {
+		clientset := c.Clientset()
+
+		resp, err := client.DispatchDeleteChild(ctx, c, parent, index,
+			func(p string, idx int) (*http.Response, error) {
+				params := &v33.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V33().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
+				params := &v32.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V32().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
+				params := &v31.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V31().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
+				params := &v30.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V30().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
+				params := &v32ee.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V32EE().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
+				params := &v31ee.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V31EE().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+			func(p string, idx int) (*http.Response, error) {
+				params := &v30ee.DeleteHTTPAfterResponseRuleFrontendParams{TransactionId: &txID}
+				return clientset.V30EE().DeleteHTTPAfterResponseRuleFrontend(ctx, p, idx, params)
+			},
+		)
+		return dispatchAndCheck(resp, err, "HTTP after response rule deletion from frontend")
+	}
+}
+
 // HTTPAfterResponseRuleBackendDelete returns an executor for deleting HTTP after response rules from backends.
 func HTTPAfterResponseRuleBackendDelete() func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, _ *models.HTTPAfterResponseRule) error {
 	return func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, index int, _ *models.HTTPAfterResponseRule) error {

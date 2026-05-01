@@ -90,13 +90,11 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_basic_headers", key) %}
           {%- var value = ingress | dig("metadata", "annotations", "haproxy.org/forwarded-for") | fallback("") | tostring() %}
           {%- if value != "" && value != "true" && value != "false" %}
             {{- fail("Invalid value '" + value + "' for annotation 'haproxy.org/forwarded-for' on Ingress '" + key + "'. Valid values: 'true', 'false'") -}}
           {%- end %}
           {%- if value == "true" %}{%- forwardforEnabled = true %}{%- end %}
-        {%- end %}
       {%- end %}
       {%- if forwardforEnabled %}
       # haproxytech/frontend-filters-haproxytech-basic-headers (forwarded-for)
@@ -111,7 +109,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_access_control", key) %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
             {%- var h = rule | dig("host") %}
@@ -131,7 +128,6 @@ templateSnippets:
       acl {{ aclName }} src{% for _, ip := range split(denylist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
       http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-300-haproxytech-cors:
@@ -142,7 +138,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_cors", key) %}
           {%- var corsEnabled = ingress | dig("metadata", "annotations", "haproxy.org/cors-enable") | fallback("") | tostring() %}
           {%- if corsEnabled == "true" %}
             {%- var hosts = []any{} %}
@@ -181,7 +176,6 @@ templateSnippets:
               {% end -%}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   features-100-haproxytech-ssl-redirect:
@@ -240,7 +234,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_redirects", key) %}
           {%- var target = ingress | dig("metadata", "annotations", "haproxy.org/request-redirect") | fallback("") | tostring() %}
           {%- if target != "" %}
             {%- var code = ingress | dig("metadata", "annotations", "haproxy.org/request-redirect-code") | fallback("302") | tostring() %}
@@ -260,7 +253,6 @@ templateSnippets:
       http-request redirect location {{ target }} code {{ code }} if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-500-haproxytech-logging:
@@ -271,7 +263,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("haproxytech_logging", key) %}
           {%- var srcIpHeader = ingress | dig("metadata", "annotations", "haproxy.org/src-ip-header") | fallback("") | tostring() %}
           {%- var reqCapture = ingress | dig("metadata", "annotations", "haproxy.org/request-capture") | fallback("") | tostring() %}
           {%- var captureLen = ingress | dig("metadata", "annotations", "haproxy.org/request-capture-len") | fallback("128") | tostring() %}
@@ -295,7 +286,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   # ============================================================================

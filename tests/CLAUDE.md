@@ -18,6 +18,7 @@ Work in this directory when:
 - Unit tests → Place in same package as code (e.g., `pkg/templating/engine_test.go`)
 - Integration tests → Use `tests/integration/`
 - Acceptance tests → Use `tests/acceptance/`
+- Full-stack e2e tests → Use `tests/e2e/`
 
 ## Directory Purpose
 
@@ -44,15 +45,28 @@ tests/
 │   ├── auxiliaryfiles_test.go   # Auxiliary file (maps, SSL, general) sync tests
 │   ├── enterprise_*_test.go     # 5 Enterprise-edition feature test files (WAF, Bot Mgmt, UDP LB, Keepalived, misc)
 │   └── testdata/                # Test configuration files
-└── acceptance/                   # Acceptance tests (e2e-framework)
-    ├── main_test.go             # TestMain — Kind setup/teardown
-    ├── env.go                   # E2E framework setup
-    ├── constants.go             # Shared timing/port constants
-    ├── fixtures.go              # Test resource factories
-    ├── debug_client.go          # Debug HTTP client
-    ├── parallel_test.go         # Shared-cluster parallel test driver
-    └── *_test.go                # Per-feature tests: compression, error_scenarios,
-                                 # http_store, leader_election, metrics
+├── acceptance/                   # Acceptance tests (e2e-framework)
+│   ├── main_test.go             # TestMain — Kind setup/teardown
+│   ├── env.go                   # E2E framework setup
+│   ├── constants.go             # Shared timing/port constants
+│   ├── fixtures.go              # Test resource factories
+│   ├── debug_client.go          # Debug HTTP client
+│   ├── parallel_test.go         # Shared-cluster parallel test driver
+│   └── *_test.go                # Per-feature tests: compression, error_scenarios,
+│                                # http_store, leader_election, metrics
+├── e2e/                          # Full-stack e2e tests (e2e-framework, //go:build e2e)
+│   ├── main_test.go             # TestMain — owns kind cluster, helm install, fixtures
+│   ├── env.go                   # WaitForE2EEnvironmentReady (controller debug endpoint)
+│   ├── fixtures.go              # NamespaceForTest, NewIngress, NewEchoServerBackend, ...
+│   ├── gateway_fixtures.go      # NewGateway, NewHTTPRoute, NewHTTPSGateway
+│   ├── haproxy_demo_backend.go  # PROXY-protocol / TLS-terminating per-test backend
+│   ├── webhook_certs.go         # Self-signed CA + client/server cert generators
+│   ├── cleanup.go               # DumpLogsOnFailure → debug-logs/<test-name>/
+│   ├── httpclient/              # Fluent HTTP/HTTPS/mTLS client (DinD-aware)
+│   └── *_test.go                # ~30 routing tests migrated from scripts/test-routes.sh
+└── conformance/                  # Gateway API upstream conformance suite
+                                  # (gated on `gateway_conformance` build tag, currently t.Skip
+                                  #  pending chart-side HTTPRoute fixes — see package doc)
 ```
 
 ## Test Types

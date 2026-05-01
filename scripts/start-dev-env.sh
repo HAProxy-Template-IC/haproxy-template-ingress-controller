@@ -959,8 +959,9 @@ deploy_auth_server() {
 # haproxy-ingress operators conventionally use (the chart only
 # reads `data.ca.crt` regardless of secret type).
 #
-# Cert files stay on disk at /tmp/haptic-auth-tls-test/ for the
-# test-routes E2E tests to consume via curl --cacert/--cert/--key.
+# Cert files stay on disk at /tmp/haptic-auth-tls-test/ for ad-hoc
+# curl-based testing (the Go e2e suite under tests/e2e/ generates its
+# own per-test certs).
 deploy_auth_tls_fixtures() {
 	local cert_dir="${TMPDIR:-/tmp}/haptic-auth-tls-test"
 	log INFO "Generating auth-tls E2E certificates in ${cert_dir}..."
@@ -1089,7 +1090,7 @@ deploy_ingress_demo() {
 	echo "  Combined:"
 	echo "    - echo-combined (echo-combined.localdev.me) - Multiple annotations"
 	echo ""
-	echo "Run './scripts/test-routes.sh' to test all examples"
+	echo "Run 'make test-e2e' to test all examples (full Go e2e suite under tests/e2e/)"
 }
 
 # Development convenience functions

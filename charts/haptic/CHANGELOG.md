@@ -9,6 +9,11 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `templates/validatingwebhookconfiguration.yaml` now sources `watchedResources` from the merged template libraries (`haptic.mergeLibraries`) instead of iterating raw `.Values.controller.config.watched_resources`. The old form silently produced no `ValidatingWebhookConfiguration` for chart users whose watched resources were declared via libraries (e.g. `libraries/ingress.yaml: enableValidationWebhook: true`) rather than via raw helm-values overrides — meaning the admission webhook was effectively disabled, and malformed Ingresses (e.g. conflicting `cookie-persistence` + `cookie-persistence-no-dynamic` annotations) reached the controller where they failed render and stalled the reconcile pipeline for *all* other Ingresses. This is the same merging path `haproxytemplateconfig.yaml` uses, ensuring the webhook scope matches what the controller actually validates.
+- `features-160-ssl-redirect-map` no longer uses the cross-render `first_seen` cache to dedupe hosts; it now uses a per-snippet `seen` map keyed by `(code, host)`. The previous form produced an inconsistent render under high resource churn — the snippet would skip registering `ssl-redirect-<code>.map` while the paired `frontend-filters-050-ssl-redirect` snippet still emitted the rule referencing it. Result: HAProxy reload failed with `failed to open pattern file <maps/ssl-redirect-<code>.map>` once the orchestrator post-config phase deleted the (correctly-) unreferenced map file. The fix keeps the two snippets in lockstep regardless of how often `redirectHosts` is observed.
+
 ### Added
 
 - `spoaHub` values block plus a conditionally-rendered SPOA hub sidecar in the HAProxy pod. The sidecar runs `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub` (built in cycle 1) and bundles six plugin shared libraries (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth). It is absent by default, auto-rendered when any plugin is enabled, and exposes a Unix-domain socket at `/run/spoa/hub.sock` shared with the HAProxy container. Per-plugin `params:` values are a free-form TOML string blob so chart upgrades don't require values-schema churn when upstream plugins evolve.

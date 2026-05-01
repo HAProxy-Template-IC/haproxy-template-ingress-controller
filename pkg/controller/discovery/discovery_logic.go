@@ -57,8 +57,13 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	// Clean up state for removed pods
 	c.cleanupRemovedPods(currentCandidates)
 
-	// Filter candidates by version compatibility
-	admittedEndpoints := c.filterByVersion(candidates, credentials)
+	// Filter candidates by version compatibility. Rejections are published
+	// as HAProxyPodRejectedEvent below (outside the discovery mutex) so the
+	// metrics component can increment haptic_haproxy_pods_rejected_total.
+	admittedEndpoints, rejections := c.filterByVersion(candidates, credentials)
+	for _, r := range rejections {
+		c.eventBus.Publish(events.NewHAProxyPodRejectedEvent(r.podName, r.reason))
+	}
 
 	// Log summary - only at INFO level when count changes or pods are admitted
 	// This prevents log spam when repeatedly discovering the same empty/non-empty set
@@ -119,6 +124,14 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 	c.eventBus.Publish(event)
 }
 
+// rejection captures a pod rejected during admission, accumulated under
+// the discovery mutex and published as HAProxyPodRejectedEvent after the
+// lock is released (avoids fanning out events while holding the lock).
+type rejection struct {
+	podName string
+	reason  string
+}
+
 // filterByVersion filters candidate endpoints by version compatibility.
 //
 // For each candidate:
@@ -128,8 +141,14 @@ func (c *Component) triggerDiscovery(podStore types.Store, credentials coreconfi
 //   - If remote < local, permanently reject
 //   - If remote >= local, admit and cache version info
 //   - If remote > local, log warning once
-func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials coreconfig.Credentials) []*dataplane.Endpoint {
+//
+// Returns the admitted endpoint set and the list of rejections. Rejections
+// are published as HAProxyPodRejectedEvent by the caller (after the mutex
+// is released) so operators can alert on persistent rejections via the
+// haptic_haproxy_pods_rejected_total Prometheus counter.
+func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials coreconfig.Credentials) ([]*dataplane.Endpoint, []rejection) {
 	admitted := make([]*dataplane.Endpoint, 0, len(candidates))
+	var rejections []rejection
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,6 +171,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 		if err != nil {
 			// Version check failed - add to pending retries
 			c.handleVersionCheckFailure(podName, err)
+			rejections = append(rejections, rejection{podName: podName, reason: "version_check_failed"})
 			continue
 		}
 
@@ -172,6 +192,10 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 				"local_major", c.localVersion.Major,
 				"local_minor", c.localVersion.Minor,
 				"direction", direction)
+			rejections = append(rejections, rejection{
+				podName: podName,
+				reason:  "version_mismatch_" + direction,
+			})
 			// Don't add to pending retries - version mismatch is permanent
 			// K8s pods are replaced on upgrade, not mutated
 			continue
@@ -205,7 +229,7 @@ func (c *Component) filterByVersion(candidates []dataplane.Endpoint, credentials
 	// Schedule retry timer if there are pending pods
 	c.scheduleRetryTimerLocked()
 
-	return admitted
+	return admitted, rejections
 }
 
 // checkRemoteVersion checks the remote HAProxy version via /v3/info endpoint.

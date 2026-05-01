@@ -1,5 +1,5 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
-        test test-integration test-acceptance test-acceptance-parallel build-integration-test \
+        test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
@@ -26,6 +26,11 @@ IMAGE_NAME ?= haptic# Container image name (override: IMAGE_NAME=my-image)
 IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
 REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
+# HAProxy version baked into the controller image at build time.
+# Sourced from versions.env's DEFAULT_HAPROXY (single source of truth) so
+# local builds stay in lockstep with the chart's haproxyVersion default.
+# Override per-build with HAPROXY_VERSION=3.x.
+HAPROXY_VERSION ?= $(shell sh -c '. ./versions.env && echo $$DEFAULT_HAPROXY')
 KIND_CLUSTER ?= haptic-dev  # Kind cluster name for local testing
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "dev")
@@ -182,6 +187,38 @@ test-acceptance-parallel: docker-build-test ## Run acceptance tests in parallel 
 	@echo "  PARALLEL        - Max concurrent tests (default: 4)"
 	$(GO) test -tags=acceptance -v -timeout 30m -parallel $${PARALLEL:-4} -run TestAllAcceptanceParallel ./tests/acceptance/...
 
+test-gateway-conformance: ## Run upstream Gateway API conformance suite against the chart (currently SKIPPED — see tests/conformance/)
+	@echo "Running Gateway API conformance suite..."
+	@echo "Note: skipped until chart-side HTTPRoute bugs are resolved."
+	@echo "      See tests/conformance/gateway_conformance_test.go package doc."
+	$(GO) test -mod=mod -tags=gateway_conformance -v -timeout 30m ./tests/conformance/...
+
+test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
+	@echo "Running e2e tests..."
+	@# The chart composes its image tag as "<image.tag>-haproxy<haproxyVersion>".
+	@# docker-build-test produces "haptic:test" (with HAProxy $(HAPROXY_VERSION)
+	@# bundled, sourced from versions.env). Tag with the suffix the chart looks
+	@# for so the chart's auto-matching contract holds end-to-end.
+	@# CI sets SKIP_DOCKER_BUILD=1 and pre-tags from the registry-pulled image,
+	@# so this re-tag is a no-op there.
+	docker tag haptic:test haptic:test-haproxy$(HAPROXY_VERSION) 2>/dev/null || true
+	@echo "Note: This creates kind cluster 'haptic-e2e', helm-installs the chart, deploys fixtures."
+	@echo "Environment variables:"
+	@echo "  KEEP_CLUSTER        - Keep cluster after tests (default: true; set false to destroy)"
+	@echo "  KEEP_NAMESPACE      - Keep test namespaces after failure for debugging (default: false)"
+	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
+	@echo "  SKIP_DOCKER_BUILD   - CI mode: assume haptic:test-haproxyX.Y already loaded"
+	@echo "  TEST_RUN_PATTERN    - Run specific tests matching pattern"
+	@echo "  PARALLEL            - Max concurrent tests. Defaults to Go's default (GOMAXPROCS,"
+	@echo "                        i.e. nproc), which auto-scales to the host. Verified stable"
+	@echo "                        from 4 up through 16 on a 16-core box. Override with"
+	@echo "                        PARALLEL=N for constrained environments"
+ifdef TEST_RUN_PATTERN
+	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) -run "$(TEST_RUN_PATTERN)" ./tests/e2e/...
+else
+	HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -mod=mod -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) ./tests/e2e/...
+endif
+
 build-integration-test: ## Build integration test binary (without running)
 	@echo "Building integration test binary..."
 	@mkdir -p bin
@@ -252,11 +289,13 @@ build-for-docker: ## Build binary in platform-structured path for Docker builds 
 
 docker-build: ## Build Docker image
 	@echo "Building Docker image: $(FULL_IMAGE)"
-	@echo "  Git commit: $(GIT_COMMIT)"
-	@echo "  Git tag: $(GIT_TAG)"
+	@echo "  Git commit:      $(GIT_COMMIT)"
+	@echo "  Git tag:         $(GIT_TAG)"
+	@echo "  HAProxy version: $(HAPROXY_VERSION) (from versions.env)"
 	DOCKER_BUILDKIT=1 docker build \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
+		--build-arg HAPROXY_VERSION=$(HAPROXY_VERSION) \
 		-t $(FULL_IMAGE) \
 		.
 	@echo "✓ Image built: $(FULL_IMAGE)"
