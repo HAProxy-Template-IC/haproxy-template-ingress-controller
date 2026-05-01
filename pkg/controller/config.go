@@ -44,6 +44,18 @@ type WebhookCertificates struct {
 // fetchAndValidateInitialConfig fetches, parses, and validates the initial HAProxyTemplateConfig CRD and credentials Secret.
 //
 // Returns the validated configuration and credentials, or an error if any step fails.
+// InitialConfigBundle holds the parsed initial CRD / Secret values plus the
+// resource versions of the underlying Secrets, so the iteration startup
+// can wire bootstrap-version filtering for ConfigChangeHandler.
+type InitialConfigBundle struct {
+	Config             *coreconfig.Config
+	CRD                *v1alpha1.HAProxyTemplateConfig
+	Credentials        *coreconfig.Credentials
+	WebhookCerts       *WebhookCertificates
+	CredentialsVersion string
+	WebhookCertVersion string
+}
+
 func fetchAndValidateInitialConfig(
 	ctx context.Context,
 	k8sClient *client.Client,
@@ -53,7 +65,7 @@ func fetchAndValidateInitialConfig(
 	crdGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
-) (*coreconfig.Config, *v1alpha1.HAProxyTemplateConfig, *coreconfig.Credentials, *WebhookCertificates, error) {
+) (*InitialConfigBundle, error) {
 	logFields := []any{"crd_name", crdName}
 	if webhookCertSecretName != "" {
 		logFields = append(logFields, "webhook_cert_secret", webhookCertSecretName)
@@ -100,7 +112,7 @@ func fetchAndValidateInitialConfig(
 
 	// Wait for all fetches to complete
 	if err := g.Wait(); err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 
 	// Parse initial configuration
@@ -108,19 +120,19 @@ func fetchAndValidateInitialConfig(
 
 	cfg, crd, err := conversion.ParseCRD(crdResource)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("parsing initial HAProxyTemplateConfig: %w", err)
+		return nil, fmt.Errorf("parsing initial HAProxyTemplateConfig: %w", err)
 	}
 
 	creds, err := parseSecret(secretResource)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("parsing initial Secret: %w", err)
+		return nil, fmt.Errorf("parsing initial Secret: %w", err)
 	}
 
 	var webhookCerts *WebhookCertificates
 	if webhookCertSecretResource != nil {
 		webhookCerts, err = parseWebhookCertSecret(webhookCertSecretResource)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("parsing webhook certificate Secret: %w", err)
+			return nil, fmt.Errorf("parsing webhook certificate Secret: %w", err)
 		}
 	}
 
@@ -128,11 +140,11 @@ func fetchAndValidateInitialConfig(
 	logger.Info("Validating initial configuration and credentials")
 
 	if err := coreconfig.ValidateStructure(cfg); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("initial configuration validation failed: %w", err)
+		return nil, fmt.Errorf("initial configuration validation failed: %w", err)
 	}
 
 	if err := coreconfig.ValidateCredentials(creds); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("initial credentials validation failed: %w", err)
+		return nil, fmt.Errorf("initial credentials validation failed: %w", err)
 	}
 
 	logAttrs := []any{
@@ -144,7 +156,17 @@ func fetchAndValidateInitialConfig(
 	}
 	logger.Info("Initial configuration validated successfully", logAttrs...)
 
-	return cfg, crd, creds, webhookCerts, nil
+	bundle := &InitialConfigBundle{
+		Config:             cfg,
+		CRD:                crd,
+		Credentials:        creds,
+		WebhookCerts:       webhookCerts,
+		CredentialsVersion: secretResource.GetResourceVersion(),
+	}
+	if webhookCertSecretResource != nil {
+		bundle.WebhookCertVersion = webhookCertSecretResource.GetResourceVersion()
+	}
+	return bundle, nil
 }
 
 // waitForInitialConfig polls for the HAProxyTemplateConfig until it exists.
@@ -210,13 +232,23 @@ func checkConfigExists(ctx context.Context, k8sClient *client.Client, gvr schema
 	return true, nil
 }
 
-// finalizeConfigLoad marks config as loaded for health checks and sets the initial config
-// version to prevent the infinite reinitialization loop. CRDWatcher.onAdd will trigger
-// ConfigValidatedEvent with this version - without tracking it, that event would trigger
-// reinitialization creating an infinite loop.
-func finalizeConfigLoad(state *configState, setup *componentSetup, resourceVersion string) {
+// finalizeConfigLoad marks config as loaded for health checks and records
+// the initial CRD / credentials-Secret / webhook-cert-Secret resource
+// versions so the bootstrap watcher events (which the watcher fires the
+// moment it observes existing resources at iteration startup) don't
+// trigger a redundant reinitialization loop. The handler still triggers
+// reinitialization on later events whose version differs — that's how
+// CRD changes, credentials rotation, and webhook-cert rotation all reach
+// the iteration restart, going through the same configChangeCh path.
+func finalizeConfigLoad(state *configState, setup *componentSetup, crdVersion, credentialsVersion, webhookCertVersion string) {
 	state.SetLoaded()
-	setup.ConfigChangeHandler.SetInitialConfigVersion(resourceVersion)
+	setup.ConfigChangeHandler.SetInitialConfigVersion(crdVersion)
+	if credentialsVersion != "" {
+		setup.ConfigChangeHandler.SetInitialCredentialsVersion(credentialsVersion)
+	}
+	if webhookCertVersion != "" {
+		setup.ConfigChangeHandler.SetInitialCertVersion(webhookCertVersion)
+	}
 }
 
 // extractSecretData extracts the raw data map from a Kubernetes Secret resource.

@@ -813,3 +813,100 @@ func TestConfigChangeHandler_BootstrapEventOrderingSyntheticThenReal(t *testing.
 		t.Fatal("timeout waiting for config signal on real change")
 	}
 }
+
+// TestConfigChangeHandler_HandleCertParsed_SignalsRotation verifies that a
+// CertParsedEvent with a version different from the recorded initial
+// version triggers iteration restart through configChangeCh — the same
+// path CRD changes already use. This exercises the iteration-restart
+// approach to webhook-cert rotation: there's no parallel reload loop in
+// any individual component; rotation is observed by certloader,
+// converted to CertParsedEvent, and routed here.
+func TestConfigChangeHandler_HandleCertParsed_SignalsRotation(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+
+	bus.Start()
+	go handler.Start(t.Context())
+	time.Sleep(testutil.StartupDelay)
+
+	// Cache a validated config so handleSecretRotation has something to
+	// re-publish on configChangeCh. Without this the handler logs a
+	// warning and skips.
+	cachedConfig := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cachedConfig, nil, "v1", "sv1"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+
+	// Drain the v1 ConfigValidated signal that came out of step 1 — we
+	// only care about the cert-rotation signal below.
+	select {
+	case <-configCh:
+	default:
+	}
+
+	handler.SetInitialCertVersion("rv-bootstrap")
+	handler.EnableReinitialization()
+
+	// Bootstrap event (matches initial version) — must not signal.
+	bus.Publish(events.NewCertParsedEvent([]byte("cert-bootstrap"), []byte("key-bootstrap"), "rv-bootstrap"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case <-configCh:
+		t.Fatal("unexpected reinit signal on bootstrap CertParsedEvent")
+	case <-time.After(testutil.NoEventTimeout):
+		// expected
+	}
+
+	// Rotation event (different version) — must signal reinit.
+	bus.Publish(events.NewCertParsedEvent([]byte("cert-v2"), []byte("key-v2"), "rv-rotated"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case cfg := <-configCh:
+		assert.Same(t, cachedConfig, cfg, "rotation should re-publish the cached validated config so the next iteration starts with the same parsed CRD state")
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("timeout waiting for reinit signal after webhook-cert rotation")
+	}
+}
+
+// TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation mirrors
+// the cert-rotation test but for the credentials Secret. The handler
+// path is identical (handleSecretRotation), so this primarily confirms
+// the dispatch wiring and that the bootstrap-version filter applies
+// independently to each Secret type.
+func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+
+	bus.Start()
+	go handler.Start(t.Context())
+	time.Sleep(testutil.StartupDelay)
+
+	cachedConfig := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cachedConfig, nil, "v1", "sv1"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case <-configCh:
+	default:
+	}
+
+	handler.SetInitialCredentialsVersion("creds-bootstrap")
+	handler.EnableReinitialization()
+
+	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "creds-bootstrap"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case <-configCh:
+		t.Fatal("unexpected reinit signal on bootstrap CredentialsUpdatedEvent")
+	case <-time.After(testutil.NoEventTimeout):
+	}
+
+	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "creds-rotated"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case cfg := <-configCh:
+		assert.Same(t, cachedConfig, cfg)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("timeout waiting for reinit signal after credentials rotation")
+	}
+}

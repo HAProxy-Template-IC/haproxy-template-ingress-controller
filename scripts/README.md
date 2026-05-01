@@ -7,7 +7,6 @@ Shell helpers used by developers and by `Makefile` targets. Everything here is m
 | [`start-dev-env.sh`](#start-dev-envsh) | Local Kind-based development environment | developers |
 | [`test-templates.sh`](#test-templatessh) | Run the chart's `validationTests` against a merged Helm render | developers, CI |
 | [`test-helm-defaults.sh`](#test-helm-defaultssh) | Validate the chart with default values | developers, CI |
-| [`test-routes.sh`](#test-routessh) | HTTP smoke test against the dev cluster | developers |
 | [`test-benchmark.sh`](#test-benchmarksh) | Go benchmark runner with consistent flags | developers |
 | [`generate-dev-ssl-cert.sh`](#generate-dev-ssl-certsh) | Self-signed SSL cert used by the dev environment | `start-dev-env.sh` |
 | [`source-hash.sh`](#source-hashsh) | Hash of `pkg/**/*.go` + `cmd/**/*.go` (dev-env sync check) | `start-dev-env.sh status` |
@@ -31,7 +30,7 @@ Manages a Kind-based local development environment. Subcommands:
 | `status` | Show controller/HAProxy pod status + running-vs-local source-hash |
 | `metrics` | Curl the controller's `/metrics` endpoint via port-forward |
 | `port-forward` | Port-forward an HAProxy pod's listener for local curling |
-| `test` | Run the basic ingress smoke test (`test-routes.sh`) |
+| `test` | Run a basic ingress smoke check via curl |
 | `down` / `clean` | Delete the Kind cluster |
 
 `up --skip-build` and `restart --skip-build` reuse an existing controller image instead of rebuilding (handy when iterating on chart-only changes). `status` uses `source-hash.sh` to show whether the cluster is running your latest code — always run it before debugging.
@@ -56,10 +55,6 @@ Always prefer this over running `haptic-controller validate` against a library f
 ## test-helm-defaults.sh
 
 Renders the chart with default values and asserts key invariants — useful as a quick "does the chart still produce valid output after my change?" check. Runs in CI on every MR.
-
-## test-routes.sh
-
-HTTP smoke test against the dev cluster: creates a sample ingress, port-forwards, issues a few curl requests, validates responses. Requires `start-dev-env.sh` to have brought the cluster up first.
 
 ## test-benchmark.sh
 

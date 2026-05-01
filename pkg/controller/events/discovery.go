@@ -64,3 +64,34 @@ func NewHAProxyPodTerminatedEvent(podName, podNamespace string) *HAProxyPodTermi
 }
 
 func (e *HAProxyPodTerminatedEvent) EventType() string { return EventTypeHAProxyPodTerminated }
+
+// HAProxyPodRejectedEvent is published by the discovery component when a
+// candidate HAProxy pod is refused admission. The most common cause is a
+// remote HAProxy version mismatch with the controller's bundled version,
+// which is a deliberate safety property — the controller cannot safely
+// push config to a major.minor-different HAProxy. Surfaced via Prometheus
+// (haptic_haproxy_pods_rejected_total{reason}) so operators can alert on
+// "controller refuses to talk to N HAProxy pods" without log-grepping.
+type HAProxyPodRejectedEvent struct {
+	// PodName is the rejected pod's name (used for correlation with
+	// k8s events / pod logs).
+	PodName string
+	// Reason categorises the rejection. Stable identifiers used as a
+	// Prometheus label, so prefer a fixed enum:
+	//   - "version_mismatch_older" — remote HAProxy is older than local
+	//   - "version_mismatch_newer" — remote HAProxy is newer than local
+	//   - "version_check_failed"   — could not probe remote version (transient)
+	Reason string
+	timestamped
+}
+
+// NewHAProxyPodRejectedEvent creates a new HAProxyPodRejectedEvent.
+func NewHAProxyPodRejectedEvent(podName, reason string) *HAProxyPodRejectedEvent {
+	return &HAProxyPodRejectedEvent{
+		PodName:     podName,
+		Reason:      reason,
+		timestamped: newTimestamped(),
+	}
+}
+
+func (e *HAProxyPodRejectedEvent) EventType() string { return EventTypeHAProxyPodRejected }

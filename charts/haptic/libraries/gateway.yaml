@@ -903,11 +903,56 @@ templateSnippets:
         {%- var riRouteId = routeInfo["routeId"] %}
         {%- var riConflictGroup = routeInfo["conflictGroup"] %}
         {%- var riRuleIdx = routeInfo["ruleIdx"] %}
+        {%- var riPath map[string]any = routeInfo["path"] %}
+        {#- Detect "path-only" rules — those with no method/header/query/grpc
+            sub-matchers. The Gateway API spec requires evaluating rules in
+            order of specificity, falling through to less-specific rules
+            when a more-specific rule's sub-matchers don't all pass. The
+            existing gw_routeId scope check (set by the path-map step to the
+            most-specific path's rule IDs) blocks fallback across paths
+            within the same HTTPRoute, so a path-only catch-all loses to a
+            failed-but-more-specific sibling. We give path-only rules a
+            relaxed scope check (gw_routeId begins with this HTTPRoute's
+            prefix) plus a direct path predicate, restoring spec-compliant
+            fallback semantics without altering the strict scope check for
+            rules that already gate on their own sub-matchers. #}
+        {%- var riHeaders_check = riMatch["headers"] %}
+        {%- var riParams_check = riMatch["queryParams"] %}
+        {%- var riMethod_check = riMatch["method"] %}
+        {%- var grpcMethodCheck = riMatch["method"] %}
+        {%- var isPathOnly = (riMethod_check == nil || riResourceType != "httproute") && riHeaders_check == nil && riParams_check == nil && (!riIsGrpc || grpcMethodCheck == nil) %}
         {#- Early exit: skip if another matcher already won #}
         {%- var conditions = []any{"!{ var(req.gw_rule_id) -m found }"} %}
 
-        {#- Only run matcher if this route was matched by the map #}
-        {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
+        {%- if isPathOnly %}
+          {#- Path-only fallback: scope to this HTTPRoute (any rule of it
+              must have been the path-map winner), plus the rule's path
+              must match the request directly. -#}
+          {%- var riNsScope = riRouteMeta | dig("namespace") | fallback("") | tostring() %}
+          {%- var riNameScope = riRouteMeta | dig("name") | fallback("") | tostring() %}
+          {%- var httprouteScope = riNsScope + "_" + riNameScope + "_" %}
+          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + httprouteScope + "\" }") %}
+          {#- Direct path match for safety so different paths within the
+              same HTTPRoute don't cross-match. -#}
+          {%- if riPath != nil %}
+            {%- var pathOnlyType = tostring(riPath["type"]) %}
+            {%- var pathOnlyValue = tostring(riPath["value"]) %}
+            {%- if pathOnlyType == "Exact" %}
+              {%- conditions = append(conditions, "{ path \"" + pathOnlyValue + "\" }") %}
+            {%- else if pathOnlyType == "RegularExpression" %}
+              {%- var escapedPathOnly = replace(pathOnlyValue, "$", "\\$") %}
+              {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
+            {%- else %}
+              {#- PathPrefix (default). Trailing-slash semantics match the path map: /foo matches both /foo and /foo/* -#}
+              {%- conditions = append(conditions, "{ path_beg \"" + pathOnlyValue + "\" }") %}
+            {%- end %}
+          {%- end %}
+        {%- else %}
+          {#- Rule has sub-matchers — keep the strict same-path conflictGroup
+              check; the sub-matchers' own predicates already narrow the rule
+              to its declared path. -#}
+          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
+        {%- end %}
 
         {#- Method matcher (HTTPRoute only) #}
         {%- var riMethod = riMatch["method"] %}

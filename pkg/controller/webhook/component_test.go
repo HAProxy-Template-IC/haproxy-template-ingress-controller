@@ -16,8 +16,15 @@ package webhook
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,6 +35,29 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
 )
+
+// generateTestCertPEM creates a valid self-signed cert + key pair for tests
+// that construct webhook.Server (NewServer eagerly parses the PEM, so the
+// previous placeholder []byte("test-cert") no longer works for tests that
+// actually start a server).
+func generateTestCertPEM(t *testing.T) (cert, key []byte) {
+	t.Helper()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{Organization: []string{"unit-test"}},
+		NotBefore:    time.Now().Add(-1 * time.Hour),
+		NotAfter:     time.Now().Add(1 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	require.NoError(t, err)
+	cert = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	key = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)})
+	return
+}
 
 func TestComponent_New(t *testing.T) {
 	t.Run("applies default port", func(t *testing.T) {
@@ -287,6 +317,7 @@ func (m *mockRESTMapper) ResourceSingularizer(string) (string, error) {
 }
 
 func TestComponent_registerValidators(t *testing.T) {
+	certPEM, keyPEM := generateTestCertPEM(t)
 	t.Run("registers validators for all rules", func(t *testing.T) {
 		mapper := &mockRESTMapper{
 			kindForResults: map[string]string{
@@ -296,8 +327,8 @@ func TestComponent_registerValidators(t *testing.T) {
 		}
 
 		config := &Config{
-			CertPEM: []byte("test-cert"),
-			KeyPEM:  []byte("test-key"),
+			CertPEM: certPEM,
+			KeyPEM:  keyPEM,
 			Rules: []webhook.WebhookRule{
 				{
 					APIGroups:   []string{"networking.k8s.io"},
@@ -315,7 +346,7 @@ func TestComponent_registerValidators(t *testing.T) {
 		component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 		// Create server so validators can be registered
-		component.server = webhook.NewServer(&webhook.ServerConfig{
+		component.server, _ = webhook.NewServer(&webhook.ServerConfig{
 			Port:    9443,
 			Path:    "/validate",
 			CertPEM: config.CertPEM,
@@ -336,8 +367,8 @@ func TestComponent_registerValidators(t *testing.T) {
 		}
 
 		config := &Config{
-			CertPEM: []byte("test-cert"),
-			KeyPEM:  []byte("test-key"),
+			CertPEM: certPEM,
+			KeyPEM:  keyPEM,
 			Rules: []webhook.WebhookRule{
 				{
 					APIGroups:   []string{"unknown.group"},
@@ -350,7 +381,7 @@ func TestComponent_registerValidators(t *testing.T) {
 		component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 		// Create server
-		component.server = webhook.NewServer(&webhook.ServerConfig{
+		component.server, _ = webhook.NewServer(&webhook.ServerConfig{
 			Port:    9443,
 			Path:    "/validate",
 			CertPEM: config.CertPEM,
@@ -367,15 +398,15 @@ func TestComponent_registerValidators(t *testing.T) {
 		}
 
 		config := &Config{
-			CertPEM: []byte("test-cert"),
-			KeyPEM:  []byte("test-key"),
+			CertPEM: certPEM,
+			KeyPEM:  keyPEM,
 			Rules:   []webhook.WebhookRule{}, // Empty rules
 		}
 
 		component := New(testutil.NewTestLogger(), config, mapper, nil)
 
 		// Create server
-		component.server = webhook.NewServer(&webhook.ServerConfig{
+		component.server, _ = webhook.NewServer(&webhook.ServerConfig{
 			Port:    9443,
 			Path:    "/validate",
 			CertPEM: config.CertPEM,

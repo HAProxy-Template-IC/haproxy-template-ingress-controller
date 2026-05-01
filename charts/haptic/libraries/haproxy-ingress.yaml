@@ -747,7 +747,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_forwardfor", key) %}
           {%- var forwardfor = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/forwardfor") | fallback("") | tostring() %}
           {%- if forwardfor != "" && forwardfor != "ignore" %}
             {%- var hosts = []any{} %}
@@ -767,7 +766,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-610-haproxy-ingress-access-control:
@@ -791,7 +789,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_access_control", key) %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
             {%- var h = rule | dig("host") %}
@@ -813,7 +810,6 @@ templateSnippets:
 
       http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-620-haproxy-ingress-ssl-redirect:
@@ -835,7 +831,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_ssl_redirect", key) %}
           {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect") | fallback("") | tostring() %}
           {%- if sslRedirect == "true" %}
             {%- var hosts = []any{} %}
@@ -853,7 +848,6 @@ templateSnippets:
       http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-630-haproxy-ingress-hsts:
@@ -877,7 +871,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_hsts", key) %}
           {%- var hstsEnabled = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts") | fallback("") | tostring() %}
           {%- if hstsEnabled == "true" %}
             {%- var hosts = []any{} %}
@@ -896,7 +889,6 @@ templateSnippets:
       http-response set-header Strict-Transport-Security "{{ hstsValue }}" if { ssl_fc } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-640-haproxy-ingress-app-root:
@@ -917,7 +909,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_app_root", key) %}
           {%- var appRoot = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/app-root") | fallback("") | tostring() %}
           {%- if appRoot != "" %}
             {%- var hosts = []any{} %}
@@ -930,7 +921,6 @@ templateSnippets:
       http-request redirect location {{ appRoot }} if { path / } {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-650-haproxy-ingress-redirects:
@@ -952,7 +942,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_redirects", key) %}
           {%- var redirectTo = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/redirect-to") | fallback("") | tostring() %}
           {%- if redirectTo != "" %}
             {%- var hosts = []any{} %}
@@ -970,7 +959,6 @@ templateSnippets:
       http-request redirect location {{ redirectTo }} code {{ code }} if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-660-haproxy-ingress-cors:
@@ -999,7 +987,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_cors", key) %}
           {%- var corsEnabled = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-enable") | fallback("") | tostring() %}
           {%- if corsEnabled == "true" %}
             {%- var hosts = []any{} %}
@@ -1028,7 +1015,6 @@ templateSnippets:
               {% end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   frontend-filters-670-haproxy-ingress-headers:
@@ -1051,7 +1037,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_headers", key) %}
           {%- var headersStr = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/headers") | fallback("") | tostring() %}
           {%- if headersStr != "" %}
             {%- var hosts = []any{} %}
@@ -1074,7 +1059,6 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   # ============================================================================
@@ -1146,7 +1130,6 @@ templateSnippets:
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
         {%- var key = ns + "/" + name %}
-        {%- if first_seen("hi_mtls", key) %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
             {%- var h = rule | dig("host") %}
@@ -1175,7 +1158,6 @@ templateSnippets:
       http-request set-header X-SSL-Client-Cert %[ssl_c_der,base64] if { ssl_fc_has_crt } {{ cond }}
             {%- end %}
           {%- end %}
-        {%- end %}
       {%- end -%}
 
   features-100-haproxy-ingress-ssl-passthrough:
@@ -1260,11 +1242,24 @@ templateSnippets:
           {%- end %}
           {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
           {%- if secret == nil %}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by haproxy-ingress.github.io/auth-tls-secret on Ingress " + ns + "/" + name + " not found. Create the Secret (kubernetes.io/tls with a `ca.crt` field) or update the annotation.") -}}
+            {#- Secret missing — emit a render comment and skip mTLS for
+                this ingress instead of failing the entire render. The
+                latter form (fail()) blocks every ingress's admission,
+                because the webhook re-renders the merged config of the
+                whole cluster on every CREATE. With skip-and-continue,
+                the missing secret is logged at render time, this one
+                ingress's mTLS isn't applied (the backend behaves as if
+                the annotation were absent), and unrelated ingresses
+                continue to render. The webhook still rejects an
+                ingress whose OWN secret is missing — it just doesn't
+                cascade. -#}
+            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            {%- continue %}
           {%- end %}
           {%- var caBundleB64 = secret | dig("data", "ca.crt") | fallback("") | tostring() %}
           {%- if caBundleB64 == "" %}
-            {{- fail("Secret '" + secretNs + "/" + secretName + "' (referenced by haproxy-ingress.github.io/auth-tls-secret on Ingress " + ns + "/" + name + ") is missing data.ca.crt. The Secret must contain a `ca.crt` entry with the CA bundle that signed the clients' certificates.") -}}
+            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            {%- continue %}
           {%- end %}
           {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
           {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).

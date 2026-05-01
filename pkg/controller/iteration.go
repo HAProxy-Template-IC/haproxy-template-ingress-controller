@@ -87,16 +87,21 @@ func runIteration(
 	}
 
 	// 2. Fetch and validate initial configuration (now guaranteed to exist)
-	cfg, crd, creds, webhookCerts, err := fetchAndValidateInitialConfig(
+	bundle, err := fetchAndValidateInitialConfig(
 		ctx, k8sClient, crdName, secretName, webhookCertSecretName,
 		crdGVR, secretGVR, logger,
 	)
 	if err != nil {
 		return err
 	}
+	cfg, crd, creds, webhookCerts := bundle.Config, bundle.CRD, bundle.Credentials, bundle.WebhookCerts
 
-	// Mark config as loaded and set initial version for bootstrap loop prevention
-	finalizeConfigLoad(state, setup, crd.GetResourceVersion())
+	// Mark config as loaded and record initial CRD/Secret versions so the
+	// bootstrap watcher events don't trigger redundant reinitialization.
+	// Later events with different versions still flow through
+	// configChangeCh and trigger iteration restart — that's how
+	// credentials/webhook-cert rotation reaches the controller.
+	finalizeConfigLoad(state, setup, crd.GetResourceVersion(), bundle.CredentialsVersion, bundle.WebhookCertVersion)
 
 	// 3. Setup resource watchers
 	resourceWatcher, err := setupResourceWatchers(setup.IterCtx, cfg, k8sClient, setup.Bus, logger, setup.Cancel, setup.ErrGroup)
@@ -141,7 +146,7 @@ func runIteration(
 	var dryrunValidator *dryrunvalidator.Component
 	if webhook.HasWebhookEnabled(cfg) {
 		var err error
-		dryrunValidator, err = createDryRunValidator(cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, logger)
+		dryrunValidator, err = createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, logger)
 		if err != nil && !errors.Is(err, errNoWebhookRules) {
 			return fmt.Errorf("creating dry-run validator: %w", err)
 		}

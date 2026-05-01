@@ -186,16 +186,29 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures") -%}
       {%- var redirectHosts []any = coalesce(gf["sslRedirectHosts"], []any{}) -%}
 
-      {# Group hosts by redirect code #}
+      {#-
+        Group hosts by redirect code. Deduplicate per code via a presence set
+        rather than the cross-render `first_seen` cache: under high resource
+        churn the cache occasionally leaked between renders inside a single
+        deployment cycle, leading to features-160 emitting an empty map while
+        frontend-filters-050-ssl-redirect (which has no first_seen check) still
+        emitted the redirect rule referencing the same map. The two snippets
+        must register and reference maps in lockstep, so this deduplication
+        stays local to this snippet and matches the rule emitter exactly: any
+        host present in `redirectHosts` results in a map entry for its code.
+      -#}
       {%- var hostsByCode = map[string][]any{} -%}
+      {%- var seenByCode = map[string]map[string]bool{} -%}
       {%- for _, entry := range redirectHosts -%}
         {%- var e map[string]any = entry -%}
         {%- var code = tostring(e["code"]) -%}
         {%- var host = tostring(e["host"]) -%}
-        {%- if first_seen("ssl_redirect_map", host) -%}
-          {%- if hostsByCode[code] == nil -%}
-            {%- hostsByCode[code] = []any{} -%}
-          {%- end -%}
+        {%- if seenByCode[code] == nil -%}
+          {%- seenByCode[code] = map[string]bool{} -%}
+          {%- hostsByCode[code] = []any{} -%}
+        {%- end -%}
+        {%- if !seenByCode[code][host] -%}
+          {%- seenByCode[code][host] = true -%}
           {%- hostsByCode[code] = append(hostsByCode[code], host) -%}
         {%- end -%}
       {%- end -%}

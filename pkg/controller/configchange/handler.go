@@ -77,6 +77,17 @@ type ConfigChangeHandler struct {
 	// for the bootstrap event, creating an infinite loop.
 	initialConfigVersion string
 
+	// Initial credentials and webhook-cert Secret versions tracked the same
+	// way, for the same reason. The credentialsloader / certloader emit
+	// CredentialsUpdatedEvent / CertParsedEvent on every Secret resync —
+	// including the bootstrap event the watcher fires the moment it
+	// observes the existing Secret at iteration startup. Filtering by
+	// version means we only signal reinitialization when the Secret
+	// content actually changed (rotation), not when the watcher just
+	// re-observes the same Secret.
+	initialCredentialsVersion string
+	initialCertVersion        string
+
 	// reinitializationEnabled controls whether ConfigValidatedEvents trigger reinitialization.
 	// During startup, multiple ConfigValidatedEvents can occur:
 	// 1. Synthetic event (version="initial") - always skipped
@@ -111,11 +122,17 @@ func NewConfigChangeHandler(
 	}
 
 	// Subscribe to only the event types we handle during construction (before EventBus.Start())
-	// This ensures proper startup synchronization and reduces buffer pressure
+	// This ensures proper startup synchronization and reduces buffer pressure.
+	// CredentialsUpdated and CertParsed are subscribed here so that a
+	// rotation of either Secret triggers iteration restart through the
+	// same configChangeCh path the CRD already uses — there's no parallel
+	// "reload loop"; everything funnels through ConfigChangeHandler.
 	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeConfigParsed,
 		events.EventTypeConfigValidated,
 		events.EventTypeBecameLeader,
+		events.EventTypeCredentialsUpdated,
+		events.EventTypeCertParsed,
 	)
 
 	return &ConfigChangeHandler{
@@ -146,6 +163,29 @@ func (h *ConfigChangeHandler) SetInitialConfigVersion(version string) {
 	defer h.mu.Unlock()
 	h.initialConfigVersion = version
 	h.logger.Debug("Set initial config version for bootstrap skip",
+		"version", version)
+}
+
+// SetInitialCredentialsVersion records the resourceVersion of the
+// credentials Secret as observed at iteration startup, so the bootstrap
+// CredentialsUpdatedEvent (fired by the watcher's initial onAdd) doesn't
+// trigger a redundant reinitialization loop.
+func (h *ConfigChangeHandler) SetInitialCredentialsVersion(version string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.initialCredentialsVersion = version
+	h.logger.Debug("Set initial credentials Secret version for bootstrap skip",
+		"version", version)
+}
+
+// SetInitialCertVersion records the resourceVersion of the webhook-cert
+// Secret as observed at iteration startup, so the bootstrap CertParsedEvent
+// doesn't trigger a redundant reinitialization loop.
+func (h *ConfigChangeHandler) SetInitialCertVersion(version string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.initialCertVersion = version
+	h.logger.Debug("Set initial webhook-cert Secret version for bootstrap skip",
 		"version", version)
 }
 
@@ -198,6 +238,10 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 				h.handleConfigValidated(e)
 			case *events.BecameLeaderEvent:
 				h.handleBecameLeader(e)
+			case *events.CredentialsUpdatedEvent:
+				h.handleSecretRotation("credentials", e.SecretVersion, &h.initialCredentialsVersion)
+			case *events.CertParsedEvent:
+				h.handleSecretRotation("webhook-cert", e.Version, &h.initialCertVersion)
 			}
 		}
 	}
@@ -360,6 +404,55 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 	h.logger.Debug("Config validated, reinitialization debounced",
 		"version", event.Version)
 
+	h.debounceTimer.Reset(h.debounceInterval)
+}
+
+// handleSecretRotation reacts to a Secret-rotation event (credentials or
+// webhook-cert) by signalling iteration restart through the same
+// configChangeCh path used for CRD changes. The bootstrap event the
+// watcher fires when it first observes the Secret is filtered out by
+// comparing against the initial version recorded at iteration startup.
+//
+// Because the iteration restart re-runs fetchAndValidateInitialConfig,
+// the new iteration loads the rotated Secret from the API server before
+// any component (notably the webhook server) starts up — there's no
+// hot-rotation in any individual component. This mirrors how CRD changes
+// flow through the same channel.
+func (h *ConfigChangeHandler) handleSecretRotation(kind, version string, initialVersion *string) {
+	h.mu.RLock()
+	reinitEnabled := h.reinitializationEnabled
+	bootstrap := *initialVersion
+	h.mu.RUnlock()
+
+	if !reinitEnabled {
+		h.logger.Debug("Ignoring "+kind+" Secret rotation (reinitialization disabled during startup)",
+			"version", version)
+		return
+	}
+	if bootstrap != "" && version == bootstrap {
+		h.logger.Debug("Ignoring "+kind+" Secret bootstrap event (matches initial version)",
+			"version", version)
+		return
+	}
+
+	cfg, ok := h.configReplayer.Get()
+	if !ok || cfg == nil {
+		h.logger.Warn("Cannot signal reinitialization for "+kind+" rotation: no validated config cached",
+			"version", version)
+		return
+	}
+	parsed, ok := cfg.Config.(*coreconfig.Config)
+	if !ok {
+		h.logger.Error("Cached config event has unexpected type",
+			"kind", kind,
+			"got", fmt.Sprintf("%T", cfg.Config))
+		return
+	}
+
+	h.logger.Info("Secret rotation detected; debouncing iteration restart",
+		"kind", kind,
+		"version", version)
+	h.pendingConfig = parsed
 	h.debounceTimer.Reset(h.debounceInterval)
 }
 

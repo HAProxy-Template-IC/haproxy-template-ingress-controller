@@ -23,7 +23,7 @@ nodes:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
     extraPortMappings:
-      # HTTP traffic to HAProxy - exposed on docker host for test-routes.sh
+      # HTTP traffic to HAProxy - exposed on docker host for the Go e2e suite
       - containerPort: 30080
         hostPort: 30080
         protocol: TCP

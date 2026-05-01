@@ -22,3 +22,4 @@ ignore:
   - pkg/generated/
   - node_modules/
   - vendor/
+  - debug-logs/               # Test failure artifacts (tests/e2e/cleanup.go), captured for CI

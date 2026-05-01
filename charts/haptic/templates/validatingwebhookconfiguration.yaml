@@ -1,9 +1,26 @@
 {{- if .Values.webhook.enabled }}
-{{- $webhookRules := list }}
-{{- range $name, $resource := .Values.controller.config.watched_resources }}
-{{- if $resource.enable_validation_webhook }}
-{{- $webhookRules = append $webhookRules (dict "name" $name "resource" $resource) }}
+{{- /*
+  The validating webhook fronts the same render pipeline the controller runs
+  for an active reconcile, so its scope must match the resources the
+  controller actually watches. We therefore source `watchedResources` from
+  the same `haptic.mergeLibraries` helper that `haproxytemplateconfig.yaml`
+  uses to compose the CRD spec. Library files (libraries/ingress.yaml etc.)
+  declare `enableValidationWebhook: true` on each resource that should be
+  validated; this template emits one webhook rule per such resource.
+  Users wanting to override should add to `controller.config.watchedResources`
+  using the same camelCase shape as the library files (the merge helper
+  uses camelCase throughout).
+*/ -}}
+{{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
+{{- $watched := $mergedLibraries.watchedResources | default dict }}
+{{- if .Values.controller.config.watchedResources }}
+  {{- $watched = merge (deepCopy $watched) .Values.controller.config.watchedResources }}
 {{- end }}
+{{- $webhookRules := list }}
+{{- range $name, $resource := $watched }}
+  {{- if $resource.enableValidationWebhook }}
+    {{- $webhookRules = append $webhookRules (dict "name" $name "resource" $resource) }}
+  {{- end }}
 {{- end }}
 {{- if $webhookRules }}
 apiVersion: admissionregistration.k8s.io/v1
@@ -32,16 +49,16 @@ webhooks:
         path: /validate
     rules:
       - apiGroups:
-          {{- if eq $rule.resource.api_version "v1" }}
+          {{- if eq $rule.resource.apiVersion "v1" }}
           - ""
           {{- else }}
-          - {{ $rule.resource.api_version | regexFind "^[^/]+" }}
+          - {{ $rule.resource.apiVersion | regexFind "^[^/]+" }}
           {{- end }}
         apiVersions:
-          {{- if eq $rule.resource.api_version "v1" }}
+          {{- if eq $rule.resource.apiVersion "v1" }}
           - v1
           {{- else }}
-          - {{ $rule.resource.api_version | regexFind "[^/]+$" }}
+          - {{ $rule.resource.apiVersion | regexFind "[^/]+$" }}
           {{- end }}
         resources:
           - {{ $rule.resource.resources }}

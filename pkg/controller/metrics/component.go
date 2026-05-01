@@ -82,6 +82,7 @@ func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
 		events.EventTypeBecameLeader,
 		events.EventTypeLostLeadership,
 		events.EventTypeCertParsed,
+		events.EventTypeHAProxyPodRejected,
 	)
 
 	return &Component{
@@ -166,6 +167,8 @@ func (c *Component) handleEvent(event pkgevents.Event) {
 		c.handleLostLeadership(e)
 	case *events.CertParsedEvent:
 		c.handleCertParsed(e)
+	case *events.HAProxyPodRejectedEvent:
+		c.metrics.RecordHAProxyPodRejected(e.Reason)
 	}
 }
 

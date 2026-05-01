@@ -1195,7 +1195,17 @@ func NewHTTPStoreHAProxyTemplateConfig(namespace, name, secretName string, leade
 		WithTemplate(HTTPStoreTemplate).
 		WithFiles(map[string]haproxyv1alpha1.GeneralFile{
 			"blocked-ips.acl": {
-				Template: fmt.Sprintf(`{%%- var blocklist, fetchErr = http.Fetch("%s", map[string]any{"critical": true, "delay": "5s"}) -%%}
+				// Per-attempt timeout 5s + 3 retries = 15s fetch budget, leaving
+				// ample headroom inside the 30s render-context deadline. The
+				// default 30s per-attempt timeout collides with the render
+				// deadline: a single hung TCP SYN (observed under DinD after
+				// the blocklist-server pod restarts) consumes the entire
+				// render budget before any retry can run, and the failover
+				// recovery test then races a 60s test deadline against a
+				// natural retry cycle that takes 60s+. Smaller fetch timeout
+				// is appropriate here because the blocklist-server is an
+				// in-cluster Service and is expected to respond well below 1s.
+				Template: fmt.Sprintf(`{%%- var blocklist, fetchErr = http.Fetch("%s", map[string]any{"critical": true, "delay": "5s", "timeout": "5s", "retries": 3}) -%%}
 {%%- if fetchErr != nil -%%}{{ fail("failed to fetch blocklist: " + tostring(fetchErr)) }}{%%- end -%%}
 {{ blocklist }}`, blocklistURL),
 			},

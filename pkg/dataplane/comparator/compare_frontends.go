@@ -63,7 +63,8 @@ func (c *Comparator) createNestedFrontendOperationsWithIndexes(name string, fron
 	// Pre-allocate with estimated capacity based on nested element counts
 	desiredBinds := bindIndex[name]
 	estimatedCap := len(desiredBinds) + len(frontend.ACLList) +
-		len(frontend.HTTPRequestRuleList) + len(frontend.HTTPResponseRuleList)
+		len(frontend.HTTPRequestRuleList) + len(frontend.HTTPResponseRuleList) +
+		len(frontend.HTTPAfterResponseRuleList)
 	operations := make([]Operation, 0, estimatedCap)
 
 	// Compare ACLs
@@ -77,6 +78,12 @@ func (c *Comparator) createNestedFrontendOperationsWithIndexes(name string, fron
 	// Compare HTTP response rules
 	responseRuleOps := c.compareHTTPResponseRules(parentTypeFrontend, name, nil, frontend.HTTPResponseRuleList)
 	operations = append(operations, responseRuleOps...)
+
+	// Compare HTTP after-response rules (frontend-side; required for chart's
+	// SPOA-driven auth-failure header forwarding — see compareFrontendHTTPAfterResponseRules
+	// for the architectural detail)
+	afterResponseRuleOps := c.compareFrontendHTTPAfterResponseRules(name, nil, frontend.HTTPAfterResponseRuleList)
+	operations = append(operations, afterResponseRuleOps...)
 
 	// Compare TCP request rules
 	tcpRequestRuleOps := c.compareTCPRequestRules(parentTypeFrontend, name, nil, frontend.TCPRequestRuleList)
@@ -132,6 +139,10 @@ func (c *Comparator) compareModifiedFrontendsWithIndexes(desiredFrontends, curre
 		// Compare HTTP response rules within this frontend
 		responseRuleOps := c.compareHTTPResponseRules(parentTypeFrontend, name, currentFrontend.HTTPResponseRuleList, desiredFrontend.HTTPResponseRuleList)
 		appendOperationsIfNotEmpty(&operations, responseRuleOps, &frontendModified)
+
+		// Compare HTTP after-response rules within this frontend
+		afterResponseRuleOps := c.compareFrontendHTTPAfterResponseRules(name, currentFrontend.HTTPAfterResponseRuleList, desiredFrontend.HTTPAfterResponseRuleList)
+		appendOperationsIfNotEmpty(&operations, afterResponseRuleOps, &frontendModified)
 
 		// Compare TCP request rules within this frontend
 		tcpRequestRuleOps := c.compareTCPRequestRules(parentTypeFrontend, name, currentFrontend.TCPRequestRuleList, desiredFrontend.TCPRequestRuleList)
@@ -190,6 +201,8 @@ func frontendsEqualWithoutNestedCollections(f1, f2 *models.Frontend) bool {
 	f2Copy.HTTPRequestRuleList = nil
 	f1Copy.HTTPResponseRuleList = nil
 	f2Copy.HTTPResponseRuleList = nil
+	f1Copy.HTTPAfterResponseRuleList = nil
+	f2Copy.HTTPAfterResponseRuleList = nil
 	f1Copy.TCPRequestRuleList = nil
 	f2Copy.TCPRequestRuleList = nil
 	f1Copy.BackendSwitchingRuleList = nil

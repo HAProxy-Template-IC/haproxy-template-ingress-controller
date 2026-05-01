@@ -127,6 +127,28 @@ dependenciesRules:
         - "**.pkg.**"
         - "**.codegen.**"
 
+  # Rule 10a: the bare `tests` package (architecture_test.go) — same
+  # allowance as `**.tests.**` but the trailing `.**` glob doesn't match
+  # the package without a sub-segment, so it needs its own entry to count
+  # against the coverage threshold.
+  - package: "**.tests"
+    shouldOnlyDependsOn:
+      internal:
+        - "**.tests.**"
+        - "**.cmd.**"
+        - "**.pkg.**"
+        - "**.codegen.**"
+
+  # Rule 10b: scripts/dev-env-assets package (devassets.go) — embeds the
+  # static manifests the e2e suite ships and depends on no internal
+  # packages.
+  - package: "**.scripts.dev-env-assets"
+    shouldNotDependsOn:
+      internal:
+        - "**.cmd.**"
+        - "**.pkg.**"
+        - "**.tests.**"
+
   # Rule 11: examples packages can depend on all internal packages (demonstration code)
   - package: "**.examples.**"
     shouldOnlyDependsOn:

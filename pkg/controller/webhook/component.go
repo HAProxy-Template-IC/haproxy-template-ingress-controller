@@ -68,6 +68,13 @@ type Component struct {
 	// Runtime state
 	serverCtx    context.Context
 	serverCancel context.CancelFunc
+
+	// listening is closed once the underlying *webhook.Server has bound
+	// its listener. The iteration sequencer reads Listening() before
+	// flipping the controller's readiness probe so the chart's
+	// ValidatingWebhookConfiguration doesn't get routed admission requests
+	// while the listener is still pending.
+	listening chan struct{}
 }
 
 // MetricsRecorder defines the interface for recording webhook metrics.
@@ -135,7 +142,16 @@ func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metric
 		restMapper:      restMapper,
 		metrics:         metrics,
 		dryRunValidator: config.DryRunValidator,
+		listening:       make(chan struct{}),
 	}
+}
+
+// Listening returns a channel that is closed once the underlying webhook
+// server has bound its TLS listener. Until this channel is closed, an
+// admission request routed at the controller fails with "connection
+// refused", because the listening socket simply doesn't exist yet.
+func (c *Component) Listening() <-chan struct{} {
+	return c.listening
 }
 
 // Start starts the webhook component.
@@ -165,8 +181,12 @@ func (c *Component) Start(ctx context.Context) error {
 		"cert_size", len(c.config.CertPEM),
 		"key_size", len(c.config.KeyPEM))
 
-	// Create webhook server with certificates from configuration
-	c.server = webhook.NewServer(&webhook.ServerConfig{
+	// Create webhook server with certificates from configuration.
+	// The server's TLS certificate is hot-rotatable via RotateCertificate
+	// (driven by the controller component below subscribing to
+	// CertParsedEvent). New TLS handshakes pick up the rotated cert
+	// without restarting the listening socket.
+	server, err := webhook.NewServer(&webhook.ServerConfig{
 		Port:         c.config.Port,
 		Path:         c.config.Path,
 		CertPEM:      c.config.CertPEM,
@@ -174,6 +194,10 @@ func (c *Component) Start(ctx context.Context) error {
 		ReadTimeout:  timeouts.HTTPServerTimeout,
 		WriteTimeout: timeouts.HTTPServerTimeout,
 	})
+	if err != nil {
+		return fmt.Errorf("creating webhook server: %w", err)
+	}
+	c.server = server
 
 	// Register validators
 	c.registerValidators()
@@ -190,11 +214,30 @@ func (c *Component) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Wait for the underlying listener to actually bind before logging
+	// "started" or signalling readiness to the iteration sequencer. The
+	// pure server signals via Listening() once net.Listen has returned;
+	// this prevents the controller from advertising readiness while the
+	// API server's first AdmissionReview would still bounce with
+	// "connection refused".
+	select {
+	case <-c.server.Listening():
+		close(c.listening)
+	case err := <-serverErrCh:
+		return fmt.Errorf("webhook server failed before bind: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
 	c.logger.Info("Webhook server started",
 		"port", c.config.Port,
 		"path", c.config.Path)
 
-	// Wait for shutdown or error
+	// Wait for shutdown or error. Cert rotation is handled at the
+	// iteration boundary by ConfigChangeHandler, which signals
+	// reinitialization on CertParsedEvent — the next iteration
+	// constructs a fresh Server with the new PEM bytes (same flow that
+	// already covers CRD- and credentials-Secret changes).
 	select {
 	case err := <-serverErrCh:
 		return fmt.Errorf("webhook server failed: %w", err)
