@@ -2917,7 +2917,7 @@ validationTests:
     # default chart values (no plugins), spoa-hub library is absent —
     # auth-url.map doesn't exist and the frontend snippets don't
     # render. Skip in that case so validate-helm-libraries is green.
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Nginx Ingress auth-url annotation populates auth-url.map and the
       spoa-hub frontend wiring (set-var, send-spoe-group, deny rule).
@@ -3003,7 +3003,7 @@ validationTests:
   test-nginx-ingress-external-auth-signin:
     # Same prerequisite as the other external-auth tests — needs the
     # spoa-hub library loaded so auth-signin.map is defined.
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Nginx Ingress auth-signin annotation makes auth failures redirect
       (302) to the configured sign-in URL instead of returning 401.
@@ -3087,7 +3087,7 @@ validationTests:
         description: Deny rule still emits as fallback for ingresses without auth-signin
 
   test-nginx-ingress-external-auth-method:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Nginx Ingress auth-method annotation populates auth-method.map
       and threads through the SPOE check-auth message's `method` arg
@@ -3169,7 +3169,7 @@ validationTests:
         description: SPOE message body threads txn.auth_method into the plugin's method arg
 
   test-nginx-ingress-external-auth-response-headers:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Nginx Ingress auth-response-headers annotation populates
       auth-extract-headers.map and emits one
@@ -3257,7 +3257,7 @@ validationTests:
     # Same as test-nginx-ingress-external-auth: needs the spoa-hub
     # library loaded for the auth-url.map definition (the fail() is
     # triggered while rendering that map's contributions).
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Ingress with auth-url annotation AND a host-less rule must fail
       loudly at template-render time. The auth-url map is keyed by

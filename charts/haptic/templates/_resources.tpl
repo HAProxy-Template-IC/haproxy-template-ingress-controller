@@ -2,11 +2,6 @@
 Resource math: memory parsing, CPU → nbthread, dataplane GOMAXPROCS / maxParallel,
 HAProxy shm-stats sizing, and the bootstrap-config checksum (which depends on
 several of these values, so it lives next to them).
-
-The previous helper `haptic.haproxy.memoryLimitMB` was a thin wrapper around
-`haptic.memoryToMB` with a hardcoded input source; it was deleted in #4 and
-its single caller now invokes `haptic.memoryToMB` directly with the memory
-string from values. See ADR/CHANGELOG entries.
 */}}
 
 {{/*

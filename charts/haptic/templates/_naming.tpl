@@ -1,9 +1,7 @@
 {{/*
-Naming, labels, and serviceAccount helpers.
-
-All Helm template names are global; this file is a purely organizational split
-of the original _helpers.tpl. Consumers `include` these helpers by name as
-before — file boundaries are invisible to callers.
+Naming, labels, and serviceAccount helpers. Split across _*.tpl files for
+readability — Helm template names are global, so file boundaries are
+invisible to callers.
 */}}
 
 {{/*
@@ -78,10 +76,39 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
-Component labels
-Generates app.kubernetes.io/component label for a given component name
-Usage: {{ include "haptic.componentLabels" "loadbalancer" }}
+Webhook TLS Secret / Certificate name. Resolves the operator override
+.Values.webhook.secretName, or falls back to "<fullname>-webhook-cert".
+Used by every place that points at the webhook TLS material —
+templates/webhook-certificate.yaml (Certificate metadata.name and
+spec.secretName), templates/validatingwebhookconfiguration.yaml
+(cert-manager.io/inject-ca-from), and templates/deployment.yaml
+(WEBHOOK_CERT_SECRET_NAME env var and the webhook-certs volume).
+Centralising this here keeps those references aligned when an
+operator sets webhook.secretName.
 */}}
-{{- define "haptic.componentLabels" -}}
-app.kubernetes.io/component: {{ . }}
+{{- define "haptic.webhook.secretName" -}}
+{{- .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) -}}
 {{- end -}}
+
+{{/*
+Extract the API group from a Kubernetes apiVersion string and render it as
+a YAML scalar suitable for an `apiGroups:` list item. Core resources
+("v1") render as the literal "" (empty quoted string); grouped resources
+render as the bare group name (e.g. networking.k8s.io for
+"networking.k8s.io/v1"). The output is the YAML token, not a raw Go
+string, so callers do `- {{ include "haptic.apiGroupOf" ... }}` without
+piping through `quote`.
+*/}}
+{{- define "haptic.apiGroupOf" -}}
+{{- if contains "/" . -}}{{ regexFind "^[^/]+" . }}{{- else -}}""{{- end -}}
+{{- end -}}
+
+{{/*
+Extract the API version from a Kubernetes apiVersion string.
+Returns the part after the slash, or the whole input when there is no
+group (e.g. "v1" -> "v1", "networking.k8s.io/v1" -> "v1").
+*/}}
+{{- define "haptic.apiVersionOf" -}}
+{{- regexFind "[^/]+$" . -}}
+{{- end -}}
+

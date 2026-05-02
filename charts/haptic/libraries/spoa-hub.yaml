@@ -45,7 +45,7 @@
 # Loaded when explicitly enabled OR when haptic.spoaHub.enabled (helper) is truthy
 # (any plugin under spoaHub.plugins.* enabled, or spoaHub.enabled=true).
 _helm_load:
-  enable: '{{ if or .Values.controller.templateLibraries.spoaHub.enabled (include "haptic.spoaHub.enabled" .) }}true{{ else }}false{{ end }}'
+  enable: '{{ or .Values.controller.templateLibraries.spoaHub.enabled (include "haptic.spoaHub.enabled" .) }}'
 
 templateSnippets:
   # RFC 7230 token guard for HTTP header field names from annotation

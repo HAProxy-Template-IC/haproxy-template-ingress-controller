@@ -41,6 +41,16 @@ Returns "true" or "" (Helm-truthy convention).
 {{- end -}}
 
 {{/*
+Inverse of `haptic.spoaHub.enabled` — returns "true" when SPOA hub will NOT
+be rendered, empty string otherwise. The library `_helm_skip_test`
+predicates use this to skip validation tests that depend on snippets the
+spoa-hub library contributes.
+*/}}
+{{- define "haptic.spoaHub.disabled" -}}
+{{- if not (include "haptic.spoaHub.enabled" .) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 SPOA hub container image reference.
 Uses spoaHub.image.tag if set, otherwise falls back to .Chart.AppVersion.
 Example: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.1.0

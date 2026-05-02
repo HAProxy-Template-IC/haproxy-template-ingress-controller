@@ -2,12 +2,12 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) }}
+  name: {{ include "haptic.webhook.secretName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
-  secretName: {{ .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) }}
+  secretName: {{ include "haptic.webhook.secretName" . }}
   duration: {{ .Values.webhook.certManager.duration | default "8760h" }}
   renewBefore: {{ .Values.webhook.certManager.renewBefore | default "720h" }}
   dnsNames:

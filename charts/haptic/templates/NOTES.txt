@@ -1,7 +1,7 @@
 HAPTIC (HAProxy Template Ingress Controller) has been installed!
 
 Controller Status:
-  kubectl get pods -l app.kubernetes.io/name={{ include "haptic.name" . }} -n {{ .Release.Namespace }}
+  kubectl get pods -l app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=controller -n {{ .Release.Namespace }}
 
 {{- if and (.Values.controller.config.controller.leaderElection.enabled) (gt (.Values.replicaCount | int) 1) }}
 
@@ -11,11 +11,11 @@ High Availability ({{ .Values.replicaCount }} replicas):
   All replicas watch resources and remain ready for failover
 
   Check current leader:
-    kubectl get lease {{ .Values.controller.config.controller.leaderElection.leaseName }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.holderIdentity}'
+    kubectl get lease {{ .Values.controller.config.controller.leaderElection.leaseName | default (include "haptic.fullname" .) }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.holderIdentity}'
 
   View leadership metrics:
-    kubectl port-forward -n {{ .Release.Namespace }} deployment/{{ include "haptic.fullname" . }} 9090:9090
-    curl http://localhost:9090/metrics | grep leader_election_is_leader
+    kubectl port-forward -n {{ .Release.Namespace }} deployment/{{ include "haptic.controllerFullname" . }} {{ .Values.controller.ports.metrics }}:{{ .Values.controller.ports.metrics }}
+    curl http://localhost:{{ .Values.controller.ports.metrics }}/metrics | grep leader_election_is_leader
 {{- else if eq (.Values.replicaCount | int) 1 }}
 
 Single Replica Mode:
@@ -25,11 +25,11 @@ Single Replica Mode:
 {{- end }}
 
 View Logs:
-  kubectl logs -f -l app.kubernetes.io/name={{ include "haptic.name" . }} -n {{ .Release.Namespace }}
+  kubectl logs -f -l app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=controller -n {{ .Release.Namespace }}
 
 Configuration:
-  ConfigMap: {{ .Values.controller.configmapName }}
-  Secret: {{ include "haptic.fullname" . }}-credentials
+  HAProxyTemplateConfig: {{ .Values.controller.crdName }}
+  Credentials Secret: {{ include "haptic.fullname" . }}-credentials
 
 Introspection Endpoint:
   Health checks and debugging are available on port {{ .Values.controller.debugPort }}
@@ -37,9 +37,9 @@ Introspection Endpoint:
   Endpoints: /healthz, /debug/vars, /debug/pprof
 
 Metrics Endpoint:
-  Prometheus metrics are available on port {{ .Values.controller.config.controller.metricsPort }}
-  Access via: kubectl port-forward -n {{ .Release.Namespace }} pod/<controller-pod> {{ .Values.controller.config.controller.metricsPort }}:{{ .Values.controller.config.controller.metricsPort }}
-  URL: http://localhost:{{ .Values.controller.config.controller.metricsPort }}/metrics
+  Prometheus metrics are available on port {{ .Values.controller.ports.metrics }}
+  Access via: kubectl port-forward -n {{ .Release.Namespace }} pod/<controller-pod> {{ .Values.controller.ports.metrics }}:{{ .Values.controller.ports.metrics }}
+  URL: http://localhost:{{ .Values.controller.ports.metrics }}/metrics
 
 {{- if .Values.monitoring.serviceMonitor.enabled }}
 

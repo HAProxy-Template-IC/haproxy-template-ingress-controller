@@ -63,7 +63,8 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 6. haproxytech.yaml
 7. haproxy-ingress.yaml
 8. nginx-ingress.yaml
-9. values.yaml           (highest priority - your configuration)
+9. spoa-hub.yaml         (auto-loaded when SPOA hub sidecar is enabled)
+10. values.yaml          (highest priority - your configuration)
 ```
 
 Your custom configuration in `controller.config` always takes precedence.

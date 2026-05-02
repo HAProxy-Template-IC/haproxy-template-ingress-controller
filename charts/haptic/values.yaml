@@ -81,9 +81,10 @@ controller:
     metrics: 9090 # Prometheus metrics endpoint
     webhook: 9443 # Admission webhook HTTPS endpoint
   # Template libraries
-  # Control which predefined template libraries to include
-  # Libraries are merged in order: base -> ssl -> ingress -> gateway -> haproxytech -> values.yaml
-  # User-provided config in controller.config always takes precedence
+  # Control which predefined template libraries to include.
+  # Merge order is fixed by templates/_libraries.tpl (haptic.mergeLibraries) and
+  # documented in docs/template-libraries.md; later libraries override earlier
+  # ones, and user-provided controller.config always wins.
   # Each library can define its own watched resources (conditionally included when enabled)
   templateLibraries:
     # Base library: Resource-agnostic core configuration
@@ -302,8 +303,13 @@ controller:
         app.kubernetes.io/component: loadbalancer
         # app.kubernetes.io/name and app.kubernetes.io/instance are set dynamically by template
     controller:
-      # Health check and metrics ports
-      # These must match the container ports defined in controller.ports
+      # Health check and metrics ports — display-only.
+      # The chart strips these before serialising the CRD; the controller
+      # reads the actual ports from the HEALTHZ_PORT and METRICS_PORT env
+      # vars (defaults 8080 / 9090; set 0 to disable). To change them,
+      # set the env var via controller.extraEnv and update
+      # controller.ports.{healthz,metrics} so the container port and
+      # Service still line up.
       healthzPort: 8080
       metricsPort: 9090
       # Leader election for high availability

@@ -3,10 +3,8 @@ Image references, binary paths, and the principal UID/GID for HAProxy and
 the dataplane API container.
 
 `haptic.haproxy.uid` returns the single UID/GID used for runAsUser, runAsGroup,
-fsGroup, and the dataplane container (which must share the volume group with
-HAProxy). The four previously-separate helpers (haptic.haproxy.runAsUser,
-runAsGroup, fsGroup, dataplaneRunAsUser) all returned the same value and were
-collapsed in #4 — see ADR/CHANGELOG entries.
+fsGroup on the HAProxy pod and runAsUser on the dataplane container, which
+must share the volume group with HAProxy.
 */}}
 
 {{/*

@@ -3110,7 +3110,7 @@ validationTests:
     # the chart's haptic.spoaHub.enabled helper is truthy. Skip when
     # the library isn't loaded (e.g. validate-helm-libraries default
     # render).
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       HAProxy-Ingress auth-url annotation populates auth-url.map and
       the spoa-hub frontend wiring (set-var, send-spoe-group, deny
@@ -3195,7 +3195,7 @@ validationTests:
   test-haproxy-ingress-external-auth-signin:
     # Same prerequisite as the other external-auth tests — needs the
     # spoa-hub library loaded so auth-signin.map is defined.
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       HAProxy-Ingress auth-signin annotation makes auth failures
       redirect (302) to the configured sign-in URL instead of
@@ -3279,7 +3279,7 @@ validationTests:
         description: Deny rule still emits as fallback for ingresses without auth-signin
 
   test-haproxy-ingress-external-auth-method:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       haproxy-ingress.github.io/auth-method annotation populates
       auth-method.map and threads through the SPOE check-auth
@@ -3359,7 +3359,7 @@ validationTests:
         description: SPOE message body threads txn.auth_method into the plugin's method arg
 
   test-haproxy-ingress-external-auth-headers-request:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       haproxy-ingress.github.io/auth-headers-request annotation
       populates auth-forward-headers.map and threads through the
@@ -3442,7 +3442,7 @@ validationTests:
         description: SPOE message body threads txn.auth_forward_headers into the plugin's forward_headers arg
 
   test-haproxy-ingress-external-auth-headers-request-extends-spoe-message:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       haproxy-ingress.github.io/auth-headers-request listing a custom
       header (one not in the hardcoded six) must auto-extend the SPOE
@@ -3556,7 +3556,7 @@ validationTests:
         description: Hardcoded Authorization header must not be re-emitted by the auto-extend snippet
 
   test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Two header spellings that differ only in dashes vs underscores
       (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to
@@ -3653,7 +3653,7 @@ validationTests:
         description: Only one hdr_x_request_id capture must appear on the SPOE args line; first writer wins
 
   test-haproxy-ingress-external-auth-headers-succeed-fail:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail
       annotations both populate auth-extract-headers.map (their union
@@ -3749,7 +3749,7 @@ validationTests:
         description: Second fail header gets its own http-after-response set-header line
 
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       A header name in auth-headers-succeed / auth-headers-fail that
       doesn't match the RFC 7230 token grammar (e.g. contains
@@ -3828,7 +3828,7 @@ validationTests:
   test-haproxy-ingress-external-auth-hostless-rejected:
     # Same as test-haproxy-ingress-external-auth: needs the spoa-hub
     # library loaded.
-    _helm_skip_test: '{{ if include "haptic.spoaHub.enabled" . }}false{{ else }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Ingress with haproxy-ingress.github.io/auth-url AND a host-less
       rule must fail loudly at template-render time. Same security

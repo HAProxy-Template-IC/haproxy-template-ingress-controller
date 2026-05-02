@@ -106,21 +106,14 @@ spec:
             - name: WEBHOOK_PORT
               value: {{ .Values.controller.ports.webhook | quote }}
             - name: WEBHOOK_CERT_SECRET_NAME
-              value: {{ .Values.webhook.secretName | default (printf "%s-webhook-cert" (include "haptic.fullname" .)) | quote }}
+              value: {{ include "haptic.webhook.secretName" . | quote }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- if .Values.startupProbe.enabled }}
           startupProbe:
-            httpGet:
-              path: {{ .Values.startupProbe.httpGet.path }}
-              port: {{ .Values.startupProbe.httpGet.port }}
-            initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
-            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
-            timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
-            successThreshold: {{ .Values.startupProbe.successThreshold }}
-            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+            {{- toYaml (omit .Values.startupProbe "enabled") | nindent 12 }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
@@ -158,7 +151,7 @@ spec:
         {{- if .Values.webhook.enabled }}
         - name: webhook-certs
           secret:
-            secretName: {{ include "haptic.fullname" . }}-webhook-cert
+            secretName: {{ include "haptic.webhook.secretName" . }}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}

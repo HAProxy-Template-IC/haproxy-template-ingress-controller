@@ -72,7 +72,7 @@ The chart deploys separate Services for the controller and HAProxy so data-plane
 
 ### Controller Service
 
-A single `ClusterIP` Service (`.Release.Name-controller`) that exposes the controller's ports defined in `controller.ports`:
+A single `ClusterIP` Service named after the chart's fullname (e.g. `<release>-haptic`) that exposes the controller's ports defined in `controller.ports`:
 
 | Name | Container port | Values key | Purpose |
 |------|----------------|------------|---------|
@@ -90,7 +90,7 @@ service:
 
 ### HAProxy Service
 
-A Service (`.Release.Name-haproxy`, `NodePort` by default) that fronts the HAProxy pods. Port structure comes from `haproxy.service.*` and container ports from `haproxy.ports.*`:
+A Service (`<fullname>-haproxy`, e.g. `<release>-haptic-haproxy`, `NodePort` by default) that fronts the HAProxy pods. Port structure comes from `haproxy.service.*` and container ports from `haproxy.ports.*`:
 
 | Name | Service port | Container port | nodePort default |
 |------|--------------|----------------|------------------|

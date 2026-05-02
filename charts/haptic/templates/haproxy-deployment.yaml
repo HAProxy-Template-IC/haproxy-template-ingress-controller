@@ -38,7 +38,7 @@ spec:
         {{- end }}
       labels:
         {{- include "haptic.selectorLabels" . | nindent 8 }}
-        {{- include "haptic.componentLabels" "loadbalancer" | nindent 8 }}
+        app.kubernetes.io/component: loadbalancer
     spec:
       {{- include "haptic.podSpec" (list .Values.haproxy.podSpec .) | trim | nindent 6 }}
       {{- if .Values.haproxy.podSpec.shareProcessNamespace }}

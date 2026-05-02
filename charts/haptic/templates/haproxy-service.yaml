@@ -14,6 +14,7 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.haproxy.service.type }}
+  {{- $exposesNodePort := or (eq .Values.haproxy.service.type "NodePort") (eq .Values.haproxy.service.type "LoadBalancer") }}
   {{- if .Values.haproxy.service.loadBalancerIP }}
   loadBalancerIP: {{ .Values.haproxy.service.loadBalancerIP }}
   {{- end }}
@@ -44,21 +45,21 @@ spec:
       port: {{ .Values.haproxy.service.http.port }}
       targetPort: http
       protocol: TCP
-      {{- if or (eq .Values.haproxy.service.type "NodePort") (eq .Values.haproxy.service.type "LoadBalancer") }}
+      {{- if $exposesNodePort }}
       nodePort: {{ .Values.haproxy.service.http.nodePort }}
       {{- end }}
     - name: https
       port: {{ .Values.haproxy.service.https.port }}
       targetPort: https
       protocol: TCP
-      {{- if or (eq .Values.haproxy.service.type "NodePort") (eq .Values.haproxy.service.type "LoadBalancer") }}
+      {{- if $exposesNodePort }}
       nodePort: {{ .Values.haproxy.service.https.nodePort }}
       {{- end }}
     - name: stats
       port: {{ .Values.haproxy.service.stats.port }}
       targetPort: stats
       protocol: TCP
-      {{- if or (eq .Values.haproxy.service.type "NodePort") (eq .Values.haproxy.service.type "LoadBalancer") }}
+      {{- if $exposesNodePort }}
       nodePort: {{ .Values.haproxy.service.stats.nodePort }}
       {{- end }}
 ---

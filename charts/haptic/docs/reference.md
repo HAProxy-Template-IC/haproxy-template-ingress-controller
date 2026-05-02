@@ -67,8 +67,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.config.credentialsSecretRef.name` | string | Auto-generated | Secret containing Dataplane API credentials |
 | `controller.config.credentialsSecretRef.namespace` | string | `""` | Credentials secret namespace |
 | `controller.config.podSelector.matchLabels` | map | `{app.kubernetes.io/component: loadbalancer}` | Labels to match HAProxy pods |
-| `controller.config.controller.healthzPort` | int | `8080` | **Display only** — chart renders this in `NOTES.txt`; the chart strips it from the serialized CRD. The actual health-check port is set by `controller.ports.healthz` (container port) and the controller doesn't read this field |
-| `controller.config.controller.metricsPort` | int | `9090` | **Display only** — chart renders this in `NOTES.txt`; the chart strips it from the serialized CRD. The actual metrics port is set by the `METRICS_PORT` env var (default `9090`); set `METRICS_PORT=0` via `controller.extraEnv` to disable the metrics server |
+| `controller.config.controller.healthzPort` | int | `8080` | **Display only** — the chart strips this from the serialized CRD. The actual health-check port is set by the container port `controller.ports.healthz` and the controller doesn't read this field |
+| `controller.config.controller.metricsPort` | int | `9090` | **Display only** — the chart strips this from the serialized CRD. The actual metrics port is set by the `METRICS_PORT` env var (default `9090`); set `METRICS_PORT=0` via `controller.extraEnv` to disable the metrics server. `controller.ports.metrics` declares the matching container port and Service port |
 
 ## Leader Election
 
