@@ -4,12 +4,9 @@ Pure render service that turns the controller's templates + Kubernetes state int
 
 ## Overview
 
-Two surfaces live in this package:
+`RenderService` (`service.go`) is the synchronous, library-style API. The render-validate pipeline (`pkg/controller/pipeline.Pipeline`) calls `service.Render(ctx, storeProvider)` directly, with no event hop. The leader-only Coordinator drives the pipeline; it then publishes `TemplateRenderedEvent` itself.
 
-- **`RenderService`** (`service.go`) — the synchronous, library-style API used in production. The render-validate pipeline (`pkg/controller/pipeline.Pipeline`) calls `service.Render(ctx, storeProvider)` directly, with no event hop. The leader-only Coordinator drives the pipeline; it then publishes `TemplateRenderedEvent` itself.
-- **`Component`** (`component.go`) — an event-adapter wrapper around the same engine that subscribes to `ReconciliationTriggeredEvent` and publishes `TemplateRenderedEvent` / `TemplateRenderFailedEvent`. Currently used only by tests; the production wiring went straight to `RenderService` to avoid the extra event hop.
-
-For new code use `RenderService`. The `Component` form is documented here only because the test fixtures still build it.
+The renderer is a library, not an event-driven component. See `docs/adr/0001-renderer-is-synchronous-not-event-adapter.md` for the rationale.
 
 ## Quick Start (RenderService)
 
@@ -47,23 +44,6 @@ Path resolution uses *relative* paths derived from `cfg.Dataplane.{MapsDir,SSLCe
 The rendering context is assembled by `pkg/controller/rendercontext.Builder` (see its README for the full key list). The `resources` map exposes one `*rendercontext.StoreWrapper` per `spec.watchedResources` entry; templates iterate them with `.List()` / `.Get(keys...)` / `.GetSingle(keys...)`.
 
 `StoreWrapper` lazy-caches `.List()` per render — every resource is unwrapped from `*unstructured.Unstructured` to a plain map on the first call and reused for the rest of the reconciliation. `.Get` / `.GetSingle` unwrap on demand for the matched subset only.
-
-## Component (Test-Only)
-
-```go
-component, err := renderer.New(
-    bus,
-    cfg,
-    storeMap,           // map[string]stores.Store
-    haproxyPodStore,    // stores.Store
-    currentConfigStore, // *currentconfigstore.Store
-    capabilities,       // dataplane.Capabilities
-    logger,
-)
-go component.Start(ctx) // method is Start, not Run — matches the lifecycle.Component contract
-```
-
-Subscribes to `ReconciliationTriggeredEvent`; publishes `TemplateRenderedEvent` / `TemplateRenderFailedEvent`. The seven-arg constructor (no `RenderServiceConfig` struct) is the historical event-driven shape; the production controller stopped using it once the pipeline went synchronous.
 
 ## See Also
 

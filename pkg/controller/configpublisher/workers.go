@@ -17,7 +17,6 @@ package configpublisher
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -56,15 +55,16 @@ func (c *Component) discardCachedConfig(correlationID string) {
 // This worker runs in a separate goroutine to prevent blocking the event loop
 // on slow K8S API calls.
 //
-// When a publish interval is configured, the worker uses leading-edge throttling:
-// the first publish after idle fires immediately, subsequent publishes within
-// the refractory period are buffered and flushed when the timer expires.
+// Throttling is delegated to publishThrottle (a *throttle.LeadingEdge): the
+// first publish after idle fires immediately; submissions inside the
+// refractory period are stashed in pendingPublish, and the worker flushes
+// the latest buffered item when publishThrottle.FiredCh() signals.
 func (c *Component) publishWorker(ctx context.Context) {
 	for {
 		select {
 		case work := <-c.publishWork:
 			c.processPublishWork(work)
-		case <-c.throttleTimerCh:
+		case <-c.publishThrottle.FiredCh():
 			c.flushPendingPublish()
 		case <-ctx.Done():
 			// Flush any buffered publish before shutdown
@@ -90,43 +90,35 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 		return
 	}
 
-	// Use pre-computed checksum from pipeline (propagated via TemplateRenderedEvent)
-	checksumHex := work.entry.contentChecksum
-
-	// Throttle: if a publish interval is configured, use leading-edge refractory.
-	if c.publishInterval > 0 {
-		c.throttleMu.Lock()
-		timeSinceLast := time.Since(c.lastPublishTime)
-		if timeSinceLast < c.publishInterval {
-			// Inside refractory — buffer latest work, clean up any previously buffered entry
-			if c.pendingPublish != nil {
-				c.discardCachedConfig(c.pendingPublish.correlationID)
-			}
-			c.pendingPublish = work
-			remaining := c.publishInterval - timeSinceLast
-			c.throttleMu.Unlock()
-
-			c.logger.Debug("throttling CRD publish, buffering for later",
-				"remaining", remaining,
-				"checksum", checksumHex,
-				"correlation_id", work.correlationID,
-			)
-			c.ensureThrottleTimer(remaining)
-			return
+	// Throttle: leading-edge refractory via publishThrottle. If the gate is
+	// closed, buffer the latest work and ask the throttle to wake us when
+	// the refractory expires.
+	if !c.publishThrottle.Available() {
+		c.pendingMu.Lock()
+		if c.pendingPublish != nil {
+			c.discardCachedConfig(c.pendingPublish.correlationID)
 		}
-		c.throttleMu.Unlock()
+		c.pendingPublish = work
+		c.pendingMu.Unlock()
+
+		c.logger.Debug("throttling CRD publish, buffering for later",
+			"checksum", work.entry.contentChecksum,
+			"correlation_id", work.correlationID,
+		)
+		c.publishThrottle.ScheduleFlush()
+		return
 	}
 
-	// Outside refractory (or no throttle configured) — publish immediately
+	// Gate open — publish immediately
 	c.executePublish(work)
 }
 
 // flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
 func (c *Component) flushPendingPublish() {
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	work := c.pendingPublish
 	c.pendingPublish = nil
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 
 	if work == nil {
 		return
@@ -169,20 +161,6 @@ func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bo
 	return true
 }
 
-// ensureThrottleTimer starts a one-shot timer that signals the publishWorker via throttleTimerCh.
-// The timer fires after the remaining refractory period. Only one timer runs at a time;
-// if a timer is already pending, this is a no-op (the existing timer will flush the
-// latest buffered work).
-func (c *Component) ensureThrottleTimer(remaining time.Duration) {
-	// Non-blocking send — if a signal is already pending the worker will pick it up
-	time.AfterFunc(remaining, func() {
-		select {
-		case c.throttleTimerCh <- struct{}{}:
-		default:
-		}
-	})
-}
-
 // executePublish performs the actual K8S API call to publish the config CRD.
 func (c *Component) executePublish(work *publishWorkItem) {
 	request := c.buildPublishRequest(work.templateConfig, work.entry)
@@ -210,15 +188,13 @@ func (c *Component) executePublish(work *publishWorkItem) {
 		"correlation_id", work.correlationID,
 	)
 
-	// Update last published checksum, last publish time, and clean up
+	// Update last published checksum, mark throttle fired, clean up.
 	c.mu.Lock()
 	c.lastPublishedChecksum = checksumHex
 	delete(c.renderedConfigs, work.correlationID)
 	c.mu.Unlock()
 
-	c.throttleMu.Lock()
-	c.lastPublishTime = time.Now()
-	c.throttleMu.Unlock()
+	c.publishThrottle.MarkFired()
 
 	// Publish success event with runtime config info
 	c.eventBus.Publish(events.NewConfigPublishedEvent(
@@ -295,16 +271,16 @@ func (c *Component) processValidationFailedWork(work *validationFailedWorkItem) 
 // signal and then processes all pending updates at once. This ensures that when
 // multiple updates arrive for the same pod, only the latest one is applied.
 //
-// When a publish interval is configured, the worker uses leading-edge throttling
-// (same pattern as the publish worker) to limit how often status is written to
-// the CRD. Each UpdateStatus writes the full ~509 KB object to etcd, so throttling
-// significantly reduces etcd write pressure.
+// Throttling is delegated to statusThrottle (a *throttle.LeadingEdge): the
+// first flush after idle fires immediately; while inside the refractory
+// period, pending updates keep accumulating in statusWorkPending and the
+// worker flushes them when statusThrottle.FiredCh() signals.
 func (c *Component) statusWorker(ctx context.Context) {
 	for {
 		select {
 		case <-c.statusWorkTrigger:
 			c.handleStatusTrigger()
-		case <-c.statusThrottleTimerCh:
+		case <-c.statusThrottle.FiredCh():
 			c.processAllPendingStatusWork()
 		case <-ctx.Done():
 			// Flush any pending status updates before shutdown
@@ -316,35 +292,13 @@ func (c *Component) statusWorker(ctx context.Context) {
 
 // handleStatusTrigger decides whether to process status updates immediately or defer.
 func (c *Component) handleStatusTrigger() {
-	if c.publishInterval <= 0 {
+	if c.statusThrottle.Available() {
 		c.processAllPendingStatusWork()
 		return
 	}
-
-	c.throttleMu.Lock()
-	timeSinceLast := time.Since(c.lastStatusWriteTime)
-	if timeSinceLast >= c.publishInterval {
-		c.throttleMu.Unlock()
-		// Outside refractory — process immediately (leading-edge)
-		c.processAllPendingStatusWork()
-		return
-	}
-	remaining := c.publishInterval - timeSinceLast
-	c.throttleMu.Unlock()
-
-	// Inside refractory — ensure a timer is running to flush later.
-	// Pending updates accumulate in statusWorkPending (already coalesced per pod).
-	c.ensureStatusThrottleTimer(remaining)
-}
-
-// ensureStatusThrottleTimer starts a one-shot timer that signals the statusWorker.
-func (c *Component) ensureStatusThrottleTimer(remaining time.Duration) {
-	time.AfterFunc(remaining, func() {
-		select {
-		case c.statusThrottleTimerCh <- struct{}{}:
-		default:
-		}
-	})
+	// Inside refractory — wake up at the end. Pending updates already
+	// accumulate (and coalesce per pod) in statusWorkPending.
+	c.statusThrottle.ScheduleFlush()
 }
 
 // processAllPendingStatusWork drains the pending status work map and processes all items.
@@ -372,12 +326,8 @@ func (c *Component) processAllPendingStatusWork() {
 		c.processStatusWork(work)
 	}
 
-	// Record write time for throttle refractory
-	if c.publishInterval > 0 {
-		c.throttleMu.Lock()
-		c.lastStatusWriteTime = time.Now()
-		c.throttleMu.Unlock()
-	}
+	// Record write time for throttle refractory.
+	c.statusThrottle.MarkFired()
 }
 
 // processStatusWork performs the actual pod status update.

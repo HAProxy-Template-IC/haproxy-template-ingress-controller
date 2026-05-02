@@ -40,7 +40,7 @@ import (
 //     duplicate to etcd — undermining the throttle's whole purpose.
 
 // flushTestComponent constructs a Component with the minimum fields
-// flushPendingPublish needs for the early-return paths: throttleMu,
+// flushPendingPublish needs for the early-return paths: pendingMu,
 // pendingPublish, mu, lastPublishedChecksum, renderedConfigs, logger.
 // publisher and eventBus are intentionally nil — the tested paths
 // MUST NOT reach them.
@@ -54,9 +54,9 @@ func flushTestComponent() *Component {
 func TestFlushPendingPublish_NilPendingIsNoOp(t *testing.T) {
 	c := flushTestComponent()
 	// pendingPublish is the zero value (nil) — sanity assert.
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	require.Nil(t, c.pendingPublish, "baseline: pendingPublish must start nil")
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 
 	// Pre-seed an unrelated cache entry so we can verify the guard
 	// doesn't touch shared state on the no-op path.
@@ -98,9 +98,9 @@ func TestFlushPendingPublish_DedupHitSkipsAndDropsCache(t *testing.T) {
 		templateConfig: &v1alpha1.HAProxyTemplateConfig{},
 	}
 
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	c.pendingPublish = work
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 
 	// lastPublishedChecksum matches the work's checksum → dedup MUST
 	// fire and skip the publish.
@@ -117,9 +117,9 @@ func TestFlushPendingPublish_DedupHitSkipsAndDropsCache(t *testing.T) {
 			"identical duplicate to etcd")
 
 	// Pending must be drained regardless of outcome.
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	pending := c.pendingPublish
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 	assert.Nil(t, pending,
 		"flushPendingPublish MUST always drain the buffer — leaving the "+
 			"pending work in place would let the next timer tick re-process "+
