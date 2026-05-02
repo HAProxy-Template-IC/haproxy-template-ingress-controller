@@ -17,6 +17,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 )
 
 // handleStatusTrigger is the throttle-decision point for pod status
@@ -51,13 +52,21 @@ import (
 // the tested branches reach processAllPendingStatusWork at most,
 // which has its own empty-map fast path that exits before the
 // publisher is needed.
-func statusTriggerComponent(interval, sinceLastWrite time.Duration) *Component {
+// statusTriggerComponent constructs a Component plus a throttle whose gate
+// state matches the desired branch. Callers pass either:
+//   - interval=0 (throttle disabled — gate always open)
+//   - markFired=false (fresh throttle — gate open, "outside refractory")
+//   - markFired=true  (throttle fired just now — gate closed, "inside refractory")
+func statusTriggerComponent(interval time.Duration, markFired bool) *Component {
+	t := throttle.New(interval)
+	if markFired {
+		t.MarkFired()
+	}
 	return &Component{
-		logger:                testutil.NewTestLogger(),
-		statusWorkPending:     make(map[string]*statusWorkItem),
-		publishInterval:       interval,
-		lastStatusWriteTime:   time.Now().Add(-sinceLastWrite),
-		statusThrottleTimerCh: make(chan struct{}, 1),
+		logger:            testutil.NewTestLogger(),
+		statusWorkPending: make(map[string]*statusWorkItem),
+		publishInterval:   interval,
+		statusThrottle:    t,
 	}
 }
 
@@ -66,7 +75,7 @@ func TestHandleStatusTrigger_NoThrottleProcessesImmediately(t *testing.T) {
 	// MUST call processAllPendingStatusWork directly. With an empty
 	// pending map, processAllPendingStatusWork has its own fast
 	// path that exits cleanly — no panic.
-	c := statusTriggerComponent(0, 0)
+	c := statusTriggerComponent(0, false)
 
 	require.NotPanics(t, func() { c.handleStatusTrigger() },
 		"publishInterval=0 must take the immediate-process branch — "+
@@ -76,12 +85,12 @@ func TestHandleStatusTrigger_NoThrottleProcessesImmediately(t *testing.T) {
 }
 
 func TestHandleStatusTrigger_OutsideRefractoryProcessesImmediately(t *testing.T) {
-	// publishInterval=10s, lastStatusWriteTime=15s ago → fully
+	// publishInterval=10s, fresh throttle (never fired) → fully
 	// outside the refractory window. Leading-edge throttle MUST
 	// fire immediately. Empty pending map again so
 	// processAllPendingStatusWork's fast path keeps the test
 	// self-contained.
-	c := statusTriggerComponent(10*time.Second, 15*time.Second)
+	c := statusTriggerComponent(10*time.Second, false)
 
 	require.NotPanics(t, func() { c.handleStatusTrigger() },
 		"outside refractory MUST process immediately (leading-edge throttle) "+
@@ -91,14 +100,14 @@ func TestHandleStatusTrigger_OutsideRefractoryProcessesImmediately(t *testing.T)
 }
 
 func TestHandleStatusTrigger_InsideRefractoryDefersToTimer(t *testing.T) {
-	// publishInterval=10s, lastStatusWriteTime=1s ago → inside the
+	// publishInterval=10s, throttle marked fired just now → inside the
 	// refractory. Pre-seed pending work with a sentinel: if a
 	// regression caused processAllPendingStatusWork to be called,
 	// the sentinel would be drained from the map (and the function
 	// would crash trying to call processStatusWork on a nil
 	// publisher). The defer-to-timer contract requires the sentinel
 	// to remain in the map.
-	c := statusTriggerComponent(10*time.Second, 1*time.Second)
+	c := statusTriggerComponent(10*time.Second, true)
 	const podKey = "haptic/rt-cfg/haproxy-pod-1"
 	sentinel := &statusWorkItem{
 		event: events.NewConfigAppliedToPodEvent(

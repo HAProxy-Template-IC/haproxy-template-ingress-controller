@@ -20,7 +20,6 @@
 package validator
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -30,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
@@ -60,10 +59,12 @@ const (
 // The component caches the last validation result to support:
 // - State replay during leadership transitions (when new leader-only components start subscribing).
 // - Skipping re-validation of identical failed configs (reduces log spam).
+//
+// Coalescing of TemplateRenderedEvent is handled by component.Base via the
+// CoalescingHandler interface — intermediate coalescible renders that arrive
+// while a validation is in flight are skipped; only the latest is re-dispatched.
 type HAProxyValidatorComponent struct {
-	eventBus  *busevents.EventBus
-	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger    *slog.Logger
+	*component.Base
 
 	// State replay for leadership transitions (only successful validations)
 	validationReplayer *leadership.StateReplayer[*events.ValidationCompletedEvent]
@@ -94,20 +95,21 @@ func NewHAProxyValidator(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 ) *HAProxyValidatorComponent {
-	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	// Use typed subscription to only receive events we handle (reduces buffer pressure)
-	eventChan := eventBus.SubscribeTypes(HAProxyValidatorComponentName, HAProxyValidatorEventBufferSize,
-		events.EventTypeTemplateRendered,
-		events.EventTypeBecameLeader,
-	)
-
-	return &HAProxyValidatorComponent{
-		eventBus:           eventBus,
-		eventChan:          eventChan,
-		logger:             logger,
+	v := &HAProxyValidatorComponent{
 		validationReplayer: leadership.NewStateReplayer[*events.ValidationCompletedEvent](eventBus),
 	}
+	v.Base = component.New(&component.Config{
+		EventBus:   eventBus,
+		Logger:     logger,
+		Name:       HAProxyValidatorComponentName,
+		BufferSize: HAProxyValidatorEventBufferSize,
+		Handler:    v,
+		EventTypes: []string{
+			events.EventTypeTemplateRendered,
+			events.EventTypeBecameLeader,
+		},
+	})
+	return v
 }
 
 // Name returns the unique identifier for this component.
@@ -116,81 +118,23 @@ func (v *HAProxyValidatorComponent) Name() string {
 	return HAProxyValidatorComponentName
 }
 
-// Start begins the validator's event loop.
-//
-// This method blocks until the context is cancelled or an error occurs.
-// The component is already subscribed to the EventBus (subscription happens in NewHAProxyValidator()),
-// so this method only processes events:
-//   - TemplateRenderedEvent: Starts HAProxy configuration validation
-//   - BecameLeaderEvent: Replays last validation state for new leader-only components
-//
-// The component runs until the context is cancelled, at which point it
-// performs cleanup and returns.
-//
-// Parameters:
-//   - ctx: Context for cancellation and lifecycle management
-//
-// Returns:
-//   - nil when context is cancelled (graceful shutdown)
-//   - Error only in exceptional circumstances
-func (v *HAProxyValidatorComponent) Start(ctx context.Context) error {
-	v.logger.Debug("HAProxy validator starting")
-
-	for {
-		select {
-		case event := <-v.eventChan:
-			v.handleEvent(event)
-
-		case <-ctx.Done():
-			v.logger.Info("HAProxy Validator shutting down", "reason", ctx.Err())
-			return nil
-		}
-	}
-}
-
-// handleEvent processes events from the EventBus.
-func (v *HAProxyValidatorComponent) handleEvent(event busevents.Event) {
+// HandleEvent dispatches one event to the appropriate handler. Coalescing of
+// intermediate TemplateRenderedEvents is performed by component.Base after
+// each call returns, via the CoalescingHandler interface below.
+func (v *HAProxyValidatorComponent) HandleEvent(event busevents.Event) {
 	switch ev := event.(type) {
 	case *events.TemplateRenderedEvent:
-		v.handleTemplateRendered(ev)
-
+		v.performValidation(ev)
 	case *events.BecameLeaderEvent:
 		v.handleBecameLeader(ev)
 	}
 }
 
-// handleTemplateRendered implements "latest wins" coalescing for template rendered events.
-//
-// When multiple coalescible TemplateRenderedEvents arrive while validation is in progress,
-// intermediate events are superseded - only the latest pending event is processed.
-// This prevents queue backlog where validation can't keep up with high-frequency renders.
-//
-// Non-coalescible events (e.g., from drift_prevention) are always processed and never skipped.
-//
-// Uses the centralized coalesce.DrainLatest utility for consistent behavior across components.
-func (v *HAProxyValidatorComponent) handleTemplateRendered(event *events.TemplateRenderedEvent) {
-	// Process current event
-	v.performValidation(event)
-
-	// After validation completes, drain the event channel for any pending coalescible events.
-	// Since the event loop is single-threaded, events buffer in eventChan while performValidation executes.
-	// We process only the latest coalescible event, handling other event types normally.
-	for {
-		latest, supersededCount := coalesce.DrainLatest[*events.TemplateRenderedEvent](
-			v.eventChan,
-			v.handleEvent, // Handle non-coalescible and other event types
-		)
-		if latest == nil {
-			return
-		}
-
-		if supersededCount > 0 {
-			v.logger.Debug("Coalesced template rendered events",
-				"superseded_count", supersededCount,
-				"processing", latest.CorrelationID())
-		}
-		v.performValidation(latest)
-	}
+// CoalescesOn declares the event type for which intermediate coalescible
+// events should be drained after each dispatch. component.Base reads this
+// after every HandleEvent call.
+func (v *HAProxyValidatorComponent) CoalescesOn() string {
+	return events.EventTypeTemplateRendered
 }
 
 // performValidation validates the rendered HAProxy configuration.
@@ -214,12 +158,12 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		cachedErrors := v.lastValidationErrors
 		v.mu.RUnlock()
 
-		v.logger.Debug("Skipping validation for unchanged failed config",
+		v.Logger().Debug("Skipping validation for unchanged failed config",
 			"config_hash", configHash[:16],
 			"correlation_id", correlationID)
 
 		// Publish validation started event (for consistency)
-		v.eventBus.Publish(events.NewValidationStartedEvent(
+		v.EventBus().Publish(events.NewValidationStartedEvent(
 			events.PropagateCorrelation(event),
 		))
 
@@ -236,7 +180,7 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 	v.mu.RUnlock()
 
 	// Publish validation started event with correlation
-	v.eventBus.Publish(events.NewValidationStartedEvent(
+	v.EventBus().Publish(events.NewValidationStartedEvent(
 		events.PropagateCorrelation(event),
 	))
 
@@ -281,7 +225,7 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 		// Keep full error in logs for debugging
 		simplified := dataplane.SimplifyValidationError(err)
 
-		v.logger.Error("HAProxy configuration validation failed",
+		v.Logger().Error("HAProxy configuration validation failed",
 			"error", simplified,
 			"correlation_id", correlationID)
 
@@ -320,7 +264,7 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 	// Cache successful validation for leadership transition replay
 	v.validationReplayer.Cache(completedEvent)
 
-	v.eventBus.Publish(completedEvent)
+	v.EventBus().Publish(completedEvent)
 }
 
 // handleBecameLeader handles BecameLeaderEvent by re-publishing the last validation result.
@@ -332,12 +276,12 @@ func (v *HAProxyValidatorComponent) performValidation(event *events.TemplateRend
 // that were published before they started subscribing.
 func (v *HAProxyValidatorComponent) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	if !v.validationReplayer.HasState() {
-		v.logger.Debug("Became leader but no validation result available yet, skipping state replay")
+		v.Logger().Debug("Became leader but no validation result available yet, skipping state replay")
 		return
 	}
 
 	// StateReplayer only caches successful validations (Cache is called only on success)
-	v.logger.Debug("Became leader, re-publishing last validation result (success) for DeploymentScheduler")
+	v.Logger().Debug("Became leader, re-publishing last validation result (success) for DeploymentScheduler")
 	v.validationReplayer.Replay()
 }
 
@@ -356,7 +300,7 @@ func (v *HAProxyValidatorComponent) publishValidationFailure(errs []string, dura
 	}
 	v.mu.Unlock()
 
-	v.eventBus.Publish(events.NewValidationFailedEvent(
+	v.EventBus().Publish(events.NewValidationFailedEvent(
 		errs,
 		durationMs,
 		triggerReason,
@@ -380,7 +324,7 @@ func (v *HAProxyValidatorComponent) cleanupValidationTempDir(tempDir string) {
 	}
 
 	if err := os.RemoveAll(tempDir); err != nil {
-		v.logger.Warn("Failed to clean up validation temp directory",
+		v.Logger().Warn("Failed to clean up validation temp directory",
 			"path", tempDir,
 			"error", err)
 	}

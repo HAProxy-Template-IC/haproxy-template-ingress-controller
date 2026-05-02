@@ -789,3 +789,17 @@ For detailed development context on specific packages, see:
 - `pkg/templating/CLAUDE.md` - Template engine
 - `pkg/core/CLAUDE.md` - Core functionality
 - `cmd/controller/CLAUDE.md` - Entry point and startup
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitLab issues on `gitlab.com:haproxy-haptic/haptic`. Use the `glab` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles use their default label strings (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: one `CONTEXT.md` and `docs/adr/` at the repo root, created lazily by `/grill-with-docs`. See `docs/agents/domain.md`.

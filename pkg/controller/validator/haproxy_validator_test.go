@@ -23,13 +23,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
 )
 
 func TestRendererToValidator_SuccessFlow(t *testing.T) {
@@ -58,54 +56,30 @@ backend servers
 		},
 	}
 
-	storeMap := map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-	}
-
-	// Create mock haproxy-pods store
-	haproxyPodStore := &storetest.MockStore{}
-
-	// Create renderer
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
-	require.NoError(t, err)
-
-	// Create validator
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
-	// Subscribe to events
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx := t.Context()
-
-	// Start components
-	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
-
 	time.Sleep(50 * time.Millisecond)
 
-	// Trigger reconciliation
-	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
+	bus.Publish(events.NewTemplateRenderedEvent(
+		cfg.HAProxyConfig.Template,
+		&dataplane.AuxiliaryFiles{},
+		nil, 0, 0, "test", "", true,
+	))
 
-	// Wait for validation completed event
-	// Use longer timeout for race detector (which makes execution 2-10x slower)
 	timeout := time.After(30 * time.Second)
 	var validationCompleted *events.ValidationCompletedEvent
-	sawRendered := false
 
-	for {
+	for validationCompleted == nil {
 		select {
 		case event := <-eventChan:
 			switch e := event.(type) {
-			case *events.TemplateRenderedEvent:
-				sawRendered = true
-				assert.Contains(t, e.HAProxyConfig, "global")
-				assert.Contains(t, e.HAProxyConfig, "frontend http-in")
 			case *events.ValidationCompletedEvent:
 				validationCompleted = e
-				goto Done
 			case *events.ValidationFailedEvent:
 				t.Fatalf("Validation failed unexpectedly: %v", e.Errors)
 			}
@@ -114,8 +88,6 @@ backend servers
 		}
 	}
 
-Done:
-	assert.True(t, sawRendered, "Should have received TemplateRenderedEvent")
 	require.NotNil(t, validationCompleted)
 	assert.GreaterOrEqual(t, validationCompleted.DurationMs, int64(0))
 }
@@ -147,34 +119,21 @@ backend servers
 		},
 	}
 
-	storeMap := map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-	}
-
-	// Create mock haproxy-pods store
-	haproxyPodStore := &storetest.MockStore{}
-
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
-	require.NoError(t, err)
-
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	ctx := t.Context()
-
-	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
-
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
+	bus.Publish(events.NewTemplateRenderedEvent(
+		cfg.HAProxyConfig.Template,
+		&dataplane.AuxiliaryFiles{},
+		nil, 0, 0, "test", "", true,
+	))
 
-	// Wait for validation failed event
-	// Use longer timeout for race detector (which makes execution 2-10x slower)
 	timeout := time.After(30 * time.Second)
 	var validationFailed *events.ValidationFailedEvent
 
@@ -223,24 +182,7 @@ backend servers
     server s1 127.0.0.1:8080
 `,
 		},
-		Maps: map[string]config.MapFile{
-			"maps/hosts.map": {
-				Template: "example.com backend1\ntest.com backend2\n",
-			},
-		},
 	}
-
-	storeMap := map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-	}
-
-	// Create mock haproxy-pods store
-	haproxyPodStore := &storetest.MockStore{}
-
-	// Use HAProxy 3.2+ version to enable CRT-list support in tests
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
-	require.NoError(t, err)
 
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
@@ -248,26 +190,30 @@ backend servers
 	bus.Start()
 
 	ctx := t.Context()
-
-	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
-
 	time.Sleep(50 * time.Millisecond)
 
-	bus.Publish(events.NewReconciliationTriggeredEvent("test", true))
+	auxFiles := &dataplane.AuxiliaryFiles{
+		MapFiles: []auxiliaryfiles.MapFile{{
+			Path:    "maps/hosts.map",
+			Content: "example.com backend1\ntest.com backend2\n",
+		}},
+	}
+	bus.Publish(events.NewTemplateRenderedEvent(
+		cfg.HAProxyConfig.Template,
+		auxFiles,
+		nil, 1, 0, "test", "", true,
+	))
 
-	// Wait for validation completed event
-	// Use longer timeout for race detector (which makes execution 2-10x slower)
 	timeout := time.After(10 * time.Second)
 	var validationCompleted *events.ValidationCompletedEvent
 
-	for {
+	for validationCompleted == nil {
 		select {
 		case event := <-eventChan:
 			switch e := event.(type) {
 			case *events.ValidationCompletedEvent:
 				validationCompleted = e
-				goto Done
 			case *events.ValidationFailedEvent:
 				t.Fatalf("Validation failed unexpectedly: %v", e.Errors)
 			}
@@ -276,81 +222,8 @@ backend servers
 		}
 	}
 
-Done:
 	require.NotNil(t, validationCompleted)
 	assert.GreaterOrEqual(t, validationCompleted.DurationMs, int64(0))
-}
-
-// waitForValidation waits for a ValidationCompletedEvent on the channel.
-// Returns true if received within timeout, false otherwise.
-func waitForValidation(eventChan <-chan busevents.Event, timeout time.Duration) bool {
-	timer := time.After(timeout)
-	for {
-		select {
-		case event := <-eventChan:
-			if _, ok := event.(*events.ValidationCompletedEvent); ok {
-				return true
-			}
-		case <-timer:
-			return false
-		}
-	}
-}
-
-func TestRendererToValidator_MultipleReconciliations(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := testutil.NewTestLogger()
-
-	cfg := &config.Config{
-		HAProxyConfig: config.HAProxyConfig{
-			Template: `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5000ms
-    timeout client 50000ms
-    timeout server 50000ms
-
-frontend http-in
-    bind :80
-    default_backend servers
-
-backend servers
-    server s1 127.0.0.1:8080
-`,
-		},
-	}
-
-	storeMap := map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-	}
-
-	haproxyPodStore := &storetest.MockStore{}
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, storeMap, haproxyPodStore, nil, capabilities, logger)
-	require.NoError(t, err)
-
-	validatorComponent := NewHAProxyValidator(bus, logger)
-
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	ctx := t.Context()
-
-	go rendererComponent.Start(ctx)
-	go validatorComponent.Start(ctx)
-
-	time.Sleep(50 * time.Millisecond)
-
-	// First reconciliation should produce validation
-	bus.Publish(events.NewReconciliationTriggeredEvent("first", true))
-	assert.True(t, waitForValidation(eventChan, 10*time.Second), "First reconciliation should produce validation")
-
-	// Second reconciliation with identical content should be deduplicated (no validation event).
-	// The renderer skips emitting TemplateRenderedEvent when content checksum matches.
-	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
-	assert.False(t, waitForValidation(eventChan, 200*time.Millisecond), "Identical content should be deduplicated")
 }
 
 func TestValidator_ContextCancellation(t *testing.T) {
@@ -538,27 +411,21 @@ backend servers
 		},
 	}
 
-	storeMap := map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-	}
-
-	capabilities := dataplane.CapabilitiesFromVersion(&dataplane.Version{Major: 3, Minor: 2, Full: "3.2.0"})
-	rendererComponent, err := renderer.New(bus, cfg, storeMap, &storetest.MockStore{}, nil, capabilities, logger)
-	require.NoError(t, err)
-
 	validatorComponent := NewHAProxyValidator(bus, logger)
 
 	eventChan := bus.Subscribe("test-sub", 100)
 	bus.Start()
 
 	ctx := t.Context()
-
-	go rendererComponent.Start(ctx)
 	go validatorComponent.Start(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	// Trigger a reconciliation that will fail validation
-	bus.Publish(events.NewReconciliationTriggeredEvent("initial", true))
+	// Publish an invalid rendered config so validator records a failure.
+	bus.Publish(events.NewTemplateRenderedEvent(
+		cfg.HAProxyConfig.Template,
+		&dataplane.AuxiliaryFiles{},
+		nil, 0, 0, "initial", "", true,
+	))
 
 	// Wait for validation failure
 	timeout := time.After(10 * time.Second)

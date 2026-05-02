@@ -47,6 +47,21 @@ type PanicHandler interface {
 	HandlePanic(recovered any, event busevents.Event)
 }
 
+// CoalescingHandler is an optional interface implemented by handlers that
+// want intermediate coalescible events of a given type to be skipped after
+// each dispatch. After Base dispatches an event, if the handler is a
+// CoalescingHandler returning a non-empty event-type string, Base drains
+// the channel for the latest pending event of that type that is also
+// coalescible (i.e. event.(busevents.CoalescibleEvent).Coalescible() == true)
+// and re-dispatches it. Non-matching events and non-coalescible events of
+// the same type pass through dispatch normally.
+//
+// The empty string disables coalescing — handlers that conditionally need
+// it can return "" to opt out at runtime.
+type CoalescingHandler interface {
+	CoalescesOn() string
+}
+
 // Base is a reusable event-loop implementation. It subscribes on
 // construction (so components are guaranteed to receive events published
 // after EventBus.Start()), wraps each dispatch in a recover, and supports
@@ -117,6 +132,69 @@ func (b *Base) Start(ctx context.Context) error {
 			return nil
 		case event := <-b.eventChan:
 			b.dispatch(event)
+			b.drainCoalesced()
+		}
+	}
+}
+
+// drainCoalesced is a no-op unless the handler implements CoalescingHandler
+// and returns a non-empty event type. When enabled, it pulls events off the
+// channel non-blockingly: events of the declared type that are also
+// coalescible supersede earlier ones; non-matching events and
+// non-coalescible events of the same type pass through dispatch normally.
+// The latest superseding event is dispatched once the channel is empty,
+// then the loop repeats so a newer coalescible event arriving during the
+// re-dispatch is also skipped.
+func (b *Base) drainCoalesced() {
+	ch, ok := b.handler.(CoalescingHandler)
+	if !ok {
+		return
+	}
+	eventType := ch.CoalescesOn()
+	if eventType == "" {
+		return
+	}
+	for {
+		latest, superseded := drainLatestByType(b.eventChan, eventType, b.dispatch)
+		if latest == nil {
+			return
+		}
+		if superseded > 0 {
+			b.logger.Debug(b.name+" coalesced events",
+				"event_type", eventType,
+				"superseded_count", superseded)
+		}
+		b.dispatch(latest)
+	}
+}
+
+// drainLatestByType performs a non-blocking drain of eventChan, returning
+// the latest event whose EventType() matches eventType *and* whose
+// CoalescibleEvent.Coalescible() returns true. All other events are passed
+// to dispatch as they arrive.
+func drainLatestByType(
+	eventChan <-chan busevents.Event,
+	eventType string,
+	dispatch func(busevents.Event),
+) (latest busevents.Event, supersededCount int) {
+	for {
+		select {
+		case event := <-eventChan:
+			if event.EventType() != eventType {
+				dispatch(event)
+				continue
+			}
+			coalescible, ok := event.(busevents.CoalescibleEvent)
+			if !ok || !coalescible.Coalescible() {
+				dispatch(event)
+				continue
+			}
+			if latest != nil {
+				supersededCount++
+			}
+			latest = event
+		default:
+			return latest, supersededCount
 		}
 	}
 }

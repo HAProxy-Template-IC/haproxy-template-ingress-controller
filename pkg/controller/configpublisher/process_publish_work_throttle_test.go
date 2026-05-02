@@ -17,6 +17,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 )
 
 // processPublishWork is the throttle decision point sitting between
@@ -43,24 +44,31 @@ import (
 //     proportional to the throttle rate.
 //
 // The tests use a minimal Component constructed directly because
-// processPublishWork's throttle branch only touches throttleMu,
-// pendingPublish, lastPublishTime, publishInterval, mu,
-// renderedConfigs, lastPublishedChecksum, throttleTimerCh, and
-// logger. No publisher / event bus needed for the buffering
-// branches (they don't reach executePublish).
+// processPublishWork's throttle branch only touches pendingMu,
+// pendingPublish, publishInterval, publishThrottle, mu,
+// renderedConfigs, lastPublishedChecksum, and logger. No publisher /
+// event bus needed for the buffering branches (they don't reach
+// executePublish).
 
 // throttleComponent constructs a Component pre-wired for throttle
 // branch testing. The publisher is intentionally nil — branches 1
 // and 2 must NOT reach it; if a regression invokes the publisher
 // the test crashes with a nil-pointer deref, which is the desired
 // loud failure mode.
-func throttleComponent(publishInterval, sinceLastPublish time.Duration) *Component {
+//
+// markFired toggles whether the throttle's gate is closed (true =
+// "inside refractory") or open (false = "outside refractory" /
+// disabled when interval == 0).
+func throttleComponent(publishInterval time.Duration, markFired bool) *Component {
+	t := throttle.New(publishInterval)
+	if markFired {
+		t.MarkFired()
+	}
 	return &Component{
 		logger:                testutil.NewTestLogger(),
 		renderedConfigs:       make(map[string]*renderedConfigEntry),
 		publishInterval:       publishInterval,
-		lastPublishTime:       time.Now().Add(-sinceLastPublish),
-		throttleTimerCh:       make(chan struct{}, 1),
+		publishThrottle:       t,
 		lastPublishedChecksum: "",
 	}
 }
@@ -78,19 +86,19 @@ func throttleWork(c *Component, correlationID, checksum string) *publishWorkItem
 }
 
 func TestProcessPublishWork_BuffersWhenWithinRefractoryAndNoPendingPublish(t *testing.T) {
-	// publishInterval=10s, lastPublishTime=1s ago → inside refractory.
+	// publishInterval=10s, throttle marked fired just now → inside refractory.
 	// No previous pendingPublish. The work item MUST be buffered, the
 	// publisher MUST NOT be invoked, and the renderedConfigs cache
 	// for the work's correlation ID MUST remain intact (the buffered
 	// publish will need it when the throttle timer fires).
-	c := throttleComponent(10*time.Second, 1*time.Second)
+	c := throttleComponent(10*time.Second, true)
 	work := throttleWork(c, "corr-buffered", "fresh-checksum")
 
 	c.processPublishWork(work)
 
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	pending := c.pendingPublish
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 	require.NotNil(t, pending,
 		"work inside refractory must be buffered as pendingPublish — "+
 			"a regression that fell through to executePublish would "+
@@ -122,7 +130,7 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndDiscardsOldPending(t *
 	//   - Retain the old item's cache → renderedConfigs leaks entries
 	//     proportional to the throttle rate (every superseded pending
 	//     leaves a stale entry behind).
-	c := throttleComponent(10*time.Second, 1*time.Second)
+	c := throttleComponent(10*time.Second, true)
 	oldWork := throttleWork(c, "corr-old-pending", "old-checksum")
 	newWork := throttleWork(c, "corr-new-pending", "new-checksum")
 
@@ -130,18 +138,18 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndDiscardsOldPending(t *
 	// processPublishWork call that landed during the same refractory
 	// window. We set the buffer state directly so this test exercises
 	// only the supersede branch, not the path that put oldWork there.
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	c.pendingPublish = oldWork
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 
 	require.Contains(t, c.renderedConfigs, "corr-old-pending",
 		"sanity: old work's cache must be present before supersede")
 
 	c.processPublishWork(newWork)
 
-	c.throttleMu.Lock()
+	c.pendingMu.Lock()
 	pending := c.pendingPublish
-	c.throttleMu.Unlock()
+	c.pendingMu.Unlock()
 
 	require.NotNil(t, pending)
 	assert.Same(t, newWork, pending,

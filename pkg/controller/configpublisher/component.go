@@ -25,6 +25,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
@@ -136,21 +137,24 @@ type Component struct {
 	// Protected by mu.
 	lastPublishedChecksum string
 
-	// Publish throttle: leading-edge with refractory period.
-	// Decouples CRD publish frequency from reconciliation frequency to reduce etcd
-	// write pressure. Deployments to HAProxy pods (event-driven) are unaffected.
+	// publishInterval configures the leading-edge refractory period for both
+	// publish and status throttles. Decouples CRD writes from reconciliation
+	// frequency to reduce etcd write pressure; deployments to HAProxy pods
+	// (event-driven) are unaffected.
 	publishInterval time.Duration
-	lastPublishTime time.Time        // Protected by throttleMu
-	pendingPublish  *publishWorkItem // Buffered work during refractory, protected by throttleMu
-	throttleMu      sync.Mutex
-	throttleTimerCh chan struct{} // Signals throttle timer expiry to publishWorker
 
-	// Status write throttle: same leading-edge refractory as spec publishes.
-	// Each UpdateStatus writes the full ~509 KB object to etcd even though only
-	// the status subresource changed. Throttling to the same interval as spec
-	// publishes dramatically reduces etcd write pressure from deployment status updates.
-	lastStatusWriteTime   time.Time     // Protected by throttleMu
-	statusThrottleTimerCh chan struct{} // Signals status throttle timer expiry
+	// publishThrottle gates spec writes; statusThrottle gates status
+	// subresource writes. Each UpdateStatus writes the full ~509 KB object to
+	// etcd even though only the status changed, so throttling them at the
+	// same cadence as spec publishes is essential for etcd write pressure.
+	publishThrottle *throttle.LeadingEdge
+	statusThrottle  *throttle.LeadingEdge
+
+	// pendingPublish buffers the latest publish work item that arrived while
+	// inside the publish-throttle refractory window. The publish worker
+	// flushes it on publishThrottle.FiredCh(). Protected by pendingMu.
+	pendingPublish *publishWorkItem
+	pendingMu      sync.Mutex
 }
 
 // Option configures the Component.
@@ -183,22 +187,25 @@ func New(
 	// (after leadership is acquired). All-replica components replay their state
 	// on BecameLeaderEvent to ensure leader-only components receive current state.
 	c := &Component{
-		ReadySignal:           component.NewReadySignal(),
-		publisher:             publisher,
-		eventBus:              eventBus,
-		logger:                logger.With("component", ComponentName),
-		renderedConfigs:       make(map[string]*renderedConfigEntry),
-		publishWork:           make(chan *publishWorkItem, publishWorkChannelSize),
-		validationFailedWork:  make(chan *validationFailedWorkItem, publishWorkChannelSize),
-		statusWorkPending:     make(map[string]*statusWorkItem),
-		statusWorkTrigger:     make(chan struct{}, statusWorkTriggerSize),
-		throttleTimerCh:       make(chan struct{}, 1),
-		statusThrottleTimerCh: make(chan struct{}, 1),
+		ReadySignal:          component.NewReadySignal(),
+		publisher:            publisher,
+		eventBus:             eventBus,
+		logger:               logger.With("component", ComponentName),
+		renderedConfigs:      make(map[string]*renderedConfigEntry),
+		publishWork:          make(chan *publishWorkItem, publishWorkChannelSize),
+		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
+		statusWorkPending:    make(map[string]*statusWorkItem),
+		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
 	}
 
 	for _, opt := range opts {
 		opt(c)
 	}
+
+	// Throttles are constructed after options so publishInterval is set.
+	// A zero interval disables them (Available() always returns true).
+	c.publishThrottle = throttle.New(c.publishInterval)
+	c.statusThrottle = throttle.New(c.publishInterval)
 
 	return c
 }
