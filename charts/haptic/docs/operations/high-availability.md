@@ -63,15 +63,17 @@ podDisruptionBudget:
   minAvailable: 2
 
 # Distribute across availability zones
-affinity:
-  podAntiAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        podAffinityTerm:
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: haptic
-          topologyKey: topology.kubernetes.io/zone
+controller:
+  podSpec:
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: haptic
+              topologyKey: topology.kubernetes.io/zone
 ```
 
 ## Single Replica (Development)

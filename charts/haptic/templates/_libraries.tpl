@@ -157,28 +157,18 @@ Deep merge template libraries.
   {{- end }}
 {{- end }}
 
-{{- /* Merge user-provided config from values.yaml (highest priority) */ -}}
+{{- /* Merge user-provided config from values.yaml (highest priority).
+       Only the keys with library-overlapping shape are forwarded; other
+       controller.config.* fields (routing, dataplane, …) are consumed
+       directly by other templates. */ -}}
 {{- $userConfig := dict }}
-{{- if $context.Values.controller.config.templateSnippets }}
-  {{- $_ := set $userConfig "templateSnippets" $context.Values.controller.config.templateSnippets }}
+{{- $userConfigKeys := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
+{{- range $key := $userConfigKeys }}
+  {{- $value := index $context.Values.controller.config $key }}
+  {{- if $value }}
+    {{- $_ := set $userConfig $key $value }}
+  {{- end }}
 {{- end }}
-{{- if $context.Values.controller.config.maps }}
-  {{- $_ := set $userConfig "maps" $context.Values.controller.config.maps }}
-{{- end }}
-{{- if $context.Values.controller.config.files }}
-  {{- $_ := set $userConfig "files" $context.Values.controller.config.files }}
-{{- end }}
-{{- if $context.Values.controller.config.sslCertificates }}
-  {{- $_ := set $userConfig "sslCertificates" $context.Values.controller.config.sslCertificates }}
-{{- end }}
-{{- if $context.Values.controller.config.haproxyConfig }}
-  {{- $_ := set $userConfig "haproxyConfig" $context.Values.controller.config.haproxyConfig }}
-{{- end }}
-{{- if $context.Values.controller.config.validationTests }}
-  {{- $_ := set $userConfig "validationTests" $context.Values.controller.config.validationTests }}
-{{- end }}
-
-{{- /* Merge user config last so it overrides libraries */ -}}
 {{- $merged = mustMergeOverwrite $merged $userConfig }}
 
 {{- /* Return merged config as YAML */ -}}

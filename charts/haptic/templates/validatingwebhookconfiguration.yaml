@@ -31,7 +31,7 @@ metadata:
     {{- include "haptic.labels" . | nindent 4 }}
   {{- if .Values.webhook.certManager.enabled }}
   annotations:
-    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "haptic.fullname" . }}-webhook-cert
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "haptic.webhook.secretName" . }}
   {{- end }}
 webhooks:
 {{- range $rule := $webhookRules }}
@@ -49,17 +49,9 @@ webhooks:
         path: /validate
     rules:
       - apiGroups:
-          {{- if eq $rule.resource.apiVersion "v1" }}
-          - ""
-          {{- else }}
-          - {{ $rule.resource.apiVersion | regexFind "^[^/]+" }}
-          {{- end }}
+          - {{ include "haptic.apiGroupOf" $rule.resource.apiVersion }}
         apiVersions:
-          {{- if eq $rule.resource.apiVersion "v1" }}
-          - v1
-          {{- else }}
-          - {{ $rule.resource.apiVersion | regexFind "[^/]+$" }}
-          {{- end }}
+          - {{ include "haptic.apiVersionOf" $rule.resource.apiVersion }}
         resources:
           - {{ $rule.resource.resources }}
         operations:

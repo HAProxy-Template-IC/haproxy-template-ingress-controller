@@ -26,45 +26,36 @@ spec:
       {{- end }}
     {{- end }}
   {{- end }}
-  {{- /* Add default SSL certificate configuration to extraContext */ -}}
-  {{- if .Values.controller.defaultSSLCertificate.enabled }}
-    {{- if not $config.templatingSettings }}
-      {{- $_ := set $config "templatingSettings" dict }}
-    {{- end }}
-    {{- if not $config.templatingSettings.extraContext }}
-      {{- $_ := set $config.templatingSettings "extraContext" dict }}
-    {{- end }}
-    {{- $_ := set $config.templatingSettings.extraContext "default_ssl_cert_name" .Values.controller.defaultSSLCertificate.secretName }}
-    {{- $_ := set $config.templatingSettings.extraContext "default_ssl_cert_namespace" (.Values.controller.defaultSSLCertificate.namespace | default .Release.Namespace) }}
-  {{- end }}
-  {{- /* Add statusPatchesDisabled flag to extraContext when status patches are turned off */ -}}
-  {{- if not (eq (.Values.controller.statusPatches.enabled | toString) "true") }}
-    {{- if not $config.templatingSettings }}
-      {{- $_ := set $config "templatingSettings" dict }}
-    {{- end }}
-    {{- if not $config.templatingSettings.extraContext }}
-      {{- $_ := set $config.templatingSettings "extraContext" dict }}
-    {{- end }}
-    {{- $_ := set $config.templatingSettings.extraContext "statusPatchesDisabled" true }}
-  {{- end }}
-  {{- /* Add Gateway API controllerName to extraContext for status patches */ -}}
-  {{- if and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
-    {{- if not $config.templatingSettings }}
-      {{- $_ := set $config "templatingSettings" dict }}
-    {{- end }}
-    {{- if not $config.templatingSettings.extraContext }}
-      {{- $_ := set $config.templatingSettings "extraContext" dict }}
-    {{- end }}
-    {{- $_ := set $config.templatingSettings.extraContext "controllerName" .Values.gatewayClass.controllerName }}
-  {{- end }}
-  {{- /* Add haproxyVersion to extraContext for version-gated features (e.g., shm-stats-file) */ -}}
+  {{- /* Ensure templatingSettings.extraContext exists, then populate it.
+         extraContext is a parameter bag the Scriggo runtime exposes to
+         every template snippet. Each block below is a single concern. */ -}}
   {{- if not $config.templatingSettings }}
     {{- $_ := set $config "templatingSettings" dict }}
   {{- end }}
   {{- if not $config.templatingSettings.extraContext }}
     {{- $_ := set $config.templatingSettings "extraContext" dict }}
   {{- end }}
-  {{- $_ := set $config.templatingSettings.extraContext "haproxyVersion" .Values.haproxyVersion }}
+  {{- $extraContext := $config.templatingSettings.extraContext }}
+
+  {{- /* Default SSL certificate */ -}}
+  {{- if .Values.controller.defaultSSLCertificate.enabled }}
+    {{- $_ := set $extraContext "default_ssl_cert_name" .Values.controller.defaultSSLCertificate.secretName }}
+    {{- $_ := set $extraContext "default_ssl_cert_namespace" (.Values.controller.defaultSSLCertificate.namespace | default .Release.Namespace) }}
+  {{- end }}
+
+  {{- /* Disable status-patch snippets when the operator opts out */ -}}
+  {{- if not (eq (.Values.controller.statusPatches.enabled | toString) "true") }}
+    {{- $_ := set $extraContext "statusPatchesDisabled" true }}
+  {{- end }}
+
+  {{- /* Gateway API controllerName for status patches */ -}}
+  {{- if and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
+    {{- $_ := set $extraContext "controllerName" .Values.gatewayClass.controllerName }}
+  {{- end }}
+
+  {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
+  {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
+
   {{- /* Pass spoaHub wiring through extraContext when the sidecar is
          enabled AND at least one plugin contributes a SPOE message.
          The spoa-hub template library reads this to render spoe.conf
@@ -84,7 +75,7 @@ spec:
     {{- end }}
     {{- $messages = uniq $messages }}
     {{- if $messages }}
-      {{- $_ := set $config.templatingSettings.extraContext "spoaHub" (dict
+      {{- $_ := set $extraContext "spoaHub" (dict
           "enabled" true
           "socketPath" .Values.spoaHub.haproxy.socketPath
           "modeSpop" .Values.spoaHub.haproxy.modeSpop
@@ -97,22 +88,18 @@ spec:
       ) }}
     {{- end }}
   {{- end }}
-  {{- /* Add shmStats settings to extraContext when enabled */ -}}
+
+  {{- /* shm-stats-file settings (when enabled) */ -}}
   {{- if .Values.haproxy.shmStats.enabled }}
-    {{- $_ := set $config.templatingSettings.extraContext "shmStatsEnabled" true }}
-    {{- $_ := set $config.templatingSettings.extraContext "shmStatsPath" .Values.haproxy.shmStats.path }}
-    {{- $_ := set $config.templatingSettings.extraContext "shmStatsMaxObjects" (.Values.haproxy.shmStats.maxObjects | int) }}
+    {{- $_ := set $extraContext "shmStatsEnabled" true }}
+    {{- $_ := set $extraContext "shmStatsPath" .Values.haproxy.shmStats.path }}
+    {{- $_ := set $extraContext "shmStatsMaxObjects" (.Values.haproxy.shmStats.maxObjects | int) }}
   {{- end }}
-  {{- /* Add nbthread to extraContext for controller-rendered HAProxy config */ -}}
+
+  {{- /* nbthread for controller-rendered HAProxy config */ -}}
   {{- $nbthread := include "haptic.haproxy.nbthread" . }}
   {{- if $nbthread }}
-    {{- if not $config.templatingSettings }}
-      {{- $_ := set $config "templatingSettings" dict }}
-    {{- end }}
-    {{- if not $config.templatingSettings.extraContext }}
-      {{- $_ := set $config.templatingSettings "extraContext" dict }}
-    {{- end }}
-    {{- $_ := set $config.templatingSettings.extraContext "nbthread" ($nbthread | int) }}
+    {{- $_ := set $extraContext "nbthread" ($nbthread | int) }}
   {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}

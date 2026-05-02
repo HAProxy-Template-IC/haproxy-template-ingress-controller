@@ -6,7 +6,7 @@ Development context for working with the HAProxy Template Ingress Controller Hel
 
 ### Library Merging System
 
-The chart uses a library-based architecture where multiple YAML files are merged at Helm render time. The full sequence (read `templates/_helpers.tpl` `define "haptic.mergeLibraries"` for the canonical order):
+The chart uses a library-based architecture where multiple YAML files are merged at Helm render time. The full sequence (read `templates/_libraries.tpl` `define "haptic.mergeLibraries"` for the canonical order):
 
 ```
 Merge Order (lowest to highest priority):
@@ -26,9 +26,9 @@ Each layer skips itself if its `controller.templateLibraries.<name>.enabled` fla
 
 The frontend path-matching order is selected at base-load time by `controller.config.routing.regexMatchOrder` (`default` or `last`). When `last`, `haptic.mergeLibraries` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before merge so it never appears in the rendered HAProxyTemplateConfig.
 
-**Merge Logic** (`templates/_helpers.tpl`, `define "haptic.mergeLibraries"`):
+**Merge Logic** (`templates/_libraries.tpl`, `define "haptic.mergeLibraries"`):
 
-The loader iterates a fixed ordered list of library files. The merge order is a system property and lives in `_helpers.tpl`. Per-library loading rules — enable predicates and any chart-time mutations of the parsed YAML — live next to the resources they parameterize, in each library's top-level `_helm_load:` block. The block is stripped before merge so it never appears in the rendered HAProxyTemplateConfig.
+The loader iterates a fixed ordered list of library files. The merge order is a system property and lives in `_libraries.tpl`. Per-library loading rules — enable predicates and any chart-time mutations of the parsed YAML — live next to the resources they parameterize, in each library's top-level `_helm_load:` block. The block is stripped before merge so it never appears in the rendered HAProxyTemplateConfig.
 
 ```yaml
 {{- define "haptic.mergeLibraries" -}}
@@ -83,7 +83,7 @@ Real examples in the source:
 - `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
 - `libraries/spoa-hub.yaml` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
-Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `$libraryFiles` in `_helpers.tpl`'s `mergeLibraries`. The merge function does not need a new branch.
+Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `$libraryFiles` in `_libraries.tpl`'s `mergeLibraries`. The merge function does not need a new branch.
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
@@ -504,7 +504,7 @@ helm template charts/haptic \
   > /tmp/gateway-config.yaml
 ```
 
-This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check (`templates/_helpers.tpl:86`) to only merge when Gateway API CRDs are detected.
+This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check in its `_helm_load.enable` predicate (`libraries/gateway.yaml`) to only merge when Gateway API CRDs are detected.
 
 ### Testing Specific Libraries
 
@@ -1943,7 +1943,13 @@ charts/haptic/
 │   └── nginx-ingress.yaml      # nginx-ingress annotation compatibility (disabled by default)
 │
 ├── templates/                   # Helm templates
-│   ├── _helpers.tpl            # Template helper functions (library merging)
+│   ├── _libraries.tpl          # Library merging (haptic.mergeLibraries)
+│   ├── _naming.tpl             # Names, labels, apiGroup/apiVersion split
+│   ├── _image.tpl              # Image refs, binary paths, runAsUser
+│   ├── _credentials.tpl        # Dataplane API username/password
+│   ├── _resources.tpl          # CPU/mem math, nbthread, GOMAXPROCS, checksums
+│   ├── _spoa-hub.tpl           # SPOA-hub helpers (enabled/disabled, image, libName)
+│   ├── _pod-spec.tpl           # Shared pod-spec scheduling/runtime fields
 │   ├── haproxytemplateconfig.yaml  # Renders merged HAProxyTemplateConfig CRD
 │   ├── deployment.yaml         # Controller deployment
 │   ├── service.yaml            # Controller service

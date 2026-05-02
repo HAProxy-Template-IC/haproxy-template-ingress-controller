@@ -12,11 +12,7 @@ rules:
   # Watched resources from configuration and libraries
   {{- range $name, $resource := $allWatchedResources }}
   - apiGroups:
-      {{- if eq $resource.apiVersion "v1" }}
-      - ""
-      {{- else }}
-      - {{ $resource.apiVersion | regexFind "^[^/]+" }}
-      {{- end }}
+      - {{ include "haptic.apiGroupOf" $resource.apiVersion }}
     resources:
       - {{ $resource.resources }}
     verbs: ["get", "list", "watch"]
@@ -25,11 +21,7 @@ rules:
   {{- range $name, $resource := $allWatchedResources }}
   {{- if $resource.statusPatch }}
   - apiGroups:
-      {{- if eq $resource.apiVersion "v1" }}
-      - ""
-      {{- else }}
-      - {{ $resource.apiVersion | regexFind "^[^/]+" }}
-      {{- end }}
+      - {{ include "haptic.apiGroupOf" $resource.apiVersion }}
     resources:
       - {{ $resource.resources }}/status
     verbs: ["patch"]
