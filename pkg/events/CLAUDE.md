@@ -508,10 +508,10 @@ case DeploymentCompletedEvent:
 
 **Consumers (controller components) are different.** A `switch event.(type)`
 inside a component's event loop is the canonical shape — it's how
-`reconciler.handleEvent`, `deployer.Component.Start`, `renderer.Component.Start`,
-and the commentator's insight pipelines all dispatch their subscribed event
-types. Don't rewrite those into chains of `if _, ok := event.(X); ok` —
-that loses the exhaustiveness signal and reads worse.
+`reconciler.handleEvent`, `deployer.Component.Start`, and the commentator's
+insight pipelines all dispatch their subscribed event types. Don't rewrite
+those into chains of `if _, ok := event.(X); ok` — that loses the
+exhaustiveness signal and reads worse.
 
 ### 3. Document Event Contracts
 

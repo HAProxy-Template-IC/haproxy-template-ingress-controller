@@ -42,7 +42,6 @@ Components that run on all replicas and replay state on leadership transitions v
 |-----------|---------|----------------------|---------|
 | **ConfigChangeHandler** | Validation orchestrator + reinit signaller | `BecameLeaderEvent` → `ConfigValidatedEvent` | `configchange/handler.go` (`configReplayer`) |
 | **Discovery** | Discovers HAProxy pod endpoints | `BecameLeaderEvent` → `HAProxyPodsDiscoveredEvent` | `discovery/component.go` (`discoveredReplayer`) |
-| **HAProxyValidator** | Validates rendered configurations | `BecameLeaderEvent` → `ValidationCompletedEvent` | `validator/haproxy_validator.go` (`validationReplayer`) |
 
 The renderer is leader-only itself, so it has *no* `StateReplayer` — instead, the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (`pkg/controller/reconciler/reconciler.go`), so the new leader's pipeline produces a current `TemplateRenderedEvent` rather than replaying a stale one.
 
@@ -92,7 +91,7 @@ func (c *Component) handleBecameLeader(_ *events.BecameLeaderEvent) {
 }
 ```
 
-The hand-rolled `sync.RWMutex` + `lastState` + `hasState` triple is the older pre-StateReplayer pattern and shouldn't be used in new code; grep `leadership.NewStateReplayer[` for the canonical examples (`configchange/handler.go`, `discovery/component.go`, `validator/haproxy_validator.go`).
+The hand-rolled `sync.RWMutex` + `lastState` + `hasState` triple is the older pre-StateReplayer pattern and shouldn't be used in new code; grep `leadership.NewStateReplayer[` for the canonical examples (`configchange/handler.go`, `discovery/component.go`).
 
 ### Pattern 2: State Cleanup on LostLeadershipEvent
 

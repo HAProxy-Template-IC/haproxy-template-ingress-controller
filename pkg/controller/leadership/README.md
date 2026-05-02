@@ -54,12 +54,11 @@ Grep for `leadership.NewStateReplayer[` to find the canonical list. Currently:
 |----------------|-----------|----------------|
 | `*ConfigValidatedEvent` | `pkg/controller/configchange.ConfigChangeHandler` | `BecameLeaderEvent` consumed by leader-only configpublisher / deployer |
 | `*HAProxyPodsDiscoveredEvent` | `pkg/controller/discovery.Component` | same |
-| `*ValidationCompletedEvent` | `pkg/controller/validator.HAProxyValidatorComponent` | same |
 
-`pkg/controller/renderer` is itself leader-only — it has no replayer because
-the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` instead
-of replaying a stale render. See the comment on `Component` in
-`renderer/component.go` for the design note.
+Render and validation events are not replayed: the render-validate path is the
+synchronous `pkg/controller/pipeline.Pipeline`, driven by the leader-only
+`reconciler.Coordinator`. The Reconciler triggers a fresh reconciliation on
+`BecameLeaderEvent` instead of replaying a stale render or validation.
 
 See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full inventory of
 leader-only components and the cache/replay contract every one of them

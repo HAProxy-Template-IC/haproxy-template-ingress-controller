@@ -18,7 +18,7 @@ Work in this package when:
 
 ## Package Purpose
 
-Houses the **responder** side of the configuration scatter-gather validation pattern, plus the rendered-config validator used by the deployment pipeline. The orchestrator that fans `ConfigValidationRequest` out to these responders and aggregates the answers lives in `pkg/controller/configchange.ConfigChangeHandler`.
+Houses the **responder** side of the configuration scatter-gather validation pattern. The orchestrator that fans `ConfigValidationRequest` out to these responders and aggregates the answers lives in `pkg/controller/configchange.ConfigChangeHandler`. Rendered-config validation (syntax + OpenAPI schema + `haproxy -c`) is performed synchronously inside `pkg/controller/pipeline.Pipeline` via `pkg/dataplane`'s `ValidateConfiguration` — there is no event-adapter for it.
 
 ## Architecture
 
@@ -36,14 +36,11 @@ configchange.ConfigChangeHandler  (publishes outcome)
 ConfigValidatedEvent  or  ConfigInvalidEvent
 ```
 
-`HAProxyValidatorComponent` (also in this package) is unrelated to the config scatter-gather; it validates rendered HAProxy configurations during the render-validate pipeline using the three-phase strategy (client-native syntax + OpenAPI schema + `haproxy -c` semantic).
-
 ## Validators
 
 - **BasicValidator**: Structural validation (required fields, types)
 - **TemplateValidator**: Template syntax validation. Calls `helpers.ExtractTemplatesFromConfig`, which walks `spec.haproxyConfig`, `spec.templateSnippets`, `spec.maps`, `spec.files`, and `spec.sslCertificates` (there is no flat `spec.templates` field), then compiles them with `templating.NewScriggoWithDeclarations`.
 - **JSONPathValidator**: JSONPath expression validation (evaluates each `indexBy` expression)
-- **HAProxyValidatorComponent**: Three-phase validation of rendered HAProxy configs (pipeline-side)
 
 ## Resources
 

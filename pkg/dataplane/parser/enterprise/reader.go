@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"io"
 	"strings"
-
-	parser "github.com/haproxytech/client-native/v6/config-parser"
 )
 
 // Reader parses HAProxy configuration files line by line.
@@ -216,50 +214,4 @@ func splitFields(s string) []string {
 	}
 
 	return fields
-}
-
-// ExtractSection extracts all parsed data for a section.
-// This is used to convert parsed results into the structured config.
-func (r *Reader) ExtractSection(section Section, name string) map[string]any {
-	var parsers *parser.Parsers
-
-	switch section {
-	case SectionGlobal:
-		parsers = r.parsers.Global
-	case SectionDefaults:
-		parsers = r.parsers.Defaults
-	case SectionFrontend:
-		parsers = r.parsers.Frontend[name]
-	case SectionBackend:
-		parsers = r.parsers.Backend[name]
-	case SectionListen:
-		parsers = r.parsers.Listen[name]
-	case SectionWAFGlobal:
-		parsers = r.parsers.WAFGlobal
-	case SectionWAFProfile:
-		parsers = r.parsers.WAFProfile[name]
-	case SectionBotMgmtProfile:
-		parsers = r.parsers.BotMgmtProfile[name]
-	case SectionCaptcha:
-		parsers = r.parsers.Captcha[name]
-	case SectionUDPLB:
-		parsers = r.parsers.UDPLB[name]
-	case SectionDynamicUpdate:
-		parsers = r.parsers.DynamicUpdate[name]
-	default:
-		return nil
-	}
-
-	if parsers == nil {
-		return nil
-	}
-
-	result := make(map[string]any)
-	for parserName, p := range parsers.Parsers {
-		if data, err := p.Get(false); err == nil && data != nil {
-			result[parserName] = data
-		}
-	}
-
-	return result
 }

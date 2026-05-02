@@ -319,6 +319,15 @@ templateSnippets:
             {%- var userlistName = "auth_" + secretNs + "_" + secretName %}
             {%- if first_seen("haproxytech_userlist", userlistName) %}
               {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+              {#-
+                If the referenced Secret isn't in the controller's cache yet (e.g.
+                the informer hasn't observed a freshly-created Secret, or the
+                Secret was already cascade-deleted but the Ingress still lingers
+                in cache), the matching backend snippet skips the http_auth ACL
+                ref so the rendered config stays internally consistent. Skip
+                emitting the userlist for the same reason. The next render (after
+                the cache catches up) will produce the full auth setup.
+              -#}
               {%- if secret != nil %}
       # haproxytech/global-top-haproxytech-ingress-auth
       userlist {{ userlistName }}
@@ -332,8 +341,6 @@ templateSnippets:
                   {%- end %}
         user {{ username }} password {{ passwordHash }}
                 {% end -%}
-              {%- else %}
-                {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'haproxy.org/auth-secret' does not exist. Please create the secret or update the annotation.") -}}
               {%- end %}
             {%- end %}
           {%- end %}
@@ -620,8 +627,18 @@ templateSnippets:
             {%- end %}
             {#- Userlist name is per-secret for deduplication -#}
             {%- var userlistName = "auth_" + secretNs + "_" + secretName %}
+            {#-
+              Skip the http_auth ACL ref when the referenced Secret isn't in
+              the controller's cache (informer not yet caught up, or the Secret
+              was just cascade-deleted while the Ingress still lingers). The
+              global-top userlist snippet skips its userlist on the same
+              condition so the rendered config stays self-consistent — HAProxy
+              never sees a dangling http_auth(...) reference.
+            -#}
+            {%- if resources.secrets.GetSingle(secretNs, secretName) != nil %}
       # haproxytech/backend-directives-haproxytech-ingress-auth
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+            {%- end %}
           {%- end -%}
         {%- end -%}
       {%- end -%}

@@ -146,8 +146,8 @@ func createReconciliationComponents(
 	// Create StoreProvider from storeManager for the Coordinator
 	baseStoreProvider := newStoreProviderFromManager(storeManager)
 
-	// Create Coordinator (replaces Executor + Renderer event handling + HAProxyValidator)
-	// The Coordinator calls Pipeline.Execute() directly and publishes events for downstream components
+	// Create Coordinator. It calls Pipeline.Execute() (render + three-phase validate)
+	// directly and publishes events for downstream components.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
 		EventBus:      bus,
 		Pipeline:      pipelineInstance,

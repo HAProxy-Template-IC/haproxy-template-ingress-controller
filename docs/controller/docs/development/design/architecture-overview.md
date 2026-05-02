@@ -23,7 +23,7 @@ The controller operates through event-driven coordination, with one synchronous 
 5. **Deployer** (`pkg/controller/deployer.Component`, **leader-only**) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls against every HAProxy endpoint, and publishes `DeploymentCompletedEvent` plus per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent`
 6. **All-replica observers** (Discovery, ConfigPublisher, StatusApplier, ProposalValidator, HTTPStore, Metrics, Commentator) subscribe to relevant events for their specific purposes and either react locally or — if leader-only writes are involved — let the leader-only sister component pick up the work
 
-`pkg/controller/renderer.Component` and `pkg/controller/validator.HAProxyValidatorComponent` exist in the source tree as event-driven adapters but are **not constructed in production code**; the leader's synchronous Pipeline replaced them. They remain for test fixtures and historical reference.
+There is no event-adapter for rendering or HAProxy-config validation in production: the leader's synchronous `pkg/controller/pipeline.Pipeline` runs `RenderService` + three-phase `ValidationService` in one shot, with no event hop between them.
 
 **Key Design Principles:**
 
@@ -153,7 +153,7 @@ graph TB
 
 **Event-Driven Data Flow:**
 
-The diagram above shows the conceptual flow; the production reality fuses Renderer + HAProxyValidator into the leader-only Coordinator's synchronous pipeline call.
+The diagram above shows the conceptual flow; the production reality fuses rendering and HAProxy-config validation into the leader-only Coordinator's synchronous pipeline call.
 
 1. **Config/Resource Watchers** receive Kubernetes changes and publish events to EventBus
 2. **Reconciler** subscribes to change events, applies a leading-edge refractory debouncer (default 5s; see `pkg/k8s/types.DefaultDebounceInterval`), filters initial sync events, and publishes `ReconciliationTriggeredEvent`. Also fires on `BecameLeaderEvent` so a freshly-elected leader produces a current render instead of waiting for the next change.

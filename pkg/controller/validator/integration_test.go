@@ -94,11 +94,15 @@ func setupValidationTest(t *testing.T) (context.Context, *busevents.EventBus) {
 	}))
 
 	bus := busevents.NewEventBus(100)
-	bus.Start()
 
+	// Subscribe before bus.Start() per the project's component-startup contract:
+	// the BaseValidator constructors subscribe via component.Base, and bus.Start()
+	// flushes the pre-start buffer to whoever's subscribed at that moment.
 	basicValidator := NewBasicValidator(bus, logger)
 	templateValidator := NewTemplateValidator(bus, logger)
 	jsonpathValidator := NewJSONPathValidator(bus, logger)
+
+	bus.Start()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -106,8 +110,6 @@ func setupValidationTest(t *testing.T) (context.Context, *busevents.EventBus) {
 	go basicValidator.Start(ctx)
 	go templateValidator.Start(ctx)
 	go jsonpathValidator.Start(ctx)
-
-	time.Sleep(100 * time.Millisecond) // Give validators time to subscribe
 
 	return ctx, bus
 }
