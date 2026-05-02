@@ -3,6 +3,10 @@
 # Provides haproxy.org/* annotation support for Ingress resources.
 # Gateway API uses filters instead - see docs/libraries/gateway.md.
 
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.haproxytech.enabled }}'
+
 watchedResources:
   secrets:
     apiVersion: v1
@@ -44,39 +48,19 @@ templateSnippets:
   util-haproxytech-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations.
-          Uses ComputeIfAbsent for race-free caching across parallel template renders.
-          The compute function runs exactly once, even with concurrent access. -#}
-      {%- import "util-build-haproxytech-ssl-passthrough" for BuildHaproxytechSSLPassthrough %}
+          Build logic lives in annotation-compat.yaml's BuildAnnotationSSLPassthrough macro;
+          this snippet only owns the per-library cache key and naming-convention parameters. -#}
+      {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("haproxytech_sslPassthrough", func() any {
           var sslData = map[string]any{"backends": []any{}}
-          BuildHaproxytechSSLPassthrough(sslData)
+          BuildAnnotationSSLPassthrough(sslData,
+            "haproxy.org/ssl-passthrough",
+            "ssl-passthrough-",
+            "haproxytech_sslPassthrough_host")
           return sslData
         })
       %%}
-
-  util-build-haproxytech-ssl-passthrough:
-    template: |
-      {#- Macro to populate SSL passthrough data from haproxy.org/ssl-passthrough annotations.
-          Called from ComputeIfAbsent to enable use of template functions. -#}
-      {%- macro BuildHaproxytechSSLPassthrough(sslData map[string]any) %}
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var passthrough = ingress | dig("metadata", "annotations", "haproxy.org/ssl-passthrough") | fallback("") | tostring() %}
-          {%- if passthrough == "true" %}
-            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var host = rule | dig("host") %}
-              {%- if host != nil && first_seen("haproxytech_sslPassthrough_host", tostring(host)) %}
-                {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
-                  "name": "ssl-passthrough-" + ns + "-" + name,
-                  "sni": host, "namespace": ns, "ingress": name,
-                }) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end macro %}
 
   # ============================================================================
   # Frontend Filters - Applied before backend selection
@@ -103,31 +87,14 @@ templateSnippets:
 
   frontend-filters-200-haproxytech-access-control:
     template: |
-      {#- HAProxy IP allowlist/denylist -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-        {%- var key = ns + "/" + name %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
-          {%- end %}
-          {%- var allowlist = ingress | dig("metadata", "annotations", "haproxy.org/allowlist") | fallback("") | tostring() %}
-          {%- var denylist = ingress | dig("metadata", "annotations", "haproxy.org/denylist") | fallback("") | tostring() %}
-          {%- if allowlist != "" && len(hosts) > 0 %}
-            {%- var aclName = "haproxytech_allowlist_" + ns + "_" + name %}
-      # haproxytech/frontend-filters-haproxytech-access-control (allowlist for {{ key }})
-      acl {{ aclName }} src{% for _, ip := range split(allowlist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
-      http-request deny if {{ HostMatchCondition(hosts) }} !{{ aclName }}
-          {%- end %}
-          {%- if denylist != "" && len(hosts) > 0 %}
-            {%- var aclName = "haproxytech_denylist_" + ns + "_" + name %}
-      # haproxytech/frontend-filters-haproxytech-access-control (denylist for {{ key }})
-      acl {{ aclName }} src{% for _, ip := range split(denylist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
-      http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
-          {%- end %}
+      {#- HAProxy IP allowlist/denylist via the shared annotation-compat scaffold. -#}
+      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationAccessControl(ingress,
+            "haproxy.org/allowlist", "haproxy.org/denylist",
+            "haproxytech",
+            "haproxytech/frontend-filters-haproxytech-access-control (allowlist for {KEY})",
+            "haproxytech/frontend-filters-haproxytech-access-control (denylist for {KEY})") }}
       {%- end -%}
 
   frontend-filters-300-haproxytech-cors:

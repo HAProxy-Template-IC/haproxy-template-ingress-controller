@@ -1,0 +1,143 @@
+# Annotation Compatibility Scaffold Library
+#
+# Provides shared HAProxy output macros and utility snippets consumed by the
+# vendor-specific annotation libraries (haproxytech.yaml, haproxy-ingress.yaml,
+# nginx-ingress.yaml). Sits at hierarchy level 2.5 — loaded after the resource
+# libraries (ingress, gateway) and before the protocol libraries.
+#
+# This library does NOT process resources directly. It contains only stateless
+# macros and parameterized utility snippets. Each protocol library extracts
+# annotations from its own resource set and calls into the scaffold to emit
+# HAProxy directives.
+#
+# Rationale and design: see docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+#
+# Knowledge hierarchy:
+#   Level 0:   base
+#   Level 1:   ssl
+#   Level 2:   ingress, gateway
+#   Level 2.5: annotation-compat   <- this library
+#   Level 3:   haproxytech, haproxy-ingress, nginx-ingress
+
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.annotationCompat.enabled }}'
+
+templateSnippets:
+
+  # ============================================================================
+  # SSL Passthrough — shared macro
+  #
+  # Each protocol library has its own `util-build-X-ssl-passthrough` macro
+  # that loops over Ingresses, checks for a vendor-specific annotation
+  # (e.g. haproxy.org/ssl-passthrough, haproxy-ingress.github.io/ssl-passthrough,
+  # nginx.ingress.kubernetes.io/ssl-passthrough), and appends per-host
+  # entries to a `sslData["backends"]` slice. The shape of that loop is
+  # identical across libraries; only four strings differ:
+  #
+  #   - annotationKey:  the annotation name to look up
+  #   - namePrefix:     the backend-name prefix (preserves the existing per-library
+  #                     naming convention for backwards compatibility)
+  #   - firstSeenKey:   the first_seen() prefix used to dedupe hosts
+  #
+  # The protocol library's own `util-X-ssl-passthrough` snippet still owns the
+  # ComputeIfAbsent cache key (so its data slot stays distinct), but the
+  # build logic is shared.
+  # ============================================================================
+
+  util-build-annotation-ssl-passthrough:
+    template: |
+      {#-
+        Macro: BuildAnnotationSSLPassthrough(sslData, annotationKey, namePrefix, firstSeenKey)
+
+        Populates sslData["backends"] with one entry per (host, ingress) pair
+        where the ingress carries a truthy annotationKey value. Deduplicates
+        hosts via first_seen(firstSeenKey, host).
+
+        Backend entry shape (must stay identical across libraries — the ssl.yaml
+        consumer reads "name", "sni", and the ingress libraries' tests assert
+        backend names by exact string):
+          {
+            "name":      namePrefix + ns + "-" + name,
+            "sni":       host,
+            "namespace": ns,
+            "ingress":   name,
+          }
+      -#}
+      {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
+        {%- for _, ingress := range resources.ingresses.List() %}
+          {%- var passthrough = ingress | dig("metadata", "annotations", annotationKey) | fallback("") | tostring() %}
+          {%- if passthrough == "true" %}
+            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+              {%- var host = rule | dig("host") %}
+              {%- if host != nil && first_seen(firstSeenKey, tostring(host)) %}
+                {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
+                  "name": namePrefix + ns + "-" + name,
+                  "sni": host, "namespace": ns, "ingress": name,
+                }) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end macro %}
+
+  # ============================================================================
+  # IP Allow/Deny ACL — shared macro
+  #
+  # All three protocol libraries implement CIDR-based source-range access
+  # control with the same shape: read an allowlist annotation and a denylist
+  # annotation, emit `acl <name> src <cidrs>` plus a `http-request deny if
+  # <host-match> [!]<acl>` rule, scoped to the ingress's hosts.
+  #
+  # Parameterized differences:
+  #   - allowAnnotation / denyAnnotation: vendor-specific annotation keys
+  #   - aclPrefix:    per-library ACL name prefix (haproxytech / hi / ni); validation
+  #                   tests assert on these, so they must remain library-distinct
+  #   - allowCommentFmt / denyCommentFmt: leading "# ..." comment per ruleset; each
+  #                   library has its own phrasing. Format strings may contain the
+  #                   literal {KEY} placeholder, which is substituted with the
+  #                   "<ns>/<name>" key at emission time.
+  # ============================================================================
+
+  util-emit-annotation-access-control:
+    template: |
+      {#-
+        Macro: EmitAnnotationAccessControl(
+          ingress, allowAnnotation, denyAnnotation, aclPrefix,
+          allowCommentFmt, denyCommentFmt
+        )
+
+        Reads the allowlist/denylist annotations and emits the CIDR ACL plus
+        the gating http-request deny rule, scoped to the ingress's hosts.
+        Comment format strings may contain {KEY} (replaced by "<ns>/<name>").
+        No-op when the ingress has no hosts or neither annotation is set.
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- macro EmitAnnotationAccessControl(ingress any, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var key = ns + "/" + name %}
+        {%- var hosts = []any{} %}
+        {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+          {%- var h = rule | dig("host") %}
+          {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+        {%- end %}
+        {%- var allowlist = ingress | dig("metadata", "annotations", allowAnnotation) | fallback("") | tostring() %}
+        {%- var denylist = ingress | dig("metadata", "annotations", denyAnnotation) | fallback("") | tostring() %}
+        {%- if allowlist != "" && len(hosts) > 0 %}
+          {%- var aclName = aclPrefix + "_allowlist_" + ns + "_" + name %}
+      # {{ replace(allowCommentFmt, "{KEY}", key) }}
+      acl {{ aclName }} src{% for _, ip := range split(allowlist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
+
+      http-request deny if {{ HostMatchCondition(hosts) }} !{{ aclName }}
+        {%- end %}
+        {%- if denylist != "" && len(hosts) > 0 %}
+          {%- var aclName = aclPrefix + "_denylist_" + ns + "_" + name %}
+      # {{ replace(denyCommentFmt, "{KEY}", key) }}
+      acl {{ aclName }} src{% for _, ip := range split(denylist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
+
+      http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
+        {%- end %}
+      {%- end macro %}

@@ -9,6 +9,47 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- New `annotation-compat` template library at hierarchy level 2.5 (between resource libraries and the vendor annotation libraries). Provides parameterized macros that the protocol libraries call into instead of duplicating the same patterns. Currently houses two macros: `BuildAnnotationSSLPassthrough` (replaces three near-identical SSL passthrough scanners — `haproxytech`, `haproxy-ingress`, `nginx-ingress` — that all looped over Ingresses, checked a vendor-specific annotation, and appended host entries to `gf["sslPassthroughBackends"]`) and `EmitAnnotationAccessControl` (replaces three near-identical CIDR allow/deny ACL emitters that read source-range annotations and emitted `acl ... src` + `http-request deny` rules). Backend names, ACL names, and rendered HAProxy output are byte-identical to the previous per-library implementations. Cookie-affinity, backend-timeout, and request/response-header patterns were considered but not extracted: their shapes diverge enough across the three libraries that a shared abstraction would obscure rather than concentrate the behaviour. See `docs/adr/0003-annotation-compat-scaffold-level-2-5.md`.
+
+### Changed
+
+- **BREAKING**: Path matching order is now selected by `controller.config.routing.regexMatchOrder` (`default` or `last`), not by enabling the `path-regex-last` template library. The library has been removed; its single override snippet now lives in `base.yaml` as a swappable variant of `frontend-routing-logic`. Operators with `controller.templateLibraries.pathRegexLast.enabled: true` must replace it with `controller.config.routing.regexMatchOrder: last`. Rationale: the library scaffold (top-level merge entry, dedicated docs page, hierarchy slot) exceeded the behaviour it carried — one snippet override differing in four lines. See `docs/adr/0005-path-matching-order-as-values-flag.md`.
+- **BREAKING**: Pod-spec scheduling, runtime, and metadata fields have moved under namespaced `podSpec:` blocks for consistency between the controller and HAProxy Deployments. The chart now renders the universally-shared fields via a single `_pod-spec.tpl` helper. Operators must rename the following keys in their custom values files:
+
+  | Previous | New |
+  |---|---|
+  | `imagePullSecrets` | `controller.podSpec.imagePullSecrets` |
+  | `podAnnotations` | `controller.podSpec.podAnnotations` |
+  | `podLabels` | `controller.podSpec.podLabels` |
+  | `priorityClassName` | `controller.podSpec.priorityClassName` |
+  | `topologySpreadConstraints` | `controller.podSpec.topologySpreadConstraints` |
+  | `podSecurityContext` | `controller.podSpec.podSecurityContext` |
+  | `nodeSelector` | `controller.podSpec.nodeSelector` |
+  | `tolerations` | `controller.podSpec.tolerations` |
+  | `affinity` | `controller.podSpec.affinity` |
+  | `terminationGracePeriodSeconds` | `controller.podSpec.terminationGracePeriodSeconds` |
+  | `dnsPolicy` | `controller.podSpec.dnsPolicy` |
+  | `dnsConfig` | `controller.podSpec.dnsConfig` |
+  | `hostAliases` | `controller.podSpec.hostAliases` |
+  | `runtimeClassName` | `controller.podSpec.runtimeClassName` |
+  | `haproxy.priorityClassName` | `haproxy.podSpec.priorityClassName` |
+  | `haproxy.topologySpreadConstraints` | `haproxy.podSpec.topologySpreadConstraints` |
+  | `haproxy.nodeSelector` | `haproxy.podSpec.nodeSelector` |
+  | `haproxy.tolerations` | `haproxy.podSpec.tolerations` |
+  | `haproxy.affinity` | `haproxy.podSpec.affinity` |
+  | `haproxy.dnsPolicy` | `haproxy.podSpec.dnsPolicy` |
+  | `haproxy.dnsConfig` | `haproxy.podSpec.dnsConfig` |
+  | `haproxy.hostAliases` | `haproxy.podSpec.hostAliases` |
+  | `haproxy.runtimeClassName` | `haproxy.podSpec.runtimeClassName` |
+  | `haproxy.podAnnotations` | `haproxy.podSpec.podAnnotations` |
+  | `haproxy.shareProcessNamespace` | `haproxy.podSpec.shareProcessNamespace` |
+  | `haproxy.terminationGracePeriodSeconds` | `haproxy.podSpec.terminationGracePeriodSeconds` |
+  | `haproxy.podSecurityContext` | `haproxy.podSpec.podSecurityContext` |
+
+  Container-level fields (`securityContext`, `resources`, probes, `lifecycle`), Deployment-level fields (`updateStrategy`, `replicaCount`, `autoscaling`, `podDisruptionBudget`, `revisionHistoryLimit`, `minReadySeconds`, `deploymentAnnotations`), and chart-wide fields (`commonLabels`, `commonAnnotations`) are unchanged. The four UID/GID helpers (`haproxy.runAsUser` / `runAsGroup` / `fsGroup` / `dataplaneRunAsUser`) collapsed into a single `haproxy.uid` helper since all four returned the same value; this is internal to the chart and operator-invisible. `_helpers.tpl` was split into purpose-grouped files (`_naming.tpl`, `_libraries.tpl`, `_image.tpl`, `_credentials.tpl`, `_resources.tpl`, `_spoa-hub.tpl`, `_pod-spec.tpl`) for navigability.
+
 ### Fixed
 
 - `templates/validatingwebhookconfiguration.yaml` now sources `watchedResources` from the merged template libraries (`haptic.mergeLibraries`) instead of iterating raw `.Values.controller.config.watched_resources`. The old form silently produced no `ValidatingWebhookConfiguration` for chart users whose watched resources were declared via libraries (e.g. `libraries/ingress.yaml: enableValidationWebhook: true`) rather than via raw helm-values overrides — meaning the admission webhook was effectively disabled, and malformed Ingresses (e.g. conflicting `cookie-persistence` + `cookie-persistence-no-dynamic` annotations) reached the controller where they failed render and stalled the reconcile pipeline for *all* other Ingresses. This is the same merging path `haproxytemplateconfig.yaml` uses, ensuring the webhook scope matches what the controller actually validates.

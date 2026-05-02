@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+#
+# Tests for the decentralized library loader (haptic.mergeLibraries).
+# See ADR-0002 (docs/adr/0002-decentralized-helm-library-loader.md).
+suite: library loader
+templates:
+  - haproxytemplateconfig.yaml
+tests:
+  - it: should strip _helm_load metadata from rendered HAProxyTemplateConfig spec
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    asserts:
+      - notExists:
+          path: spec._helm_load
+      - notExists:
+          path: _helm_load
+
+  - it: should inject ingressClassName into ingresses.fieldSelector via _helm_load
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    set:
+      ingressClass.name: my-class
+    asserts:
+      - equal:
+          path: spec.watchedResources.ingresses.fieldSelector
+          value: spec.ingressClassName=my-class
+
+  - it: should inject gatewayClassName into gateways.fieldSelector via _helm_load
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    capabilities:
+      apiVersions:
+        - gateway.networking.k8s.io/v1/GatewayClass
+    set:
+      gatewayClass.name: my-gw-class
+    asserts:
+      - equal:
+          path: spec.watchedResources.gateways.fieldSelector
+          value: spec.gatewayClassName=my-gw-class
+
+  - it: should inject controller-services labelSelector via _helm_load
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    asserts:
+      - matchRegex:
+          path: spec.watchedResources.controller_services.labelSelector
+          pattern: app\.kubernetes\.io/name=.*,app\.kubernetes\.io/component=loadbalancer
+
+  - it: should swap frontend-routing-logic to regex-last variant when configured
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    set:
+      controller.config.routing.regexMatchOrder: last
+    asserts:
+      - matchRegex:
+          path: spec.templateSnippets["frontend-routing-logic"].template
+          pattern: "Path matching: Exact > Prefix-exact > Prefix > Regex"
+      - notExists:
+          path: spec.templateSnippets["frontend-routing-logic-regex-last"]
+
+  - it: should always strip frontend-routing-logic-regex-last variant from output
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    asserts:
+      - notExists:
+          path: spec.templateSnippets["frontend-routing-logic-regex-last"]
+
+  - it: should not load gateway library when Capabilities.APIVersions.Has fails
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    asserts:
+      - notExists:
+          path: spec.watchedResources.gateways
+
+  - it: should load gateway library when Gateway API CRD is detected
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    capabilities:
+      apiVersions:
+        - gateway.networking.k8s.io/v1/GatewayClass
+    asserts:
+      - exists:
+          path: spec.watchedResources.gateways
+
+  - it: should load annotation-compat scaffold by default
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    asserts:
+      - exists:
+          path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]
+      - exists:
+          path: spec.templateSnippets["util-emit-annotation-access-control"]
+
+  - it: should skip annotation-compat scaffold when disabled
+    documentSelector:
+      path: kind
+      value: HAProxyTemplateConfig
+    set:
+      controller.templateLibraries.annotationCompat.enabled: false
+    asserts:
+      - notExists:
+          path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]

@@ -41,6 +41,12 @@
 #       spoaHub:
 #         enabled: true   # auto-enabled when spoaHub.enabled is truthy
 
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Loaded when explicitly enabled OR when haptic.spoaHub.enabled (helper) is truthy
+# (any plugin under spoaHub.plugins.* enabled, or spoaHub.enabled=true).
+_helm_load:
+  enable: '{{ if or .Values.controller.templateLibraries.spoaHub.enabled (include "haptic.spoaHub.enabled" .) }}true{{ else }}false{{ end }}'
+
 templateSnippets:
   # RFC 7230 token guard for HTTP header field names from annotation
   # values. Ingress libraries call this before embedding a header

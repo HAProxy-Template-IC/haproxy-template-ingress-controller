@@ -14,6 +14,14 @@
 #   - Sharded generation: Automatic parallel processing for large route sets
 #   - Extension points: frontend-matchers-advanced-*, frontend-filters-*
 
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Loaded only when Gateway API CRDs are detected on the cluster (via Capabilities).
+_helm_load:
+  enable: '{{ if and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}true{{ else }}false{{ end }}'
+  inject:
+    - path: watchedResources.gateways.fieldSelector
+      value: 'spec.gatewayClassName={{ .Values.gatewayClass.name }}'
+
 watchedResources:
   gateways:
     apiVersion: gateway.networking.k8s.io/v1

@@ -47,6 +47,10 @@
 # Advanced:
 #   - limit-rps, limit-whitelist
 
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.haproxyIngress.enabled }}'
+
 watchedResources:
   secrets:
     apiVersion: v1
@@ -784,32 +788,14 @@ templateSnippets:
           http-request deny if <host-match> !<acl>    (for allowlist)
           http-request deny if <host-match> <acl>     (for denylist)
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-        {%- var key = ns + "/" + name %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
-          {%- end %}
-          {%- var allowlist = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/allowlist-source-range") | fallback("") | tostring() %}
-          {%- var denylist = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/denylist-source-range") | fallback("") | tostring() %}
-          {%- if allowlist != "" && len(hosts) > 0 %}
-            {%- var aclName = "hi_allowlist_" + ns + "_" + name %}
-      # haproxy-ingress/allowlist-source-range ({{ key }})
-      acl {{ aclName }} src{% for _, ip := range split(allowlist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
-
-      http-request deny if {{ HostMatchCondition(hosts) }} !{{ aclName }}
-          {%- end %}
-          {%- if denylist != "" && len(hosts) > 0 %}
-            {%- var aclName = "hi_denylist_" + ns + "_" + name %}
-      # haproxy-ingress/denylist-source-range ({{ key }})
-      acl {{ aclName }} src{% for _, ip := range split(denylist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
-
-      http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
-          {%- end %}
+      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationAccessControl(ingress,
+            "haproxy-ingress.github.io/allowlist-source-range",
+            "haproxy-ingress.github.io/denylist-source-range",
+            "hi",
+            "haproxy-ingress/allowlist-source-range ({KEY})",
+            "haproxy-ingress/denylist-source-range ({KEY})") }}
       {%- end -%}
 
   frontend-filters-620-haproxy-ingress-ssl-redirect:
@@ -1068,39 +1054,19 @@ templateSnippets:
   util-haproxy-ingress-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends from haproxy-ingress.github.io/ssl-passthrough annotations.
-          Uses ComputeIfAbsent for race-free caching across parallel template renders.
-          The compute function runs exactly once, even with concurrent access. -#}
-      {%- import "util-build-haproxy-ingress-ssl-passthrough" for BuildHISSLPassthrough %}
+          Build logic lives in annotation-compat.yaml's BuildAnnotationSSLPassthrough macro;
+          this snippet only owns the per-library cache key and naming-convention parameters. -#}
+      {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
         var _, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any {
           var sslData = map[string]any{"backends": []any{}}
-          BuildHISSLPassthrough(sslData)
+          BuildAnnotationSSLPassthrough(sslData,
+            "haproxy-ingress.github.io/ssl-passthrough",
+            "ssl-passthrough-hi-",
+            "hi_sslPassthrough_host")
           return sslData
         })
       %%}
-
-  util-build-haproxy-ingress-ssl-passthrough:
-    template: |
-      {#- Macro to populate SSL passthrough data from haproxy-ingress.github.io/ssl-passthrough annotations.
-          Called from ComputeIfAbsent to enable use of template functions. -#}
-      {%- macro BuildHISSLPassthrough(sslData map[string]any) %}
-        {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var passthrough = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-passthrough") | fallback("") | tostring() %}
-          {%- if passthrough == "true" %}
-            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var host = rule | dig("host") %}
-              {%- if host != nil && first_seen("hi_sslPassthrough_host", tostring(host)) %}
-                {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
-                  "name": "ssl-passthrough-hi-" + ns + "-" + name,
-                  "sni": host, "namespace": ns, "ingress": name,
-                }) %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end macro %}
 
   frontend-filters-690-haproxy-ingress-mtls-error:
     template: |

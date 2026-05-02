@@ -111,7 +111,17 @@ The controller uses a modular template library system where configuration files 
 | haproxytech | Enabled | `haproxytech` | `haproxy.org/*` annotation support |
 | haproxy-ingress | Enabled | `haproxyIngress` | `haproxy-ingress.github.io/*` annotation compatibility |
 | nginx-ingress | Disabled | `nginxIngress` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| Path Regex Last | Disabled | `pathRegexLast` | Performance-first path matching |
+
+### Path Matching Order
+
+Path-based routing inside the rendered `frontend-routing-logic` snippet evaluates four map types: exact, regex, prefix-exact, and prefix. The evaluation order is selected by `controller.config.routing.regexMatchOrder`:
+
+| Value | Order | Use case |
+|-------|-------|----------|
+| `default` (default) | Exact > Regex > Prefix-exact > Prefix | De-facto standard; matches typical Ingress controller behaviour |
+| `last` | Exact > Prefix-exact > Prefix > Regex | Performance-first; evaluates faster matchers before regex |
+
+The chart swaps in the `frontend-routing-logic-regex-last` variant of the snippet at Helm load time when `last` is set. No runtime difference.
 
 ### Enabling/Disabling Libraries
 

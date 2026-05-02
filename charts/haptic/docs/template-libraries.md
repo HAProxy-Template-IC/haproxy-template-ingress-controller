@@ -19,10 +19,10 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
+| [annotation-compat](libraries/annotation-compat.md) | Enabled | Shared scaffold consumed by the vendor annotation libraries below (level 2.5) |
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
-| [Path Regex Last](libraries/path-regex-last.md) | Disabled | Performance-first path matching order |
 
 ## Enabling and Disabling Libraries
 
@@ -45,8 +45,9 @@ controller:
       enabled: true   # HAProxy Ingress compatibility
     nginxIngress:
       enabled: false  # nginx-ingress annotation compatibility
-    pathRegexLast:
-      enabled: false  # Performance optimization (opt-in)
+  config:
+    routing:
+      regexMatchOrder: default  # "default" or "last" — see configuration.md
 ```
 
 ## Library Merge Order
@@ -54,15 +55,15 @@ controller:
 Libraries are merged in a specific order, with later libraries overriding earlier ones:
 
 ```
-1. base.yaml           (lowest priority)
+1. base.yaml             (lowest priority)
 2. ssl.yaml
 3. ingress.yaml
 4. gateway.yaml
-5. haproxytech.yaml
-6. haproxy-ingress.yaml
-7. nginx-ingress.yaml
-8. path-regex-last.yaml
-9. values.yaml         (highest priority - your configuration)
+5. annotation-compat.yaml  (level 2.5 - shared scaffold)
+6. haproxytech.yaml
+7. haproxy-ingress.yaml
+8. nginx-ingress.yaml
+9. values.yaml           (highest priority - your configuration)
 ```
 
 Your custom configuration in `controller.config` always takes precedence.
@@ -194,7 +195,6 @@ To override a built-in snippet, use the **same key name**; values-file entries t
 | haproxytech | `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
 | haproxy-ingress | `features-*`, `map-path-*`, `map-pfxexact-*`, `backend-directives-*`, `frontend-filters-*`, `global-top-*`, `backends-*` |
 | nginx-ingress | `features-*`, `backends-*`, `global-top-*`, `backend-directives-*`, `frontend-filters-*` |
-| Path Regex Last | Overrides `frontend-routing-logic` (not an extension point pattern) |
 
 ## Custom Libraries
 
@@ -245,8 +245,7 @@ controller:
                                    ▼
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    Optional Libraries (if enabled)                    │
-│  path-regex-last.yaml  nginx-ingress.yaml  haproxy-ingress.yaml     │
-│                        gateway.yaml                                  │
+│       nginx-ingress.yaml  haproxy-ingress.yaml  gateway.yaml          │
 └──────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
@@ -271,4 +270,3 @@ controller:
 - [haproxytech library](libraries/haproxytech.md) - `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat)
 - [haproxy-ingress library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat)
 - [nginx-ingress library](libraries/nginx-ingress.md) - `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat)
-- [Path Regex Last Library](libraries/path-regex-last.md) - Alternative path matching order
