@@ -137,6 +137,18 @@ func (c *Component) handleEvent(event busevents.Event) {
 }
 
 // handleValidationRequest processes a proposal validation request.
+//
+// This path is used by HTTPStore to ask "is the HAProxy config valid if I
+// promote this newly-fetched HTTP content?" — a different semantic from
+// ValidateSync's "is this admission request OK?" path. Admission can
+// usefully relax to "admit when baseline already fails" because denying
+// every unrelated admission on an existing broken resource is a real
+// production reliability bug. Pending-content promotion CANNOT relax the
+// same way: if baseline is already broken, promoting new (possibly bad)
+// HTTP content compounds the broken state instead of recovering from it,
+// and downstream observers (HTTPStore.handleProposalValidationCompleted)
+// branch on event.Valid to decide whether to promote or reject. So this
+// path keeps the strict "deny on any failure" semantics.
 func (c *Component) handleValidationRequest(req *events.ProposalValidationRequestedEvent) {
 	hasHTTPOverlay := req.HTTPOverlay != nil && !req.HTTPOverlay.IsEmpty()
 	c.logger.Debug("processing proposal validation request",
@@ -231,6 +243,16 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 // an immediate response. Unlike event-driven validation, this blocks until
 // validation completes.
 //
+// On a proposed-config failure (render or validate phase), this method also
+// runs a baseline check — the same render+validate pipeline against the live
+// stores *without* the overlay. If the baseline already fails, the new
+// resource isn't the cause of the failure and admission is allowed (with a
+// warning log). This prevents a real production reliability issue: a single
+// broken existing resource (e.g., an Ingress referencing a Secret the user
+// deleted) would otherwise block admission of every unrelated resource until
+// the broken one is fixed. The baseline check reuses the validation cache, so
+// in steady state (baseline healthy) the extra cost only kicks in on failure.
+//
 // Parameters:
 //   - ctx: Context for cancellation
 //   - overlays: Map of store name to proposed changes
@@ -256,30 +278,103 @@ func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*store
 		}
 	}
 
-	// Execute render-validate pipeline
-	// The OverlayStoreProvider automatically enables validation mode
-	_, validationResult, err := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
-	if err != nil {
+	outcome := c.runWithBaselineCheck(ctx, overlayProvider)
+	if outcome.Admit {
 		return &validation.ValidationResult{
-			Valid:      false,
-			Phase:      "render",
-			Error:      err,
+			Valid:      true,
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}
 	}
-
-	// Check validation result
-	if !validationResult.Valid {
-		return &validation.ValidationResult{
-			Valid:      false,
-			Phase:      validationResult.Phase,
-			Error:      validationResult.Error,
-			DurationMs: time.Since(startTime).Milliseconds(),
-		}
-	}
-
 	return &validation.ValidationResult{
-		Valid:      true,
+		Valid:      false,
+		Phase:      outcome.Phase,
+		Error:      outcome.Error,
 		DurationMs: time.Since(startTime).Milliseconds(),
 	}
+}
+
+// validationOutcome is the decision the baseline-aware pipeline driver
+// returns to its caller. Admit=true means "let this through" (either the
+// proposed run succeeded, or it failed but baseline failed too); Admit=false
+// means "deny" with the proposed run's failure metadata. AdmittedViaBaseline
+// distinguishes the "proposed succeeded" case from the "baseline-also-fails"
+// case for log-level decisions.
+type validationOutcome struct {
+	Admit               bool
+	AdmittedViaBaseline bool
+	Phase               string
+	Error               error
+}
+
+// runWithBaselineCheck runs the render-validate pipeline twice: first with
+// the given overlayProvider (proposed state), and — only if the proposed run
+// fails — once more against the live stores without overlays (baseline). If
+// the baseline also fails, the new resource isn't the cause of the failure,
+// so the outcome admits. The baseline check is the load-bearing fix for the
+// production reliability bug where a single broken existing resource (e.g.
+// an Ingress whose Secret was deleted) blocks admission of every unrelated
+// resource until an operator intervenes; see the package's component
+// docstring for the rationale and the e2e flake history that motivated it.
+//
+// The baseline run reuses the validation service's content-checksum cache,
+// so in steady state (baseline healthy) the second pipeline execution is
+// only invoked on failure paths.
+func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *stores.OverlayStoreProvider) validationOutcome {
+	_, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
+	if proposedErr == nil && proposedResult.Valid {
+		return validationOutcome{Admit: true}
+	}
+
+	baselineResult, baselineErr := c.runBaselineCheck(ctx)
+	baselineFailed := baselineErr != nil || (baselineResult != nil && !baselineResult.Valid)
+	if baselineFailed {
+		c.logger.Warn("admitting proposed change because baseline validation already fails — pre-existing broken state, not the new resource",
+			"proposed_render_err", proposedErr,
+			"proposed_validation_phase", validationPhaseOf(proposedResult),
+			"proposed_validation_err", validationErrorOf(proposedResult),
+			"baseline_render_err", baselineErr,
+			"baseline_validation_phase", validationPhaseOf(baselineResult),
+			"baseline_validation_err", validationErrorOf(baselineResult))
+		return validationOutcome{Admit: true, AdmittedViaBaseline: true}
+	}
+
+	// Baseline is healthy → the new resource is the cause of the failure → deny.
+	if proposedErr != nil {
+		return validationOutcome{Phase: "render", Error: proposedErr}
+	}
+	return validationOutcome{Phase: proposedResult.Phase, Error: proposedResult.Error}
+}
+
+// runBaselineCheck runs the render-validate pipeline against the live stores
+// without any overlays. Used by runWithBaselineCheck to determine whether a
+// proposed-state failure is caused by the new resource or by pre-existing
+// broken state. Returns (validationResult, renderErr): exactly one is
+// non-nil on a failure path, both nil on internal-error paths the caller
+// treats as "baseline failed" (conservative).
+func (c *Component) runBaselineCheck(ctx context.Context) (*validation.ValidationResult, error) {
+	// Wrap the base store in an OverlayStoreProvider with an empty
+	// ValidationContext so the pipeline accepts a uniform StoreProvider type
+	// in both the proposed and baseline paths. With no overlays the provider
+	// behaves as a pass-through to the live stores.
+	emptyCtx := stores.NewValidationContext(nil)
+	baselineProvider := stores.NewOverlayStoreProvider(c.baseStore, emptyCtx)
+	_, result, err := c.pipeline.ExecuteWithResult(ctx, baselineProvider)
+	return result, err
+}
+
+// validationPhaseOf returns the Phase from a ValidationResult, or "" if r is nil.
+// Used in the structured-log fields that compare proposed vs baseline outcomes.
+func validationPhaseOf(r *validation.ValidationResult) string {
+	if r == nil {
+		return ""
+	}
+	return r.Phase
+}
+
+// validationErrorOf returns the Error from a ValidationResult, or nil if r is nil.
+func validationErrorOf(r *validation.ValidationResult) error {
+	if r == nil {
+		return nil
+	}
+	return r.Error
 }

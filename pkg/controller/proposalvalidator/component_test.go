@@ -185,6 +185,52 @@ defaults
 	assert.NotNil(t, result.Error)
 }
 
+// TestComponent_ValidateSync_BaselineAlsoFails_Admits pins the load-bearing
+// behavior added to bound the webhook's coupling to global state: when the
+// rendered config fails validation BUT the baseline (live stores without the
+// proposed overlay) ALSO fails for the same reason, the new resource isn't
+// the cause of the failure. The webhook must admit it; otherwise a single
+// pre-existing broken resource (e.g. an Ingress whose referenced Secret was
+// deleted) blocks admission of every unrelated resource until an operator
+// intervenes — a real production reliability issue.
+func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
+	// Template renders an invalid HAProxy directive verbatim, so semantic
+	// validation (haproxy -c) rejects the config regardless of which stores
+	// or overlays are applied. Both proposed and baseline runs hit the same
+	// failure → the new resource isn't the cause → admit.
+	template := `global
+    daemon
+    nosuch_directive_haproxy_will_reject this_is_an_alert_trigger
+`
+
+	bus := busevents.NewEventBus(100)
+	pipelineInstance := createTestPipeline(t, template)
+	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
+
+	component := New(&ComponentConfig{
+		EventBus:          bus,
+		Pipeline:          pipelineInstance,
+		BaseStoreProvider: baseStore,
+		Logger:            slog.Default(),
+	})
+
+	// Empty overlays — baseline and proposed render to the same config; the
+	// admission-relevant property is "broken state, no fix from this MR".
+	result := component.ValidateSync(context.Background(), map[string]*stores.StoreOverlay{})
+
+	require.NotNil(t, result)
+	assert.True(t, result.Valid,
+		"baseline-also-fails MUST admit — denying would gate every unrelated "+
+			"resource on an operator fixing the pre-existing broken state, "+
+			"which is the production bug this baseline check exists to fix")
+	assert.Empty(t, result.Phase,
+		"on admit, no phase should be reported — the result represents an "+
+			"intentional bypass of the failure, not the failure itself")
+	assert.Nil(t, result.Error,
+		"on admit, no error should be reported — the proposed-render failure "+
+			"is logged at warn but not surfaced to the caller as a denial reason")
+}
+
 func TestValidationResult_ErrorMessage(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -220,6 +266,97 @@ func TestValidationResult_ErrorMessage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, tt.result.ErrorMessage())
 		})
+	}
+}
+
+// TestComponent_Start_AsyncPath_DeniesOnFailure pins that the async event
+// path keeps strict deny-on-failure semantics, which is intentionally
+// different from ValidateSync's baseline-check policy. The async path is
+// driven by HTTPStore's pending-content promotion flow:
+// HTTPStore.handleProposalValidationCompleted branches on event.Valid —
+// Valid=true → promote pending HTTP content, Valid=false → reject it.
+// Admitting on baseline-also-fails (the policy ValidateSync uses for
+// admission) would PROMOTE BAD content into the live config, compounding
+// the broken state rather than recovering from it. The two callers ask
+// different questions ("can this admission go through?" vs. "is this new
+// content OK to promote?") and need different answers.
+//
+// Surfaced as a regression on MR !875's CI when the async path
+// temporarily inherited the admission policy: TestIngressAuthHeaders*
+// failed because SPOA-related HTTP content was promoted despite the
+// rendered config being broken, so the runtime SPOA filter chain was
+// missing and auth headers never reached the backend.
+func TestComponent_Start_AsyncPath_DeniesOnFailure(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	failingEngine, err := templating.New(
+		templating.EngineTypeScriggo,
+		map[string]string{"haproxy.cfg": `{{ fail("pretend HTTP content is bad") }}`},
+		nil, nil, nil,
+	)
+	require.NoError(t, err)
+
+	renderSvc := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine:       failingEngine,
+		Config:       &config.Config{},
+		Logger:       slog.Default(),
+		Capabilities: defaultCapabilities(),
+	})
+	validationSvc := validation.NewValidationService(&validation.ValidationServiceConfig{
+		Logger:            slog.Default(),
+		SkipDNSValidation: true,
+	})
+	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
+		Renderer:  renderSvc,
+		Validator: validationSvc,
+		Logger:    slog.Default(),
+	})
+
+	baseStore := stores.NewRealStoreProvider(map[string]stores.Store{})
+	component := New(&ComponentConfig{
+		EventBus:          bus,
+		Pipeline:          pipelineInstance,
+		BaseStoreProvider: baseStore,
+		Logger:            slog.Default(),
+	})
+
+	resultChan := bus.Subscribe("test", 10)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() { _ = component.Start(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	req := events.NewProposalValidationRequestedEvent(
+		map[string]*stores.StoreOverlay{},
+		nil,
+		"http-store",
+		"pending-content-promotion",
+	)
+	bus.Publish(req)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case event := <-resultChan:
+			completed, ok := event.(*events.ProposalValidationCompletedEvent)
+			if !ok {
+				continue
+			}
+			if completed.RequestID != req.ID {
+				continue
+			}
+			assert.False(t, completed.Valid,
+				"async path MUST publish Valid=false on validation failure — "+
+					"HTTPStore.handleProposalValidationCompleted promotes pending "+
+					"content on Valid=true, so admitting here would compound broken "+
+					"state by promoting BAD content into the live config; phase=%q err=%q",
+				completed.Phase, completed.Error)
+			return
+		case <-deadline:
+			t.Fatal("timeout waiting for validation completion event — async handler may not be running, " +
+				"or it published nothing (which would also be a regression)")
+		}
 	}
 }
 
