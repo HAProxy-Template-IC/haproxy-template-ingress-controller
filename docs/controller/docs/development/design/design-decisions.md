@@ -430,7 +430,7 @@ func NewConfigParsedEvent(config, templateConfig any, version, secretVersion str
 func (e *ConfigParsedEvent) EventType() string { return EventTypeConfigParsed }
 ```
 
-Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook certificates, webhook validation (observability + scatter-gather request/response), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
+Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook certificates, webhook validation (observability only — admission validation itself is a synchronous library call, see ADR-0001), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
 
 **Event Immutability Contract**:
 

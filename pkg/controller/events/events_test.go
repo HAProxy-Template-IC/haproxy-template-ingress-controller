@@ -817,56 +817,6 @@ func TestPublishingEvents(t *testing.T) {
 	})
 }
 
-func TestWebhookEvents(t *testing.T) {
-	t.Run("WebhookValidationRequest", func(t *testing.T) {
-		obj := map[string]any{"metadata": map[string]any{"name": "test"}}
-		event := NewWebhookValidationRequest(
-			"networking.k8s.io/v1.Ingress",
-			"default",
-			"my-ingress",
-			obj,
-			"CREATE",
-		)
-		require.NotNil(t, event)
-		assert.NotEmpty(t, event.ID)
-		assert.Equal(t, "networking.k8s.io/v1.Ingress", event.GVK)
-		assert.Equal(t, "default", event.Namespace)
-		assert.Equal(t, "my-ingress", event.Name)
-		assert.Equal(t, obj, event.Object)
-		assert.Equal(t, "CREATE", event.Operation)
-		assert.Equal(t, EventTypeWebhookValidationRequestSG, event.EventType())
-		assert.Equal(t, event.ID, event.RequestID())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("WebhookValidationRequest_UniqueIDs", func(t *testing.T) {
-		event1 := NewWebhookValidationRequest("gvk", "ns", "n", nil, "CREATE")
-		event2 := NewWebhookValidationRequest("gvk", "ns", "n", nil, "CREATE")
-		assert.NotEqual(t, event1.ID, event2.ID)
-	})
-
-	t.Run("WebhookValidationResponse_Allowed", func(t *testing.T) {
-		event := NewWebhookValidationResponse("req-123", "dryrun", true, "")
-		require.NotNil(t, event)
-		assert.Equal(t, "req-123", event.RequestID())
-		assert.Equal(t, "dryrun", event.ValidatorID)
-		assert.Equal(t, "dryrun", event.Responder())
-		assert.True(t, event.Allowed)
-		assert.Empty(t, event.Reason)
-		assert.Equal(t, EventTypeWebhookValidationResponseSG, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("WebhookValidationResponse_Denied", func(t *testing.T) {
-		event := NewWebhookValidationResponse("req-123", "basic", false, "invalid configuration")
-		require.NotNil(t, event)
-		assert.Equal(t, "req-123", event.RequestID())
-		assert.Equal(t, "basic", event.ValidatorID)
-		assert.False(t, event.Allowed)
-		assert.Equal(t, "invalid configuration", event.Reason)
-	})
-}
-
 func TestWebhookObservabilityEvents(t *testing.T) {
 	t.Run("WebhookValidationRequestEvent", func(t *testing.T) {
 		event := NewWebhookValidationRequestEvent(
@@ -1087,9 +1037,6 @@ func TestTimestampNotZero(t *testing.T) {
 		{"ConfigPublished", NewConfigPublishedEvent("n", "ns", 0, 0)},
 		{"ConfigPublishFailed", NewConfigPublishFailedEvent(nil)},
 		{"ConfigAppliedToPod", NewConfigAppliedToPodEvent("n", "ns", "pod", "ns", "checksum", false, nil)},
-		// Webhook events
-		{"WebhookValidationRequest", NewWebhookValidationRequest("gvk", "ns", "n", nil, "CREATE")},
-		{"WebhookValidationResponse", NewWebhookValidationResponse("req", "validator", true, "")},
 		// Webhook observability events
 		{"WebhookValidationRequestEvent", NewWebhookValidationRequestEvent("uid", "kind", "n", "ns", "op")},
 		{"WebhookValidationAllowedEvent", NewWebhookValidationAllowedEvent("uid", "kind", "n", "ns")},

@@ -84,8 +84,9 @@ type MetricsRecorder interface {
 	RecordWebhookValidation(gvk, result string)
 }
 
-// DryRunValidator defines the interface for dry-run validation.
-// This allows the webhook to validate resources without scatter-gather events.
+// DryRunValidator defines the synchronous interface the webhook uses to
+// validate resources. The implementation in pkg/controller/dryrunvalidator
+// is a library, not a lifecycle component.
 type DryRunValidator interface {
 	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string)
 }
@@ -382,7 +383,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			return false, err.Error(), nil
 		}
 
-		// Dry-run validation (direct call - no scatter-gather)
+		// Dry-run validation (synchronous call into dryrunvalidator.ValidateDirect).
 		if c.dryRunValidator == nil {
 			// Fail-open if no validator configured
 			c.logger.Warn("No dry-run validator configured, allowing resource",

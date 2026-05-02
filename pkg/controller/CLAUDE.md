@@ -162,22 +162,19 @@ Utility components provide infrastructure services and can be called directly wi
 - **Metrics**: Prometheus metrics (`pkg/controller/metrics`)
 - **RestMapper**: Kubernetes API mapping (`k8s.io/apimachinery/pkg/api/meta`)
 
-Example - DryRunValidator calls StoreManager directly:
+Example - DryRunValidator is itself called directly by the webhook:
 
 ```go
 // pkg/controller/dryrunvalidator/component.go
 type Component struct {
-    storeManager *resourcestore.Manager  // Utility component
-    engine       templating.Engine            // Pure component (but called directly here - acceptable)
+    proposalValidator *proposalvalidator.Component // Pure component (delegates render+validate)
+    // ... config, engine, testRunner, logger ...
 }
 
-func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
-    // Direct utility call - this is acceptable
-    overlayStores, err := c.storeManager.CreateOverlayMap(...)
-
-    // Pure component called directly within same reconciliation context
-    // This is acceptable because we're not coordinating across components
-    haproxyConfig, err := c.engine.Render(ctx, "haproxy.cfg", context)
+// pkg/controller/webhook calls this synchronously per admission request.
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string) {
+    // Build a *stores.StoreOverlay representing the admission request, hand it to
+    // proposalValidator.ValidateSync, return a flat allow/deny answer. No event hop.
 }
 ```
 
@@ -196,6 +193,15 @@ func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest
 2. Scatter-gather operations (multiple validators responding)
 3. Asynchronous workflows
 4. Observability needs (commentator logs all events)
+
+### Guiding principle: local consistency, principle of least surprise
+
+The choice between events and direct calls is per-call-site, not a global rule. Pick whichever makes the *local* path obviously correct to a reader who lands on it cold:
+
+- A call site whose surrounding code is event-driven and whose work is asynchronous (timer-driven, multi-subscriber, decouples latency) should use events. Carving out a single direct-call hop in an otherwise event-driven module is more surprising than the asymmetry would be.
+- A call site whose surrounding code is synchronous and whose work is single-participant (one publisher, one subscriber, closed loop) should be a direct call. Wrapping it in events for symmetry adds latency, parallel code paths, and an event hop that readers must trace before realising it's plumbing.
+
+ADR-0001 (renderer) and ADR-0006 (httpstore↔proposalvalidator) settle the same question in opposite directions for the same reason: each call site got the shape its local context required.
 
 ### Adding New Components
 
@@ -830,7 +836,7 @@ The `EventBus.Request()` method implements scatter-gather for operations requiri
 
 - **Config validation** — `pkg/controller/configchange.ConfigChangeHandler` fans `ConfigValidationRequest` out to `BasicValidator`, `TemplateValidator`, and `JSONPathValidator` (all under `pkg/controller/validator`) and aggregates the `ConfigValidationResponse` events into `ConfigValidatedEvent` / `ConfigInvalidEvent`.
 
-The admission webhook does **not** use scatter-gather despite the `WebhookValidationRequest` / `EventTypeWebhookValidationRequestSG` types existing in the catalogue — production calls `dryrunvalidator.Component.ValidateDirect` synchronously to keep the request path tight (see `pkg/controller/dryrunvalidator/README.md`). The dormant scatter-gather plumbing is kept around for future observability fan-out.
+The admission webhook does **not** use scatter-gather. It calls `dryrunvalidator.Component.ValidateDirect` synchronously to keep the request path tight (see `pkg/controller/dryrunvalidator/README.md`). ADR-0001 records the same shape for the renderer; both removals follow the same principle — no event hop where there is no second participant.
 
 **When to Use Scatter-Gather:**
 

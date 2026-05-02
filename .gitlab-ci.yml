@@ -360,11 +360,15 @@ test:
   before_script:
     - haproxy -v
   script:
-    # gotestsum passes coverage flags through to go test - single test run
-    # Use -coverpkg to exclude generated code from coverage calculation
+    # gotestsum passes coverage flags through to go test - single test run.
+    # Use -coverpkg to exclude generated code from coverage calculation.
+    # -count=1 disables Go's test result cache: cached results from prior
+    # runs on main carry coverage profile entries for files that have been
+    # deleted on the branch, which break `go tool cover -func` on the next
+    # step (cover needs to read each referenced source file by path).
     - |
       go tool gotestsum --junitfile report.xml --format testname -- \
-        -race -coverprofile=coverage.out -covermode=atomic \
+        -race -count=1 -coverprofile=coverage.out -covermode=atomic \
         -coverpkg=${COVERAGE_PACKAGES} \
         ./...
     # Show coverage summary

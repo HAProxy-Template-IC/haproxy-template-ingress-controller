@@ -12,17 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package dryrunvalidator implements the DryRunValidator component that
-// performs dry-run reconciliation for webhook validation.
+// Package dryrunvalidator implements the DryRunValidator that performs
+// dry-run reconciliation for webhook validation.
 //
-// This component:
-// - Subscribes to WebhookValidationRequest events (scatter-gather)
-// - Creates overlay stores simulating resource changes
-// - Performs dry-run reconciliation (rendering + validation)
-// - Publishes WebhookValidationResponse events
-//
-// The validator ensures resources are valid before they're saved to etcd,
-// preventing invalid configurations from being admitted.
+// The validator is called synchronously by pkg/controller/webhook via
+// ValidateDirect. It creates an overlay store simulating the admission
+// request's hypothetical state, delegates to ProposalValidator.ValidateSync
+// for rendering and validation, and runs validation tests if configured.
 package dryrunvalidator
 
 import (
@@ -31,10 +27,8 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -43,14 +37,8 @@ import (
 )
 
 const (
-	// ComponentName is the unique identifier for this component.
+	// ComponentName identifies this validator in log records.
 	ComponentName = "dryrun-validator"
-
-	// ValidatorID identifies this validator in scatter-gather responses.
-	ValidatorID = "dryrun"
-
-	// EventBufferSize is the size of the event subscription buffer.
-	EventBufferSize = busevents.StandardSubscriberBuffer
 
 	// TestExecutionTimeout is the maximum time allowed for running validation tests.
 	// Tests run sequentially with Workers=1, so this should accommodate multiple tests.
@@ -59,14 +47,11 @@ const (
 
 // Component implements the dry-run validator.
 //
-// It subscribes to WebhookValidationRequest events, creates store overlays
-// from admission requests, and delegates validation to ProposalValidator.
-//
-// The component also runs validation tests if configured, which is not
-// handled by ProposalValidator.
+// It creates store overlays from admission requests and delegates validation
+// to ProposalValidator. The component also runs validation tests if
+// configured, which is not handled by ProposalValidator.
 type Component struct {
 	eventBus          *busevents.EventBus
-	eventChan         <-chan busevents.Event // Subscribed in constructor per CLAUDE.md guidelines
 	proposalValidator *proposalvalidator.Component
 	config            *config.Config
 	testRunner        *testrunner.Runner
@@ -75,7 +60,9 @@ type Component struct {
 
 // ComponentConfig contains configuration for creating a DryRunValidator.
 type ComponentConfig struct {
-	// EventBus is the event bus for subscribing to requests and publishing responses.
+	// EventBus is used to publish validation-tests observability events
+	// (ValidationTestsStarted/Completed/Failed). The component does not
+	// subscribe to anything; ValidateDirect is called synchronously.
 	EventBus *busevents.EventBus
 
 	// ProposalValidator is the component that performs render-validate pipeline.
@@ -110,12 +97,6 @@ type ComponentConfig struct {
 }
 
 // New creates a new DryRunValidator component.
-//
-// Parameters:
-//   - cfg: Configuration for the component
-//
-// Returns:
-//   - A new Component instance ready to be started
 func New(cfg *ComponentConfig) *Component {
 	logger := cfg.Logger
 	if logger == nil {
@@ -141,13 +122,8 @@ func New(cfg *ComponentConfig) *Component {
 		)
 	}
 
-	// Subscribe to only WebhookValidationRequest events per CLAUDE.md guidelines
-	// This ensures subscription happens before EventBus.Start() and reduces buffer pressure
-	eventChan := cfg.EventBus.SubscribeTypes(ComponentName, EventBufferSize, events.EventTypeWebhookValidationRequestSG)
-
 	return &Component{
 		eventBus:          cfg.EventBus,
-		eventChan:         eventChan,
 		proposalValidator: cfg.ProposalValidator,
 		config:            cfg.Config,
 		testRunner:        testRunnerInstance,
@@ -155,66 +131,9 @@ func New(cfg *ComponentConfig) *Component {
 	}
 }
 
-// Name returns the unique identifier for this component.
-// Implements the lifecycle.Component interface.
-func (c *Component) Name() string {
-	return ComponentName
-}
-
-// Start begins the validator's event loop.
-//
-// This method blocks until the context is cancelled. It processes
-// WebhookValidationRequest events from the pre-subscribed channel.
-func (c *Component) Start(ctx context.Context) error {
-	c.logger.Debug("dryrun validator starting")
-
-	for {
-		select {
-		case event := <-c.eventChan:
-			c.handleEvent(event)
-
-		case <-ctx.Done():
-			c.logger.Info("DryRun validator shutting down", "reason", ctx.Err())
-			return nil
-		}
-	}
-}
-
-// handleEvent processes events from the EventBus.
-func (c *Component) handleEvent(event busevents.Event) {
-	if req, ok := event.(*events.WebhookValidationRequest); ok {
-		c.handleValidationRequest(req)
-	}
-}
-
-// handleValidationRequest processes a webhook validation request.
-//
-// This performs dry-run validation by:
-//  1. Mapping GVK to resource type
-//  2. Creating a StoreOverlay from the admission request
-//  3. Delegating to ProposalValidator.ValidateSync() for rendering and validation
-//  4. Running validation tests if configured
-//  5. Publishing a validation response
-func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
-	c.logger.Debug("Processing validation request",
-		"request_id", req.ID,
-		"gvk", req.GVK,
-		"namespace", req.Namespace,
-		"name", req.Name,
-		"operation", req.Operation)
-
-	// Use timeout context to prevent validation from hanging indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), validation.DefaultValidationTimeout)
-	defer cancel()
-	allowed, reason := c.validateWithOverlay(ctx, req.GVK, req.Namespace, req.Name, req.Object, req.Operation, req.ID)
-	c.publishResponse(req.ID, allowed, reason)
-}
-
-// validateWithOverlay is the shared validation pipeline used by both the
-// scatter-gather webhook path (handleValidationRequest) and the synchronous
-// direct path (ValidateDirect). It maps the GVK, builds an overlay store for
-// the affected resource, runs the proposal validator, and runs validation tests
-// if configured. It returns whether the resource is allowed and, if not, a
+// validateWithOverlay maps the GVK, builds an overlay store for the affected
+// resource, runs the proposal validator, and runs validation tests if
+// configured. It returns whether the resource is allowed and, if not, a
 // user-facing reason.
 func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, name string, object any, operation, requestID string) (allowed bool, reason string) {
 	resourceType, err := c.mapGVKToResourceType(gvk)
@@ -261,19 +180,7 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 	return true, ""
 }
 
-// createOverlay creates a StoreOverlay from validation parameters.
-//
-// Parameters:
-//   - namespace: Resource namespace
-//   - name: Resource name
-//   - object: The Kubernetes resource object (must be runtime.Object for CREATE/UPDATE)
-//   - operation: Admission operation (CREATE, UPDATE, DELETE)
-//   - requestID: Request ID for logging (can be empty for direct validation)
-
-// ValidateDirect performs synchronous dry-run validation without scatter-gather.
-//
-// This method is intended for direct webhook integration, eliminating the
-// event-based scatter-gather pattern for improved performance and simplicity.
+// ValidateDirect performs synchronous dry-run validation.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout

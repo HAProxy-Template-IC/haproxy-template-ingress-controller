@@ -128,8 +128,11 @@ func setupWebhook(
 
 // createDryRunValidator creates a DryRunValidator component for webhook validation.
 //
-// This function is called BEFORE EventBus.Start() to ensure the validator subscribes
-// to events before any buffered events are released.
+// This function is called BEFORE EventBus.Start() because the proposal
+// validator it constructs subscribes to ProposalValidationRequestedEvent in
+// its constructor and must be in place before buffered events are released.
+// The DryRunValidator itself is a synchronous library called via
+// ValidateDirect; it does not subscribe to anything.
 //
 // The iterCtx argument is used solely to clean up the per-iteration scratch
 // directory (`os.MkdirTemp(...)`) when the iteration ends — without that hook,
