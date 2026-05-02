@@ -3,6 +3,13 @@
 # Provides Kubernetes networking.k8s.io/v1 Ingress support.
 # Features: path matching (Exact, Prefix), TLS certificates, backend generation.
 
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.ingress.enabled }}'
+  inject:
+    - path: watchedResources.ingresses.fieldSelector
+      value: 'spec.ingressClassName={{ .Values.ingressClass.name }}'
+
 watchedResources:
   ingresses:
     apiVersion: networking.k8s.io/v1

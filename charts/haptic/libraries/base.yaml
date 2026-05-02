@@ -3,6 +3,21 @@
 # Provides resource-agnostic building blocks for HAProxy configuration generation.
 # Libraries like ingress.yaml and gateway.yaml extend these primitives via:
 #   - Plugin patterns: render_glob "backends-*", "map-host-*", etc.
+
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# The "frontend-routing-logic-regex-last" snippet below is the alternate
+# variant of frontend-routing-logic; we conditionally swap it in and always
+# strip the alternate so it never appears in the merged HAProxyTemplateConfig.
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.base.enabled }}'
+  inject:
+    - path: watchedResources.controller_services.labelSelector
+      value: 'app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=loadbalancer'
+    - path: templateSnippets.frontend-routing-logic
+      from: templateSnippets.frontend-routing-logic-regex-last
+      when: '{{- $r := "default" -}}{{- with .Values.controller.config.routing -}}{{- $r = .regexMatchOrder | default "default" -}}{{- end -}}{{- if eq $r "last" }}true{{ end -}}'
+  unset:
+    - templateSnippets.frontend-routing-logic-regex-last
 #   - Composable macros: import and extend utility functions
 #
 # SSL/TLS infrastructure is in ssl.yaml (loaded separately when needed)
@@ -92,7 +107,10 @@ templateSnippets:
           - MULTIBACKEND:<weight>:<key> → Weighted routing via weighted-multi-backend.map
 
         Path Matching Order: Exact > Regex > Prefix-exact > Prefix
-        (Override with path-regex-last library for: Exact > Prefix > Regex)
+        (To select the alternative performance-first order — Exact > Prefix-exact >
+         Prefix > Regex — set controller.config.routing.regexMatchOrder=last in
+         values.yaml. The chart swaps in the frontend-routing-logic-regex-last
+         variant below at load time.)
 
         Extension Points:
           - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
@@ -112,6 +130,53 @@ templateSnippets:
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
+
+      # Parse qualifier type
+      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
+
+      # Extension point: advanced matchers (method/header/query)
+      {{- render_glob "frontend-matchers-advanced-*" }}
+      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
+
+      # MULTIBACKEND: weighted routing via random selection
+      http-request set-var(txn.total_weight) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.random_weight) rand(),mod(txn.total_weight) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.route_key) var(txn.path_match),field(3,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.lookup_key) var(txn.random_weight),concat(:,txn.route_key,) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+
+      # BACKEND: direct routing
+      http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
+
+  frontend-routing-logic-regex-last:
+    template: |-
+      {#-
+        Performance-first path matching variant: Exact > Prefix-exact > Prefix > Regex.
+
+        This snippet exists only to be swapped into "frontend-routing-logic" by
+        haptic.mergeLibraries when controller.config.routing.regexMatchOrder=last.
+        It is unset before the merged config is rendered, so it never appears in
+        the operator-visible HAProxyTemplateConfig output.
+
+        Differs from the default variant only in the four path-matching set-var
+        lines below (regex moved to last). All other logic is identical and must
+        stay in lockstep with frontend-routing-logic.
+      -#}
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      # base/frontend-routing-logic (regex-last variant)
+
+      # Host and path extraction
+      http-request set-var(txn.base) base
+      http-request set-var(txn.path) path
+      http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
+      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }})
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+
+      # Path matching: Exact > Prefix-exact > Prefix > Regex
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
 
       # Parse qualifier type
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)

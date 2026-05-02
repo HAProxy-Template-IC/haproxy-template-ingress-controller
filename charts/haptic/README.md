@@ -62,7 +62,6 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 |---------|---------|--------|
 | `base` | always on | Core `haproxyConfig`, extension points (`render_glob` patterns) — must stay resource-agnostic |
 | `ssl` | on | Terminate TLS, crt-list management, SSL passthrough |
-| `path-regex-last` | off | Alternative path-matching ordering (regex last, for performance) |
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` (requires Gateway CRDs installed) |
 | `haproxytech` | on | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |

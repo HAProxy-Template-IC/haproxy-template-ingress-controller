@@ -121,7 +121,7 @@ tests:
   - it: should set priorityClassName when specified
     template: deployment.yaml
     set:
-      priorityClassName: high-priority
+      controller.podSpec.priorityClassName: high-priority
     asserts:
       - equal:
           path: spec.template.spec.priorityClassName
@@ -130,7 +130,7 @@ tests:
   - it: should set nodeSelector when specified
     template: deployment.yaml
     set:
-      nodeSelector:
+      controller.podSpec.nodeSelector:
         disktype: ssd
     asserts:
       - equal:
@@ -140,7 +140,7 @@ tests:
   - it: should set tolerations when specified
     template: deployment.yaml
     set:
-      tolerations:
+      controller.podSpec.tolerations:
         - key: node-role.kubernetes.io/master
           effect: NoSchedule
     asserts:
@@ -298,7 +298,7 @@ tests:
   - it: should set custom termination grace period
     template: deployment.yaml
     set:
-      terminationGracePeriodSeconds: 60
+      controller.podSpec.terminationGracePeriodSeconds: 60
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
@@ -372,7 +372,7 @@ tests:
   - it: should set custom dnsPolicy
     template: deployment.yaml
     set:
-      dnsPolicy: None
+      controller.podSpec.dnsPolicy: None
     asserts:
       - equal:
           path: spec.template.spec.dnsPolicy
@@ -381,7 +381,7 @@ tests:
   - it: should set dnsConfig when specified
     template: deployment.yaml
     set:
-      dnsConfig:
+      controller.podSpec.dnsConfig:
         nameservers:
           - 8.8.8.8
         options:
@@ -401,7 +401,7 @@ tests:
   - it: should set hostAliases when specified
     template: deployment.yaml
     set:
-      hostAliases:
+      controller.podSpec.hostAliases:
         - ip: "127.0.0.1"
           hostnames:
             - "foo.local"
@@ -423,7 +423,7 @@ tests:
   - it: should set runtimeClassName when specified
     template: deployment.yaml
     set:
-      runtimeClassName: gvisor
+      controller.podSpec.runtimeClassName: gvisor
     asserts:
       - equal:
           path: spec.template.spec.runtimeClassName
@@ -468,7 +468,7 @@ tests:
   - it: should set topologySpreadConstraints when specified
     template: deployment.yaml
     set:
-      topologySpreadConstraints:
+      controller.podSpec.topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule

@@ -56,7 +56,6 @@ image:
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion
   tag: ""
-imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 # Controller configuration
@@ -111,6 +110,14 @@ controller:
     # Features: Path matching, header matching, traffic splitting, host-based routing
     gateway:
       enabled: true
+    # Annotation-compat scaffold: shared HAProxy output macros and utility
+    # snippets consumed by the vendor-specific annotation libraries below.
+    # Sits at hierarchy level 2.5 — provides macros for SSL passthrough, cookie
+    # affinity, backend timeouts, and ACL/headers patterns that would otherwise
+    # be duplicated across haproxytech / haproxy-ingress / nginx-ingress.
+    # See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+    annotationCompat:
+      enabled: true
     # HAProxyTech library: Support for haproxy.org/* annotations
     # Currently includes basic authentication (haproxy.org/auth-type, haproxy.org/auth-secret)
     # Works with both Ingress and Gateway API resources
@@ -127,12 +134,6 @@ controller:
     # Supports: timeouts, load balancing, SSL redirect, CORS, auth, rate limiting, canary, and more
     # Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/
     nginxIngress:
-      enabled: false
-    # Path Regex Last library: Performance-first path matching order
-    # Overrides default ordering to: Exact > Prefix > Regex (regex moved to last)
-    # Default (de facto standard): Exact > Regex > Prefix
-    # Enable for HAProxy-optimized performance (exact/prefix faster than regex)
-    pathRegexLast:
       enabled: false
     # SPOA hub library: HAProxy-side wiring for the bundled spoa-hub sidecar
     # Provides the `backend spoa-hub` block, the `filter spoe engine` directive
@@ -214,6 +215,77 @@ controller:
   # cutover when tools like external-dns watch status fields.
   statusPatches:
     enabled: true
+  # Pod-spec scheduling, runtime, and metadata for the controller Deployment.
+  # The chart's _pod-spec.tpl helper renders the universally-shared fields
+  # (priorityClassName / runtimeClassName / terminationGracePeriodSeconds /
+  # dnsPolicy / dnsConfig / hostAliases / topologySpreadConstraints /
+  # nodeSelector / affinity / tolerations / imagePullSecrets) from this block.
+  # The remaining fields (podAnnotations, podLabels, podSecurityContext) are
+  # consumed directly by templates/deployment.yaml, which mixes them with
+  # workload-specific data (config checksums, component labels, container UID).
+  podSpec:
+    # Image pull secrets (private registry access)
+    imagePullSecrets: []
+    # Pod annotations
+    podAnnotations: {}
+    # Pod labels
+    podLabels: {}
+    # Priority class for pod scheduling
+    # Used to mark critical workloads for preferential scheduling and preemption
+    # Common values:
+    #   - system-cluster-critical: Highest priority for cluster infrastructure
+    #   - system-node-critical: High priority for node management components
+    #   - "" (empty): Default priority (recommended for most deployments)
+    # Requires priority class to be pre-created in the cluster
+    priorityClassName: ""
+    # Topology spread constraints for high availability
+    # Controls pod distribution across topology domains (zones, nodes, etc.)
+    # Default: [] (empty, user opt-in)
+    # Example for zone spreading:
+    #   - maxSkew: 1
+    #     topologyKey: topology.kubernetes.io/zone
+    #     whenUnsatisfiable: DoNotSchedule
+    #     labelSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: haptic
+    #         app.kubernetes.io/component: controller
+    topologySpreadConstraints: []
+    # Pod security context
+    # Complies with Pod Security Standards (PSS) Restricted profile
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532 # nonroot user
+      runAsGroup: 65532
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    # Node selector
+    nodeSelector: {}
+    # Tolerations
+    tolerations: []
+    # Affinity rules
+    affinity: {}
+    # Termination grace period in seconds
+    terminationGracePeriodSeconds: 30
+    # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
+    dnsPolicy: ClusterFirst
+    # DNS config for custom DNS settings
+    dnsConfig: {}
+    # nameservers:
+    #   - 8.8.8.8
+    # searches:
+    #   - my-namespace.svc.cluster.local
+    # options:
+    #   - name: ndots
+    #     value: "2"
+    # Host aliases (/etc/hosts entries)
+    hostAliases: []
+    # - ip: "127.0.0.1"
+    #   hostnames:
+    #     - "foo.local"
+    #     - "bar.local"
+    # Runtime class name (for specialized runtimes like gVisor, Kata)
+    runtimeClassName: ""
   # HAProxyTemplateConfig specification
   # This configuration is rendered into a HAProxyTemplateConfig CRD
   # Users can customize this configuration using Helm values or create
@@ -282,6 +354,14 @@ controller:
       sslCertsDir: /etc/haproxy/ssl
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
+    # Frontend path-matching order
+    # "default" — Exact > Regex > Prefix-exact > Prefix (de-facto standard)
+    # "last"    — Exact > Prefix-exact > Prefix > Regex (performance-first;
+    #             evaluates faster matchers before regex)
+    # The chart swaps in the regex-last variant of the frontend-routing-logic
+    # snippet at Helm load time when this is set to "last".
+    routing:
+      regexMatchOrder: default
     # Runtime log level override (optional)
     # Uncomment to override controller.logLevel at runtime without pod restart
     # logging:
@@ -519,39 +599,6 @@ serviceAccount:
 rbac:
   # Specifies whether RBAC resources should be created
   create: true
-# Pod annotations
-podAnnotations: {}
-# Pod labels
-podLabels: {}
-# Priority class for pod scheduling
-# Used to mark critical workloads for preferential scheduling and preemption
-# Common values:
-#   - system-cluster-critical: Highest priority for cluster infrastructure
-#   - system-node-critical: High priority for node management components
-#   - "" (empty): Default priority (recommended for most deployments)
-# Requires priority class to be pre-created in the cluster
-priorityClassName: ""
-# Topology spread constraints for high availability
-# Controls pod distribution across topology domains (zones, nodes, etc.)
-# Default: [] (empty, user opt-in)
-# Example for zone spreading:
-#   - maxSkew: 1
-#     topologyKey: topology.kubernetes.io/zone
-#     whenUnsatisfiable: DoNotSchedule
-#     labelSelector:
-#       matchLabels:
-#         app.kubernetes.io/name: haptic
-#         app.kubernetes.io/component: controller
-topologySpreadConstraints: []
-# Pod security context
-# Complies with Pod Security Standards (PSS) Restricted profile
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 65532 # nonroot user
-  runAsGroup: 65532
-  fsGroup: 65532
-  seccompProfile:
-    type: RuntimeDefault
 # Container security context
 # Complies with Pod Security Standards (PSS) Restricted profile
 # No capabilities required - controller uses only standard syscalls
@@ -619,12 +666,6 @@ resources:
 #     - name: MY_VAR
 #       value: "my-value"
 extraEnv: []
-# Node selector
-nodeSelector: {}
-# Tolerations
-tolerations: []
-# Affinity rules
-affinity: {}
 # Extra volumes for controller pod
 # Use this to add custom volumes (ConfigMaps, Secrets, emptyDir, etc.)
 extraVolumes: []
@@ -672,8 +713,6 @@ lifecycle: {}
 #   httpGet:
 #     path: /ready
 #     port: 8080
-# Termination grace period in seconds
-terminationGracePeriodSeconds: 30
 # Deployment update strategy
 updateStrategy:
   type: RollingUpdate
@@ -687,25 +726,6 @@ revisionHistoryLimit: 10
 # Deployment-level annotations (different from pod annotations)
 deploymentAnnotations: {}
 # reloader.stakater.com/auto: "true"
-# DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
-dnsPolicy: ClusterFirst
-# DNS config for custom DNS settings
-dnsConfig: {}
-# nameservers:
-#   - 8.8.8.8
-# searches:
-#   - my-namespace.svc.cluster.local
-# options:
-#   - name: ndots
-#     value: "2"
-# Host aliases (/etc/hosts entries)
-hostAliases: []
-# - ip: "127.0.0.1"
-#   hostnames:
-#     - "foo.local"
-#     - "bar.local"
-# Runtime class name (for specialized runtimes like gVisor, Kata)
-runtimeClassName: ""
 # Autoscaling configuration
 autoscaling:
   enabled: false
@@ -982,50 +1002,77 @@ haproxy:
       memory: 1Gi
     limits:
       memory: 1Gi
-  # Priority class for pod scheduling
-  # Used to mark critical workloads for preferential scheduling and preemption
-  # Common values:
-  #   - system-cluster-critical: Highest priority for cluster infrastructure
-  #   - system-node-critical: High priority for node management components
-  #   - "" (empty): Default priority (recommended for most deployments)
-  # Requires priority class to be pre-created in the cluster
-  priorityClassName: ""
-  # Topology spread constraints for high availability
-  # Controls pod distribution across topology domains (zones, nodes, etc.)
-  # Default: [] (empty, user opt-in)
-  # Example for zone spreading:
-  #   - maxSkew: 1
-  #     topologyKey: topology.kubernetes.io/zone
-  #     whenUnsatisfiable: DoNotSchedule
-  #     labelSelector:
-  #       matchLabels:
-  #         app.kubernetes.io/name: haptic
-  #         app.kubernetes.io/component: loadbalancer
-  topologySpreadConstraints: []
-  # Node selector for HAProxy pods
-  nodeSelector: {}
-  # Tolerations for HAProxy pods
-  tolerations: []
-  # Affinity rules for HAProxy pods
-  affinity: {}
-  # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
-  dnsPolicy: ClusterFirst
-  # DNS config for custom nameservers, searches, and options
-  dnsConfig: {}
-  # nameservers:
-  #   - 8.8.8.8
-  # searches:
-  #   - my-namespace.svc.cluster.local
-  # options:
-  #   - name: ndots
-  #     value: "2"
-  # Host aliases (/etc/hosts entries)
-  hostAliases: []
-  # - ip: "127.0.0.1"
-  #   hostnames:
-  #     - "foo.local"
-  # Runtime class name (for specialized runtimes like gVisor, Kata)
-  runtimeClassName: ""
+  # Pod-spec scheduling, runtime, and metadata for the HAProxy Deployment.
+  # The chart's _pod-spec.tpl helper renders the universally-shared fields
+  # from this block. podSecurityContext, podAnnotations, and shareProcessNamespace
+  # are consumed directly by templates/haproxy-deployment.yaml.
+  podSpec:
+    # Priority class for pod scheduling
+    # Used to mark critical workloads for preferential scheduling and preemption
+    # Common values:
+    #   - system-cluster-critical: Highest priority for cluster infrastructure
+    #   - system-node-critical: High priority for node management components
+    #   - "" (empty): Default priority (recommended for most deployments)
+    # Requires priority class to be pre-created in the cluster
+    priorityClassName: ""
+    # Topology spread constraints for high availability
+    # Controls pod distribution across topology domains (zones, nodes, etc.)
+    # Default: [] (empty, user opt-in)
+    # Example for zone spreading:
+    #   - maxSkew: 1
+    #     topologyKey: topology.kubernetes.io/zone
+    #     whenUnsatisfiable: DoNotSchedule
+    #     labelSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: haptic
+    #         app.kubernetes.io/component: loadbalancer
+    topologySpreadConstraints: []
+    # Node selector for HAProxy pods
+    nodeSelector: {}
+    # Tolerations for HAProxy pods
+    tolerations: []
+    # Affinity rules for HAProxy pods
+    affinity: {}
+    # DNS policy (ClusterFirst, ClusterFirstWithHostNet, Default, None)
+    dnsPolicy: ClusterFirst
+    # DNS config for custom nameservers, searches, and options
+    dnsConfig: {}
+    # nameservers:
+    #   - 8.8.8.8
+    # searches:
+    #   - my-namespace.svc.cluster.local
+    # options:
+    #   - name: ndots
+    #     value: "2"
+    # Host aliases (/etc/hosts entries)
+    hostAliases: []
+    # - ip: "127.0.0.1"
+    #   hostnames:
+    #     - "foo.local"
+    # Runtime class name (for specialized runtimes like gVisor, Kata)
+    runtimeClassName: ""
+    # Extra pod annotations for HAProxy pods (supports template expressions)
+    podAnnotations: {}
+    # Share process namespace between containers (required for signal-based sidecar reload)
+    shareProcessNamespace: false
+    # Termination grace period in seconds
+    terminationGracePeriodSeconds: 30
+    # Pod security context for HAProxy deployment
+    # Complies with Pod Security Standards (PSS) Restricted profile
+    # NO NET_BIND_SERVICE capability required - HAProxy binds to unprivileged ports (8080, 8443, 8404)
+    # Kubernetes Service handles mapping to privileged ports (80, 443)
+    #
+    # UIDs are auto-derived based on enterprise.enabled:
+    #   Community: runAsUser=99, runAsGroup=99, fsGroup=99 (haproxy user)
+    #   Enterprise: runAsUser=1000, runAsGroup=1000, fsGroup=1000 (hapee-lb user)
+    podSecurityContext:
+      seccompProfile:
+        type: RuntimeDefault
+      # Pod-level sysctls (requires kubelet allowedUnsafeSysctls for unsafe sysctls)
+      sysctls: []
+      # Example:
+      #   - name: net.ipv4.tcp_wmem
+      #     value: "4096 16384 536870912"
   # Extra volumes for HAProxy pod
   extraVolumes: []
   # - name: custom-config
@@ -1041,10 +1088,6 @@ haproxy:
   # - name: init-config
   #   image: busybox:1.36
   #   command: ['sh', '-c', 'echo "Initializing..."']
-  # Extra pod annotations for HAProxy pods (supports template expressions)
-  podAnnotations: {}
-  # Share process namespace between containers (required for signal-based sidecar reload)
-  shareProcessNamespace: false
   # Sidecar containers for HAProxy pod
   sidecars: []
   # - name: log-shipper
@@ -1054,8 +1097,6 @@ haproxy:
   # preStop:
   #   exec:
   #     command: ["/bin/sh", "-c", "sleep 30"]
-  # Termination grace period in seconds
-  terminationGracePeriodSeconds: 30
   # Deployment update strategy
   updateStrategy:
     type: RollingUpdate
@@ -1129,22 +1170,6 @@ haproxy:
     #     start: 0 8 * * 1-5
     #     end: 0 18 * * 1-5
     #     desiredReplicas: "5"
-  # Pod security context for HAProxy deployment
-  # Complies with Pod Security Standards (PSS) Restricted profile
-  # NO NET_BIND_SERVICE capability required - HAProxy binds to unprivileged ports (8080, 8443, 8404)
-  # Kubernetes Service handles mapping to privileged ports (80, 443)
-  #
-  # UIDs are auto-derived based on enterprise.enabled:
-  #   Community: runAsUser=99, runAsGroup=99, fsGroup=99 (haproxy user)
-  #   Enterprise: runAsUser=1000, runAsGroup=1000, fsGroup=1000 (hapee-lb user)
-  podSecurityContext:
-    seccompProfile:
-      type: RuntimeDefault
-    # Pod-level sysctls (requires kubelet allowedUnsafeSysctls for unsafe sysctls)
-    sysctls: []
-    # Example:
-    #   - name: net.ipv4.tcp_wmem
-    #     value: "4096 16384 536870912"
   # Initial HAProxy configuration
   # This provides a minimal working config until the controller deploys the full config
   initialConfig: |

@@ -33,47 +33,16 @@ spec:
       annotations:
         checksum/secret: {{ printf "%s-%s" (include "haptic.dataplane.username" .) (include "haptic.dataplane.password" .) | sha256sum }}
         checksum/config: {{ include "haptic.haproxy.bootstrapConfigChecksum" . }}
-        {{- with .Values.haproxy.podAnnotations }}
+        {{- with .Values.haproxy.podSpec.podAnnotations }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       labels:
         {{- include "haptic.selectorLabels" . | nindent 8 }}
         {{- include "haptic.componentLabels" "loadbalancer" | nindent 8 }}
     spec:
-      {{- with .Values.haproxy.priorityClassName }}
-      priorityClassName: {{ . }}
-      {{- end }}
-      terminationGracePeriodSeconds: {{ .Values.haproxy.terminationGracePeriodSeconds }}
-      {{- with .Values.haproxy.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.haproxy.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.haproxy.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.haproxy.topologySpreadConstraints }}
-      topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      dnsPolicy: {{ .Values.haproxy.dnsPolicy }}
-      {{- with .Values.haproxy.dnsConfig }}
-      dnsConfig:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- if .Values.haproxy.shareProcessNamespace }}
+      {{- include "haptic.podSpec" (list .Values.haproxy.podSpec .) | trim | nindent 6 }}
+      {{- if .Values.haproxy.podSpec.shareProcessNamespace }}
       shareProcessNamespace: true
-      {{- end }}
-      {{- with .Values.haproxy.hostAliases }}
-      hostAliases:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.haproxy.runtimeClassName }}
-      runtimeClassName: {{ . }}
       {{- end }}
       {{- with .Values.haproxy.initContainers }}
       initContainers:
@@ -81,14 +50,14 @@ spec:
       {{- end }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: {{ include "haptic.haproxy.runAsUser" . }}
-        runAsGroup: {{ include "haptic.haproxy.runAsGroup" . }}
-        fsGroup: {{ include "haptic.haproxy.fsGroup" . }}
-        {{- with .Values.haproxy.podSecurityContext.seccompProfile }}
+        runAsUser: {{ include "haptic.haproxy.uid" . }}
+        runAsGroup: {{ include "haptic.haproxy.uid" . }}
+        fsGroup: {{ include "haptic.haproxy.uid" . }}
+        {{- with .Values.haproxy.podSpec.podSecurityContext.seccompProfile }}
         seccompProfile:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        {{- with .Values.haproxy.podSecurityContext.sysctls }}
+        {{- with .Values.haproxy.podSpec.podSecurityContext.sysctls }}
         sysctls:
           {{- toYaml . | nindent 10 }}
         {{- end }}
@@ -105,7 +74,7 @@ spec:
               add: [NET_BIND_SERVICE]
               {{- end }}
             runAsNonRoot: true
-            runAsUser: {{ include "haptic.haproxy.runAsUser" . }}
+            runAsUser: {{ include "haptic.haproxy.uid" . }}
           image: {{ include "haptic.haproxy.image" . }}
           imagePullPolicy: {{ .Values.haproxy.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
@@ -120,8 +89,11 @@ spec:
 
               # Start HAProxy in master-worker mode with master socket
               # -dr: Skip DNS resolution failures - servers start in DOWN state instead of failing startup
-              # -m: Memory limit in MB (derived from container memory requests)
-              {{- $memLimitMB := include "haptic.haproxy.memoryLimitMB" . }}
+              # -m: Memory limit in MB (derived from container memory requests, when set)
+              {{- $memLimitMB := "" -}}
+              {{- with .Values.haproxy.resources -}}{{- with .requests -}}{{- with .memory -}}
+              {{- $memLimitMB = include "haptic.memoryToMB" . -}}
+              {{- end -}}{{- end -}}{{- end }}
               exec {{ include "haptic.haproxy.bin" . }} -dr -W -db{{ if $memLimitMB }} -m {{ $memLimitMB }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
           {{- with .Values.haproxy.extraEnv }}
           env:
@@ -187,7 +159,7 @@ spec:
               {{- end }}
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: {{ include "haptic.haproxy.dataplaneRunAsUser" . }}
+            runAsUser: {{ include "haptic.haproxy.uid" . }}
           image: {{ include "haptic.haproxy.image" . }}
           imagePullPolicy: {{ .Values.haproxy.image.pullPolicy }}
           env:

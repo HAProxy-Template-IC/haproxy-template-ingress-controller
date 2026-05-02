@@ -1016,5 +1016,4 @@ All annotations are fully supported.
 - [Base Library](base.md) - Path matching infrastructure
 - [Ingress Library](ingress.md) - Standard Ingress support
 - [HAProxyTech Library](haproxytech.md) - `haproxy.org/*` annotations
-- [Path Regex Last Library](path-regex-last.md) - Alternative path matching order
 - [HAProxy Ingress Documentation](https://haproxy-ingress.github.io/docs/configuration/keys/) - Original annotation reference

@@ -15,7 +15,6 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
 | `image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `image.tag` | string | `""` | Controller image tag; empty = `<chart appVersion>-haproxy<haproxyVersion>` |
-| `imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
 | `nameOverride` | string | `""` | Override chart name |
 | `fullnameOverride` | string | `""` | Override full release name |
 
@@ -37,10 +36,11 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTPRoute, GRPCRoute) |
+| `controller.templateLibraries.annotationCompat.enabled` | bool | `true` | Shared annotation-compat scaffold (level 2.5). Provides parameterized macros consumed by the vendor annotation libraries below |
 | `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
-| `controller.templateLibraries.pathRegexLast.enabled` | bool | `false` | Performance-first path matching (regex last) |
+| `controller.config.routing.regexMatchOrder` | string | `default` | Path matching order: `default` (Exact > Regex > Prefix-exact > Prefix) or `last` (Exact > Prefix-exact > Prefix > Regex, performance-first) |
 
 ## Default SSL Certificate
 
@@ -155,19 +155,30 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `serviceAccount.name` | string | `""` | ServiceAccount name (auto-generated if empty) |
 | `rbac.create` | bool | `true` | Create RBAC resources |
 
-## Pod Configuration
+## Pod Configuration (Controller)
+
+Pod-spec scheduling, runtime, and metadata fields for the controller Deployment live under `controller.podSpec.*`. The chart's `_pod-spec.tpl` helper renders the universally-shared subset; the remaining fields (podAnnotations, podLabels, podSecurityContext) are consumed directly by `templates/deployment.yaml`.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `podAnnotations` | map | `{}` | Pod annotations |
-| `podLabels` | map | `{}` | Additional pod labels |
-| `priorityClassName` | string | `""` | Pod priority class name |
-| `topologySpreadConstraints` | list | `[]` | Pod topology spread constraints |
-| `podSecurityContext.runAsNonRoot` | bool | `true` | Run as non-root user |
-| `podSecurityContext.runAsUser` | int | `65532` | User ID |
-| `podSecurityContext.runAsGroup` | int | `65532` | Group ID |
-| `podSecurityContext.fsGroup` | int | `65532` | Filesystem group ID |
-| `podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
+| `controller.podSpec.imagePullSecrets` | list | `[]` | Image pull secrets for private registries |
+| `controller.podSpec.podAnnotations` | map | `{}` | Pod annotations |
+| `controller.podSpec.podLabels` | map | `{}` | Additional pod labels |
+| `controller.podSpec.priorityClassName` | string | `""` | Pod priority class name |
+| `controller.podSpec.runtimeClassName` | string | `""` | Runtime class (e.g. gVisor, Kata) |
+| `controller.podSpec.terminationGracePeriodSeconds` | int | `30` | Termination grace period |
+| `controller.podSpec.dnsPolicy` | string | `ClusterFirst` | DNS policy |
+| `controller.podSpec.dnsConfig` | map | `{}` | DNS config |
+| `controller.podSpec.hostAliases` | list | `[]` | /etc/hosts entries |
+| `controller.podSpec.topologySpreadConstraints` | list | `[]` | Pod topology spread constraints |
+| `controller.podSpec.nodeSelector` | map | `{}` | Node selector |
+| `controller.podSpec.tolerations` | list | `[]` | Pod tolerations |
+| `controller.podSpec.affinity` | map | `{}` | Pod affinity rules |
+| `controller.podSpec.podSecurityContext.runAsNonRoot` | bool | `true` | Run as non-root user |
+| `controller.podSpec.podSecurityContext.runAsUser` | int | `65532` | User ID |
+| `controller.podSpec.podSecurityContext.runAsGroup` | int | `65532` | Group ID |
+| `controller.podSpec.podSecurityContext.fsGroup` | int | `65532` | Filesystem group ID |
+| `controller.podSpec.podSecurityContext.seccompProfile.type` | string | `RuntimeDefault` | Seccomp profile type |
 
 ## Container Security Context
 
@@ -200,9 +211,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `resources.requests.cpu` | string | `100m` | CPU request |
 | `resources.requests.memory` | string | `512Mi` | Memory request (Guaranteed QoS — matches `limits.memory`) |
 | `resources.limits.memory` | string | `512Mi` | Memory limit |
-| `nodeSelector` | map | `{}` | Node selector |
-| `tolerations` | list | `[]` | Pod tolerations |
-| `affinity` | map | `{}` | Pod affinity rules |
+
+Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) live under `controller.podSpec.*` — see [Pod Configuration (Controller)](#pod-configuration-controller).
 
 ## Autoscaling & PDB
 
@@ -243,10 +253,23 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 
 ## HAProxy Pod Configuration
 
+Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*` (the chart's `_pod-spec.tpl` helper renders the universally-shared subset). See also `controller.podSpec.*` for the controller Deployment.
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.podAnnotations` | map | `{}` | Extra pod annotations for HAProxy pods (supports template expressions) |
-| `haproxy.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
+| `haproxy.podSpec.podAnnotations` | map | `{}` | Extra pod annotations for HAProxy pods (supports template expressions) |
+| `haproxy.podSpec.shareProcessNamespace` | bool | `false` | Share process namespace between containers (required for signal-based sidecar reload) |
+| `haproxy.podSpec.priorityClassName` | string | `""` | Pod priority class |
+| `haproxy.podSpec.terminationGracePeriodSeconds` | int | `30` | Termination grace period |
+| `haproxy.podSpec.dnsPolicy` | string | `ClusterFirst` | DNS policy |
+| `haproxy.podSpec.dnsConfig` | map | `{}` | DNS config |
+| `haproxy.podSpec.hostAliases` | list | `[]` | /etc/hosts entries |
+| `haproxy.podSpec.runtimeClassName` | string | `""` | Runtime class (e.g. gVisor, Kata) |
+| `haproxy.podSpec.topologySpreadConstraints` | list | `[]` | Topology spread constraints |
+| `haproxy.podSpec.nodeSelector` | map | `{}` | Node selector |
+| `haproxy.podSpec.tolerations` | list | `[]` | Tolerations |
+| `haproxy.podSpec.affinity` | map | `{}` | Affinity rules |
+| `haproxy.podSpec.podSecurityContext` | map | See values.yaml | Pod-level security context (seccomp, sysctls). UIDs auto-derived from `haproxy.enterprise.enabled` |
 | `haproxy.sidecars` | list | `[]` | Additional sidecar containers for HAProxy pod |
 | `haproxy.initContainers` | list | `[]` | Init containers for HAProxy pod |
 | `haproxy.extraVolumes` | list | `[]` | Extra volumes for HAProxy pod |
@@ -289,8 +312,6 @@ Dataplane API credentials moved to the top-level `credentials.dataplane.*` secti
 | `haproxy.resources.requests.cpu` | string | `250m` | CPU request |
 | `haproxy.resources.requests.memory` | string | `1Gi` | Memory request (Guaranteed QoS — limits.memory matches) |
 | `haproxy.resources.limits.memory` | string | `1Gi` | Memory limit |
-| `haproxy.priorityClassName` | string | `""` | Pod priority class |
-| `haproxy.topologySpreadConstraints` | list | `[]` | Topology spread constraints |
 
 No CPU limit is set by default to avoid throttling; Go's auto-GOMAXPROCS adapts to the request value.
 

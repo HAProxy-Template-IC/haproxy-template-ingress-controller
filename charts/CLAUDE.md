@@ -10,38 +10,82 @@ The chart uses a library-based architecture where multiple YAML files are merged
 
 ```
 Merge Order (lowest to highest priority):
-1. base.yaml             - Core HAProxy template and snippets
-2. ssl.yaml              - HTTPS frontend, TLS certs, SSL passthrough infra
-3. ingress.yaml          - Kubernetes Ingress support
-4. gateway.yaml          - Gateway API (only when GatewayClass CRD is present)
-5. haproxytech.yaml      - haproxy.org/* annotation compatibility
-6. haproxy-ingress.yaml  - haproxy-ingress.github.io/* annotation compatibility
-7. nginx-ingress.yaml    - nginx.ingress.kubernetes.io/* compat (disabled by default)
-8. path-regex-last.yaml  - Optional: regex paths matched last (disabled by default)
-9. spoa-hub.yaml         - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
-10. controller.config.*  - User overrides from values.yaml (highest priority)
+1. base.yaml               - Core HAProxy template and snippets
+2. ssl.yaml                - HTTPS frontend, TLS certs, SSL passthrough infra
+3. ingress.yaml            - Kubernetes Ingress support
+4. gateway.yaml            - Gateway API (only when GatewayClass CRD is present)
+5. annotation-compat.yaml  - Shared scaffold for vendor annotation libraries (level 2.5)
+6. haproxytech.yaml        - haproxy.org/* annotation compatibility
+7. haproxy-ingress.yaml    - haproxy-ingress.github.io/* annotation compatibility
+8. nginx-ingress.yaml      - nginx.ingress.kubernetes.io/* compat (disabled by default)
+9. spoa-hub.yaml           - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
+10. controller.config.*    - User overrides from values.yaml (highest priority)
 ```
 
-Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are pure plugin libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up.
+Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `annotation-compat.yaml` (level 2.5) provides macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
+
+The frontend path-matching order is selected at base-load time by `controller.config.routing.regexMatchOrder` (`default` or `last`). When `last`, `haptic.mergeLibraries` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before merge so it never appears in the rendered HAProxyTemplateConfig.
 
 **Merge Logic** (`templates/_helpers.tpl`, `define "haptic.mergeLibraries"`):
+
+The loader iterates a fixed ordered list of library files. The merge order is a system property and lives in `_helpers.tpl`. Per-library loading rules — enable predicates and any chart-time mutations of the parsed YAML — live next to the resources they parameterize, in each library's top-level `_helm_load:` block. The block is stripped before merge so it never appears in the rendered HAProxyTemplateConfig.
 
 ```yaml
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
-# Load each library in order using mustMergeOverwrite, gated by its
-# enabled flag. Later libraries override earlier ones for the same keys.
-{{- $merged = mustMergeOverwrite $merged $baseLibrary }}
-{{- $merged = mustMergeOverwrite $merged $sslLibrary }}
-{{- $merged = mustMergeOverwrite $merged $ingressLibrary }}
-{{- $merged = mustMergeOverwrite $merged $gatewayLibrary }}
-{{- $merged = mustMergeOverwrite $merged $haproxytechLibrary }}
-{{- $merged = mustMergeOverwrite $merged $haproxyIngressLibrary }}
-{{- $merged = mustMergeOverwrite $merged $nginxIngressLibrary }}
-{{- $merged = mustMergeOverwrite $merged $pathRegexLastLibrary }}
-{{- $merged = mustMergeOverwrite $merged $userConfig }}
+{{- $libraryFiles := list "libraries/base.yaml" ... "libraries/spoa-hub.yaml" }}
+{{- range $file := $libraryFiles }}
+  {{- $library := $context.Files.Get $file | fromYaml }}
+  {{- $loadHints := $library._helm_load | default dict }}
+  {{- if eq (tpl $loadHints.enable $context | trim) "true" }}
+    # apply _helm_load.inject items, optionally gated by inject.when
+    # apply _helm_load.unset items
+    # strip _helm_load
+    # apply haptic.filterTests universally (no-op for libs without _helm_skip_test)
+    {{- $merged = mustMergeOverwrite $merged $library }}
+  {{- end }}
+{{- end }}
+# Then merge user-provided controller.config.* (highest priority).
 {{- end }}
 ```
+
+### `_helm_load:` Schema
+
+Every library file declares its loading rules in a top-level `_helm_load:` block. This is the same convention as `_helm_skip_test` (per-test skip rule); both `_helm_*` keys are chart-time-only metadata and are stripped before the merged config is rendered.
+
+```yaml
+_helm_load:
+  # Required: Helm template string evaluated by tpl. Library is loaded only if
+  # the result trims to "true". Truthy bools render as "true" / "false" naturally;
+  # for compound conditions wrap with {{ if ... }}true{{ else }}false{{ end }}.
+  enable: '{{ .Values.controller.templateLibraries.foo.enabled }}'
+
+  # Optional: list of injection operations applied to the parsed library AFTER
+  # fromYaml, BEFORE merge. Each item:
+  #   path: dotted path within the library to write
+  #   value: tpl-evaluated string written at that path                     (one of)
+  #   from:  dotted path within the library to copy from                   (the other)
+  #   when: optional tpl-evaluated condition; injection skipped if not "true"
+  inject:
+    - path: watchedResources.foo.fieldSelector
+      value: 'spec.fooClass={{ .Values.fooClass.name }}'
+
+  # Optional: list of dotted paths to remove from the library AFTER injects,
+  # BEFORE merge. Useful for stripping internal-only snippets (variant scaffolding).
+  unset:
+    - templateSnippets.foo-internal-variant
+```
+
+Real examples in the source:
+
+- `libraries/ingress.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
+- `libraries/gateway.yaml` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + one `inject` for the gateway-class field selector.
+- `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
+- `libraries/spoa-hub.yaml` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
+
+Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `$libraryFiles` in `_helpers.tpl`'s `mergeLibraries`. The merge function does not need a new branch.
+
+See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
 ### Library Knowledge Hierarchy
 
@@ -52,19 +96,27 @@ Level 0: base.yaml
          │
          ├── Knows: nothing (completely resource-agnostic)
          │
-Level 1: ssl.yaml, path-regex-last.yaml
+Level 1: ssl.yaml
          │
          ├── Know: base
-         ├── Don't know: each other
          │
 Level 2: ingress.yaml, gateway.yaml
          │
-         ├── Know: base, ssl, path-regex-last
+         ├── Know: base, ssl
          ├── Don't know: each other
+         │
+Level 2.5: annotation-compat.yaml
+         │
+         ├── Knows: base (via shared utilities like HostMatchCondition)
+         ├── Provides: parameterized macros for patterns shared across the
+         │             vendor annotation libraries below (currently SSL
+         │             passthrough scan + CIDR allow/deny ACL emission)
+         ├── Constraint: macros are stateless — they take parameters and
+         │             emit HAProxy directives, never read resources directly
          │
 Level 3: haproxy-ingress.yaml, haproxytech.yaml, nginx-ingress.yaml
          │
-         ├── Know: all libraries above
+         ├── Know: all libraries above (including annotation-compat)
          └── Don't know: each other
 ```
 
@@ -1888,8 +1940,7 @@ charts/haptic/
 │   ├── ingress.yaml            # Kubernetes Ingress support
 │   ├── gateway.yaml            # Gateway API support
 │   ├── haproxytech.yaml        # HAProxy annotation compatibility
-│   ├── nginx-ingress.yaml      # nginx-ingress annotation compatibility (disabled by default)
-│   └── path-regex-last.yaml    # Alternative path matching order
+│   └── nginx-ingress.yaml      # nginx-ingress annotation compatibility (disabled by default)
 │
 ├── templates/                   # Helm templates
 │   ├── _helpers.tpl            # Template helper functions (library merging)

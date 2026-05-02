@@ -126,7 +126,7 @@ See [Template Libraries → Snippet Priority](../template-libraries.md#snippet-p
 The base library implements a sophisticated routing system using HAProxy maps and transaction variables:
 
 1. **Host matching**: Extracts and matches the Host header
-2. **Path matching**: Evaluates paths in order (Exact > Regex > Prefix-exact > Prefix). The `path-regex-last` library can override this to use performance-first ordering (Exact > Prefix-exact > Prefix > Regex).
+2. **Path matching**: Evaluates paths in order (Exact > Regex > Prefix-exact > Prefix). Set `controller.config.routing.regexMatchOrder=last` in values.yaml to switch to performance-first ordering (Exact > Prefix-exact > Prefix > Regex).
 3. **Qualifier system**: Supports `BACKEND` (direct) and `MULTIBACKEND` (weighted) routing
 
 ```haproxy
@@ -138,7 +138,7 @@ http-request set-var(txn.path_match) var(txn.host),concat(,txn.path,),map_beg(ma
 ```
 
 !!! note "Overriding Path Match Order"
-    Enabling the `path-regex-last` library overrides the default routing snippet with performance-first ordering (Exact > Prefix-exact > Prefix > Regex), so faster matchers run first and regex matching is only evaluated as a fallback.
+    Setting `controller.config.routing.regexMatchOrder=last` swaps in the alternate `frontend-routing-logic-regex-last` variant of this snippet at Helm load time, producing performance-first ordering (Exact > Prefix-exact > Prefix > Regex). Faster matchers run first and regex matching is only evaluated as a fallback. The variant snippet is unset before the merged config is rendered, so it never appears in the operator-visible output.
 
 ### Built-in Operators and Functions
 
@@ -329,4 +329,4 @@ Each `global-settings-*` and `defaults-settings-*` snippet can be individually o
 
 - [Template Libraries Overview](../template-libraries.md) - How template libraries work
 - [SSL Library](ssl.md) - TLS certificate management and HTTPS frontend
-- [Path Regex Last Library](path-regex-last.md) - Alternative path matching order
+- [Configuration Reference](../configuration.md#path-matching-order) - Switching path-matching order
