@@ -34,8 +34,14 @@ const (
 	// (event-driven) remain unaffected.
 	DefaultConfigPublishInterval = 30 * time.Second
 
-	// DefaultDataplaneSSLCertsDir is the default directory for SSL certificates.
-	// This matches the values.yaml default and HAProxy container directory structure.
+	// DefaultDataplaneSSLCertsDir is the Go-side fallback directory for SSL
+	// certificates, used when neither the user nor the chart sets sslCertsDir.
+	// The Helm chart explicitly sets sslCertsDir to /etc/haproxy/ssl in its
+	// values.yaml, so chart-deployed controllers see /etc/haproxy/ssl rather
+	// than this fallback. The two diverge intentionally: the chart's "ssl"
+	// matches conventional HAProxy directory naming, while this constant
+	// preserves the historical "certs" name for non-chart users (mostly
+	// integration tests under tests/integration/).
 	DefaultDataplaneSSLCertsDir = "/etc/haproxy/certs"
 
 	// DefaultDataplaneGeneralStorageDir is the default directory for general files.

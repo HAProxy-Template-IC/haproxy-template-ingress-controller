@@ -339,7 +339,7 @@ func TestMemoryStore_UpdateToNewKey(t *testing.T) {
 		"version": "v1",
 	}
 
-	RunUpdateToNewKeyTest(t, store, store, resource, []string{"default", "new-resource"})
+	runUpdateToNewKeyTest(t, store, store, resource, []string{"default", "new-resource"})
 }
 
 // TestMemoryStore_DeleteNonExistent verifies deleting non-existent resource is a no-op.
@@ -348,7 +348,7 @@ func TestMemoryStore_DeleteNonExistent(t *testing.T) {
 
 	resource := map[string]string{"name": "test"}
 
-	RunDeleteNonExistentTest(t, store, store, resource,
+	runDeleteNonExistentTest(t, store, store, resource,
 		[]string{"default", "test"},
 		[]string{"other", "nonexistent"})
 }

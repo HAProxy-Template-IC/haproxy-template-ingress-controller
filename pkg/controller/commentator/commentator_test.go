@@ -76,11 +76,6 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			want:  slog.LevelError,
 		},
 		{
-			name:  "webhook validation error is error",
-			event: mockEvent{eventType: events.EventTypeWebhookValidationError},
-			want:  slog.LevelError,
-		},
-		{
 			name:  "config invalid is error",
 			event: mockEvent{eventType: events.EventTypeConfigInvalid},
 			want:  slog.LevelError,
@@ -93,13 +88,16 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			want:  slog.LevelWarn,
 		},
 		{
-			name:  "webhook validation denied is warn",
-			event: mockEvent{eventType: events.EventTypeWebhookValidationDenied},
+			name:  "lost leadership is warn",
+			event: mockEvent{eventType: events.EventTypeLostLeadership},
 			want:  slog.LevelWarn,
 		},
 		{
-			name:  "lost leadership is warn",
-			event: mockEvent{eventType: events.EventTypeLostLeadership},
+			// Pod rejection means the controller is refusing to talk to a deployed
+			// HAProxy pod (typically version mismatch with the bundled binary).
+			// Operator-actionable, so WARN — not the DEBUG default.
+			name:  "haproxy pod rejected is warn",
+			event: mockEvent{eventType: events.EventTypeHAProxyPodRejected},
 			want:  slog.LevelWarn,
 		},
 
@@ -759,14 +757,6 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	logger := slog.Default()
 	ec := NewEventCommentator(bus, logger, 100)
 
-	t.Run("ValidationStartedEvent", func(t *testing.T) {
-		event := events.NewValidationStartedEvent()
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "validation started")
-	})
-
 	t.Run("ValidationCompletedEvent without warnings", func(t *testing.T) {
 		event := events.NewValidationCompletedEvent(nil, 150, "", nil, true)
 
@@ -857,71 +847,6 @@ func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {
 		assert.Contains(t, insight, "HAProxy pod terminated")
 		assert.Contains(t, insight, "haproxy-system/haproxy-123")
 		assertContainsAttr(t, attrs, "pod_name", "haproxy-123")
-	})
-}
-
-func TestEventCommentator_GenerateInsight_WebhookObservabilityEvents(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	t.Run("WebhookValidationRequestEvent", func(t *testing.T) {
-		event := events.NewWebhookValidationRequestEvent("uid-123", "Ingress", "my-ingress", "default", "CREATE")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Webhook validation request")
-		assert.Contains(t, insight, "CREATE")
-		assert.Contains(t, insight, "Ingress")
-		assertContainsAttr(t, attrs, "operation", "CREATE")
-	})
-
-	t.Run("WebhookValidationRequestEvent without namespace", func(t *testing.T) {
-		event := events.NewWebhookValidationRequestEvent("uid-123", "ClusterRole", "my-role", "", "UPDATE")
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Webhook validation request")
-		assert.Contains(t, insight, "my-role")
-	})
-
-	t.Run("WebhookValidationAllowedEvent", func(t *testing.T) {
-		event := events.NewWebhookValidationAllowedEvent("uid-123", "Ingress", "my-ingress", "default")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Webhook validation allowed")
-		assert.Contains(t, insight, "Ingress")
-		assertContainsAttr(t, attrs, "kind", "Ingress")
-	})
-
-	t.Run("WebhookValidationDeniedEvent", func(t *testing.T) {
-		event := events.NewWebhookValidationDeniedEvent("uid-123", "Ingress", "my-ingress", "default", "invalid backend")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Webhook validation denied")
-		assert.Contains(t, insight, "invalid backend")
-		assertContainsAttr(t, attrs, "reason", "invalid backend")
-	})
-
-	t.Run("WebhookValidationDeniedEvent without namespace", func(t *testing.T) {
-		event := events.NewWebhookValidationDeniedEvent("uid-123", "ClusterRole", "my-role", "", "forbidden")
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Webhook validation denied")
-		assert.Contains(t, insight, "my-role")
-	})
-
-	t.Run("WebhookValidationErrorEvent", func(t *testing.T) {
-		event := events.NewWebhookValidationErrorEvent("uid-123", "Ingress", "internal error")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Webhook validation error")
-		assert.Contains(t, insight, "internal error")
-		assertContainsAttr(t, attrs, "error", "internal error")
 	})
 }
 

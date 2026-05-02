@@ -41,23 +41,11 @@ var configMapGVR = schema.GroupVersionResource{
 	Resource: "configmaps",
 }
 
-func newTestClient(t *testing.T) *client.Client {
+func newTestClient(t *testing.T, objects ...runtime.Object) *client.Client {
 	t.Helper()
 	fakeClientset := kubefake.NewClientset()
-	// Register the list kind for configmaps
-	gvrToListKind := map[schema.GroupVersionResource]string{
-		configMapGVR: "ConfigMapList",
-	}
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(
-		runtime.NewScheme(),
-		gvrToListKind,
-	)
-	return client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
-}
-
-func newTestClientWithScheme(t *testing.T, objects ...runtime.Object) *client.Client {
-	t.Helper()
-	fakeClientset := kubefake.NewClientset()
+	// Register the list kind for configmaps so the fake dynamic client can
+	// LIST them; without this, the reflector panics on unknown list kinds.
 	gvrToListKind := map[schema.GroupVersionResource]string{
 		configMapGVR: "ConfigMapList",
 	}
@@ -423,7 +411,7 @@ func TestWatcher_HandleAdd(t *testing.T) {
 		},
 	}
 
-	k8sClient := newTestClientWithScheme(t, configMap)
+	k8sClient := newTestClient(t, configMap)
 
 	var addCalled atomic.Bool
 

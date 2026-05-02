@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
@@ -110,18 +111,21 @@ func TestIngressAuthHeadersFail(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "WWW-Authenticate and X-Error-Reason are on the 401 response",
 			Check: func(t *testing.T, host string) {
-				// Poll on WWW-Authenticate (not status). The 401 from
-				// `http-request deny deny_status 401` syncs quickly, but the
-				// companion `http-after-response set-header` rules can land a
-				// reload cycle later. Polling on the header value waits until
-				// the full deny+headers pipeline is live.
-				resp := httpclient.New(t).GET(host, "/").ExpectHeader(t, "WWW-Authenticate", `Bearer realm="api"`)
-				if resp.Status != http.StatusUnauthorized {
-					t.Fatalf("expected status 401; got %d", resp.Status)
-				}
-				if got := resp.Header.Get("X-Error-Reason"); got != "token-expired" {
-					t.Fatalf("expected X-Error-Reason: token-expired; got %q", got)
-				}
+				// Poll on the conjunction of all three signals. The
+				// `http-request deny deny_status 401` rule and the
+				// companion `http-after-response set-header` rules can land
+				// in different reload cycles, so polling on any single
+				// signal leaves a race window where one rule is live but the
+				// others are not (e.g. set-header rule landed → response
+				// carries WWW-Authenticate, but deny rule hasn't → status
+				// is still 200 from the proxied backend).
+				_ = httpclient.New(t).GET(host, "/").ExpectMatching(t,
+					"auth deny pipeline live (401 + WWW-Authenticate + X-Error-Reason)",
+					func(resp *httpclient.Response) bool {
+						return resp.Status == http.StatusUnauthorized &&
+							strings.Contains(resp.Header.Get("WWW-Authenticate"), `Bearer realm="api"`) &&
+							resp.Header.Get("X-Error-Reason") == "token-expired"
+					})
 			},
 		}},
 	})

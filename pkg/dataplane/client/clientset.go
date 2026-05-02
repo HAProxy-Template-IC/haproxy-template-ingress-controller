@@ -54,7 +54,8 @@ type Clientset struct {
 //
 // Example:
 //
-//	clientset, err := client.NewClientset(ctx, client.Endpoint{
+//	// endpoint is taken by pointer so &client.Endpoint{...} is required.
+//	clientset, err := client.NewClientset(ctx, &client.Endpoint{
 //	    URL:      "http://haproxy:5555",
 //	    Username: "admin",
 //	    Password: "password",
@@ -63,13 +64,16 @@ type Clientset struct {
 //	    return err
 //	}
 //
-//	// Use version-specific client
+//	// Use version-specific client. Naming the variable `versioned`
+//	// avoids shadowing the imported `client` package.
 //	if clientset.Capabilities().SupportsCrtList {
-//	    client := clientset.V32()
+//	    versioned := clientset.V32()
 //	    // Use v3.2-specific features
+//	    _ = versioned
 //	} else {
-//	    client := clientset.V30()
+//	    versioned := clientset.V30()
 //	    // Fallback to v3.0-compatible operations
+//	    _ = versioned
 //	}
 func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) (*Clientset, error) {
 	if logger == nil {

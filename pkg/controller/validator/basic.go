@@ -43,7 +43,7 @@ func NewBasicValidator(eventBus *busevents.EventBus, logger *slog.Logger) *Basic
 		eventBus: eventBus,
 		logger:   logger,
 	}
-	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameBasic, "Basic structure validator", v)
+	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameBasic, v)
 	return v
 }
 

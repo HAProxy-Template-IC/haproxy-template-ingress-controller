@@ -142,8 +142,7 @@
 //
 //	result, err := client.Sync(ctx, desiredConfig, nil, nil)
 //	if err != nil {
-//	    var syncErr *dataplane.SyncError
-//	    if errors.As(err, &syncErr) {
+//	    if syncErr, ok := errors.AsType[*dataplane.SyncError](err); ok {
 //	        fmt.Printf("Stage: %s\n", syncErr.Stage)
 //	        fmt.Printf("Error: %s\n", syncErr.Message)
 //	        for _, hint := range syncErr.Hints {
@@ -192,7 +191,9 @@ type Client struct {
 //
 // Example:
 //
-//	endpoint := dataplane.Endpoint{
+//	// NewClient takes endpoint by pointer (so the controller can mutate
+//	// the cached version fields on the same struct).
+//	endpoint := &dataplane.Endpoint{
 //	    URL:      "http://haproxy:5555/v3",
 //	    Username: "admin",
 //	    Password: "secret",
@@ -236,10 +237,11 @@ func NewClient(ctx context.Context, endpoint *Endpoint) (*Client, error) {
 	}, nil
 }
 
-// Close cleans up client resources.
-// Currently a no-op, but provided for future resource cleanup needs.
+// Close releases client resources. The current implementation has no
+// background work to clean up, but the method is part of the documented
+// API so existing `defer client.Close()` call sites stay valid as the
+// client gains owned resources.
 func (c *Client) Close() error {
-	// Future: close HTTP connections, cleanup resources
 	return nil
 }
 

@@ -170,3 +170,66 @@ func TestLeaderElectionConfig_DurationGetters_Overrides(t *testing.T) {
 			"invalid RetryPeriod → DefaultLeaderElectionRetryPeriod")
 	})
 }
+
+// TestWatchedResource_GetDebounceInterval pins the per-resource debounce
+// override semantics: GetDebounceInterval returns 0 for the empty / invalid
+// cases (so the watcher's WatcherConfig.SetDefaults takes over with the
+// pkg/k8s/types.DefaultDebounceInterval = 5s value), and returns the parsed
+// duration verbatim for valid Go duration strings. The contract is
+// load-bearing for the resourcewatcher hand-off (resourcewatcher/watcher.go
+// passes this value straight into WatcherConfig.DebounceInterval).
+//
+// This getter intentionally falls back to ZERO (not to a default duration)
+// because the watcher layer owns the default. The other Get* getters in
+// this file all fall back to a named default constant — this one is the
+// outlier and the comment exists to make that asymmetry explicit.
+func TestWatchedResource_GetDebounceInterval(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want time.Duration
+	}{
+		{
+			name: "empty returns zero so watcher uses its own default",
+			raw:  "",
+			want: 0,
+		},
+		{
+			name: "valid sub-second duration is parsed",
+			raw:  "500ms",
+			want: 500 * time.Millisecond,
+		},
+		{
+			name: "valid second duration is parsed",
+			raw:  "10s",
+			want: 10 * time.Second,
+		},
+		{
+			name: "valid compound duration is parsed",
+			raw:  "1m30s",
+			want: 90 * time.Second,
+		},
+		{
+			name: "invalid string returns zero (silent fallback to watcher default)",
+			raw:  "not-a-duration",
+			want: 0,
+		},
+		{
+			name: "missing unit returns zero (time.ParseDuration rejects bare numbers)",
+			raw:  "30",
+			want: 0,
+		},
+		{
+			name: "explicit zero is preserved (caller asked for the watcher's default)",
+			raw:  "0s",
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &WatchedResource{DebounceInterval: tt.raw}
+			assert.Equal(t, tt.want, r.GetDebounceInterval())
+		})
+	}
+}

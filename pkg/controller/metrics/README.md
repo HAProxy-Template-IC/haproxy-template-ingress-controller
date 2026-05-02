@@ -9,7 +9,7 @@ User-facing queries, alerting rules, and dashboard templates live in [`docs/cont
 
 ## Complete Metric Catalogue
 
-All names are listed exactly as exported. `metrics.go` contains the authoritative list; the `TestMetrics_AllMetricsRegistered` assertion in `metrics_test.go` covers a representative subset (~11 of 31) — extend that slice when you add or rename a metric.
+All names are listed exactly as exported. `metrics.go` contains the authoritative list; the `TestMetrics_AllMetricsRegistered` assertion in `metrics_test.go` covers a representative subset (~12 of 32) — extend that slice when you add or rename a metric.
 
 ### Reconciliation pipeline
 
@@ -49,6 +49,12 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
 | `haptic_resource_count` | gauge | `type` | Current size of each watched-resource store (including `haproxy-pods`) |
+
+### HAProxy pod discovery
+
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_haproxy_pods_rejected_total` | counter | `reason` | HAProxy pods refused admission by the discovery component. Persistent non-zero growth typically means the controller cannot talk to the deployed HAProxy pods (e.g. bundled HAProxy major.minor differs from the chart's `haproxyVersion`). |
 
 ### Event bus
 

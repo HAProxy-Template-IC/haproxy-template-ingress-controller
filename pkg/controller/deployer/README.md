@@ -77,8 +77,8 @@ On `LostLeadershipEvent` the scheduler drops any pending deployment and clears i
 
 On `BecameLeaderEvent` the scheduler is bootstrapped from two sides:
 
-- All-replica components that maintain state replay their last event so the new leader's scheduler doesn't have to wait. Currently that's `HAProxyPodsDiscoveredEvent` (from `pkg/controller/discovery`), `ValidationCompletedEvent` (from `pkg/controller/validator`), and `ConfigValidatedEvent` (from `pkg/controller/configchange`). Grep for `leadership.NewStateReplayer[` to see the canonical list.
-- `TemplateRenderedEvent` is *not* replayed — the renderer is itself leader-only and only starts on the new leader. Instead, the reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (see `pkg/controller/reconciler/reconciler.go:handleBecameLeader`), which produces a fresh render rather than a stale replay. The new leader's scheduler then assembles all three inputs naturally.
+- All-replica components that maintain state replay their last event so the new leader's scheduler doesn't have to wait. Currently that's `HAProxyPodsDiscoveredEvent` (from `pkg/controller/discovery`) and `ConfigValidatedEvent` (from `pkg/controller/configchange`). Grep for `leadership.NewStateReplayer[` to see the canonical list.
+- Neither `TemplateRenderedEvent` nor `ValidationCompletedEvent` is replayed — both are published by the leader-only `reconciler.Coordinator` from inside `Pipeline.Execute` (ADR-0001), so they only exist on the leader to begin with. Instead, the reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (see `pkg/controller/reconciler/reconciler.go:handleBecameLeader`), which produces fresh render+validate events rather than stale replays. The new leader's scheduler then assembles all three inputs naturally.
 
 See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full replay/clear contract every leader-only component implements.
 
@@ -86,7 +86,7 @@ See `pkg/controller/LEADER_ONLY_COMPONENTS.md` for the full replay/clear contrac
 
 - [`pkg/dataplane`](../../dataplane/) — the `Client.Sync` call that the executor drives
 - [`pkg/controller/discovery`](../discovery/) — publishes `HAProxyPodsDiscoveredEvent`
-- [`pkg/controller/renderer`](../renderer/) / [`validator`](../validator/) — upstream producers of `TemplateRenderedEvent` / `ValidationCompletedEvent`
+- [`pkg/controller/reconciler`](../reconciler/) — leader-only `Coordinator` that publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` from inside `Pipeline.Execute` (the synchronous renderer + validator services live in [`pkg/controller/renderer`](../renderer/) and [`pkg/controller/validation`](../validation/), but are called directly, not subscribed to)
 - [`pkg/controller/leadership`](../leadership/) — the gating helper these components use
 - `pkg/controller/LEADER_ONLY_COMPONENTS.md` — leadership-transition patterns
 - `docs/controller/docs/operations/high-availability.md` — user-facing view of the leader-only deployment split

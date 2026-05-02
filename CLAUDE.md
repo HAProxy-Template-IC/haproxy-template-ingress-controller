@@ -169,7 +169,10 @@ type Renderer interface {
 Only controller package contains event adapters:
 
 ```go
-// pkg/controller/renderer/renderer.go - Event adapter
+// Illustrative event-adapter shape — not a real package.
+// The production renderer is the synchronous `renderer.RenderService`
+// driven by `pkg/controller/pipeline.Pipeline` (no event hop, see ADR-0001).
+// For the production event-adapter scaffold, see `pkg/controller/component.Base`.
 type RendererComponent struct {
     engine    templating.Engine     // Pure component
     eventBus  *events.EventBus
@@ -389,7 +392,11 @@ Tests use real Kubernetes clusters (kind) and HAProxy pods. The `KEEP_CLUSTER=tr
 
 ### Event-Driven Component Tests
 
-Test event adapters with mock EventBus:
+Test event adapters with mock EventBus. The example below uses the
+hypothetical `RendererComponent` from the Event Adapter Pattern section
+above; the real renderer is a synchronous `RenderService` (ADR-0001) and
+isn't tested via this shape. For an actual event-adapter test, see
+`pkg/controller/configloader/loader_test.go`.
 
 ```go
 func TestRendererComponent(t *testing.T) {

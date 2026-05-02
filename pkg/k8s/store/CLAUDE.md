@@ -634,8 +634,11 @@ Tuning:
 
 ### Potential Enhancements
 
-1. **Metrics**: Cache hit/miss rates, API latency, memory usage (CachedStore
-   already keeps internal hit/miss counters — wire them to Prometheus).
+1. **Metrics**: Cache hit/miss rates, API latency, memory usage. CachedStore
+   currently has no internal hit/miss counters — adding them on the struct
+   and exposing through a stats accessor (or directly through Prometheus
+   collectors) is the prerequisite. The Troubleshooting section below
+   documents the size accessors that exist today (`Size()` / `CacheSize()`).
 2. **Sharded Maps**: Reduce lock contention for high-concurrency scenarios.
 3. **Batch Fetch**: Fetch multiple resources in a single API call instead of
    per-reference Get loops.

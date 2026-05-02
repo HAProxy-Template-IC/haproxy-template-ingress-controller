@@ -211,6 +211,13 @@ func (ec *EventCommentator) podInsight(event busevents.Event, attrs []any) (insi
 		return fmt.Sprintf("HAProxy pod terminated: %s/%s", e.PodNamespace, e.PodName),
 			append(attrs, "pod_name", e.PodName, "pod_namespace", e.PodNamespace)
 
+	case *events.HAProxyPodRejectedEvent:
+		// Surfaces controller-vs-HAProxy version mismatches (and similar admission
+		// failures) at WARN so operators see them in logs, not just in the
+		// haptic_haproxy_pods_rejected_total counter.
+		return fmt.Sprintf("HAProxy pod rejected: %s (reason: %s)", e.PodName, e.Reason),
+			append(attrs, "pod_name", e.PodName, "reason", e.Reason)
+
 	default:
 		return "", attrs
 	}

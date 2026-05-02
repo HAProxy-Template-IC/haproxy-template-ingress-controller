@@ -70,8 +70,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return ec.templateInsight(event, attrs)
 
 	// Validation Events
-	case *events.ValidationStartedEvent, *events.ValidationCompletedEvent,
-		*events.ValidationFailedEvent,
+	case *events.ValidationCompletedEvent, *events.ValidationFailedEvent,
 		*events.ValidationTestsStartedEvent, *events.ValidationTestsCompletedEvent,
 		*events.ValidationTestsFailedEvent:
 		return ec.validationInsight(event, attrs)
@@ -82,13 +81,8 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return ec.deploymentInsight(event, attrs)
 
 	// HAProxy Pod Events
-	case *events.HAProxyPodsDiscoveredEvent, *events.HAProxyPodTerminatedEvent:
+	case *events.HAProxyPodsDiscoveredEvent, *events.HAProxyPodTerminatedEvent, *events.HAProxyPodRejectedEvent:
 		return ec.podInsight(event, attrs)
-
-	// Webhook Validation Events
-	case *events.WebhookValidationRequestEvent, *events.WebhookValidationAllowedEvent,
-		*events.WebhookValidationDeniedEvent, *events.WebhookValidationErrorEvent:
-		return ec.webhookInsight(event, attrs)
 
 	// Leader Election Events
 	case *events.LeaderElectionStartedEvent, *events.BecameLeaderEvent,

@@ -2,7 +2,7 @@
 
 Domain event catalogue for the controller. All event types that flow through the `pkg/events` bus live here; the infrastructure itself (publish/subscribe, scatter-gather) lives in `pkg/events` and has no knowledge of domain semantics.
 
-- ~50 event types across ~15 categories.
+- ~45 event types across ~14 categories.
 - All implement the `pkg/events.Event` interface (`EventType() string`, `Timestamp() time.Time`) via pointer receivers.
 - All exported constructors `NewFooEvent(...)` perform defensive copies of slices and maps so consumers can't mutate a published event.
 - A custom `go vet`-style analyzer in `tools/linters/eventimmutability` enforces the pointer-receiver rule at build time.
@@ -23,14 +23,12 @@ One file per category. The full list as of writing, with representative types:
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |
 | `validation.go` | Syntax/semantic validation | `ValidationCompletedEvent`, `ValidationFailedEvent` |
 | `deployment.go` | HAProxy deployment scheduler + executor | `DeploymentScheduledEvent`, `InstanceDeployedEvent` |
-| `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent` |
+| `discovery.go` | HAProxy pod discovery | `HAProxyPodsDiscoveredEvent`, `HAProxyPodRejectedEvent` |
 | `leader.go` | Leader election | `BecameLeaderEvent`, `LostLeadershipEvent` |
-| `publishing.go` | Output-CRD publishing (`HAProxyCfg` + `HAProxy{General,Map,CRTList}File`) and per-pod sync outcomes | `ConfigPublishedEvent`, `ConfigPublishFailedEvent`, `ConfigAppliedToPodEvent` |
+| `publishing.go` | Output-CRD publishing (`HAProxyCfg` + `HAProxy{General,Map,CRTList}File`) and per-pod sync outcomes | `ConfigPublishedEvent`, `ConfigAppliedToPodEvent` |
 | `proposal.go` | Admission-time proposal validation | `ProposalValidationRequestedEvent`, `ProposalValidationCompletedEvent` |
 | `http.go` | HTTP resource fetcher | `HTTPResourceUpdatedEvent` |
 | `status.go` | Status-patch application | `StatusUpdateCompletedEvent`, `StatusUpdateFailedEvent` |
-| `webhook.go` | Scatter-gather admission request/response plumbing | `WebhookValidationRequest`, `WebhookValidationResponse` |
-| `webhookobservability.go` | Webhook telemetry events | `WebhookValidationAllowedEvent` |
 
 `types.go` plus the event-category files enumerate every constant — if the list above looks incomplete, check `grep -E "^type [A-Z].*Event " pkg/controller/events/*.go` rather than trusting this README.
 
@@ -71,9 +69,9 @@ filtered := bus.SubscribeTypes(
 )
 ```
 
-## Scatter-Gather (Admission Validation)
+## Scatter-Gather (Config Validation)
 
-`ConfigValidationRequest` and `WebhookValidationRequest` are the two `Request` types in the catalogue. Usage goes through `pkg/events.Request`:
+`ConfigValidationRequest` is the single `Request` type in the catalogue. Usage goes through `pkg/events.Request`:
 
 ```go
 req := events.NewConfigValidationRequest(cfg, version)

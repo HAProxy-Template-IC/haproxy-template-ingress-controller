@@ -195,7 +195,7 @@ type storeWithSize interface {
 	Size() int
 }
 
-// RunUpdateToNewKeyTest verifies that Update creates a new entry when the resource doesn't exist.
+// runUpdateToNewKeyTest verifies that Update creates a new entry when the resource doesn't exist.
 // This is a common behavior that both MemoryStore and CachedStore should support.
 //
 // Parameters:
@@ -203,7 +203,7 @@ type storeWithSize interface {
 //   - store: the Store implementation to test (must also implement Size())
 //   - resource: a resource appropriate for the store type
 //   - keys: the index keys for the resource
-func RunUpdateToNewKeyTest(t *testing.T, store interface {
+func runUpdateToNewKeyTest(t *testing.T, store interface {
 	Update(resource any, keys []string) error
 	Get(keys ...string) ([]any, error)
 }, sizeGetter storeWithSize, resource any, keys []string) {
@@ -231,7 +231,7 @@ func RunUpdateToNewKeyTest(t *testing.T, store interface {
 	}
 }
 
-// RunDeleteNonExistentTest verifies that deleting a non-existent resource is a no-op.
+// runDeleteNonExistentTest verifies that deleting a non-existent resource is a no-op.
 // This is a common behavior that both MemoryStore and CachedStore should support.
 //
 // Parameters:
@@ -240,7 +240,7 @@ func RunUpdateToNewKeyTest(t *testing.T, store interface {
 //   - existingResource: a resource to add first
 //   - existingKeys: keys for the existing resource
 //   - nonExistentKeys: keys for a resource that doesn't exist
-func RunDeleteNonExistentTest(t *testing.T, store interface {
+func runDeleteNonExistentTest(t *testing.T, store interface {
 	Add(resource any, keys []string) error
 	Delete(keys ...string) error
 }, sizeGetter storeWithSize, existingResource any, existingKeys []string, nonExistentKeys []string) {

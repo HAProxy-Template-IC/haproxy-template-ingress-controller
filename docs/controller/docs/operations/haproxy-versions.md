@@ -91,7 +91,7 @@ Enterprise deployments require:
 
 1. Setting `haproxy.enterprise.enabled: true`
 2. Pointing `haproxy.image.repository` to the enterprise registry
-3. Configuring `imagePullSecrets` with your registry credentials
+3. Configuring `haproxy.podSpec.imagePullSecrets` with your registry credentials
 
 ```yaml
 haproxyVersion: "3.2"
@@ -101,8 +101,9 @@ haproxy:
   enterprise:
     enabled: true
     version: "3.2"
-imagePullSecrets:
-  - name: hapee-registry-secret
+  podSpec:
+    imagePullSecrets:
+      - name: hapee-registry-secret
 ```
 
 With `enterprise.enabled: true`, the pod image tag defaults to the enterprise revision from `haproxyEnterprisePatchVersions` (e.g. `3.2r1`). To pin a specific revision:

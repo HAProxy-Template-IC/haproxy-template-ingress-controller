@@ -110,14 +110,10 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 	}
 }
 
-// validationInsight handles ValidationStarted, ValidationCompleted, ValidationFailed,
+// validationInsight handles ValidationCompleted, ValidationFailed,
 // ValidationTestsStarted, ValidationTestsCompleted, and ValidationTestsFailed events.
 func (ec *EventCommentator) validationInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
-	case *events.ValidationStartedEvent:
-		return "HAProxy configuration validation started",
-			attrs
-
 	case *events.ValidationCompletedEvent:
 		warningInfo := ""
 		if len(e.Warnings) > 0 {

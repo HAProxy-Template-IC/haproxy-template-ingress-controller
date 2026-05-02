@@ -11,6 +11,7 @@ For each watcher the component:
 - Resolves `apiVersion`/`resources` to a GVR
 - Merges the global `watchedResourcesIgnoreFields` list with any per-resource overrides
 - Indexes resources using the configured `indexBy` JSONPath expressions
+- Applies the per-resource `debounceInterval` override (or the 5s `pkg/k8s/types.DefaultDebounceInterval` when empty) to the watcher's leading-edge refractory window
 - Forwards add/update/delete events as `ResourceIndexUpdatedEvent` and emits `ResourceSyncCompleteEvent` once the informer's initial list completes
 
 The exposed stores are read by `pkg/controller/renderer` and `pkg/controller/dryrunvalidator` to build template contexts.

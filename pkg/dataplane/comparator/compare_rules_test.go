@@ -328,12 +328,12 @@ func TestCompare_HTTPRequestRuleInsertIndex(t *testing.T) {
 		"frontend", "http",
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
 			{Type: "deny", CondTest: "{ path_beg /secret }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 	)
 
@@ -351,11 +351,11 @@ func TestCompare_HTTPRequestRuleDeleteIndex(t *testing.T) {
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
 			{Type: "deny", CondTest: "{ path_beg /secret }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 	)
 
@@ -372,13 +372,13 @@ func TestCompare_HTTPRequestRuleUpdateIndex(t *testing.T) {
 		"frontend", "http",
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "deny", CondTest: "{ path_beg /secret }", DenyStatus: ptrInt64Fn(403)},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "deny", CondTest: "{ path_beg /secret }", DenyStatus: ptrInt64(403)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "deny", CondTest: "{ path_beg /secret }", DenyStatus: ptrInt64Fn(404)},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "deny", CondTest: "{ path_beg /secret }", DenyStatus: ptrInt64(404)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 	)
 
@@ -394,12 +394,12 @@ func TestCompare_HTTPRequestRuleMultipleInsertIndexes(t *testing.T) {
 		"frontend", "http",
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
 			{Type: "deny", CondTest: "{ path_beg /secret }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 			{Type: "set-header", HdrName: "X-Test", HdrFormat: "1"},
 		},
 	)
@@ -428,11 +428,11 @@ func TestCompare_HTTPRequestRuleDeleteAndInsertIndexes(t *testing.T) {
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /old }"},
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 		},
 		models.HTTPRequestRules{
 			{Type: "deny", CondTest: "{ path_beg /admin }"},
-			{Type: "redirect", RedirCode: ptrInt64Fn(301)},
+			{Type: "redirect", RedirCode: ptrInt64(301)},
 			{Type: "set-header", HdrName: "X-New", HdrFormat: "1"},
 		},
 	)
@@ -454,11 +454,6 @@ func TestCompare_HTTPRequestRuleDeleteAndInsertIndexes(t *testing.T) {
 	assert.Equal(t, 0, extractIndex(t, deleteOp), "DELETE should target current-config index 0")
 	assert.Equal(t, 2, extractIndex(t, createOp), "CREATE should target desired-config index 2")
 }
-
-// ptrInt64Fn is a helper to create *int64 pointers in test data.
-//
-//go:fix inline
-func ptrInt64Fn(v int64) *int64 { return new(v) }
 
 // --- Cascade Elimination Tests for All 8 Rule Types ---
 
@@ -608,7 +603,7 @@ func makeTCPRequestRules(n int) models.TCPRequestRules {
 func insertTCPRequestRule(rules models.TCPRequestRules, pos int) models.TCPRequestRules {
 	dst := make(models.TCPRequestRules, 0, len(rules)+1)
 	dst = append(dst, rules[:pos]...)
-	dst = append(dst, &models.TCPRequestRule{Type: "inspect-delay", Timeout: ptrInt64Fn(9999)})
+	dst = append(dst, &models.TCPRequestRule{Type: "inspect-delay", Timeout: ptrInt64(9999)})
 	dst = append(dst, rules[pos:]...)
 	return dst
 }
@@ -624,7 +619,7 @@ func makeTCPResponseRules(n int) models.TCPResponseRules {
 func insertTCPResponseRule(rules models.TCPResponseRules, pos int) models.TCPResponseRules {
 	dst := make(models.TCPResponseRules, 0, len(rules)+1)
 	dst = append(dst, rules[:pos]...)
-	dst = append(dst, &models.TCPResponseRule{Type: "inspect-delay", Timeout: ptrInt64Fn(9999)})
+	dst = append(dst, &models.TCPResponseRule{Type: "inspect-delay", Timeout: ptrInt64(9999)})
 	dst = append(dst, rules[pos:]...)
 	return dst
 }

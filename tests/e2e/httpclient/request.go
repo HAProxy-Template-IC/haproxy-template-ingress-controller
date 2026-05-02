@@ -304,6 +304,21 @@ func (r *Request) ExpectEchoHeader(t *testing.T, name, want string) *Response {
 	return resp
 }
 
+// ExpectMatching asserts the response satisfies a caller-supplied predicate,
+// retrying under the client's wait budget. Use this when a single assertion
+// depends on multiple response signals being simultaneously consistent (e.g.
+// "status=401 AND has WWW-Authenticate header" — polling on either signal
+// alone leaves a race window where one rule has landed but the other has
+// not). The description is used for diagnostic messages on timeout.
+func (r *Request) ExpectMatching(t *testing.T, description string, predicate func(*Response) bool) *Response {
+	t.Helper()
+	resp, err := r.poll(t, fmt.Sprintf("%s %s: %s", r.method, r.url(), description), predicate)
+	if err != nil {
+		t.Fatalf("ExpectMatching(%s): %v", description, err)
+	}
+	return resp
+}
+
 // ExpectRedirect asserts the response is a redirect (3xx) with a Location
 // header containing want.
 func (r *Request) ExpectRedirect(t *testing.T, want string) *Response {

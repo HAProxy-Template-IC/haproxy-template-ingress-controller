@@ -18,11 +18,7 @@ const (
 // It generates the minimal set of operations needed to transform a current
 // configuration into a desired configuration, using attribute-level granularity
 // to minimize API calls and avoid unnecessary HAProxy reloads.
-type Comparator struct {
-	// Future: Add section-specific comparators here
-	// backendComparator *sections.BackendComparator
-	// serverComparator  *sections.ServerComparator
-}
+type Comparator struct{}
 
 // New creates a new Comparator instance.
 func New() *Comparator {
@@ -135,8 +131,11 @@ func compareNamedMaps[V any](
 //
 // Example:
 //
-//	comparator := comparator.New()
-//	diff, err := comparator.Compare(currentConfig, desiredConfig)
+//	// cmp is a *Comparator; the variable name avoids shadowing the
+//	// imported `comparator` package so subsequent comparator.X type
+//	// references in the same scope keep working.
+//	cmp := comparator.New()
+//	diff, err := cmp.Compare(currentConfig, desiredConfig)
 //	if err != nil {
 //	    slog.Error("comparison failed", "error", err)
 //	    os.Exit(1)

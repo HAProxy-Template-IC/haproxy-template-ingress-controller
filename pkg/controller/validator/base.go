@@ -55,8 +55,6 @@ type BaseValidator struct {
 //   - eventBus: The EventBus to subscribe to and publish on
 //   - logger: Structured logger for diagnostics
 //   - name: Validator name (for error messages and responses)
-//   - description: Human-readable component description (unused; retained for
-//     API compatibility with existing validator constructors)
 //   - handler: ValidationHandler implementation for validator-specific logic
 //
 // Returns:
@@ -65,7 +63,6 @@ func NewBaseValidator(
 	eventBus *busevents.EventBus,
 	logger *slog.Logger,
 	name string,
-	_ string,
 	handler ValidationHandler,
 ) *BaseValidator {
 	v := &BaseValidator{

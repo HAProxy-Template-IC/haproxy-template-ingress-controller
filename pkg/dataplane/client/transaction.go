@@ -57,10 +57,12 @@ type TransactionResponse struct {
 // will fail with a 409 Conflict error.
 // Works with all HAProxy DataPlane API versions (v3.0+).
 //
-// Example:
+// Example (rare — most callers should use *VersionAdapter.ExecuteTransaction
+// instead, which wraps this in the standard 409-retry loop):
 //
-//	version, _ := client.GetVersion(context.Background())
-//	tx, err := client.CreateTransaction(context.Background(), version)
+//	// dpClient avoids shadowing the imported `client` package.
+//	version, _ := dpClient.GetVersion(context.Background())
+//	tx, err := dpClient.CreateTransaction(context.Background(), version)
 //	if err != nil {
 //	    slog.Error("failed to create transaction", "error", err)
 //	    os.Exit(1)

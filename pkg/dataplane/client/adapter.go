@@ -45,8 +45,9 @@ type VersionAdapter struct {
 //
 // Example:
 //
-//	client, _ := client.New(client.Config{...})
-//	adapter := client.NewVersionAdapter(client, 3)
+//	// dpClient avoids shadowing the imported `client` package.
+//	dpClient, _ := client.New(client.Config{...})
+//	adapter := client.NewVersionAdapter(dpClient, 3)
 //	err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *Transaction) error {
 //	    // Execute operations within transaction
 //	    return nil
@@ -135,11 +136,14 @@ func (a *VersionAdapter) executeTransactionWithRetry(ctx context.Context, resolv
 //
 // Example:
 //
-//	adapter := client.NewVersionAdapter(client, 3)
+//	// dpClient avoids shadowing the imported `client` package; the
+//	// inner Client() call returns the version-specific client used to
+//	// invoke the generated CreateBackend method.
+//	adapter := client.NewVersionAdapter(dpClient, 3)
 //	result, err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *Transaction) error {
 //	    // Create backend
 //	    backend := &models.Backend{Name: "web"}
-//	    _, err := client.Client().CreateBackend(ctx, &CreateBackendParams{
+//	    _, err := dpClient.Client().CreateBackend(ctx, &CreateBackendParams{
 //	        TransactionID: &tx.ID,
 //	    }, backend)
 //	    return err

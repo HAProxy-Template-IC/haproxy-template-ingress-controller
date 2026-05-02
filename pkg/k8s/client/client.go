@@ -65,11 +65,14 @@ type Config struct {
 //
 // Example:
 //
+//	// k8sClient avoids shadowing the imported `client` package; this is
+//	// the convention used throughout pkg/controller (see iteration.go).
+//
 //	// In-cluster client
-//	client, err := client.New(client.Config{})
+//	k8sClient, err := client.New(client.Config{})
 //
 //	// Out-of-cluster client
-//	client, err := client.New(client.Config{
+//	k8sClient, err = client.New(client.Config{
 //	    Kubeconfig: "/path/to/kubeconfig",
 //	    Namespace:  "default",
 //	})
@@ -189,13 +192,13 @@ func (c *Client) Namespace() string {
 //
 // Example:
 //
-//	// Fetch a ConfigMap
+//	// Fetch a ConfigMap; k8sClient is a *Client from client.New(...).
 //	gvr := schema.GroupVersionResource{
 //	    Group:    "",
 //	    Version:  "v1",
 //	    Resource: "configmaps",
 //	}
-//	cm, err := client.GetResource(ctx, gvr, "my-config")
+//	cm, err := k8sClient.GetResource(ctx, gvr, "my-config")
 func (c *Client) GetResource(ctx context.Context, gvr schema.GroupVersionResource, name string) (*unstructured.Unstructured, error) {
 	if c.namespace == "" {
 		return nil, &ClientError{

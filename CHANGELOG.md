@@ -16,6 +16,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ### Added
 
+- Per-resource `debounceInterval` override on `spec.watchedResources.*`. Defaults to the global 5s window when empty or unparseable; useful to react faster on resources where 5s is too slow (e.g. HTTPRoute changes during canary rollouts) or to throttle further for very high-churn resources on large clusters.
 - New multi-arch `spoa-hub` container image at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<version>` bundling [`haproxy-spoa-hub`](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) plus the six plugin shared libraries (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth). Cosign-signed by digest with a CycloneDX SBOM attestation. See `docs/controller/docs/operations/spoa-hub.md` for the bundled component list.
 - New `versions-spoa.env` pinning the upstream hub + plugin versions, with renovate-managed bumps (grouped into one MR per run).
 - New `make spoa-hub-image` for local single-arch builds; `make spoa-prep` runs the upstream sha256 + cosign verification of plugin `.so` files into `plugins/`.

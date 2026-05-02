@@ -136,8 +136,8 @@ func TestIsRetriable_DispatchTable(t *testing.T) {
 }
 
 // timeoutNetErr satisfies net.Error and reports Timeout()=true so
-// isRetriable's `errors.As(err, &netErr) && netErr.Timeout()` branch
-// fires.
+// isRetriable's `errors.AsType[net.Error](err)` branch matches and the
+// subsequent `netErr.Timeout()` check returns true.
 type timeoutNetErr struct{}
 
 func (timeoutNetErr) Error() string   { return "i/o timeout" }
@@ -145,7 +145,7 @@ func (timeoutNetErr) Timeout() bool   { return true }
 func (timeoutNetErr) Temporary() bool { return false }
 
 // nonTimeoutNetErr is the negative — exercises the branch where
-// errors.As succeeds but Timeout() returns false. The net branch
+// errors.AsType succeeds but Timeout() returns false. The net branch
 // returns netErr.Timeout() directly, so this classifies as
 // NOT retriable (permanent — e.g. connection refused).
 type nonTimeoutNetErr struct{}

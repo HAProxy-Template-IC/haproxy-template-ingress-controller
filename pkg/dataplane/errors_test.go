@@ -300,6 +300,32 @@ func TestSimplifyValidationError(t *testing.T) {
 			want: "semantic validation failed: configuration has semantic errors",
 		},
 		{
+			name: "semantic validation error with multi-line context",
+			err: errors.New(`semantic validation failed: configuration has semantic errors: haproxy validation failed:   userlist auth_users
+      user admin password ...
+→ [ALERT] (001) : parsing [haproxy.cfg:15] : unknown user 'missing' in userlist 'auth_users' (declared at haproxy.cfg:12)
+  backend api
+      server s1 127.0.0.1:8080`),
+			want: `  userlist auth_users
+      user admin password ...
+→ [ALERT] (001) : parsing [haproxy.cfg:15] : unknown user 'missing' in userlist 'auth_users' (declared at haproxy.cfg:12)
+  backend api
+      server s1 127.0.0.1:8080`,
+		},
+		{
+			name: "semantic validation error - backend has no server",
+			err: errors.New(`semantic validation failed: configuration has semantic errors: haproxy validation failed:   defaults
+      mode http
+  backend api
+→ [ALERT] (002) : parsing [haproxy.cfg:15] : backend 'api' has no server
+      balance roundrobin`),
+			want: `  defaults
+      mode http
+  backend api
+→ [ALERT] (002) : parsing [haproxy.cfg:15] : backend 'api' has no server
+      balance roundrobin`,
+		},
+		{
 			name:    "schema validation error with value",
 			err:     errors.New(`schema validation failed: configuration violates API schema constraints: Error at "/maxconn": must be >= 1` + "\nValue:\n  \"0\""),
 			want:    "maxconn must be >= 1 (got 0)",

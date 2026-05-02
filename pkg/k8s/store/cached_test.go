@@ -887,7 +887,7 @@ func TestCachedStore_UpdateToNewKey(t *testing.T) {
 		t.Fatalf("NewCachedStore failed: %v", err)
 	}
 
-	RunUpdateToNewKeyTest(t, store, store, resource, []string{"default", "test-cm"})
+	runUpdateToNewKeyTest(t, store, store, resource, []string{"default", "test-cm"})
 }
 
 // TestCachedStore_DeleteNonExistent verifies deleting non-existent resource is a no-op.
@@ -918,7 +918,7 @@ func TestCachedStore_DeleteNonExistent(t *testing.T) {
 		t.Fatalf("NewCachedStore failed: %v", err)
 	}
 
-	RunDeleteNonExistentTest(t, store, store, resource,
+	runDeleteNonExistentTest(t, store, store, resource,
 		[]string{"default", "test-cm"},
 		[]string{"other", "nonexistent"})
 }

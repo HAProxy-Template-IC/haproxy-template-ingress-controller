@@ -145,18 +145,18 @@ haptic-controller validate -f config.yaml --trace-templates
 2. **Parse flags/env vars**: Load configuration from environment
 3. **Create Kubernetes client**: Connect to cluster
 4. **Create EventBus**: Initialize event infrastructure
-5. **Start components**: Boot components in correct order (5 stages)
+5. **Start components**: Boot components in correct order (eight stages)
 6. **Handle signals**: Graceful shutdown on SIGTERM/SIGINT
 7. **Expose endpoints**: Health checks, metrics, profiling
 
 **Not responsible for:**
 
-- Configuration validation (done in pkg/controller/validators)
+- Configuration validation (done in pkg/controller/validator)
 - Resource watching (done in pkg/k8s)
 - Template rendering (done in pkg/templating)
 - Event coordination (done in pkg/controller)
 
-## Five-Stage Startup
+## Eight-Stage Startup
 
 The controller uses event-driven staged startup:
 
@@ -164,7 +164,7 @@ The controller uses event-driven staged startup:
 Stage 1: Config Management Components
   - ConfigLoader (parses HAProxyTemplateConfig CRD)
   - CredentialsLoader (parses credentials Secret)
-  - ConfigValidator (basic + template + jsonpath validators via scatter-gather)
+  - BasicValidator + TemplateValidator + JSONPathValidator (scatter-gather over `ConfigValidationRequest`) + ConfigChangeHandler (orchestrator)
   - Commentator (subscribes to all events for domain-aware logging)
 
 Stage 2: Wait for Valid Config
@@ -183,9 +183,25 @@ Stage 4: EventBus.Start()
 Stage 5: Reconciliation & Observability Components
   - Reconciler (debounces resource-index updates)
   - Coordinator (drives the render → validate → publish pipeline; leader-only)
-  - DeploymentScheduler, Deployer, DriftMonitor (leader-only)
-  - Discovery, ConfigPublisher, Metrics, Webhook
+  - DeploymentScheduler, Deployer, DriftMonitor, ConfigPublisher, StatusApplier (leader-only)
+  - Discovery, HTTPStore, ProposalValidator, Metrics
   - Initial ReconciliationTriggeredEvent is published
+
+Stage 6: Leader Election
+  - Starts the lease-backed elector; on BecameLeaderEvent the leader-only
+    components (Coordinator, Deployer, DeploymentScheduler, DriftMonitor,
+    ConfigPublisher, StatusApplier) start their goroutines and subscribe.
+
+Stage 7: Webhook Validation (only if `enableValidationWebhook: true`
+on at least one watched resource)
+  - Starts the HTTPS admission server; the DryRunValidator was created in
+    Stage 5 so its proposal-validation subscriptions were in place before
+    EventBus.Start().
+
+Stage 8: Debug & Health Wiring
+  - Registers debug variables with the introspection server, starts the
+    pre-created EventBuffer goroutine, and swaps the bootstrap health
+    checker for one backed by the full lifecycle registry.
 
 Controller operational: subsequent CRD or Secret changes cancel the iteration
 context, components shut down, and the loop restarts with the new config (no pod

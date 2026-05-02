@@ -425,20 +425,6 @@ func TestTemplateEvents(t *testing.T) {
 }
 
 func TestValidationEvents(t *testing.T) {
-	t.Run("ValidationStartedEvent", func(t *testing.T) {
-		event := NewValidationStartedEvent()
-		require.NotNil(t, event)
-		assert.Equal(t, EventTypeValidationStarted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ValidationStartedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewValidationStartedEvent(WithCorrelation("corr-123", "cause-456"))
-		require.NotNil(t, event)
-		assert.Equal(t, "corr-123", event.CorrelationID())
-		assert.Equal(t, "cause-456", event.CausationID())
-	})
-
 	t.Run("ValidationCompletedEvent", func(t *testing.T) {
 		warnings := []string{"warning1", "warning2"}
 		event := NewValidationCompletedEvent(warnings, 50, "config_change", nil, true)
@@ -756,21 +742,6 @@ func TestPublishingEvents(t *testing.T) {
 		assert.False(t, event.Timestamp().IsZero())
 	})
 
-	t.Run("ConfigPublishFailedEvent", func(t *testing.T) {
-		err := assert.AnError
-		event := NewConfigPublishFailedEvent(err)
-		require.NotNil(t, event)
-		assert.Equal(t, err.Error(), event.Error)
-		assert.Equal(t, EventTypeConfigPublishFailed, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ConfigPublishFailedEvent_NilError", func(t *testing.T) {
-		event := NewConfigPublishFailedEvent(nil)
-		require.NotNil(t, event)
-		assert.Empty(t, event.Error)
-	})
-
 	t.Run("ConfigAppliedToPodEvent", func(t *testing.T) {
 		syncMetadata := &SyncMetadata{
 			ReloadTriggered:        true,
@@ -817,82 +788,23 @@ func TestPublishingEvents(t *testing.T) {
 	})
 }
 
-func TestWebhookObservabilityEvents(t *testing.T) {
-	t.Run("WebhookValidationRequestEvent", func(t *testing.T) {
-		event := NewWebhookValidationRequestEvent(
-			"uid-123",
-			"Ingress",
-			"my-ingress",
-			"default",
-			"CREATE",
-		)
-		require.NotNil(t, event)
-		assert.Equal(t, "uid-123", event.RequestUID)
-		assert.Equal(t, "Ingress", event.Kind)
-		assert.Equal(t, "my-ingress", event.Name)
-		assert.Equal(t, "default", event.Namespace)
-		assert.Equal(t, "CREATE", event.Operation)
-		assert.Equal(t, EventTypeWebhookValidationRequest, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("WebhookValidationAllowedEvent", func(t *testing.T) {
-		event := NewWebhookValidationAllowedEvent("uid-123", "Ingress", "my-ingress", "default")
-		require.NotNil(t, event)
-		assert.Equal(t, "uid-123", event.RequestUID)
-		assert.Equal(t, "Ingress", event.Kind)
-		assert.Equal(t, "my-ingress", event.Name)
-		assert.Equal(t, "default", event.Namespace)
-		assert.Equal(t, EventTypeWebhookValidationAllowed, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("WebhookValidationDeniedEvent", func(t *testing.T) {
-		event := NewWebhookValidationDeniedEvent(
-			"uid-123",
-			"Ingress",
-			"my-ingress",
-			"default",
-			"invalid configuration",
-		)
-		require.NotNil(t, event)
-		assert.Equal(t, "uid-123", event.RequestUID)
-		assert.Equal(t, "Ingress", event.Kind)
-		assert.Equal(t, "my-ingress", event.Name)
-		assert.Equal(t, "default", event.Namespace)
-		assert.Equal(t, "invalid configuration", event.Reason)
-		assert.Equal(t, EventTypeWebhookValidationDenied, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("WebhookValidationErrorEvent", func(t *testing.T) {
-		event := NewWebhookValidationErrorEvent("uid-123", "Ingress", "timeout")
-		require.NotNil(t, event)
-		assert.Equal(t, "uid-123", event.RequestUID)
-		assert.Equal(t, "Ingress", event.Kind)
-		assert.Equal(t, "timeout", event.Error)
-		assert.Equal(t, EventTypeWebhookValidationError, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-}
-
 func TestCorrelation(t *testing.T) {
 	t.Run("NewCorrelation_NoOptions", func(t *testing.T) {
-		c := NewCorrelation()
+		c := newCorrelation()
 		assert.NotEmpty(t, c.EventID())
 		assert.Empty(t, c.CorrelationID())
 		assert.Empty(t, c.CausationID())
 	})
 
 	t.Run("NewCorrelation_WithNewCorrelation", func(t *testing.T) {
-		c := NewCorrelation(WithNewCorrelation())
+		c := newCorrelation(WithNewCorrelation())
 		assert.NotEmpty(t, c.EventID())
 		assert.NotEmpty(t, c.CorrelationID())
 		assert.Empty(t, c.CausationID())
 	})
 
 	t.Run("NewCorrelation_WithCorrelation", func(t *testing.T) {
-		c := NewCorrelation(WithCorrelation("corr-123", "cause-456"))
+		c := newCorrelation(WithCorrelation("corr-123", "cause-456"))
 		assert.NotEmpty(t, c.EventID())
 		assert.Equal(t, "corr-123", c.CorrelationID())
 		assert.Equal(t, "cause-456", c.CausationID())
@@ -900,15 +812,15 @@ func TestCorrelation(t *testing.T) {
 
 	t.Run("NewCorrelation_MultipleOptions", func(t *testing.T) {
 		// WithCorrelation should override WithNewCorrelation
-		c := NewCorrelation(WithNewCorrelation(), WithCorrelation("corr-123", "cause-456"))
+		c := newCorrelation(WithNewCorrelation(), WithCorrelation("corr-123", "cause-456"))
 		assert.NotEmpty(t, c.EventID())
 		assert.Equal(t, "corr-123", c.CorrelationID())
 		assert.Equal(t, "cause-456", c.CausationID())
 	})
 
 	t.Run("NewCorrelation_UniqueEventIDs", func(t *testing.T) {
-		c1 := NewCorrelation()
-		c2 := NewCorrelation()
+		c1 := newCorrelation()
+		c2 := newCorrelation()
 		assert.NotEqual(t, c1.EventID(), c2.EventID())
 	})
 
@@ -941,7 +853,7 @@ func TestCorrelation(t *testing.T) {
 		assert.Empty(t, opt.causationID)
 
 		// When used, should not set any correlation
-		c := NewCorrelation(opt)
+		c := newCorrelation(opt)
 		assert.Empty(t, c.CorrelationID())
 		assert.Empty(t, c.CausationID())
 	})
@@ -971,7 +883,7 @@ func TestCorrelation(t *testing.T) {
 
 	t.Run("WithCorrelation_EmptyValues", func(t *testing.T) {
 		opt := WithCorrelation("", "")
-		c := NewCorrelation(opt)
+		c := newCorrelation(opt)
 		// Empty values should not be set
 		assert.Empty(t, c.CorrelationID())
 		assert.Empty(t, c.CausationID())
@@ -1017,7 +929,6 @@ func TestTimestampNotZero(t *testing.T) {
 		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
-		{"ValidationStarted", NewValidationStartedEvent()},
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
 		{"ValidationTestsStarted", NewValidationTestsStartedEvent(0)},
@@ -1035,13 +946,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HAProxyPodTerminated", NewHAProxyPodTerminatedEvent("name", "ns")},
 		// Publishing events
 		{"ConfigPublished", NewConfigPublishedEvent("n", "ns", 0, 0)},
-		{"ConfigPublishFailed", NewConfigPublishFailedEvent(nil)},
 		{"ConfigAppliedToPod", NewConfigAppliedToPodEvent("n", "ns", "pod", "ns", "checksum", false, nil)},
-		// Webhook observability events
-		{"WebhookValidationRequestEvent", NewWebhookValidationRequestEvent("uid", "kind", "n", "ns", "op")},
-		{"WebhookValidationAllowedEvent", NewWebhookValidationAllowedEvent("uid", "kind", "n", "ns")},
-		{"WebhookValidationDeniedEvent", NewWebhookValidationDeniedEvent("uid", "kind", "n", "ns", "reason")},
-		{"WebhookValidationErrorEvent", NewWebhookValidationErrorEvent("uid", "kind", "error")},
 		// Status update events
 		{"StatusUpdateCompleted", NewStatusUpdateCompletedEvent(StatusPatchPhaseDeployed, 3, 1, 50)},
 		{"StatusUpdateFailed", NewStatusUpdateFailedEvent("ns", "name", "networking.k8s.io/v1/ingresses", "error", true)},

@@ -199,8 +199,10 @@ func New() (*Parser, error) {
 //	    balance roundrobin
 //	    server srv1 192.168.1.10:80
 //	`
-//	parser, _ := parser.New()
-//	structured, err := parser.ParseFromString(config)
+//	// p is a *Parser; the variable name avoids shadowing the imported
+//	// `parser` package so subsequent parser.X calls (e.g. types) keep working.
+//	p, _ := parser.New()
+//	structured, err := p.ParseFromString(config)
 func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 	if config == "" {
 		return nil, errors.New("configuration string is empty")

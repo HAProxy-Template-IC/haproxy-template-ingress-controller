@@ -1,4 +1,4 @@
-// Package types provides parser implementations for HAProxy Enterprise Edition
+// Package directives provides parser implementations for HAProxy Enterprise Edition
 // section-specific directives.
 //
 // Each file in this package implements ParserInterface for directives within

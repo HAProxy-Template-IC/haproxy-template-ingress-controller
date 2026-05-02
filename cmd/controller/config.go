@@ -103,7 +103,7 @@ func runConfigView(_ *cobra.Command, _ []string) error {
 		configCRDName = os.Getenv("CRD_NAME")
 	}
 	if configCRDName == "" {
-		configCRDName = DefaultCRDName
+		configCRDName = defaultCRDName
 	}
 
 	// Create Kubernetes client

@@ -181,10 +181,10 @@ const (
 
 	// Path utility functions.
 
-	// funcBasename extracts the filename from a path (like Unix basename command).
+	// FuncBasename extracts the filename from a path (like Unix basename command).
 	// Useful for extracting sanitized filenames from paths returned by fileRegistry.Register().
 	// Syntax: basename(path) returns string.
-	funcBasename = "basename"
+	FuncBasename = "basename"
 
 	// Status patch functions.
 

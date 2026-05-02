@@ -90,37 +90,44 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 			})
 			return ctx
 		}).
+		// All four assertions poll on (status==200 AND Echo backend identity).
+		// Polling on status alone leaves a race window where one HTTPRoute
+		// rule has landed (the request gets a 200 from whatever backend it
+		// hit) but the rule under test hasn't, so the response identifies a
+		// different backend than expected.
 		Assess("highest-precedence rule wins (GET + 2 headers + query)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/?debug=true").
+			httpclient.New(t).GET(host, "/?debug=true").
 				WithHeader("X-Version", "v2").
 				WithHeader("X-Environment", "prod").
-				ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment != "v2" {
-				t.Fatalf("expected v2 backend (rule 2 most specific)")
-			}
+				ExpectMatching(t, "rule 2 (most specific) routes to v2 backend",
+					func(resp *httpclient.Response) bool {
+						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment == "v2"
+					})
 			return ctx
 		}).
 		Assess("medium rule (GET + X-Version=v1) wins over catch-all", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/").
+			httpclient.New(t).GET(host, "/").
 				WithHeader("X-Version", "v1").
-				ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend (rule 0 — explicit v1 header)")
-			}
+				ExpectMatching(t, "rule 0 (explicit v1 header) routes to default backend",
+					func(resp *httpclient.Response) bool {
+						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment != "v2"
+					})
 			return ctx
 		}).
 		Assess("plain GET routes to v2 (rule 3, low specificity)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment != "v2" {
-				t.Fatalf("expected v2 backend (rule 3 — GET catch-all)")
-			}
+			httpclient.New(t).GET(host, "/").
+				ExpectMatching(t, "rule 3 (GET catch-all) routes to v2 backend",
+					func(resp *httpclient.Response) bool {
+						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment == "v2"
+					})
 			return ctx
 		}).
 		Assess("POST falls all the way through to catch-all", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/").WithMethod("POST").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend (POST hits rule 1 catch-all)")
-			}
+			httpclient.New(t).GET(host, "/").WithMethod("POST").
+				ExpectMatching(t, "rule 1 (catch-all) routes POST to default backend",
+					func(resp *httpclient.Response) bool {
+						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment != "v2"
+					})
 			return ctx
 		}).
 		Feature()

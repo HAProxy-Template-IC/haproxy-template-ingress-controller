@@ -49,15 +49,15 @@ Use "haptic-controller [command] --help" for more information about a command.`,
 }
 
 const (
-	// DefaultCRDName is the default name for the HAProxyTemplateConfig CRD resource.
-	DefaultCRDName = "haproxy-config"
+	// defaultCRDName is the default name for the HAProxyTemplateConfig CRD resource.
+	defaultCRDName = "haproxy-config"
 
-	// DefaultSecretName is the default name for the credentials Secret.
+	// defaultSecretName is the default name for the credentials Secret.
 	// #nosec G101 -- This is a Kubernetes resource name, not an actual credential
-	DefaultSecretName = "haproxy-credentials"
+	defaultSecretName = "haproxy-credentials"
 
-	// DefaultDebugPort is the default port for the debug HTTP server (0 = disabled).
-	DefaultDebugPort = 0
+	// defaultDebugPort is the default port for the debug HTTP server (0 = disabled).
+	defaultDebugPort = 0
 )
 
 func init() {

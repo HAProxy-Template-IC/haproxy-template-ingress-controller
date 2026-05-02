@@ -69,11 +69,27 @@ rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 
 ## Reconciliation Tuning
 
-### Debounce Interval (internal, 5s)
+### Debounce Interval (per-resource override, 5s default)
 
 The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 5-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 5 s are batched.
 
-This interval is not exposed as a CRD field, env var, or CLI flag — it is a compile-time default chosen to balance latency against CPU burn during rolling deploys. If you need a different value in a custom build, change `DefaultDebounceInterval` in `pkg/k8s/types/types.go` (or set `DebounceInterval` on the `WatcherConfig` constructed in `pkg/controller/resourcewatcher/watcher.go`, which currently passes `0` to mean "use the default").
+Each watched resource can override the window via `spec.watchedResources.<name>.debounceInterval`:
+
+```yaml
+watchedResources:
+  httproutes:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: httproutes
+    debounceInterval: "500ms"  # react fast on canary rollouts
+  endpointslices:
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
+    debounceInterval: "30s"    # absorb churn on large clusters
+```
+
+Empty / invalid strings fall back to the 5s default silently. The Reconciler downstream applies its own *separate* leading-edge refractory (also 5s, not CRD-configurable) on top of the per-watcher window — see [architecture-overview](../development/design/architecture-overview.md) for the two-layer flow.
+
+If you need to change the global default in a custom build, edit `DefaultDebounceInterval` in `pkg/k8s/types/types.go`.
 
 ### Deployment Pacing
 
@@ -498,7 +514,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 
 - Profile to find hot spots (`/debug/pprof/profile?seconds=30`)
 - Optimize template complexity — see [Template Optimization](#template-optimization)
-- Raise `dataplane.minDeploymentInterval` to absorb more updates per push (the debounce interval is not user-tunable)
+- Raise `dataplane.minDeploymentInterval` to absorb more updates per push, and consider raising `spec.watchedResources.<name>.debounceInterval` for high-churn resources (e.g. EndpointSlices on a large cluster) so each watcher batches more aggressively before triggering reconciliation
 
 **Slow deployments:**
 
@@ -512,7 +528,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 ### Initial Deployment
 
 - [ ] Set appropriate resource requests/limits
-- [ ] Tune `dataplane.minDeploymentInterval` for workload (debounce itself is not configurable)
+- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the 5s default is wrong for a specific kind (e.g. faster on HTTPRoute, slower on EndpointSlice)
 - [ ] Set HAProxy maxconn based on expected load
 - [ ] Match nbthread to CPU allocation
 

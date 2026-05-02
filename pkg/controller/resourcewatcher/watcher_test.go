@@ -9,7 +9,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes/fake"
 
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -17,6 +20,18 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
 )
+
+// newFakeClient returns a *client.Client backed by in-memory fake clientsets.
+// The watcher component constructor only stores the client and reads its
+// namespace; no API calls happen until Start(), so a fake is sufficient for
+// construction-only tests.
+func newFakeClient() *client.Client {
+	return client.NewFromClientset(
+		fake.NewClientset(),
+		dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		"default",
+	)
+}
 
 func TestToGVR(t *testing.T) {
 	tests := []struct {
@@ -549,28 +564,25 @@ func TestNew_NilParameters(t *testing.T) {
 }
 
 func TestNew_EmptyConfig(t *testing.T) {
-	t.Skip("Requires Kubernetes cluster - run as integration test")
-
 	cfg := &coreconfig.Config{
 		WatchedResources: map[string]coreconfig.WatchedResource{},
 	}
-	k8sClient, err := client.New(client.Config{})
-	require.NoError(t, err)
 	bus := busevents.NewEventBus(10)
 	logger := slog.Default()
 
-	rwc, err := New(cfg, k8sClient, bus, logger)
+	rwc, err := New(cfg, newFakeClient(), bus, logger)
 	require.NoError(t, err)
 	require.NotNil(t, rwc)
 
-	// Should have no watchers for empty config
-	assert.Empty(t, rwc.watchers)
-	assert.Empty(t, rwc.stores)
+	// New() always auto-injects a haproxy-pods watcher driven by PodSelector,
+	// regardless of WatchedResources content.
+	assert.Len(t, rwc.watchers, 1)
+	assert.Len(t, rwc.stores, 1)
+	assert.Contains(t, rwc.watchers, "haproxy-pods")
+	assert.Contains(t, rwc.stores, "haproxy-pods")
 }
 
 func TestNew_InvalidResource(t *testing.T) {
-	t.Skip("Requires Kubernetes cluster - run as integration test")
-
 	cfg := &coreconfig.Config{
 		WatchedResources: map[string]coreconfig.WatchedResource{
 			"invalid": {
@@ -579,19 +591,15 @@ func TestNew_InvalidResource(t *testing.T) {
 			},
 		},
 	}
-	k8sClient, err := client.New(client.Config{})
-	require.NoError(t, err)
 	bus := busevents.NewEventBus(10)
 	logger := slog.Default()
 
-	_, err = New(cfg, k8sClient, bus, logger)
+	_, err := New(cfg, newFakeClient(), bus, logger)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid resource")
 }
 
 func TestGetStore(t *testing.T) {
-	t.Skip("Requires Kubernetes cluster - run as integration test")
-
 	cfg := &coreconfig.Config{
 		WatchedResources: map[string]coreconfig.WatchedResource{
 			"services": {
@@ -601,26 +609,23 @@ func TestGetStore(t *testing.T) {
 			},
 		},
 	}
-	k8sClient, err := client.New(client.Config{})
-	require.NoError(t, err)
 	bus := busevents.NewEventBus(10)
 	logger := slog.Default()
 
-	rwc, err := New(cfg, k8sClient, bus, logger)
+	rwc, err := New(cfg, newFakeClient(), bus, logger)
 	require.NoError(t, err)
 
 	// Existing resource type
-	store := rwc.GetStore("services")
-	assert.NotNil(t, store)
+	assert.NotNil(t, rwc.GetStore("services"))
+
+	// Auto-injected haproxy-pods is also addressable.
+	assert.NotNil(t, rwc.GetStore("haproxy-pods"))
 
 	// Non-existent resource type
-	store = rwc.GetStore("ingresses")
-	assert.Nil(t, store)
+	assert.Nil(t, rwc.GetStore("ingresses"))
 }
 
 func TestGetAllStores(t *testing.T) {
-	t.Skip("Requires Kubernetes cluster - run as integration test")
-
 	cfg := &coreconfig.Config{
 		WatchedResources: map[string]coreconfig.WatchedResource{
 			"services": {
@@ -635,18 +640,18 @@ func TestGetAllStores(t *testing.T) {
 			},
 		},
 	}
-	k8sClient, err := client.New(client.Config{})
-	require.NoError(t, err)
 	bus := busevents.NewEventBus(10)
 	logger := slog.Default()
 
-	rwc, err := New(cfg, k8sClient, bus, logger)
+	rwc, err := New(cfg, newFakeClient(), bus, logger)
 	require.NoError(t, err)
 
+	// Two configured resources + one auto-injected haproxy-pods watcher.
 	stores := rwc.GetAllStores()
-	assert.Len(t, stores, 2)
+	assert.Len(t, stores, 3)
 	assert.NotNil(t, stores["services"])
 	assert.NotNil(t, stores["pods"])
+	assert.NotNil(t, stores["haproxy-pods"])
 
 	// Verify it returns a copy (modifying return value doesn't affect internal state)
 	stores["services"] = nil
@@ -654,8 +659,6 @@ func TestGetAllStores(t *testing.T) {
 }
 
 func TestSyncTracking(t *testing.T) {
-	t.Skip("Requires Kubernetes cluster - run as integration test")
-
 	cfg := &coreconfig.Config{
 		WatchedResources: map[string]coreconfig.WatchedResource{
 			"services": {
@@ -670,20 +673,24 @@ func TestSyncTracking(t *testing.T) {
 			},
 		},
 	}
-	k8sClient, err := client.New(client.Config{})
-	require.NoError(t, err)
 	bus := busevents.NewEventBus(10)
 	logger := slog.Default()
 
-	rwc, err := New(cfg, k8sClient, bus, logger)
+	rwc, err := New(cfg, newFakeClient(), bus, logger)
 	require.NoError(t, err)
 
-	// Initially nothing is synced
+	// New() also auto-injects a haproxy-pods watcher driven by PodSelector.
+	// AllSynced() returns true only when *every* watcher is synced, so this
+	// test has to flip the haproxy-pods flag too.
+	const haproxyPodsKey = "haproxy-pods"
+
+	// Initially nothing is synced.
 	assert.False(t, rwc.IsSynced("services"))
 	assert.False(t, rwc.IsSynced("pods"))
+	assert.False(t, rwc.IsSynced(haproxyPodsKey))
 	assert.False(t, rwc.AllSynced())
 
-	// Simulate OnSyncComplete callback for services
+	// Simulate OnSyncComplete callback for services.
 	rwc.syncMu.Lock()
 	rwc.synced["services"] = true
 	rwc.syncMu.Unlock()
@@ -692,62 +699,30 @@ func TestSyncTracking(t *testing.T) {
 	assert.False(t, rwc.IsSynced("pods"))
 	assert.False(t, rwc.AllSynced())
 
-	// Simulate OnSyncComplete callback for pods
+	// Simulate OnSyncComplete callback for pods + haproxy-pods.
 	rwc.syncMu.Lock()
 	rwc.synced["pods"] = true
+	rwc.synced[haproxyPodsKey] = true
 	rwc.syncMu.Unlock()
 
 	assert.True(t, rwc.IsSynced("services"))
 	assert.True(t, rwc.IsSynced("pods"))
+	assert.True(t, rwc.IsSynced(haproxyPodsKey))
 	assert.True(t, rwc.AllSynced())
 }
 
-// TestEventPublishing verifies that the component publishes correct events.
-// This is an integration test that requires a bit more setup.
-func TestEventPublishing(t *testing.T) {
-	t.Skip("Integration test - requires real k8s client or extensive mocking")
+// Event-publishing coverage (ResourceIndexUpdatedEvent / ResourceSyncCompleteEvent
+// firing when resources change or initial sync completes) lives end-to-end in
+// the integration suite under tests/, where a real informer drives the watcher.
+// A unit-level recreation would need either a fake informer or a hand-rolled
+// dispatch harness, neither of which is cheap enough to justify here.
 
-	// This test would verify:
-	// 1. ResourceIndexUpdatedEvent is published on resource changes
-	// 2. ResourceSyncCompleteEvent is published on initial sync
-	// 3. Events contain correct resource type names and stats
-}
-
-// TestStart verifies that Start() begins watching and waits for context cancellation.
+// TestStart is intentionally a skip-only placeholder. Start() drives real
+// informers, and dynamicfake.NewSimpleDynamicClient panics when the
+// reflector tries to LIST a resource whose list-kind is not pre-registered
+// on the fake's scheme. Setting that up per resource would mean teaching
+// every fake fixture about every WatchedResource — the integration suite
+// already covers Start() with a real informer, which is the right place.
 func TestStart(t *testing.T) {
-	t.Skip("Requires Kubernetes cluster - run as integration test")
-
-	cfg := &coreconfig.Config{
-		WatchedResources: map[string]coreconfig.WatchedResource{
-			"services": {
-				APIVersion: "v1",
-				Resources:  "services",
-				IndexBy:    []string{"metadata.namespace"},
-			},
-		},
-	}
-	k8sClient, err := client.New(client.Config{})
-	require.NoError(t, err)
-	bus := busevents.NewEventBus(10)
-	logger := slog.Default()
-
-	rwc, err := New(cfg, k8sClient, bus, logger)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	// Start should not block
-	done := make(chan error, 1)
-	go func() {
-		done <- rwc.Start(ctx)
-	}()
-
-	// Verify it completes when context is cancelled
-	select {
-	case err := <-done:
-		require.NoError(t, err)
-	case <-time.After(1 * time.Second):
-		t.Fatal("Start() did not return after context cancellation")
-	}
+	t.Skip("Start() drives real informers; covered by tests/integration")
 }
