@@ -183,7 +183,6 @@ Stage 4: EventBus.Start()
 Stage 5: Reconciliation & Observability Components
   - Reconciler (debounces resource-index updates)
   - Coordinator (drives the render → validate → publish pipeline; leader-only)
-  - Renderer, HAProxyValidator (all-replica)
   - DeploymentScheduler, Deployer, DriftMonitor (leader-only)
   - Discovery, ConfigPublisher, Metrics, Webhook
   - Initial ReconciliationTriggeredEvent is published

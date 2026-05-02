@@ -37,33 +37,6 @@ type MockServerConfig struct {
 	Handlers map[string]http.HandlerFunc
 }
 
-// NewMockServer creates a test server that mimics the Dataplane API.
-// It always provides a /v3/info endpoint returning the configured API version.
-func NewMockServer(t *testing.T, cfg MockServerConfig) *httptest.Server {
-	t.Helper()
-
-	apiVersion := cfg.APIVersion
-	if apiVersion == "" {
-		apiVersion = CommunityAPIVersion
-	}
-
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v3/info" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, `{"api":{"version":"%s"}}`, apiVersion)
-			return
-		}
-
-		if handler, ok := cfg.Handlers[r.URL.Path]; ok {
-			handler(w, r)
-			return
-		}
-
-		w.WriteHeader(http.StatusNotFound)
-	}))
-}
-
 // NewMockEnterpriseServer creates a test server that mimics the Enterprise Dataplane API.
 // It provides the same /v3/info endpoint but also tries to match handlers with and without
 // the /v3 prefix, which mirrors how the enterprise API routes requests.

@@ -79,13 +79,12 @@ func TestIngressAuthHeadersSucceed(t *testing.T) {
 		Assess: []SimpleIngressAssertion{{
 			Name: "X-Auth-User: alice reaches the backend",
 			Check: func(t *testing.T, host string) {
-				resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
-				if resp.Echo == nil {
-					t.Fatalf("expected echo-server JSON")
-				}
-				if got := resp.Echo.Headers["x-auth-user"]; got != "alice" {
-					t.Fatalf("expected backend to see X-Auth-User: alice; got %q (all headers: %v)", got, resp.Echo.Headers)
-				}
+				// Poll on the echo'd header (not just status). The 200 from the
+				// auth-allowed path syncs quickly, but the companion
+				// `http-request set-header X-Auth-User var(...)` rule that
+				// forwards the header to the backend can land a reload cycle
+				// later. ExpectEchoHeader waits for the full pipeline.
+				httpclient.New(t).GET(host, "/").ExpectEchoHeader(t, "X-Auth-User", "alice")
 			},
 		}},
 	})

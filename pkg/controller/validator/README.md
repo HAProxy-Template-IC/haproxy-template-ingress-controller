@@ -4,14 +4,13 @@ Configuration validators (scatter-gather participants).
 
 ## Overview
 
-Three validators run as the responder side of the scatter-gather validation pattern. Each one wraps a shared `BaseValidator`, subscribes to `ConfigValidationRequest` on the EventBus, and responds with a `ConfigValidationResponse` flagged valid or invalid. The orchestrator that fans the request out and aggregates responses is **not** in this package — it lives in `pkg/controller/configchange.ConfigChangeHandler`. The same package also hosts `HAProxyValidatorComponent`, which performs the three-phase HAProxy validation (syntax + OpenAPI schema + `haproxy -c`) for rendered configs as part of the deployment pipeline.
+Three validators run as the responder side of the scatter-gather validation pattern. Each one wraps a shared `BaseValidator`, subscribes to `ConfigValidationRequest` on the EventBus, and responds with a `ConfigValidationResponse` flagged valid or invalid. The orchestrator that fans the request out and aggregates responses is **not** in this package — it lives in `pkg/controller/configchange.ConfigChangeHandler`. Rendered-HAProxy-config validation (syntax + OpenAPI schema + `haproxy -c`) runs synchronously inside `pkg/controller/pipeline.Pipeline` via `pkg/dataplane.ValidateConfiguration`, not through this package.
 
 ## Validators
 
 - **BasicValidator** — Structural validation (required fields, type checks, basic schema sanity).
 - **TemplateValidator** — Calls `helpers.ExtractTemplatesFromConfig` to collect every template defined under `haproxyConfig`, `templateSnippets`, `maps`, `files`, and `sslCertificates`, then compiles them with `templating.NewScriggoWithDeclarations` to surface syntax errors before they reach the render pipeline.
 - **JSONPathValidator** — Evaluates the `indexBy` JSONPath expressions on every entry under `spec.watchedResources` against a synthetic resource.
-- **HAProxyValidatorComponent** — Three-phase validation of a rendered HAProxy config (used by the render-validate pipeline, not the config-validation scatter-gather).
 
 ## Quick Start
 

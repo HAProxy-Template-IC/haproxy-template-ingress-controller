@@ -347,7 +347,7 @@ Component Architecture:
 
 - **Pure Libraries**: Testable business logic with no EventBus dependencies (`pkg/templating`, `pkg/dataplane`, `pkg/k8s`).
 - **Synchronous Pipeline**: One direct function call inside the leader-only Coordinator. Render + validate is a single atomic step rather than two event-driven hops, because admission decisions and reconciliation decisions must agree.
-- **Event-Driven Components**: Coordination across components, observability, and webhook flows (`pkg/controller/*`). `pkg/controller/renderer.Component` and `pkg/controller/validator.HAProxyValidatorComponent` exist in the source tree as event-driven adapters but are constructed only by tests; the production controller wires the synchronous pipeline instead.
+- **Event-Driven Components**: Coordination across components, observability, and webhook flows (`pkg/controller/*`). Rendering and HAProxy-config validation have no event-adapters in production — they run synchronously inside the Pipeline.
 
 **Homegrown Event Bus Implementation** (real shape — see `pkg/events/bus.go`):
 
@@ -834,7 +834,6 @@ pkg/controller/validator/            # Event-adapter responders for the scatter-
   basic.go                           # BasicValidator   → core/config.ValidateStructure
   template.go                        # TemplateValidator → templating.NewScriggoWithDeclarations
   jsonpath.go                        # JSONPathValidator → k8s/indexer.ValidateJSONPath
-  haproxy_validator.go               # HAProxyValidator (separate flow: validates rendered output)
 
 pkg/controller/configchange/
   handler.go                         # ConfigChangeHandler — fans the request out via bus.Request,

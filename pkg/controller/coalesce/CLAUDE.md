@@ -68,8 +68,6 @@ func (c *Component) handleTrigger(event *events.TriggerEvent) {
 
 | Component | Event Type | Purpose |
 |-----------|------------|---------|
-| Renderer (`pkg/controller/renderer`) | `ReconciliationTriggeredEvent` | Skip intermediate triggers while rendering is in flight |
-| HAProxyValidator (`pkg/controller/validator`) | `TemplateRenderedEvent` | Skip intermediate renders while validation is in flight |
 | DeploymentScheduler (`pkg/controller/deployer`) | `HAProxyPodsDiscoveredEvent` | Use only the most recent pod-discovery snapshot per scheduling decision |
 | Deployer (`pkg/controller/deployer`) | `DeploymentScheduledEvent` | Deploy only the latest config when several land back-to-back |
 

@@ -230,8 +230,8 @@ type Component struct {
 func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
     // Build overlay stores and a proposal request, then delegate.
     // The proposalValidator builds the rendering context, runs the template
-    // engine, and feeds the output through HAProxyValidatorComponent's
-    // three-phase validation (syntax + schema + haproxy -c).
+    // engine, and feeds the output through dataplane.ValidateConfiguration
+    // (syntax + schema + haproxy -c).
 
     // Event publishing - coordination with other components
     c.eventBus.Publish(events.NewWebhookValidationResponse(...))

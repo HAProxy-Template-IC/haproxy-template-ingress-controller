@@ -65,7 +65,6 @@ The actual classification lives in `pkg/controller/reconciliation.go` (search fo
 - CertLoader (`pkg/controller/certloader`) — Parses the webhook TLS Secret
 - ResourceWatcher (`pkg/controller/resourcewatcher`) — Watches Kubernetes resources (Ingress, Service, etc.)
 - Reconciler (`pkg/controller/reconciler`) — Debounces changes and publishes `ReconciliationTriggeredEvent`
-- HAProxyValidator (`pkg/controller/validator`) — Three-phase HAProxy validation; caches `ValidationCompletedEvent` for replay on `BecameLeaderEvent`
 - Discovery (`pkg/controller/discovery`) — Discovers HAProxy pod endpoints; caches `HAProxyPodsDiscoveredEvent` for replay
 - HTTPStore (`pkg/controller/httpstore`) — Periodic HTTP refresh + two-version cache for content used in templates
 - ProposalValidator (`pkg/controller/proposalvalidator`) — Speculative render+validate driven by HTTPStore (async) and DryRunValidator (sync)
@@ -191,9 +190,7 @@ Stage 4: Wait for Index Sync
 
 Stage 5: Reconciliation Components
   - Reconciler (all replicas)
-  - Renderer (all replicas)
-  - HAProxyValidator (all replicas)
-  - Coordinator (LEADER ONLY)
+  - Coordinator (LEADER ONLY) — runs the synchronous render+validate Pipeline
   - Discovery (all replicas)
   - Deployer (LEADER ONLY)
   - DeploymentScheduler (LEADER ONLY)

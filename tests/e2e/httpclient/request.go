@@ -278,6 +278,32 @@ func (r *Request) ExpectHeader(t *testing.T, name, want string) *Response {
 	return resp
 }
 
+// ExpectEchoHeader asserts that the upstream backend (echo-server) saw a
+// request header `name` with value containing `want`. Used to verify
+// HAProxy / SPOA forwarded an auth-derived header through to the backend.
+//
+// Polling on the echo'd header (rather than just polling on a 200 with
+// ExpectOK and then asserting) is the correct shape: the controller can
+// land a config that returns 200 from the auth flow before the matching
+// `http-request set-header` rules that forward auth-response headers to
+// the backend are live, so a request that races ahead can see 200 with
+// no forwarded header. Polling closes that window.
+func (r *Request) ExpectEchoHeader(t *testing.T, name, want string) *Response {
+	t.Helper()
+	lower := strings.ToLower(name)
+	resp, err := r.poll(t, fmt.Sprintf("%s %s echo'd header %s contains %q", r.method, r.url(), name, want),
+		func(resp *Response) bool {
+			if resp.Status != http.StatusOK || resp.Echo == nil {
+				return false
+			}
+			return strings.Contains(resp.Echo.Headers[lower], want)
+		})
+	if err != nil {
+		t.Fatalf("ExpectEchoHeader(%s, %q): %v", name, want, err)
+	}
+	return resp
+}
+
 // ExpectRedirect asserts the response is a redirect (3xx) with a Location
 // header containing want.
 func (r *Request) ExpectRedirect(t *testing.T, want string) *Response {

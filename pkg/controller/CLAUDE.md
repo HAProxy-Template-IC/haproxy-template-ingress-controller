@@ -47,8 +47,7 @@ pkg/controller/
 │   ├── base.go          # Shared BaseValidator that subscribes to ConfigValidationRequest
 │   ├── basic.go         # Structural validation
 │   ├── template.go      # Template syntax validation
-│   ├── jsonpath.go      # JSONPath expression validation
-│   └── haproxy_validator.go  # Three-phase HAProxy validation (syntax + schema + binary)
+│   └── jsonpath.go      # JSONPath expression validation
 └── controller.go         # Main controller with staged startup
 
 ```
@@ -71,7 +70,7 @@ Engine          ────wraps──→  ConfigLoaderComponent
 
 The skeleton below illustrates the pattern with a hypothetical adapter. For the production scaffold every adapter embeds, see `pkg/controller/component.Base` (subscribes in the constructor, dispatches one event at a time, recovers from panics). Live examples include `pkg/controller/configloader.ConfigLoaderComponent` and `pkg/controller/credentialsloader.CredentialsLoaderComponent`.
 
-Note: `pkg/controller/renderer.Component` exists with the seven-arg `renderer.New` shape, but it is a *test-only* legacy adapter. The production renderer is the synchronous `renderer.RenderService` (driven by `pkg/controller/pipeline.Pipeline`, no event hop), so don't model new adapters on it.
+Note: the production renderer is the synchronous `renderer.RenderService` (driven by `pkg/controller/pipeline.Pipeline`, no event hop), so don't model new event adapters on a "renderer wrapper" — there is no event hop for rendering.
 
 ```go
 // Illustrative — not a real package. Shows the event-adapter shape.
@@ -135,10 +134,10 @@ Pure components contain domain business logic and must be wrapped in event adapt
 - `pkg/dataplane`: HAProxy synchronization
 - `pkg/k8s`: Kubernetes resource watching
 
-Example - Renderer wraps Engine:
+Example — a hypothetical event-adapter that wraps the `templating.Engine`:
 
 ```go
-// pkg/controller/renderer/component.go
+// Illustrative — not a real package. Shows the event-adapter shape.
 type Component struct {
     engine    templating.Engine    // Pure component
     eventBus  *events.EventBus
@@ -149,7 +148,7 @@ func New(bus *events.EventBus, engine templating.Engine) *Component {
     return &Component{
         engine:    engine,
         eventBus:  bus,
-        eventChan: bus.Subscribe("renderer", 100),  // Subscribe in constructor
+        eventChan: bus.Subscribe("examplerenderer", 100),  // Subscribe in constructor
     }
 }
 ```
@@ -961,7 +960,6 @@ func (c *Component) handleWork(event *events.WorkEvent) {
 **Implemented in** (see `pkg/controller/leadership.NewStateReplayer[T]` for the helper they all use; line numbers drift, grep for `handleBecameLeader`):
 
 - `pkg/controller/discovery/handlers.go` — re-publishes `HAProxyPodsDiscoveredEvent`
-- `pkg/controller/validator/haproxy_validator.go` — re-publishes `ValidationCompletedEvent`
 - `pkg/controller/configchange/handler.go` — re-publishes `ConfigValidatedEvent`
 
 The renderer does **not** re-publish `TemplateRenderedEvent` — it's leader-only itself. The reconciler instead triggers a fresh reconciliation on `BecameLeaderEvent` so the new leader's pipeline produces a current render rather than replaying a stale one.

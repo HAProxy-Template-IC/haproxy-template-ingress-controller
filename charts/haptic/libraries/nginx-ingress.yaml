@@ -549,8 +549,16 @@ templateSnippets:
               {%- secretName = parts[1] %}
             {%- end %}
             {%- var userlistName = "ni_auth_" + secretNs + "_" + secretName %}
+            {#-
+              Skip the http_auth ACL ref when the referenced Secret isn't in
+              the controller's cache; the matching userlist snippet skips its
+              userlist on the same condition so the rendered config stays
+              self-consistent.
+            -#}
+            {%- if resources.secrets.GetSingle(secretNs, secretName) != nil %}
       # nginx-ingress/backend-directives-auth ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+            {%- end %}
           {%- end %}
         {%- end %}
       {%- end -%}
@@ -1408,6 +1416,13 @@ templateSnippets:
             {%- var userlistName = "ni_auth_" + secretNs + "_" + secretName %}
             {%- if first_seen("ni_userlist", userlistName) %}
               {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+              {#-
+                Skip both the userlist and the matching backend ACL ref when the
+                referenced Secret isn't in the controller's cache (informer not
+                yet caught up, or the Secret was just cascade-deleted while the
+                Ingress still lingers). The next render — once the cache catches
+                up — will produce the full auth setup.
+              -#}
               {%- if secret != nil %}
                 {%- var authData = secret | dig("data", "auth") | fallback("") | b64decode() | tostring() %}
                 {%- if authData != "" %}
@@ -1428,8 +1443,6 @@ templateSnippets:
                 {%- else %}
                   {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has empty 'auth' key.") -}}
                 {%- end %}
-              {%- else %}
-                {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' does not exist.") -}}
               {%- end %}
             {%- end %}
           {%- end %}
