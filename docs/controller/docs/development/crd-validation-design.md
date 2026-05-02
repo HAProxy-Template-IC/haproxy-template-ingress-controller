@@ -37,7 +37,7 @@ The validating webhook runs inside the controller pod rather than a dedicated de
 
 - **Single source of truth.** The webhook uses the same render/validate code path as the reconciler, so there's no way for the admission decision to drift from the runtime decision.
 - **No extra moving parts.** One deployment, one Service, one Lease, one cert.
-- **Shared store.** The webhook reuses the watched-resource store to build a realistic render context with proposed changes overlaid (see `pkg/stores/overlay`).
+- **Shared store.** The webhook reuses the watched-resource store to build a realistic render context with proposed changes overlaid (see `pkg/stores/overlay.go`).
 
 TLS certificates are provided by cert-manager (recommended) or supplied manually; the chart wires both options.
 

@@ -366,7 +366,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			"namespace", valCtx.Namespace,
 			"name", valCtx.Name)
 
-		// Basic structural validation (inline - previously done by BasicValidatorComponent)
+		// Basic structural validation runs inline before delegating to ValidateDirect.
 		if err := c.validateBasicStructure(valCtx.Object); err != nil {
 			c.logger.Info("Basic validation failed",
 				"gvk", gvk,
@@ -438,8 +438,9 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 
 // validateBasicStructure performs basic structural validation on a Kubernetes resource.
 //
-// This check was previously done by BasicValidatorComponent but is now inlined
-// since it's trivial and doesn't warrant a separate component.
+// The check is intentionally inlined here rather than living in a separate
+// component — it's trivial enough that a dedicated subscriber + event hop
+// would add latency on the admission path for no benefit.
 //
 // Checks:
 //   - Object is a valid unstructured resource

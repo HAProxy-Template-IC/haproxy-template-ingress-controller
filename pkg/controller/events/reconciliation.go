@@ -56,7 +56,7 @@ func NewReconciliationTriggeredEvent(reason string, coalescible bool, opts ...Co
 		Reason:      reason,
 		coalescible: coalescible,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 
@@ -88,7 +88,7 @@ func NewReconciliationStartedEvent(trigger string, opts ...CorrelationOption) *R
 	return &ReconciliationStartedEvent{
 		Trigger:     trigger,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 
@@ -115,7 +115,7 @@ func NewReconciliationCompletedEvent(durationMs int64, opts ...CorrelationOption
 	return &ReconciliationCompletedEvent{
 		DurationMs:  durationMs,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 
@@ -144,7 +144,7 @@ func NewReconciliationFailedEvent(err, phase string, opts ...CorrelationOption) 
 		Error:       err,
 		Phase:       phase,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 

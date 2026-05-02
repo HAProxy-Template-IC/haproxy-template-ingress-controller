@@ -130,7 +130,7 @@ For the canonical layout (with sub-packages), see [`docs/controller/docs/develop
 Packages like `templating`, `k8s`, `dataplane` provide pure business logic:
 
 ```go
-// pkg/templating/engine.go
+// pkg/templating/engine_interface.go
 package templating
 
 // No event dependencies - pure library (real type is templating.Engine)
@@ -215,7 +215,7 @@ func (c *Component) Start(ctx context.Context) error {
 ### Example Pattern
 
 ```go
-// pkg/dataplane/client.go - Provide concrete type
+// pkg/dataplane/dataplane.go - Provide concrete type
 package dataplane
 
 type Client struct {
@@ -277,7 +277,7 @@ watcher.eventBus.Publish(ResourceIndexUpdatedEvent{Type: "ingress"})
 Test pure components in isolation:
 
 ```go
-// pkg/templating/engine_test.go
+// pkg/templating/engine_scriggo_test.go
 package templating
 
 func TestEngine_Render(t *testing.T) {

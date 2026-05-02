@@ -99,7 +99,7 @@ func NewTemplateRenderedEvent(
 		TriggerReason:      triggerReason,
 		coalescible:        coalescible,
 		timestamped:        newTimestamped(),
-		Correlation:        NewCorrelation(opts...),
+		Correlation:        newCorrelation(opts...),
 	}
 }
 
@@ -140,7 +140,7 @@ func NewTemplateRenderFailedEvent(templateName, err, stackTrace string, opts ...
 		Error:        err,
 		StackTrace:   stackTrace,
 		timestamped:  newTimestamped(),
-		Correlation:  NewCorrelation(opts...),
+		Correlation:  newCorrelation(opts...),
 	}
 }
 

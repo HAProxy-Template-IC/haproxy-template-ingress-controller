@@ -23,7 +23,7 @@ The component's effective configuration (pod-selector labels, dataplane port, ba
 ## Events
 
 - Subscribes: `ConfigValidatedEvent` (dataplane port + selector), `CredentialsUpdatedEvent`, `ResourceIndexUpdatedEvent` (haproxy-pods), `ResourceSyncCompleteEvent`, `BecameLeaderEvent`
-- Publishes: `HAProxyPodsDiscoveredEvent`, `HAProxyPodTerminatedEvent`
+- Publishes: `HAProxyPodsDiscoveredEvent`, `HAProxyPodTerminatedEvent`, `HAProxyPodRejectedEvent` (one per candidate that fails version/credentials probing — the metrics component turns these into `haptic_haproxy_pods_rejected_total`)
 
 ## License
 

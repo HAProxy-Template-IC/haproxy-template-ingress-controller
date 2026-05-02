@@ -45,11 +45,9 @@ Events are organized into separate files by category:
 | `leader.go` | Leader election events |
 | `publishing.go` | Config publishing events (includes SyncMetadata types) |
 | `certificate.go` | Webhook certificate events |
-| `webhookobservability.go` | Webhook validation observability events |
 | `http.go` | HTTP resource events |
 | `status.go` | Status patch application events |
-| `webhook.go` | Scatter-gather request/response events |
-| `proposal.go` | Proposal validation request/response events |
+| `proposal.go` | Proposal validation request/response events (used by both webhook and HTTP store) |
 | `correlation.go` | Correlation ID helpers for tracing events |
 | `timestamped.go` | Embedded `timestamped` mixin used by all events |
 | `internal_copy.go` | Internal helpers for defensive slice/map copying |
@@ -69,10 +67,9 @@ Events are organized by lifecycle phase:
 9. **Leader Election Events** (`leader.go`) - Leadership transitions
 10. **Publishing Events** (`publishing.go`) - Config publishing (includes auxiliary file sync metadata)
 11. **Certificate Events** (`certificate.go`) - Webhook certificates
-12. **Webhook Events** (`webhookobservability.go`, `webhook.go`) - Webhook validation observability and scatter-gather
-13. **HTTP Resource Events** (`http.go`) - HTTP resource management
-14. **Proposal Events** (`proposal.go`) - Speculative validation of hypothetical configs
-15. **Status Events** (`status.go`) - Kubernetes status patch results
+12. **HTTP Resource Events** (`http.go`) - HTTP resource management
+13. **Proposal Events** (`proposal.go`) - Speculative validation of hypothetical configs (used by both the admission webhook's synchronous `ValidateDirect` path and the HTTP store's content-validation cycle)
+14. **Status Events** (`status.go`) - Kubernetes status patch results
 
 ## Key Principles
 

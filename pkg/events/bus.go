@@ -349,8 +349,11 @@ func (b *EventBus) Request(ctx context.Context, request Request, opts RequestOpt
 //
 // Example:
 //
-//	bus.SetDropCallback(func(eventType string) {
-//	    slog.Warn("Event dropped from critical subscriber", "event_type", eventType)
+//	bus.SetDropCallback(func(info DropInfo) {
+//	    slog.Warn("Event dropped from critical subscriber",
+//	        "event_type", info.EventType,
+//	        "subscriber", info.SubscriberName,
+//	        "buffer_size", info.BufferSize)
 //	    metrics.EventsDroppedCritical.Inc()
 //	})
 func (b *EventBus) SetDropCallback(cb DropCallback) {

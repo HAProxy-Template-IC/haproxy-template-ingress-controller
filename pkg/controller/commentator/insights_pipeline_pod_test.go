@@ -140,3 +140,26 @@ func TestPodInsight_TerminatedEvent_FormatStability(t *testing.T) {
 	assertContainsAttr(t, attrs, "pod_name", "haproxy-abc")
 	assertContainsAttr(t, attrs, "pod_namespace", "haptic-system")
 }
+
+// HAProxyPodRejectedEvent also has no correlation logic — pin the
+// "HAProxy pod rejected: {pod} (reason: {reason})" format. The reason
+// label flows through to haptic_haproxy_pods_rejected_total{reason}
+// so log queries and Prometheus alerts share the same enum values
+// (version_mismatch_older / _newer / version_check_failed). A refactor
+// that capitalised or rewrote the reason string would silently break
+// log-to-metric correlation.
+func TestPodInsight_RejectedEvent_FormatStability(t *testing.T) {
+	bus := busevents.NewEventBus(100)
+	ec := NewEventCommentator(bus, slog.Default(), 100)
+
+	event := events.NewHAProxyPodRejectedEvent("haproxy-xyz", "version_mismatch_older")
+
+	insight, attrs := ec.generateInsight(event)
+
+	assert.Contains(t, insight, "haproxy-xyz",
+		"rejected insight must include the pod name verbatim for ELK correlation")
+	assert.Contains(t, insight, "version_mismatch_older",
+		"reason must round-trip verbatim — alert templates and dashboards key on the exact enum value")
+	assertContainsAttr(t, attrs, "pod_name", "haproxy-xyz")
+	assertContainsAttr(t, attrs, "reason", "version_mismatch_older")
+}

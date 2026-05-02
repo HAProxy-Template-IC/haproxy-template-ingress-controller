@@ -44,7 +44,7 @@ func NewDeploymentStartedEvent(endpoints []dataplane.Endpoint, opts ...Correlati
 	return &DeploymentStartedEvent{
 		Endpoints:   copySlice(endpoints),
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 
@@ -75,7 +75,7 @@ func NewInstanceDeployedEvent(endpoint any, durationMs int64, reloadRequired boo
 		DurationMs:     durationMs,
 		ReloadRequired: reloadRequired,
 		timestamped:    newTimestamped(),
-		Correlation:    NewCorrelation(opts...),
+		Correlation:    newCorrelation(opts...),
 	}
 }
 
@@ -106,7 +106,7 @@ func NewInstanceDeploymentFailedEvent(endpoint any, err string, retryable bool, 
 		Error:       err,
 		Retryable:   retryable,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 
@@ -190,7 +190,7 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 		OperationBreakdown: breakdownCopy,
 		BackendDiffFields:  result.BackendDiffFields,
 		timestamped:        newTimestamped(),
-		Correlation:        NewCorrelation(opts...),
+		Correlation:        newCorrelation(opts...),
 	}
 }
 
@@ -279,7 +279,7 @@ func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFil
 		Reason:                 reason,
 		coalescible:            coalescible,
 		timestamped:            newTimestamped(),
-		Correlation:            NewCorrelation(opts...),
+		Correlation:            newCorrelation(opts...),
 	}
 }
 
@@ -309,7 +309,7 @@ func NewDeploymentCancelRequestEvent(reason string, opts ...CorrelationOption) *
 	return &DeploymentCancelRequestEvent{
 		Reason:      reason,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 

@@ -31,14 +31,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	pkgevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
 func TestNew(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 	assert.NotNil(t, component)
@@ -47,7 +47,7 @@ func TestNew(t *testing.T) {
 func TestComponent_ReconciliationEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -88,7 +88,7 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 func TestComponent_DeploymentEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -145,7 +145,7 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 func TestComponent_ValidationEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -178,7 +178,7 @@ func TestComponent_ValidationEvents(t *testing.T) {
 func TestComponent_ResourceEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -245,10 +245,52 @@ func TestComponent_ResourceEvents(t *testing.T) {
 	cancel()
 }
 
+// TestComponent_HAProxyPodRejected verifies that HAProxyPodRejectedEvent
+// increments haptic_haproxy_pods_rejected_total with the reason as a
+// label. The reason enum is the same string the discovery component
+// publishes (version_mismatch_older / _newer / version_check_failed)
+// and the same string the commentator surfaces as a WARN-level log
+// attribute — see TestPodInsight_RejectedEvent_FormatStability for the
+// log-side assertion. A regression that mangled or dropped the label
+// would silently break the alert "controller refuses to talk to N
+// HAProxy pods" because dashboards filter by exact reason value.
+func TestComponent_HAProxyPodRejected(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+	eventBus := busevents.NewEventBus(100)
+
+	component := New(metrics, eventBus)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go component.Start(ctx)
+	time.Sleep(10 * time.Millisecond)
+	eventBus.Start()
+
+	// Two rejections with the same reason → counter at 2 for that label.
+	eventBus.Publish(events.NewHAProxyPodRejectedEvent("haproxy-a", "version_mismatch_older"))
+	eventBus.Publish(events.NewHAProxyPodRejectedEvent("haproxy-b", "version_mismatch_older"))
+	// One rejection with a different reason → independent counter at 1.
+	eventBus.Publish(events.NewHAProxyPodRejectedEvent("haproxy-c", "version_check_failed"))
+
+	time.Sleep(100 * time.Millisecond)
+
+	older, err := metrics.HAProxyPodsRejectedTotal.GetMetricWithLabelValues("version_mismatch_older")
+	require.NoError(t, err)
+	assert.Equal(t, 2.0, testutil.ToFloat64(older),
+		"two rejections with reason=version_mismatch_older must aggregate on that label")
+
+	probe, err := metrics.HAProxyPodsRejectedTotal.GetMetricWithLabelValues("version_check_failed")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, testutil.ToFloat64(probe),
+		"reason labels must stay independent — different reason → separate counter")
+}
+
 func TestComponent_AllEventTypes(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -293,7 +335,7 @@ func TestComponent_AllEventTypes(t *testing.T) {
 func TestComponent_GracefulShutdown(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -331,7 +373,7 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 func TestComponent_HighEventVolume(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -365,7 +407,7 @@ func TestComponent_HighEventVolume(t *testing.T) {
 func TestComponent_Metrics(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -377,7 +419,7 @@ func TestComponent_Metrics(t *testing.T) {
 func TestComponent_ValidationTestsEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -404,7 +446,7 @@ func TestComponent_ValidationTestsEvents(t *testing.T) {
 func TestComponent_LeaderElectionEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -450,7 +492,7 @@ func TestComponent_LeaderElectionEvents(t *testing.T) {
 func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -480,7 +522,7 @@ func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 func TestComponent_CertParsedUpdatesExpiry(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -519,7 +561,7 @@ func TestComponent_CertParsedUpdatesExpiry(t *testing.T) {
 func TestComponent_TickerUpdatesEventSubscribers(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -541,7 +583,7 @@ func TestComponent_TickerUpdatesEventSubscribers(t *testing.T) {
 func TestComponent_QueueWaitRecorded(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 
@@ -591,7 +633,7 @@ func TestComponent_QueueWaitRecorded(t *testing.T) {
 func TestComponent_InitialSyncSkipped(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
-	eventBus := pkgevents.NewEventBus(100)
+	eventBus := busevents.NewEventBus(100)
 
 	component := New(metrics, eventBus)
 

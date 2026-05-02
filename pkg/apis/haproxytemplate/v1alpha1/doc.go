@@ -17,8 +17,7 @@
 // # Overview
 //
 // This package defines the HAProxyTemplateConfig custom resource, which provides
-// configuration for the HAProxy Template Ingress Controller. It replaces the previous
-// ConfigMap-based configuration approach with a Kubernetes-native CRD.
+// configuration for the HAProxy Template Ingress Controller as a Kubernetes-native CRD.
 //
 // # Key Features
 //
@@ -38,8 +37,8 @@
 //
 // # Examples
 //
-// See docs/development/crd-validation-design.md for comprehensive examples
-// and usage patterns.
+// See docs/controller/docs/development/crd-validation-design.md for
+// comprehensive examples and usage patterns.
 //
 // +k8s:deepcopy-gen=package
 // +groupName=haproxy-haptic.org

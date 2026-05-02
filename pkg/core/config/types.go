@@ -350,6 +350,31 @@ type WatchedResource struct {
 	// Use "on-demand" for large resources that are accessed infrequently (e.g., Secrets).
 	// Use "full" for frequently accessed resources (e.g., Ingress, Service, EndpointSlice).
 	Store string `yaml:"store"`
+
+	// DebounceInterval overrides the default leading-edge refractory window
+	// for this resource type's watcher. Format: Go duration string (e.g.,
+	// "500ms", "10s"). When empty or invalid, the watcher falls back to
+	// pkg/k8s/types.DefaultDebounceInterval (5s).
+	//
+	// Lower values make the controller respond faster to bursty changes at
+	// the cost of more reconciliations and GC pressure. Most workloads
+	// should leave this empty.
+	DebounceInterval string `yaml:"debounce_interval,omitempty"`
+}
+
+// GetDebounceInterval returns the configured debounce interval, or zero if
+// the field is empty or unparseable. The watcher treats zero as "use the
+// pkg/k8s/types.DefaultDebounceInterval (5s)" via WatcherConfig.SetDefaults,
+// so callers can pass the result through without a nil check.
+func (r *WatchedResource) GetDebounceInterval() time.Duration {
+	if r.DebounceInterval == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(r.DebounceInterval)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 // TemplateSnippet is a reusable template fragment.

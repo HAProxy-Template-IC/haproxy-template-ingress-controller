@@ -21,56 +21,6 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
-// webhookInsight handles WebhookValidationRequest, WebhookValidationAllowed,
-// WebhookValidationDenied, and WebhookValidationError events.
-func (ec *EventCommentator) webhookInsight(event busevents.Event, attrs []any) (insight string, args []any) {
-	switch e := event.(type) {
-	case *events.WebhookValidationRequestEvent:
-		return fmt.Sprintf("Webhook validation request: %s %s %s",
-				e.Operation, e.Kind, namespacedName(e.Namespace, e.Name)),
-			append(attrs,
-				"request_uid", e.RequestUID,
-				"kind", e.Kind,
-				"name", e.Name,
-				"namespace", e.Namespace,
-				"operation", e.Operation)
-
-	case *events.WebhookValidationAllowedEvent:
-		return fmt.Sprintf("Webhook validation allowed: %s %s", e.Kind, namespacedName(e.Namespace, e.Name)),
-			append(attrs,
-				"request_uid", e.RequestUID,
-				"kind", e.Kind,
-				"name", e.Name,
-				"namespace", e.Namespace)
-
-	case *events.WebhookValidationDeniedEvent:
-		// Truncate long reasons for log readability
-		reason := e.Reason
-		if len(reason) > maxErrorPreviewLength {
-			reason = reason[:maxErrorPreviewLength-3] + "..."
-		}
-		return fmt.Sprintf("Webhook validation denied: %s %s - %s",
-				e.Kind, namespacedName(e.Namespace, e.Name), reason),
-			append(attrs,
-				"request_uid", e.RequestUID,
-				"kind", e.Kind,
-				"name", e.Name,
-				"namespace", e.Namespace,
-				"reason", e.Reason)
-
-	case *events.WebhookValidationErrorEvent:
-		return fmt.Sprintf("Webhook validation error for %s: %s",
-				e.Kind, e.Error),
-			append(attrs,
-				"request_uid", e.RequestUID,
-				"kind", e.Kind,
-				"error", e.Error)
-
-	default:
-		return "", attrs
-	}
-}
-
 // leaderInsight handles LeaderElectionStarted, BecameLeader, LostLeadership,
 // and NewLeaderObserved events.
 func (ec *EventCommentator) leaderInsight(event busevents.Event, attrs []any) (insight string, args []any) {

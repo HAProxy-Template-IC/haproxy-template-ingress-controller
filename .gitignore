@@ -79,6 +79,10 @@ tmp/
 docs/controller/docs/stylesheets/colors.css
 charts/haptic/docs/stylesheets/colors.css
 
+# mkdocs build output (each docs/* and charts/*/docs sub-tree builds to its own site/)
+docs/*/site/
+charts/*/site/
+
 # Test failure diagnostic artifacts (tests/e2e/cleanup.go writes here)
 debug-logs/
 

@@ -76,7 +76,9 @@ type Config struct {
 //
 // Example:
 //
-//	client, err := client.New(ctx, client.Config{
+//	// dpClient avoids shadowing the imported `client` package; cfg is
+//	// taken by pointer so &client.Config{...} is required.
+//	dpClient, err := client.New(ctx, &client.Config{
 //	    BaseURL:  "http://haproxy-dataplane:5555",
 //	    Username: "admin",
 //	    Password: "password",

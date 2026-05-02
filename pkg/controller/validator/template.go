@@ -41,7 +41,7 @@ func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *Te
 		eventBus: eventBus,
 		logger:   logger,
 	}
-	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, "Template syntax validator", v)
+	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, v)
 	return v
 }
 

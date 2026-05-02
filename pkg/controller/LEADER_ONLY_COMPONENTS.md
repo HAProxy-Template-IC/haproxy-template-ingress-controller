@@ -28,11 +28,11 @@ Components that only run on the elected leader (registered via `registry.Build()
 | Component | Purpose | Event Dependencies | State Replay | Cleanup |
 |-----------|---------|-------------------|--------------|---------|
 | **Coordinator** | Drives the synchronous render-validate pipeline | `ReconciliationTriggeredEvent` | N/A (subscribes via `SubscribeTypesLeaderOnly` after lease acquired) | N/A (context cancellation tears down) |
-| **DeploymentScheduler** | Schedules HAProxy deployments with rate limiting | `ValidationCompletedEvent`<br>`HAProxyPodsDiscoveredEvent` | N/A (receives replayed events) | ✅ `LostLeadershipEvent` |
-| **Deployer** | Executes deployments to HAProxy pods | `DeploymentScheduledEvent` | N/A (stateless) | N/A (stateless) |
+| **DeploymentScheduler** | Schedules HAProxy deployments with rate limiting | `TemplateRenderedEvent`<br>`ValidationCompletedEvent`<br>`HAProxyPodsDiscoveredEvent` (the three gating inputs — scheduler holds until all three are present) | N/A (receives replayed events) | ✅ `LostLeadershipEvent` |
+| **Deployer** | Executes deployments to HAProxy pods | `DeploymentScheduledEvent`<br>`DeploymentCancelRequestEvent` (cancels an in-progress deployment when the scheduler hits its `deploymentTimeout`) | N/A (stateless) | N/A (stateless) |
 | **DriftPreventionMonitor** | Triggers periodic drift prevention deployments | `DeploymentCompletedEvent` | N/A (timer-based) | ✅ `LostLeadershipEvent` |
-| **ConfigPublisher** | Creates and updates HAProxyCfg and auxiliary file resources | `ConfigValidatedEvent`<br>`TemplateRenderedEvent`<br>`ValidationCompletedEvent`<br>`ConfigAppliedToPodEvent`<br>`HAProxyPodTerminatedEvent` | N/A (caches state from events) | ✅ `LostLeadershipEvent` |
-| **StatusUpdater** | Writes validation results back to the `HAProxyTemplateConfig` CRD's status subresource | `ConfigValidatedEvent`, `ConfigInvalidEvent` | N/A | N/A (context cancellation tears down) |
+| **ConfigPublisher** | Creates and updates HAProxyCfg and auxiliary file resources | `ConfigValidatedEvent`<br>`TemplateRenderedEvent`<br>`ValidationCompletedEvent`<br>`ValidationFailedEvent` (publishes the failed render as an *invalid* HAProxyCfg)<br>`ConfigAppliedToPodEvent`<br>`HAProxyPodTerminatedEvent`<br>`HAProxyPodsDiscoveredEvent` (reconciles `deployedToPods` status against the currently-running set, cleaning up stale entries from pods that terminated while the controller was restarting) | N/A (caches state from events) | ✅ `LostLeadershipEvent` |
+| **StatusUpdater** | Writes validation results back to the `HAProxyTemplateConfig` CRD's status subresource | `ConfigValidatedEvent`, `ConfigInvalidEvent`, `ValidationFailedEvent` | N/A | N/A (context cancellation tears down) |
 
 ## All-Replica Components with State Replay
 
@@ -43,7 +43,7 @@ Components that run on all replicas and replay state on leadership transitions v
 | **ConfigChangeHandler** | Validation orchestrator + reinit signaller | `BecameLeaderEvent` → `ConfigValidatedEvent` | `configchange/handler.go` (`configReplayer`) |
 | **Discovery** | Discovers HAProxy pod endpoints | `BecameLeaderEvent` → `HAProxyPodsDiscoveredEvent` | `discovery/component.go` (`discoveredReplayer`) |
 
-The renderer is leader-only itself, so it has *no* `StateReplayer` — instead, the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (`pkg/controller/reconciler/reconciler.go`), so the new leader's pipeline produces a current `TemplateRenderedEvent` rather than replaying a stale one.
+There is no renderer *component* (ADR-0001) — the renderer is the synchronous `renderer.RenderService` driven inside the leader-only `Coordinator`'s `Pipeline.Execute`. There is therefore no separate subscription that could be late, and no `StateReplayer` to wire. Instead, the Reconciler triggers a fresh reconciliation on `BecameLeaderEvent` (`pkg/controller/reconciler/reconciler.go`), so the new leader's pipeline produces a current `TemplateRenderedEvent` rather than replaying a stale one.
 
 ## Solution Architecture
 

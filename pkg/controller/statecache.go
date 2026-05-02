@@ -49,7 +49,7 @@ const (
 //   - CredentialsUpdatedEvent → updates credentials cache
 //   - TemplateRenderedEvent → updates rendered config cache
 //   - ReconciliationTriggeredEvent → updates pipeline trigger state
-//   - ValidationStartedEvent/CompletedEvent/FailedEvent → updates validation state
+//   - ValidationCompletedEvent/FailedEvent → updates validation state
 //   - DeploymentStartedEvent/CompletedEvent → updates deployment state
 //   - InstanceDeploymentFailedEvent → tracks failed endpoints
 type StateCache struct {
@@ -124,7 +124,6 @@ func NewStateCache(eventBus *busevents.EventBus, resourceWatcher *resourcewatche
 		events.EventTypeTemplateRendered,
 		events.EventTypeTemplateRenderFailed,
 		events.EventTypeReconciliationTriggered,
-		events.EventTypeValidationStarted,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeDeploymentStarted,
@@ -169,8 +168,6 @@ func (sc *StateCache) handleEvent(event busevents.Event) {
 		sc.handleTemplateRenderFailed(e)
 	case *events.ReconciliationTriggeredEvent:
 		sc.handleReconciliationTriggered(e)
-	case *events.ValidationStartedEvent:
-		sc.handleValidationStarted(e)
 	case *events.ValidationCompletedEvent:
 		sc.handleValidationCompleted(e)
 	case *events.ValidationFailedEvent:
@@ -263,16 +260,6 @@ func (sc *StateCache) handleReconciliationTriggered(e *events.ReconciliationTrig
 	sc.validationStatus = ""
 	sc.deploymentStatus = ""
 	sc.failedEndpoints = nil
-}
-
-func (sc *StateCache) handleValidationStarted(e *events.ValidationStartedEvent) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-
-	sc.validationStatus = statusPending
-	sc.validationTime = e.Timestamp()
-	sc.validationErrors = nil
-	sc.validationWarnings = nil
 }
 
 func (sc *StateCache) handleValidationCompleted(e *events.ValidationCompletedEvent) {

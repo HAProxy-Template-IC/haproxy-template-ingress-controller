@@ -40,9 +40,10 @@ type SyncOperationsResult struct {
 //
 // Example:
 //
-//	adapter := client.NewVersionAdapter(client, 3)
+//	// dpClient avoids shadowing the imported `client` package.
+//	adapter := client.NewVersionAdapter(dpClient, 3)
 //	err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-//	    _, err := synchronizer.SyncOperations(ctx, client, diff.Operations, tx, 80)
+//	    _, err := synchronizer.SyncOperations(ctx, dpClient, diff.Operations, tx, 80)
 //	    return err
 //	})
 func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, operations []comparator.Operation, tx *client.Transaction, maxParallel int) (*SyncOperationsResult, error) {

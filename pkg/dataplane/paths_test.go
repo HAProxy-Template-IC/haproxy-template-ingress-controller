@@ -17,31 +17,23 @@ func TestResolvePaths(t *testing.T) {
 		ConfigFile: "/etc/haproxy/haproxy.cfg",
 	}
 
-	// CRTListDir is always GeneralDir because CRT-list files are stored as general files
-	// to avoid reload on create (native CRT-list API doesn't support skip_reload).
-	tests := []struct {
+	// ResolvePaths intentionally ignores the Capabilities argument today
+	// (the second parameter is `_ Capabilities`): CRT-list files are
+	// always stored under GeneralDir regardless of SupportsCrtList,
+	// because the native CRT-list API triggers a reload on create
+	// without a skip_reload parameter. We pin three representative
+	// capability values to assert this is genuinely capability-invariant
+	// — if a future change starts branching on capabilities, the assertion
+	// pattern below stops being identical across cases and the test
+	// signals which branch needs explicit coverage.
+	for _, tt := range []struct {
 		name         string
 		capabilities Capabilities
 	}{
-		{
-			name: "crt-list supported (v3.2+)",
-			capabilities: client.Capabilities{
-				SupportsCrtList: true,
-			},
-		},
-		{
-			name: "crt-list not supported (v3.0/v3.1)",
-			capabilities: client.Capabilities{
-				SupportsCrtList: false,
-			},
-		},
-		{
-			name:         "empty capabilities",
-			capabilities: client.Capabilities{},
-		},
-	}
-
-	for _, tt := range tests {
+		{"crt-list supported (v3.2+)", client.Capabilities{SupportsCrtList: true}},
+		{"crt-list not supported (v3.0/v3.1)", client.Capabilities{SupportsCrtList: false}},
+		{"empty capabilities", client.Capabilities{}},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
 			resolved := ResolvePaths(basePath, tt.capabilities)
 
@@ -50,7 +42,6 @@ func TestResolvePaths(t *testing.T) {
 			assert.Equal(t, "/etc/haproxy/ssl", resolved.SSLDir)
 			assert.Equal(t, "/etc/haproxy/files", resolved.GeneralDir)
 			assert.Equal(t, "/etc/haproxy/haproxy.cfg", resolved.ConfigFile)
-			// CRTListDir always equals GeneralDir to avoid reload on create
 			assert.Equal(t, "/etc/haproxy/files", resolved.CRTListDir,
 				"CRTListDir should always be GeneralDir regardless of capabilities")
 		})

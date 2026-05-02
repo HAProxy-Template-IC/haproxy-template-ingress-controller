@@ -281,29 +281,6 @@ func TestStateCache_HandleReconciliationTriggered(t *testing.T) {
 	assert.False(t, status.LastTrigger.Timestamp.IsZero())
 }
 
-func TestStateCache_HandleValidationStarted(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	cache := NewStateCache(bus, nil, logger)
-
-	ctx := t.Context()
-
-	go cache.Start(ctx)
-	bus.Start()
-
-	// Publish validation started event
-	bus.Publish(events.NewValidationStartedEvent())
-
-	// Allow time for event processing
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify validation status is pending
-	status, err := cache.GetPipelineStatus()
-	require.NoError(t, err)
-	require.NotNil(t, status.Validation)
-	assert.Equal(t, statusPending, status.Validation.Status)
-}
-
 func TestStateCache_HandleValidationCompleted(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.Default()

@@ -151,7 +151,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncShardSlice] = scriggoShardSlice
 
 	// Path utility functions
-	decl[funcBasename] = scriggoBasename
+	decl[FuncBasename] = scriggoBasename
 
 	// Status patch functions
 	decl[FuncStatusPatch] = scriggoStatusPatch

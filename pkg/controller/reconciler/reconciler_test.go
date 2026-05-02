@@ -699,7 +699,7 @@ func TestReconciler_HandleEvent_UnknownEvent(t *testing.T) {
 	reconciler := New(bus, logger, nil)
 
 	// Should not panic for unknown events
-	unknownEvent := events.NewValidationStartedEvent()
+	unknownEvent := events.NewReconciliationCompletedEvent(0)
 	reconciler.handleEvent(unknownEvent)
 }
 

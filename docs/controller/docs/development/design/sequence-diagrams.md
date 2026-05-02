@@ -39,7 +39,7 @@ sequenceDiagram
         Iteration->>EventBus: Start() (replay buffered events)
 
         Note over Iteration,Reconciler: Stage 5: Reconciliation & Observability Components
-        Iteration->>Reconciler: Start Reconciler, Coordinator, Renderer, Validator, Deployer, Discovery, Metrics
+        Iteration->>Reconciler: Start Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, Metrics
         Iteration->>EventBus: Publish initial ReconciliationTriggeredEvent
 
         Note over Iteration: 6. Event Loop
@@ -64,7 +64,7 @@ The controller runs iterations that respond to configuration changes:
 3. **Resource Watchers**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
 4. **Config/Secret SingleWatchers**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
 5. **EventBus Start**: Call `EventBus.Start()` to replay buffered events and begin normal operation.
-6. **Stage 5 — Reconciliation & Observability**: Start reconciliation components (Reconciler, Coordinator, Renderer, Validator, DeploymentScheduler, Deployer, Discovery) and observability components (Metrics, Debug HTTP server).
+6. **Stage 5 — Reconciliation & Observability**: Start reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Rendering and three-phase HAProxy validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack (ADR-0001) — neither has its own goroutine or event subscription. The config validators (Basic, Template, JSONPath) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
 7. **Event Loop**: Wait for configuration changes or context cancellation.
 8. **Reinitialization**: When the CRD or Secret changes, cancel the iteration context to stop all components, then restart with the new settings.
 
@@ -132,8 +132,8 @@ sequenceDiagram
 
 **Event-Driven Flow:**
 
-1. **Resource Change**: ResourceWatcher receives Kubernetes event, updates local index, publishes `ResourceIndexUpdatedEvent`.
-2. **Reconciler debouncing**: Reconciler applies a *leading-edge refractory* (default 5 s, see `pkg/k8s/types.DefaultDebounceInterval`) — the first change in a quiet window fires immediately, subsequent changes inside the window are batched into the next trigger. This is deliberately different from classic trailing-edge debouncing so single ingress flips react with 0 ms delay.
+1. **Resource Change**: ResourceWatcher receives Kubernetes events, updates the local index, and coalesces bursts within a per-resource debounce window before publishing one `ResourceIndexUpdatedEvent` per quiet window. The window defaults to 5 s (`pkg/k8s/types.DefaultDebounceInterval`); each watched resource can override it via `spec.watchedResources.<name>.debounceInterval`.
+2. **Reconciler debouncing**: Reconciler then applies a *second* leading-edge refractory (also default 5 s, but separate from the watcher window above and not CRD-configurable) — the first change in a quiet window fires immediately, subsequent changes inside the window are batched into the next trigger. This is deliberately different from classic trailing-edge debouncing so single ingress flips react with 0 ms delay.
 3. **Reconciliation Trigger**: Reconciler publishes `ReconciliationTriggeredEvent` either after the refractory window expires or immediately for whole-store events (`IndexSynchronizedEvent`, `BecameLeaderEvent`, `DriftPreventionTriggeredEvent`).
 4. **Coordinator (leader-only)**: subscribes to `ReconciliationTriggeredEvent`, publishes `ReconciliationStartedEvent`, then calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` **synchronously** — render and validation are one atomic step, not a multi-hop event chain.
 5. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs `ValidationService.Validate` (syntax via client-native parser → OpenAPI schema → `haproxy -c` semantic).

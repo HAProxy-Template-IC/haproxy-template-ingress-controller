@@ -19,10 +19,7 @@ import (
 
 // TestNewSingle verifies SingleWatcher creation.
 func TestNewSingle(t *testing.T) {
-	// Create fake clients
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForSingleWatcher()
 
 	tests := []struct {
 		name      string
@@ -190,10 +187,7 @@ func TestSingleWatcher_IsSynced(t *testing.T) {
 
 // TestSingleWatcher_WaitForSyncTimeout verifies timeout behavior.
 func TestSingleWatcher_WaitForSyncTimeout(t *testing.T) {
-	// Create fake clients
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForSingleWatcher()
 
 	cfg := types.SingleWatcherConfig{
 		GVR: schema.GroupVersionResource{
@@ -508,9 +502,7 @@ func TestSingleWatcher_NoDeleteCallbacksDuringSync(t *testing.T) {
 
 // TestSingleWatcher_StopIdempotency verifies Stop() can be called multiple times safely.
 func TestSingleWatcher_StopIdempotency(t *testing.T) {
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForSingleWatcher()
 
 	cfg := types.SingleWatcherConfig{
 		GVR: schema.GroupVersionResource{
@@ -548,9 +540,7 @@ func TestSingleWatcher_StopIdempotency(t *testing.T) {
 
 // TestSingleWatcher_ConcurrentCallbacks verifies thread-safe callback invocation after sync.
 func TestSingleWatcher_ConcurrentCallbacks(t *testing.T) {
-	fakeClientset := kubefake.NewClientset()
-	fakeDynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-	k8sClient := client.NewFromClientset(fakeClientset, fakeDynamicClient, "default")
+	k8sClient := createFakeClientForSingleWatcher()
 
 	callbackCount := 0
 	var mu sync.Mutex

@@ -89,7 +89,7 @@ type CorrelationOption struct {
 //
 // Example:
 //
-//	triggeredEvent := events.NewReconciliationTriggeredEvent("config_change")
+//	triggeredEvent := events.NewReconciliationTriggeredEvent("config_change", true, events.WithNewCorrelation())
 //	renderedEvent := events.NewTemplateRenderedEvent(...,
 //	    events.WithCorrelation(triggeredEvent.CorrelationID(), triggeredEvent.EventID()))
 func WithCorrelation(correlationID, causationID string) CorrelationOption {
@@ -104,18 +104,18 @@ func WithCorrelation(correlationID, causationID string) CorrelationOption {
 //
 // Example:
 //
-//	event := events.NewReconciliationTriggeredEvent("config_change",
+//	event := events.NewReconciliationTriggeredEvent("config_change", true,
 //	    events.WithNewCorrelation())
 func WithNewCorrelation() CorrelationOption {
 	return CorrelationOption{newChain: true}
 }
 
-// NewCorrelation creates a Correlation struct from the provided options.
+// newCorrelation creates a Correlation struct from the provided options.
 // This factory always generates a unique eventID for the event.
 //
 // This function only mutates a local variable (which is allowed),
 // ensuring events are fully initialized in their struct literals.
-func NewCorrelation(opts ...CorrelationOption) Correlation {
+func newCorrelation(opts ...CorrelationOption) Correlation {
 	c := Correlation{
 		eventID: uuid.New().String(),
 	}

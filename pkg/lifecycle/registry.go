@@ -52,7 +52,10 @@ type registeredComponent struct {
 //	registry.Register(reconciler.New(bus, logger))
 //	registry.Register(deployer.New(bus, logger), lifecycle.LeaderOnly())
 //
-//	err := registry.StartAll(ctx)
+//	// StartAll requires isLeader so leader-only components can be skipped
+//	// on follower replicas (they're started later via
+//	// StartLeaderOnlyComponents on the elected leader).
+//	err := registry.StartAll(ctx, isLeader)
 type Registry struct {
 	components []*registeredComponent          // Stores pointers to avoid invalidation on slice growth
 	byName     map[string]*registeredComponent // Fast lookup by name

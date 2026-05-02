@@ -61,11 +61,12 @@ func (r *Registry) prepareLeaderOnlyComponents() ([]*registeredComponent, error)
 // This should be called when leadership is acquired. Returns an error
 // if any leader-only component fails to start.
 //
-// Example:
+// Example (illustrative — pkg/controller has no Controller struct; the
+// real call site is the OnStartedLeading callback wrapper in
+// pkg/controller/leaderelection/component.go):
 //
-//	// In leadership callback
-//	func (c *Controller) onBecameLeader() {
-//	    if err := c.registry.StartLeaderOnlyComponents(ctx); err != nil {
+//	func (h *leadershipHandler) onBecameLeader(ctx context.Context) {
+//	    if err := h.registry.StartLeaderOnlyComponents(ctx); err != nil {
 //	        log.Error("Failed to start leader components", "error", err)
 //	    }
 //	}
@@ -107,11 +108,12 @@ func (r *Registry) StartLeaderOnlyComponents(ctx context.Context) error {
 //     components complete successfully. The caller should track this in an errgroup.
 //   - An error if components cannot be started (e.g., dependency validation fails)
 //
-// Example:
+// Example (illustrative — see pkg/controller/leaderelection/component.go's
+// OnStartedLeading wrapper for the real Pause/Start choreography around
+// this call):
 //
-//	// In leadership callback
-//	func (c *Controller) onBecameLeader() error {
-//	    errCh, err := c.registry.StartLeaderOnlyComponentsAsync(ctx)
+//	func (h *leadershipHandler) onBecameLeader(ctx context.Context) error {
+//	    errCh, err := h.registry.StartLeaderOnlyComponentsAsync(ctx)
 //	    if err != nil {
 //	        return err
 //	    }

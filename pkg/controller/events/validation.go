@@ -18,39 +18,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 )
 
-// ValidationStartedEvent is published when local configuration validation begins.
-//
-// Validation is performed locally using the HAProxy binary to check configuration syntax.
-// It does not involve HAProxy endpoints - those are only used later for deployment.
-//
-// This event propagates the correlation ID from TemplateRenderedEvent.
-type ValidationStartedEvent struct {
-	timestamped
-
-	// Correlation embeds correlation tracking for event tracing.
-	Correlation
-}
-
-// NewValidationStartedEvent creates a new ValidationStartedEvent.
-//
-// Use PropagateCorrelation() to propagate correlation from the triggering event:
-//
-//	event := events.NewValidationStartedEvent(
-//	    events.PropagateCorrelation(renderedEvent))
-func NewValidationStartedEvent(opts ...CorrelationOption) *ValidationStartedEvent {
-	return &ValidationStartedEvent{
-		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
-	}
-}
-
-func (e *ValidationStartedEvent) EventType() string { return EventTypeValidationStarted }
-
 // ValidationCompletedEvent is published when local configuration validation succeeds.
 //
 // Validation is performed locally using the HAProxy binary. Endpoints are not involved.
 //
-// This event propagates the correlation ID from ValidationStartedEvent.
+// This event propagates the correlation ID from TemplateRenderedEvent.
 //
 // This event implements CoalescibleEvent. The coalescible flag is propagated from
 // TemplateRenderedEvent to enable coalescing throughout the reconciliation pipeline.
@@ -100,7 +72,7 @@ func NewValidationCompletedEvent(warnings []string, durationMs int64, triggerRea
 		ParsedConfig:  parsedConfig,
 		coalescible:   coalescible,
 		timestamped:   newTimestamped(),
-		Correlation:   NewCorrelation(opts...),
+		Correlation:   newCorrelation(opts...),
 	}
 }
 
@@ -114,7 +86,7 @@ func (e *ValidationCompletedEvent) Coalescible() bool { return e.coalescible }
 //
 // Validation is performed locally using the HAProxy binary. Endpoints are not involved.
 //
-// This event propagates the correlation ID from ValidationStartedEvent.
+// This event propagates the correlation ID from TemplateRenderedEvent.
 type ValidationFailedEvent struct {
 	Errors     []string // Validation errors from HAProxy
 	DurationMs int64
@@ -144,7 +116,7 @@ func NewValidationFailedEvent(errors []string, durationMs int64, triggerReason s
 		DurationMs:    durationMs,
 		TriggerReason: triggerReason,
 		timestamped:   newTimestamped(),
-		Correlation:   NewCorrelation(opts...),
+		Correlation:   newCorrelation(opts...),
 	}
 }
 

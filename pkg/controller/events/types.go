@@ -55,9 +55,9 @@
 //   - leader.go:              Leader election events
 //   - publishing.go:          Config publishing events (including SyncMetadata types)
 //   - certificate.go:         Webhook certificate events
-//   - webhookobservability.go: Webhook validation observability events
 //   - http.go:                HTTP resource events
-//   - webhook.go:             Scatter-gather request/response events for webhook validation
+//   - proposal.go:            Speculative validation requests/responses (used by webhook and HTTP store)
+//   - status.go:              Status patch application events
 package events
 
 const (
@@ -85,7 +85,6 @@ const (
 	EventTypeTemplateRenderFailed = "template.render.failed"
 
 	// Validation event types (HAProxy dataplane API validation).
-	EventTypeValidationStarted   = "validation.started"
 	EventTypeValidationCompleted = "validation.completed"
 	EventTypeValidationFailed    = "validation.failed"
 
@@ -109,9 +108,8 @@ const (
 	EventTypeHAProxyPodRejected    = "haproxy.pod.rejected"
 
 	// Config publishing event types.
-	EventTypeConfigPublished     = "config.published"
-	EventTypeConfigPublishFailed = "config.publish.failed"
-	EventTypeConfigAppliedToPod  = "config.applied.to.pod"
+	EventTypeConfigPublished    = "config.published"
+	EventTypeConfigAppliedToPod = "config.applied.to.pod"
 
 	// Credentials event types.
 	EventTypeSecretResourceChanged = "secret.resource.changed"
@@ -121,13 +119,6 @@ const (
 	// Webhook certificate event types.
 	EventTypeCertResourceChanged = "cert.resource.changed"
 	EventTypeCertParsed          = "cert.parsed"
-
-	// Webhook validation event types (observability only).
-	// Note: Scatter-gather request/response events are in webhook.go.
-	EventTypeWebhookValidationRequest = "webhook.validation.request"
-	EventTypeWebhookValidationAllowed = "webhook.validation.allowed"
-	EventTypeWebhookValidationDenied  = "webhook.validation.denied"
-	EventTypeWebhookValidationError   = "webhook.validation.error"
 
 	// Leader election event types.
 	EventTypeLeaderElectionStarted = "leader.election.started"

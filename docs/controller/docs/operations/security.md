@@ -47,7 +47,7 @@ Debug endpoints expose credential *metadata* only (version, `has_dataplane_creds
 
 ## Pod Hardening
 
-The chart ships with a restrictive default pod spec. The relevant `controller.securityContext` / `controller.podSecurityContext` defaults:
+The chart ships with a restrictive default pod spec. The relevant `securityContext` (container-level) / `controller.podSpec.podSecurityContext` (pod-level) defaults:
 
 | Setting | Default |
 |---------|---------|

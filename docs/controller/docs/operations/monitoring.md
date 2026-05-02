@@ -150,6 +150,7 @@ rate(haptic_validation_total[5m])
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `haptic_resource_count` | Gauge | `type` | Current count of watched resources |
+| `haptic_haproxy_pods_rejected_total` | Counter | `reason` | HAProxy pods refused admission by the discovery component. Persistent non-zero growth typically means the controller cannot talk to the deployed HAProxy pods (for example, the bundled HAProxy major.minor differs from the chart's `haproxyVersion`). |
 
 **Key queries:**
 
@@ -164,6 +165,9 @@ haptic_resource_count{type="haproxy-pods"}
 
 # Resource count changes
 delta(haptic_resource_count[1h])
+
+# Rejected HAProxy pods, broken down by reason
+sum by (reason) (rate(haptic_haproxy_pods_rejected_total[5m]))
 ```
 
 ### Event Metrics

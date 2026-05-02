@@ -398,7 +398,7 @@ type EventBus struct {
 
 **Event Type Definitions**:
 
-The full catalog of event-type constants (~50 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `certificate.go`, `webhookobservability.go`, `http.go`, `webhook.go`, `proposal.go`, `status.go`).
+The full catalog of event-type constants (~45 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `certificate.go`, `http.go`, `proposal.go`, `status.go`).
 
 Every event type follows the same shape:
 
@@ -616,7 +616,7 @@ IndexReady:
 **Event Multiplexing with `select`** (illustrative — see `pkg/controller/reconciler/reconciler.go` for the real `Reconciler.Start` loop, which uses `*timers.SafeTimer` and a typed subscription):
 
 ```go
-// pkg/controller/reconciler.go (illustrative)
+// pkg/controller/reconciler/reconciler.go (illustrative)
 type Reconciler struct {
     eventBus  *EventBus
     timer     *timers.SafeTimer // leading-edge refractory; not trailing-edge debounce
@@ -648,7 +648,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
         case <-r.timer.Chan():
             r.timer.Fired() // MUST call after channel drain or EnsureRunning becomes a no-op
-            r.eventBus.Publish(NewReconciliationTriggeredEvent("debounce_timer"))
+            r.eventBus.Publish(NewReconciliationTriggeredEvent("debounce_timer", true, WithNewCorrelation()))
 
         case <-ctx.Done():
             return ctx.Err()
@@ -660,8 +660,10 @@ func (r *Reconciler) Start(ctx context.Context) error {
 **Graceful Shutdown with Context**:
 
 ```go
-// Illustrative — actual implementation is in pkg/controller/iteration.go
-// (runIteration) and composed by pkg/controller/controller.go (Controller.Run)
+// Illustrative — the actual implementation is the package-level
+// `controller.Run` function in pkg/controller/controller.go (no
+// Controller struct), which composes pkg/controller/iteration.go
+// (`runIteration`) inside its reinitialization loop.
 func (r *OperatorRunner) Run(ctx context.Context) error {
     eventBus := events.NewEventBus(1000)
 
@@ -900,11 +902,14 @@ func (h *ConfigChangeHandler) handleParsed(ctx context.Context, parsed *events.C
     })
 
     if err != nil || hasInvalid(result.Responses) {
-        h.eventBus.Publish(events.NewConfigInvalidEvent(parsed.Version, collectErrors(result, err)))
+        // NewConfigInvalidEvent's third arg is map[string][]string keyed by validator name.
+        h.eventBus.Publish(events.NewConfigInvalidEvent(parsed.Version, parsed.TemplateConfig, collectErrors(result, err)))
         return
     }
 
-    h.eventBus.Publish(events.NewConfigValidatedEvent(parsed.Config, parsed.Version))
+    // NewConfigValidatedEvent threads the typed CRD wrapper plus both resourceVersion strings
+    // (CRD + credentials Secret) so downstream subscribers can correlate.
+    h.eventBus.Publish(events.NewConfigValidatedEvent(parsed.Config, parsed.TemplateConfig, parsed.Version, parsed.SecretVersion))
 }
 ```
 
@@ -1000,11 +1005,13 @@ Event Flow with Commentator:
 
 EventBus (50+ event types)
     │
-    ├─> Pure Components (business logic, no logging clutter)
-    │   ├── ConfigLoader
-    │   ├── TemplateRenderer
-    │   ├── Validator
-    │   └── Deployer
+    ├─> Domain components (publish/consume events; logging stays out of business logic)
+    │   ├── ConfigLoader, CredentialsLoader, ConfigChangeHandler
+    │   ├── BasicValidator / TemplateValidator / JSONPathValidator (scatter-gather over ConfigValidationRequest)
+    │   ├── Reconciler → Coordinator (Coordinator drives RenderService + ValidationService synchronously inside Pipeline.Execute, see ADR-0001)
+    │   ├── DeploymentScheduler → Deployer → ConfigPublisher → StatusApplier
+    │   ├── Discovery, HTTPStore, ProposalValidator, DriftPreventionMonitor
+    │   └── LeaderElector, CertLoader, ResourceWatcher
     │
     └─> Event Commentator (observability layer)
         ├── Subscribes to ALL events

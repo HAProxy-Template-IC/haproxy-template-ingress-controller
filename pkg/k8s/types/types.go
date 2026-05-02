@@ -205,8 +205,8 @@ type WatcherConfig struct {
 	// LabelSelector filters resources by label selector.
 	// Uses Kubernetes label selector syntax.
 	//
-	// Example:
-	//   LabelSelector: metav1.LabelSelector{
+	// Example (the field is a pointer, so the literal needs `&`):
+	//   LabelSelector: &metav1.LabelSelector{
 	//       MatchLabels: map[string]string{
 	//           "app": "haproxy",
 	//           "component": "loadbalancer",
@@ -273,7 +273,11 @@ type WatcherConfig struct {
 	// Rapid resource changes within this interval are batched into a single callback
 	// with aggregated statistics.
 	//
-	// Default: 500ms
+	// Default: DefaultDebounceInterval (5s) — applied in WatcherConfig.SetDefaults
+	// when DebounceInterval is zero. The 5s value reduces reconciliation frequency
+	// and GC pressure during high EndpointSlice churn; lower it only if you have a
+	// resource that needs faster reaction and you've measured that it doesn't add
+	// to controller load.
 	DebounceInterval time.Duration
 
 	// OnChange is called when resources in the store change.

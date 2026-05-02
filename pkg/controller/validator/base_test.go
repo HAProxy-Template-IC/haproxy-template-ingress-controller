@@ -65,7 +65,7 @@ func TestBaseValidator_Stop(t *testing.T) {
 		eventBus: bus,
 		name:     "test",
 	}
-	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
+	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	bus.Start()
 
@@ -101,7 +101,7 @@ func TestBaseValidator_StopIdempotent(t *testing.T) {
 		eventBus: bus,
 		name:     "test",
 	}
-	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
+	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	// Call Stop() multiple times - should not panic
 	var wg sync.WaitGroup
@@ -117,7 +117,7 @@ func TestBaseValidator_PanicRecovery(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	handler := &panicHandler{panicMessage: "test panic"}
-	validator := NewBaseValidator(bus, logger, "test-validator", "Test validator", handler)
+	validator := NewBaseValidator(bus, logger, "test-validator", handler)
 
 	// Subscribe to events to receive the error response
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -151,7 +151,7 @@ func TestBaseValidator_ContextCancellation(t *testing.T) {
 		eventBus: bus,
 		name:     "test",
 	}
-	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
+	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	bus.Start()
 
@@ -478,7 +478,7 @@ func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 		name:       "test",
 		handleChan: handleChan,
 	}
-	validator := NewBaseValidator(bus, logger, "test", "Test validator", handler)
+	validator := NewBaseValidator(bus, logger, "test", handler)
 
 	bus.Start()
 

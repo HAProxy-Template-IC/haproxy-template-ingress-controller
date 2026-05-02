@@ -29,8 +29,8 @@ import (
 
 // HAProxyTemplateConfig defines the configuration for the HAProxy Template Ingress Controller.
 //
-// This custom resource replaces the previous ConfigMap-based configuration approach,
-// providing better validation, type safety, and support for embedded validation tests.
+// As a custom resource it provides OpenAPI validation, type safety, and support for
+// embedded validation tests.
 type HAProxyTemplateConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -183,17 +183,17 @@ type LeaderElectionConfig struct {
 	// LeaseDuration is the duration that non-leader candidates will wait
 	// to force acquire leadership (measured against time of last observed ack).
 	//
-	// Format: Go duration string (e.g., "60s", "1m")
-	// Default: 60s
-	// Minimum: 15s
+	// Format: Go duration string (e.g., "15s", "30s")
+	// Default: 15s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
+	// the Helm chart's values.yaml sets the same value at controller.config.controller.leaderElection.leaseDuration)
 	// +optional
 	LeaseDuration string `json:"leaseDuration,omitempty"`
 
 	// RenewDeadline is the duration that the acting leader will retry
 	// refreshing leadership before giving up.
 	//
-	// Format: Go duration string (e.g., "15s")
-	// Default: 15s
+	// Format: Go duration string (e.g., "10s")
+	// Default: 10s (DefaultLeaderElectionRenewDeadline)
 	// Must be less than LeaseDuration
 	// +optional
 	RenewDeadline string `json:"renewDeadline,omitempty"`
@@ -201,8 +201,8 @@ type LeaderElectionConfig struct {
 	// RetryPeriod is the duration the LeaderElector clients should wait
 	// between tries of actions.
 	//
-	// Format: Go duration string (e.g., "5s")
-	// Default: 5s
+	// Format: Go duration string (e.g., "2s")
+	// Default: 2s (DefaultLeaderElectionRetryPeriod)
 	// Must be less than RenewDeadline
 	// +optional
 	RetryPeriod string `json:"retryPeriod,omitempty"`
@@ -424,6 +424,25 @@ type WatchedResource struct {
 	// +kubebuilder:validation:Enum=full;on-demand
 	// +optional
 	Store string `json:"store,omitempty"`
+
+	// DebounceInterval overrides the default leading-edge refractory window
+	// for this resource type's watcher.
+	//
+	// Format: Go duration string (e.g., "500ms", "10s").
+	// Default: 5s (pkg/k8s/types.DefaultDebounceInterval).
+	//
+	// Lower values make the controller respond faster to bursty changes at
+	// the cost of more reconciliations and GC pressure under load. Most
+	// workloads should leave this unset; per-resource overrides are useful
+	// for resources that need faster reaction (e.g., HTTPRoute changes
+	// during canary rollouts) or slower batching (e.g., very high-churn
+	// EndpointSlices on a large cluster).
+	//
+	// Invalid values silently fall back to the default — invalid means a
+	// string that fails time.ParseDuration. Empty (the default) also uses
+	// the default.
+	// +optional
+	DebounceInterval string `json:"debounceInterval,omitempty"`
 }
 
 // TemplateSnippet defines a reusable template fragment.

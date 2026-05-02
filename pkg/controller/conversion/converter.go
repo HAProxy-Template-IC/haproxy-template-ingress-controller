@@ -115,6 +115,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 			LabelSelector:           labelSelectorMap,
 			FieldSelector:           crdRes.FieldSelector,
 			Store:                   crdRes.Store,
+			DebounceInterval:        crdRes.DebounceInterval,
 		}
 	}
 

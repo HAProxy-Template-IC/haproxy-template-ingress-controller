@@ -16,6 +16,7 @@ watchedResources:
     labelSelector: ""                       # "app=myapp" — string, not matchLabels object
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
+    debounceInterval: ""                    # Go duration string; empty / invalid uses the 5s default
 ```
 
 All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.
@@ -104,6 +105,26 @@ For fixture-based mocking during validation tests, set per-test `httpResources` 
 ## Validating Webhook Scope
 
 Setting `enableValidationWebhook: true` on an entry registers that kind with the admission webhook, so creates/updates are rendered against an overlay store before being accepted. Set it only on the kinds you actually want validated in-band — the default is off to avoid dragging unrelated kinds (e.g. EndpointSlice churn) through the webhook path.
+
+## Debounce Override
+
+Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler (which has its own separate, non-CRD-configurable debounce on top — see [architecture-overview](./development/design/architecture-overview.md) for the two-layer flow). The default is 5 seconds (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval`:
+
+```yaml
+watchedResources:
+  httproutes:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: httproutes
+    indexBy: ["metadata.namespace", "metadata.name"]
+    debounceInterval: "500ms"   # react fast on canary rollouts
+  endpointslices:
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
+    indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
+    debounceInterval: "30s"     # absorb endpoint churn on large clusters
+```
+
+Empty / invalid strings fall back to the 5s default silently — the validating webhook does not reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …).
 
 ## Troubleshooting
 

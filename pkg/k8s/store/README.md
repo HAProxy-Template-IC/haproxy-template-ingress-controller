@@ -88,7 +88,7 @@ for _, obj := range resources {
 }
 ```
 
-This is enforced by convention, not by type — the `Store` interface returns `any`, so the compiler can't help. Watchers and `pkg/stores/overlay` both rely on this contract.
+This is enforced by convention, not by type — the `Store` interface returns `any`, so the compiler can't help. Watchers and `pkg/stores/overlay.go` both rely on this contract.
 
 ## Non-Unique Keys
 
@@ -108,7 +108,7 @@ Tests exercise both stores against the same `types.Store` interface contract —
 - [`pkg/k8s/types`](../types/) — `Store` interface definition
 - [`pkg/k8s/watcher`](../watcher/) — `Watcher` builds these stores from a `SharedInformerFactory`
 - [`pkg/k8s/indexer`](../indexer/) — JSONPath extraction that produces the composite keys
-- [`pkg/stores/overlay`](../../stores/overlay.go) — overlay wrapper used by the webhook dry-run path
+- [`pkg/stores/overlay.go`](../../stores/overlay.go) — overlay wrapper used by the webhook dry-run path
 - `pkg/k8s/store/CLAUDE.md` — developer context (adding storage strategies, cache tuning, thread-safety proofs)
 
 ## License

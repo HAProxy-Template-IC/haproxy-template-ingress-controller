@@ -64,9 +64,6 @@ type ResolvedPaths struct {
 //   - CRT-list storage: Always uses general directory because the native CRT-list
 //     API triggers reload on create without supporting skip_reload parameter.
 //     General file storage returns 201 without triggering reload.
-//
-// Future capability-dependent paths should be added here to ensure
-// consistent resolution across all components.
 func ResolvePaths(base PathConfig, _ Capabilities) *ResolvedPaths {
 	return &ResolvedPaths{
 		MapsDir:    base.MapsDir,

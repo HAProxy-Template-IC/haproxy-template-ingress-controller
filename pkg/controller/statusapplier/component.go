@@ -402,8 +402,7 @@ func isRetriable(err error) bool {
 	}
 
 	// Network-level transient errors
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if netErr, ok := errors.AsType[net.Error](err); ok {
 		return netErr.Timeout()
 	}
 

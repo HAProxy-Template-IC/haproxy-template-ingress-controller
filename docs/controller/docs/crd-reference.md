@@ -184,6 +184,7 @@ watchedResources:
       - metadata.name
     labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
     store: full  # or "on-demand" for cached store
+    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 5s default
 ```
 
 See [Watching Resources](./watching-resources.md) for detailed configuration.

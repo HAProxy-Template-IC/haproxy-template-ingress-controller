@@ -26,7 +26,7 @@ import (
 //
 // Example:
 //
-//	version, err := client.GetVersion(context.Background())
+//	version, err := dpClient.GetVersion(context.Background())
 //	if err != nil {
 //	    slog.Error("failed to get version", "error", err)
 //	    os.Exit(1)
@@ -91,7 +91,7 @@ func (c *DataplaneClient) GetVersion(ctx context.Context) (int64, error) {
 //
 // Example:
 //
-//	config, err := client.GetRawConfiguration(context.Background())
+//	config, err := dpClient.GetRawConfiguration(context.Background())
 //	if err != nil {
 //	    slog.Error("failed to get config", "error", err)
 //	    os.Exit(1)
@@ -158,7 +158,7 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //
 // Example:
 //
-//	reloadID, err := client.PushRawConfiguration(context.Background(), newConfig, 1)
+//	reloadID, err := dpClient.PushRawConfiguration(context.Background(), newConfig, 1)
 //	if err != nil {
 //	    slog.Error("failed to push config", "error", err)
 //	    os.Exit(1)
@@ -303,7 +303,7 @@ type ReloadInfo struct {
 //
 // Example:
 //
-//	info, err := client.GetReloadStatus(ctx, "abc123")
+//	info, err := dpClient.GetReloadStatus(ctx, "abc123")
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

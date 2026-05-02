@@ -828,7 +828,11 @@ func TestConvertSpec_WithWatchedResourceStore(t *testing.T) {
 				APIVersion:              "v1",
 				Resources:               "secrets",
 				EnableValidationWebhook: true,
-				Store:                   "memory",
+				// "on-demand" is the only non-default valid Store value (CRD enum is
+				// "full" / "on-demand"); see pkg/apis/.../types_config.go for the
+				// kubebuilder validation tag and pkg/controller/resourcewatcher.determineStoreType
+				// for the runtime mapping.
+				Store: "on-demand",
 			},
 		},
 	}
@@ -837,11 +841,11 @@ func TestConvertSpec_WithWatchedResourceStore(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Contains(t, cfg.WatchedResources, "secrets")
-	assert.Equal(t, "memory", cfg.WatchedResources["secrets"].Store)
+	assert.Equal(t, "on-demand", cfg.WatchedResources["secrets"].Store)
 	assert.True(t, cfg.WatchedResources["secrets"].EnableValidationWebhook)
 }
 
-func TestConvertSpec_DataplaneDirectories(t *testing.T) {
+func TestConvertSpec_WithDataplaneDirectories(t *testing.T) {
 	spec := v1alpha1.HAProxyTemplateConfigSpec{
 		CredentialsSecretRef: v1alpha1.SecretReference{
 			Name: "haproxy-creds",
@@ -868,4 +872,55 @@ func TestConvertSpec_DataplaneDirectories(t *testing.T) {
 	assert.Equal(t, "/etc/haproxy/certs", cfg.Dataplane.SSLCertsDir)
 	assert.Equal(t, "/etc/haproxy/storage", cfg.Dataplane.GeneralStorageDir)
 	assert.Equal(t, "/etc/haproxy/haproxy.cfg", cfg.Dataplane.ConfigFile)
+}
+
+// TestConvertSpec_WithWatchedResourceDebounceInterval pins that the per-
+// resource DebounceInterval string round-trips through ConvertSpec verbatim.
+// The converter does NOT parse the value (parsing happens later in
+// WatchedResource.GetDebounceInterval, exercised by the GetDebounceInterval
+// test in pkg/core/config/getters_test.go), so this test only needs to prove
+// the string makes it across.
+//
+// Without this regression test, a refactor that drops the field from the
+// struct-literal copy in converter.go would silently revert per-resource
+// debounce overrides to "always use the 5s default" without breaking any
+// existing test.
+func TestConvertSpec_WithWatchedResourceDebounceInterval(t *testing.T) {
+	spec := &v1alpha1.HAProxyTemplateConfigSpec{
+		PodSelector: v1alpha1.PodSelector{
+			MatchLabels: map[string]string{"app": "haproxy"},
+		},
+		WatchedResources: map[string]v1alpha1.WatchedResource{
+			"ingresses": {
+				APIVersion:       "networking.k8s.io/v1",
+				Resources:        "ingresses",
+				DebounceInterval: "250ms",
+			},
+			"endpointslices": {
+				APIVersion:       "discovery.k8s.io/v1",
+				Resources:        "endpointslices",
+				DebounceInterval: "30s",
+			},
+			// Default empty — converter should pass through unchanged.
+			"services": {
+				APIVersion: "v1",
+				Resources:  "services",
+			},
+		},
+		HAProxyConfig: v1alpha1.HAProxyConfig{Template: "global\n"},
+	}
+
+	cfg, err := ConvertSpec(spec)
+	require.NoError(t, err)
+
+	require.Contains(t, cfg.WatchedResources, "ingresses")
+	require.Contains(t, cfg.WatchedResources, "endpointslices")
+	require.Contains(t, cfg.WatchedResources, "services")
+
+	assert.Equal(t, "250ms", cfg.WatchedResources["ingresses"].DebounceInterval,
+		"per-resource override must round-trip verbatim — converter must not parse or normalize it")
+	assert.Equal(t, "30s", cfg.WatchedResources["endpointslices"].DebounceInterval,
+		"each resource's DebounceInterval must be independent")
+	assert.Empty(t, cfg.WatchedResources["services"].DebounceInterval,
+		"empty DebounceInterval must round-trip as empty so the watcher's SetDefaults takes over")
 }

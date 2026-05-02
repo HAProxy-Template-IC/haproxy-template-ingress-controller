@@ -15,12 +15,51 @@
 package dataplane
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 )
+
+// generateSelfSignedSSLPEM returns a PEM bundle (cert + private key) that
+// passes HAProxy's strict format check in `-c` mode. We generate a fresh
+// self-signed certificate per test rather than committing a fixture, both to
+// avoid expiry surprises and to keep the test fully self-contained.
+func generateSelfSignedSSLPEM(t *testing.T) string {
+	t.Helper()
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generating RSA key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "haptic-test"},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("creating certificate: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	return string(certPEM) + string(keyPEM)
+}
 
 // testValidationPaths returns validation paths for testing using temporary directories.
 func testValidationPaths(t *testing.T) *ValidationPaths {
@@ -213,11 +252,11 @@ backend servers
 }
 
 func TestValidateConfiguration_WithSSLCertificate(t *testing.T) {
-	t.Skip("Skipping SSL test - HAProxy strictly validates certificate format in -c mode")
-
-	// Note: We use a dummy cert for testing. In production, this would be a real PEM file.
-	// HAProxy will validate the file exists but may not fully validate the cert format in -c mode.
-	// Use relative path that will be resolved from the temp directory
+	// HAProxy's -c mode actually loads the cert referenced by `bind ssl crt`,
+	// so the bundled PEM has to be a syntactically valid cert + key — a
+	// hand-crafted dummy gets rejected. We generate a fresh self-signed
+	// cert per run via crypto/x509 to avoid bundling a fixture that would
+	// silently expire.
 	config := `
 global
     daemon
@@ -236,60 +275,16 @@ backend servers
     server s1 127.0.0.1:8080
 `
 
-	// Minimal self-signed certificate for testing
-	dummyCert := `-----BEGIN CERTIFICATE-----
-MIICljCCAX4CCQCKz8Q0Q0Q0QDANBgkqhkiG9w0BAQsFADANMQswCQYDVQQGEwJV
-UzAeFw0yNDAxMDEwMDAwMDBaFw0yNTAxMDEwMDAwMDBaMA0xCzAJBgNVBAYTAlVT
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7BAxYCtENXeAZ0Qd5uV
-VwE1TJLy7cZKlLq4VrfBdXqMzLbQqpL0fKnYS0qIvzEz2vjdIKVQ5HBbzj7L8YhP
-lYKdAqLFH1KGq8JXxKpZxGS5vZ6T8nXGjCdLmJpQ1jVj5HvKzBpL5T9JKWmYfE6L
-K5pZ1HvQqYfJdX5K6qL5YhT9KpXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9Yp
-T5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLd
-XqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5
-KwIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQBzqYpQ1L5K6qL5YhT9KpXqLdXqL9Yp
-T5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLd
-XqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5
-KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXq
-L9YpT5KqXqLdXqL9YpT5Kw==
------END CERTIFICATE-----
------BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrsEDFgK0Q1d4B
-nRB3m5VXATVMkvLtxkqUurhWt8F1eozMttCqkvR8qdhLSoi/MTPa+N0gpVDkcFvO
-PsvxiE+Vgp0CosUfUoarwlfEqlnEZLm9npPydcaMJ0uYmlDWNWPke8rMGkvlP0kp
-aZh8TosrmlnUe9Cph8l1fkrqovliFP0qleot1eov1ilPkqpeot1eov1ilPkqpeot
-1eov1ilPkqpeot1eov1ilPkqpeot1eov1ilPkqpeot1eov1ilPkqpeot1eov1ilP
-kqpeot1eov1ilPkqpeot1eov1ilPkqpeot1eov1ilPkqpeot1eov1ilPkrAgMBAA
-ECggEAH5j3L9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLd
-XqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5
-KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXq
-L9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5Kq
-XqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9
-YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KwKB
-gQDXL5K6qL5YhT9KpXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdX
-qL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5K
-qXqLdXqL9YpT5KwKBgQDLL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9
-YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXq
-LdXqL9YpT5KwKBgD5K6qL5YhT9KpXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9
-YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXq
-LdXqL9YpT5KwKBgBzL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT
-5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdX
-qL9YpT5KwKBgFpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLd
-XqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5KqXqLdXqL9YpT5
-Kw==
------END PRIVATE KEY-----
-`
-
 	auxFiles := &AuxiliaryFiles{
 		SSLCertificates: []auxiliaryfiles.SSLCertificate{
 			{
 				Path:    "ssl/cert.pem",
-				Content: dummyCert,
+				Content: generateSelfSignedSSLPEM(t),
 			},
 		},
 	}
 
-	_, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false)
-	if err != nil {
+	if _, err := ValidateConfiguration(config, auxFiles, testValidationPaths(t), nil, false); err != nil {
 		t.Fatalf("ValidateConfiguration() failed with SSL certificate: %v", err)
 	}
 }

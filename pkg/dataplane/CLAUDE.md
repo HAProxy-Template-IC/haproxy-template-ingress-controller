@@ -1166,7 +1166,7 @@ adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction
 
 ### Parallel Endpoint Sync
 
-`pkg/dataplane.Sync` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, look at `pkg/controller/deployer.Component` (uses `errgroup` with `SetLimit(maxParallel)`) for the production pattern. For one-off scripts that need to push to multiple HAProxies in parallel, the same shape applies:
+`pkg/dataplane.Sync` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, `pkg/controller/deployer.Component.deployToEndpoints` spawns one goroutine per endpoint via `sync.WaitGroup` (no across-endpoint cap; `maxParallel` is passed _into_ each `dataplane.Sync` call as `SyncOptions.MaxParallel` to limit operations _within_ that single pod). For one-off scripts that need to push to multiple HAProxies in parallel with a global cap, an `errgroup` with `SetLimit(maxParallel)` is the natural shape:
 
 ```go
 g, gCtx := errgroup.WithContext(ctx)

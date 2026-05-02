@@ -107,13 +107,17 @@ graph TB
         subgraph reconciliation["Reconciliation Components"]
             direction LR
             RC["Reconciler<br/>(Debouncer)"]
-            COORD["Coordinator<br/>(Pipeline driver)"]
+            COORD["Coordinator<br/>(leader-only<br/>pipeline driver)"]
         end
 
-        subgraph pipeline["Event-Driven Pipeline"]
+        subgraph pipeline["Synchronous Pipeline (no event hop, ADR-0001)"]
             direction LR
-            REND["Renderer"]
-            VAL["HAProxy<br/>Validator"]
+            REND["RenderService"]
+            VAL["ValidationService<br/>(syntax + schema<br/>+ haproxy -c)"]
+        end
+
+        subgraph deploy["Event-Driven Deployment"]
+            direction LR
             SCHED["Deployment<br/>Scheduler"]
             DEPL["Deployer"]
         end
@@ -128,16 +132,18 @@ graph TB
         CW & RW -->|Publish| EB
         EB -->|Subscribe| RC
         RC -->|Publish| EB
-        EB -->|Subscribe| REND
-        REND -->|Publish| EB
-        EB -->|Subscribe| VAL
-        VAL -->|Publish| EB
+        EB -->|Subscribe| COORD
+        COORD -.->|direct call| REND
+        REND -.->|return| COORD
+        COORD -.->|direct call| VAL
+        VAL -.->|return| COORD
+        COORD -->|Publish| EB
         EB -->|Subscribe| SCHED
         SCHED -->|Publish| EB
         EB -->|Subscribe| DEPL
         DEPL -->|Publish| EB
-        EB -->|Subscribe| COORD & DISC & METR & COMM
-        COORD & DISC -->|Publish| EB
+        EB -->|Subscribe| DISC & METR & COMM
+        DISC -->|Publish| EB
     end
 
     K8S -->|Watch| RW
@@ -147,16 +153,17 @@ graph TB
     style watchers fill:#E3F2FD
     style reconciliation fill:#F3E5F5
     style pipeline fill:#C8E6C9
+    style deploy fill:#C8E6C9
     style support fill:#FFF9C4
     style ext fill:#F5F5F5
 ```
 
+The dashed arrows between Coordinator and the synchronous pipeline are direct function calls — there is no event hop for rendering or HAProxy validation (ADR-0001). The Coordinator publishes `TemplateRenderedEvent` and `ValidationCompletedEvent` itself once the synchronous call returns.
+
 **Event-Driven Data Flow:**
 
-The diagram above shows the conceptual flow; the production reality fuses rendering and HAProxy-config validation into the leader-only Coordinator's synchronous pipeline call.
-
-1. **Config/Resource Watchers** receive Kubernetes changes and publish events to EventBus
-2. **Reconciler** subscribes to change events, applies a leading-edge refractory debouncer (default 5s; see `pkg/k8s/types.DefaultDebounceInterval`), filters initial sync events, and publishes `ReconciliationTriggeredEvent`. Also fires on `BecameLeaderEvent` so a freshly-elected leader produces a current render instead of waiting for the next change.
+1. **Config/Resource Watchers** receive Kubernetes changes, coalesce bursts within a per-resource debounce window (default 5s, overridable via `spec.watchedResources.<name>.debounceInterval`), and publish one event per quiet window to the EventBus.
+2. **Reconciler** subscribes to change events, applies a *second* leading-edge refractory debouncer (also default 5s, but separate from the watcher window in step 1 and not CRD-configurable; see `pkg/k8s/types.DefaultDebounceInterval`), filters initial sync events, and publishes `ReconciliationTriggeredEvent`. Also fires on `BecameLeaderEvent` so a freshly-elected leader produces a current render instead of waiting for the next change.
 3. **Coordinator** (leader-only) subscribes to `ReconciliationTriggeredEvent` and calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` synchronously. The pipeline runs `RenderService.Render` + three-phase `ValidationService.Validate` in one atomic step. On success, the Coordinator publishes `TemplateRenderedEvent` + `ValidationCompletedEvent`; on failure, `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.As` to extract the failed phase). Either path ends with `ReconciliationCompletedEvent` for metrics.
 4. **DeploymentScheduler** (leader-only) subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, `HAProxyPodsDiscoveredEvent`, and `ConfigValidatedEvent`; enforces rate limiting (default 2s minimum interval), implements "latest wins" queueing, publishes `DeploymentScheduledEvent`
 5. **Deployer** (leader-only) subscribes to `DeploymentScheduledEvent`, executes parallel `dataplane.Sync` calls to all HAProxy endpoints, publishes `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent` per endpoint and `DeploymentCompletedEvent` overall
@@ -167,7 +174,7 @@ The diagram above shows the conceptual flow; the production reality fuses render
 **Key Architecture Properties:**
 
 - **EventBus** is the single coordination mechanism - zero direct component-to-component function calls
-- **Event-Driven Components** (Renderer, Validator, Scheduler, Deployer) are wrappers around pure libraries (pkg/templating, pkg/dataplane, pkg/k8s)
+- **Event-Driven Components** (Reconciler, Coordinator, Scheduler, Deployer, ConfigPublisher, Discovery, …) wrap pure libraries (pkg/templating, pkg/dataplane, pkg/k8s) in event adapters; the rendering and HAProxy-validation services they call are themselves *not* event-adapter components — they're synchronous services driven from inside Coordinator's `Pipeline.Execute` (ADR-0001)
 - **Pure Libraries** (pkg/templating, pkg/dataplane, pkg/k8s) contain testable business logic with no event dependencies
 - **Event Adapters** translate between EventBus pub/sub and pure library function calls
 - **Extensibility** - new features can subscribe to existing events without modifying existing code

@@ -42,7 +42,7 @@ func NewJSONPathValidator(eventBus *busevents.EventBus, logger *slog.Logger) *JS
 		eventBus: eventBus,
 		logger:   logger,
 	}
-	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameJSONPath, "JSONPath expression validator", v)
+	v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameJSONPath, v)
 	return v
 }
 

@@ -71,8 +71,9 @@ Add the following to your Helm values to configure the HAProxy pod with spiffe-h
 ```yaml
 haproxy:
   # Restart pods when spiffe-helper or other sidecar configs change
-  podAnnotations:
-    checksum/extra-config: '{{ toJson .Values.extraDeploy | sha256sum }}'
+  podSpec:
+    podAnnotations:
+      checksum/extra-config: '{{ toJson .Values.extraDeploy | sha256sum }}'
 
   # Create cert directory before spiffe-helper starts
   initContainers:

@@ -40,29 +40,6 @@ func NewConfigPublishedEvent(runtimeConfigName, runtimeConfigNamespace string, m
 
 func (e *ConfigPublishedEvent) EventType() string { return EventTypeConfigPublished }
 
-// ConfigPublishFailedEvent is published when runtime configuration publishing fails.
-//
-// This is logged but does not affect controller operation.
-type ConfigPublishFailedEvent struct {
-	Error string
-	timestamped
-}
-
-// NewConfigPublishFailedEvent creates a new ConfigPublishFailedEvent.
-func NewConfigPublishFailedEvent(err error) *ConfigPublishFailedEvent {
-	errStr := ""
-	if err != nil {
-		errStr = err.Error()
-	}
-
-	return &ConfigPublishFailedEvent{
-		Error:       errStr,
-		timestamped: newTimestamped(),
-	}
-}
-
-func (e *ConfigPublishFailedEvent) EventType() string { return EventTypeConfigPublishFailed }
-
 // ConfigAppliedToPodEvent is published after configuration is successfully applied to an HAProxy pod.
 //
 // This triggers updating the deployment status in runtime config resources.

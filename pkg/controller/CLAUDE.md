@@ -382,7 +382,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 **Features:**
 
-- Debounces resource changes with a leading-edge refractory window (`types.DefaultDebounceInterval`, currently 5s); not configurable via the CRD
+- Debounces resource changes with a leading-edge refractory window (`types.DefaultDebounceInterval`, currently 5s). The Reconciler-level window is *not* CRD-configurable; the per-watcher `spec.watchedResources.<name>.debounceInterval` override added separately controls each watcher's own pre-Reconciler debounce, not this one.
 - Triggers immediate reconciliation when all indices are synchronized
 - Filters initial sync events to prevent premature reconciliation
 - Publishes ReconciliationTriggeredEvent
@@ -427,7 +427,7 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 ## Staged Startup Pattern
 
-The controller uses a six-stage startup sequence coordinated via events (Stage 5 = reconciliation + observability, Stage 6 = leader election; both stage labels are logged in `iteration.go`). The entry point is the package-level function `controller.Run` (no `Controller` struct); each iteration is `pkg/controller/iteration.go`. Below is the *shape* — read `iteration.go` for the canonical wiring (constructor signatures, error handling, leader-only gating).
+The controller uses an eight-stage startup sequence coordinated via events (Stage 5 = reconciliation + observability, Stage 6 = leader election, Stage 7 = webhook HTTPS server, Stage 8 = debug-variable + health-checker wiring; all stage labels are logged in `iteration.go` / `infrastructure.go`). The entry point is the package-level function `controller.Run` (no `Controller` struct); each iteration is `pkg/controller/iteration.go`. Below is the *shape* of the first six stages — read `iteration.go` for the canonical wiring (including Stage 7/8) plus the constructor signatures, error handling, and leader-only gating that this sketch elides.
 
 ```go
 // pkg/controller/iteration.go (sketch — see source for the real thing)
@@ -489,7 +489,7 @@ func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
 Key non-obvious points:
 
 - **Subscribe in constructors**, not in `Run` / `Start`. `bus.Start()` flushes the pre-start buffer to whoever's subscribed *at that moment*; late subscribers miss buffered events. Every constructor in this tree obeys this rule via the shared `pkg/controller/component.Base` scaffold.
-- **Leader-only components** (Coordinator, Deployer, DriftMonitor) subscribe inside `Start()` after `BecameLeaderEvent`. All-replica components that hold state (Renderer, Validator, Discovery) re-publish their last state on `BecameLeaderEvent` so the late-subscribed leader-only components don't miss the events that landed during the leadership transition.
+- **Leader-only components** (Coordinator, Deployer, DeploymentScheduler, DriftMonitor, ConfigPublisher, StatusApplier) subscribe inside `Start()` after `BecameLeaderEvent`. All-replica components that hold state (Discovery → `HAProxyPodsDiscoveredEvent`, ConfigChangeHandler → `ConfigValidatedEvent`, both via `pkg/controller/leadership.NewStateReplayer`) re-publish their last state on `BecameLeaderEvent` so the late-subscribed leader-only components don't miss the events that landed during the leadership transition. The renderer is *not* in this list — it's a synchronous service driven by the leader-only Coordinator (ADR-0001), so the new leader's first reconciliation produces a fresh render rather than replaying a stale one.
 
 **Why staged startup?**
 
@@ -968,7 +968,7 @@ func (c *Component) handleWork(event *events.WorkEvent) {
 - `pkg/controller/discovery/handlers.go` — re-publishes `HAProxyPodsDiscoveredEvent`
 - `pkg/controller/configchange/handler.go` — re-publishes `ConfigValidatedEvent`
 
-The renderer does **not** re-publish `TemplateRenderedEvent` — it's leader-only itself. The reconciler instead triggers a fresh reconciliation on `BecameLeaderEvent` so the new leader's pipeline produces a current render rather than replaying a stale one.
+There is no renderer *component* (ADR-0001) — `renderer.RenderService` runs synchronously inside the leader-only Coordinator's `Pipeline.Execute`. So no separate subscription exists to be late, and no `TemplateRenderedEvent` replay is needed. Instead the reconciler triggers a fresh reconciliation on `BecameLeaderEvent` and the new leader's pipeline produces a current render rather than replaying a stale one.
 
 ### Solution 2: State Cleanup on LostLeadershipEvent
 

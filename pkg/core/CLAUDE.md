@@ -108,16 +108,21 @@ type Config struct {
     ValidationTests      map[string]ValidationTest
 }
 
-// Watched resource definition
+// Watched resource definition (selected fields — see types.go for the full shape).
+// There is intentionally no Kind field; the controller derives the kind from
+// the GroupVersionResource at watch time. DebounceInterval is optional —
+// when empty or unparseable, the watcher falls back to
+// pkg/k8s/types.DefaultDebounceInterval (5s); the field exists so noisy
+// resources (HTTPRoute, EndpointSlice) can override the global window.
 type WatchedResource struct {
-    APIVersion       string            `yaml:"api_version"`
-    Kind             string            `yaml:"kind"`
-    Resources        string            `yaml:"resources"`
-    IndexBy          []string          `yaml:"index_by"`
-    LabelSelector    map[string]string `yaml:"label_selector,omitempty"`
-    FieldSelector    string            `yaml:"field_selector,omitempty"`
-    DebounceInterval string            `yaml:"debounce_interval,omitempty"`
-    // ... see types.go for the complete shape including ignore-fields and store options
+    APIVersion              string            `yaml:"api_version"`
+    Resources               string            `yaml:"resources"`
+    IndexBy                 []string          `yaml:"index_by"`
+    LabelSelector           map[string]string `yaml:"label_selector,omitempty"`
+    FieldSelector           string            `yaml:"field_selector,omitempty"`
+    Store                   string            `yaml:"store,omitempty"`              // "full" or "on-demand"
+    EnableValidationWebhook bool              `yaml:"enable_validation_webhook"`
+    DebounceInterval        string            `yaml:"debounce_interval,omitempty"`  // Go duration string, e.g. "10s"
 }
 
 // Auxiliary file definitions — every "file template" type carries the same
@@ -142,10 +147,10 @@ There is no `HAProxyConfigSpec`, `MapDefinition`, `FileDefinition`, or `Dataplan
 
 - Required fields present
 - Port numbers in valid range (1-65535)
-- Enum values are valid (e.g., StoreType = "memory" or "cached")
+- Enum values are valid (e.g., the `Store` field is "full" or "on-demand"; the schema-side enum lives on the CRD type and is enforced by the apiserver, not by pkg/core/config)
 - Non-empty credentials
 
-**Advanced Validation (pkg/controller/validators):**
+**Advanced Validation (pkg/controller/validator):**
 
 - Template syntax validation
 - JSONPath expression validation
@@ -243,8 +248,8 @@ func (c *Config) ValidateStructure() error {
     return nil
 }
 
-// Advanced validation in pkg/controller/validators
-package validators
+// Advanced validation in pkg/controller/validator
+package validator
 
 func ValidateTemplates(cfg config.Config) error {
     engine, err := templating.New(...)
@@ -305,24 +310,23 @@ func anotherPlace(cfg WatchedResource) {
 }
 ```
 
-**Solution**: Define defaults in the canonical package and have callers depend on it. The actual debounce default lives in `pkg/k8s/types.DefaultDebounceInterval`, not in `pkg/core/config` — config-side defaults like `DefaultStoreType` live here.
+**Solution**: Define defaults in the canonical package and have callers depend on it. The actual debounce default lives in `pkg/k8s/types.DefaultDebounceInterval`, not in `pkg/core/config` — config-side defaults like `DefaultMinDeploymentInterval` live here.
 
 ```go
-// Good - centralized defaults
+// Good - centralized defaults (real example from pkg/core/config/defaults.go)
 package config
 
 const (
-    DefaultStoreType = "memory"
-    // DebounceInterval is intentionally NOT redefined here; reuse
-    // pkg/k8s/types.DefaultDebounceInterval (5 * time.Second).
+    DefaultMinDeploymentInterval   = 2 * time.Second
+    DefaultDriftPreventionInterval = 60 * time.Second
+    // The watcher debounce window is intentionally NOT redefined here;
+    // reuse pkg/k8s/types.DefaultDebounceInterval (5 * time.Second).
 )
 
-func (r *WatchedResource) GetDebounceInterval() time.Duration {
-    if r.DebounceInterval != "" {
-        duration, _ := time.ParseDuration(r.DebounceInterval)
-        return duration
-    }
-    return DefaultDebounceInterval
+// Each Get* accessor parses the user's duration string and falls back to
+// the constant when the field is empty or invalid.
+func (d *DataplaneConfig) GetMinDeploymentInterval() time.Duration {
+    return parseDurationOr(d.MinDeploymentInterval, DefaultMinDeploymentInterval)
 }
 ```
 
@@ -551,15 +555,17 @@ type Config struct {
     // ...
 }
 
-func ParseConfig(data map[string][]byte) (*Config, error) {
-    config := &Config{}
-    // ... parse ...
-
-    if config.Version != "" && config.Version != "v2" {
-        return nil, fmt.Errorf("unsupported config version %s, expected v2", config.Version)
+// Wrap the real LoadConfig (no separate ParseConfig exists; see the
+// "Configuration Management" section above) with a version check.
+func LoadConfig(configYAML string) (*Config, error) {
+    cfg, err := loadConfigInternal(configYAML)
+    if err != nil {
+        return nil, err
     }
-
-    return config, nil
+    if cfg.Version != "" && cfg.Version != "v2" {
+        return nil, fmt.Errorf("unsupported config version %s, expected v2", cfg.Version)
+    }
+    return cfg, nil
 }
 ```
 

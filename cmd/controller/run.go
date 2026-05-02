@@ -92,7 +92,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		runCRDName = os.Getenv("CRD_NAME")
 	}
 	if runCRDName == "" {
-		runCRDName = DefaultCRDName
+		runCRDName = defaultCRDName
 	}
 
 	// Secret name
@@ -100,7 +100,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		runSecretName = os.Getenv("SECRET_NAME")
 	}
 	if runSecretName == "" {
-		runSecretName = DefaultSecretName
+		runSecretName = defaultSecretName
 	}
 
 	// Webhook certificate Secret name (optional - empty means webhooks disabled)
@@ -117,7 +117,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		}
 	}
 	if runDebugPort == 0 {
-		runDebugPort = DefaultDebugPort
+		runDebugPort = defaultDebugPort
 	}
 
 	// Set up structured logging with dynamic level support

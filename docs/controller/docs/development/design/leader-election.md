@@ -164,19 +164,14 @@ These events enable:
 
 ### Controller Startup Changes
 
-**Modified startup sequence** (`pkg/controller/controller.go`):
+**Startup sequence** (`pkg/controller/iteration.go` + `pkg/controller/infrastructure.go`):
 
 ```
-Stage 0: Leader Election Initialization (NEW)
-  - Read POD_NAME from environment
-  - Create LeaderElector with Lease lock
-  - Start leader election loop in background goroutine
-  - Continue startup (don't block on becoming leader)
-
 Stage 1: Config Management Components
   - ConfigLoader, CredentialsLoader (all replicas)
-  - ConfigValidator (all replicas, scatter-gather over basic / template / jsonpath)
-  - EventBus.Start()
+  - BasicValidator + TemplateValidator + JSONPathValidator
+    (all replicas, scatter-gather over ConfigValidationRequest)
+  - ConfigChangeHandler (orchestrates the scatter-gather)
 
 Stage 2: Wait for Valid Config
   - All replicas block here
@@ -188,21 +183,31 @@ Stage 3: Resource Watchers
 Stage 4: Wait for Index Sync
   - All replicas block here
 
-Stage 5: Reconciliation Components
+Stage 5: Reconciliation Components (all components subscribe in their
+constructors before EventBus.Start() is called)
   - Reconciler (all replicas)
   - Coordinator (LEADER ONLY) — runs the synchronous render+validate Pipeline
-  - Discovery (all replicas)
-  - Deployer (LEADER ONLY)
-  - DeploymentScheduler (LEADER ONLY)
-  - DriftMonitor (LEADER ONLY)
+  - Discovery, HTTPStore, ProposalValidator (all replicas)
+  - DeploymentScheduler, Deployer, DriftPreventionMonitor,
+    ConfigPublisher, StatusApplier (LEADER ONLY)
+  - Metrics, Commentator (all replicas)
+  → EventBus.Start() runs here, releasing the pre-start buffer to every
+    subscriber that registered during construction.
 
-Stage 6: Webhook Validation
-  - Webhook component (all replicas)
-  - DryRunValidator (all replicas)
+Stage 6: Leader Election (lease-backed elector started after EventBus.Start();
+  on BecameLeaderEvent the LEADER ONLY components above start their goroutines
+  and subscribe via SubscribeTypesLeaderOnly).
 
-Stage 7: Debug Infrastructure
-  - Debug server (all replicas)
-  - Metrics server (all replicas)
+Stage 7: Webhook Validation (only when at least one watched resource has
+enableValidationWebhook: true)
+  - Webhook HTTPS server (all replicas)
+  - DryRunValidator was already created in Stage 5 so its subscriptions
+    were in place before EventBus.Start().
+
+Stage 8: Debug & Metrics Wiring
+  - Register debug variables with the introspection server
+  - Start the pre-created EventBuffer goroutine
+  - Swap the bootstrap health checker for one backed by the lifecycle registry
 ```
 
 ### Conditional Component Startup

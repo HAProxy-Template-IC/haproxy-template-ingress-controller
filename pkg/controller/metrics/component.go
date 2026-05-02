@@ -23,7 +23,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	pkgevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
 
 // ComponentName is the unique identifier for the metrics component.
@@ -39,8 +39,8 @@ const ComponentName = "metrics"
 // the metrics it was updating become eligible for garbage collection.
 type Component struct {
 	metrics        *Metrics
-	eventBus       *pkgevents.EventBus
-	eventChan      <-chan pkgevents.Event // Subscribed in constructor for proper startup synchronization
+	eventBus       *busevents.EventBus
+	eventChan      <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
 	resourceCounts map[string]int         // Tracks current resource counts
 
 	// Leader election tracking
@@ -63,7 +63,7 @@ type Component struct {
 //	component := metrics.New(metrics, eventBus)
 //	go component.Start(ctx)
 //	eventBus.Start()
-func New(metrics *Metrics, eventBus *pkgevents.EventBus) *Component {
+func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 	// Subscribe to EventBus during construction (before EventBus.Start())
 	// This ensures proper startup synchronization without timing-based sleeps
 	// Use typed subscription to only receive events we handle (reduces buffer pressure)
@@ -130,7 +130,7 @@ func (c *Component) Metrics() *Metrics {
 }
 
 // handleEvent processes individual events and updates corresponding metrics.
-func (c *Component) handleEvent(event pkgevents.Event) {
+func (c *Component) handleEvent(event busevents.Event) {
 	// Record every event for total events metric
 	c.metrics.RecordEvent()
 

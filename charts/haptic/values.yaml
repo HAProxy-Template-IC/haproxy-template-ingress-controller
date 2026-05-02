@@ -426,6 +426,10 @@ controller:
         #   apiVersion: v1
         #   resources: configmaps
         #   indexBy: ["metadata.namespace", "metadata.name"]
+        #   # Optional: per-resource debounce override; defaults to 5s.
+        #   # Useful to react faster on routes (e.g. "500ms" on httproutes for canary work)
+        #   # or to absorb churn on EndpointSlices on large clusters (e.g. "30s").
+        #   debounceInterval: ""
     # Template customization
     # The sections below (templateSnippets, maps, files, haproxyConfig, validationTests)
     # are provided by template libraries (see controller.templateLibraries above).

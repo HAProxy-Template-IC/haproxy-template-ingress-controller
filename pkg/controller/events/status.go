@@ -67,7 +67,7 @@ func NewStatusUpdateCompletedEvent(
 		SkippedCount: skippedCount,
 		DurationMs:   durationMs,
 		timestamped:  newTimestamped(),
-		Correlation:  NewCorrelation(opts...),
+		Correlation:  newCorrelation(opts...),
 	}
 }
 
@@ -114,7 +114,7 @@ func NewStatusUpdateFailedEvent(
 		Error:       err,
 		Retriable:   retriable,
 		timestamped: newTimestamped(),
-		Correlation: NewCorrelation(opts...),
+		Correlation: newCorrelation(opts...),
 	}
 }
 

@@ -206,10 +206,11 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
 
-	// GaugeVec metrics don't appear in registry until used with a label value
-	// Initialize them to ensure they're registered
+	// GaugeVec / CounterVec metrics don't appear in registry until used
+	// with a label value — seed them so Gather sees them.
 	metrics.SetResourceCount("test", 0)
 	metrics.SetEventSubscribers(0)
+	metrics.RecordHAProxyPodRejected("version_mismatch_older")
 
 	// Gather all metrics
 	metricFamilies, err := registry.Gather()
@@ -228,6 +229,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 		"haptic_resource_count",
 		"haptic_event_subscribers",
 		"haptic_events_published_total",
+		"haptic_haproxy_pods_rejected_total",
 	}
 
 	// Collect registered metric names

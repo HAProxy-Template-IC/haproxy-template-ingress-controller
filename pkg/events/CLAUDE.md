@@ -18,7 +18,7 @@ Modify this package when:
 
 - Adding new event types → Use `pkg/controller/events`
 - Changing business logic → Use appropriate domain package
-- Adding domain-specific validation → Use `pkg/controller/validators`
+- Adding domain-specific validation → Use `pkg/controller/validator`
 
 ## Key Design Principle
 

@@ -146,7 +146,10 @@ func New(
 		driftInterval := cfg.Dataplane.GetDriftPreventionInterval()
 		cacheTTL := driftInterval * 22 / 10 // 2.2x drift interval
 
-		// Create watcher configuration
+		// Create watcher configuration. DebounceInterval comes from the per-resource
+		// override on the CRD; GetDebounceInterval returns 0 when the field is empty
+		// or unparseable, and WatcherConfig.SetDefaults treats zero as "use the
+		// 5s pkg/k8s/types.DefaultDebounceInterval".
 		watcherConfig := &types.WatcherConfig{
 			GVR:              gvr,
 			Namespace:        determineNamespace(resourceTypeName, k8sClient),
@@ -156,7 +159,7 @@ func New(
 			IgnoreFields:     ignoreFields,
 			StoreType:        determineStoreType(watchedResource.Store),
 			CacheTTL:         cacheTTL,
-			DebounceInterval: 0, // Use default (5s)
+			DebounceInterval: watchedResource.GetDebounceInterval(),
 
 			// OnChange publishes ResourceIndexUpdatedEvent
 			OnChange: func(store types.Store, changeStats types.ChangeStats) {

@@ -40,7 +40,10 @@ const (
 )
 
 // PipelineError is a structured error that identifies which pipeline phase failed.
-// Callers can use errors.As() to extract phase information instead of string parsing.
+// Callers can use errors.AsType[*PipelineError] (or errors.As with a typed
+// pointer target on Go < 1.26) to extract phase information instead of string
+// parsing. The Coordinator does this in handlePipelineFailure to set the
+// reconciliation-failed event's phase field.
 type PipelineError struct {
 	// Phase identifies which pipeline phase failed.
 	Phase PipelinePhase
