@@ -792,9 +792,17 @@ func TestHandleValidationRequest_DeleteSuccess(t *testing.T) {
 	assert.True(t, event.Allowed)
 }
 
-// TestHandleValidationRequest_RenderFailure tests that a render failure produces
-// a denied response with a simplified error message.
-func TestHandleValidationRequest_RenderFailure(t *testing.T) {
+// TestHandleValidationRequest_AlwaysFailingTemplate_AdmitsBecauseBaselineFails
+// pins the same baseline-check semantics covered by
+// TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails, but
+// for the scatter-gather event-driven path that publishes
+// WebhookValidationResponse instead of returning the result synchronously.
+//
+// An always-failing template (`{{ fail("Service 'api' not found") }}`) means
+// both proposed and baseline renders fail identically — the proposal isn't
+// the cause of the failure — so the response is "allowed". See the comment
+// on the sync test for the production-reliability rationale.
+func TestHandleValidationRequest_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
@@ -865,8 +873,15 @@ func TestHandleValidationRequest_RenderFailure(t *testing.T) {
 
 	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, "test-render-fail", event.RequestID())
-	assert.False(t, event.Allowed)
-	assert.Contains(t, event.Reason, "Service 'api' not found")
+	assert.True(t, event.Allowed,
+		"baseline-also-fails MUST admit on the async path too — the policy "+
+			"(only deny when the new resource is the cause) is enforced by "+
+			"proposalvalidator.ValidateSync and applies regardless of which "+
+			"caller (sync ValidateDirect or async handleValidationRequest) "+
+			"surfaces the result")
+	assert.Empty(t, event.Reason,
+		"on admit no denial reason should be surfaced — the proposed-render "+
+			"failure is logged at warn but not propagated as a denial message")
 }
 
 // TestHandleValidationRequest_OverlayReferencesInvalidStore tests that overlays
@@ -1029,8 +1044,22 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 	assert.Contains(t, reason, "unsupported resource type")
 }
 
-// TestValidateDirect_ValidationFailure tests that ValidateDirect returns denied for failures.
-func TestValidateDirect_ValidationFailure(t *testing.T) {
+// TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails verifies
+// the baseline-check semantics added to proposalvalidator.ValidateSync: when
+// the proposed render fails AND the baseline render (live stores without the
+// overlay) ALSO fails for the same reason, the new resource isn't the cause
+// of the failure and admission is allowed.
+//
+// The fixture uses a template of `{{ fail("invalid config") }}` — it
+// produces a render error regardless of overlay content, so both the
+// proposed and baseline runs fail identically. Pre-existing broken state in
+// production manifests this way (e.g., an Ingress whose Secret has been
+// deleted causes every render to fail until the Ingress or Secret is fixed).
+// Under the previous "deny on any failure" policy, every webhook admission
+// would be denied in that situation, blocking unrelated work. The
+// baseline-check policy admits unrelated proposals so they aren't gated on
+// an operator fixing the pre-existing failure first.
+func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
@@ -1038,7 +1067,6 @@ func TestValidateDirect_ValidationFailure(t *testing.T) {
 		ValidationTests:  map[string]config.ValidationTest{},
 	}
 
-	// Use a template that always fails
 	failingEngine, err := templating.New(
 		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`},
@@ -1095,8 +1123,14 @@ func TestValidateDirect_ValidationFailure(t *testing.T) {
 		"CREATE",
 	)
 
-	assert.False(t, allowed)
-	assert.Contains(t, reason, "invalid config")
+	assert.True(t, allowed,
+		"baseline-also-fails MUST admit the proposal — the alternative is "+
+			"denying every unrelated admission whenever the cluster has any "+
+			"broken pre-existing state, which is the production reliability "+
+			"bug the baseline check fixes")
+	assert.Empty(t, reason,
+		"on admit no denial reason should be surfaced — the proposed-render "+
+			"failure is logged at warn but not propagated as a denial message")
 }
 
 // createMockProposalValidator creates a minimal ProposalValidator for testing.
