@@ -64,8 +64,7 @@ type RequestResult struct {
 //
 // When adding new Response types in pkg/controller/events, register them here.
 var responseEventTypes = []string{
-	"config.validation.response",     // ConfigValidationResponse
-	"webhook.validation.response.sg", // WebhookValidationResponse
+	"config.validation.response", // ConfigValidationResponse
 }
 
 // executeRequest implements the scatter-gather pattern.

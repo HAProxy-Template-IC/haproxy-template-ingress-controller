@@ -175,7 +175,7 @@ Webhook Admission Request
     ├─ Valid → Allow
     └─ Invalid → SimplifyValidationError → Deny
     ↓
-Publish WebhookValidationResponse
+Return (allowed bool, reason string) to webhook
 ```
 
 ## Error Handling
@@ -219,32 +219,27 @@ The DryRunValidator delegates the render+validate work to a `*proposalvalidator.
 
 ```go
 type Component struct {
-    eventBus          *busevents.EventBus
-    eventChan         <-chan busevents.Event
+    eventBus          *busevents.EventBus           // ValidationTests* observability events only
     proposalValidator *proposalvalidator.Component  // Performs render + 3-phase validation
     config            *config.Config                // Cached for testRunner construction
     testRunner        *testrunner.Runner            // Optional: only built if ValidationTests is set
     logger            *slog.Logger
 }
 
-func (c *Component) handleValidationRequest(req *events.WebhookValidationRequest) {
-    // Build overlay stores and a proposal request, then delegate.
-    // The proposalValidator builds the rendering context, runs the template
-    // engine, and feeds the output through dataplane.ValidateConfiguration
-    // (syntax + schema + haproxy -c).
-
-    // Event publishing - coordination with other components
-    c.eventBus.Publish(events.NewWebhookValidationResponse(...))
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string) {
+    // Build the overlay store, delegate render+validate to proposalValidator.ValidateSync,
+    // optionally run embedded validationTests, return a flat allow/deny + reason.
+    // No event hop — the webhook holds the request open and gets the answer synchronously.
 }
 ```
 
-**Why this delegation is acceptable here:**
+**Why a synchronous library, not an event adapter:**
 
-1. **Same pipeline as reconciliation**: Webhook validation must reject configs that would also fail at deploy time, so reusing the proposal pipeline is required by spec, not just convenient.
-2. **Performance critical**: Webhook timeouts are tight (10 seconds); avoiding extra event hops keeps the path predictable.
-3. **Stateless**: Each validation is independent.
+1. **Same pipeline as reconciliation**: webhook validation must reject configs that would also fail at deploy time, so reusing the proposal pipeline is required by spec.
+2. **Performance critical**: webhook timeouts are tight (5–10 seconds); a publish/subscribe round-trip adds latency for no observable benefit.
+3. **Stateless**: each validation is independent — there is no shared state for the bus to broker.
 
-This pattern is documented in `/CLAUDE.md` and `pkg/controller/CLAUDE.md` as an exception to strict event-driven patterns for performance-critical paths.
+ADR-0001 settled the analogous question for the renderer; the dry-run validator follows the same shape and was cleaned up for the same reasons.
 
 ## Testing Strategy
 
@@ -262,27 +257,23 @@ func TestSimplifyRenderingError(t *testing.T) {
 
 ### Integration Tests
 
-The full integration shape is in `component_test.go`. Two things differ from
-what you might guess from the rest of this doc:
+The full integration shape is in `component_test.go`. The constructor takes a
+`*ComponentConfig` struct:
 
-- The constructor takes a `*ComponentConfig` struct, not positional args:
+```go
+component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
+    EventBus:          bus, // optional unless ValidationTests are configured
+    ProposalValidator: proposalValidator,
+    Config:            cfg,
+    Engine:            engine,
+    ValidationPaths:   validationPaths,
+    Capabilities:      capabilities,
+    Logger:            logger,
+})
+```
 
-  ```go
-  component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-      EventBus:          bus,
-      ProposalValidator: proposalValidator,
-      Config:            cfg,
-      Engine:            engine,
-      ValidationPaths:   validationPaths,
-      Capabilities:      capabilities,
-      Logger:            logger,
-  })
-  ```
-
-- Use `events.NewWebhookValidationRequest(gvk, namespace, name, obj, operation)`
-  to build requests; you can't construct `WebhookValidationRequest` literally
-  because the timestamp mixin is unexported and the constructor stamps the
-  `ID` (UUID).
+Drive validation through `component.ValidateDirect(ctx, gvk, namespace, name, object, operation)`
+— there is no event-driven path to exercise.
 
 ## Common Pitfalls
 

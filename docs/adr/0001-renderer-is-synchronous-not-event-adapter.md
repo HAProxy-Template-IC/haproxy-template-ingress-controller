@@ -25,3 +25,7 @@ The legacy `renderer.Component` and its test files have been removed. The valida
 ## Do not re-suggest
 
 A future architecture review may notice that "every other component is an event adapter, why is the renderer a library?" and propose re-introducing `renderer.Component` for symmetry. **Do not.** The synchronous pipeline is deliberate. Symmetry is not load-bearing; the event hop was removed because it added latency on the hot path and made the render-validate sequence harder to reason about. If you have a use case that genuinely needs an event-adapted renderer, propose a new ADR superseding this one with the concrete requirement.
+
+## Related
+
+- The dry-run validator (`pkg/controller/dryrunvalidator`) followed the same shape: a `WebhookValidationRequest` scatter-gather subscription was kept "for future scatter-gather observability" with no production publisher. It was deleted on the same principle — no event hop where there is no second participant. Production calls `ValidateDirect` synchronously.

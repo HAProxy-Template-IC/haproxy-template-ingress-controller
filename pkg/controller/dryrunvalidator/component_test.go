@@ -19,13 +19,11 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
@@ -271,11 +269,6 @@ func TestBuildTestFailureError(t *testing.T) {
 	}
 }
 
-func TestConstants(t *testing.T) {
-	assert.Equal(t, "dryrun", ValidatorID)
-	assert.Equal(t, 50, EventBufferSize)
-}
-
 func TestCreateOverlay(t *testing.T) {
 	c := &Component{
 		logger: slog.Default(),
@@ -407,7 +400,6 @@ func TestNew(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -419,287 +411,10 @@ func TestNew(t *testing.T) {
 	require.NotNil(t, component)
 	assert.Equal(t, cfg, component.config)
 	assert.NotNil(t, component.logger)
-	assert.NotNil(t, component.eventChan, "eventChan should be set by constructor")
 }
 
-func TestStart_ContextCancellation(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:     "/etc/haproxy/maps",
-		SSLCertsDir: "/etc/haproxy/ssl",
-		ConfigFile:  "/etc/haproxy/haproxy.cfg",
-	}
-
-	engine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": "# empty config"},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
-	proposalValidator := createMockProposalValidator(bus, logger)
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	bus.Start()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan error)
-	go func() {
-		done <- component.Start(ctx)
-	}()
-
-	// Give component time to start
-	time.Sleep(testutil.StartupDelay)
-
-	// Cancel context
-	cancel()
-
-	// Verify component stops cleanly
-	select {
-	case err := <-done:
-		assert.NoError(t, err)
-	case <-time.After(testutil.LongTimeout):
-		t.Fatal("component did not stop after context cancellation")
-	}
-}
-
-func TestHandleEvent_IgnoresNonValidationEvents(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{}
-	validationPaths := &dataplane.ValidationPaths{}
-
-	engine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": "# empty"},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
-	proposalValidator := createMockProposalValidator(bus, logger)
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	// handleEvent with non-validation event should not panic
-	// This tests the type switch in handleEvent
-	component.handleEvent(&events.ConfigParsedEvent{})
-}
-
-func TestPublishResponse_Allowed(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{}
-	validationPaths := &dataplane.ValidationPaths{}
-
-	engine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": "# empty"},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
-	proposalValidator := createMockProposalValidator(bus, logger)
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	// Publish allowed response
-	component.publishResponse("test-req-123", true, "")
-
-	// Verify event was published
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-req-123", event.RequestID())
-	assert.Equal(t, ValidatorID, event.ValidatorID)
-	assert.True(t, event.Allowed)
-	assert.Empty(t, event.Reason)
-}
-
-func TestPublishResponse_Denied(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{}
-	validationPaths := &dataplane.ValidationPaths{}
-
-	engine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": "# empty"},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
-	proposalValidator := createMockProposalValidator(bus, logger)
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	// Publish denied response
-	component.publishResponse("test-req-456", false, "validation failed: invalid config")
-
-	// Verify event was published
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-req-456", event.RequestID())
-	assert.Equal(t, ValidatorID, event.ValidatorID)
-	assert.False(t, event.Allowed)
-	assert.Equal(t, "validation failed: invalid config", event.Reason)
-}
-
-func TestHandleValidationRequest_InvalidGVK(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:     "/etc/haproxy/maps",
-		SSLCertsDir: "/etc/haproxy/ssl",
-		ConfigFile:  "/etc/haproxy/haproxy.cfg",
-	}
-
-	engine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": "# empty config"},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
-	proposalValidator := createMockProposalValidator(bus, logger)
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	// Create validation request with invalid GVK (no dot separator)
-	req := &events.WebhookValidationRequest{
-		ID:        "test-req-invalid-gvk",
-		GVK:       "invalid", // Missing version.Kind
-		Namespace: "default",
-		Name:      "test-resource",
-		Operation: "CREATE",
-	}
-
-	// Handle the request
-	component.handleValidationRequest(req)
-
-	// Verify error response was published
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-req-invalid-gvk", event.RequestID())
-	assert.Equal(t, ValidatorID, event.ValidatorID)
-	assert.False(t, event.Allowed)
-	assert.Contains(t, event.Reason, "unsupported resource type")
-	assert.Contains(t, event.Reason, "invalid GVK")
-}
-
-// TestHandleValidationRequest_CreateSuccess tests the full flow for a CREATE operation.
-func TestHandleValidationRequest_CreateSuccess(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:     "/etc/haproxy/maps",
-		SSLCertsDir: "/etc/haproxy/ssl",
-		ConfigFile:  "/etc/haproxy/haproxy.cfg",
-	}
-
-	engine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
-	proposalValidator := createMockProposalValidator(bus, logger)
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	req := &events.WebhookValidationRequest{
-		ID:        "test-create",
-		GVK:       "networking.k8s.io/v1.Ingress",
-		Namespace: "default",
-		Name:      "test-ingress",
-		Operation: "CREATE",
-		Object:    createTestIngress("test-ingress", "default"),
-	}
-
-	component.handleValidationRequest(req)
-
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-create", event.RequestID())
-	assert.True(t, event.Allowed)
-	assert.Empty(t, event.Reason)
-}
-
-// TestHandleValidationRequest_UpdateSuccess tests the full flow for an UPDATE operation.
-func TestHandleValidationRequest_UpdateSuccess(t *testing.T) {
+// TestValidateDirect_UpdateSuccess tests the full flow for an UPDATE operation.
+func TestValidateDirect_UpdateSuccess(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
@@ -710,7 +425,6 @@ func TestHandleValidationRequest_UpdateSuccess(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine: func() templating.Engine {
@@ -726,27 +440,23 @@ func TestHandleValidationRequest_UpdateSuccess(t *testing.T) {
 		Logger:          logger,
 	})
 
-	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
-	req := &events.WebhookValidationRequest{
-		ID:        "test-update",
-		GVK:       "networking.k8s.io/v1.Ingress",
-		Namespace: "staging",
-		Name:      "updated-ingress",
-		Operation: "UPDATE",
-		Object:    createTestIngress("updated-ingress", "staging"),
-	}
+	allowed, reason := component.ValidateDirect(
+		context.Background(),
+		"networking.k8s.io/v1.Ingress",
+		"staging",
+		"updated-ingress",
+		createTestIngress("updated-ingress", "staging"),
+		"UPDATE",
+	)
 
-	component.handleValidationRequest(req)
-
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-update", event.RequestID())
-	assert.True(t, event.Allowed)
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
 }
 
-// TestHandleValidationRequest_DeleteSuccess tests the full flow for a DELETE operation.
-func TestHandleValidationRequest_DeleteSuccess(t *testing.T) {
+// TestValidateDirect_DeleteSuccess tests the full flow for a DELETE operation.
+func TestValidateDirect_DeleteSuccess(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
@@ -757,7 +467,6 @@ func TestHandleValidationRequest_DeleteSuccess(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine: func() templating.Engine {
@@ -773,120 +482,24 @@ func TestHandleValidationRequest_DeleteSuccess(t *testing.T) {
 		Logger:          logger,
 	})
 
-	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
-	req := &events.WebhookValidationRequest{
-		ID:        "test-delete",
-		GVK:       "networking.k8s.io/v1.Ingress",
-		Namespace: "default",
-		Name:      "test-ingress",
-		Operation: "DELETE",
-		Object:    nil,
-	}
-
-	component.handleValidationRequest(req)
-
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-delete", event.RequestID())
-	assert.True(t, event.Allowed)
-}
-
-// TestHandleValidationRequest_AlwaysFailingTemplate_AdmitsBecauseBaselineFails
-// pins the same baseline-check semantics covered by
-// TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails, but
-// for the scatter-gather event-driven path that publishes
-// WebhookValidationResponse instead of returning the result synchronously.
-//
-// An always-failing template (`{{ fail("Service 'api' not found") }}`) means
-// both proposed and baseline renders fail identically — the proposal isn't
-// the cause of the failure — so the response is "allowed". See the comment
-// on the sync test for the production-reliability rationale.
-func TestHandleValidationRequest_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *testing.T) {
-	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
-	// Create a proposal validator with an invalid template that will fail rendering
-	failingEngine, err := templating.New(
-		templating.EngineTypeScriggo,
-		map[string]string{"haproxy.cfg": `{{ fail("Service 'api' not found") }}`},
-		nil, nil, nil,
+	allowed, reason := component.ValidateDirect(
+		context.Background(),
+		"networking.k8s.io/v1.Ingress",
+		"default",
+		"test-ingress",
+		nil,
+		"DELETE",
 	)
-	require.NoError(t, err)
 
-	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine: failingEngine,
-		Config: &config.Config{},
-		Logger: logger,
-	})
-
-	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
-		Logger:            logger,
-		SkipDNSValidation: true,
-	})
-
-	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
-		Renderer:  renderService,
-		Validator: validationService,
-		Logger:    logger,
-	})
-
-	baseStoreProvider := stores.NewRealStoreProvider(map[string]stores.Store{
-		"ingresses": &storetest.MockStore{},
-		"services":  &storetest.MockStore{},
-	})
-
-	failingProposalValidator := proposalvalidator.New(&proposalvalidator.ComponentConfig{
-		EventBus:          bus,
-		Pipeline:          pipelineInstance,
-		BaseStoreProvider: baseStoreProvider,
-		Logger:            logger,
-	})
-
-	component := New(&ComponentConfig{
-		EventBus:          bus,
-		ProposalValidator: failingProposalValidator,
-		Config:            cfg,
-		Engine:            failingEngine,
-		ValidationPaths:   &dataplane.ValidationPaths{},
-		Capabilities:      dataplane.Capabilities{},
-		Logger:            logger,
-	})
-
-	eventChan := bus.Subscribe("test-sub", 10)
-	bus.Start()
-
-	req := &events.WebhookValidationRequest{
-		ID:        "test-render-fail",
-		GVK:       "networking.k8s.io/v1.Ingress",
-		Namespace: "default",
-		Name:      "test-ingress",
-		Operation: "CREATE",
-		Object:    createTestIngress("test-ingress", "default"),
-	}
-
-	component.handleValidationRequest(req)
-
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-render-fail", event.RequestID())
-	assert.True(t, event.Allowed,
-		"baseline-also-fails MUST admit on the async path too — the policy "+
-			"(only deny when the new resource is the cause) is enforced by "+
-			"proposalvalidator.ValidateSync and applies regardless of which "+
-			"caller (sync ValidateDirect or async handleValidationRequest) "+
-			"surfaces the result")
-	assert.Empty(t, event.Reason,
-		"on admit no denial reason should be surfaced — the proposed-render "+
-			"failure is logged at warn but not propagated as a denial message")
+	assert.True(t, allowed)
+	assert.Empty(t, reason)
 }
 
-// TestHandleValidationRequest_OverlayReferencesInvalidStore tests that overlays
+// TestValidateDirect_OverlayReferencesInvalidStore tests that overlays
 // referencing non-existent stores produce a denial.
-func TestHandleValidationRequest_OverlayReferencesInvalidStore(t *testing.T) {
+func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
 	cfg := &config.Config{
@@ -930,7 +543,6 @@ func TestHandleValidationRequest_OverlayReferencesInvalidStore(t *testing.T) {
 	})
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: noStoreProposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -939,24 +551,19 @@ func TestHandleValidationRequest_OverlayReferencesInvalidStore(t *testing.T) {
 		Logger:            logger,
 	})
 
-	eventChan := bus.Subscribe("test-sub", 10)
 	bus.Start()
 
-	req := &events.WebhookValidationRequest{
-		ID:        "test-no-store",
-		GVK:       "networking.k8s.io/v1.Ingress",
-		Namespace: "default",
-		Name:      "test-ingress",
-		Operation: "CREATE",
-		Object:    createTestIngress("test-ingress", "default"),
-	}
+	allowed, reason := component.ValidateDirect(
+		context.Background(),
+		"networking.k8s.io/v1.Ingress",
+		"default",
+		"test-ingress",
+		createTestIngress("test-ingress", "default"),
+		"CREATE",
+	)
 
-	component.handleValidationRequest(req)
-
-	event := testutil.WaitForEvent[*events.WebhookValidationResponse](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, "test-no-store", event.RequestID())
-	assert.False(t, event.Allowed)
-	assert.Contains(t, event.Reason, "non-existent store")
+	assert.False(t, allowed)
+	assert.Contains(t, reason, "non-existent store")
 }
 
 // TestValidateDirect_Success tests the synchronous validation path.
@@ -978,7 +585,6 @@ func TestValidateDirect_Success(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -1020,7 +626,6 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -1103,7 +708,6 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 	})
 
 	component := New(&ComponentConfig{
-		EventBus:          bus,
 		ProposalValidator: failingProposalValidator,
 		Config:            cfg,
 		Engine:            failingEngine,

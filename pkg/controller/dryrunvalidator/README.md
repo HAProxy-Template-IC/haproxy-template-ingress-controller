@@ -12,7 +12,7 @@ The validating admission webhook needs a synchronous answer to "would this propo
 4. Optionally running the embedded `validationTests` against the proposed config (when the CRD declares them).
 5. Returning a flat allow/deny + simplified reason string for the webhook response.
 
-The component also subscribes to `*events.WebhookValidationRequest` (event-type constant `EventTypeWebhookValidationRequestSG` — the `SG` suffix marks scatter-gather). No production component currently publishes that request — the webhook flows entirely through the synchronous `ValidateDirect` call — so the subscription is dormant infrastructure left in place for future scatter-gather observability. Treat `ValidateDirect` as the only live path today.
+The component does not subscribe to any events. `EventBus` is wired in only so the embedded `validationTests` runner can publish `ValidationTestsStarted/Completed/Failed` for the commentator and metrics components.
 
 ## Quick Start
 
@@ -22,22 +22,18 @@ import (
 )
 
 component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-    EventBus:          bus,
-    ProposalValidator: proposalValidator, // sync-mode *proposalvalidator.Component
+    EventBus:          bus,                // for ValidationTests* observability events only
+    ProposalValidator: proposalValidator,  // sync-mode *proposalvalidator.Component
     Config:            cfg,
-    Engine:            templateEngine,    // pre-compiled
+    Engine:            templateEngine,     // pre-compiled
     ValidationPaths:   validationPaths,
     Capabilities:      caps,
     Logger:            logger,
 })
-go func() {
-    if err := component.Start(ctx); err != nil {
-        logger.Error("dryrunvalidator exited", "error", err)
-    }
-}()
 
-// pkg/controller/webhook hands this exact component as DryRunValidator
-// and calls ValidateDirect synchronously per admission request.
+// pkg/controller/webhook hands this component as DryRunValidator and
+// calls ValidateDirect synchronously per admission request. There is
+// no Start() — the validator is a library, not a lifecycle component.
 ```
 
 `ValidationTests` is optional — the validator only constructs an internal `*testrunner.Runner` when the CRD has tests. With `Workers: 1` the runner stays lightweight enough for the webhook timeout window.

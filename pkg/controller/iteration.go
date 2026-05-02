@@ -141,8 +141,10 @@ func runIteration(
 	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
 	// It subscribes in constructor before EventBus.Start() for proper subscription ordering
 
-	// 6.2. Create DryRunValidator for webhook validation (subscribes in constructor)
-	// Must be created before EventBus.Start() to ensure proper subscription
+	// 6.2. Create DryRunValidator for webhook validation.
+	// The validator is a synchronous library (ValidateDirect); the proposal
+	// validator it wires up subscribes to ProposalValidationRequestedEvent in
+	// its constructor, so this must run before EventBus.Start().
 	var dryrunValidator *dryrunvalidator.Component
 	if webhook.HasWebhookEnabled(cfg) {
 		var err error

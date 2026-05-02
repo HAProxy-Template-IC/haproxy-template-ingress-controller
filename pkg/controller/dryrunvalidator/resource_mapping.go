@@ -20,7 +20,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -139,18 +138,4 @@ func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
 
 	// Default: add 's' for regular plurals
 	return kindLower + "s", nil
-}
-
-// publishResponse publishes a WebhookValidationResponse event.
-func (c *Component) publishResponse(requestID string, allowed bool, reason string) {
-	response := events.NewWebhookValidationResponse(requestID, ValidatorID, allowed, reason)
-	c.eventBus.Publish(response)
-
-	if allowed {
-		c.logger.Debug("Published allowed response", "request_id", requestID)
-	} else {
-		c.logger.Info("Published denied response",
-			"request_id", requestID,
-			"reason", reason)
-	}
 }
