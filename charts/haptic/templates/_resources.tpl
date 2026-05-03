@@ -48,7 +48,7 @@ Changes when any value feeding into the bootstrap config changes,
 triggering a rolling update of HAProxy pods.
 */}}
 {{- define "haptic.haproxy.bootstrapConfigChecksum" -}}
-{{- printf "%v-%v-%v" (.Values.haproxy.ports | toJson) (include "haptic.haproxy.nbthread" . | default "0") (.Values.haproxy.shmStats | toJson) | sha256sum -}}
+{{- printf "%v-%v" (tpl (.Values.haproxy.initialConfig | default "") .) (.Values.haproxy.shmStats | toJson) | sha256sum -}}
 {{- end -}}
 
 {{/*

@@ -1192,6 +1192,49 @@ haproxy:
     #     start: 0 8 * * 1-5
     #     end: 0 18 * * 1-5
     #     desiredReplicas: "5"
+  # Initial HAProxy bootstrap config rendered into the haproxy-config ConfigMap.
+  # This is the config HAProxy starts with on pod boot. The controller replaces
+  # it via the Dataplane API on its first reconcile, so the bootstrap only
+  # matters during the seconds between pod start and controller handoff (and on
+  # pod restart before the controller reconciles again).
+  #
+  # The string is processed through Helm's tpl, so chart helpers
+  # ({{ include "haptic.haproxy.nbthread" . }}) and value references
+  # ({{ .Values.haproxy.ports.stats }}) are available. To customise the
+  # bootstrap, copy this default into your values file and edit it.
+  #
+  # !!! warning "Preserve the /ready 503 until controller takeover"
+  #     The default returns 503 on /ready so the pod stays NotReady until the
+  #     controller pushes its first real config (which then defines the
+  #     production /ready handler). An override that returns 200 on /ready
+  #     will let the Service route traffic to HAProxy before any backends
+  #     exist — clients will see 404s.
+  initialConfig: |
+    global
+        log stdout len 4096 local0 info
+        {{- with include "haptic.haproxy.nbthread" . }}
+        nbthread {{ . }}
+        {{- end }}
+
+    defaults
+        mode http
+        log global
+        option httplog
+        timeout connect 5000
+        timeout client 50000
+        timeout server 50000
+
+    frontend status
+        bind *:{{ .Values.haproxy.ports.stats }}
+        http-request return status 200 content-type text/plain string "OK" if { path /healthz }
+        http-request return status 503 content-type text/plain string "Not ready - waiting for controller config" if { path /ready }
+
+    frontend http_frontend
+        bind *:{{ .Values.haproxy.ports.http }}
+        default_backend default_backend
+
+    backend default_backend
+        http-request return status 404
   # NetworkPolicy configuration for HAProxy loadbalancer pods
   # This controls network access to/from HAProxy pods that handle incoming traffic
   #

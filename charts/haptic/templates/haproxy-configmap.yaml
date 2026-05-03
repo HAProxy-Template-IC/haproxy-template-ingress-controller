@@ -1,5 +1,4 @@
 {{- if .Values.haproxy.enabled }}
-{{- $ports := .Values.haproxy.ports }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,29 +9,5 @@ metadata:
     app.kubernetes.io/component: loadbalancer
 data:
   haproxy.cfg: |
-    global
-        log stdout len 4096 local0 info
-        {{- with include "haptic.haproxy.nbthread" . }}
-        nbthread {{ . }}
-        {{- end }}
-
-    defaults
-        mode http
-        log global
-        option httplog
-        timeout connect 5000
-        timeout client 50000
-        timeout server 50000
-
-    frontend status
-        bind *:{{ $ports.stats }}
-        http-request return status 200 content-type text/plain string "OK" if { path /healthz }
-        http-request return status 503 content-type text/plain string "Not ready - waiting for controller config" if { path /ready }
-
-    frontend http_frontend
-        bind *:{{ $ports.http }}
-        default_backend default_backend
-
-    backend default_backend
-        http-request return status 404
+    {{- tpl (.Values.haproxy.initialConfig | default "") . | nindent 4 }}
 {{- end }}
