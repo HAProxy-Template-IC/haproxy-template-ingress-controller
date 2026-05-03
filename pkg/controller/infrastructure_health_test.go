@@ -9,10 +9,16 @@
 package controller
 
 import (
+	"log/slog"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
+	pvtestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 )
 
 // createEarlyHealthChecker is the health endpoint Kubernetes uses
@@ -116,5 +122,74 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		assert.True(t, got["config"].Healthy)
 		assert.Empty(t, got["config"].Error,
 			"transitioning loaded must clear the wait message")
+	})
+}
+
+// mergePluggableValidatorHealth is the seam through which `spec.validators`
+// status reaches /healthz. Pin three load-bearing properties:
+//
+//  1. No validators configured → no entry inserted (operators not using
+//     the feature see /healthz output unchanged).
+//  2. All validator sockets healthy → single Healthy=true entry under
+//     "pluggable-validators", no Error string.
+//  3. One or more sockets unreachable → Healthy=false with the failure
+//     reasons surfaced verbatim (semicolon-joined for multi-failure).
+func TestMergePluggableValidatorHealth(t *testing.T) {
+	t.Run("nil manager skips the entry", func(t *testing.T) {
+		result := map[string]introspection.ComponentHealth{}
+		mergePluggableValidatorHealth(result, nil)
+		_, present := result["pluggable-validators"]
+		assert.False(t, present,
+			"nil manager must not pollute /healthz output for operators not using the feature")
+	})
+
+	t.Run("manager with no validators skips the entry", func(t *testing.T) {
+		mgr, err := pluggablevalidator.NewManager(slog.Default(), nil)
+		require.NoError(t, err)
+		result := map[string]introspection.ComponentHealth{}
+		mergePluggableValidatorHealth(result, mgr)
+		_, present := result["pluggable-validators"]
+		assert.False(t, present,
+			"manager.Configured()==false must not surface a /healthz entry")
+	})
+
+	t.Run("all sockets healthy reports healthy with no error", func(t *testing.T) {
+		srv1 := pvtestutil.NewFixtureServer(t)
+		srv2 := pvtestutil.NewFixtureServer(t)
+		mgr, err := pluggablevalidator.NewManager(slog.Default(), []pluggablevalidator.ManagerConfig{
+			{Name: "coraza", SocketPath: srv1.SocketPath},
+			{Name: "otel", SocketPath: srv2.SocketPath},
+		})
+		require.NoError(t, err)
+
+		result := map[string]introspection.ComponentHealth{}
+		mergePluggableValidatorHealth(result, mgr)
+
+		entry, ok := result["pluggable-validators"]
+		require.True(t, ok, "all-healthy state must surface the entry so operators can see configured-and-fine")
+		assert.True(t, entry.Healthy,
+			"all sockets reachable → Healthy=true; otherwise liveness probes flap on a working setup")
+		assert.Empty(t, entry.Error,
+			"healthy state must not carry an error string")
+	})
+
+	t.Run("missing socket reports unhealthy with the failure name", func(t *testing.T) {
+		srv := pvtestutil.NewFixtureServer(t)
+		missing := filepath.Join(t.TempDir(), "missing.sock")
+		mgr, err := pluggablevalidator.NewManager(slog.Default(), []pluggablevalidator.ManagerConfig{
+			{Name: "coraza", SocketPath: srv.SocketPath},
+			{Name: "otel", SocketPath: missing},
+		})
+		require.NoError(t, err)
+
+		result := map[string]introspection.ComponentHealth{}
+		mergePluggableValidatorHealth(result, mgr)
+
+		entry, ok := result["pluggable-validators"]
+		require.True(t, ok)
+		assert.False(t, entry.Healthy,
+			"any socket failure must mark the validators entry unhealthy")
+		assert.Contains(t, entry.Error, "otel:",
+			"the failing validator's name must surface so operators can identify the broken sidecar")
 	})
 }

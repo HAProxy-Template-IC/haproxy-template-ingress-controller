@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -131,11 +133,17 @@ func startEarlyInfrastructureServers(
 //
 // Note: /debug/events is already registered in startEarlyInfrastructureServers via two-phase
 // initialization (Setup/Serve pattern), so it's available even during early startup.
+//
+// The pluggable-validator manager is consulted on every probe via its
+// Healthy() method (sub-millisecond happy path). Each configured
+// validator socket gets its own entry in the /healthz response so
+// operators can tell which sidecar is broken when the probe fails.
 func setupInfrastructureServers(
 	ctx context.Context,
 	setup *componentSetup,
 	stateCache *StateCache,
 	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
+	pluggableMgr *pluggablevalidator.Manager,
 	logger *slog.Logger,
 ) {
 	logger.Info("Stage 8: Registering debug variables and updating health checker")
@@ -154,7 +162,7 @@ func setupInfrastructureServers(
 	// This replaces the initial simple health checker set in startEarlyInfrastructureServers
 	setup.IntrospectionServer.SetHealthChecker(func() map[string]introspection.ComponentHealth {
 		status := setup.Registry.Status()
-		result := make(map[string]introspection.ComponentHealth, len(status))
+		result := make(map[string]introspection.ComponentHealth, len(status)+1)
 		for name, info := range status {
 			// StatusStandby is healthy - component is intentionally not active
 			// (e.g., leader-only components on non-leader pods)
@@ -167,9 +175,37 @@ func setupInfrastructureServers(
 				Error:   info.Error,
 			}
 		}
+		mergePluggableValidatorHealth(result, pluggableMgr)
 		return result
 	})
 
 	logger.Info("Debug variables registered and health checker updated",
 		"endpoints", "/debug/vars, /debug/pprof, /healthz")
+}
+
+// mergePluggableValidatorHealth adds a "pluggable-validators" entry to
+// the health-checker map summarising the configured validator sockets.
+// When no validators are configured the entry is omitted entirely so
+// /healthz output stays unchanged for operators not using the feature.
+//
+// Behaviour when validators are configured:
+//   - All sockets healthy → Healthy=true, no Error.
+//   - Any socket unreachable → Healthy=false, Error lists every failing
+//     "<name>: <reason>" entry semicolon-joined so operators can see in
+//     one line which sidecar is broken.
+//
+// Sub-millisecond happy path so the probe stays cheap on every interval.
+func mergePluggableValidatorHealth(
+	result map[string]introspection.ComponentHealth,
+	mgr *pluggablevalidator.Manager,
+) {
+	if mgr == nil || !mgr.Configured() {
+		return
+	}
+	ok, failures := mgr.Healthy()
+	entry := introspection.ComponentHealth{Healthy: ok}
+	if !ok {
+		entry.Error = strings.Join(failures, "; ")
+	}
+	result["pluggable-validators"] = entry
 }
