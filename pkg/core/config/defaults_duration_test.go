@@ -62,6 +62,50 @@ func TestDataplaneConfig_Getters_Defaults(t *testing.T) {
 		"empty DeploymentTimeout falls back to DefaultDeploymentTimeout")
 	assert.Equal(t, DefaultConfigPublishInterval, cfg.GetConfigPublishInterval(),
 		"empty ConfigPublishInterval falls back to DefaultConfigPublishInterval")
+	assert.Equal(t, DefaultReloadVerificationTimeout, cfg.GetReloadVerificationTimeout(),
+		"empty ReloadVerificationTimeout falls back to DefaultReloadVerificationTimeout")
+	assert.Equal(t, DefaultSyncTimeout, cfg.GetSyncTimeout(),
+		"empty SyncTimeout falls back to DefaultSyncTimeout")
+	assert.Equal(t, DefaultSyncMaxRetries, cfg.GetSyncMaxRetries(),
+		"nil SyncMaxRetries falls back to DefaultSyncMaxRetries")
+}
+
+// TestControllerConfig_Getters pins the reconciler-refractory accessor:
+// empty falls back to the shared default; valid duration overrides;
+// invalid falls back through parseDurationOr.
+func TestControllerConfig_Getters(t *testing.T) {
+	t.Run("empty falls back to default", func(t *testing.T) {
+		cfg := &ControllerConfig{}
+		assert.Equal(t, DefaultReconciliationDebounceInterval, cfg.GetReconciliationDebounceInterval())
+	})
+	t.Run("valid duration overrides default", func(t *testing.T) {
+		cfg := &ControllerConfig{ReconciliationDebounceInterval: "1500ms"}
+		assert.Equal(t, 1500*time.Millisecond, cfg.GetReconciliationDebounceInterval())
+	})
+	t.Run("invalid duration falls back to default", func(t *testing.T) {
+		cfg := &ControllerConfig{ReconciliationDebounceInterval: "garbage"}
+		assert.Equal(t, DefaultReconciliationDebounceInterval, cfg.GetReconciliationDebounceInterval())
+	})
+}
+
+// TestSyncMaxRetries_PointerSemantics pins the unset / 0 / positive
+// distinction the *int field encodes — the whole reason for the pointer.
+func TestSyncMaxRetries_PointerSemantics(t *testing.T) {
+	t.Run("nil means default", func(t *testing.T) {
+		cfg := &DataplaneConfig{SyncMaxRetries: nil}
+		assert.Equal(t, DefaultSyncMaxRetries, cfg.GetSyncMaxRetries())
+	})
+	t.Run("zero means no retries, not default", func(t *testing.T) {
+		zero := 0
+		cfg := &DataplaneConfig{SyncMaxRetries: &zero}
+		assert.Equal(t, 0, cfg.GetSyncMaxRetries(),
+			"explicit 0 must be honored as 'no retries', not silently replaced by the default")
+	})
+	t.Run("positive value is honored", func(t *testing.T) {
+		seven := 7
+		cfg := &DataplaneConfig{SyncMaxRetries: &seven}
+		assert.Equal(t, 7, cfg.GetSyncMaxRetries())
+	})
 }
 
 // TestDataplaneConfig_Getters_Overrides pins that valid duration strings on
@@ -69,22 +113,28 @@ func TestDataplaneConfig_Getters_Defaults(t *testing.T) {
 // through parseDurationOr instead of crashing.
 func TestDataplaneConfig_Getters_Overrides(t *testing.T) {
 	cfg := &DataplaneConfig{
-		MinDeploymentInterval:   "11s",
-		DriftPreventionInterval: "12m",
-		DeploymentTimeout:       "13s",
-		ConfigPublishInterval:   "14s",
+		MinDeploymentInterval:     "11s",
+		DriftPreventionInterval:   "12m",
+		DeploymentTimeout:         "13s",
+		ConfigPublishInterval:     "14s",
+		ReloadVerificationTimeout: "15s",
+		SyncTimeout:               "16m",
 	}
 
 	assert.Equal(t, 11*time.Second, cfg.GetMinDeploymentInterval())
 	assert.Equal(t, 12*time.Minute, cfg.GetDriftPreventionInterval())
 	assert.Equal(t, 13*time.Second, cfg.GetDeploymentTimeout())
 	assert.Equal(t, 14*time.Second, cfg.GetConfigPublishInterval())
+	assert.Equal(t, 15*time.Second, cfg.GetReloadVerificationTimeout())
+	assert.Equal(t, 16*time.Minute, cfg.GetSyncTimeout())
 
 	bad := &DataplaneConfig{
-		MinDeploymentInterval:   "garbage",
-		DriftPreventionInterval: "garbage",
-		DeploymentTimeout:       "garbage",
-		ConfigPublishInterval:   "garbage",
+		MinDeploymentInterval:     "garbage",
+		DriftPreventionInterval:   "garbage",
+		DeploymentTimeout:         "garbage",
+		ConfigPublishInterval:     "garbage",
+		ReloadVerificationTimeout: "garbage",
+		SyncTimeout:               "garbage",
 	}
 
 	assert.Equal(t, DefaultMinDeploymentInterval, bad.GetMinDeploymentInterval(),
@@ -95,4 +145,8 @@ func TestDataplaneConfig_Getters_Overrides(t *testing.T) {
 		"invalid DeploymentTimeout falls back to DefaultDeploymentTimeout")
 	assert.Equal(t, DefaultConfigPublishInterval, bad.GetConfigPublishInterval(),
 		"invalid ConfigPublishInterval falls back to DefaultConfigPublishInterval")
+	assert.Equal(t, DefaultReloadVerificationTimeout, bad.GetReloadVerificationTimeout(),
+		"invalid ReloadVerificationTimeout falls back to DefaultReloadVerificationTimeout")
+	assert.Equal(t, DefaultSyncTimeout, bad.GetSyncTimeout(),
+		"invalid SyncTimeout falls back to DefaultSyncTimeout")
 }

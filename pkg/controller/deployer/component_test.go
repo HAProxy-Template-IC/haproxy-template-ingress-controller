@@ -31,7 +31,11 @@ import (
 // Test helper to create a test deployer component.
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	logger := testutil.NewTestLogger()
-	return New(eventBus, logger, 0, 0) // 0 = unlimited parallelism, 0 = disabled raw push threshold
+	// Zero-value SyncOptions is intentional: every per-sync knob falls back to
+	// dataplane.DefaultSyncOptions() in deployToSingleEndpoint (timeouts via the
+	// > 0 guards, MaxRetries via the *int nil check). This is the contract the
+	// deployer gives test code.
+	return New(eventBus, logger, SyncOptions{})
 }
 
 func TestHandleDeploymentScheduled(t *testing.T) {

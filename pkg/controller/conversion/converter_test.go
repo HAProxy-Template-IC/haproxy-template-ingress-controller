@@ -81,14 +81,19 @@ func TestConvertSpec(t *testing.T) {
 						RenewDeadline: "10s",
 						RetryPeriod:   "2s",
 					},
+					ReconciliationDebounceInterval: "1500ms",
 				},
 				Logging: v1alpha1.LoggingConfig{
 					Level: "INFO",
 				},
 				Dataplane: v1alpha1.DataplaneConfig{
-					Port:                    5555,
-					MinDeploymentInterval:   "2s",
-					DriftPreventionInterval: "5m",
+					Port:                      5555,
+					MinDeploymentInterval:     "2s",
+					DriftPreventionInterval:   "5m",
+					ConfigPublishInterval:     "45s",
+					ReloadVerificationTimeout: "20s",
+					SyncTimeout:               "3m",
+					SyncMaxRetries:            new(7),
 				},
 				WatchedResources: map[string]v1alpha1.WatchedResource{
 					"ingresses": {
@@ -140,14 +145,19 @@ func TestConvertSpec(t *testing.T) {
 					ConfigPublishing: config.ConfigPublishingConfig{
 						CompressionThreshold: config.DefaultCompressionThreshold, // Default when not set
 					},
+					ReconciliationDebounceInterval: "1500ms",
 				},
 				Logging: config.LoggingConfig{
 					Level: "INFO",
 				},
 				Dataplane: config.DataplaneConfig{
-					Port:                    5555,
-					MinDeploymentInterval:   "2s",
-					DriftPreventionInterval: "5m",
+					Port:                      5555,
+					MinDeploymentInterval:     "2s",
+					DriftPreventionInterval:   "5m",
+					ConfigPublishInterval:     "45s",
+					ReloadVerificationTimeout: "20s",
+					SyncTimeout:               "3m",
+					SyncMaxRetries:            new(7),
 				},
 				WatchedResources: map[string]config.WatchedResource{
 					"ingresses": {

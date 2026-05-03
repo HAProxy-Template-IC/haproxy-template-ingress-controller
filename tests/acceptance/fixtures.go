@@ -434,9 +434,16 @@ type HAProxyTemplateConfigBuilder struct {
 	template             string
 	files                map[string]haproxyv1alpha1.GeneralFile
 	compressionThreshold *int64
+	fastTimings          bool
 }
 
 // NewHAProxyTemplateConfigBuilder creates a new builder with required parameters.
+//
+// Fast test timings are ON by default — every throttle on the path between a
+// resource event and a HAProxy push is collapsed to ~100ms (and drift
+// prevention is pushed out to 10m so it doesn't fire mid-test). Tests that
+// need realistic timings (drift-prevention behaviour, debounce-window
+// regressions) can opt out with WithFastTestTimings(false).
 func NewHAProxyTemplateConfigBuilder(namespace, name, secretName string) *HAProxyTemplateConfigBuilder {
 	return &HAProxyTemplateConfigBuilder{
 		namespace:      namespace,
@@ -444,6 +451,7 @@ func NewHAProxyTemplateConfigBuilder(namespace, name, secretName string) *HAProx
 		secretName:     secretName,
 		leaderElection: false,
 		template:       DefaultHAProxyTemplate,
+		fastTimings:    true,
 	}
 }
 
@@ -473,9 +481,45 @@ func (b *HAProxyTemplateConfigBuilder) WithCompressionThreshold(threshold int64)
 	return b
 }
 
+// WithFastTestTimings toggles the fast-timings preset.
+//
+// When enabled (the builder default), Build() collapses every event-to-deploy
+// throttle to ~100ms, raises driftPreventionInterval to 10m so it never fires
+// mid-test, and sets the per-watcher debounce on the single declared
+// WatchedResource to 100ms. The chart-side production defaults (5s refractory
+// + 2s minDeploymentInterval + 30s configPublishInterval + 60s
+// driftPreventionInterval) are designed for steady-state load on real
+// clusters and add a few seconds of latency per test that nobody benefits
+// from in CI. Pass false on tests that exercise drift prevention or any
+// timing-window regression.
+func (b *HAProxyTemplateConfigBuilder) WithFastTestTimings(enabled bool) *HAProxyTemplateConfigBuilder {
+	b.fastTimings = enabled
+	return b
+}
+
 // Build creates the HAProxyTemplateConfig resource.
 func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateConfig {
 	enabled := b.leaderElection
+
+	// Fast-timings preset: see the doc comment on WithFastTestTimings.
+	// reloadVerificationTimeout, syncTimeout, deploymentTimeout, syncMaxRetries,
+	// and the leader-election lease durations are intentionally NOT touched —
+	// they're either safety ceilings or paid once per cluster (see the
+	// evaluation in tests/acceptance/CLAUDE.md / repo plan).
+	var (
+		controllerRefractory     string
+		minDeploymentInterval    string
+		configPublishInterval    string
+		driftPreventionInterval  string
+		watchedResourceDebounce  string
+	)
+	if b.fastTimings {
+		controllerRefractory = "100ms"
+		minDeploymentInterval = "100ms"
+		configPublishInterval = "200ms"
+		driftPreventionInterval = "10m"
+		watchedResourceDebounce = "100ms"
+	}
 
 	config := &haproxyv1alpha1.HAProxyTemplateConfig{
 		TypeMeta: metav1.TypeMeta{
@@ -512,22 +556,27 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 					}
 					return haproxyv1alpha1.ConfigPublishingConfig{}
 				}(),
+				ReconciliationDebounceInterval: controllerRefractory,
 			},
 			Logging: haproxyv1alpha1.LoggingConfig{
 				Level: "DEBUG", // DEBUG level for tests
 			},
 			Dataplane: haproxyv1alpha1.DataplaneConfig{
-				Port:              5555,
-				MapsDir:           "/tmp/haproxy-validation/maps",
-				SSLCertsDir:       "/tmp/haproxy-validation/ssl",
-				GeneralStorageDir: "/tmp/haproxy-validation/general",
-				ConfigFile:        "/tmp/haproxy-validation/haproxy.cfg",
+				Port:                    5555,
+				MapsDir:                 "/tmp/haproxy-validation/maps",
+				SSLCertsDir:             "/tmp/haproxy-validation/ssl",
+				GeneralStorageDir:       "/tmp/haproxy-validation/general",
+				ConfigFile:              "/tmp/haproxy-validation/haproxy.cfg",
+				MinDeploymentInterval:   minDeploymentInterval,
+				ConfigPublishInterval:   configPublishInterval,
+				DriftPreventionInterval: driftPreventionInterval,
 			},
 			WatchedResources: map[string]haproxyv1alpha1.WatchedResource{
 				"ingresses": {
-					APIVersion: "networking.k8s.io/v1",
-					Resources:  "ingresses",
-					IndexBy:    []string{"metadata.namespace", "metadata.name"},
+					APIVersion:       "networking.k8s.io/v1",
+					Resources:        "ingresses",
+					IndexBy:          []string{"metadata.namespace", "metadata.name"},
+					DebounceInterval: watchedResourceDebounce,
 				},
 			},
 			HAProxyConfig: haproxyv1alpha1.HAProxyConfig{

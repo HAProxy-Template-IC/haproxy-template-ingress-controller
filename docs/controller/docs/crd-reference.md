@@ -86,6 +86,7 @@ controller:
     leaseDuration: 15s   # default (DefaultLeaderElectionLeaseDuration)
     renewDeadline: 10s   # default (DefaultLeaderElectionRenewDeadline)
     retryPeriod: 2s      # default (DefaultLeaderElectionRetryPeriod)
+  reconciliationDebounceInterval: 5s  # default; refractory window between resource changes and a render+deploy cycle
 ```
 
 !!! note
@@ -147,6 +148,10 @@ dataplane:
   minDeploymentInterval: 2s          # Minimum gap between deployments (default 2s)
   driftPreventionInterval: 60s       # Periodic redeploy to correct drift (default 60s)
   deploymentTimeout: 30s             # Safety net for lost deployments (default 30s)
+  configPublishInterval: 30s         # Throttle for HAProxyCfg CRD republishes (default 30s)
+  reloadVerificationTimeout: 10s     # Wait for HAProxy to confirm graceful reload (default 10s)
+  syncTimeout: 2m                    # Per-endpoint sync timeout (default 2m)
+  syncMaxRetries: 3                  # Retries on HTTP 409 transaction conflicts; 0 disables retries (default 3)
   maxParallel: 0                     # Concurrent Dataplane ops; 0 = unlimited (not recommended for large configs)
   rawPushThreshold: 100              # Switch to raw config push when change count exceeds this (default 100)
   mapsDir: /etc/haproxy/maps         # Used for both validation and deployment

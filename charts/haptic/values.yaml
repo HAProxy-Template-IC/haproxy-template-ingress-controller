@@ -339,6 +339,13 @@ controller:
         # Interval between leadership refresh attempts
         # Default: 2s (should be < renew_deadline, typically 1/5 of it)
         retryPeriod: 2s
+      # Reconciler refractory window between resource-change events and a
+      # render+deploy cycle. Leading-edge: the first change after the window
+      # fires immediately; further changes within the window are batched.
+      # Lower it for faster response on small clusters; raise it on
+      # high-churn clusters to absorb more changes per render.
+      # Default: 5s (shared with the per-watcher debounce default)
+      # reconciliationDebounceInterval: 5s
     dataplane:
       # Port is defined in haproxy.ports.dataplane and referenced here
       port: 5555 # Must match haproxy.ports.dataplane value
@@ -367,6 +374,23 @@ controller:
       sslCertsDir: /etc/haproxy/ssl
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
+      # Throttle for republishing the rendered config as the HAProxyCfg
+      # observability CRD. Reduces etcd write pressure during endpoint churn.
+      # Default: 30s
+      # configPublishInterval: 30s
+      # Maximum time the Dataplane sync waits for HAProxy to report a
+      # graceful reload as completed. Set higher than the Dataplane API's
+      # own reload-delay setting.
+      # Default: 10s
+      # reloadVerificationTimeout: 10s
+      # Overall timeout for one Dataplane sync to a single HAProxy endpoint
+      # (parse + diff + transactional apply + optional reload-verify).
+      # Default: 2m
+      # syncTimeout: 2m
+      # Max retries the VersionAdapter performs on HTTP 409 transaction
+      # commit conflicts. 0 disables retries.
+      # Default: 3
+      # syncMaxRetries: 3
     # Frontend path-matching order
     # "default" — Exact > Regex > Prefix-exact > Prefix (de-facto standard)
     # "last"    — Exact > Prefix-exact > Prefix > Regex (performance-first;

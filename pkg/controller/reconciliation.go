@@ -73,8 +73,10 @@ func createReconciliationComponents(
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
 ) (*reconciliationComponents, error) {
-	// Create Reconciler with default configuration
-	reconcilerComponent := reconciler.New(bus, logger, nil)
+	// Create Reconciler with the configured refractory window
+	reconcilerComponent := reconciler.New(bus, logger, &reconciler.Config{
+		DebounceInterval: cfg.Controller.GetReconciliationDebounceInterval(),
+	})
 
 	// Detect local HAProxy version and compute capabilities
 	localVersion, err := dataplane.DetectLocalVersion()
@@ -165,8 +167,16 @@ func createReconciliationComponents(
 		Logger:            logger,
 	})
 
-	// Create Deployer with maxParallel and rawPushThreshold from config
-	deployerComponent := deployer.New(bus, logger, cfg.Dataplane.MaxParallel, cfg.Dataplane.RawPushThreshold)
+	// Create Deployer with the configured per-sync Dataplane options.
+	// SyncMaxRetries flows through as the raw *int so the deployer can
+	// distinguish "unset → fall back to dataplane default" from "&0 → no retries".
+	deployerComponent := deployer.New(bus, logger, deployer.SyncOptions{
+		MaxParallel:               cfg.Dataplane.MaxParallel,
+		RawPushThreshold:          cfg.Dataplane.RawPushThreshold,
+		ReloadVerificationTimeout: cfg.Dataplane.GetReloadVerificationTimeout(),
+		Timeout:                   cfg.Dataplane.GetSyncTimeout(),
+		MaxRetries:                cfg.Dataplane.SyncMaxRetries,
+	})
 
 	// Create DeploymentScheduler with rate limiting and timeout
 	minDeploymentInterval := cfg.Dataplane.GetMinDeploymentInterval()

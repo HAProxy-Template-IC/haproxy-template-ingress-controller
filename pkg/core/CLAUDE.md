@@ -323,6 +323,15 @@ const (
     // reuse pkg/k8s/types.DefaultDebounceInterval (5 * time.Second).
 )
 
+// The reconciler refractory window mirrors the watcher debounce default
+// (5s) so a single timing default drives both debouncers. pkg/core/config
+// can't import pkg/k8s/types (arch-go.yml forbids it), so the constant is
+// duplicated by design and a test in tests/defaults_consistency_test.go
+// pins the equality. Both tunables surface to operators on the CRD —
+// per-watcher debounce on spec.watchedResources.<name>.debounceInterval,
+// reconciler refractory on spec.controller.reconciliationDebounceInterval.
+const DefaultReconciliationDebounceInterval = 5 * time.Second
+
 // Each Get* accessor parses the user's duration string and falls back to
 // the constant when the field is empty or invalid.
 func (d *DataplaneConfig) GetMinDeploymentInterval() time.Duration {

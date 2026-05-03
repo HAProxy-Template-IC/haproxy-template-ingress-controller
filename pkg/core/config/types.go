@@ -187,6 +187,13 @@ type ControllerConfig struct {
 
 	// ConfigPublishing configures how rendered configs are stored in CRDs.
 	ConfigPublishing ConfigPublishingConfig `yaml:"config_publishing"`
+
+	// ReconciliationDebounceInterval overrides the leading-edge refractory window
+	// the Reconciler applies before triggering a reconciliation cycle.
+	// Format: Go duration string (e.g., "5s", "1s")
+	// Default: 5s (DefaultReconciliationDebounceInterval, shared with the
+	// per-watcher debounce default in pkg/k8s/types.DefaultDebounceInterval)
+	ReconciliationDebounceInterval string `yaml:"reconciliation_debounce_interval"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.
@@ -305,6 +312,24 @@ type DataplaneConfig struct {
 	// Format: Go duration string (e.g., "30s", "1m")
 	// Default: 30s
 	ConfigPublishInterval string `yaml:"config_publish_interval"`
+
+	// ReloadVerificationTimeout bounds how long the Dataplane sync waits for a
+	// graceful HAProxy reload to be reported as completed before failing the sync.
+	// Format: Go duration string (e.g., "10s", "30s")
+	// Default: 10s
+	ReloadVerificationTimeout string `yaml:"reload_verification_timeout"`
+
+	// SyncTimeout is the overall timeout for one Dataplane sync to a single
+	// HAProxy endpoint (parse + diff + transactional apply + optional reload-verify).
+	// Format: Go duration string (e.g., "2m", "30s")
+	// Default: 2m
+	SyncTimeout string `yaml:"sync_timeout"`
+
+	// SyncMaxRetries is the maximum number of automatic retries the VersionAdapter
+	// performs on HTTP 409 config-version conflicts. nil means "use default"; 0
+	// disables retries.
+	// Default: 3
+	SyncMaxRetries *int `yaml:"sync_max_retries"`
 }
 
 // WatchedResource configures watching for a specific Kubernetes resource type.
