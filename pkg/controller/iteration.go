@@ -30,14 +30,16 @@ import (
 )
 
 // buildPluggableValidatorManager constructs the validator manager from
-// the configured spec.validators. The returned Manager is always
-// non-nil — Manager.Configured() reports whether any validators are
-// registered, so callers don't need a nil check.
+// the configured spec.validators.
 //
-// The Manager is currently only constructed (and exposed via Healthy()
-// for the next change's /healthz integration). Wiring it into the
-// admission webhook is a follow-up MR.
-func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger) (*pluggablevalidator.Manager, error) {
+// Returns nil and logs the underlying error when the slice contains
+// duplicate names or empty paths — both are CRD-schema violations the
+// apiserver should have rejected before this code path runs, so the
+// failure is treated as a degraded state rather than a fatal one. The
+// /healthz check downstream sees a nil manager and skips the
+// "pluggable-validators" entry, surfacing the misconfiguration through
+// the absence of the expected entry plus the controller log.
+func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger) *pluggablevalidator.Manager {
 	configs := make([]pluggablevalidator.ManagerConfig, 0, len(cfg.Validators))
 	for _, v := range cfg.Validators {
 		mc := pluggablevalidator.ManagerConfig{
@@ -52,7 +54,9 @@ func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger)
 	}
 	mgr, err := pluggablevalidator.NewManager(logger, configs)
 	if err != nil {
-		return nil, fmt.Errorf("pluggable validators: %w", err)
+		logger.Error("pluggable-validator manager construction failed; feature disabled for this iteration",
+			slog.Any("error", err))
+		return nil
 	}
 	if mgr.Configured() {
 		logger.Info("pluggable validators registered",
@@ -60,7 +64,7 @@ func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger)
 			slog.Any("names", mgr.Names()),
 		)
 	}
-	return mgr, nil
+	return mgr
 }
 
 // runIteration runs a single controller iteration.
@@ -195,12 +199,11 @@ func runIteration(
 
 	// 6.3. Construct the pluggable-validator Manager from spec.validators.
 	// Pure synchronous service (no event subs, no goroutines) so order
-	// relative to EventBus.Start() doesn't matter. This MR builds and
-	// validates it (catches duplicate names + bad socket paths early);
-	// the follow-up MR wires it into DryRunValidator and /healthz.
-	if _, err := buildPluggableValidatorManager(cfg, logger); err != nil {
-		return fmt.Errorf("constructing pluggable-validator manager: %w", err)
-	}
+	// relative to EventBus.Start() doesn't matter. The Manager's
+	// Healthy() output is plumbed into /healthz below; the actual
+	// admission-time invocation lands with the chart-side sidecar in
+	// the next MR.
+	pluggableMgr := buildPluggableValidatorManager(cfg, logger)
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
 	// All components have now subscribed during their construction, so we can safely start
@@ -220,7 +223,7 @@ func runIteration(
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
 	// This call registers debug variables and updates the health checker
-	setupInfrastructureServers(setup.IterCtx, setup, stateCache, eventBuffer, logger)
+	setupInfrastructureServers(setup.IterCtx, setup, stateCache, eventBuffer, pluggableMgr, logger)
 
 	// 10. Enable reinitialization signaling now that startup is complete
 	// This allows future ConfigValidatedEvents to trigger controller reinitialization.
