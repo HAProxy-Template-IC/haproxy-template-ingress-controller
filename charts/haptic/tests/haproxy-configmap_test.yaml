@@ -1,0 +1,63 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/helm-unittest/helm-unittest/main/schema/helm-testsuite.json
+suite: haproxy configmap
+templates:
+  - haproxy-configmap.yaml
+set:
+  haproxy.enabled: true
+tests:
+  - it: should render the default bootstrap config
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "frontend status"
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "Not ready - waiting for controller config"
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "default_backend default_backend"
+
+  - it: should replace the bootstrap when initialConfig is overridden
+    set:
+      haproxy.initialConfig: |
+        global
+            log stdout len 4096 local0 info
+        frontend custom
+            bind *:9999
+    asserts:
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "frontend custom"
+      - notMatchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "Not ready - waiting for controller config"
+
+  - it: should resolve chart values inside initialConfig via tpl
+    set:
+      haproxy.ports.stats: 9999
+      haproxy.initialConfig: |
+        frontend status
+            bind *:{{ .Values.haproxy.ports.stats }}
+    asserts:
+      - matchRegex:
+          path: data["haproxy.cfg"]
+          pattern: "bind \\*:9999"
+
+  - it: should render an empty haproxy.cfg when initialConfig is explicitly null
+    set:
+      haproxy.initialConfig: null
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: data["haproxy.cfg"]
+          value: ""
+
+  - it: should not render when haproxy disabled
+    set:
+      haproxy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

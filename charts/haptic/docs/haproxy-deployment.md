@@ -152,6 +152,39 @@ haproxy:
       nodePort: 30404
 ```
 
+## Initial Bootstrap Config
+
+When the chart manages HAProxy, the pod boots with a minimal `haproxy.cfg` rendered from `haproxy.initialConfig` into the `<release>-haptic-haproxy-config` ConfigMap. The controller replaces this config via the Dataplane API on its first reconcile, so the bootstrap only matters during the seconds between pod start and controller handoff (and on pod restart before the controller reconciles again).
+
+The default keeps `/healthz` returning 200 on the stats port and `/ready` returning 503 ("waiting for controller config"), so the pod stays NotReady until the controller pushes its first real config. To customise (for example, to add a cluster-internal ACL, an extra logging directive, or pre-bind a port the controller doesn't manage), copy the default from `values.yaml` into your own values file and edit it:
+
+```yaml
+haproxy:
+  initialConfig: |
+    global
+        log stdout len 4096 local0 info
+        {{- with include "haptic.haproxy.nbthread" . }}
+        nbthread {{ . }}
+        {{- end }}
+    defaults
+        mode http
+        timeout connect 5s
+    frontend status
+        bind *:{{ .Values.haproxy.ports.stats }}
+        http-request return status 200 content-type text/plain string "OK" if { path /healthz }
+        http-request return status 503 content-type text/plain string "Not ready" if { path /ready }
+    frontend http_frontend
+        bind *:{{ .Values.haproxy.ports.http }}
+        default_backend default_backend
+    backend default_backend
+        http-request return status 404
+```
+
+The string is processed through Helm's `tpl`, so chart helpers and `.Values` references are available. Editing this value bumps the bootstrap-config checksum on the HAProxy Deployment, which rolls HAProxy pods on the next `helm upgrade`.
+
+!!! warning "Keep /ready returning 503 until the controller takes over"
+    An override that returns 200 on `/ready` will let the Service route traffic to HAProxy before any backends exist — clients will see 404s. Replicate the 503 behaviour, or accept the gap.
+
 ## HAProxy Pod Requirements
 
 When `haproxy.enabled: false`, you're responsible for deploying HAProxy pods yourself. The controller discovers them via the pod selector at `controller.config.podSelector`, which defaults to:
