@@ -86,6 +86,19 @@ type HAProxyTemplateConfigSpec struct {
 	// +kubebuilder:validation:MinProperties=1
 	WatchedResources map[string]WatchedResource `json:"watchedResources"`
 
+	// Validators declares pluggable validator sidecars consulted by the
+	// admission webhook before admitting changes that affect plugin
+	// configuration. See `docs/controller/docs/operations/pluggable-validators.md`
+	// for setup; the wire protocol is at
+	// `docs/development/validator-protocol.md`.
+	//
+	// An empty list (the default) disables pluggable validation — the
+	// webhook keeps performing template + HAProxy syntax dry-run only.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Validators []ValidatorConfig `json:"validators,omitempty"`
+
 	// TemplateSnippets maps snippet names to reusable template fragments.
 	//
 	// Snippets can be included in other templates using {{ render "name" }}.

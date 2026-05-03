@@ -62,6 +62,14 @@ type Config struct {
 	//     index_by: ["metadata.namespace", "metadata.name"]
 	WatchedResources map[string]WatchedResource `yaml:"watched_resources"`
 
+	// Validators lists pluggable validator sidecars consulted by the
+	// admission webhook before admitting changes that affect plugin
+	// configuration. See ValidatorConfig for per-entry semantics.
+	//
+	// An empty list (the default) leaves admission validation at
+	// template + HAProxy syntax dry-run only.
+	Validators []ValidatorConfig `yaml:"validators,omitempty"`
+
 	// TemplateSnippets maps snippet names to reusable template fragments.
 	//
 	// Snippets can be included in other templates using {{ render "name" }}.
@@ -536,4 +544,31 @@ type Credentials struct {
 
 	// DataplanePassword is the password for production HAProxy instances.
 	DataplanePassword string
+}
+
+// ValidatorConfig is the core-config mirror of v1alpha1.ValidatorConfig.
+//
+// The CRD type carries Kubernetes validation tags; this type carries the
+// raw values after conversion. Consumers (controller startup, the
+// pluggablevalidator package) work against this type so they don't take a
+// dependency on the v1alpha1 API surface.
+//
+// The wire protocol the field describes lives in
+// docs/development/validator-protocol.md.
+type ValidatorConfig struct {
+	// Name is the operator-facing validator identifier.
+	Name string `yaml:"name"`
+
+	// SocketPath is the absolute filesystem path to the validator's
+	// Unix domain socket inside the controller pod.
+	SocketPath string `yaml:"socket_path"`
+
+	// Plugins lists the [plugins.params.<name>] subtrees this
+	// validator handles. An empty list means "validate the whole
+	// hub TOML".
+	Plugins []string `yaml:"plugins,omitempty"`
+
+	// TimeoutMs is the per-call deadline in milliseconds, covering
+	// connect + write + read. Zero falls back to 5000 (5 seconds).
+	TimeoutMs int32 `yaml:"timeout_ms,omitempty"`
 }

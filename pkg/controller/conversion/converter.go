@@ -196,6 +196,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		TemplatingSettings:           templatingSettings,
 		WatchedResourcesIgnoreFields: spec.WatchedResourcesIgnoreFields,
 		WatchedResources:             watchedResources,
+		Validators:                   convertValidators(spec.Validators),
 		TemplateSnippets:             templateSnippets,
 		Maps:                         maps,
 		Files:                        files,
@@ -205,6 +206,30 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	}
 
 	return cfg, nil
+}
+
+// convertValidators copies the CRD validators array into the
+// internal core-config representation. The shapes are nearly identical;
+// the only translation is dereferencing the optional TimeoutMs pointer
+// (CRD optionality) into the non-pointer int32 (zero defaults to the
+// pluggablevalidator package's DefaultTimeout downstream).
+func convertValidators(crdValidators []v1alpha1.ValidatorConfig) []config.ValidatorConfig {
+	if len(crdValidators) == 0 {
+		return nil
+	}
+	out := make([]config.ValidatorConfig, 0, len(crdValidators))
+	for _, v := range crdValidators {
+		entry := config.ValidatorConfig{
+			Name:       v.Name,
+			SocketPath: v.SocketPath,
+			Plugins:    append([]string(nil), v.Plugins...),
+		}
+		if v.TimeoutMs != nil {
+			entry.TimeoutMs = *v.TimeoutMs
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // convertValidationTests converts CRD validation tests to internal config format.
