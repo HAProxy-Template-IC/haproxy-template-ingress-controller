@@ -96,6 +96,27 @@ spec:
   {{- with include "haptic.haproxy.nbthread" . }}
     {{- $_ := set $extraContext "nbthread" (. | int) }}
   {{- end }}
+  {{- /* Pluggable validators. The chart appends entries declared under
+         controller.validators.entries to spec.validators (de-duplicating
+         by name with operator-provided $config.validators winning). The
+         CRD requires non-empty `files` per entry, so an empty list here
+         leaves spec.validators absent rather than emitting an invalid
+         empty entry. */ -}}
+  {{- $entries := default list $controller.validators.entries }}
+  {{- if $entries }}
+    {{- $existing := default list $config.validators }}
+    {{- $byName := dict }}
+    {{- range $existing }}
+      {{- $_ := set $byName .name . }}
+    {{- end }}
+    {{- $merged := $existing }}
+    {{- range $entries }}
+      {{- if not (hasKey $byName .name) }}
+        {{- $merged = append $merged . }}
+      {{- end }}
+    {{- end }}
+    {{- $_ := set $config "validators" $merged }}
+  {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
   {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
