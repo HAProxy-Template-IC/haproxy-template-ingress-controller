@@ -75,6 +75,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		ConfigPublishing: config.ConfigPublishingConfig{
 			CompressionThreshold: compressionThreshold,
 		},
+		ReconciliationDebounceInterval: spec.Controller.ReconciliationDebounceInterval,
 	}
 
 	// Convert logging config
@@ -86,16 +87,20 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 	// Note: Scheme, InsecureSkipVerify, and Version are not in CRD spec.
 	// These are internal Dataplane API client configuration fields set by defaults.
 	dataplaneConfig := config.DataplaneConfig{
-		Port:                    spec.Dataplane.Port,
-		MinDeploymentInterval:   spec.Dataplane.MinDeploymentInterval,
-		DriftPreventionInterval: spec.Dataplane.DriftPreventionInterval,
-		DeploymentTimeout:       spec.Dataplane.DeploymentTimeout,
-		MapsDir:                 spec.Dataplane.MapsDir,
-		SSLCertsDir:             spec.Dataplane.SSLCertsDir,
-		GeneralStorageDir:       spec.Dataplane.GeneralStorageDir,
-		ConfigFile:              spec.Dataplane.ConfigFile,
-		MaxParallel:             spec.Dataplane.MaxParallel,
-		RawPushThreshold:        spec.Dataplane.RawPushThreshold,
+		Port:                      spec.Dataplane.Port,
+		MinDeploymentInterval:     spec.Dataplane.MinDeploymentInterval,
+		DriftPreventionInterval:   spec.Dataplane.DriftPreventionInterval,
+		DeploymentTimeout:         spec.Dataplane.DeploymentTimeout,
+		MapsDir:                   spec.Dataplane.MapsDir,
+		SSLCertsDir:               spec.Dataplane.SSLCertsDir,
+		GeneralStorageDir:         spec.Dataplane.GeneralStorageDir,
+		ConfigFile:                spec.Dataplane.ConfigFile,
+		MaxParallel:               spec.Dataplane.MaxParallel,
+		RawPushThreshold:          spec.Dataplane.RawPushThreshold,
+		ConfigPublishInterval:     spec.Dataplane.ConfigPublishInterval,
+		ReloadVerificationTimeout: spec.Dataplane.ReloadVerificationTimeout,
+		SyncTimeout:               spec.Dataplane.SyncTimeout,
+		SyncMaxRetries:            spec.Dataplane.SyncMaxRetries,
 	}
 
 	// Convert watched resources

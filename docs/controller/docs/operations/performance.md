@@ -87,18 +87,26 @@ watchedResources:
     debounceInterval: "30s"    # absorb churn on large clusters
 ```
 
-Empty / invalid strings fall back to the 5s default silently. The Reconciler downstream applies its own *separate* leading-edge refractory (also 5s, not CRD-configurable) on top of the per-watcher window — see [architecture-overview](../development/design/architecture-overview.md) for the two-layer flow.
+Empty / invalid strings fall back to the 5s default silently. The Reconciler downstream applies its own *separate* leading-edge refractory (default 5s, configurable via `spec.controller.reconciliationDebounceInterval`) on top of the per-watcher window — see [architecture-overview](../development/design/architecture-overview.md) for the two-layer flow.
 
 If you need to change the global default in a custom build, edit `DefaultDebounceInterval` in `pkg/k8s/types/types.go`.
 
+### Reconciliation Pacing
+
+`spec.controller.reconciliationDebounceInterval` (default 5s) is the leading-edge refractory window the Reconciler applies between resource-change events and a render+deploy cycle. The first change after the window fires immediately; further changes within the window are batched and the timer fires once at window end. Lower it for faster response on small clusters; raise it on high-churn clusters to absorb more changes per render.
+
 ### Deployment Pacing
 
-Two CRD fields on `spec.dataplane` bound how often the controller pushes configuration to HAProxy:
+CRD fields on `spec.dataplane` bound how often the controller pushes configuration to HAProxy and how each push behaves:
 
 | Field | Default | Purpose |
 |-------|---------|---------|
 | `dataplane.minDeploymentInterval` | 2s | Minimum time between consecutive deployments; rate-limits rapid-fire pushes |
 | `dataplane.driftPreventionInterval` | 60s | Forces a deployment if none has happened within this window; corrects external drift |
+| `dataplane.configPublishInterval` | 30s | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
+| `dataplane.reloadVerificationTimeout` | 10s | Maximum time the sync waits for HAProxy to confirm a graceful reload completed |
+| `dataplane.syncTimeout` | 2m | Overall per-endpoint sync timeout (parse + diff + apply + reload-verify) |
+| `dataplane.syncMaxRetries` | 3 | Automatic retries on HTTP 409 transaction-version conflicts; 0 disables retries |
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
@@ -115,6 +123,8 @@ spec:
 
 - Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per push (trades latency for fewer Dataplane API calls).
 - Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client cannot hold HAProxy in a drifted state for long.
+- Raise `reloadVerificationTimeout` if your Dataplane API has a high `reload-delay` setting; the verification timeout must exceed it.
+- `syncMaxRetries: 0` is a valid choice when you want sync failures to surface immediately rather than be retried.
 
 ### Reconciliation Metrics
 

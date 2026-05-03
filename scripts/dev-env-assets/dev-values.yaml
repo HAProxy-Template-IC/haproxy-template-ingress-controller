@@ -33,6 +33,21 @@ controller:
     logging:
       level: DEBUG  # Runtime log level (overrides env var if set)
 
+    # Fast-timings preset for dev/CI: collapse every event-to-deploy throttle
+    # to ~100ms and push driftPreventionInterval out to 10m so it doesn't
+    # fire mid-test. Production defaults (5s refractory, 2s minDeploymentInterval,
+    # 30s configPublishInterval, 60s driftPreventionInterval) target steady-
+    # state load on real clusters; in CI they only add latency that nobody
+    # benefits from. Safety ceilings (reloadVerificationTimeout, syncTimeout,
+    # deploymentTimeout, syncMaxRetries) are deliberately left at chart
+    # defaults — they only matter on failure paths.
+    controller:
+      reconciliationDebounceInterval: 100ms
+    dataplane:
+      minDeploymentInterval: 100ms
+      configPublishInterval: 200ms
+      driftPreventionInterval: 10m
+
     templatingSettings:
       extraContext:
         debug: true  # Enable introspection headers for development

@@ -162,6 +162,28 @@ type ControllerConfig struct {
 	// ConfigPublishing configures how rendered configs are stored in CRDs.
 	// +optional
 	ConfigPublishing ConfigPublishingConfig `json:"configPublishing,omitempty"`
+
+	// ReconciliationDebounceInterval overrides the leading-edge refractory window
+	// the Reconciler applies to resource and HTTP-resource change events before
+	// triggering a reconciliation cycle.
+	//
+	// The first change after the window expires fires immediately; further changes
+	// arriving within the window are batched and the timer fires once at window end.
+	// This guarantees at least this much time between any two reconciliations and at
+	// most this much latency for any single change.
+	//
+	// Format: Go duration string (e.g., "1s", "5s", "30s").
+	// Default: 5s (DefaultReconciliationDebounceInterval, shared with the per-watcher
+	// debounce default in pkg/k8s/types.DefaultDebounceInterval).
+	//
+	// Lower it when responsiveness matters more than reconciliation cost (small
+	// clusters, latency-sensitive rollouts). Raise it on high-churn clusters to
+	// absorb more changes per render and reduce GC pressure.
+	//
+	// Invalid values silently fall back to the default. Empty (the default) also
+	// uses the default.
+	// +optional
+	ReconciliationDebounceInterval string `json:"reconciliationDebounceInterval,omitempty"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.
@@ -298,6 +320,49 @@ type DataplaneConfig struct {
 	// Default: 30s
 	// +optional
 	DeploymentTimeout string `json:"deploymentTimeout,omitempty"`
+
+	// ConfigPublishInterval throttles how often the rendered HAProxy config is
+	// republished as the HAProxyCfg observability CRD. The CRD itself is not on
+	// the deployment hot path, but during endpoint churn rewriting the (~500 KB)
+	// CRD on every reconciliation creates significant etcd write pressure;
+	// throttling republishes reduces that write load while leaving the
+	// event-driven push to HAProxy pods untouched.
+	//
+	// Format: Go duration string (e.g., "30s", "1m").
+	// Default: 30s
+	// +optional
+	ConfigPublishInterval string `json:"configPublishInterval,omitempty"`
+
+	// ReloadVerificationTimeout is the maximum time the Dataplane sync waits for
+	// HAProxy to report a graceful reload as completed before failing the sync.
+	// Set this higher than the Dataplane API's own reload-delay setting.
+	//
+	// Format: Go duration string (e.g., "10s", "30s").
+	// Default: 10s
+	// +optional
+	ReloadVerificationTimeout string `json:"reloadVerificationTimeout,omitempty"`
+
+	// SyncTimeout is the overall timeout for a single Dataplane sync to one
+	// HAProxy endpoint. The sync covers parse + diff + transactional apply +
+	// optional reload-verification. If exceeded, the sync is cancelled and the
+	// scheduler retries on the next reconciliation.
+	//
+	// Format: Go duration string (e.g., "2m", "30s").
+	// Default: 2m
+	// +optional
+	SyncTimeout string `json:"syncTimeout,omitempty"`
+
+	// SyncMaxRetries is the maximum number of automatic retries the Dataplane
+	// VersionAdapter performs when a transaction commit fails with HTTP 409
+	// (config-version conflict, typically caused by a concurrent writer). Each
+	// retry re-fetches the current version and replays the transaction.
+	//
+	// 0 disables retries. Use a pointer so unset / 0 / positive are all
+	// distinguishable: nil means "use the default", 0 means "no retries".
+	// Default: 3
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	SyncMaxRetries *int `json:"syncMaxRetries,omitempty"`
 
 	// MaxParallel limits concurrent Dataplane API operations during sync.
 	// This prevents overwhelming the API when syncing large configurations.

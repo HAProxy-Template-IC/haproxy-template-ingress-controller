@@ -24,7 +24,17 @@ scheduler := deployer.NewDeploymentScheduler(
     2*time.Second,   // minDeploymentInterval
     30*time.Second,  // deploymentTimeout
 )
-exec := deployer.New(bus, logger, 0, 100)       // maxParallel (0 = unlimited — passed through to dataplane.SyncOptions), rawPushThreshold
+// MaxRetries is *int so a zero-value SyncOptions{} preserves the
+// dataplane default (3) instead of silently disabling retries; pass
+// e.g. &zero for an explicit "no retries" configuration.
+maxRetries := 3
+exec := deployer.New(bus, logger, deployer.SyncOptions{
+    MaxParallel:               0,                // 0 = unlimited
+    RawPushThreshold:          100,
+    ReloadVerificationTimeout: 10 * time.Second,
+    Timeout:                   2 * time.Minute,
+    MaxRetries:                &maxRetries,
+})
 monitor := deployer.NewDriftPreventionMonitor(bus, logger, 60*time.Second)
 
 go scheduler.Start(ctx)
@@ -32,7 +42,7 @@ go exec.Start(ctx)
 go monitor.Start(ctx)
 ```
 
-All five durations / ints come from `spec.dataplane` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `maxParallel`, `rawPushThreshold`, and `driftPreventionInterval`.
+All durations / ints come from `spec.dataplane` and `spec.controller` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `maxParallel`, `rawPushThreshold`, `driftPreventionInterval`, `reloadVerificationTimeout`, `syncTimeout`, `syncMaxRetries`, plus `controller.reconciliationDebounceInterval`.
 
 ## Event Flow
 

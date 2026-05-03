@@ -68,7 +68,29 @@ const (
 	// DefaultRawPushThreshold is the default number of changes that triggers
 	// a raw config push instead of fine-grained sync.
 	DefaultRawPushThreshold = 100
+
+	// DefaultReloadVerificationTimeout is the default maximum time the Dataplane
+	// sync waits for a graceful HAProxy reload to be reported as completed.
+	DefaultReloadVerificationTimeout = 10 * time.Second
+
+	// DefaultSyncTimeout is the default overall timeout for one Dataplane sync
+	// to a single HAProxy endpoint.
+	DefaultSyncTimeout = 2 * time.Minute
+
+	// DefaultSyncMaxRetries is the default number of HTTP 409 retries the
+	// VersionAdapter performs on a transaction commit conflict.
+	DefaultSyncMaxRetries = 3
 )
+
+// DefaultReconciliationDebounceInterval is the default leading-edge refractory
+// window the Reconciler applies before triggering a reconciliation cycle.
+//
+// Intentionally equal to pkg/k8s/types.DefaultDebounceInterval so the two
+// debouncers (per-watcher and reconciler-level) share one timing default.
+// We can't import pkg/k8s/types from pkg/core (arch-go.yml forbids it), so
+// the equality is enforced by a sanity test in pkg/k8s/types that imports
+// this constant. If you change one, change the other.
+const DefaultReconciliationDebounceInterval = 5 * time.Second
 
 // SetDefaults applies default values to unset configuration fields.
 // This modifies the config in-place and should be called after parsing
@@ -184,4 +206,32 @@ func (le *LeaderElectionConfig) GetRenewDeadline() time.Duration {
 // or the default if not specified or invalid.
 func (le *LeaderElectionConfig) GetRetryPeriod() time.Duration {
 	return parseDurationOr(le.RetryPeriod, DefaultLeaderElectionRetryPeriod)
+}
+
+// GetReconciliationDebounceInterval returns the configured reconciler
+// refractory window or the default if not specified or invalid.
+func (c *ControllerConfig) GetReconciliationDebounceInterval() time.Duration {
+	return parseDurationOr(c.ReconciliationDebounceInterval, DefaultReconciliationDebounceInterval)
+}
+
+// GetReloadVerificationTimeout returns the configured reload-verification
+// timeout or the default if not specified or invalid.
+func (d *DataplaneConfig) GetReloadVerificationTimeout() time.Duration {
+	return parseDurationOr(d.ReloadVerificationTimeout, DefaultReloadVerificationTimeout)
+}
+
+// GetSyncTimeout returns the configured per-endpoint sync timeout or the
+// default if not specified or invalid.
+func (d *DataplaneConfig) GetSyncTimeout() time.Duration {
+	return parseDurationOr(d.SyncTimeout, DefaultSyncTimeout)
+}
+
+// GetSyncMaxRetries returns the configured number of HTTP 409 retries or the
+// default if unset. A pointer is used so that "0 = no retries" is
+// distinguishable from "unset".
+func (d *DataplaneConfig) GetSyncMaxRetries() int {
+	if d.SyncMaxRetries == nil {
+		return DefaultSyncMaxRetries
+	}
+	return *d.SyncMaxRetries
 }

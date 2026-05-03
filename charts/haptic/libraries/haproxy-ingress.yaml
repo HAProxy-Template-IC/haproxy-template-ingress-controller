@@ -1340,14 +1340,21 @@ templateSnippets:
           {%- end %}
           {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
           {%- if first_seen("hi_userlist", userlistName) %}
-            {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
             {#-
               Skip both the userlist and the matching backend ACL ref when the
               referenced Secret isn't in the controller's cache (informer not
               yet caught up, or the Secret was just cascade-deleted while the
               Ingress still lingers). The next render — once the cache catches
               up — will produce the full auth setup.
+
+              Goes through shared.ComputeIfAbsent so the matching http_auth
+              snippet sees the same Secret presence/absence; stores are live
+              during render and two direct GetSingle calls can observe
+              different states.
             -#}
+            {%- var secret, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
+              return resources.secrets.GetSingle(secretNs, secretName)
+            }) %}
             {%- if secret != nil %}
       # haproxy-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}
@@ -1715,9 +1722,14 @@ templateSnippets:
             Skip the http_auth ACL ref when the referenced Secret isn't in
             the controller's cache; the matching userlist snippet skips its
             userlist on the same condition so the rendered config stays
-            self-consistent.
+            self-consistent. Routed through shared.ComputeIfAbsent so the two
+            snippets see the same store state (live stores can mutate
+            between two direct GetSingle calls in one render).
           -#}
-          {%- if resources.secrets.GetSingle(secretNs, secretName) != nil %}
+          {%- var hiAuthSecret, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
+            return resources.secrets.GetSingle(secretNs, secretName)
+          }) %}
+          {%- if hiAuthSecret != nil %}
       # haproxy-ingress/backend-directives-auth ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
           {%- end %}

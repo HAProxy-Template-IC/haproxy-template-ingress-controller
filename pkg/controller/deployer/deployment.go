@@ -415,6 +415,15 @@ func (c *Component) deployToSingleEndpoint(
 	opts := dataplane.DefaultSyncOptions()
 	opts.MaxParallel = c.maxParallel
 	opts.RawPushThreshold = c.rawPushThreshold
+	if c.reloadVerificationTimeout > 0 {
+		opts.ReloadVerificationTimeout = c.reloadVerificationTimeout
+	}
+	if c.syncTimeout > 0 {
+		opts.Timeout = c.syncTimeout
+	}
+	if c.syncMaxRetries != nil {
+		opts.MaxRetries = *c.syncMaxRetries
+	}
 
 	// Pass pre-parsed config to skip redundant parsing during sync
 	if parsedConfig != nil {
