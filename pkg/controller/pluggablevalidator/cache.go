@@ -21,29 +21,47 @@ import (
 	"sync"
 )
 
-// DefaultCacheCapacity is the default LRU cache size. Sized for a healthy
-// reconciliation churn — one entry per (validator, distinct-content) pair.
+// DefaultCacheCapacity is the default LRU cache size. Sized for a
+// healthy reconciliation churn — one entry per
+// (validator, file-path, distinct-content) tuple.
 const DefaultCacheCapacity = 256
 
-// CacheKey identifies a cache entry. The validator name keeps entries from
-// different validators isolated even when their request bodies happen to
-// match.
+// CacheKey identifies a cache entry. Keyed per-(validator, file-path,
+// content-hash) so:
+//
+//   - the same file routed to two validators caches independently
+//     (each validator may decide differently);
+//   - the same validator handling multiple files caches each file
+//     independently (changing one file doesn't invalidate the others);
+//   - identical content at different paths is NOT collapsed (the
+//     wire-protocol response carries the path, so the cached response
+//     is path-specific).
+//
+// The wire-protocol contract requires validators to be pure functions
+// of their input — under that contract, this key is sufficient and
+// safe.
 type CacheKey struct {
 	ValidatorName string
-	ContentSHA256 string // hex-encoded sha256 of the request body
+	Path          string
+	ContentSHA256 string // hex-encoded sha256 of the file content
 }
 
-// HashContent returns the hex-encoded sha256 of the given content. Used to
-// build CacheKeys without keeping the full payload around. Stable across
-// goroutines.
+// HashContent returns the hex-encoded sha256 of the given content.
+// Used to build CacheKeys without keeping the full payload around.
+// Stable across goroutines.
 func HashContent(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
 }
 
-// NewCacheKey builds a CacheKey for a given validator + raw request body.
-func NewCacheKey(validatorName string, content []byte) CacheKey {
-	return CacheKey{ValidatorName: validatorName, ContentSHA256: HashContent(content)}
+// NewCacheKey builds a CacheKey for a (validator, file-path, content)
+// tuple.
+func NewCacheKey(validatorName, path string, content []byte) CacheKey {
+	return CacheKey{
+		ValidatorName: validatorName,
+		Path:          path,
+		ContentSHA256: HashContent(content),
+	}
 }
 
 // ResultCache is a process-local LRU cache mapping CacheKey to *Response.

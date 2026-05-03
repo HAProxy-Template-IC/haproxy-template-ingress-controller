@@ -548,12 +548,12 @@ type Credentials struct {
 
 // ValidatorConfig is the core-config mirror of v1alpha1.ValidatorConfig.
 //
-// The CRD type carries Kubernetes validation tags; this type carries the
-// raw values after conversion. Consumers (controller startup, the
-// pluggablevalidator package) work against this type so they don't take a
-// dependency on the v1alpha1 API surface.
+// The CRD type carries Kubernetes validation tags; this type carries
+// the raw values after conversion. Consumers (controller startup, the
+// pluggablevalidator package) work against this type so they don't
+// take a dependency on the v1alpha1 API surface.
 //
-// The wire protocol the field describes lives in
+// The wire protocol this struct configures lives in
 // docs/development/validator-protocol.md.
 type ValidatorConfig struct {
 	// Name is the operator-facing validator identifier.
@@ -563,12 +563,19 @@ type ValidatorConfig struct {
 	// Unix domain socket inside the controller pod.
 	SocketPath string `yaml:"socket_path"`
 
-	// Plugins lists the [plugins.params.<name>] subtrees this
-	// validator handles. An empty list means "validate the whole
-	// hub TOML".
-	Plugins []string `yaml:"plugins,omitempty"`
+	// Files is the list of glob patterns matched against rendered
+	// file paths to decide which files to send to this validator.
+	// Globs follow Go's `path/filepath.Match` rules; absolute paths
+	// only.
+	Files []string `yaml:"files"`
 
 	// TimeoutMs is the per-call deadline in milliseconds, covering
-	// connect + write + read. Zero falls back to 5000 (5 seconds).
+	// the request-response cycle for one file. Zero falls back to
+	// 5000 (5 seconds).
 	TimeoutMs int32 `yaml:"timeout_ms,omitempty"`
+
+	// MaxConnections caps the controller-side pool size for this
+	// validator's socket. Zero falls back to 4. The pool starts
+	// small and grows on contention up to this cap.
+	MaxConnections int32 `yaml:"max_connections,omitempty"`
 }

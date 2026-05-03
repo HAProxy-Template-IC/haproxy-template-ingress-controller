@@ -29,23 +29,28 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
 
-// buildPluggableValidatorManager constructs the validator manager from
-// the configured spec.validators.
+// buildAndRegisterPluggableValidatorManager constructs the validator
+// manager from the configured spec.validators and registers a
+// cleanup callback on the iteration setup so the manager's
+// connection pools are drained on teardown (every iteration
+// restart, every config change, every shutdown).
 //
 // Returns nil and logs the underlying error when the slice contains
-// duplicate names or empty paths — both are CRD-schema violations the
-// apiserver should have rejected before this code path runs, so the
-// failure is treated as a degraded state rather than a fatal one. The
-// /healthz check downstream sees a nil manager and skips the
-// "pluggable-validators" entry, surfacing the misconfiguration through
-// the absence of the expected entry plus the controller log.
-func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger) *pluggablevalidator.Manager {
+// duplicate names, empty paths, or malformed globs — all CRD-schema
+// violations the apiserver should have rejected before this code
+// path runs, so the failure is treated as a degraded state rather
+// than a fatal one. The /healthz check downstream sees a nil
+// manager and skips the "pluggable-validators" entry, surfacing the
+// misconfiguration through the absence of the expected entry plus
+// the controller log.
+func buildAndRegisterPluggableValidatorManager(setup *componentSetup, cfg *coreconfig.Config, logger *slog.Logger) *pluggablevalidator.Manager {
 	configs := make([]pluggablevalidator.ManagerConfig, 0, len(cfg.Validators))
 	for _, v := range cfg.Validators {
 		mc := pluggablevalidator.ManagerConfig{
-			Name:       v.Name,
-			SocketPath: v.SocketPath,
-			Plugins:    v.Plugins,
+			Name:           v.Name,
+			SocketPath:     v.SocketPath,
+			Files:          v.Files,
+			MaxConnections: int(v.MaxConnections),
 		}
 		if v.TimeoutMs > 0 {
 			mc.Timeout = time.Duration(v.TimeoutMs) * time.Millisecond
@@ -64,6 +69,10 @@ func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger)
 			slog.Any("names", mgr.Names()),
 		)
 	}
+	setup.AddCleanup(func() {
+		logger.Debug("closing pluggable-validator connection pools")
+		mgr.Close()
+	})
 	return mgr
 }
 
@@ -202,8 +211,9 @@ func runIteration(
 	// relative to EventBus.Start() doesn't matter. The Manager's
 	// Healthy() output is plumbed into /healthz below; the actual
 	// admission-time invocation lands with the chart-side sidecar in
-	// the next MR.
-	pluggableMgr := buildPluggableValidatorManager(cfg, logger)
+	// the next MR. The helper registers Close() on the iteration
+	// cleanup hook so connection pools drain on teardown.
+	pluggableMgr := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
 	// All components have now subscribed during their construction, so we can safely start
@@ -264,6 +274,9 @@ func handleIterationCancellation(
 
 	// Wait for all goroutines to finish gracefully
 	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Shutdown")
+
+	// Run registered cleanups (drains connection pools, etc.).
+	setup.RunCleanups()
 }
 
 // handleConfigurationChange handles cleanup and reinitialization when configuration changes.
@@ -284,6 +297,9 @@ func handleConfigurationChange(
 
 	// Wait for all goroutines to finish before reinitializing
 	waitForGoroutinesToFinish(setup.ErrGroup, logger, "Reinitialization")
+
+	// Run registered cleanups (drains connection pools, etc.).
+	setup.RunCleanups()
 
 	logger.Info("Reinitialization triggered - starting new iteration")
 }

@@ -2,11 +2,30 @@
 
 ## Overview
 
-HAPTIC's admission webhook consults one or more validator sidecars to check the rendered hub TOML before admitting changes that affect plugin configuration. This document is the authoritative specification of the wire protocol between the controller and a validator sidecar.
+HAPTIC's admission webhook consults one or more validator sidecars to check rendered files before admitting changes. This document is the authoritative specification of the wire protocol between the controller and a validator sidecar; HAPTIC owns the contract.
 
-The reference implementation is `haproxy-spoa-hub --validate-socket <path>` (see [haproxy-spoa-hub specs/004-validate-mode](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub/-/blob/main/specs/004-validate-mode/contracts/validate-socket-protocol.md)). Any implementation conforming to this document may be substituted; HAPTIC owns the protocol's evolution rules. The hub-side spec carries an interim-ownership disclaimer that points back here.
+A validator is an **opaque program** to the controller: it speaks this protocol over a unix socket. What it does internally — whether it parses TOML, has a plugin system, dispatches files to internal handlers, talks to remote services — is its own concern and is not described here. Concrete implementations document their internals in their own repositories. Reference implementation: [`haproxy-spoa-hub --validate-socket <path>`](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub/-/blob/main/specs/004-validate-mode/spec.md).
 
 For end-user documentation about declaring validators on `HAProxyTemplateConfig` and operating the sidecar, see [`../controller/docs/operations/pluggable-validators.md`](../controller/docs/operations/pluggable-validators.md).
+
+## Routing model (controller-side)
+
+The controller does NOT know what's inside a validator. Routing of rendered files to validators is decided by the controller using `spec.validators[i].files` glob patterns:
+
+```text
+rendered files = controller's dry-run output (haproxy.cfg, *.map, hub TOMLs, certs, ...)
+
+for each rendered file:
+    for each configured validator:
+        if any of validator.files globs match the file's path:
+            send a single-file request to validator.socketPath
+```
+
+A file matching multiple validators' globs is sent to each of them. A file matching no validator's globs is not validated by any sidecar (it still flows through the existing template + HAProxy syntax dry-run).
+
+The controller dispatches `(validator, file)` pairs **in parallel** — independent validators on different sockets validating independent files have no shared state, so there's no benefit to running them serially. Concurrency is bounded both by a top-level cap (default 16 in-flight tasks) and per-validator connection-pool ceilings.
+
+The controller maintains a per-`(validator, file-path, content-hash)` LRU cache so unchanged files skip the round-trip entirely.
 
 ## Framing
 
@@ -19,13 +38,20 @@ Each frame on the socket is:
 
 - Length is an unsigned 32-bit big-endian integer.
 - Maximum frame size: 1 MiB (`1 << 20` bytes). Frames exceeding the limit MUST be rejected by the producer; an oversized response causes the client to close the connection.
-- The JSON payload MUST be valid UTF-8, no BOM. Decoder errors on either side are surfaced as a single error-severity diagnostic.
+- The JSON payload MUST be valid UTF-8 with no BOM.
 
-## Connection lifecycle
+## Connections (persistent keep-alive)
 
-- Each accepted connection serves exactly one request-response cycle.
-- The client opens the socket, writes one request frame, reads one response frame, closes the connection.
-- Persistent / multiplexed connections are out of scope for this version.
+Connections are persistent. A controller opens connections to a validator on demand and reuses them for many subsequent request-response cycles:
+
+- **Sequential pipelined per connection.** Within one connection, frames are strictly ordered: client writes request *k*, validator writes response *k*, then the client writes request *k+1*. There is no out-of-order interleaving and no correlation IDs.
+- **Concurrency comes from the pool.** The controller maintains a per-validator connection pool (size capped by `spec.validators[i].maxConnections`, default 4, adaptive: starts small, grows on contention, shrinks when idle). Concurrent webhook calls grab independent connections from the pool and run in parallel against the same validator.
+- **Either side MAY close at inter-frame boundaries.** Validator MAY idle-close after some quiet period (recommended: 60 s) so file descriptors don't accumulate. Controller MAY close on shutdown or when shrinking the pool. Mid-frame close is a protocol violation.
+- **Framing or decode errors poison the connection.** On any partial-read / oversized-frame / malformed-JSON error, the side that detected it closes the connection. Recovery happens by opening a fresh connection — never by trying to recover state on the broken one.
+- **Application-level errors (malformed JSON, validation timeout, protocol-version mismatch) keep the connection open.** The validator writes a synthetic error response and waits for the next frame. Only framing failures close it.
+- **Idle-close handling on the controller side.** If the validator idle-closed a connection between the client's last use and now, the first request on that connection MAY fail to write. Clients MUST tolerate this with a single transparent reconnect-and-retry; the call returns success on the retry's response. Two consecutive failures on a fresh connection is a real transport error.
+
+The validator MUST handle multiple concurrent connections from the same controller. Implementations that only accept one connection at a time degrade the controller's pool to serial behaviour but do not break correctness.
 
 ## Request
 
@@ -34,8 +60,8 @@ Each frame on the socket is:
   "protocol_version": 1,
   "files": [
     {
-      "path": "hub-config.toml",
-      "content": "[hub]\nlisten = \"0.0.0.0:9000\"\n\n[[plugins]]\nname = \"coraza\"\nlibrary = \"libcoraza.so\"\n\n[plugins.params.coraza]\ndirectives = '''\nSecRuleEngine On\nSecRule ARGS \"@rx evil\" \"id:1001,deny\"\n'''\n"
+      "path": "/etc/haproxy-spoa-hub/config.toml",
+      "content": "[hub]\nlisten = \"0.0.0.0:9000\"\n\n[plugins.params.coraza]\ndirectives = \"SecRuleEngine On\"\n"
     }
   ]
 }
@@ -43,12 +69,12 @@ Each frame on the socket is:
 
 | Field | Type | Required | Semantics |
 |-------|------|----------|-----------|
-| `protocol_version` | integer | yes | Currently `1`. Validators MUST reject any other value. |
-| `files` | array | yes (non-empty) | One or more files to validate. Order-preserving. |
+| `protocol_version` | integer | yes | Currently `1`. Validators MUST reject any other value with a protocol-level error response. |
+| `files` | array | yes (non-empty) | One or more files to validate. Order-preserving. The controller typically sends one file per request frame; the array is multi-element for forward compatibility. |
 | `files[].path` | string | yes | Operator-facing identifier echoed back in diagnostics. The validator MUST NOT open this path on disk; it processes `content` directly. |
-| `files[].content` | string | yes | UTF-8 file body. For hub-TOML files, this is the raw TOML text. |
+| `files[].content` | string | yes | UTF-8 file body. Format is whatever the validator expects for that path. |
 
-The validator processes each file independently. For hub-TOML files, the validator: parses TOML → structurally checks `[hub]` and `[[plugins]]` → for each `[plugins.params.<name>]` subtree, looks up the named plugin among loaded plugins and dispatches to its `validate()` → aggregates diagnostics under that file's path.
+The controller does not interpret file contents in any way before sending; it relays the rendered bytes verbatim.
 
 ## Response
 
@@ -59,7 +85,7 @@ The validator processes each file independently. For hub-TOML files, the validat
   "warnings": [],
   "errors": [
     {
-      "path": "hub-config.toml",
+      "path": "/etc/haproxy-spoa-hub/config.toml",
       "line": 6,
       "column": 0,
       "message": "unknown directive \"secresquestbodyaccess\""
@@ -71,41 +97,41 @@ The validator processes each file independently. For hub-TOML files, the validat
 | Field | Type | Required | Semantics |
 |-------|------|----------|-----------|
 | `protocol_version` | integer | yes | `1` in this version. |
-| `result` | string | yes | One of `"valid"`, `"warning"`, `"error"`. Computed: `error` if `errors` is non-empty; else `warning` if `warnings` is non-empty; else `valid`. |
+| `result` | string | yes | One of `"valid"`, `"warning"`, `"error"`. Computed: `"error"` if `errors` is non-empty; else `"warning"` if `warnings` is non-empty; else `"valid"`. |
 | `warnings` | array | yes (possibly empty) | List of `Diagnostic` objects with implicit `severity = warning`. |
 | `errors` | array | yes (possibly empty) | List of `Diagnostic` objects with implicit `severity = error`. |
 
-Each `Diagnostic` object:
+A `Diagnostic` SHALL have:
 
 | Field | Type | Required | Semantics |
 |-------|------|----------|-----------|
 | `path` | string | yes | The file the diagnostic refers to, matching one of the request's `files[].path` values. Protocol-level diagnostics use `path: ""`. |
 | `line` | integer | yes | 1-based line number, or `0` for "unknown / file-level". |
 | `column` | integer | yes | 1-based column number, or `0` for "unknown / file-level". |
-| `message` | string | yes | Human-readable error message. SHOULD be self-explanatory in the `kubectl apply` context (e.g., `"unknown directive 'secresquestbodyaccess'"` rather than `"validation error #4"`). |
+| `message` | string | yes | Human-readable error message. SHOULD be self-explanatory in the `kubectl apply` context. |
 
-## Result aggregation
+## Three-result behaviour
 
-When a single response carries diagnostics from multiple plugins:
+The `result` field's three values map to three webhook outcomes:
 
-- Diagnostics across all files and all plugins are collected into the warnings/errors arrays.
-- Severity counts determine `result` (any error → `"error"`; any warning, no errors → `"warning"`; else `"valid"`).
-- Order: file-level diagnostics (TOML parse, plugin-not-loaded) first, then per-plugin in plugin-load order.
-- Within a single plugin's diagnostics, the order is what the plugin produced — plugins SHOULD return diagnostics in source order.
+- **`valid`** → admission allowed; no message.
+- **`warning`** → admission allowed; `warnings[]` are appended to `AdmissionResponse.Warnings` so `kubectl apply` prints them as soft warnings. The resource is admitted unchanged.
+- **`error`** → admission denied. `errors[]` (and any `warnings[]` for context) are formatted as the denial reason. The resource is rejected.
+
+The aggregate result across multiple validators × multiple files is computed the same way: any error wins; any warning without errors wins; otherwise valid. The webhook always preserves the per-diagnostic `path` + `line` + `column` so the operator can pinpoint the offending file.
 
 ## Error responses (protocol-level)
 
-These responses come from the validator framework itself, not from a plugin's `validate()`. All have `result: "error"`, `warnings: []`, `errors: [<single diagnostic>]`. The diagnostic's `path` is empty.
+These responses come from the validator framework itself, not from any internal validation logic. All have `result: "error"`, `warnings: []`, `errors: [<single diagnostic>]`. The diagnostic's `path` is empty (`""`).
 
 | Trigger | Diagnostic message |
 |---------|--------------------|
 | Frame too large | `"request frame exceeds maximum size of N bytes"` (connection closed after response) |
-| Malformed JSON | `"request body is not valid JSON: <reason>"` |
-| Wrong protocol version | `"protocol version N not supported (max: 1)"` |
-| Missing required field | `"missing required field 'files'"` etc. |
-| Empty files array | `"'files' array must be non-empty"` |
-| Per-request timeout exceeded | `"validation timed out after Ns"` (configurable; reference implementation defaults to 5s) |
-| Plugin panic | `"internal validator error in plugin <name>: <panic message>"` (sidecar continues serving subsequent requests) |
+| Malformed JSON | `"request body is not valid JSON: <reason>"` (connection MAY remain open) |
+| Wrong protocol version | `"protocol version N not supported (max: 1)"` (connection MAY remain open) |
+| Missing required field | `"missing required field 'files'"` etc. (connection MAY remain open) |
+| Empty files array | `"'files' array must be non-empty"` (connection MAY remain open) |
+| Per-request timeout exceeded | `"validation timed out after Ns"` (connection closed; mid-write timeout poisons stream state) |
 | Connect refused (client-side) | `"validator <name>: connect <path>: <reason>"` |
 | Decode failure (client-side) | `"validator <name>: decode response: <reason>"` |
 
@@ -119,41 +145,42 @@ The current protocol is version `1`. Future evolution rules:
 
 ## Caching (client-side)
 
-The HAPTIC controller maintains a process-local LRU cache keyed by `sha256(validator-name || request-body)`. Cache hits skip the round-trip and return the cached response byte-for-byte. The cache holds successful round-trips (including warning/error responses); it does NOT cache transport-level failures so a transient sidecar outage doesn't poison subsequent admissions.
+The HAPTIC controller maintains a process-local LRU cache keyed by `(validator-name, path, sha256(content))`. Cache hits skip the round-trip and return the cached response. The cache holds successful round-trips (including responses with `result: "warning"` or `result: "error"`); it does NOT cache transport-level failures so a transient sidecar outage doesn't poison subsequent admissions.
 
 The cache is process-local — a controller restart re-warms it. There is no cross-pod sharing.
 
-This caching layer is not visible on the wire; validators can ignore it. Validator implementations MUST NOT rely on hidden state (the wire-protocol contract requires `validate()` to be a pure function of its inputs); violating purity poisons the cache and produces stale results.
+This caching layer is not visible on the wire; validators can ignore it. Validators MUST be pure functions of their input (the wire-protocol contract); violating purity poisons the cache and produces stale results.
 
 ## Worked example
 
-### Request
+### Request (single file)
 
 ```text
-00 00 00 D6  # 4-byte length: 214 bytes of JSON below
+00 00 00 D9  # 4-byte length: 217 bytes of JSON below
 
-{"protocol_version":1,"files":[{"path":"hub-config.toml","content":"[hub]\nlisten = \"0.0.0.0:9000\"\n\n[[plugins]]\nname = \"coraza\"\nlibrary = \"libcoraza.so\"\n\n[plugins.params.coraza]\ndirectives = '''\nSecRulRemoveById 942100\n'''\n"}]}
+{"protocol_version":1,"files":[{"path":"/etc/haproxy-spoa-hub/config.toml","content":"[hub]\nlisten = \"0.0.0.0:9000\"\n\n[plugins.params.coraza]\ndirectives = \"SecRulRemoveById 942100\"\n"}]}
 ```
 
 ### Response
 
 ```text
-00 00 00 D2  # length: 210 bytes
+00 00 00 DD  # length: 221 bytes
 
-{"protocol_version":1,"result":"error","warnings":[],"errors":[{"path":"hub-config.toml","line":11,"column":0,"message":"invalid WAF config from string: unknown directive \"secrulremovebyid\""}]}
+{"protocol_version":1,"result":"error","warnings":[],"errors":[{"path":"/etc/haproxy-spoa-hub/config.toml","line":4,"column":0,"message":"invalid WAF config from string: unknown directive \"secrulremovebyid\""}]}
 ```
 
-The `line: 11` corresponds to the line within the embedded TOML file at which the bad SecLang directive appears. The Coraza validator extracts that line number from the WAF parser's structured logs (see [`haproxy-spoa-hub-plugin-coraza/specs/003-validate-override`](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-coraza/-/blob/main/specs/003-validate-override/spec.md)).
+The validator extracted the `line: 4` from its internal parser; how it does so is opaque to the controller.
 
 ## Implementation notes for new validators
 
 A new validator (whether a haproxy-cfg validator, a third-party WAF, or anything else) must:
 
 1. Open a unix-domain stream socket at the path declared in `spec.validators[i].socketPath`.
-2. Accept one connection per request; read exactly 4 bytes of length prefix, then exactly `length` bytes of JSON.
-3. Reply with a length-prefixed JSON response within the per-request timeout (default 5s).
-4. Close the connection after writing the response.
-5. Implement validate as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. The HAPTIC-side cache assumes purity.
-6. Surface line numbers via 1-based `line` field, columns via 1-based `column` field, or `0` for "file-level". Self-explanatory `message` text — operators see this in `kubectl apply` denial reasons.
+2. Accept multiple concurrent connections (one tokio task / goroutine per connection, or equivalent).
+3. On each connection, loop on read-frame / process / write-response until the client closes, the connection goes idle past the validator's timeout, or a transport-level error poisons the byte stream.
+4. Handle one request frame per cycle: read 4 bytes of length prefix, then exactly `length` bytes of JSON; reply with one length-prefixed JSON response within the per-request timeout (recommended default 5 s).
+5. Process every file in `request.files[]` according to whatever internal logic the validator defines. The controller has already filtered files by glob match before sending.
+6. Implement validation as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. The HAPTIC-side cache assumes purity.
+7. Surface line numbers via the 1-based `line` field, columns via the 1-based `column` field, or `0` for "file-level". Self-explanatory `message` text — operators see this in `kubectl apply` denial reasons.
 
 Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/specs/pluggable-validator-sidecar/spec.md`](../../openspec/specs/pluggable-validator-sidecar/spec.md).

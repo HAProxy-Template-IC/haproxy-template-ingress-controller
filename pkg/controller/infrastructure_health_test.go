@@ -157,8 +157,8 @@ func TestMergePluggableValidatorHealth(t *testing.T) {
 		srv1 := pvtestutil.NewFixtureServer(t)
 		srv2 := pvtestutil.NewFixtureServer(t)
 		mgr, err := pluggablevalidator.NewManager(slog.Default(), []pluggablevalidator.ManagerConfig{
-			{Name: "coraza", SocketPath: srv1.SocketPath},
-			{Name: "otel", SocketPath: srv2.SocketPath},
+			{Name: "coraza", SocketPath: srv1.SocketPath, Files: []string{"/probe.toml"}},
+			{Name: "otel", SocketPath: srv2.SocketPath, Files: []string{"/probe.toml"}},
 		})
 		require.NoError(t, err)
 
@@ -177,8 +177,8 @@ func TestMergePluggableValidatorHealth(t *testing.T) {
 		srv := pvtestutil.NewFixtureServer(t)
 		missing := filepath.Join(t.TempDir(), "missing.sock")
 		mgr, err := pluggablevalidator.NewManager(slog.Default(), []pluggablevalidator.ManagerConfig{
-			{Name: "coraza", SocketPath: srv.SocketPath},
-			{Name: "otel", SocketPath: missing},
+			{Name: "coraza", SocketPath: srv.SocketPath, Files: []string{"/probe.toml"}},
+			{Name: "otel", SocketPath: missing, Files: []string{"/probe.toml"}},
 		})
 		require.NoError(t, err)
 
