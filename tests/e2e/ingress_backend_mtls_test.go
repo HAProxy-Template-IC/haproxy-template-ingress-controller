@@ -30,7 +30,7 @@ import (
 // annotation triple — `haproxy.org/server-ssl` (turn on TLS to backend),
 // `haproxy.org/server-ca` (CA secret used to verify the backend's cert),
 // and `haproxy.org/server-crt` (client cert+key the chart presents to the
-// backend). The fixture is an HAProxy backend with `verify required`
+// backend). The fixture is a HAProxy backend with `verify required`
 // configured against the same CA, so the request only succeeds if all
 // three annotations wire correctly.
 //

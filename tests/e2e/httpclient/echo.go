@@ -24,8 +24,8 @@ import (
 // EchoBody is a typed view of the JSON the echo-server emits.
 //
 // The dev-env echo-server is jmalloc/echo-server, which serializes the
-// incoming request as JSON. This gives Go tests structured access to the
-// data instead of substring-matching the bash way.
+// incoming request as JSON; tests assert against structured fields rather
+// than substring-matching the response body.
 //
 // Only fields the test suite asserts against are mapped; unmapped fields are
 // preserved in Raw for ad-hoc lookups.

@@ -20,10 +20,10 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
-// SingleWatcher.invokeOnChange has THREE branches; coverage was
-// 50%. The function is the load-bearing safety latch that
-// guarantees a misbehaving consumer's callback can't tear down
-// the watcher goroutine. All three branches matter:
+// SingleWatcher.invokeOnChange has THREE branches. The function is
+// the load-bearing safety latch that guarantees a misbehaving
+// consumer's callback can't tear down the watcher goroutine. All
+// three branches matter:
 //
 //  1. nil OnChange → silent no-op. Production code may register
 //     a SingleWatcher purely to track resource sync state without

@@ -460,8 +460,6 @@ type TemplateSnippet struct {
 // IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
 //   - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
 //   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
-//
-// The converter.go file transforms CRD types to internal config types used by the controller.
 type PostProcessorConfig struct {
 	// Type specifies the post-processor type (e.g., "regex_replace").
 	// +kubebuilder:validation:Required

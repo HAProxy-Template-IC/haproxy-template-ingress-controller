@@ -27,7 +27,7 @@
 //
 // For production use, create a Client to reuse connections across multiple operations:
 //
-//	endpoint := dataplane.Endpoint{
+//	endpoint := &dataplane.Endpoint{
 //	    URL:      "http://haproxy:5555/v3",
 //	    Username: "admin",
 //	    Password: "secret",

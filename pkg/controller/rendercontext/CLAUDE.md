@@ -17,11 +17,12 @@ Modify this package when:
 
 ## Package Purpose
 
-This package consolidates template context creation from 4 previously duplicated locations:
+Single source of truth for template-rendering context construction. Four
+call sites use the same `Builder`:
 
-| Original Location | Usage |
-|-------------------|-------|
-| `pkg/controller/renderer/context.go` | Production rendering |
+| Call site | Usage |
+|-----------|-------|
+| `pkg/controller/renderer/service.go` | Production rendering |
 | `pkg/controller/testrunner/runner.go` | Validation tests |
 | `cmd/controller/benchmark.go` | Performance benchmarks |
 | `pkg/controller/dryrunvalidator/component.go` | Webhook admission |

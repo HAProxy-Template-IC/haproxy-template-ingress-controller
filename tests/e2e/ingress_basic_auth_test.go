@@ -28,9 +28,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// TestIngressBasicAuth covers the bash test_ingress_auth flow: the chart's
-// haproxytech-library auth-type=basic-auth annotation gates the Ingress
-// behind HTTP Basic. Two checks:
+// TestIngressBasicAuth verifies that the chart's haproxytech-library
+// auth-type=basic-auth annotation gates the Ingress behind HTTP Basic.
+// Two checks:
 //   - no credentials → 401
 //   - admin:admin     → 200 (echo-server reached)
 //

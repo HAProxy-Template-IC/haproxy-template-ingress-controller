@@ -165,7 +165,7 @@ echo "Captcha module installed and copied to /etc/haproxy/modules/"
 `, hapeeKey)
 }
 
-// DeployHAProxy deploys an HAProxy instance to the given namespace
+// DeployHAProxy deploys a HAProxy instance to the given namespace
 func DeployHAProxy(ns *Namespace, cfg *HAProxyConfig) (*HAProxyInstance, error) {
 	if cfg == nil {
 		cfg = DefaultHAProxyConfig()

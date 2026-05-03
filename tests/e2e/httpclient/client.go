@@ -15,8 +15,7 @@
 //go:build e2e
 
 // Package httpclient is the fluent HTTP/HTTPS/mTLS client used by the
-// full-stack e2e suite. It replaces the bash curl/jq/grep assertions in
-// scripts/test-routes.sh with a typed, retrying, DinD-aware client.
+// full-stack e2e suite — typed, retrying, and DinD-aware.
 //
 // Design goals:
 //   - Condition-based waits: every assertion polls a real predicate under

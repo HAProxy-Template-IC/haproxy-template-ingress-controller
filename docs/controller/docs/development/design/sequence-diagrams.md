@@ -137,7 +137,7 @@ sequenceDiagram
 3. **Reconciliation Trigger**: Reconciler publishes `ReconciliationTriggeredEvent` either after the refractory window expires or immediately for whole-store events (`IndexSynchronizedEvent`, `BecameLeaderEvent`, `DriftPreventionTriggeredEvent`).
 4. **Coordinator (leader-only)**: subscribes to `ReconciliationTriggeredEvent`, publishes `ReconciliationStartedEvent`, then calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` **synchronously** — render and validation are one atomic step, not a multi-hop event chain.
 5. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs `ValidationService.Validate` (syntax via client-native parser → OpenAPI schema → `haproxy -c` semantic).
-6. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.As` to extract the failed phase).
+6. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` + `ValidationCompletedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase).
 7. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent`, `ValidationCompletedEvent`, and `HAProxyPodsDiscoveredEvent`; only deploys when all three inputs are present. Enforces `minDeploymentInterval` and "latest wins" coalescing.
 8. **Deployer (leader-only)**: executes parallel `dataplane.Sync` calls to every endpoint, publishes per-endpoint `InstanceDeployedEvent` / `InstanceDeploymentFailedEvent` and aggregate `DeploymentCompletedEvent`.
 9. **Completion**: Coordinator subscribes to `DeploymentCompletedEvent` and publishes `ReconciliationCompletedEvent` with duration metrics.
@@ -204,7 +204,7 @@ sequenceDiagram
 4. **Phase 1 — Syntax**: client-native parser checks grammar and section structure. Cheap.
 5. **Phase 1.5 — OpenAPI schema**: parsed structure cross-checked against the version-specific Dataplane API OpenAPI spec via `pkg/generated/validators`. Catches out-of-range values, pattern violations, missing required fields. Also cheap (in-memory, no fork).
 6. **Phase 2 — Semantic**: writes the config + auxiliary files into a per-call temp directory, runs `haproxy -c -f <tempdir>/haproxy.cfg`, parses the binary's stderr on failure. The temp directory mirrors the production layout (`maps/`, `ssl/`, `general/`) under `default-path origin <tempdir>` so file references resolve exactly like at runtime.
-7. **Result**: Pipeline wraps the `ValidationResult` into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.As`); the Coordinator then publishes `ValidationCompletedEvent` or `ReconciliationFailedEvent` accordingly.
+7. **Result**: Pipeline wraps the `ValidationResult` into a `*PipelineResult` (success) or `*PipelineError` (failure carrying `Phase` for `errors.AsType[*PipelineError]`); the Coordinator then publishes `ValidationCompletedEvent` or `ReconciliationFailedEvent` accordingly.
 
 ## Zero-Reload Deployment Strategy
 

@@ -42,12 +42,10 @@ import (
 //   - POST or other                 → default (rule 1 catch-all)
 func TestHTTPRoutePrecedence(t *testing.T) {
 	t.Parallel()
-	// TODO(haproxy-haptic#???): the bash test_httproute_precedence passes
-	// against the dev environment with the same rule shape, but the same
-	// declarations rendered through our per-test HTTPRoute fixture fail
-	// the "highest-precedence rule wins" assertion. Likely a rule-sorting
-	// quirk in the chart's gateway library when rules are declared
-	// out-of-order — needs dedicated investigation, not a test-side fix.
+	// TODO(haproxy-haptic#???): rules declared out-of-order through our
+	// per-test HTTPRoute fixture sometimes fail the "highest-precedence
+	// rule wins" assertion — likely a rule-sorting quirk in the chart's
+	// gateway library. Needs dedicated investigation, not a test-side fix.
 
 	host := "httproute-precedence.localdev.me"
 
@@ -139,13 +137,12 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 // Verifies the chart can compose them via AND.
 func TestHTTPRouteCombined(t *testing.T) {
 	t.Parallel()
-	// TODO(haproxy-haptic#???): the bash test_httproute_combined passes
-	// against the dev environment with this same rule (POST + path
-	// + Content-Type header + regex queryParam). Through our per-test
-	// fixture, the "all matchers satisfied → v2" assertion times out.
-	// HAProxy config IS rendered (verified via debug-logs), so the
-	// chart accepts the regex matcher; the runtime matching seems to
-	// reject the request. Needs dedicated chart investigation.
+	// TODO(haproxy-haptic#???): with this rule shape (POST + path +
+	// Content-Type header + regex queryParam), the "all matchers
+	// satisfied → v2" assertion times out. HAProxy config IS rendered
+	// (verified via debug-logs), so the chart accepts the regex matcher;
+	// runtime matching seems to reject the request. Needs dedicated
+	// chart investigation.
 
 	host := "httproute-combined.localdev.me"
 

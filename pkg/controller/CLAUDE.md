@@ -324,7 +324,9 @@ result, err := h.eventBus.Request(ctx, events.NewConfigValidationRequest(cfg, ve
 func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *TemplateValidator {
     // BaseValidator subscribes the component to ConfigValidationRequest
     // and dispatches to the validator's HandleRequest method.
-    return &TemplateValidator{Base: NewBaseValidator(eventBus, logger, "template", "", &templateHandler{})}
+    v := &TemplateValidator{eventBus: eventBus, logger: logger}
+    v.BaseValidator = NewBaseValidator(eventBus, logger, ValidatorNameTemplate, v)
+    return v
 }
 ```
 

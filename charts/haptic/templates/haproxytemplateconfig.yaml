@@ -57,7 +57,7 @@ spec:
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
   {{- /* Pass spoaHub wiring through extraContext when the sidecar is
-         enabled AND at least one plugin contributes a SPOE message.
+         enabled AND at least one plugin contributes an SPOE message.
          The spoa-hub template library reads this to render spoe.conf
          and the spoa-hub backend block. We compute the union of
          enabled-plugin messages once here rather than asking Scriggo

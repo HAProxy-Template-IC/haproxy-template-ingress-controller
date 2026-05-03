@@ -56,7 +56,7 @@ func (e *DeploymentStartedEvent) EventType() string { return EventTypeDeployment
 type InstanceDeployedEvent struct {
 	Endpoint       any // The HAProxy endpoint that was deployed to
 	DurationMs     int64
-	ReloadRequired bool // Whether this deployment required an HAProxy reload
+	ReloadRequired bool // Whether this deployment required a HAProxy reload
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.

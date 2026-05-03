@@ -144,7 +144,7 @@ Server modifications avoid reloads **only** when changing these Runtime API-supp
 
 ### Reload-Required Operations
 
-The following changes **require an HAProxy reload**:
+The following changes **require a HAProxy reload**:
 
 #### Server Operations
 

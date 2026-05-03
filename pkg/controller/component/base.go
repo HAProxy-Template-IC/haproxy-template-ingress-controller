@@ -14,9 +14,11 @@
 
 // Package component provides a shared event-loop scaffold for controller
 // components that subscribe on construction and dispatch one event at a
-// time. It consolidates the logic that previously lived in
-// pkg/controller/resourceloader and pkg/controller/validator (BaseLoader and
-// BaseValidator respectively).
+// time. The two domain-flavoured wrappers in the controller tree
+// (pkg/controller/resourceloader.BaseLoader and
+// pkg/controller/validator.BaseValidator) embed *Base for the actual
+// subscribe/dispatch/panic-recovery loop and add their own domain-specific
+// dispatch on top.
 //
 // Consumers embed *Base and implement EventHandler. Components that need a
 // domain-specific response to a panic (e.g. scatter-gather responders)

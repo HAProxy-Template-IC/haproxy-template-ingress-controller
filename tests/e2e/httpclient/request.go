@@ -264,9 +264,9 @@ func (r *Request) ExpectBodyContains(t *testing.T, substr string) *Response {
 	return resp
 }
 
-// ExpectHeader asserts a response header has the given value (substring
-// match — matches what the bash assert_header_value did with `grep`).
-// Retries under the client's wait budget.
+// ExpectHeader asserts a response header contains the given value
+// (substring match, not equality). Retries under the client's wait
+// budget.
 func (r *Request) ExpectHeader(t *testing.T, name, want string) *Response {
 	t.Helper()
 	resp, err := r.poll(t, fmt.Sprintf("%s %s header %s contains %q", r.method, r.url(), name, want), func(resp *Response) bool {

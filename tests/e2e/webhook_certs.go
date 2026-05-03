@@ -188,8 +188,7 @@ type mTLSBundle struct {
 }
 
 // generateMTLSBundle is the all-in-one cert-fixture builder for tests
-// that exercise client-mTLS. Mirrors the bash dev-script's
-// deploy_auth_tls_fixtures helper. Returns PEM bytes ready to drop into
+// that exercise client-mTLS. Returns PEM bytes ready to drop into
 // kubernetes.io/tls or generic Opaque secrets.
 //
 // All certs are short-lived (1 year), RSA-2048. Server CN matches the

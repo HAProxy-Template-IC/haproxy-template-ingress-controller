@@ -21,8 +21,8 @@ import (
 )
 
 // Watcher.handleDelete (multi-resource variant, distinct from
-// SingleWatcher.handleDelete which has its own pin) had 0%
-// coverage. Three early-return branches matter:
+// SingleWatcher.handleDelete which has its own pin). Three
+// early-return branches matter:
 //
 //  1. Direct conversion fails AND tombstone unwrap also fails
 //     → return WITHOUT calling processDelete. A regression that

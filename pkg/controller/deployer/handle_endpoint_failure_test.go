@@ -22,10 +22,8 @@ import (
 )
 
 // handleEndpointFailure is the per-endpoint failure path inside a
-// parallel deployment fan-out. Coverage was 0%; the function had
-// no direct tests despite being on every operator's alerting path.
-//
-// Three load-bearing contracts:
+// parallel deployment fan-out — on every operator's alerting path,
+// so pin its three load-bearing contracts directly here.
 //
 //  1. Always publishes InstanceDeploymentFailedEvent with the
 //     endpoint, error message, retryable=true, AND the correlation

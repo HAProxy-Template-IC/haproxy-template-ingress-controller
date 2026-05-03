@@ -431,7 +431,7 @@ use_backend %[path,map({{ pathResolver.GetPath("path.map", "map") }})]
 
 ### Common Pitfall
 
-Do not remove or rename the `default-path origin` line in `base.yaml` — `ValidationService.runHAProxyValidator` does an exact `strings.Replace(config, "default-path origin "+s.baseDir, "default-path origin "+tempDir, 1)`. If the directive is missing, or the rendered base differs from the configured `Dataplane.MapsDir` parent, the replacement silently no-ops and validation will look for files in the production paths inside a sandbox that doesn't have them.
+Do not remove or rename the `default-path origin` line in `base.yaml` — `ValidationService.ValidateWithChecksum` does an exact `strings.Replace(config, "default-path origin "+s.baseDir, "default-path origin "+tempDir, 1)`. If the directive is missing, or the rendered base differs from the configured `Dataplane.MapsDir` parent, the replacement silently no-ops and validation will look for files in the production paths inside a sandbox that doesn't have them.
 
 ## Development Workflow
 
@@ -1623,9 +1623,10 @@ func registerScriggoRuntimeVars(decl native.Declarations) {
 
 ### Caching with shared.ComputeIfAbsent
 
-For expensive computations that should run only once per render. The legacy
-`has_cached` / `set_cached` / `get_cached` helpers were removed in favour of a
-single thread-safe atomic call:
+For expensive computations that should run only once per render, use
+`shared.ComputeIfAbsent(key, fn)` — a single thread-safe atomic call that
+runs `fn` exactly once per render and returns the cached result on
+subsequent calls:
 
 ```scriggo
 {%- var result, _ = shared.ComputeIfAbsent("analysis_key", func() any {

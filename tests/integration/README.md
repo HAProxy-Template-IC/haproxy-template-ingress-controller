@@ -60,7 +60,7 @@ Most integration tests follow the same shape — render a minimal HAProxy config
 1. Drop a YAML or HAProxy-config fixture under `testdata/<section>/`.
 2. Add a `sync_<section>_test.go` (or extend an existing grouping) that pulls the fixture, calls `hi.Sync(...)`, and verifies the resulting state.
 3. If the section is Enterprise-only, guard the test with the appropriate `skipIf*` helper — or add a new one to `env.go` if the capability isn't already represented.
-4. If the section is new to the comparator, `pkg/dataplane/comparator/CLAUDE.md` has the execute-factory walkthrough.
+4. If the section is new to the comparator, `pkg/dataplane/comparator/README.md` describes the comparator's role and `pkg/dataplane/comparator/sections/executors/` is the per-section dispatch layer to extend.
 
 See `tests/integration/CLAUDE.md` for fixture-design conventions (when to hit `SharedCluster` vs. when to isolate, parallel-test safety, how the HAProxy-version matrix in CI selects fixtures).
 

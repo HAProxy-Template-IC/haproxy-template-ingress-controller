@@ -114,7 +114,7 @@ func startLeaderOnlyComponents(
 	})
 
 	logger.Debug("Leader-only components started via lifecycle registry",
-		"components", "Deployer, DeploymentScheduler, ConfigPublisher, Renderer, DriftMonitor")
+		"components", "Coordinator, DriftMonitor, Deployer, DeploymentScheduler, ConfigPublisher, StatusUpdater")
 
 	return &leaderOnlyComponents{
 		deployer:            components.deployer,

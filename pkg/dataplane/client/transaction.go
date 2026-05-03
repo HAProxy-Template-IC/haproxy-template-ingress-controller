@@ -18,7 +18,7 @@ import (
 	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
-// Transaction represents an HAProxy Dataplane API transaction.
+// Transaction represents a HAProxy Dataplane API transaction.
 //
 // Transactions provide atomic configuration changes - all operations within
 // a transaction are applied together or none are applied. This prevents

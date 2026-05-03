@@ -140,7 +140,7 @@ templateSnippets:
         {# Emit one crt-list line per (config) group. Sort by key for
            deterministic output — Scriggo map iteration order is not
            guaranteed stable across renders, and a reordered crt-list
-           triggers an HAProxy reload even when the underlying inputs
+           triggers a HAProxy reload even when the underlying inputs
            are identical. #}
         {%- var keyList = []any{} -%}
         {%- for k := range snisByConfig -%}

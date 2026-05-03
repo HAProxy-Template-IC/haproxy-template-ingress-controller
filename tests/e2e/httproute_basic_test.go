@@ -26,10 +26,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// TestHTTPRouteBasic covers the bash test_httproute_basic: a Gateway
-// with an HTTPRoute attached, routing all traffic for one host to the
-// echo-server backend. Mirrors TestIngressBasic but via Gateway API
-// resources.
+// TestHTTPRouteBasic exercises a Gateway with an HTTPRoute attached,
+// routing all traffic for one host to the echo-server backend. Mirrors
+// TestIngressBasic but via Gateway API resources.
 //
 // First HTTPRoute test in the suite — if it passes, the Gateway API CRDs
 // are installed correctly, the chart's gateway library is wired, and the

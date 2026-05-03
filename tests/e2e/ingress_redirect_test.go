@@ -22,9 +22,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 )
 
-// TestIngressRedirect covers the bash test_ingress_redirect: the
-// haproxy.org/request-redirect annotation should produce a 302 Location
-// response without ever reaching the backend.
+// TestIngressRedirect verifies that the haproxy.org/request-redirect
+// annotation produces a 302 Location response without ever reaching the
+// backend.
 func TestIngressRedirect(t *testing.T) {
 	t.Parallel()
 	const target = "https://echo.localdev.me"

@@ -161,7 +161,7 @@ func (p *HTTPResponses) SetPreComments(preComment []string) {
 func (p *HTTPResponses) ResultAll() ([]common.ReturnResultLine, []string, error) {
 	results := make([]common.ReturnResultLine, 0, len(p.eeActions))
 
-	// Add EE actions (none currently implemented).
+	// Add EE actions (populated via Insert / Set with *EEHTTPResponseAction).
 	for _, action := range p.eeActions {
 		line := "http-response " + action.Type
 		if action.Profile != "" {
