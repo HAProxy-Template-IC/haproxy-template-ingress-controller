@@ -9,7 +9,7 @@ verbatim under `[plugins.params]`. Whitespace and quoting are preserved.
 The chart never parses or validates the blob — see each upstream plugin's
 README for the schema.
 */}}
-{{- if include "haptic.spoaHub.enabled" . }}
+{{- if or (include "haptic.spoaHub.enabled" .) (include "haptic.validators.enabled" .) }}
 {{- $spoaHub := .Values.spoaHub }}
 {{- $hub := $spoaHub.hub }}
 apiVersion: v1
