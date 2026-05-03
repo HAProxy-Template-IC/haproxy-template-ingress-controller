@@ -20,53 +20,108 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
-// DefaultTimeout matches the hub-side default (--validate-timeout-ms) so
-// operators see consistent latency budgets across both ends of the wire.
+// DefaultTimeout matches the hub-side default per-request timeout so
+// operators see consistent latency budgets across both ends of the
+// wire.
 const DefaultTimeout = 5 * time.Second
 
-// Client is a synchronous unix-socket client speaking the validator wire
-// protocol. One Client maps to one configured validator (one socket path,
-// one timeout). Clients are safe for concurrent use; each Validate call
-// opens its own connection per the wire protocol.
+// DefaultMaxConnections is the per-validator pool ceiling when
+// `spec.validators[i].maxConnections` is omitted. Sized to match
+// typical reconciliation-burst concurrency (a handful of in-flight
+// validations) without holding many idle file descriptors per
+// validator.
+const DefaultMaxConnections = 4
+
+// idleClose is the period after which a checked-in connection is
+// closed and not returned to the pool. Mirrors HTTP keep-alive
+// timeouts and stays well under the validator's typical idle close
+// (60s) so the controller proactively reaps before the validator
+// closes underneath it.
+const idleClose = 30 * time.Second
+
+// Client speaks the HAPTIC validator wire protocol over a unix
+// socket. One Client maps to one configured validator: one socket
+// path, one timeout budget, one connection pool. Clients are safe
+// for concurrent use; the pool serialises within-connection traffic
+// and parallelises across connections.
+//
+// Pool semantics (adaptive):
+//   - Start small (zero connections; lazy open on first use).
+//   - Grow on contention up to MaxConnections (acquires that find
+//     no free connection and have headroom open a fresh one).
+//   - Shrink on idleness (connections checked back into the pool
+//     past `idleClose` are closed instead of returned, so the pool
+//     deflates when traffic dies down).
+//   - Connections that error on read/write are discarded (poisoned)
+//     and replaced lazily on next acquire.
 type Client struct {
-	// Name is the operator-facing validator name from spec.validators[i].name.
-	// Surfaced in synthetic protocol-level diagnostics so users can identify
-	// which validator failed.
+	// Name is the operator-facing validator name from
+	// spec.validators[i].name. Surfaced in synthetic protocol-level
+	// diagnostics so users can identify which validator failed.
 	Name string
 
-	// SocketPath is the absolute filesystem path to the validator's unix
-	// domain socket.
+	// SocketPath is the absolute filesystem path to the validator's
+	// unix domain socket.
 	SocketPath string
 
-	// Timeout is the per-call deadline covering connect + write + read.
-	// Zero falls back to DefaultTimeout.
+	// Timeout is the per-call deadline for one request-response
+	// cycle (acquire + write + read). Zero falls back to
+	// DefaultTimeout.
 	Timeout time.Duration
 
-	// dialer is overridable in tests. nil means use the default unix
+	// MaxConnections caps the pool size. Zero falls back to
+	// DefaultMaxConnections; values < 1 are clamped up to 1.
+	MaxConnections int
+
+	// dialer is overridable in tests. nil means the default unix
 	// dialer.
 	dialer func(ctx context.Context, path string) (net.Conn, error)
+
+	mu       sync.Mutex
+	cond     *sync.Cond    // broadcast on every release/discard so waiters wake without polling
+	idle     []*pooledConn // free connections
+	inFlight int           // checked-out + in-progress dial count
+}
+
+type pooledConn struct {
+	conn   net.Conn
+	parked time.Time // when it was last checked back in (for idle close)
 }
 
 // NewClient builds a Client for the given validator socket.
-func NewClient(name, socketPath string, timeout time.Duration) *Client {
+// `timeout <= 0` falls back to DefaultTimeout; `maxConnections <= 0`
+// falls back to DefaultMaxConnections.
+func NewClient(name, socketPath string, timeout time.Duration, maxConnections int) *Client {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	return &Client{Name: name, SocketPath: socketPath, Timeout: timeout}
+	if maxConnections <= 0 {
+		maxConnections = DefaultMaxConnections
+	}
+	c := &Client{
+		Name:           name,
+		SocketPath:     socketPath,
+		Timeout:        timeout,
+		MaxConnections: maxConnections,
+	}
+	c.cond = sync.NewCond(&c.mu)
+	return c
 }
 
-// Validate sends one request frame and reads one response frame, then closes
-// the connection. Returns the decoded Response or, on transport / protocol
-// failure, a synthetic ProtocolError Response.
+// Validate sends one request frame and reads one response frame on a
+// pooled connection. Returns the decoded Response or, on transport /
+// protocol failure, a synthetic ProtocolError Response.
 //
-// Validate never returns a non-nil error alongside a non-nil Response: the
-// caller treats every transport failure as a protocol-level error
-// diagnostic. The error return is reserved for caller-supplied invariant
-// violations (nil request, etc.) where the failure is "you misused this
-// API" rather than "the validator is unreachable".
+// Validate never returns a non-nil error alongside a non-nil
+// Response: the caller treats every transport failure as a
+// protocol-level error diagnostic. The error return is reserved for
+// caller-supplied invariant violations (nil request, etc.) where the
+// failure is "you misused this API" rather than "the validator is
+// unreachable".
 func (c *Client) Validate(ctx context.Context, req *Request) (*Response, error) {
 	if req == nil {
 		return nil, errors.New("validator client: nil request")
@@ -76,24 +131,32 @@ func (c *Client) Validate(ctx context.Context, req *Request) (*Response, error) 
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	dialCtx, cancel := context.WithDeadline(ctx, deadline)
+	callCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
-	conn, err := c.dial(dialCtx, c.SocketPath)
+	conn, fresh, err := c.acquire(callCtx)
 	if err != nil {
 		return ProtocolError(fmt.Sprintf(
 			"validator %q: connect %s: %v", c.Name, c.SocketPath, err,
 		)), nil
 	}
-	defer func() { _ = conn.Close() }()
 
 	if err := conn.SetDeadline(deadline); err != nil {
+		c.discard(conn)
 		return ProtocolError(fmt.Sprintf(
 			"validator %q: set deadline: %v", c.Name, err,
 		)), nil
 	}
 
 	if _, err := EncodeRequest(conn, req); err != nil {
+		// On a fresh connection a write error is most likely a
+		// real socket failure. On a reused connection it could be
+		// the server having idle-closed underneath us; retry once
+		// with a fresh dial.
+		c.discard(conn)
+		if !fresh {
+			return c.retryOnce(callCtx, req), nil
+		}
 		return ProtocolError(fmt.Sprintf(
 			"validator %q: encode request: %v", c.Name, err,
 		)), nil
@@ -101,37 +164,246 @@ func (c *Client) Validate(ctx context.Context, req *Request) (*Response, error) 
 
 	resp, err := DecodeResponse(conn)
 	if err != nil {
+		c.discard(conn)
+		if !fresh {
+			return c.retryOnce(callCtx, req), nil
+		}
 		return ProtocolError(fmt.Sprintf(
 			"validator %q: decode response: %v", c.Name, err,
 		)), nil
 	}
+
+	c.release(conn)
 	return resp, nil
 }
 
-// dial returns a unix-socket connection. Test code may override Client.dialer
-// to redirect through an in-process listener.
-func (c *Client) dial(ctx context.Context, path string) (net.Conn, error) {
+// retryOnce retries Validate exactly once with a forced-fresh
+// connection. Used when the first attempt failed on a reused
+// connection (which may have been idle-closed by the validator
+// between our last use and now). A single retry is enough — if the
+// fresh connection also fails, the validator is genuinely broken.
+//
+// Always returns a non-nil Response: transport-level failures are
+// surfaced as ProtocolError responses for symmetry with Validate.
+func (c *Client) retryOnce(ctx context.Context, req *Request) *Response {
+	deadline, _ := ctx.Deadline()
+
+	conn, _, err := c.dialFresh(ctx)
+	if err != nil {
+		return ProtocolError(fmt.Sprintf(
+			"validator %q: connect %s (retry): %v", c.Name, c.SocketPath, err,
+		))
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		c.discard(conn)
+		return ProtocolError(fmt.Sprintf(
+			"validator %q: set deadline (retry): %v", c.Name, err,
+		))
+	}
+	if _, err := EncodeRequest(conn, req); err != nil {
+		c.discard(conn)
+		return ProtocolError(fmt.Sprintf(
+			"validator %q: encode request (retry): %v", c.Name, err,
+		))
+	}
+	resp, err := DecodeResponse(conn)
+	if err != nil {
+		c.discard(conn)
+		return ProtocolError(fmt.Sprintf(
+			"validator %q: decode response (retry): %v", c.Name, err,
+		))
+	}
+	c.release(conn)
+	return resp
+}
+
+// acquire returns a pooled connection (reusing a free one if any,
+// dialing a fresh one if there's pool headroom, or blocking on
+// cond.Wait until one is released). The bool indicates whether the
+// connection is fresh (just dialed) — Validate uses this to decide
+// whether to retry on first-use failure (reused connections may have
+// been idle-closed by the validator and deserve one retry; fresh
+// connections that fail are the real failure mode).
+//
+// Context cancellation is honored via a watchdog goroutine that
+// broadcasts on the cond when ctx fires; the waiter wakes, observes
+// the context state, and returns an error.
+func (c *Client) acquire(ctx context.Context) (net.Conn, bool, error) {
+	// Wire ctx cancellation into the cond: when ctx fires, broadcast
+	// so any goroutine in cond.Wait below wakes up and re-checks.
+	stop := c.armCancelWatcher(ctx)
+	defer stop()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for {
+		// Reuse any free, non-stale connection first.
+		if pc := c.popIdleLocked(); pc != nil {
+			c.inFlight++
+			return pc.conn, false, nil
+		}
+		// Open a fresh connection if there's headroom.
+		if c.inFlight < c.MaxConnections {
+			c.inFlight++
+			c.mu.Unlock()
+			conn, dialErr := c.dial(ctx)
+			c.mu.Lock()
+			if dialErr != nil {
+				c.inFlight--
+				c.cond.Signal()
+				return nil, false, dialErr
+			}
+			return conn, true, nil
+		}
+		// At cap. Bail if the context is already cancelled.
+		if err := ctx.Err(); err != nil {
+			return nil, false, fmt.Errorf("acquire: %w", err)
+		}
+		// Wait for release/discard or cancellation broadcast.
+		c.cond.Wait()
+	}
+}
+
+// popIdleLocked removes and returns the most recently parked
+// non-stale idle connection, or nil when the pool is empty (or every
+// remaining entry is stale and got closed). Caller MUST hold c.mu.
+func (c *Client) popIdleLocked() *pooledConn {
+	for len(c.idle) > 0 {
+		idx := len(c.idle) - 1
+		pc := c.idle[idx]
+		c.idle = c.idle[:idx]
+		if time.Since(pc.parked) > idleClose {
+			// Stale — close and try the next one. Stale entries
+			// don't count against inFlight; they were released.
+			_ = pc.conn.Close()
+			continue
+		}
+		return pc
+	}
+	return nil
+}
+
+// armCancelWatcher launches a goroutine that broadcasts on the cond
+// when the context is cancelled, so any goroutine in cond.Wait wakes
+// up and re-checks ctx.Err(). Returns a stop function the caller
+// MUST defer to avoid leaking the watcher goroutine on the happy
+// path.
+func (c *Client) armCancelWatcher(ctx context.Context) func() {
+	if ctx.Done() == nil {
+		// context.Background() has no cancellation — nothing to
+		// watch.
+		return func() {}
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.mu.Lock()
+			c.cond.Broadcast()
+			c.mu.Unlock()
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
+}
+
+// dialFresh always opens a new connection, bypassing the pool's
+// reuse logic. Used by retryOnce. Counts toward inFlight so the
+// pool's MaxConnections cap is honored even during retries. Blocks
+// on cond.Wait when at cap, just like acquire — no busy polling.
+func (c *Client) dialFresh(ctx context.Context) (net.Conn, bool, error) {
+	stop := c.armCancelWatcher(ctx)
+	defer stop()
+
+	c.mu.Lock()
+	for c.inFlight >= c.MaxConnections {
+		if err := ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return nil, false, fmt.Errorf("dialFresh: %w", err)
+		}
+		c.cond.Wait()
+	}
+	c.inFlight++
+	c.mu.Unlock()
+
+	conn, err := c.dial(ctx)
+	if err != nil {
+		c.mu.Lock()
+		c.inFlight--
+		c.cond.Signal()
+		c.mu.Unlock()
+		return nil, false, err
+	}
+	return conn, true, nil
+}
+
+// release returns a healthy connection to the pool. The connection
+// gets a fresh `parked` timestamp; subsequent acquires will reap it
+// if it sits idle past idleClose. Signals the cond so any acquirer
+// blocked at the pool cap wakes up.
+func (c *Client) release(conn net.Conn) {
+	// Drop the deadline before returning to the pool — the next
+	// caller will set its own.
+	_ = conn.SetDeadline(time.Time{})
+	c.mu.Lock()
+	c.inFlight--
+	c.idle = append(c.idle, &pooledConn{conn: conn, parked: time.Now()})
+	c.cond.Signal()
+	c.mu.Unlock()
+}
+
+// discard closes a poisoned connection without returning it to the
+// pool. inFlight counter is decremented so a subsequent acquire can
+// open a replacement. Signals the cond so any acquirer blocked at
+// the pool cap wakes up.
+func (c *Client) discard(conn net.Conn) {
+	_ = conn.Close()
+	c.mu.Lock()
+	c.inFlight--
+	c.cond.Signal()
+	c.mu.Unlock()
+}
+
+// dial returns a unix-socket connection. Test code may override
+// Client.dialer to redirect through an in-process listener.
+func (c *Client) dial(ctx context.Context) (net.Conn, error) {
 	if c.dialer != nil {
-		return c.dialer(ctx, path)
+		return c.dialer(ctx, c.SocketPath)
 	}
 	d := net.Dialer{}
-	return d.DialContext(ctx, "unix", path)
+	return d.DialContext(ctx, "unix", c.SocketPath)
+}
+
+// Close drains the pool and shuts every idle connection. Safe to
+// call repeatedly; the pool is unusable after the first close.
+// Used during iteration teardown.
+func (c *Client) Close() {
+	c.mu.Lock()
+	conns := c.idle
+	c.idle = nil
+	c.mu.Unlock()
+	for _, pc := range conns {
+		_ = pc.conn.Close()
+	}
 }
 
 // HealthCheck verifies a validator socket is reachable and accepting
-// connections. Returns nil on success or a wrapped error describing the
-// failure.
+// connections. Returns nil on success or a wrapped error describing
+// the failure.
 //
-// The check is intentionally lightweight (sub-ms in the happy path) so it
-// can run on every Kubernetes liveness/readiness probe interval (default
-// 10s). It does NOT exercise the protocol — a malformed validator that
-// accepts connections but produces garbage will pass HealthCheck. Catching
-// that needs a deeper round-trip probe, which is out of scope for /healthz.
+// The check is intentionally lightweight (sub-ms in the happy path)
+// so it can run on every Kubernetes liveness/readiness probe
+// interval (default 10s). It does NOT exercise the protocol — a
+// malformed validator that accepts connections but produces garbage
+// will pass HealthCheck. Catching that needs a deeper round-trip
+// probe, which is out of scope for /healthz.
 //
-// On Linux, `os.OpenFile` against a stream unix socket fails with ENXIO
-// regardless of the socket's state, so we use a short non-blocking dial as
-// the readiness check instead. Stat + mode check still rules out the
-// regular-file case before paying the dial cost.
+// On Linux, `os.OpenFile` against a stream unix socket fails with
+// ENXIO regardless of the socket's state, so we use a short
+// non-blocking dial as the readiness check instead. Stat + mode
+// check still rules out the regular-file case before paying the
+// dial cost.
 func HealthCheck(socketPath string) error {
 	info, err := os.Stat(socketPath)
 	if err != nil {

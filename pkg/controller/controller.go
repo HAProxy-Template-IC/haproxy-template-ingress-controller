@@ -265,6 +265,40 @@ type componentSetup struct {
 	Cancel                context.CancelFunc
 	ConfigChangeCh        chan *coreconfig.Config
 	ErrGroup              *errgroup.Group // Tracks all background goroutines for graceful shutdown
+
+	// cleanups holds tear-down callbacks registered by helpers
+	// during setup. RunCleanups invokes them in reverse-registration
+	// order on iteration exit (mirrors `defer` semantics) so e.g. a
+	// pluggable-validator manager's connection pools get drained
+	// before the iteration context goes away. Mutex-guarded because
+	// registration may happen from multiple stages of setup.
+	cleanupsMu sync.Mutex
+	cleanups   []func()
+}
+
+// AddCleanup registers a callback to run on iteration teardown.
+// Callbacks fire in reverse-registration order (LIFO), mirroring
+// `defer` semantics. Safe for concurrent registration.
+func (s *componentSetup) AddCleanup(fn func()) {
+	if fn == nil {
+		return
+	}
+	s.cleanupsMu.Lock()
+	s.cleanups = append(s.cleanups, fn)
+	s.cleanupsMu.Unlock()
+}
+
+// RunCleanups invokes registered cleanup callbacks in reverse order.
+// Idempotent — calling a second time is a no-op (cleanups have
+// already drained).
+func (s *componentSetup) RunCleanups() {
+	s.cleanupsMu.Lock()
+	cleanups := s.cleanups
+	s.cleanups = nil
+	s.cleanupsMu.Unlock()
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		cleanups[i]()
+	}
 }
 
 // setupComponents creates and starts all event-driven components.

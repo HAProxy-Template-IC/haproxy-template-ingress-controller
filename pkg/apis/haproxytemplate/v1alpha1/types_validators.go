@@ -18,14 +18,24 @@ package v1alpha1
 // controller will consult during admission webhook processing.
 //
 // The wire protocol between the controller and a validator sidecar is
-// documented in `docs/development/validator-protocol.md`. The reference
-// implementation is `haproxy-spoa-hub --validate-socket <path>` shipped
-// alongside HAPTIC; any conforming implementation may be substituted.
+// documented in `docs/development/validator-protocol.md` and is owned
+// by HAPTIC. Reference implementation: `haproxy-spoa-hub
+// --validate-socket <path>` shipped alongside HAPTIC; any conforming
+// implementation may be substituted. The validator program is opaque
+// to HAPTIC — its internal architecture (whether it has plugins, how
+// it dispatches files, how it parses content) is its own concern.
 //
-// Operators declare zero, one, or many validators. Each one runs in its
-// own sidecar container in the controller pod and shares a Unix domain
-// socket via an emptyDir volume; the chart wires this up automatically
-// when `spec.validators` is non-empty.
+// Operators declare zero, one, or many validators. Each one runs in
+// its own sidecar container in the controller pod and shares a Unix
+// domain socket via an emptyDir volume; the chart wires this up
+// automatically when `spec.validators` is non-empty.
+//
+// Routing: HAPTIC matches each rendered file's path against every
+// validator's `files` glob list. Files that match are sent to that
+// validator over its socket. A file that matches multiple validators'
+// globs is sent to each of them. Files that match no validator's
+// globs are not validated by any sidecar (they still flow through the
+// existing template + HAProxy syntax dry-run).
 type ValidatorConfig struct {
 	// Name is the operator-facing identifier for this validator.
 	//
@@ -51,29 +61,51 @@ type ValidatorConfig struct {
 	// +kubebuilder:validation:Pattern=`^/`
 	SocketPath string `json:"socketPath"`
 
-	// Plugins lists the `[plugins.params.<name>]` subtree names this
-	// validator handles in the rendered hub TOML.
+	// Files is a list of glob patterns matched against rendered file
+	// paths to decide which files to send to this validator.
 	//
-	// An empty list (the default) means "validate the whole hub TOML";
-	// the validator decides what to do with the full config (typically
-	// it dispatches to every loaded plugin's `validate()`). Listing
-	// specific plugins is a forward-compatible hook for the case where
-	// multiple validators each handle a disjoint subset; it is unused
-	// by the current single-validator-per-hub deployment shape but
-	// kept in the schema so a future change does not require a CRD
-	// version bump.
-	// +optional
-	Plugins []string `json:"plugins,omitempty"`
+	// Glob syntax follows Go's `path/filepath.Match` rules:
+	//   - `*` matches any run of non-`/` characters.
+	//   - `?` matches any single non-`/` character.
+	//   - `[a-z]` matches any character in the range.
+	//   - `**` is NOT supported; use multiple entries to cover
+	//     directory hierarchies.
+	//
+	// At least one glob MUST be specified. Each glob MUST be an
+	// absolute path (start with `/`) so it matches the rendered file
+	// paths that the controller produces (e.g. `/etc/haproxy/maps/host.map`,
+	// `/etc/haproxy-spoa-hub/config.toml`). Operators get the matching
+	// behaviour they expect from a path-style glob.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinItems=1
+	// +listType=set
+	Files []string `json:"files"`
 
 	// TimeoutMs is the per-call deadline, in milliseconds, covering
-	// connect + write + read.
+	// the request-response cycle for one file (connect-or-acquire +
+	// write + read).
 	//
 	// Defaults to 5000 (5 seconds) when omitted. Validator calls
-	// exceeding this deadline yield a synthetic admission denial with
-	// `result: "error"` so a wedged sidecar does not stall the webhook
-	// path indefinitely.
+	// exceeding this deadline are surfaced as `result: "error"` so a
+	// wedged sidecar does not stall the webhook path indefinitely.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=60000
 	TimeoutMs *int32 `json:"timeoutMs,omitempty"`
+
+	// MaxConnections caps the size of the controller's connection
+	// pool to this validator's socket. The pool starts small (one
+	// idle connection) and grows on contention up to this cap;
+	// connections idle past the validator's idle timeout are reaped
+	// transparently and reopened on next use.
+	//
+	// Defaults to 4 when omitted. Setting 1 reproduces a serial
+	// client (one validation in flight at a time). Higher values
+	// allow more concurrent validations during reconciliation bursts
+	// at the cost of file descriptors and validator-side resource
+	// pressure.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=32
+	MaxConnections *int32 `json:"maxConnections,omitempty"`
 }

@@ -210,9 +210,10 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 
 // convertValidators copies the CRD validators array into the
 // internal core-config representation. The shapes are nearly identical;
-// the only translation is dereferencing the optional TimeoutMs pointer
-// (CRD optionality) into the non-pointer int32 (zero defaults to the
-// pluggablevalidator package's DefaultTimeout downstream).
+// the translation dereferences the optional pointer fields (TimeoutMs,
+// MaxConnections) into non-pointer int32 fields (zero defaults to the
+// pluggablevalidator package defaults downstream) and copies the Files
+// glob slice defensively.
 func convertValidators(crdValidators []v1alpha1.ValidatorConfig) []config.ValidatorConfig {
 	if len(crdValidators) == 0 {
 		return nil
@@ -222,10 +223,13 @@ func convertValidators(crdValidators []v1alpha1.ValidatorConfig) []config.Valida
 		entry := config.ValidatorConfig{
 			Name:       v.Name,
 			SocketPath: v.SocketPath,
-			Plugins:    append([]string(nil), v.Plugins...),
+			Files:      append([]string(nil), v.Files...),
 		}
 		if v.TimeoutMs != nil {
 			entry.TimeoutMs = *v.TimeoutMs
+		}
+		if v.MaxConnections != nil {
+			entry.MaxConnections = *v.MaxConnections
 		}
 		out = append(out, entry)
 	}

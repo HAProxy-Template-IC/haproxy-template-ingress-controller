@@ -48,7 +48,7 @@ func TestClient_Validate_HappyPath(t *testing.T) {
 		t.Fatalf("SetResponse: %v", err)
 	}
 
-	client := pv.NewClient("coraza", srv.SocketPath, 2*time.Second)
+	client := pv.NewClient("coraza", srv.SocketPath, 2*time.Second, 2)
 	resp, err := client.Validate(context.Background(), newRequest())
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -64,7 +64,7 @@ func TestClient_Validate_HappyPath(t *testing.T) {
 func TestClient_Validate_ConnectionRefused(t *testing.T) {
 	// Point at a path that doesn't exist; dial fails.
 	missing := filepath.Join(t.TempDir(), "missing.sock")
-	client := pv.NewClient("coraza", missing, 500*time.Millisecond)
+	client := pv.NewClient("coraza", missing, 500*time.Millisecond, 2)
 
 	resp, err := client.Validate(context.Background(), newRequest())
 	if err != nil {
@@ -88,7 +88,7 @@ func TestClient_Validate_ServerCloseWithoutResponse(t *testing.T) {
 		t.Fatalf("SetResponse(nil): %v", err)
 	}
 
-	client := pv.NewClient("coraza", srv.SocketPath, 500*time.Millisecond)
+	client := pv.NewClient("coraza", srv.SocketPath, 500*time.Millisecond, 2)
 	resp, err := client.Validate(context.Background(), newRequest())
 	if err != nil {
 		t.Fatalf("Validate returned err for closed connection: %v", err)
@@ -110,7 +110,7 @@ func TestClient_Validate_TimeoutEnforced(t *testing.T) {
 	}
 	srv.SetResponseDelay(500 * time.Millisecond)
 
-	client := pv.NewClient("coraza", srv.SocketPath, 50*time.Millisecond)
+	client := pv.NewClient("coraza", srv.SocketPath, 50*time.Millisecond, 2)
 	start := time.Now()
 	resp, err := client.Validate(context.Background(), newRequest())
 	elapsed := time.Since(start)
@@ -138,7 +138,7 @@ func TestClient_Validate_ContextDeadlineEnforced(t *testing.T) {
 	}
 	srv.SetResponseDelay(500 * time.Millisecond)
 
-	client := pv.NewClient("coraza", srv.SocketPath, 5*time.Second)
+	client := pv.NewClient("coraza", srv.SocketPath, 5*time.Second, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
@@ -167,7 +167,7 @@ func TestClient_Validate_MalformedResponse(t *testing.T) {
 	copy(frame[4:], body)
 	srv.SetRawResponse(frame)
 
-	client := pv.NewClient("coraza", srv.SocketPath, 500*time.Millisecond)
+	client := pv.NewClient("coraza", srv.SocketPath, 500*time.Millisecond, 2)
 	resp, err := client.Validate(context.Background(), newRequest())
 	if err != nil {
 		t.Fatalf("Validate returned err: %v", err)
@@ -178,7 +178,7 @@ func TestClient_Validate_MalformedResponse(t *testing.T) {
 }
 
 func TestClient_Validate_NilRequest(t *testing.T) {
-	client := pv.NewClient("coraza", "/nonexistent", 500*time.Millisecond)
+	client := pv.NewClient("coraza", "/nonexistent", 500*time.Millisecond, 2)
 	if _, err := client.Validate(context.Background(), nil); err == nil {
 		t.Fatal("expected error for nil request — caller misused the API")
 	}

@@ -114,27 +114,6 @@ func (r *Response) IsSynthetic() bool {
 	return r != nil && r.synthetic
 }
 
-// marshalRequest returns the JSON body the wire protocol carries (without
-// the 4-byte length prefix). Same invariants as EncodeRequest minus the
-// io.Writer step. Used by the cache to derive content-hash keys without
-// double-marshaling.
-func marshalRequest(req *Request) ([]byte, error) {
-	if req == nil {
-		return nil, fmt.Errorf("marshal request: nil")
-	}
-	if req.ProtocolVersion != ProtocolVersion {
-		return nil, fmt.Errorf("marshal request: unsupported protocol_version %d (want %d)", req.ProtocolVersion, ProtocolVersion)
-	}
-	if len(req.Files) == 0 {
-		return nil, fmt.Errorf("marshal request: files array must be non-empty")
-	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-	return body, nil
-}
-
 // EncodeRequest serialises a Request into a length-prefixed JSON frame and
 // writes it to w. Returns the number of bytes written (including the 4-byte
 // length prefix) or an error.

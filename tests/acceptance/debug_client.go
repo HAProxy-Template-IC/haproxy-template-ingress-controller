@@ -134,7 +134,17 @@ func (dc *DebugClient) proxyGet(ctx context.Context, path string) ([]byte, error
 			strings.Contains(errStr, "connection reset") ||
 			strings.Contains(errStr, "i/o timeout") ||
 			strings.Contains(errStr, "an error on the server") ||
-			strings.Contains(errStr, "EOF") {
+			strings.Contains(errStr, "EOF") ||
+			// Service-existence race during controller pod restart: the
+			// API-server proxy briefly returns NotFound on the Service
+			// resource ("get services ...") between Pod-Ready and
+			// Endpoints-fully-propagated, even after WaitForServiceEndpoints
+			// has succeeded. The Service object is never actually deleted
+			// — this is a transient API-server view that resolves within
+			// the existing 4-retry / ~5s budget. Legitimate "service
+			// doesn't exist" cases still surface via the outer Wait
+			// function timeouts (30-60s).
+			strings.Contains(errStr, "could not find the requested resource") {
 			// Retryable error, continue to next attempt
 			continue
 		}

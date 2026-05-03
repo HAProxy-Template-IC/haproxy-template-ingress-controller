@@ -1,36 +1,69 @@
 # Pluggable Validator Sidecar
 
-A sidecar-based validation pipeline. The controller dispatches rendered plugin TOML to one or more validator sidecars (running `haproxy-spoa-hub --validate-socket` or any conforming implementation) over a unix socket using a length-prefixed JSON wire protocol; sidecars return line-numbered diagnostics that the admission webhook surfaces to the operator.
+A sidecar-based validation pipeline. The controller dispatches rendered files to one or more validator sidecars over a unix socket using a length-prefixed JSON wire protocol; sidecars return line-numbered diagnostics that the admission webhook surfaces to the operator.
 
-This capability defines the wire protocol, the controller-side client, the result cache, the CRD field shape, and the event integration points. It does NOT define the chart-side sidecar wiring (separate capability `pluggable-validator-chart`) nor the webhook-side diagnostic surfacing (separate capability `pluggable-validator-webhook-wiring`).
+The validator on the other side of the socket is opaque to the controller — it speaks the protocol and returns diagnostics. This capability defines the wire protocol, controller-side glob routing, the per-(validator, file, content) result cache, persistent keep-alive connections with an adaptive pool, parallel dispatch, the CRD field shape, and the wire-protocol document. It does NOT define the chart-side sidecar wiring (separate capability `pluggable-validator-chart`) nor the webhook-side diagnostic surfacing (separate capability `pluggable-validator-webhook-wiring`).
 
 ## ADDED Requirements
 
 ### Requirement: Validators CRD Field
 
-The `HAProxyTemplateConfig` resource SHALL accept an optional `spec.validators` array. Each entry SHALL declare a `name` (required, RFC 1123 label, unique across the array), a `socketPath` (required, absolute filesystem path), a `plugins` array (optional, list of `[plugins.params.<name>]` subtree names this validator handles, defaulting to the empty list which means "validate the whole hub TOML"), and a `timeoutMs` (optional, positive integer in milliseconds, defaulting to 5000).
+The `HAProxyTemplateConfig` resource SHALL accept an optional `spec.validators` array. Each entry SHALL declare:
 
-The empty `validators` array (or absent field) SHALL leave the controller's behaviour unchanged from before this capability — no validator sidecar is consulted. This preserves backward compatibility for operators who do not opt in.
+- `name` (required, RFC 1123 label, unique across the array).
+- `socketPath` (required, absolute filesystem path to the validator's Unix domain socket inside the controller pod).
+- `files` (required, non-empty list of glob patterns following Go `path/filepath.Match` semantics; absolute paths only). Patterns are matched against rendered file paths to decide which files to send to this validator.
+- `timeoutMs` (optional, positive integer milliseconds, range 1–60000, default 5000). Per-call deadline covering one (file, validator) round-trip.
+- `maxConnections` (optional, positive integer, range 1–32, default 4). Cap on the controller's adaptive connection pool to this validator.
+
+The empty `validators` array (or absent field) SHALL leave the controller's behaviour unchanged from before this capability — no validator sidecar is consulted.
 
 #### Scenario: HAProxyTemplateConfig with validators field omitted
 
 WHEN an HAProxyTemplateConfig is admitted with no `spec.validators` field
-THEN the controller SHALL behave identically to the pre-feature behaviour: no `PluggableValidationRequest` events are published.
+THEN the controller SHALL behave identically to the pre-feature behaviour: no validator socket is consulted.
 
 #### Scenario: HAProxyTemplateConfig with one validator
 
-WHEN an HAProxyTemplateConfig is admitted with `spec.validators` containing one entry
-THEN the controller SHALL create one validator-client instance bound to the entry's socket path with the entry's timeout. No sockets are opened until a validation request is dispatched (lazy connection).
+WHEN an HAProxyTemplateConfig is admitted with `spec.validators` containing one entry whose `files` glob matches a rendered file
+THEN the controller SHALL forward that file to the validator's socket and surface the response in the admission webhook outcome.
 
-#### Scenario: HAProxyTemplateConfig with duplicate validator names
+#### Scenario: HAProxyTemplateConfig with empty files list
 
-WHEN an HAProxyTemplateConfig is admitted with two `spec.validators` entries sharing the same `name`
-THEN the CRD's OpenAPI schema SHALL reject the resource at admission time with a clear duplicate-name diagnostic. The controller MUST NOT see this resource.
+WHEN a `spec.validators[i].files` is empty
+THEN the CRD's OpenAPI schema SHALL reject the resource at admission time. A validator with no globs would never be consulted, so the configuration is meaningless.
 
-#### Scenario: timeoutMs out of range
+#### Scenario: Bad glob syntax
 
-WHEN an HAProxyTemplateConfig declares `timeoutMs: 0` or `timeoutMs: -1` on a validator entry
-THEN the CRD's OpenAPI schema SHALL reject the resource as invalid (`timeoutMs MUST be > 0`).
+WHEN a `spec.validators[i].files[j]` contains malformed glob syntax (e.g. unclosed `[`)
+THEN the controller's Manager construction SHALL fail and the iteration SHALL surface the validator's name + the offending pattern in the error message.
+
+### Requirement: Glob-Based File Routing
+
+For each rendered file produced by the dry-run, the controller SHALL match the file's path against each validator's `files` glob list. A file matching at least one of a validator's globs SHALL be sent to that validator. A file matching multiple validators' globs SHALL be sent to each matching validator independently. A file matching no validator's globs SHALL NOT be sent to any sidecar.
+
+The controller MUST treat the validator program as opaque — routing decisions are made entirely controller-side from the configured globs; the validator is not consulted about which files it wants.
+
+#### Scenario: File matching one validator's glob
+
+GIVEN validator `v1` configured with `files: ["/etc/x/*.toml"]`
+AND a rendered file at path `/etc/x/config.toml`
+WHEN ValidateAll runs
+THEN `v1` SHALL receive a request frame containing exactly that file.
+
+#### Scenario: File matching no validator's glob
+
+GIVEN validator `v1` configured with `files: ["/etc/x/*.toml"]`
+AND a rendered file at path `/etc/y/other.yaml`
+WHEN ValidateAll runs
+THEN no validator SHALL receive that file.
+
+#### Scenario: File matching multiple validators' globs
+
+GIVEN validators `v1` and `v2` both configured with `files: ["/etc/x/*.toml"]`
+AND a rendered file at path `/etc/x/config.toml`
+WHEN ValidateAll runs
+THEN both `v1` and `v2` SHALL receive the file in independent request frames; their diagnostics SHALL be aggregated.
 
 ### Requirement: Wire Protocol Framing
 
@@ -41,24 +74,53 @@ The wire format between the controller and a validator sidecar SHALL be length-p
 |        length = N              |  JSON payload  |
 ```
 
-Length is an unsigned 32-bit big-endian integer. The JSON payload SHALL be valid UTF-8 with no BOM. Maximum frame size is 1 MiB by default; sizes exceeding the limit SHALL be rejected by the producer (the controller MUST NOT send oversized frames; an oversized response causes the client to return a synthetic frame-too-large error).
+Length is an unsigned 32-bit big-endian integer. The JSON payload SHALL be valid UTF-8 with no BOM. Maximum frame size is 1 MiB by default.
 
-Each accepted connection serves exactly one request-response cycle. The client opens the socket, writes one request frame, reads one response frame, closes. Persistent / multiplexed connections are out of scope.
+### Requirement: Persistent Keep-Alive Connections
 
-#### Scenario: Round-trip a small request
+Connections between the controller and a validator SHALL be persistent. A controller opens a connection to a validator on first demand and reuses it for many subsequent request-response cycles. The validator MUST honor the keep-alive contract:
 
-WHEN the client encodes a request with one `files` entry containing a 200-byte TOML and writes it to the socket
-THEN the receiving server SHALL read 4 bytes for length, then `length` bytes for the JSON, then have exactly the bytes the client encoded — no trailing data.
+- Each connection serves an unbounded number of sequential request-response cycles.
+- Within one connection, frames are strictly ordered (no interleaving, no correlation IDs).
+- The validator MAY close idle connections after a server-side timeout (recommended ≥ 30 s); the controller MUST tolerate this with a transparent reconnect-and-retry on the next request.
+- Either side MAY close at inter-frame boundaries; mid-frame close is a protocol violation.
+- Application-level errors (malformed JSON, validation timeout, protocol-version mismatch) SHALL keep the connection open for the next frame; only framing failures close it.
 
-#### Scenario: Reject oversized request before send
+The validator MUST handle multiple concurrent connections from the same controller. Implementations that only accept one connection at a time degrade the controller's pool to serial behaviour but do not break correctness.
 
-WHEN the client is asked to encode a request whose JSON exceeds `MaxFrameSize`
-THEN the encoder SHALL return an error and SHALL NOT write any bytes to the socket.
+#### Scenario: Multiple requests on one connection
 
-#### Scenario: Reject oversized response on receive
+WHEN the controller writes request *k* on a connection, reads response *k*, then writes request *k+1* on the same connection
+THEN the validator SHALL respond to request *k+1* without closing the connection, in arrival order.
 
-WHEN the server returns a response frame with `length > MaxFrameSize`
-THEN the client SHALL close the connection without reading the body and return a synthetic error-severity `Diagnostic` with `path: ""` and a message identifying the size violation.
+#### Scenario: Server idle-close on first reuse
+
+WHEN the controller's pool returns a connection that the validator has since idle-closed
+AND the controller writes a request frame on it
+THEN the controller SHALL detect the closed write/read, transparently reconnect, retry the request once, and surface the response to the caller as if no failure occurred.
+
+### Requirement: Adaptive Connection Pool
+
+The controller SHALL maintain a per-validator connection pool with the following adaptive shape:
+
+- The pool starts empty (no connections open).
+- On `Validate`, the pool prefers a free idle connection if any. If the pool is empty AND has headroom, it dials a new connection and adds it to in-flight count.
+- The pool size is bounded by `spec.validators[i].maxConnections` (default 4). Acquires that find no free connection and no headroom block briefly until one is released.
+- Connections idle past 30 s are closed and replaced lazily on next acquire.
+- Connections that error on read/write are discarded (not returned to the pool); the next acquire opens a replacement.
+
+#### Scenario: Pool grows on contention up to MaxConnections
+
+GIVEN a validator configured with `maxConnections: 4`
+AND four concurrent calls to ValidateAll all matching files for this validator
+WHEN the calls run
+THEN the controller SHALL open up to 4 connections, each call gets one, and no caller blocks past the per-call timeout.
+
+#### Scenario: Pool shrinks on idleness
+
+GIVEN a validator with multiple open connections
+WHEN no request has been issued for ≥ 30 s on a particular connection
+THEN that connection SHALL be closed on next acquire and replaced lazily.
 
 ### Requirement: Request Schema
 
@@ -69,17 +131,12 @@ A request SHALL be a JSON object with the following fields:
 
 The validator MUST NOT open `path` from disk — it processes `content` directly. `path` is only an identifier echoed back in diagnostics.
 
-#### Scenario: Request with empty files array
+#### Scenario: Wire-format request
 
-WHEN a request would be encoded with `files: []`
-THEN the encoder SHALL return an error before sending — empty arrays are rejected client-side.
+WHEN the controller encodes a request with one `files` entry containing a 200-byte payload and writes it to the socket
+THEN the receiving server SHALL read 4 bytes for length, then `length` bytes for the JSON, then have exactly the bytes the controller encoded — no trailing data.
 
-#### Scenario: Request with unsupported protocol_version
-
-WHEN a server receives `protocol_version: 2`
-THEN the server SHALL respond with a single error-severity diagnostic `path: "" line: 0 column: 0 message: "protocol version 2 not supported (max: 1)"` and close the connection.
-
-### Requirement: Response Schema
+### Requirement: Response Schema and Three-Result Semantics
 
 A response SHALL be a JSON object with the following fields:
 
@@ -88,92 +145,68 @@ A response SHALL be a JSON object with the following fields:
 - `warnings` (array, always present, possibly empty): list of `Diagnostic` objects with `severity = Warning`.
 - `errors` (array, always present, possibly empty): list of `Diagnostic` objects with `severity = Error`.
 
-A `Diagnostic` SHALL have `path`, `line` (1-based, `0` for unknown), `column` (1-based, `0` for unknown), and `message` (human-readable, self-explanatory in `kubectl apply` context). Protocol-level diagnostics (frame errors, version mismatch, missing fields, timeout, plugin panic) use `path: ""`.
+The webhook caller maps the three results to admission outcomes:
 
-#### Scenario: Response field consistency
+- `valid` → admission allowed; no message.
+- `warning` → admission allowed; warnings populated in `AdmissionResponse.Warnings` so `kubectl apply` prints them as soft warnings; resource admitted unchanged.
+- `error` → admission denied; errors formatted as the denial reason; warnings appended for context.
 
-WHEN the response carries 0 warnings and 0 errors
-THEN `result` SHALL equal `"valid"`.
+#### Scenario: Warning result allows admission
 
-WHEN the response carries 0 warnings and 1+ errors
-THEN `result` SHALL equal `"error"`.
-
-WHEN the response carries 1+ warnings and 0 errors
-THEN `result` SHALL equal `"warning"`.
-
-#### Scenario: Diagnostic line for file-level error
-
-WHEN the validator reports a problem that has no specific source line (e.g., "directives field is required")
-THEN the `Diagnostic` SHALL set `line: 0 column: 0`.
+WHEN a validator returns `result: "warning"` with one warning diagnostic
+THEN the webhook SHALL admit the resource AND populate `AdmissionResponse.Warnings` with the diagnostic message AND not deny.
 
 ### Requirement: Result Cache
 
-The controller SHALL maintain a process-local LRU cache of validator responses keyed by `sha256(validator-name || request-content)`. Cache hits skip the socket round-trip and return the cached `Response` byte-for-byte. Default capacity SHALL be 256 entries. Eviction SHALL be by least-recently-used insertion order. The cache is process-local and re-warms after restart.
+The controller SHALL maintain a process-local LRU cache of validator responses keyed by `(validator-name, path, sha256(content))`. Cache hits skip the socket round-trip and return the cached `Response` byte-for-byte. Default capacity SHALL be 256 entries. Eviction SHALL be by least-recently-used insertion order.
 
-#### Scenario: Repeat request returns cached response
+The cache SHALL NOT memoise transport-level (synthetic) failures; only real validator responses (including warning- and error-severity ones) SHALL be cached. The wire-protocol contract requires validator output to be a pure function of its input, so caching real responses is correct.
 
-WHEN the controller calls `Validate(ctx, content)` for a `(validator, content)` pair already in the cache
+#### Scenario: Repeat call returns cached response
+
+WHEN the controller calls `ValidateAll` for a (validator, path, content) tuple already in the cache
 THEN the cache SHALL return the cached `Response` without opening the socket.
 
 #### Scenario: Different content produces a cache miss
 
-WHEN the controller calls `Validate(ctx, content)` for a `(validator, content)` pair where `content` differs even by one byte from a previously-cached entry
+WHEN the controller calls `ValidateAll` for a tuple where `content` differs even by one byte from a previously-cached entry
 THEN the cache SHALL miss and the request SHALL go over the socket.
 
 #### Scenario: Different validator produces a cache miss
 
-WHEN the controller calls `Validate(ctx, content)` for the same `content` but a different `validator-name` than a cached entry
+WHEN the controller calls `ValidateAll` for the same `(path, content)` but a different `validator-name`
 THEN the cache SHALL miss. Validators with the same content key MUST NOT share cache entries.
 
-#### Scenario: Capacity-bounded eviction
+#### Scenario: Synthetic ProtocolError responses NOT cached
 
-WHEN the cache reaches its capacity and a new entry is inserted
-THEN the least-recently-used entry SHALL be evicted before the new entry is recorded.
+GIVEN a validator whose socket is unreachable
+WHEN ValidateAll calls it twice with identical content
+THEN both calls SHALL hit the network (or fail to dial); the synthetic error response SHALL NOT be cached.
 
-### Requirement: Event Adapter
+### Requirement: Parallel Dispatch
 
-The controller SHALL provide a `pluggablevalidator.Component` event adapter that wraps the cache and clients. The component SHALL subscribe to `events.PluggableValidationRequest`, dispatch via the cache + client chain, and publish a `events.PluggableValidationResponse` carrying the resulting `Response`. On client error, the published response SHALL have `result: "error"` and a single error-severity diagnostic identifying the failure (validator name, error class — `connection refused`, `timeout`, `protocol error`, `plugin panic`).
+The controller SHALL dispatch `(validator, file)` round-trips in parallel rather than serially. The maximum number of concurrent in-flight dispatch tasks SHALL be capped (default 16) to avoid pathological goroutine counts on extremely large renders. Per-validator connection-pool ceilings further throttle within-validator concurrency.
 
-The component SHALL register itself on the EventBus during construction (per the repo's "subscribe in New, not in Start" convention to avoid startup races) and consume only events naming a `validator` field present in its known-validators set.
+#### Scenario: Three slow validators run in parallel
 
-#### Scenario: Request for unknown validator
+GIVEN three validators each with a 200 ms response delay configured with the same glob
+AND a single rendered file that matches all three
+WHEN ValidateAll runs
+THEN total wall-clock latency SHALL be ~200 ms + dispatch overhead, NOT 3 × 200 ms.
 
-WHEN the bus emits a `PluggableValidationRequest` whose `validator` field does not match any of the component's configured validators
-THEN the component SHALL ignore the event (no response published). The publishing component is responsible for filtering before publishing — this is a misconfiguration guard, not a routing layer.
+#### Scenario: Diagnostics sorted deterministically
 
-#### Scenario: Validator socket unreachable
+WHEN ValidateAll completes with multiple diagnostics from concurrent dispatch
+THEN the returned outcome's `Warnings` and `Errors` slices SHALL be sorted by `(path, line, column, message)` so output is stable across runs.
 
-WHEN the component receives a `PluggableValidationRequest` for a known validator whose socket is unreachable (file missing, permission denied, connection refused)
-THEN the component SHALL publish a `PluggableValidationResponse` with `result: "error"`, `errors` containing one `Diagnostic` with `path: ""`, `line: 0`, `column: 0`, and a message naming the validator + the failure class. No exception SHALL propagate.
+### Requirement: Manager Health Check
 
-### Requirement: Client Health Check
+The Manager SHALL expose `Healthy() (ok bool, failures []string)` summarising the writability of every configured validator socket. Each socket SHALL be checked by `os.Stat` (path exists), mode-test (`mode & os.ModeSocket != 0`), and a non-blocking unix dial. Each check SHALL complete in under 1 ms in the happy path. Failed checks SHALL appear in `failures` as `"<validator-name>: <reason>"`. The `ok` boolean SHALL be `false` if any failure is recorded.
 
-The component SHALL expose `Healthy() (ok bool, failures []string)` summarising the writability of every configured validator socket. Each socket SHALL be checked by `os.Stat` (path exists), mode-test (`mode & os.ModeSocket != 0`), and `os.OpenFile(path, os.O_WRONLY, 0)` followed by close. Each check SHALL complete in under 1ms in the happy path. Failed checks SHALL appear in `failures` as `"<validator-name>: <reason>"`. The `ok` boolean SHALL be `false` if any failure is recorded.
-
-The `Healthy()` callable SHALL be exposed for the next change (`pluggable-validator-webhook-wiring`) to inject into the introspection server's `/healthz` health-checker callback. This change does NOT itself wire `/healthz`; it only provides the callable.
-
-#### Scenario: All sockets writable
-
-WHEN every configured socket exists, is a unix socket, and accepts an `O_WRONLY` open
-THEN `Healthy()` SHALL return `(true, nil)`.
-
-#### Scenario: One socket missing
-
-WHEN one of the configured sockets does not exist as a file
-THEN `Healthy()` SHALL return `(false, ["<validator-name>: socket file does not exist"])`.
-
-#### Scenario: One socket exists but is a regular file
-
-WHEN one of the configured paths exists but is a regular file (not a socket)
-THEN `Healthy()` SHALL return `(false, ["<validator-name>: path is not a unix socket"])`.
+The `Healthy()` callable SHALL be exposed for `/healthz` injection. This requirement does NOT define the `/healthz` wiring itself; that's the `pluggable-validator-webhook-wiring` capability.
 
 ### Requirement: Authoritative Wire-Protocol Document
 
-The repository SHALL host the authoritative wire-protocol document at `docs/development/validator-protocol.md`. The hub-side spec at `haproxy-spoa-hub/specs/004-validate-mode/contracts/validate-socket-protocol.md` SHALL be reduced to a one-line pointer in a follow-up MR; the disclaimer in that file already names HAPTIC as the long-term owner.
+The repository SHALL host the authoritative wire-protocol document at `docs/development/validator-protocol.md`. The hub-side spec at `haproxy-spoa-hub/specs/004-validate-mode/contracts/validate-socket-protocol.md` is a one-line pointer to this document.
 
-The HAPTIC-side document SHALL describe: framing, connection lifecycle, request schema, response schema, error responses, versioning rules, and a worked example. It SHALL include HAPTIC-side framing (caller, LRU cache, fail-closed semantics) that the hub-side spec does not.
-
-#### Scenario: Hub-side pointer points at the HAPTIC URL
-
-WHEN a developer follows the link in the hub-side spec
-THEN they SHALL land at `docs/development/validator-protocol.md` in this repository, which carries the canonical contract.
+The HAPTIC-side document SHALL describe: framing, persistent connections with idle/poison semantics, adaptive pool semantics, request and response schemas, three-result behavior, parallel dispatch, error responses, versioning rules, and a worked example. It SHALL NOT describe the validator program's internals (plugins, dispatch logic, parser implementation) — those belong to each implementation's own repo.

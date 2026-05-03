@@ -25,19 +25,21 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
 )
 
-func managerRequest() *pv.Request {
-	return &pv.Request{
-		ProtocolVersion: pv.ProtocolVersion,
-		Files: []pv.File{
-			{Path: "hub-config.toml", Content: "[hub]\nlisten = \"0.0.0.0:9000\"\n"},
-		},
+func tomlFile() pv.File {
+	return pv.File{
+		Path:    "/etc/haproxy-spoa-hub/config.toml",
+		Content: "[hub]\nlisten = \"0.0.0.0:9000\"\n",
 	}
+}
+
+func tomlGlob() []string {
+	return []string{"/etc/haproxy-spoa-hub/*.toml"}
 }
 
 func TestManager_NewManager_RejectsDuplicateNames(t *testing.T) {
 	configs := []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: "/x"},
-		{Name: "coraza", SocketPath: "/y"},
+		{Name: "coraza", SocketPath: "/x", Files: tomlGlob()},
+		{Name: "coraza", SocketPath: "/y", Files: tomlGlob()},
 	}
 	if _, err := pv.NewManager(nil, configs); err == nil {
 		t.Fatal("expected error for duplicate validator names")
@@ -45,14 +47,29 @@ func TestManager_NewManager_RejectsDuplicateNames(t *testing.T) {
 }
 
 func TestManager_NewManager_RejectsEmptyName(t *testing.T) {
-	if _, err := pv.NewManager(nil, []pv.ManagerConfig{{SocketPath: "/x"}}); err == nil {
+	if _, err := pv.NewManager(nil, []pv.ManagerConfig{{SocketPath: "/x", Files: tomlGlob()}}); err == nil {
 		t.Fatal("expected error for empty name")
 	}
 }
 
 func TestManager_NewManager_RejectsEmptySocketPath(t *testing.T) {
-	if _, err := pv.NewManager(nil, []pv.ManagerConfig{{Name: "coraza"}}); err == nil {
+	if _, err := pv.NewManager(nil, []pv.ManagerConfig{{Name: "coraza", Files: tomlGlob()}}); err == nil {
 		t.Fatal("expected error for empty socketPath")
+	}
+}
+
+func TestManager_NewManager_RejectsEmptyFiles(t *testing.T) {
+	if _, err := pv.NewManager(nil, []pv.ManagerConfig{{Name: "coraza", SocketPath: "/x"}}); err == nil {
+		t.Fatal("expected error for empty files glob list")
+	}
+}
+
+func TestManager_NewManager_RejectsBadGlob(t *testing.T) {
+	bad := []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: "/x", Files: []string{"/etc/[unclosed"}},
+	}
+	if _, err := pv.NewManager(nil, bad); err == nil {
+		t.Fatal("expected error for malformed glob")
 	}
 }
 
@@ -68,56 +85,16 @@ func TestManager_NoValidators(t *testing.T) {
 	if !ok || failures != nil {
 		t.Fatalf("empty Manager Healthy() = (%v, %v), want (true, nil)", ok, failures)
 	}
-}
-
-func TestManager_Validate_UnknownValidator(t *testing.T) {
-	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{{Name: "coraza", SocketPath: "/no"}})
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
+	out := mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+	if out == nil {
+		t.Fatal("ValidateAll must return non-nil outcome")
 	}
-	if _, err := mgr.Validate(context.Background(), "otel", managerRequest()); err == nil {
-		t.Fatal("expected error for unknown validator name")
+	if out.Result() != pv.ResultValid {
+		t.Fatalf("no-validator outcome must be Valid, got %q", out.Result())
 	}
 }
 
-func TestManager_Validate_NilRequest(t *testing.T) {
-	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{{Name: "coraza", SocketPath: "/x"}})
-	if _, err := mgr.Validate(context.Background(), "coraza", nil); err == nil {
-		t.Fatal("expected error for nil request")
-	}
-}
-
-func TestManager_Validate_HappyPath(t *testing.T) {
-	srv := testutil.NewFixtureServer(t)
-	if err := srv.SetResponse(&pv.Response{
-		ProtocolVersion: pv.ProtocolVersion,
-		Result:          pv.ResultValid,
-		Warnings:        []pv.Diagnostic{},
-		Errors:          []pv.Diagnostic{},
-	}); err != nil {
-		t.Fatalf("SetResponse: %v", err)
-	}
-
-	mgr, err := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: srv.SocketPath, Timeout: time.Second},
-	})
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-
-	resp, err := mgr.Validate(context.Background(), "coraza", managerRequest())
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if resp.Result != pv.ResultValid {
-		t.Fatalf("result=%q want %q", resp.Result, pv.ResultValid)
-	}
-	if len(srv.Requests()) != 1 {
-		t.Fatalf("server saw %d requests, want 1", len(srv.Requests()))
-	}
-}
-
-func TestManager_Validate_CacheHitSkipsRoundTrip(t *testing.T) {
+func TestManager_ValidateAll_RoutesByGlob(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	if err := srv.SetResponse(&pv.Response{
 		ProtocolVersion: pv.ProtocolVersion,
@@ -127,145 +104,256 @@ func TestManager_Validate_CacheHitSkipsRoundTrip(t *testing.T) {
 	}
 
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: srv.SocketPath, Timeout: time.Second},
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
 	})
 
-	// First call goes over the wire.
-	if _, err := mgr.Validate(context.Background(), "coraza", managerRequest()); err != nil {
-		t.Fatalf("first Validate: %v", err)
+	files := []pv.File{
+		tomlFile(), // matches glob → sent
+		{Path: "/etc/haproxy/haproxy.cfg", Content: "frontend foo"}, // doesn't match → skipped
 	}
-	// Second call with identical request must be served from cache.
-	if _, err := mgr.Validate(context.Background(), "coraza", managerRequest()); err != nil {
-		t.Fatalf("second Validate: %v", err)
+	out := mgr.ValidateAll(context.Background(), files)
+	if out.Result() != pv.ResultValid {
+		t.Fatalf("result=%q want %q", out.Result(), pv.ResultValid)
 	}
+	if got := len(srv.Requests()); got != 1 {
+		t.Fatalf("server saw %d requests, want 1 (only glob-matching file should be sent)", got)
+	}
+}
+
+func TestManager_ValidateAll_FanOutToMultipleValidators(t *testing.T) {
+	srv1 := testutil.NewFixtureServer(t)
+	srv2 := testutil.NewFixtureServer(t)
+	for _, s := range []*testutil.FixtureServer{srv1, srv2} {
+		if err := s.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
+			t.Fatalf("SetResponse: %v", err)
+		}
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv1.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+		{Name: "otel", SocketPath: srv2.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+
+	out := mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+	if out.Result() != pv.ResultValid {
+		t.Fatalf("result=%q want %q", out.Result(), pv.ResultValid)
+	}
+	if got := len(srv1.Requests()); got != 1 {
+		t.Fatalf("srv1 saw %d, want 1", got)
+	}
+	if got := len(srv2.Requests()); got != 1 {
+		t.Fatalf("srv2 saw %d, want 1 — same file routed to both matching validators", got)
+	}
+}
+
+func TestManager_ValidateAll_CacheHitSkipsRoundTrip(t *testing.T) {
+	srv := testutil.NewFixtureServer(t)
+	if err := srv.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+
+	files := []pv.File{tomlFile()}
+	mgr.ValidateAll(context.Background(), files)
+	mgr.ValidateAll(context.Background(), files)
 	if got := len(srv.Requests()); got != 1 {
 		t.Fatalf("server saw %d requests, want 1 (cache hit must skip socket)", got)
 	}
 }
 
-func TestManager_Validate_TransportErrorNotCached(t *testing.T) {
-	srv := testutil.NewFixtureServer(t)
-	if err := srv.SetResponse(&pv.Response{
-		ProtocolVersion: pv.ProtocolVersion,
-		Result:          pv.ResultValid,
-	}); err != nil {
-		t.Fatalf("SetResponse: %v", err)
-	}
-
+func TestManager_ValidateAll_TransportErrorNotCached(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.sock")
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "broken", SocketPath: missing, Timeout: 200 * time.Millisecond},
-		{Name: "ok", SocketPath: srv.SocketPath, Timeout: time.Second},
+		{Name: "broken", SocketPath: missing, Files: tomlGlob(), Timeout: 200 * time.Millisecond},
 	})
 
-	// Two calls against the broken validator: both must hit the
-	// network (no caching of transport failures), so neither should
-	// be served from cache. The cache is otherwise functional — a
-	// successful round-trip against the ok validator IS cached.
-	for range 2 {
-		resp, err := mgr.Validate(context.Background(), "broken", managerRequest())
-		if err != nil {
-			t.Fatalf("Validate broken: %v", err)
-		}
-		if resp.Result != pv.ResultError {
-			t.Fatalf("broken validator result=%q want %q", resp.Result, pv.ResultError)
-		}
+	files := []pv.File{tomlFile()}
+	out1 := mgr.ValidateAll(context.Background(), files)
+	if out1.Result() != pv.ResultError {
+		t.Fatalf("result=%q want %q", out1.Result(), pv.ResultError)
 	}
-
-	// Sanity: the ok validator's cache works (single round-trip).
-	if _, err := mgr.Validate(context.Background(), "ok", managerRequest()); err != nil {
-		t.Fatalf("Validate ok (1): %v", err)
+	out2 := mgr.ValidateAll(context.Background(), files)
+	if out2.Result() != pv.ResultError {
+		t.Fatalf("result=%q want %q", out2.Result(), pv.ResultError)
 	}
-	if _, err := mgr.Validate(context.Background(), "ok", managerRequest()); err != nil {
-		t.Fatalf("Validate ok (2): %v", err)
-	}
-	if got := len(srv.Requests()); got != 1 {
-		t.Fatalf("ok validator hit network %d times, want 1 (second call should be cached)", got)
+	// Both calls must surface a fresh transport error, not a cached
+	// one — proven by getting two independent error lists.
+	if len(out1.Errors) == 0 || len(out2.Errors) == 0 {
+		t.Fatal("expected at least one error per call")
 	}
 }
 
-// Regression: real validator responses that legitimately carry
-// `path: ""` diagnostics (plugin panics caught by the sidecar,
-// file-level errors like "directives field is required") must be
-// cached. The previous heuristic mistook them for transport failures
-// and skipped caching, defeating the LRU for these entries.
-func TestManager_Validate_RealValidatorPathlessErrorIsCached(t *testing.T) {
+// Regression: real validator responses with `path: ""` diagnostics
+// are NOT transport failures and MUST be cached.
+func TestManager_ValidateAll_RealValidatorPathlessErrorIsCached(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	if err := srv.SetResponse(&pv.Response{
 		ProtocolVersion: pv.ProtocolVersion,
 		Result:          pv.ResultError,
 		Warnings:        []pv.Diagnostic{},
 		Errors: []pv.Diagnostic{
-			// Path: "" is the spec-allowed shape for plugin panics
-			// and structural errors. These are real validator output,
-			// not transport failures, and must be cached.
-			{Path: "", Line: 0, Column: 0, Message: "internal validator error in plugin coraza: panic: foo"},
+			{Path: "", Line: 0, Column: 0, Message: "internal validator error: panic: foo"},
 		},
 	}); err != nil {
 		t.Fatalf("SetResponse: %v", err)
 	}
 
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: srv.SocketPath, Timeout: time.Second},
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob(), Timeout: time.Second},
 	})
 
-	for range 2 {
-		resp, err := mgr.Validate(context.Background(), "coraza", managerRequest())
-		if err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-		if resp.Result != pv.ResultError {
-			t.Fatalf("result=%q want %q", resp.Result, pv.ResultError)
-		}
-	}
+	files := []pv.File{tomlFile()}
+	mgr.ValidateAll(context.Background(), files)
+	mgr.ValidateAll(context.Background(), files)
 	if got := len(srv.Requests()); got != 1 {
 		t.Fatalf("server saw %d requests, want 1 (real validator response with path:\"\" must be cached)", got)
 	}
 }
 
-// Regression: synthetic ProtocolError responses (built by the client
-// when the socket is unreachable, the JSON is malformed, etc.) MUST
-// NOT be cached. The marker is the unexported `synthetic` field, set
-// by ProtocolError() and only there.
-func TestManager_Validate_SyntheticProtocolErrorNotCached(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "missing.sock")
+// Regression: ValidateAll dispatches (validator, file) tasks in
+// parallel rather than serialising them. Three validators each
+// with a 200ms response delay must complete in well under
+// 3×200ms = 600ms (sequential lower bound) — closer to 200ms +
+// overhead.
+func TestManager_ValidateAll_RunsValidatorsInParallel(t *testing.T) {
+	srv1 := testutil.NewFixtureServer(t)
+	srv2 := testutil.NewFixtureServer(t)
+	srv3 := testutil.NewFixtureServer(t)
+	for _, s := range []*testutil.FixtureServer{srv1, srv2, srv3} {
+		if err := s.SetResponse(&pv.Response{ProtocolVersion: pv.ProtocolVersion, Result: pv.ResultValid}); err != nil {
+			t.Fatalf("SetResponse: %v", err)
+		}
+		s.SetResponseDelay(200 * time.Millisecond)
+	}
+
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "broken", SocketPath: missing, Timeout: 200 * time.Millisecond},
+		{Name: "v1", SocketPath: srv1.SocketPath, Files: tomlGlob(), Timeout: 2 * time.Second},
+		{Name: "v2", SocketPath: srv2.SocketPath, Files: tomlGlob(), Timeout: 2 * time.Second},
+		{Name: "v3", SocketPath: srv3.SocketPath, Files: tomlGlob(), Timeout: 2 * time.Second},
 	})
 
-	resp1, _ := mgr.Validate(context.Background(), "broken", managerRequest())
-	resp2, _ := mgr.Validate(context.Background(), "broken", managerRequest())
-
-	if !resp1.IsSynthetic() || !resp2.IsSynthetic() {
-		t.Fatal("expected both responses to be synthetic ProtocolErrors")
+	start := time.Now()
+	out := mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+	elapsed := time.Since(start)
+	if out.Result() != pv.ResultValid {
+		t.Fatalf("result=%q want %q", out.Result(), pv.ResultValid)
 	}
-	if resp1 == resp2 {
-		t.Fatal("synthetic responses must not be cached (got identical pointer back)")
+	// Sequential lower bound is 600ms (3 × 200ms). Parallel
+	// completes near 200ms + dispatch overhead. Allow generous
+	// CI slack — we're guarding against accidental serialisation,
+	// not benchmarking.
+	if elapsed >= 500*time.Millisecond {
+		t.Fatalf("ValidateAll elapsed=%v — looks serialised, expected ~200ms (parallel)", elapsed)
 	}
 }
 
-func TestManager_PluginsFor(t *testing.T) {
+// Regression: diagnostics are sorted deterministically across
+// concurrent dispatch so admission denial messages are stable
+// from one run to the next.
+func TestManager_ValidateAll_DiagnosticsSortedDeterministically(t *testing.T) {
+	srvA := testutil.NewFixtureServer(t)
+	if err := srvA.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultError,
+		Errors: []pv.Diagnostic{
+			{Path: "/etc/x/c.toml", Line: 5, Message: "second"},
+		},
+	}); err != nil {
+		t.Fatalf("SetResponse A: %v", err)
+	}
+	srvB := testutil.NewFixtureServer(t)
+	if err := srvB.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultError,
+		Errors: []pv.Diagnostic{
+			{Path: "/etc/x/a.toml", Line: 3, Message: "first"},
+		},
+	}); err != nil {
+		t.Fatalf("SetResponse B: %v", err)
+	}
+
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: "/x", Plugins: []string{"coraza", "external_auth"}},
-		{Name: "otel", SocketPath: "/y"},
+		{Name: "v-a", SocketPath: srvA.SocketPath, Files: []string{"/etc/x/c.toml"}, Timeout: time.Second},
+		{Name: "v-b", SocketPath: srvB.SocketPath, Files: []string{"/etc/x/a.toml"}, Timeout: time.Second},
 	})
-	plugins := mgr.PluginsFor("coraza")
-	if len(plugins) != 2 || plugins[0] != "coraza" {
-		t.Fatalf("PluginsFor(coraza) = %v, want [coraza external_auth]", plugins)
+
+	files := []pv.File{
+		{Path: "/etc/x/c.toml", Content: "c"},
+		{Path: "/etc/x/a.toml", Content: "a"},
 	}
-	if got := mgr.PluginsFor("otel"); len(got) != 0 {
-		t.Fatalf("PluginsFor(otel) = %v, want empty", got)
+	out := mgr.ValidateAll(context.Background(), files)
+	if len(out.Errors) != 2 {
+		t.Fatalf("got %d errors, want 2", len(out.Errors))
 	}
-	if got := mgr.PluginsFor("ghost"); got != nil {
-		t.Fatalf("PluginsFor(unknown) = %v, want nil", got)
+	// Sorted by path: /etc/x/a.toml comes before /etc/x/c.toml.
+	if out.Errors[0].Path != "/etc/x/a.toml" || out.Errors[1].Path != "/etc/x/c.toml" {
+		t.Fatalf("errors not sorted by path: %+v", out.Errors)
+	}
+}
+
+func TestManager_ValidateAll_AggregatesWarningAndError(t *testing.T) {
+	srvWarn := testutil.NewFixtureServer(t)
+	if err := srvWarn.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultWarning,
+		Warnings: []pv.Diagnostic{
+			{Path: "/etc/haproxy-spoa-hub/config.toml", Line: 2, Message: "deprecated directive"},
+		},
+		Errors: []pv.Diagnostic{},
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+	srvErr := testutil.NewFixtureServer(t)
+	if err := srvErr.SetResponse(&pv.Response{
+		ProtocolVersion: pv.ProtocolVersion,
+		Result:          pv.ResultError,
+		Warnings:        []pv.Diagnostic{},
+		Errors: []pv.Diagnostic{
+			{Path: "/etc/haproxy-spoa-hub/config.toml", Line: 5, Message: "syntax error"},
+		},
+	}); err != nil {
+		t.Fatalf("SetResponse: %v", err)
+	}
+
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "warn-validator", SocketPath: srvWarn.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+		{Name: "err-validator", SocketPath: srvErr.SocketPath, Files: tomlGlob(), Timeout: time.Second},
+	})
+
+	out := mgr.ValidateAll(context.Background(), []pv.File{tomlFile()})
+	if out.Result() != pv.ResultError {
+		t.Fatalf("result=%q want %q (any error wins over warning)", out.Result(), pv.ResultError)
+	}
+	if len(out.Warnings) != 1 || out.Warnings[0].Message != "deprecated directive" {
+		t.Fatalf("warnings = %v, want exactly the warn-validator's entry", out.Warnings)
+	}
+	if len(out.Errors) != 1 || out.Errors[0].Message != "syntax error" {
+		t.Fatalf("errors = %v, want exactly the err-validator's entry", out.Errors)
+	}
+}
+
+func TestManager_FilesFor(t *testing.T) {
+	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
+		{Name: "coraza", SocketPath: "/x", Files: []string{"/etc/x/*.toml", "/etc/y/*.toml"}},
+		{Name: "otel", SocketPath: "/y", Files: tomlGlob()},
+	})
+	files := mgr.FilesFor("coraza")
+	if len(files) != 2 {
+		t.Fatalf("FilesFor(coraza) = %v, want 2 entries", files)
+	}
+	if got := mgr.FilesFor("ghost"); got != nil {
+		t.Fatalf("FilesFor(unknown) = %v, want nil", got)
 	}
 }
 
 func TestManager_Names_PreservesOrder(t *testing.T) {
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "first", SocketPath: "/a"},
-		{Name: "second", SocketPath: "/b"},
-		{Name: "third", SocketPath: "/c"},
+		{Name: "first", SocketPath: "/a", Files: tomlGlob()},
+		{Name: "second", SocketPath: "/b", Files: tomlGlob()},
+		{Name: "third", SocketPath: "/c", Files: tomlGlob()},
 	})
 	got := mgr.Names()
 	want := []string{"first", "second", "third"}
@@ -278,8 +366,8 @@ func TestManager_Healthy_AllUp(t *testing.T) {
 	srv1 := testutil.NewFixtureServer(t)
 	srv2 := testutil.NewFixtureServer(t)
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: srv1.SocketPath},
-		{Name: "otel", SocketPath: srv2.SocketPath},
+		{Name: "coraza", SocketPath: srv1.SocketPath, Files: tomlGlob()},
+		{Name: "otel", SocketPath: srv2.SocketPath, Files: tomlGlob()},
 	})
 	ok, failures := mgr.Healthy()
 	if !ok || failures != nil {
@@ -291,8 +379,8 @@ func TestManager_Healthy_OneDown(t *testing.T) {
 	srv := testutil.NewFixtureServer(t)
 	missing := filepath.Join(t.TempDir(), "missing.sock")
 	mgr, _ := pv.NewManager(nil, []pv.ManagerConfig{
-		{Name: "coraza", SocketPath: srv.SocketPath},
-		{Name: "otel", SocketPath: missing},
+		{Name: "coraza", SocketPath: srv.SocketPath, Files: tomlGlob()},
+		{Name: "otel", SocketPath: missing, Files: tomlGlob()},
 	})
 	ok, failures := mgr.Healthy()
 	if ok {

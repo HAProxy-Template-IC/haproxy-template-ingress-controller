@@ -349,3 +349,40 @@ func TestLeaderCallbackState_ConcurrentAccess(t *testing.T) {
 	<-done
 	<-done
 }
+
+// TestComponentSetup_CleanupOrderAndIdempotence locks the contract
+// that AddCleanup-registered callbacks fire in reverse-registration
+// (LIFO) order — mirrors `defer` semantics so callers can layer
+// dependencies cleanly — and that RunCleanups is idempotent (so
+// teardown paths can call it without worrying about double-fire).
+//
+// Regression: the pluggable-validator manager registers Close() via
+// AddCleanup so its connection pools get drained on teardown. If
+// RunCleanups silently no-ops or fires in the wrong order, file
+// descriptors leak across iteration restarts.
+func TestComponentSetup_CleanupOrderAndIdempotence(t *testing.T) {
+	setup := &componentSetup{}
+	var calls []string
+	setup.AddCleanup(func() { calls = append(calls, "first") })
+	setup.AddCleanup(func() { calls = append(calls, "second") })
+	setup.AddCleanup(func() { calls = append(calls, "third") })
+
+	setup.RunCleanups()
+	if len(calls) != 3 || calls[0] != "third" || calls[1] != "second" || calls[2] != "first" {
+		t.Fatalf("cleanups fired in wrong order: %v (want LIFO: third, second, first)", calls)
+	}
+
+	// Second call must be a no-op — already drained.
+	setup.RunCleanups()
+	if len(calls) != 3 {
+		t.Fatalf("RunCleanups not idempotent; second call re-fired callbacks: %v", calls)
+	}
+}
+
+// TestComponentSetup_AddCleanupNilSafe locks that AddCleanup ignores
+// nil callbacks. Callers don't have to nil-check before registering.
+func TestComponentSetup_AddCleanupNilSafe(t *testing.T) {
+	setup := &componentSetup{}
+	setup.AddCleanup(nil)
+	setup.RunCleanups() // must not panic
+}

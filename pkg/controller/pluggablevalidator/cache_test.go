@@ -56,7 +56,7 @@ func TestHashContent_Concurrent(t *testing.T) {
 
 func TestResultCache_HitAndMiss(t *testing.T) {
 	cache := NewResultCache(8)
-	key := NewCacheKey("coraza", []byte("config-a"))
+	key := NewCacheKey("coraza", "/etc/x/config.toml", []byte("config-a"))
 
 	if _, ok := cache.Get(key); ok {
 		t.Fatal("empty cache reported hit")
@@ -74,11 +74,12 @@ func TestResultCache_HitAndMiss(t *testing.T) {
 
 func TestResultCache_DifferentValidators(t *testing.T) {
 	cache := NewResultCache(8)
+	path := "/etc/x/config.toml"
 	contentA := []byte("identical-content")
-	keyForA := NewCacheKey("coraza", contentA)
-	keyForB := NewCacheKey("otel", contentA)
+	keyForA := NewCacheKey("coraza", path, contentA)
+	keyForB := NewCacheKey("otel", path, contentA)
 	if keyForA == keyForB {
-		t.Fatal("keys must differ when validator names differ even with identical content")
+		t.Fatal("keys must differ when validator names differ even with identical (path, content)")
 	}
 
 	respCoraza := &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid}
@@ -89,15 +90,36 @@ func TestResultCache_DifferentValidators(t *testing.T) {
 	gotCoraza, _ := cache.Get(keyForA)
 	gotOtel, _ := cache.Get(keyForB)
 	if gotCoraza == gotOtel {
-		t.Fatal("validators with the same content key must NOT share cache entries")
+		t.Fatal("validators with the same (path, content) key must NOT share cache entries")
+	}
+}
+
+func TestResultCache_DifferentPaths(t *testing.T) {
+	cache := NewResultCache(8)
+	content := []byte("identical-content")
+	keyA := NewCacheKey("v", "/etc/a.toml", content)
+	keyB := NewCacheKey("v", "/etc/b.toml", content)
+	if keyA == keyB {
+		t.Fatal("keys must differ when paths differ even with identical content")
+	}
+
+	respA := &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid}
+	respB := &Response{ProtocolVersion: ProtocolVersion, Result: ResultError}
+	cache.Put(keyA, respA)
+	cache.Put(keyB, respB)
+
+	gotA, _ := cache.Get(keyA)
+	gotB, _ := cache.Get(keyB)
+	if gotA == gotB {
+		t.Fatal("paths with same content must NOT share cache entries — wire response carries the path")
 	}
 }
 
 func TestResultCache_CapacityEviction(t *testing.T) {
 	cache := NewResultCache(2)
-	keyA := NewCacheKey("v", []byte("a"))
-	keyB := NewCacheKey("v", []byte("b"))
-	keyC := NewCacheKey("v", []byte("c"))
+	keyA := NewCacheKey("v", "/p", []byte("a"))
+	keyB := NewCacheKey("v", "/p", []byte("b"))
+	keyC := NewCacheKey("v", "/p", []byte("c"))
 	resp := &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid}
 
 	cache.Put(keyA, resp)
@@ -120,9 +142,9 @@ func TestResultCache_CapacityEviction(t *testing.T) {
 
 func TestResultCache_AccessPromotesEntry(t *testing.T) {
 	cache := NewResultCache(2)
-	keyA := NewCacheKey("v", []byte("a"))
-	keyB := NewCacheKey("v", []byte("b"))
-	keyC := NewCacheKey("v", []byte("c"))
+	keyA := NewCacheKey("v", "/p", []byte("a"))
+	keyB := NewCacheKey("v", "/p", []byte("b"))
+	keyC := NewCacheKey("v", "/p", []byte("c"))
 	resp := &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid}
 
 	cache.Put(keyA, resp)
@@ -145,7 +167,7 @@ func TestResultCache_ZeroCapacityDefaults(t *testing.T) {
 	cache := NewResultCache(0)
 	// Should not panic and should accept entries up to the default cap.
 	for i := range DefaultCacheCapacity + 1 {
-		key := NewCacheKey("v", []byte{byte(i)})
+		key := NewCacheKey("v", "/p", []byte{byte(i)})
 		cache.Put(key, &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid})
 	}
 	if cache.Len() != DefaultCacheCapacity {
@@ -155,7 +177,7 @@ func TestResultCache_ZeroCapacityDefaults(t *testing.T) {
 
 func TestResultCache_PutOverwrite(t *testing.T) {
 	cache := NewResultCache(8)
-	key := NewCacheKey("v", []byte("a"))
+	key := NewCacheKey("v", "/p", []byte("a"))
 	resp1 := &Response{ProtocolVersion: ProtocolVersion, Result: ResultValid}
 	resp2 := &Response{ProtocolVersion: ProtocolVersion, Result: ResultError}
 
