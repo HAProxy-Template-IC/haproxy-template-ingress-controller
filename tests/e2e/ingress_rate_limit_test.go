@@ -37,11 +37,8 @@ import (
 // randomises the source IP for connections originating from the test
 // host, so a parallel burst from the host hits HAProxy with N different
 // src IPs and never trips the limit. We use kubectl exec into a
-// per-test alpine/curl pod, where every request shares one cluster-IP
-// and the limit reliably fires.
-//
-// Mirror of the bash assert_rate_limited helper, which uses the same
-// pattern (xargs -P10 from inside an in-cluster pod).
+// per-test alpine/curl pod (xargs -P10 from inside the pod), where
+// every request shares one cluster-IP and the limit reliably fires.
 func TestIngressRateLimit(t *testing.T) {
 	t.Parallel()
 	host := "ingress-ratelimit.localdev.me"

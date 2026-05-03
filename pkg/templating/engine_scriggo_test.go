@@ -698,8 +698,8 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 }
 
 func TestScriggoEngine_SharedContextComputeIfAbsentPattern(t *testing.T) {
-	// Test the ComputeIfAbsent pattern for caching complex data structures.
-	// This replaces the old has_cached/set_cached/shared["key"] patterns.
+	// Test the ComputeIfAbsent pattern for caching complex data structures
+	// across nested template renders within a single Render call.
 	templates := map[string]string{
 		"test": `{#- Use ComputeIfAbsent to cache analysis once -#}
 {%- var analysis, wasComputed = shared.ComputeIfAbsent("ssl_analysis", func() any {

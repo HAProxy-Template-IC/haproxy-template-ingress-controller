@@ -23,12 +23,12 @@ import (
 // handlePodsDiscovered (configpublisher's, distinct from the
 // scheduler's same-named handler) reconciles status against running
 // HAProxy pods, cleaning up stale entries from terminated pods.
-// Coverage was 0%; this file pins the load-bearing pre-flight
-// guards. The happy-path requires a real K8s publisher and is
-// covered by integration tests, but the two startup-race guards
-// can fire BEFORE the publisher is even configured and would
-// nil-deref or hit ReconcileDeployedToPods with an empty namespace
-// on every pod-discovery event:
+// This file pins the load-bearing pre-flight guards. The happy
+// path requires a real K8s publisher and is covered by integration
+// tests, but the two startup-race guards can fire BEFORE the
+// publisher is even configured and would nil-deref or hit
+// ReconcileDeployedToPods with an empty namespace on every
+// pod-discovery event:
 //
 //  1. !hasTemplateConfig → MUST early-return without touching the
 //     publisher. Pod discovery happens during startup, often before

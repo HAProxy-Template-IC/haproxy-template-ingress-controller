@@ -50,18 +50,6 @@ t=5s:   Refractory expires → Callback with batched changes
 
 The refractory period is `pkg/k8s/types.DefaultDebounceInterval` (5s). This ensures fast response (0ms delay) for isolated changes while batching rapid successive changes during busy periods.
 
-### Old Behavior (for reference)
-
-Previously used trailing-edge triggering where every change reset the timer:
-
-```
-t=0s:   Resource change → Start timer (5s)
-t=2s:   Resource change → Reset timer (another 5s)
-t=7s:   Timer expires → Trigger reconciliation
-```
-
-The new leading-edge behavior significantly reduces latency for rolling deployments.
-
 ### Index Synchronized (Immediate)
 
 ```

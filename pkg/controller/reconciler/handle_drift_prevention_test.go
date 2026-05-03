@@ -39,9 +39,9 @@ import (
 //     immediate drift trigger, the deployer would receive the wrong
 //     reason and skip the cached-config fallback.
 //
-// Function had 0% coverage before this file. The two contracts are
-// not derivable from observing the function shape — they describe
-// behaviour the deployer relies on but doesn't enforce.
+// Both contracts describe behaviour the deployer relies on but doesn't
+// enforce, so they aren't derivable from observing the function shape —
+// pin them explicitly here.
 
 func TestReconciler_HandleDriftPrevention_TriggersImmediateWithDriftPreventionReason(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()

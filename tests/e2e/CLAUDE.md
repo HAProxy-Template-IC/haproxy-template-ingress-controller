@@ -7,7 +7,6 @@ Development context for full-stack end-to-end tests.
 This suite tests the **deployed system as a whole**: the controller, the helm
 chart, the template libraries, the SPOA hub and modules, external services
 (auth-server, blocklist-server), and actual HTTP/TLS routing through HAProxy.
-It replaces the legacy `scripts/test-routes.sh`.
 
 ## Self-contained
 
@@ -48,8 +47,7 @@ Nothing outside the suite is required. `scripts/start-dev-env.sh` is the
 - **Per-test logs on failure.** A standard `t.Cleanup` gated on `t.Failed()`
   dumps controller / HAProxy / SPOA / namespace-event logs to
   `debug-logs/<test-name>/` for CI artifact upload.
-- **From now on, new full-stack tests must be written in Go here**, not in
-  `scripts/test-routes.sh`. The bash script is being decommissioned.
+- **All full-stack tests live here as Go tests** under the `e2e` build tag.
 
 ## Reading the code
 
@@ -62,7 +60,7 @@ Nothing outside the suite is required. `scripts/start-dev-env.sh` is the
   builders for per-test manifests.
 - `cleanup.go` — `DumpLogsOnFailure`.
 - `httpclient/` — fluent HTTP/HTTPS/mTLS client with retry/backoff and
-  DinD-aware host resolution. Drop-in replacement for the bash assertion helpers.
+  DinD-aware host resolution.
 
 The embedded backend fixtures are sourced from `scripts/dev-env-assets/`
 via the `devassets` Go package added there. This keeps a single source of

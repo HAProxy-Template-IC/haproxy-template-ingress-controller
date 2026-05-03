@@ -45,7 +45,7 @@ func (e *HAProxyPodsDiscoveredEvent) EventType() string { return EventTypeHAProx
 // safely skipped during high-frequency pod churn (scaling, rolling updates).
 func (e *HAProxyPodsDiscoveredEvent) Coalescible() bool { return true }
 
-// HAProxyPodTerminatedEvent is published when an HAProxy pod terminates.
+// HAProxyPodTerminatedEvent is published when a HAProxy pod terminates.
 //
 // This triggers cleanup of the pod from all runtime config status fields.
 type HAProxyPodTerminatedEvent struct {

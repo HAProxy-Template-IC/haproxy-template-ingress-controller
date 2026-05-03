@@ -387,7 +387,7 @@ type TemplateSnippet struct {
 	Template string `yaml:"template"`
 }
 
-// MapFile is an HAProxy map file template.
+// MapFile is a HAProxy map file template.
 type MapFile struct {
 	// Template is the template content that generates the map file.
 	Template string `yaml:"template"`

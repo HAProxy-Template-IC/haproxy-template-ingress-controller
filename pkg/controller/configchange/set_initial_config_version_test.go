@@ -23,9 +23,9 @@ import (
 // callback doesn't trigger reinitialization (which would loop
 // forever: reinit → fresh fetch → onAdd of same version → reinit).
 //
-// Coverage was 0% on SetInitialConfigVersion AND the matching
-// version-check branch in handleConfigValidated (line 341 of
-// handler.go). Two contracts pinned by one composed test:
+// Two contracts pinned by one composed test (the second one
+// covers the matching version-check branch in
+// handleConfigValidated):
 //
 //  1. After SetInitialConfigVersion(v), a ConfigValidatedEvent
 //     carrying that exact version v MUST NOT trigger the reinit

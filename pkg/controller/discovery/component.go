@@ -16,7 +16,7 @@
 //
 // It tracks the set of HAProxy pods reported by the resource watcher (via the
 // auto-injected haproxy-pods watcher), enriches each pod with credentials and
-// an HAProxy version probe through pkg/dataplane, and publishes
+// a HAProxy version probe through pkg/dataplane, and publishes
 // HAProxyPodsDiscoveredEvent / HAProxyPodTerminatedEvent so the deployer and
 // other consumers know which endpoints to talk to.
 package discovery

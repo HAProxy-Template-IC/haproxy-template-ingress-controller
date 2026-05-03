@@ -121,7 +121,9 @@ func (ec *EventCommentator) templateInsight(event busevents.Event, attrs []any) 
 			append(attrs, "config_bytes", e.ConfigBytes, "aux_files", e.AuxiliaryFileCount, "duration_ms", e.DurationMs, "trigger_reason", e.TriggerReason)
 
 	case *events.TemplateRenderFailedEvent:
-		// Error is already formatted by renderer component, just pass it through
+		// Error string is produced by RenderService.Render and propagated by
+		// the Coordinator (no event-adapter renderer — see ADR-0001), so it's
+		// already formatted by the time we see it; just pass it through.
 		return fmt.Sprintf("Template rendering failed:\n%s", e.Error),
 			append(attrs, "template", e.TemplateName)
 

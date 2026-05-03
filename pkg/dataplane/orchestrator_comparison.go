@@ -115,8 +115,8 @@ func (o *orchestrator) parseAndCompareConfigs(currentConfigStr, desiredConfig st
 		}
 	}
 
-	// Note: Normalization of metadata format is now done automatically by the parser
-	// during caching. Both currentConfig and desiredParsed are pre-normalized.
+	// Metadata-format normalization is handled by the parser during caching;
+	// both currentConfig and desiredParsed arrive here pre-normalized.
 
 	// Use pre-parsed desired config if available, otherwise parse
 	var desiredParsed *parserconfig.StructuredConfig

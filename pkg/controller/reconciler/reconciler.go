@@ -362,7 +362,7 @@ func (r *Reconciler) stopDebounceTimer() {
 // triggerReconciliation publishes a ReconciliationTriggeredEvent with a new correlation ID.
 //
 // The correlation ID is generated here and will be propagated through the entire
-// reconciliation pipeline (Renderer → Validator → Scheduler → Deployer) enabling
+// reconciliation pipeline (Coordinator → Pipeline → Scheduler → Deployer) enabling
 // end-to-end tracing of all events in a single reconciliation cycle.
 //
 // The coalescible flag is set based on the trigger reason:

@@ -179,7 +179,7 @@ The template engine exposes a thread-safe `shared` cache via `ComputeIfAbsent(ke
 {%- var analysis_routes = shared.Get("sorted_routes") %}
 ```
 
-There is no `Set` method on the shared cache — this is deliberate and prevents racy check-then-act patterns. The old `has_cached` / `set_cached` / `get_cached` top-level functions no longer exist; translate them to the `shared.ComputeIfAbsent` / `shared.Get` pair shown above.
+There is no `Set` method on the shared cache — this is deliberate and prevents racy check-then-act patterns. Use the `shared.ComputeIfAbsent` / `shared.Get` pair shown above for compute-once and read-only access respectively.
 
 **Avoid nested loops when possible:**
 

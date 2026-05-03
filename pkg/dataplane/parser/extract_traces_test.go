@@ -20,7 +20,7 @@ import (
 //
 //  1. SectionExists(Traces, "") returns false → return nil
 //     (the config has no `traces` section, which is the OVERWHELMING
-//     common case — traces is an HAProxy 3.1+ debugging feature
+//     common case — traces is a HAProxy 3.1+ debugging feature
 //     that operators rarely enable in production).
 //  2. SectionExists is true and ParseTraces fails → log + return nil
 //     (defensive fallback; hard to trigger from a syntactically valid

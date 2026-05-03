@@ -40,7 +40,7 @@ func NewConfigPublishedEvent(runtimeConfigName, runtimeConfigNamespace string, m
 
 func (e *ConfigPublishedEvent) EventType() string { return EventTypeConfigPublished }
 
-// ConfigAppliedToPodEvent is published after configuration is successfully applied to an HAProxy pod.
+// ConfigAppliedToPodEvent is published after configuration is successfully applied to a HAProxy pod.
 //
 // This triggers updating the deployment status in runtime config resources.
 type ConfigAppliedToPodEvent struct {

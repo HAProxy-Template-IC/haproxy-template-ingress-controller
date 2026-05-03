@@ -18,9 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// pkg/lifecycle/dependencies.go has THREE load-bearing functions that
-// previously had no direct test coverage — only indirect coverage
-// through StartAll happy paths. The contracts protect against:
+// pkg/lifecycle/dependencies.go has THREE load-bearing functions whose
+// contracts aren't fully exercised by the StartAll happy-path tests
+// elsewhere in this package. Pin them directly here. The contracts
+// protect against:
 //
 //  1. validateDependencies — missing/unstarted deps must error AT
 //     STARTUP, not silently let components race ahead of dependencies

@@ -3537,7 +3537,7 @@ validationTests:
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
-        description: Custom header X-Tenant-ID is captured as a SPOE arg
+        description: Custom header X-Tenant-ID is captured as an SPOE arg
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_request_id=req\\.hdr\\(X-Request-ID\\)"
@@ -3800,7 +3800,7 @@ validationTests:
             name: bad-header
             annotations:
               haproxy-ingress.github.io/auth-url: "https://auth.example/check"
-              # Contains an HAProxy fetch-syntax injection attempt:
+              # Contains a HAProxy fetch-syntax injection attempt:
               haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, %[var(txn.injected)]"
           spec:
             ingressClassName: haproxy

@@ -36,13 +36,6 @@ import (
 // CORS, mTLS, SSL passthrough, rate limiting, sticky sessions) live in
 // dedicated files (ingress_basic_auth_test.go, ingress_redirect_test.go, …).
 //
-// Migrated from scripts/test-routes.sh: test_ingress_allowlist,
-// test_ingress_denylist, test_ingress_sethost, test_ingress_timeouts,
-// test_ingress_forwardedfor, test_ingress_capture, test_ingress_healthcheck,
-// test_ingress_maxconn, test_ingress_srcip, test_ingress_loadbalance,
-// test_ingress_headers_request, test_ingress_backend_snippet,
-// test_ingress_scale_slots.
-//
 // The matrix mixes the three annotation prefixes the chart understands —
 // haproxy.org/*, haproxy-ingress.github.io/*, nginx.ingress.kubernetes.io/*
 // — to exercise each library's wiring. We don't test every alias of every

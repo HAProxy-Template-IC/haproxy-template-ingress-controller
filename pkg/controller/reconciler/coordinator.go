@@ -44,9 +44,9 @@ const (
 
 // Coordinator orchestrates reconciliation by calling the Pipeline directly.
 //
-// This component replaces the event-driven flow where Renderer and Validator
-// are separate components publishing events. Instead, it calls Pipeline.Execute()
-// synchronously and publishes the appropriate events for downstream components.
+// Render and validate run synchronously inside Pipeline.Execute() (ADR-0001 —
+// no event hop), and the Coordinator publishes the appropriate events for
+// downstream consumers based on the result.
 //
 // Flow:
 //  1. ReconciliationTriggeredEvent received

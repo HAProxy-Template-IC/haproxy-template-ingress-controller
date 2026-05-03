@@ -16,7 +16,7 @@ import (
     "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 )
 
-// 1. Parse the YAML (typically spec.* from an HAProxyTemplateConfig CRD,
+// 1. Parse the YAML (typically spec.* from a HAProxyTemplateConfig CRD,
 //    serialised by pkg/controller/conversion).
 cfg, err := config.LoadConfig(configYAML)
 if err != nil {
@@ -70,7 +70,7 @@ Authoritative list lives in `pkg/core/config/defaults.go`. Commonly surprising o
 - `controller.configPublishing.compressionThreshold`: `1048576` (1 MiB)
 - `templatingSettings.engine`: `scriggo`
 
-Two serialisations exist for the same struct, and they don't agree — see `pkg/core/config/CLAUDE.md` for the full mapping:
+Two serialisations exist for the same struct, and they don't agree — see `pkg/core/config/README.md` for the full mapping:
 
 - **CRD JSON keys** (what operators write in `kubectl apply`-style manifests, what `kubectl get -o yaml` prints): camelCase (`podSelector`, `watchedResources`, `indexBy`, `templatingSettings`).
 - **YAML keys consumed by `LoadConfig`** (the intermediate form `pkg/controller/conversion` produces): snake_case at the top level (`pod_selector`, `watched_resources`, `template_snippets`, `haproxy_config`, …) with a few nested fields in camelCase (`extraContext`, `currentConfig`, `httpResources`, `minHAProxyVersion`).

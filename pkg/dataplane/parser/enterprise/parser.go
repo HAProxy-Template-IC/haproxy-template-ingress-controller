@@ -69,7 +69,7 @@ type EEFrontendData = parserconfig.EEFrontendData
 // EEBackendData is a type alias for parserconfig.EEBackendData.
 type EEBackendData = parserconfig.EEBackendData
 
-// ParseFromString parses an HAProxy EE configuration string into a structured representation.
+// ParseFromString parses a HAProxy EE configuration string into a structured representation.
 //
 // This uses a hybrid approach:
 // 1. client-native parser processes CE sections (complete field extraction)

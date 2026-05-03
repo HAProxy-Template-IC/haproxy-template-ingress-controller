@@ -19,11 +19,10 @@ import (
 )
 
 // findDeletedUserlists is the per-userlist deletion-detection
-// helper called from compareUserlists. Coverage was 80% — the
-// "userlist deleted" branch was effectively covered via the
-// higher-level Compare test, but the table-driven unit tests
-// below pin the exact contract so a future refactor of the diff
-// emission can't silently:
+// helper called from compareUserlists. The "userlist deleted"
+// branch is also exercised via the higher-level Compare test,
+// but the table-driven unit tests below pin the exact contract
+// so a future refactor of the diff emission can't silently:
 //
 //   - Skip emitting deletes (would leave stale userlists in
 //     HAProxy → security regression: revoked credentials still

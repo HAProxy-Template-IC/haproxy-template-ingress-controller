@@ -303,26 +303,28 @@ curl http://localhost:8080/debug/vars/state
 ### Accessing from Tests
 
 ```go
-// tests/acceptance/debug_client.go
+// tests/acceptance/debug_client.go — accesses the debug server via the
+// Kubernetes API server proxy (more reliable than port-forwarding/SPDY in
+// CI environments, and works in DinD without NodePort extraPortMappings).
 type DebugClient struct {
-    podName      string
-    debugPort    int
-    restConfig   *rest.Config
+    clientset   kubernetes.Interface
+    namespace   string
+    serviceName string
+    port        string
 }
 
 func (dc *DebugClient) GetConfig(ctx context.Context) (map[string]any, error) {
-    // Sets up port-forward and makes HTTP request
-    resp, err := http.Get(dc.buildURL("/debug/vars/config"))
-    // ...
+    // Uses CoreV1().Services(...).ProxyGet(...) to fetch /debug/vars/config
 }
 
 func (dc *DebugClient) WaitForConfigVersion(ctx context.Context, expectedVersion string, timeout time.Duration) error {
     // Polls /debug/vars/config?field={.version} until version matches
 }
 
-// In test:
-debugClient := NewDebugClient(cfg.Client().RESTConfig(), pod, 6060)
-debugClient.Start(ctx)
+// In test (use the SetupDebugClient helper, which creates the ClusterIP
+// service and returns a ready-to-use *DebugClient — no Start()/Stop() needed):
+debugClient, err := SetupDebugClient(ctx, client, clientset, namespace, 30*time.Second)
+require.NoError(t, err)
 
 config, err := debugClient.GetConfig(ctx)
 assert.Equal(t, "v1", config["version"])

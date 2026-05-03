@@ -20,8 +20,9 @@ import (
 )
 
 // DriftPreventionMonitor.handleLostLeadership is the leader-only
-// state cleanup hook. Coverage was 0%; the existing handleEvent
-// test routes DeploymentCompletedEvent but skips LostLeadershipEvent.
+// state cleanup hook. The existing handleEvent test routes
+// DeploymentCompletedEvent but doesn't exercise LostLeadershipEvent;
+// pin that path here.
 //
 // The contract is critical because DriftPreventionMonitor is a
 // leader-only component: when leadership is lost, its drift timer

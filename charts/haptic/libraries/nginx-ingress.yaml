@@ -422,7 +422,7 @@ templateSnippets:
   #   nginx.ingress.kubernetes.io/auth-method: "POST"
   #
   # The plugin allowlists GET / HEAD / POST / PUT / PATCH / DELETE /
-  # OPTIONS; values outside that set produce a SPOE-side validation
+  # OPTIONS; values outside that set produce an SPOE-side validation
   # error. Body-having methods (POST/PUT/PATCH) go out with an empty
   # body — the plugin does not forward the original request payload.
   map-auth-method-500-nginx-ingress:

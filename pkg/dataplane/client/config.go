@@ -263,7 +263,7 @@ func (e *VersionConflictError) Error() string {
 	return fmt.Sprintf("version conflict: expected %d, got %s", e.ExpectedVersion, e.ActualVersion)
 }
 
-// ReloadStatus represents the status of an HAProxy reload operation.
+// ReloadStatus represents the status of a HAProxy reload operation.
 type ReloadStatus string
 
 const (
@@ -275,7 +275,7 @@ const (
 	ReloadStatusFailed ReloadStatus = "failed"
 )
 
-// ReloadInfo contains information about an HAProxy reload operation.
+// ReloadInfo contains information about a HAProxy reload operation.
 type ReloadInfo struct {
 	// ID is the unique identifier for this reload operation.
 	ID string

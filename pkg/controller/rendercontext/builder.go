@@ -231,9 +231,9 @@ func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatc
 // SortSnippetNames sorts template snippet names alphabetically.
 // Returns a slice of snippet names in sorted order.
 //
-// Note: Snippet ordering is now controlled by encoding priority in the snippet name
-// (e.g., "features-050-ssl" for priority 50). This is required because render_glob
-// sorts templates alphabetically.
+// Snippet ordering is controlled by encoding priority in the snippet name
+// (e.g., "features-050-ssl" for priority 50). This is required because
+// render_glob sorts templates alphabetically.
 func SortSnippetNames(snippets map[string]config.TemplateSnippet) []string {
 	sorted := make([]string, 0, len(snippets))
 	for name := range snippets {

@@ -178,7 +178,7 @@ func New() (*Parser, error) {
 	}, nil
 }
 
-// ParseFromString parses an HAProxy configuration string into a structured representation.
+// ParseFromString parses a HAProxy configuration string into a structured representation.
 //
 // The configuration string should contain valid HAProxy configuration syntax.
 // Returns a StructuredConfig containing all parsed sections (global, defaults,

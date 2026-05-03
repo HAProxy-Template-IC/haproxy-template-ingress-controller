@@ -192,12 +192,14 @@ kubectl -n haptic delete pod $LEADER_POD
 
 ```
 14:05:04.123 | INFO  | Became leader
-14:05:04.124 | INFO  | became leader, re-discovering HAProxy pods for deployment scheduler | count=2
-14:05:04.125 | INFO  | became leader, re-publishing last rendered config for DeploymentScheduler | config_bytes=5523
-14:05:04.126 | INFO  | became leader, re-publishing last validation result (success) for DeploymentScheduler
-14:05:04.127 | INFO  | HAProxy pods discovered | count=2
-14:05:04.128 | INFO  | scheduling deployment | reason=pod_discovery endpoint_count=2
+14:05:04.124 | INFO  | became leader, replaying HAProxyPodsDiscoveredEvent | count=2
+14:05:04.125 | INFO  | became leader, replaying ConfigValidatedEvent | version=...
+14:05:04.126 | INFO  | reconciliation triggered: became leader
+14:05:04.127 | INFO  | template rendered | config_bytes=5523
+14:05:04.128 | INFO  | scheduling deployment | reason=became_leader endpoint_count=2
 ```
+
+The render and validation events come from a fresh pipeline run, not a replay — the renderer is synchronous (ADR-0001), so the new leader's Coordinator drives a current `Pipeline.Execute` rather than replaying a stale `TemplateRenderedEvent`.
 
 ## Common Pitfalls
 
@@ -281,7 +283,7 @@ func (v *Validator) handleBecameLeader(_ *events.BecameLeaderEvent) {
 
 ## References
 
-- Initial bug discovery: Discovery component missing HAProxyPodsDiscoveredEvent (fixed in discovery/component.go:278)
+- Discovery's BecameLeaderEvent handler: `pkg/controller/discovery/handlers.go` (`handleBecameLeader`)
 - Leader election implementation: pkg/controller/leaderelection/CLAUDE.md
 - Event coordination: pkg/events/CLAUDE.md
 - Controller architecture: pkg/controller/CLAUDE.md

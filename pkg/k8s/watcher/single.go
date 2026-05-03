@@ -299,8 +299,7 @@ func (w *SingleWatcher) handleDelete(obj any) {
 // invokeOnChange runs the configured OnChange callback for the given event.
 // Callback errors are logged and swallowed so a misbehaving consumer can't
 // stop the watcher. The eventTitle is interpolated capitalised into the warn
-// message and lower-cased for the debug message, matching the pre-refactor
-// log strings.
+// message and lower-cased for the debug message.
 func (w *SingleWatcher) invokeOnChange(eventTitle string, resource *unstructured.Unstructured) {
 	if w.config.OnChange == nil {
 		return

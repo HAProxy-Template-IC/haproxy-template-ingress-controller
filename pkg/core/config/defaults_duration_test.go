@@ -45,13 +45,12 @@ func TestParseDurationOr(t *testing.T) {
 	}
 }
 
-// TestDataplaneConfig_Getters_Defaults pins the previously-uncovered
-// GetDeploymentTimeout / GetConfigPublishInterval accessors and confirms
-// every Get* duration accessor on DataplaneConfig and LeaderElectionConfig
-// falls back to the documented default when its field is empty.
+// TestDataplaneConfig_Getters_Defaults confirms every Get* duration
+// accessor on DataplaneConfig falls back to the documented default
+// when its field is empty.
 //
-// Each row is the zero-value struct → expected default; keeping these in a
-// table form a tripwire for accidentally changing any default.
+// Each assertion is the zero-value struct → expected default; the table
+// shape is a tripwire for accidentally changing any default.
 func TestDataplaneConfig_Getters_Defaults(t *testing.T) {
 	cfg := &DataplaneConfig{}
 

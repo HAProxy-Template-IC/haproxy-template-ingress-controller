@@ -15,7 +15,7 @@ Work in this directory when:
 
 **DO NOT** work here for:
 
-- Unit tests → Place in same package as code (e.g., `pkg/templating/engine_test.go`)
+- Unit tests → Place in same package as code (e.g., `pkg/templating/engine_scriggo_test.go`)
 - Integration tests → Use `tests/integration/`
 - Acceptance tests → Use `tests/acceptance/`
 - Full-stack e2e tests → Use `tests/e2e/`
@@ -63,7 +63,7 @@ tests/
 │   ├── webhook_certs.go         # Self-signed CA + client/server cert generators
 │   ├── cleanup.go               # DumpLogsOnFailure → debug-logs/<test-name>/
 │   ├── httpclient/              # Fluent HTTP/HTTPS/mTLS client (DinD-aware)
-│   └── *_test.go                # ~30 routing tests migrated from scripts/test-routes.sh
+│   └── *_test.go                # ~30 full-stack routing tests (Ingress, HTTPRoute, mTLS, …)
 └── conformance/                  # Gateway API upstream conformance suite
                                   # (gated on `gateway_conformance` build tag, currently t.Skip
                                   #  pending chart-side HTTPRoute fixes — see package doc)

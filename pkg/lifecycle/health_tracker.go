@@ -32,7 +32,7 @@ const DefaultProcessingTimeout = 2 * time.Minute
 //   - CheckActivity() returns error if no activity for > timeout
 //   - Use ActivityStallTimeout() to calculate timeout from interval
 //
-// Processing-based tracking (for event-driven components like Renderer):
+// Processing-based tracking (for event-driven components like ConfigPublisher):
 //   - Call StartProcessing() before handling an event
 //   - Call EndProcessing() when done (including on error paths!)
 //   - CheckProcessing() returns error if processing takes > timeout

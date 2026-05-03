@@ -283,8 +283,8 @@ func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffRes
 		return nil, NewParseError(configTypeCurrent, snippet, err)
 	}
 
-	// Note: Normalization of metadata format is now done automatically by the parser
-	// during caching. Both currentConfig and desiredParsed are pre-normalized.
+	// Metadata-format normalization is handled by the parser during caching;
+	// both currentConfig and desiredParsed arrive here pre-normalized.
 
 	// Step 3: Parse desired configuration
 	desiredParsed, err := o.parser.ParseFromString(desiredConfig)

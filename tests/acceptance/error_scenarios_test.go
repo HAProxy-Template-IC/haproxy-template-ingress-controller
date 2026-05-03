@@ -36,7 +36,7 @@ import (
 
 // Template strings for CRD updates
 const (
-	// InvalidSyntaxTemplate is an HAProxy config with syntax errors that will fail validation.
+	// InvalidSyntaxTemplate is a HAProxy config with syntax errors that will fail validation.
 	// The "invalid_directive_xyz" is not a valid HAProxy directive and will cause parse errors.
 	InvalidSyntaxTemplate = `global
   maxconn 2000
