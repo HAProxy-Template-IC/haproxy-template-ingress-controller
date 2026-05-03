@@ -1,4 +1,6 @@
-{{- if .Values.webhook.enabled }}
+{{- $webhook := .Values.webhook }}
+{{- $cm := $webhook.certManager }}
+{{- if $webhook.enabled }}
 {{- /*
   The validating webhook fronts the same render pipeline the controller runs
   for an active reconcile, so its scope must match the resources the
@@ -12,10 +14,7 @@
   uses camelCase throughout).
 */ -}}
 {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-{{- $watched := $mergedLibraries.watchedResources | default dict }}
-{{- if .Values.controller.config.watchedResources }}
-  {{- $watched = merge (deepCopy $watched) .Values.controller.config.watchedResources }}
-{{- end }}
+{{- $watched := merge ($mergedLibraries.watchedResources | default dict) (.Values.controller.config.watchedResources | default dict) }}
 {{- $webhookRules := list }}
 {{- range $name, $resource := $watched }}
   {{- if $resource.enableValidationWebhook }}
@@ -23,29 +22,28 @@
   {{- end }}
 {{- end }}
 {{- if $webhookRules }}
+{{- $webhookSvcName := include "haptic.webhook.serviceName" . }}
+{{- $ns := .Release.Namespace }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: {{ include "haptic.fullname" . }}-webhook
+  name: {{ $webhookSvcName }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
-  {{- if .Values.webhook.certManager.enabled }}
+  {{- if $cm.enabled }}
   annotations:
-    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "haptic.webhook.secretName" . }}
+    cert-manager.io/inject-ca-from: {{ $ns }}/{{ include "haptic.webhook.secretName" . }}
   {{- end }}
 webhooks:
 {{- range $rule := $webhookRules }}
-  - name: {{ $rule.name }}.validation.{{ include "haptic.fullname" $ }}-webhook
+  - name: {{ $rule.name }}.validation.{{ $webhookSvcName }}
     clientConfig:
-      {{- if not $.Values.webhook.certManager.enabled }}
-      {{- if not $.Values.webhook.caBundle }}
-      {{- fail "webhook.caBundle is required when webhook.certManager.enabled is false" }}
-      {{- end }}
-      caBundle: {{ $.Values.webhook.caBundle }}
+      {{- if not $cm.enabled }}
+      caBundle: {{ required "webhook.caBundle is required when webhook.certManager.enabled is false" $webhook.caBundle }}
       {{- end }}
       service:
-        namespace: {{ $.Release.Namespace }}
-        name: {{ include "haptic.fullname" $ }}-webhook
+        namespace: {{ $ns }}
+        name: {{ $webhookSvcName }}
         path: /validate
     rules:
       - apiGroups:

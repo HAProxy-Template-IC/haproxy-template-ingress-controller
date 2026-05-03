@@ -17,6 +17,10 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `image.tag` | string | `""` | Controller image tag; empty = `<chart appVersion>-haproxy<haproxyVersion>` |
 | `nameOverride` | string | `""` | Override chart name |
 | `fullnameOverride` | string | `""` | Override full release name |
+| `commonLabels` | map | `{}` | Labels added to every chart-rendered resource on top of the standard `app.kubernetes.io/*` set |
+| `commonAnnotations` | map | `{}` | Annotations added to every chart-rendered resource that has an `annotations` block |
+| `deploymentAnnotations` | map | `{}` | Annotations added only to the controller `Deployment` (in addition to `commonAnnotations`); useful for hooks like reloader's `reloader.stakater.com/auto: "true"` |
+| `extraDeploy` | list or map | `[]` | Free-form Kubernetes resources to render alongside the chart. Each entry is rendered through `tpl` so it can reference chart values. Map form (keys → manifests) is convenient for composing across multiple values files |
 
 ## Controller Core
 
@@ -24,15 +28,17 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 |-----------|------|---------|-------------|
 | `controller.crdName` | string | `haptic-config` | Name of HAProxyTemplateConfig CRD resource |
 | `controller.debugPort` | int | `8080` | Introspection HTTP server port (/healthz, /debug/*) |
+| `controller.logLevel` | string | `INFO` | Initial controller log level (`LOG_LEVEL` env var) — see [Logging & Templating](#logging--templating) for the runtime override |
 | `controller.ports.healthz` | int | `8080` | Health check endpoint port |
 | `controller.ports.metrics` | int | `9090` | Prometheus metrics endpoint port |
 | `controller.ports.webhook` | int | `9443` | Admission webhook HTTPS port |
+| `controller.statusPatches.enabled` | bool | `true` | Whether the controller writes LoadBalancer addresses back to Ingress/Gateway `.status`. Disable during a controller migration so the incumbent keeps owning status — the chart sets `extraContext.statusPatchesDisabled: true` and the status-patch snippets become no-ops |
 
 ## Template Libraries
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration (always enabled) |
+| `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration. Disabling drops the `haproxyConfig` template the other libraries plug into; leave on unless you supply a complete replacement |
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTPRoute, GRPCRoute) |
@@ -40,6 +46,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
+| `controller.templateLibraries.spoaHub.enabled` | bool | `false` | HAProxy-side SPOA hub wiring. Auto-loaded when the SPOA hub sidecar is rendered (any `spoaHub.plugins.*` enabled, or `spoaHub.enabled: true`); set this to `true` to force-load the library standalone |
 | `controller.config.routing.regexMatchOrder` | string | `default` | Path matching order: `default` (Exact > Regex > Prefix-exact > Prefix) or `last` (Exact > Prefix-exact > Prefix > Regex, performance-first) |
 
 ## Default SSL Certificate
@@ -87,10 +94,27 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.config.dataplane.port` | int | `5555` | Dataplane API port |
 | `controller.config.dataplane.minDeploymentInterval` | duration | `2s` | Minimum time between deployments |
 | `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | Periodic drift prevention interval |
+| `controller.config.dataplane.maxParallel` | int/null | `null` | Maximum concurrent Dataplane API operations during sync. `null` auto-calculates as `dataplane GOMAXPROCS × 10` from the sidecar's CPU/memory limits. `0` disables limiting (not recommended). A positive integer pins the value |
 | `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory |
 | `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory |
 | `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory |
 | `controller.config.dataplane.configFile` | string | `/etc/haproxy/haproxy.cfg` | HAProxy config file path |
+
+## Watched Resources
+
+`controller.config.watchedResources.<name>` is a map of resource entries. The chart's template libraries contribute most entries (Ingress, Service, EndpointSlice, Secret, plus HTTPRoute / GRPCRoute when the gateway library is on); operators can add or override entries here. Each entry accepts:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `apiVersion` | string | required | API group/version (e.g. `networking.k8s.io/v1`, `v1` for core) |
+| `resources` | string | required | Plural resource name (e.g. `ingresses`) |
+| `indexBy` | list | `[]` | JSONPath expressions used to index resources for O(1) template lookup |
+| `fieldSelector` | string | `""` | Client-side JSONPath filter (e.g. `spec.ingressClassName=haptic`); supports any JSONPath expression unlike Kubernetes' built-in fieldSelector |
+| `labelSelector` | string | `""` | Server-side label selector for watch-time filtering (equality-only `key=value` pairs joined by commas) |
+| `enableValidationWebhook` | bool | `false` | Include this resource in the chart-rendered `ValidatingWebhookConfiguration` |
+| `statusPatch` | bool | `false` | Allow the controller to patch this resource's `/status` subresource |
+| `store` | string | `full` | `full` keeps all resources in memory; `on-demand` fetches with caching (lower memory, slower lookups). Useful for very large Secret stores |
+| `debounceInterval` | duration | `""` (5s) | Per-resource debounce window; empty/unparseable falls back to the controller-wide default. Lower for fast-reacting resources (e.g. `500ms` on httproutes during canaries). Avoid raising the value for resources that drive backend membership — `EndpointSlices` and `pods` in particular — because the debounce delays Pod removal from the HAProxy server pool by that whole window, so live traffic continues hitting Terminating pods until the next render fires |
 
 ## Logging & Templating
 
@@ -195,6 +219,15 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `service.type` | string | `ClusterIP` | Controller service type |
+| `service.annotations` | map | `{}` | Service annotations (cloud-LB hints, etc.) |
+| `service.clusterIP` | string | `""` | Pin a specific ClusterIP; leave empty for auto-assignment |
+| `service.loadBalancerIP` | string | `""` | LoadBalancer IP (when `type: LoadBalancer`) |
+| `service.loadBalancerSourceRanges` | list | `[]` | CIDR allowlist for LoadBalancer traffic |
+| `service.loadBalancerClass` | string | `""` | LoadBalancer class (Kubernetes 1.24+ multi-LB) |
+| `service.externalTrafficPolicy` | string | `""` | `Cluster` or `Local`; `Local` preserves client source IP at the cost of uneven distribution |
+| `service.internalTrafficPolicy` | string | `""` | `Cluster` or `Local` for in-cluster traffic |
+| `service.sessionAffinity` | string | `""` | `None` or `ClientIP` |
+| `service.sessionAffinityConfig` | map | `{}` | Session-affinity tuning (when `sessionAffinity: ClientIP`) |
 | `livenessProbe.httpGet.path` | string | `/healthz` | Liveness probe path |
 | `livenessProbe.initialDelaySeconds` | int | `10` | Initial delay |
 | `livenessProbe.periodSeconds` | int | `10` | Probe period |
@@ -203,6 +236,13 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 | `readinessProbe.initialDelaySeconds` | int | `5` | Initial delay |
 | `readinessProbe.periodSeconds` | int | `5` | Probe period |
 | `readinessProbe.failureThreshold` | int | `3` | Failure threshold |
+| `startupProbe.enabled` | bool | `false` | Enable a startup probe (useful for slow-starting controllers; while a startup probe is active the liveness/readiness probes are paused) |
+| `startupProbe.httpGet.path` | string | `/healthz` | Startup probe path |
+| `startupProbe.initialDelaySeconds` | int | `0` | Initial delay |
+| `startupProbe.periodSeconds` | int | `10` | Probe period |
+| `startupProbe.timeoutSeconds` | int | `1` | Probe timeout |
+| `startupProbe.successThreshold` | int | `1` | Success threshold |
+| `startupProbe.failureThreshold` | int | `30` | Failure threshold (with `periodSeconds: 10` this gives 5 minutes for startup) |
 
 ## Resources & Scheduling
 
@@ -214,6 +254,22 @@ Pod-spec scheduling, runtime, and metadata fields for the controller Deployment 
 
 Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) live under `controller.podSpec.*` — see [Pod Configuration (Controller)](#pod-configuration-controller).
 
+## Controller Extras & Rollout
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `extraEnv` | list | `[]` | Extra env vars for the controller container; `AUTOMEMLIMIT=…` here adjusts the GOMEMLIMIT ratio (default `0.9`) |
+| `extraVolumes` | list | `[]` | Extra volumes for the controller pod; rendered through `tpl` so values can reference chart values |
+| `extraVolumeMounts` | list | `[]` | Extra volume mounts for the controller container; rendered through `tpl` |
+| `initContainers` | list | `[]` | Init containers run before the controller starts |
+| `sidecars` | list | `[]` | Additional sidecar containers in the controller pod; rendered through `tpl` |
+| `lifecycle` | map | `{}` | Container lifecycle hooks (`preStop`, `postStart`) for the controller container |
+| `updateStrategy.type` | string | `RollingUpdate` | Controller Deployment update strategy |
+| `updateStrategy.rollingUpdate.maxSurge` | int/string | `1` | Maximum surge during rolling updates |
+| `updateStrategy.rollingUpdate.maxUnavailable` | int/string | `0` | Maximum unavailable during rolling updates |
+| `minReadySeconds` | int | `0` | Minimum seconds a new controller pod must be ready before counting as available |
+| `revisionHistoryLimit` | int | `10` | Number of old ReplicaSets to retain |
+
 ## Autoscaling & PDB
 
 | Parameter | Type | Default | Description |
@@ -221,9 +277,11 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `autoscaling.enabled` | bool | `false` | Enable HorizontalPodAutoscaler |
 | `autoscaling.minReplicas` | int | `1` | Minimum replicas |
 | `autoscaling.maxReplicas` | int | `10` | Maximum replicas |
-| `autoscaling.targetCPUUtilizationPercentage` | int | `80` | Target CPU utilization |
-| `podDisruptionBudget.enabled` | bool | `true` | Enable PodDisruptionBudget |
-| `podDisruptionBudget.minAvailable` | int | `1` | Minimum available pods |
+| `autoscaling.targetCPUUtilizationPercentage` | int | `80` | Target CPU utilization (omitted from the rendered HPA when empty) |
+| `autoscaling.targetMemoryUtilizationPercentage` | int | unset | Target memory utilization (omitted from the rendered HPA when empty) |
+| `podDisruptionBudget.enabled` | bool | `true` | Enable PodDisruptionBudget; only rendered when `replicaCount > 1` |
+| `podDisruptionBudget.minAvailable` | int/string | `1` | Minimum available pods (mutually exclusive with `maxUnavailable`) |
+| `podDisruptionBudget.maxUnavailable` | int/string | unset | Maximum unavailable pods (mutually exclusive with `minAvailable`); leave unset to use `minAvailable` |
 
 ## Monitoring
 
@@ -232,9 +290,29 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `monitoring.serviceMonitor.enabled` | bool | `false` | Create ServiceMonitor for Prometheus |
 | `monitoring.serviceMonitor.interval` | duration | `30s` | Scrape interval |
 | `monitoring.serviceMonitor.scrapeTimeout` | duration | `10s` | Scrape timeout |
-| `monitoring.serviceMonitor.labels` | map | `{}` | ServiceMonitor labels |
-| `monitoring.serviceMonitor.relabelings` | list | `[]` | Prometheus relabelings |
-| `monitoring.serviceMonitor.metricRelabelings` | list | `[]` | Metric relabelings |
+| `monitoring.serviceMonitor.labels` | map | `{}` | ServiceMonitor labels (used by Prometheus to select which ServiceMonitors to use) |
+| `monitoring.serviceMonitor.relabelings` | list | `[]` | Prometheus relabelings applied before scraping |
+| `monitoring.serviceMonitor.metricRelabelings` | list | `[]` | Metric relabelings applied to scraped metrics |
+| `monitoring.podMonitor.enabled` | bool | `false` | Create PodMonitor (alternative to ServiceMonitor when scraping pods directly) |
+| `monitoring.podMonitor.interval` | duration | `30s` | PodMonitor scrape interval |
+| `monitoring.podMonitor.scrapeTimeout` | duration | `10s` | PodMonitor scrape timeout |
+| `monitoring.podMonitor.labels` | map | `{}` | PodMonitor labels |
+| `monitoring.podMonitor.relabelings` | list | `[]` | PodMonitor relabelings |
+| `monitoring.podMonitor.metricRelabelings` | list | `[]` | PodMonitor metric relabelings |
+| `monitoring.prometheusRule.enabled` | bool | `false` | Create PrometheusRule with alerting rules |
+| `monitoring.prometheusRule.labels` | map | `{}` | PrometheusRule labels |
+| `monitoring.prometheusRule.rules` | list | `[]` | Custom alerting rules; overrides the default rule set when non-empty |
+| `monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set (reconciliation errors, deployment failures, queue-depth, no-leader); only consulted when `rules` is empty |
+| `monitoring.prometheusRule.defaultRules.reconciliationErrors` | bool | `true` | Include the `HAProxyControllerReconciliationErrors` warning rule |
+| `monitoring.prometheusRule.defaultRules.deploymentFailures` | bool | `true` | Include the `HAProxyControllerDeploymentFailures` critical rule |
+| `monitoring.prometheusRule.defaultRules.highQueueDepth` | bool | `true` | Include the `HAProxyControllerHighQueueDepth` warning rule |
+| `monitoring.prometheusRule.defaultRules.leaderElectionLost` | bool | `true` | Include the `HAProxyControllerNoLeader` critical rule |
+| `monitoring.grafanaDashboard.enabled` | bool | `false` | Create a ConfigMap holding the Grafana dashboard JSON (picked up by the Grafana sidecar via the configured discovery label) |
+| `monitoring.grafanaDashboard.labels` | map | `{grafana_dashboard: "1"}` | Discovery labels for the Grafana sidecar |
+| `monitoring.grafanaDashboard.annotations` | map | `{grafana_folder: "HAProxy"}` | Annotations on the dashboard ConfigMap; the folder annotation must match `grafana.sidecar.dashboards.folderAnnotation` |
+| `monitoring.grafanaDashboard.namespace` | string | `""` | Namespace for the dashboard ConfigMap (defaults to release namespace) |
+| `monitoring.grafanaDashboard.useBuiltIn` | bool | `true` | Use the built-in dashboard (curated subset of controller metrics); set `false` to provide your own JSON via `customDashboard` |
+| `monitoring.grafanaDashboard.customDashboard` | map | `{}` | Custom dashboard JSON, only consulted when `useBuiltIn: false` |
 
 ## HAProxy Deployment
 
@@ -249,7 +327,6 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
 | `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
-| `haproxy.user` | string | Auto-detected | HAProxy user |
 
 ## HAProxy Pod Configuration
 
@@ -302,8 +379,74 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `haproxy.dataplane.service.type` | string | `ClusterIP` | Dataplane service type |
+| `haproxy.dataplane.resources.requests.cpu` | string | `50m` | Dataplane sidecar CPU request |
+| `haproxy.dataplane.resources.requests.memory` | string | `256Mi` | Dataplane sidecar memory request (Guaranteed QoS — limits.memory matches) |
+| `haproxy.dataplane.resources.limits.memory` | string | `256Mi` | Dataplane sidecar memory limit |
+| `haproxy.dataplane.extraEnv` | list | `[]` | Extra env vars for the dataplane sidecar; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
+| `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction. The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
+| `haproxy.dataplane.debugSocketPath` | string | `""` | Unix socket path for runtime profiling of the dataplane sidecar (sets `debug_socket_path` in `dataplaneapi.yaml`) |
 
 Dataplane API credentials moved to the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
+
+## HAProxy Tuning
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.nbthread` | int/string | absent | HAProxy `nbthread` directive value. Default (key absent): auto-calculated as `ceil(cpu_request)` clamped to ≥1. Set `0` to skip the directive (HAProxy uses its built-in default). Templatable — `"{{ mul 2 (...) }}"` is allowed |
+| `haproxy.shmStats.enabled` | bool | `false` | Persist HAProxy stats counters across reloads via `shm-stats-file` (HAProxy 3.3+ only) |
+| `haproxy.shmStats.path` | string | `/dev/shm/haproxy-stats` | Path to the shared-memory stats file |
+| `haproxy.shmStats.maxObjects` | int | `50000` | Maximum object count in the shm-stats file. Each frontend, backend, listen, and server counts as one object — pick a value with headroom; HAProxy cannot resize the file on reload |
+| `haproxy.shmStats.shmSizeLimit` | string | `""` | `/dev/shm` emptyDir size limit. Empty auto-calculates from `maxObjects` (~4 KB/object + 10% overhead, rounded to MiB) |
+| `haproxy.lifecycle` | map | `{}` | Container lifecycle hooks for the HAProxy container (preStop, postStart) |
+| `haproxy.updateStrategy.type` | string | `RollingUpdate` | HAProxy Deployment update strategy |
+| `haproxy.updateStrategy.rollingUpdate.maxSurge` | int/string | `1` | Maximum surge during rolling updates |
+| `haproxy.updateStrategy.rollingUpdate.maxUnavailable` | int/string | `0` | Maximum unavailable during rolling updates |
+| `haproxy.minReadySeconds` | int | `0` | Minimum seconds a new HAProxy pod must be ready before it counts as available |
+| `haproxy.revisionHistoryLimit` | int | `10` | Number of old ReplicaSets to retain |
+
+## HAProxy KEDA Autoscaling
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `haproxy.keda.enabled` | bool | `false` | Enable KEDA `ScaledObject` for HAProxy pods (event-driven autoscaling) |
+| `haproxy.keda.minReplicaCount` | int | `2` | Minimum HAProxy replica count |
+| `haproxy.keda.maxReplicaCount` | int | `10` | Maximum HAProxy replica count |
+| `haproxy.keda.pollingInterval` | int | `30` | KEDA trigger polling interval in seconds |
+| `haproxy.keda.cooldownPeriod` | int | `300` | Seconds to wait before scaling down |
+| `haproxy.keda.fallback.failureThreshold` | int | `3` | Consecutive trigger failures before falling back |
+| `haproxy.keda.fallback.replicas` | int | `2` | Replica count to fall back to on trigger failure |
+| `haproxy.keda.advanced` | map | `{}` | Advanced HPA `behavior` overrides (scale-up/-down stabilisation windows, etc.) |
+| `haproxy.keda.triggers` | list | required | Scaling triggers; see KEDA docs for the per-source schema (Prometheus, CPU, cron, …) |
+
+## SPOA Hub Sidecar
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `spoaHub.enabled` | bool/null | `null` | Master enable. `null` auto-derives from `spoaHub.plugins.*.enabled`. Set `true` to force the sidecar on with no plugins enabled (test rendering); set `false` to force it off even when a plugin is enabled |
+| `spoaHub.image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub` | SPOA hub image repository |
+| `spoaHub.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
+| `spoaHub.image.tag` | string | `""` | Override the tag; empty uses `.Chart.AppVersion` |
+| `spoaHub.resources.requests.cpu` | string | `50m` | SPOA hub CPU request |
+| `spoaHub.resources.requests.memory` | string | `128Mi` | SPOA hub memory request |
+| `spoaHub.resources.limits.memory` | string | `256Mi` | SPOA hub memory limit |
+| `spoaHub.hub.logLevel` | string | `info` | Hub log level (`info`/`debug`/`warn`/`error`) |
+| `spoaHub.hub.workerThreads` | int/null | `null` | Tokio worker thread count; `null` defaults to CPU count |
+| `spoaHub.hub.maxConnections` | int | `1000` | Maximum concurrent connections per listener |
+| `spoaHub.hub.blockingThreadKeepAliveSecs` | int | `30` | Keep-alive seconds for blocking-thread workers |
+| `spoaHub.haproxy.socketPath` | string | `/run/spoa/hub.sock` | Unix socket path shared between HAProxy and the hub |
+| `spoaHub.haproxy.modeSpop` | bool | `true` | Use HAProxy 3.1+ `mode spop` backend; auto-falls back to `mode tcp` on 3.0. Set `false` to force `mode tcp` on 3.1+ |
+| `spoaHub.haproxy.timeoutHello` | duration | `2s` | SPOE hello timeout |
+| `spoaHub.haproxy.timeoutIdle` | duration | `5m` | SPOE idle timeout |
+| `spoaHub.haproxy.timeoutProcessing` | duration | `500ms` | Per-message processing timeout |
+| `spoaHub.haproxy.poolMaxConn` | int | `100` | Connection pool maximum |
+| `spoaHub.haproxy.poolPurgeDelay` | duration | `30s` | Idle-connection purge delay |
+| `spoaHub.plugins.<name>.enabled` | bool/string | `'{{ false }}'` (templatable) | Per-plugin enable. Default value is a chart-evaluated `tpl` string so a plugin can auto-enable when the template libraries that rely on it are on; explicit `--set` bool always wins |
+| `spoaHub.plugins.<name>.timeoutMs` | int | per-plugin | Plugin processing timeout in milliseconds |
+| `spoaHub.plugins.<name>.messages` | list | per-plugin | SPOE messages this plugin handles |
+| `spoaHub.plugins.<name>.dependsOn` | list | `[]` | Other plugin names this plugin must run after |
+| `spoaHub.plugins.<name>.params` | string | per-plugin | Free-form TOML blob spliced verbatim under `[plugins.params]` — use dotted keys (`x.y = "..."`) or fully-qualified headers (`[plugins.params.x]`) for nested values; bare `[x]` headers will close the params scope and break the config |
+
+Available plugin names (`<name>`): `coraza`, `external-auth`, `fingerprinting`, `maxmind`, `otel`, `sso-auth`. See `values.yaml` for each plugin's default `messages` / `timeoutMs` and the upstream plugin README for the `params:` schema.
 
 ## HAProxy Resources & Scheduling
 
@@ -332,13 +475,13 @@ No CPU limit is set by default to avoid throttling; Go's auto-GOMAXPROCS adapts 
 | `networkPolicy.enabled` | bool | `true` | Enable controller NetworkPolicy |
 | `networkPolicy.egress.allowDNS` | bool | `true` | Allow DNS resolution |
 | `networkPolicy.egress.kubernetesApi` | list | See values.yaml | Kubernetes API access rules |
-| `networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow access to HAProxy pods |
-| `networkPolicy.egress.haproxyPods.podSelector` | map | See values.yaml | HAProxy pod selector |
-| `networkPolicy.egress.haproxyPods.namespaceSelector` | map | `{}` | Namespace selector |
-| `networkPolicy.egress.additionalRules` | list | See values.yaml | Additional egress rules |
+| `networkPolicy.egress.haproxyPods.enabled` | bool | `true` | Allow controller egress to HAProxy Dataplane API pods (cross-namespace by default) |
+| `networkPolicy.egress.haproxyPods.podSelector` | map | See values.yaml | Pod-label selector matching the HAProxy pods to reach |
+| `networkPolicy.egress.haproxyPods.namespaceSelector` | map | `{}` | Namespace selector. **`{}` means every namespace** (Kubernetes' permissive default) — narrow to specific namespaces in production by setting `matchLabels` |
+| `networkPolicy.egress.additionalRules` | list | See values.yaml | Additional egress rules; chart default permits backend-service connections in every namespace, so override with caution |
 | `networkPolicy.ingress.monitoring.enabled` | bool | `false` | Allow Prometheus scraping |
-| `networkPolicy.ingress.monitoring.podSelector` | map | `{}` | Prometheus pod selector |
-| `networkPolicy.ingress.monitoring.namespaceSelector` | map | `{}` | Prometheus namespace selector |
+| `networkPolicy.ingress.monitoring.podSelector` | map | `{}` | Prometheus pod selector. **`{}` means every pod** — set `matchLabels` to identify your Prometheus deployment |
+| `networkPolicy.ingress.monitoring.namespaceSelector` | map | `{}` | Prometheus namespace selector. **`{}` means every namespace** — set `matchLabels` to scope to the monitoring namespace |
 | `networkPolicy.ingress.healthChecks.enabled` | bool | `true` | Allow health check access |
 | `networkPolicy.ingress.dataplaneApi.enabled` | bool | `true` | Allow Dataplane API access |
 | `networkPolicy.ingress.webhook.enabled` | bool | `true` | Allow webhook access |

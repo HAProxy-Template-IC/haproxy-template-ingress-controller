@@ -1,55 +1,50 @@
-{{- if .Values.controller.config }}
+{{- $controller := .Values.controller }}
+{{- if $controller.config }}
 apiVersion: haproxy-haptic.org/v1alpha1
 kind: HAProxyTemplateConfig
 metadata:
-  name: {{ .Values.controller.crdName }}
+  name: {{ $controller.crdName }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
-  {{- $config := .Values.controller.config | deepCopy }}
-  {{- if and $config.credentialsSecretRef (not $config.credentialsSecretRef.name) }}
-    {{- $_ := set $config.credentialsSecretRef "name" (printf "%s-credentials" (include "haptic.fullname" .)) }}
+  {{- $config := $controller.config | deepCopy }}
+  {{- with $config.credentialsSecretRef }}
+    {{- $_ := set . "name" (.name | default (include "haptic.dataplane.credentialsSecretName" $)) }}
   {{- end }}
   {{- /* Set maxParallel for dataplane (auto-calculate if not explicitly set) */ -}}
-  {{- if $config.dataplane }}
-    {{- $maxParallel := include "haptic.config.dataplane.maxParallel" . | int }}
-    {{- $_ := set $config.dataplane "maxParallel" $maxParallel }}
+  {{- with $config.dataplane }}
+    {{- $_ := set . "maxParallel" (include "haptic.config.dataplane.maxParallel" $ | int) }}
   {{- end }}
-  {{- if $config.controller }}
+  {{- with $config.controller }}
     {{- /* Remove fields that are not part of the CRD (configured via env vars instead) */ -}}
-    {{- $_ := unset $config.controller "healthzPort" }}
-    {{- $_ := unset $config.controller "metricsPort" }}
-    {{- if $config.controller.leaderElection }}
-      {{- if not $config.controller.leaderElection.leaseName }}
-        {{- $_ := set $config.controller.leaderElection "leaseName" (include "haptic.fullname" .) }}
-      {{- end }}
+    {{- $_ := unset . "healthzPort" }}
+    {{- $_ := unset . "metricsPort" }}
+    {{- if and .leaderElection (not .leaderElection.leaseName) }}
+      {{- $_ := set .leaderElection "leaseName" (include "haptic.fullname" $) }}
     {{- end }}
   {{- end }}
   {{- /* Ensure templatingSettings.extraContext exists, then populate it.
          extraContext is a parameter bag the Scriggo runtime exposes to
          every template snippet. Each block below is a single concern. */ -}}
-  {{- if not $config.templatingSettings }}
-    {{- $_ := set $config "templatingSettings" dict }}
-  {{- end }}
-  {{- if not $config.templatingSettings.extraContext }}
-    {{- $_ := set $config.templatingSettings "extraContext" dict }}
-  {{- end }}
+  {{- $_ := set $config "templatingSettings" ($config.templatingSettings | default dict) }}
+  {{- $_ := set $config.templatingSettings "extraContext" ($config.templatingSettings.extraContext | default dict) }}
   {{- $extraContext := $config.templatingSettings.extraContext }}
 
   {{- /* Default SSL certificate */ -}}
-  {{- if .Values.controller.defaultSSLCertificate.enabled }}
-    {{- $_ := set $extraContext "default_ssl_cert_name" .Values.controller.defaultSSLCertificate.secretName }}
-    {{- $_ := set $extraContext "default_ssl_cert_namespace" (.Values.controller.defaultSSLCertificate.namespace | default .Release.Namespace) }}
+  {{- $defaultSSL := $controller.defaultSSLCertificate }}
+  {{- if $defaultSSL.enabled }}
+    {{- $_ := set $extraContext "default_ssl_cert_name" $defaultSSL.secretName }}
+    {{- $_ := set $extraContext "default_ssl_cert_namespace" ($defaultSSL.namespace | default .Release.Namespace) }}
   {{- end }}
 
   {{- /* Disable status-patch snippets when the operator opts out */ -}}
-  {{- if not (eq (.Values.controller.statusPatches.enabled | toString) "true") }}
+  {{- if ne ($controller.statusPatches.enabled | toString) "true" }}
     {{- $_ := set $extraContext "statusPatchesDisabled" true }}
   {{- end }}
 
   {{- /* Gateway API controllerName for status patches */ -}}
-  {{- if and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
+  {{- if and $controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}
     {{- $_ := set $extraContext "controllerName" .Values.gatewayClass.controllerName }}
   {{- end }}
 
@@ -73,56 +68,44 @@ spec:
         {{- $messages = concat $messages $plugin.messages }}
       {{- end }}
     {{- end }}
-    {{- $messages = uniq $messages }}
-    {{- if $messages }}
+    {{- with uniq $messages }}
+      {{- $hub := $.Values.spoaHub.haproxy }}
       {{- $_ := set $extraContext "spoaHub" (dict
           "enabled" true
-          "socketPath" .Values.spoaHub.haproxy.socketPath
-          "modeSpop" .Values.spoaHub.haproxy.modeSpop
-          "messages" $messages
-          "timeoutHello" (toString .Values.spoaHub.haproxy.timeoutHello)
-          "timeoutIdle" (toString .Values.spoaHub.haproxy.timeoutIdle)
-          "timeoutProcessing" (toString .Values.spoaHub.haproxy.timeoutProcessing)
-          "poolMaxConn" (int .Values.spoaHub.haproxy.poolMaxConn)
-          "poolPurgeDelay" (toString .Values.spoaHub.haproxy.poolPurgeDelay)
+          "socketPath" $hub.socketPath
+          "modeSpop" $hub.modeSpop
+          "messages" .
+          "timeoutHello" (toString $hub.timeoutHello)
+          "timeoutIdle" (toString $hub.timeoutIdle)
+          "timeoutProcessing" (toString $hub.timeoutProcessing)
+          "poolMaxConn" (int $hub.poolMaxConn)
+          "poolPurgeDelay" (toString $hub.poolPurgeDelay)
       ) }}
     {{- end }}
   {{- end }}
 
   {{- /* shm-stats-file settings (when enabled) */ -}}
-  {{- if .Values.haproxy.shmStats.enabled }}
+  {{- $shmStats := .Values.haproxy.shmStats }}
+  {{- if $shmStats.enabled }}
     {{- $_ := set $extraContext "shmStatsEnabled" true }}
-    {{- $_ := set $extraContext "shmStatsPath" .Values.haproxy.shmStats.path }}
-    {{- $_ := set $extraContext "shmStatsMaxObjects" (.Values.haproxy.shmStats.maxObjects | int) }}
+    {{- $_ := set $extraContext "shmStatsPath" $shmStats.path }}
+    {{- $_ := set $extraContext "shmStatsMaxObjects" ($shmStats.maxObjects | int) }}
   {{- end }}
 
   {{- /* nbthread for controller-rendered HAProxy config */ -}}
-  {{- $nbthread := include "haptic.haproxy.nbthread" . }}
-  {{- if $nbthread }}
-    {{- $_ := set $extraContext "nbthread" ($nbthread | int) }}
+  {{- with include "haptic.haproxy.nbthread" . }}
+    {{- $_ := set $extraContext "nbthread" (. | int) }}
   {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-  {{- if $mergedLibraries.templateSnippets }}
-    {{- $_ := set $config "templateSnippets" $mergedLibraries.templateSnippets }}
+  {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
+    {{- with index $mergedLibraries $key }}
+      {{- $_ := set $config $key . }}
+    {{- end }}
   {{- end }}
-  {{- if $mergedLibraries.maps }}
-    {{- $_ := set $config "maps" $mergedLibraries.maps }}
-  {{- end }}
-  {{- if $mergedLibraries.files }}
-    {{- $_ := set $config "files" $mergedLibraries.files }}
-  {{- end }}
-  {{- if $mergedLibraries.sslCertificates }}
-    {{- $_ := set $config "sslCertificates" $mergedLibraries.sslCertificates }}
-  {{- end }}
-  {{- if $mergedLibraries.haproxyConfig }}
-    {{- $_ := set $config "haproxyConfig" $mergedLibraries.haproxyConfig }}
-  {{- end }}
-  {{- if $mergedLibraries.validationTests }}
-    {{- $_ := set $config "validationTests" $mergedLibraries.validationTests }}
-  {{- end }}
-  {{- if $mergedLibraries.watchedResources }}
-    {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) $mergedLibraries.watchedResources) }}
+  {{- /* watchedResources: merge with the operator's override instead of replacing it */ -}}
+  {{- with $mergedLibraries.watchedResources }}
+    {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) .) }}
   {{- end }}
   {{- /* Strip Helm-only fields from watchedResources before CRD rendering */ -}}
   {{- range $name, $resource := $config.watchedResources }}

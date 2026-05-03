@@ -1,5 +1,6 @@
 {{/*
-SPOA hub plugin enablement, image reference, and shared-library naming.
+SPOA hub plugin enablement, image reference, ConfigMap name, and
+plugin shared-library filename helpers.
 */}}
 
 {{/*
@@ -30,9 +31,8 @@ Returns "true" or "" (Helm-truthy convention).
 {{- define "haptic.spoaHub.enabled" -}}
 {{- $root := . -}}
 {{- $hub := $root.Values.spoaHub | default dict -}}
-{{- $explicit := $hub.enabled -}}
-{{- if eq (kindOf $explicit) "bool" -}}
-  {{- if $explicit -}}true{{- end -}}
+{{- if eq (kindOf $hub.enabled) "bool" -}}
+  {{- if $hub.enabled -}}true{{- end -}}
 {{- else -}}
   {{- range $name, $plugin := $hub.plugins -}}
     {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $root) -}}true{{- end -}}
@@ -51,13 +51,21 @@ spoa-hub library contributes.
 {{- end -}}
 
 {{/*
+ConfigMap name for the SPOA hub's config.toml. Used by
+templates/spoa-hub-configmap.yaml (metadata.name) and by
+templates/haproxy-deployment.yaml (volumes.configMap.name).
+*/}}
+{{- define "haptic.spoaHub.configMapName" -}}
+{{- printf "%s-spoa-hub" (include "haptic.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end -}}
+
+{{/*
 SPOA hub container image reference.
 Uses spoaHub.image.tag if set, otherwise falls back to .Chart.AppVersion.
 Example: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.1.0
 */}}
 {{- define "haptic.spoaHub.image" -}}
-{{- $tag := .Values.spoaHub.image.tag | default .Chart.AppVersion -}}
-{{- printf "%s:%s" .Values.spoaHub.image.repository $tag -}}
+{{- printf "%s:%s" .Values.spoaHub.image.repository (.Values.spoaHub.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}
 
 {{/*
@@ -69,11 +77,9 @@ whose Cargo crate name produces `libhaproxy_spoa_hub_plugin_sso_auth.so`.
 Argument: dict with `name` key.
 */}}
 {{- define "haptic.spoaHub.libName" -}}
-{{- $name := .name -}}
-{{- if eq $name "sso-auth" -}}
+{{- if eq .name "sso-auth" -}}
 libhaproxy_spoa_hub_plugin_sso_auth.so
 {{- else -}}
-{{- $stem := regexReplaceAll "-" $name "_" -}}
-lib{{ $stem }}_plugin.so
+lib{{ regexReplaceAll "-" .name "_" }}_plugin.so
 {{- end -}}
 {{- end -}}

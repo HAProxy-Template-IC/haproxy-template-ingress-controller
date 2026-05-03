@@ -4,7 +4,7 @@ The base library provides the core HAProxy configuration infrastructure. It defi
 
 ## Overview
 
-The base library is **always enabled** and cannot be disabled. It provides:
+The base library is **enabled by default** and provides the entire `haproxyConfig` template that the rest of the libraries plug into. It provides:
 
 - Core HAProxy configuration structure (global, defaults, frontends, backends)
 - The plugin pattern via extension points for other libraries to inject content
@@ -15,13 +15,13 @@ The base library is **always enabled** and cannot be disabled. It provides:
 
 ## Configuration
 
-The base library is always included and has no enable/disable option:
+The base library has the standard enable/disable flag, but disabling it is rarely useful: every other library plugs into the extension points base provides, so setting it to `false` produces a broken render with no `haproxyConfig` and no extension points.
 
 ```yaml
 controller:
   templateLibraries:
     base:
-      enabled: true  # Always true, cannot be disabled
+      enabled: true  # Default; leave on unless you supply a complete replacement haproxyConfig
 ```
 
 ## Extension Points

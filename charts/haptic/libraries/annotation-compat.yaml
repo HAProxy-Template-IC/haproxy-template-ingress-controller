@@ -33,7 +33,7 @@ templateSnippets:
   # (e.g. haproxy.org/ssl-passthrough, haproxy-ingress.github.io/ssl-passthrough,
   # nginx.ingress.kubernetes.io/ssl-passthrough), and appends per-host
   # entries to a `sslData["backends"]` slice. The shape of that loop is
-  # identical across libraries; only four strings differ:
+  # identical across libraries; only three strings differ:
   #
   #   - annotationKey:  the annotation name to look up
   #   - namePrefix:     the backend-name prefix (preserves the existing per-library

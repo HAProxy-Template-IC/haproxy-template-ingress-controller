@@ -30,11 +30,22 @@ If release name contains chart name it will be used as a full name.
 {{- end }}
 
 {{/*
-Create controller deployment name with -controller suffix.
-Only used for the controller Deployment resource.
+Create the controller Deployment name with a "-controller" suffix.
+Used as metadata.name for the controller Deployment, as the
+HPA's scaleTargetRef, and in NOTES.txt's kubectl port-forward example.
 */}}
 {{- define "haptic.controllerFullname" -}}
 {{- printf "%s-controller" (include "haptic.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Create the base name for HAProxy pod resources (Deployment, Service,
+ConfigMap, ScaledObject, NetworkPolicy). Templates that need a longer
+name like "<haproxy>-config" or "<haproxy>-dataplane" append their own
+suffix to the result.
+*/}}
+{{- define "haptic.haproxyFullname" -}}
+{{- printf "%s-haproxy" (include "haptic.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
@@ -68,12 +79,20 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 Create the name of the service account to use
 */}}
 {{- define "haptic.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "haptic.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- .Values.serviceAccount.name | default (ternary (include "haptic.fullname" .) "default" .Values.serviceAccount.create) -}}
 {{- end }}
-{{- end }}
+
+{{/*
+Webhook Service name (the ClusterIP Service that fronts the controller's
+ValidatingWebhook endpoint). Used by templates/webhook-service.yaml
+(metadata.name), templates/validatingwebhookconfiguration.yaml
+(clientConfig.service.name and the per-rule webhook name), templates/
+webhook-certificate.yaml (cert-manager dnsNames), and templates/
+deployment.yaml (WEBHOOK_SERVICE_NAME env var).
+*/}}
+{{- define "haptic.webhook.serviceName" -}}
+{{- printf "%s-webhook" (include "haptic.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end -}}
 
 {{/*
 Webhook TLS Secret / Certificate name. Resolves the operator override

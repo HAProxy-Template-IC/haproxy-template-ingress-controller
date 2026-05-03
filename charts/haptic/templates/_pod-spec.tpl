@@ -2,7 +2,7 @@
 Render the universally-shared pod-spec scheduling/runtime fields from a
 podSpec subtree (e.g. .Values.controller.podSpec or .Values.haproxy.podSpec).
 
-Args (list): [podSpec dict, root context]
+Args: the podSpec subtree dict.
 
 Renders only fields whose semantics are identical across chart workloads:
 imagePullSecrets, priorityClassName, runtimeClassName, terminationGracePeriodSeconds,
@@ -22,8 +22,7 @@ Output is at zero base indent; callers `nindent` it to fit their YAML position
 (typically `nindent 6` because pod.spec sits at 6-space indent).
 */}}
 {{- define "haptic.podSpec" -}}
-{{- $ps := index . 0 -}}
-{{- /* root context is provided as index . 1 for future use (templated values, lookups) */ -}}
+{{- $ps := . -}}
 {{- with $ps.imagePullSecrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}

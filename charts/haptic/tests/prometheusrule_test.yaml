@@ -2,6 +2,9 @@
 suite: prometheus rule
 templates:
   - prometheusrule.yaml
+set:
+  # Default: PrometheusRule enabled. Tests that need it off override per-case.
+  monitoring.prometheusRule.enabled: true
 tests:
   - it: should not render when prometheusRule is disabled
     set:
@@ -11,8 +14,6 @@ tests:
           count: 0
 
   - it: should render when prometheusRule is enabled
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - hasDocuments:
           count: 1
@@ -20,15 +21,11 @@ tests:
           of: PrometheusRule
 
   - it: should set correct apiVersion
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - isAPIVersion:
           of: monitoring.coreos.com/v1
 
   - it: should include default reconciliation errors alert
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - contains:
           path: spec.groups[0].rules
@@ -43,8 +40,6 @@ tests:
               description: "Controller {{ $labels.pod }} has {{ $value | humanize }} reconciliation errors/sec"
 
   - it: should include default deployment failures alert
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - contains:
           path: spec.groups[0].rules
@@ -59,8 +54,6 @@ tests:
               description: "Controller {{ $labels.pod }} is failing to deploy configs to HAProxy"
 
   - it: should include default high queue depth alert
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - contains:
           path: spec.groups[0].rules
@@ -75,8 +68,6 @@ tests:
               description: "Queue depth is {{ $value }} items, indicating processing delays"
 
   - it: should include default no leader alert
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - contains:
           path: spec.groups[0].rules
@@ -92,7 +83,6 @@ tests:
 
   - it: should disable reconciliation errors alert when configured
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.defaultRules.reconciliationErrors: false
     asserts:
       - notContains:
@@ -103,7 +93,6 @@ tests:
 
   - it: should disable deployment failures alert when configured
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.defaultRules.deploymentFailures: false
     asserts:
       - notContains:
@@ -114,7 +103,6 @@ tests:
 
   - it: should disable high queue depth alert when configured
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.defaultRules.highQueueDepth: false
     asserts:
       - notContains:
@@ -125,7 +113,6 @@ tests:
 
   - it: should disable leader election alert when configured
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.defaultRules.leaderElectionLost: false
     asserts:
       - notContains:
@@ -136,7 +123,6 @@ tests:
 
   - it: should use custom rules when provided
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.rules:
         - alert: CustomAlert
           expr: custom_metric > 100
@@ -159,7 +145,6 @@ tests:
 
   - it: should not include default rules when custom rules provided
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.rules:
         - alert: CustomAlert
           expr: custom_metric > 100
@@ -172,7 +157,6 @@ tests:
 
   - it: should include custom labels
     set:
-      monitoring.prometheusRule.enabled: true
       monitoring.prometheusRule.labels:
         prometheus: kube-prometheus
     asserts:
@@ -182,7 +166,6 @@ tests:
 
   - it: should include common labels
     set:
-      monitoring.prometheusRule.enabled: true
       commonLabels:
         environment: production
     asserts:
@@ -192,7 +175,6 @@ tests:
 
   - it: should include common annotations
     set:
-      monitoring.prometheusRule.enabled: true
       commonAnnotations:
         team: platform
     asserts:
@@ -201,8 +183,6 @@ tests:
           value: platform
 
   - it: should set group name
-    set:
-      monitoring.prometheusRule.enabled: true
     asserts:
       - equal:
           path: spec.groups[0].name

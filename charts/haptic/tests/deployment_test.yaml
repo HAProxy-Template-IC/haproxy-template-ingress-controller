@@ -2,23 +2,19 @@
 suite: controller deployment
 templates:
   - deployment.yaml
-  - secret.yaml
 tests:
   - it: should render deployment with correct kind
-    template: deployment.yaml
     asserts:
       - isKind:
           of: Deployment
 
   - it: should use default replica count of 2
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.replicas
           value: 2
 
   - it: should set replica count from values
-    template: deployment.yaml
     set:
       replicaCount: 5
     asserts:
@@ -27,7 +23,6 @@ tests:
           value: 5
 
   - it: should not set replicas when autoscaling is enabled
-    template: deployment.yaml
     set:
       autoscaling.enabled: true
     asserts:
@@ -35,35 +30,30 @@ tests:
           path: spec.replicas
 
   - it: should set controller container name
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].name
           value: controller
 
   - it: should set security context with readOnlyRootFilesystem
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
           value: true
 
   - it: should set security context to run as non-root
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].securityContext.runAsNonRoot
           value: true
 
   - it: should drop all capabilities
-    template: deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.containers[0].securityContext.capabilities.drop
           content: ALL
 
   - it: should expose healthz port
-    template: deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -73,7 +63,6 @@ tests:
             protocol: TCP
 
   - it: should expose metrics port
-    template: deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -83,7 +72,6 @@ tests:
             protocol: TCP
 
   - it: should set resources when specified
-    template: deployment.yaml
     set:
       resources:
         limits:
@@ -101,7 +89,6 @@ tests:
           value: 256Mi
 
   - it: should mount tmp volume
-    template: deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
@@ -110,7 +97,6 @@ tests:
             mountPath: /tmp
 
   - it: should include tmp emptyDir volume
-    template: deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.volumes
@@ -119,7 +105,6 @@ tests:
             emptyDir: {}
 
   - it: should set priorityClassName when specified
-    template: deployment.yaml
     set:
       controller.podSpec.priorityClassName: high-priority
     asserts:
@@ -128,7 +113,6 @@ tests:
           value: high-priority
 
   - it: should set nodeSelector when specified
-    template: deployment.yaml
     set:
       controller.podSpec.nodeSelector:
         disktype: ssd
@@ -138,7 +122,6 @@ tests:
           value: ssd
 
   - it: should set tolerations when specified
-    template: deployment.yaml
     set:
       controller.podSpec.tolerations:
         - key: node-role.kubernetes.io/master
@@ -151,7 +134,6 @@ tests:
             effect: NoSchedule
 
   - it: should expose webhook port when enabled
-    template: deployment.yaml
     set:
       webhook.enabled: true
     asserts:
@@ -163,7 +145,6 @@ tests:
             protocol: TCP
 
   - it: should mount webhook certs when webhook enabled
-    template: deployment.yaml
     set:
       webhook.enabled: true
     asserts:
@@ -176,7 +157,6 @@ tests:
 
   # Extra volumes and volume mounts
   - it: should include extra volumes when specified
-    template: deployment.yaml
     set:
       extraVolumes:
         - name: custom-config
@@ -191,7 +171,6 @@ tests:
               name: my-config
 
   - it: should include extra volume mounts when specified
-    template: deployment.yaml
     set:
       extraVolumeMounts:
         - name: custom-config
@@ -207,7 +186,6 @@ tests:
 
   # Init containers and sidecars
   - it: should include init containers when specified
-    template: deployment.yaml
     set:
       initContainers:
         - name: init-db
@@ -222,7 +200,6 @@ tests:
             command: ["sh", "-c", "echo init"]
 
   - it: should include sidecars when specified
-    template: deployment.yaml
     set:
       sidecars:
         - name: log-collector
@@ -236,13 +213,11 @@ tests:
 
   # Startup probe
   - it: should not include startup probe by default
-    template: deployment.yaml
     asserts:
       - notExists:
           path: spec.template.spec.containers[0].startupProbe
 
   - it: should include startup probe when enabled
-    template: deployment.yaml
     set:
       startupProbe.enabled: true
     asserts:
@@ -256,7 +231,6 @@ tests:
           value: healthz
 
   - it: should set startup probe parameters
-    template: deployment.yaml
     set:
       startupProbe:
         enabled: true
@@ -276,7 +250,6 @@ tests:
 
   # Lifecycle hooks
   - it: should include lifecycle hooks when specified
-    template: deployment.yaml
     set:
       lifecycle:
         preStop:
@@ -289,14 +262,12 @@ tests:
 
   # Termination grace period
   - it: should set default termination grace period
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
           value: 30
 
   - it: should set custom termination grace period
-    template: deployment.yaml
     set:
       controller.podSpec.terminationGracePeriodSeconds: 60
     asserts:
@@ -306,7 +277,6 @@ tests:
 
   # Update strategy
   - it: should set default update strategy
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.strategy.type
@@ -319,7 +289,6 @@ tests:
           value: "25%"
 
   - it: should set custom update strategy
-    template: deployment.yaml
     set:
       updateStrategy:
         type: Recreate
@@ -330,14 +299,12 @@ tests:
 
   # Min ready seconds and revision history
   - it: should set default minReadySeconds
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.minReadySeconds
           value: 0
 
   - it: should set custom minReadySeconds
-    template: deployment.yaml
     set:
       minReadySeconds: 10
     asserts:
@@ -346,14 +313,12 @@ tests:
           value: 10
 
   - it: should set default revisionHistoryLimit
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.revisionHistoryLimit
           value: 10
 
   - it: should set custom revisionHistoryLimit
-    template: deployment.yaml
     set:
       revisionHistoryLimit: 5
     asserts:
@@ -363,14 +328,12 @@ tests:
 
   # DNS configuration
   - it: should set default dnsPolicy
-    template: deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.dnsPolicy
           value: ClusterFirst
 
   - it: should set custom dnsPolicy
-    template: deployment.yaml
     set:
       controller.podSpec.dnsPolicy: None
     asserts:
@@ -379,7 +342,6 @@ tests:
           value: None
 
   - it: should set dnsConfig when specified
-    template: deployment.yaml
     set:
       controller.podSpec.dnsConfig:
         nameservers:
@@ -399,7 +361,6 @@ tests:
 
   # Host aliases
   - it: should set hostAliases when specified
-    template: deployment.yaml
     set:
       controller.podSpec.hostAliases:
         - ip: "127.0.0.1"
@@ -415,13 +376,11 @@ tests:
 
   # Runtime class
   - it: should not set runtimeClassName by default
-    template: deployment.yaml
     asserts:
       - notExists:
           path: spec.template.spec.runtimeClassName
 
   - it: should set runtimeClassName when specified
-    template: deployment.yaml
     set:
       controller.podSpec.runtimeClassName: gvisor
     asserts:
@@ -431,7 +390,6 @@ tests:
 
   # Common labels and annotations
   - it: should include common labels
-    template: deployment.yaml
     set:
       commonLabels:
         environment: production
@@ -445,7 +403,6 @@ tests:
           value: platform
 
   - it: should include common annotations
-    template: deployment.yaml
     set:
       commonAnnotations:
         config.kubernetes.io/managed-by: helm
@@ -455,7 +412,6 @@ tests:
           value: helm
 
   - it: should include deployment annotations
-    template: deployment.yaml
     set:
       deploymentAnnotations:
         reloader.stakater.com/auto: "true"
@@ -466,7 +422,6 @@ tests:
 
   # Topology spread constraints
   - it: should set topologySpreadConstraints when specified
-    template: deployment.yaml
     set:
       controller.podSpec.topologySpreadConstraints:
         - maxSkew: 1

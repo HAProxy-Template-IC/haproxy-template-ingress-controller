@@ -1,8 +1,26 @@
 {{/*
-Resource math: memory parsing, CPU → nbthread, dataplane GOMAXPROCS / maxParallel,
-HAProxy shm-stats sizing, and the bootstrap-config checksum (which depends on
-several of these values, so it lives next to them).
+Resource math: CPU/memory quantity parsing, HAProxy nbthread, dataplane
+GOMAXPROCS / maxParallel, HAProxy shm-stats sizing, and the
+bootstrap-config checksum (which depends on several of these values, so
+it lives next to them).
 */}}
+
+{{/*
+Convert a Kubernetes CPU quantity to whole cores using ceiling arithmetic.
+Supports millicores (e.g. "250m" → 1, "2000m" → 2) and whole cores
+(e.g. "2" → 2). Empty / zero inputs render as 0; callers that want a
+floor of 1 should clamp with `max 1` themselves.
+Input: CPU quantity string.
+*/}}
+{{- define "haptic.cpuToCores" -}}
+{{- $cpu := . | toString -}}
+{{- if hasSuffix "m" $cpu -}}
+  {{- /* ceil(millis/1000): add 999 then divide */ -}}
+  {{- div (add (trimSuffix "m" $cpu | int) 999) 1000 -}}
+{{- else -}}
+  {{- $cpu | int -}}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Calculate nbthread for HAProxy global section.
@@ -18,20 +36,8 @@ Returns empty string if no CPU requests configured and no override, or if overri
     {{- $override -}}
   {{- end -}}
 {{- else -}}
-  {{- $cpu := "" -}}
-  {{- if .Values.haproxy.resources -}}
-  {{- if .Values.haproxy.resources.requests -}}
-  {{- $cpu = .Values.haproxy.resources.requests.cpu | default "" | toString -}}
-  {{- end -}}
-  {{- end -}}
-  {{- if $cpu -}}
-    {{- if hasSuffix "m" $cpu -}}
-      {{- $millis := trimSuffix "m" $cpu | int -}}
-      {{- /* ceil(millis/1000): add 999 then divide */ -}}
-      {{- max 1 (div (add $millis 999) 1000) -}}
-    {{- else -}}
-      {{- max 1 ($cpu | int) -}}
-    {{- end -}}
+  {{- with dig "requests" "cpu" "" .Values.haproxy.resources -}}
+    {{- max 1 (include "haptic.cpuToCores" . | int) -}}
   {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -42,7 +48,7 @@ Changes when any value feeding into the bootstrap config changes,
 triggering a rolling update of HAProxy pods.
 */}}
 {{- define "haptic.haproxy.bootstrapConfigChecksum" -}}
-{{- printf "%v-%v-%v-%v" (.Values.haproxy.ports | toJson) (include "haptic.haproxy.nbthread" . | default "0") (.Values.haproxy.initialConfig | default "") (.Values.haproxy.shmStats | toJson) | sha256sum -}}
+{{- printf "%v-%v-%v" (.Values.haproxy.ports | toJson) (include "haptic.haproxy.nbthread" . | default "0") (.Values.haproxy.shmStats | toJson) | sha256sum -}}
 {{- end -}}
 
 {{/*
@@ -54,14 +60,13 @@ Formula: ceil(maxObjects * 4096 * 1.1 / 1048576) MiB
   - Converted to MiB, rounded up
 */}}
 {{- define "haptic.haproxy.shmSizeLimit" -}}
-{{- if .Values.haproxy.shmStats.shmSizeLimit -}}
-  {{- .Values.haproxy.shmStats.shmSizeLimit -}}
+{{- $shmStats := .Values.haproxy.shmStats -}}
+{{- with $shmStats.shmSizeLimit -}}
+  {{- . -}}
 {{- else -}}
-  {{- $maxObjects := .Values.haproxy.shmStats.maxObjects | int -}}
-  {{- $bytesNeeded := mul $maxObjects 4096 -}}
+  {{- $bytesNeeded := mul ($shmStats.maxObjects | int) 4096 -}}
   {{- $bytesWithMargin := add $bytesNeeded (div $bytesNeeded 10) -}}
-  {{- $mib := div (add $bytesWithMargin 1048575) 1048576 -}}
-  {{- printf "%dMi" $mib -}}
+  {{- printf "%dMi" (div (add $bytesWithMargin 1048575) 1048576) -}}
 {{- end -}}
 {{- end -}}
 
@@ -75,21 +80,17 @@ Returns: integer megabytes, or 0 if parsing fails
 {{- $memory := . -}}
 {{- if $memory -}}
   {{- if hasSuffix "Gi" $memory -}}
-    {{- $val := trimSuffix "Gi" $memory | float64 -}}
-    {{- mul $val 1024 | int -}}
+    {{- mul (trimSuffix "Gi" $memory | float64) 1024 | int -}}
   {{- else if hasSuffix "Mi" $memory -}}
     {{- trimSuffix "Mi" $memory | int -}}
   {{- else if hasSuffix "G" $memory -}}
-    {{- $val := trimSuffix "G" $memory | float64 -}}
-    {{- mul $val 1000 | int -}}
+    {{- mul (trimSuffix "G" $memory | float64) 1000 | int -}}
   {{- else if hasSuffix "M" $memory -}}
     {{- trimSuffix "M" $memory | int -}}
   {{- else if hasSuffix "Ki" $memory -}}
-    {{- $val := trimSuffix "Ki" $memory | float64 -}}
-    {{- div $val 1024 | int -}}
+    {{- div (trimSuffix "Ki" $memory | float64) 1024 | int -}}
   {{- else if hasSuffix "K" $memory -}}
-    {{- $val := trimSuffix "K" $memory | float64 -}}
-    {{- div $val 1000 | int -}}
+    {{- div (trimSuffix "K" $memory | float64) 1000 | int -}}
   {{- else -}}
     {{- /* Assume bytes, convert to MB */ -}}
     {{- div ($memory | float64) 1048576 | int -}}
@@ -110,39 +111,25 @@ Priority:
 Input: .Values.haproxy.dataplane context
 */}}
 {{- define "haptic.dataplane.gomaxprocsValue" -}}
-{{- $resources := .resources -}}
-{{- $extraEnv := .extraEnv | default list -}}
 {{- $result := 0 -}}
 {{- /* 1. Check if user explicitly set GOMAXPROCS */ -}}
-{{- range $extraEnv -}}
+{{- range .extraEnv | default list -}}
   {{- if eq .name "GOMAXPROCS" -}}
     {{- $result = .value | int -}}
   {{- end -}}
 {{- end -}}
 {{- if eq $result 0 -}}
-  {{- /* 2. If CPU limit exists, estimate from it (automaxprocs behavior) */ -}}
-  {{- if and $resources $resources.limits $resources.limits.cpu -}}
-    {{- $cpuLimit := $resources.limits.cpu | toString -}}
-    {{- /* Parse CPU: "2" -> 2, "2000m" -> 2, "500m" -> 1 */ -}}
-    {{- if hasSuffix "m" $cpuLimit -}}
-      {{- $millis := trimSuffix "m" $cpuLimit | int -}}
-      {{- /* ceil(millis/1000): add 999 then divide */ -}}
-      {{- $result = max 1 (div (add $millis 999) 1000) -}}
-    {{- else -}}
-      {{- $result = $cpuLimit | int -}}
-    {{- end -}}
-  {{- else if and $resources $resources.limits $resources.limits.memory -}}
+  {{- $limits := .resources.limits | default dict -}}
+  {{- if $limits.cpu -}}
+    {{- /* 2. If CPU limit exists, estimate from it (automaxprocs behavior) */ -}}
+    {{- $result = max 1 (include "haptic.cpuToCores" $limits.cpu | int) -}}
+  {{- else if $limits.memory -}}
     {{- /* 3. Calculate from memory limit */ -}}
-    {{- $memLimit := $resources.limits.memory -}}
-    {{- $memMB := include "haptic.memoryToMB" $memLimit | int -}}
-    {{- $result = div $memMB 64 | int -}}
+    {{- $result = div (include "haptic.memoryToMB" $limits.memory | int) 64 -}}
   {{- end -}}
 {{- end -}}
 {{- /* 4. Ensure minimum of 2 */ -}}
-{{- if lt $result 2 -}}
-  {{- $result = 2 -}}
-{{- end -}}
-{{- $result -}}
+{{- max 2 $result -}}
 {{- end -}}
 
 {{/*
@@ -152,13 +139,13 @@ Otherwise, auto-calculate as dataplane GOMAXPROCS * 10.
 Input: root context (.)
 */}}
 {{- define "haptic.config.dataplane.maxParallel" -}}
+{{- $dpConfig := .Values.controller.config.dataplane -}}
 {{- /* Check if user explicitly set maxParallel to a number (including 0) */ -}}
-{{- if hasKey .Values.controller.config.dataplane "maxParallel" -}}
-  {{- .Values.controller.config.dataplane.maxParallel | int -}}
+{{- if hasKey $dpConfig "maxParallel" -}}
+  {{- $dpConfig.maxParallel | int -}}
 {{- else -}}
   {{- /* Auto-calculate: GOMAXPROCS * 10 */ -}}
-  {{- $gomaxprocs := include "haptic.dataplane.gomaxprocsValue" .Values.haproxy.dataplane | int -}}
-  {{- mul $gomaxprocs 10 -}}
+  {{- mul (include "haptic.dataplane.gomaxprocsValue" .Values.haproxy.dataplane | int) 10 -}}
 {{- end -}}
 {{- end -}}
 
@@ -167,38 +154,17 @@ Auto-calculate GOMAXPROCS for dataplane container.
 Returns env var YAML if:
   - No CPU limit is set (automaxprocs won't work correctly)
   - User hasn't provided GOMAXPROCS in extraEnv
-Formula: max(2, floor(memory_limit_MB / 64))
+  - A memory limit is set (otherwise there's no signal to derive from)
+Value comes from haptic.dataplane.gomaxprocsValue, which uses the same
+mem_MB / 64 formula (min 2) when only a memory limit is present.
 Input: .Values.haproxy.dataplane context
 */}}
 {{- define "haptic.dataplane.autoGomaxprocs" -}}
-{{- $resources := .resources -}}
-{{- $extraEnv := .extraEnv | default list -}}
-{{- /* Check if user already set GOMAXPROCS */ -}}
-{{- $userSetGomaxprocs := false -}}
-{{- range $extraEnv -}}
-  {{- if eq .name "GOMAXPROCS" -}}
-    {{- $userSetGomaxprocs = true -}}
-  {{- end -}}
-{{- end -}}
-{{- /* Check if CPU limit exists (automaxprocs will handle it) */ -}}
-{{- $hasCpuLimit := false -}}
-{{- if and $resources $resources.limits $resources.limits.cpu -}}
-  {{- $hasCpuLimit = true -}}
-{{- end -}}
-{{- /* Auto-calculate only if needed */ -}}
-{{- if and (not $userSetGomaxprocs) (not $hasCpuLimit) -}}
-  {{- $memLimit := "" -}}
-  {{- if and $resources $resources.limits -}}
-    {{- $memLimit = $resources.limits.memory | default "" -}}
-  {{- end -}}
-  {{- if $memLimit -}}
-    {{- $memMB := include "haptic.memoryToMB" $memLimit | int -}}
-    {{- $gomaxprocs := div $memMB 64 | int -}}
-    {{- if lt $gomaxprocs 2 -}}
-      {{- $gomaxprocs = 2 -}}
-    {{- end -}}
+{{- $limits := .resources.limits | default dict -}}
+{{- $envNames := list -}}
+{{- range .extraEnv | default list -}}{{- $envNames = append $envNames .name -}}{{- end -}}
+{{- if and (not (has "GOMAXPROCS" $envNames)) (not $limits.cpu) $limits.memory -}}
 - name: GOMAXPROCS
-  value: {{ $gomaxprocs | quote }}
-  {{- end -}}
+  value: {{ include "haptic.dataplane.gomaxprocsValue" . | quote }}
 {{- end -}}
 {{- end -}}

@@ -1,14 +1,18 @@
-{{- if and .Values.haproxy.enabled .Values.haproxy.networkPolicy.enabled }}
+{{- $haproxy := .Values.haproxy }}
+{{- $np := $haproxy.networkPolicy }}
+{{- if and $haproxy.enabled $np.enabled }}
+{{- $ports := $haproxy.ports }}
+{{- $name := include "haptic.name" . }}
 {{- /*
   Validate configuration to prevent deny-all scenarios
 */ -}}
-{{- if and (not .Values.haproxy.networkPolicy.allowExternal) (not .Values.haproxy.networkPolicy.allowedSources) }}
+{{- if and (not $np.allowExternal) (not $np.allowedSources) }}
   {{- fail "haproxy.networkPolicy.allowExternal is false but haproxy.networkPolicy.allowedSources is empty. This would create a deny-all policy. Either set allowExternal: true or provide allowedSources." }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "haptic.fullname" . }}-haproxy
+  name: {{ include "haptic.haproxyFullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
@@ -18,7 +22,7 @@ spec:
     matchLabels:
       app.kubernetes.io/component: loadbalancer
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/name: {{ include "haptic.name" . }}
+      app.kubernetes.io/name: {{ $name }}
 
   policyTypes:
     - Ingress
@@ -28,14 +32,14 @@ spec:
   ingress:
     # Allow traffic on HTTP/HTTPS ports
     - ports:
-        - port: {{ .Values.haproxy.ports.http }}
+        - port: {{ $ports.http }}
           protocol: TCP
-        - port: {{ .Values.haproxy.ports.https }}
+        - port: {{ $ports.https }}
           protocol: TCP
-      {{- if not .Values.haproxy.networkPolicy.allowExternal }}
+      {{- if not $np.allowExternal }}
       # Restrictive mode - only allow from specific sources
       from:
-        {{- with .Values.haproxy.networkPolicy.allowedSources }}
+        {{- with $np.allowedSources }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- end }}
@@ -44,11 +48,11 @@ spec:
 
     # Allow stats checks
     - ports:
-        - port: {{ .Values.haproxy.ports.stats }}
+        - port: {{ $ports.stats }}
           protocol: TCP
-      {{- if not .Values.haproxy.networkPolicy.allowExternal }}
+      {{- if not $np.allowExternal }}
       from:
-        {{- with .Values.haproxy.networkPolicy.allowedSources }}
+        {{- with $np.allowedSources }}
         {{- toYaml . | nindent 8 }}
         {{- else }}
         # Default to same-namespace when no sources specified
@@ -58,16 +62,16 @@ spec:
 
     # Allow HAProxy Dataplane API access from controller
     - ports:
-        - port: {{ .Values.haproxy.ports.dataplane }}
+        - port: {{ $ports.dataplane }}
           protocol: TCP
       from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: controller
               app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/name: {{ include "haptic.name" . }}
+              app.kubernetes.io/name: {{ $name }}
 
-    {{- with .Values.haproxy.networkPolicy.extraIngress }}
+    {{- with $np.extraIngress }}
     # Additional custom ingress rules
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -95,7 +99,7 @@ spec:
         - namespaceSelector: {}
           podSelector: {}
 
-    {{- with .Values.haproxy.networkPolicy.extraEgress }}
+    {{- with $np.extraEgress }}
     # Additional custom egress rules
     {{- toYaml . | nindent 4 }}
     {{- end }}

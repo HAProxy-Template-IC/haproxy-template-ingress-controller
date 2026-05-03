@@ -1,84 +1,78 @@
-{{- if .Values.haproxy.enabled }}
+{{- $haproxy := .Values.haproxy }}
+{{- if $haproxy.enabled }}
+{{- $svc := $haproxy.service }}
+{{- $haproxyFullname := include "haptic.haproxyFullname" . }}
+{{- $labels := include "haptic.labels" . }}
+{{- $selectorLabels := include "haptic.selectorLabels" . }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "haptic.fullname" . }}-haproxy
+  name: {{ $haproxyFullname }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "haptic.labels" . | nindent 4 }}
+    {{- $labels | nindent 4 }}
     app.kubernetes.io/component: loadbalancer
-  {{- with .Values.haproxy.service.annotations }}
+  {{- with $svc.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.haproxy.service.type }}
-  {{- $exposesNodePort := or (eq .Values.haproxy.service.type "NodePort") (eq .Values.haproxy.service.type "LoadBalancer") }}
-  {{- if .Values.haproxy.service.loadBalancerIP }}
-  loadBalancerIP: {{ .Values.haproxy.service.loadBalancerIP }}
+  type: {{ $svc.type }}
+  {{- $exposesNodePort := or (eq $svc.type "NodePort") (eq $svc.type "LoadBalancer") }}
+  {{- with $svc.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
   {{- end }}
-  {{- if .Values.haproxy.service.loadBalancerSourceRanges }}
+  {{- with $svc.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
-    {{- toYaml .Values.haproxy.service.loadBalancerSourceRanges | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- if .Values.haproxy.service.loadBalancerClass }}
-  loadBalancerClass: {{ .Values.haproxy.service.loadBalancerClass }}
+  {{- with $svc.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
   {{- end }}
-  {{- if .Values.haproxy.service.externalTrafficPolicy }}
-  externalTrafficPolicy: {{ .Values.haproxy.service.externalTrafficPolicy }}
+  {{- with $svc.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
   {{- end }}
-  {{- if .Values.haproxy.service.internalTrafficPolicy }}
-  internalTrafficPolicy: {{ .Values.haproxy.service.internalTrafficPolicy }}
+  {{- with $svc.internalTrafficPolicy }}
+  internalTrafficPolicy: {{ . }}
   {{- end }}
-  {{- if .Values.haproxy.service.healthCheckNodePort }}
-  healthCheckNodePort: {{ .Values.haproxy.service.healthCheckNodePort }}
+  {{- with $svc.healthCheckNodePort }}
+  healthCheckNodePort: {{ . }}
   {{- end }}
-  {{- if .Values.haproxy.service.publishNotReadyAddresses }}
-  publishNotReadyAddresses: {{ .Values.haproxy.service.publishNotReadyAddresses }}
+  {{- with $svc.publishNotReadyAddresses }}
+  publishNotReadyAddresses: {{ . }}
   {{- end }}
   selector:
-    {{- include "haptic.selectorLabels" . | nindent 4 }}
+    {{- $selectorLabels | nindent 4 }}
     app.kubernetes.io/component: loadbalancer
   ports:
-    - name: http
-      port: {{ .Values.haproxy.service.http.port }}
-      targetPort: http
+    {{- range $name := list "http" "https" "stats" }}
+    {{- $port := index $svc $name }}
+    - name: {{ $name }}
+      port: {{ $port.port }}
+      targetPort: {{ $name }}
       protocol: TCP
       {{- if $exposesNodePort }}
-      nodePort: {{ .Values.haproxy.service.http.nodePort }}
+      nodePort: {{ $port.nodePort }}
       {{- end }}
-    - name: https
-      port: {{ .Values.haproxy.service.https.port }}
-      targetPort: https
-      protocol: TCP
-      {{- if $exposesNodePort }}
-      nodePort: {{ .Values.haproxy.service.https.nodePort }}
-      {{- end }}
-    - name: stats
-      port: {{ .Values.haproxy.service.stats.port }}
-      targetPort: stats
-      protocol: TCP
-      {{- if $exposesNodePort }}
-      nodePort: {{ .Values.haproxy.service.stats.nodePort }}
-      {{- end }}
+    {{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "haptic.fullname" . }}-haproxy-dataplane
+  name: {{ $haproxyFullname }}-dataplane
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "haptic.labels" . | nindent 4 }}
+    {{- $labels | nindent 4 }}
     app.kubernetes.io/component: loadbalancer
 spec:
-  type: {{ .Values.haproxy.dataplane.service.type }}
+  type: {{ $haproxy.dataplane.service.type }}
   selector:
-    {{- include "haptic.selectorLabels" . | nindent 4 }}
+    {{- $selectorLabels | nindent 4 }}
     app.kubernetes.io/component: loadbalancer
   ports:
     - name: dataplane
-      port: {{ .Values.haproxy.ports.dataplane }}
+      port: {{ $haproxy.ports.dataplane }}
       targetPort: dataplane
       protocol: TCP
 {{- end }}

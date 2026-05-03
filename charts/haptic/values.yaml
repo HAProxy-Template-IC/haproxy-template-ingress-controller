@@ -15,7 +15,7 @@ commonAnnotations: {}
 
 # HAProxy version - selects the major.minor series for both controller and HAProxy pod images
 # Controller image suffix: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.2
-# HAProxy pod image: haproxytech/haproxy-debian:3.2.13 (patch from haproxyPatchVersions)
+# HAProxy pod image: haproxytech/haproxy-debian:<patch from haproxyPatchVersions[<series>]>
 # Must match a version built by CI (see versions.env for supported versions).
 # Not Renovate-managed: cutting over to a new series is an operational decision
 # (must also update Chart.yaml artifacthub annotation and dev-env manifests to match).
@@ -113,21 +113,26 @@ controller:
       enabled: true
     # Annotation-compat scaffold: shared HAProxy output macros and utility
     # snippets consumed by the vendor-specific annotation libraries below.
-    # Sits at hierarchy level 2.5 — provides macros for SSL passthrough, cookie
-    # affinity, backend timeouts, and ACL/headers patterns that would otherwise
-    # be duplicated across haproxytech / haproxy-ingress / nginx-ingress.
-    # See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+    # Sits at hierarchy level 2.5 — currently provides one macro for the
+    # SSL-passthrough annotation scan and one for CIDR allow/deny ACL
+    # emission, both shared across haproxytech / haproxy-ingress /
+    # nginx-ingress. See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     annotationCompat:
       enabled: true
-    # HAProxyTech library: Support for haproxy.org/* annotations
-    # Currently includes basic authentication (haproxy.org/auth-type, haproxy.org/auth-secret)
-    # Works with both Ingress and Gateway API resources
+    # HAProxyTech library: haproxy.org/* annotation compatibility
+    # Covers basic auth, allow/deny lists, SSL redirect, SSL passthrough, CORS,
+    # cookie persistence, server SSL/mTLS, timeouts, health checks, rate
+    # limiting, header rewriting, and per-backend snippet injection. See
+    # docs/libraries/haproxytech.md for the per-annotation reference.
+    # Reference: https://github.com/haproxytech/kubernetes-ingress
     haproxytech:
       enabled: true
-    # HAProxy Ingress library: haproxy-ingress.github.io annotation compatibility
-    # Provides support for haproxy-ingress.github.io/path-type annotation
-    # Supports: "regex" path type for Ingress resources with pathType: ImplementationSpecific
-    # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+    # HAProxy Ingress library: haproxy-ingress.github.io/* annotation compatibility
+    # Covers the same feature areas as the haproxytech library plus path-type
+    # (regex), HSTS, external auth (via the SPOA hub), and incoming client
+    # mTLS — see docs/libraries/haproxy-ingress.md for the per-annotation
+    # reference (~50+ annotations).
+    # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
     haproxyIngress:
       enabled: true
     # Nginx Ingress library: nginx.ingress.kubernetes.io annotation compatibility
@@ -138,8 +143,10 @@ controller:
       enabled: false
     # SPOA hub library: HAProxy-side wiring for the bundled spoa-hub sidecar
     # Provides the `backend spoa-hub` block, the `filter spoe engine` directive
-    # in frontends, and registers the `spoe.conf` general file so plugin
-    # libraries (cycle 4) can plug into the SPOE message lifecycle.
+    # in frontends, and registers the `spoe.conf` general file so vendor
+    # annotation libraries can plug into the SPOE message lifecycle (e.g.
+    # nginx-ingress / haproxy-ingress wire `auth-url` / `auth-signin` /
+    # `auth-method` annotations through the external-auth plugin).
     # Reads its config from templatingSettings.extraContext.spoaHub, which the
     # chart populates from the values.yaml `spoaHub:` block.
     # Auto-enabled by haptic.mergeLibraries when the sidecar is on (any plugin
@@ -428,7 +435,9 @@ controller:
         #   indexBy: ["metadata.namespace", "metadata.name"]
         #   # Optional: per-resource debounce override; defaults to 5s.
         #   # Useful to react faster on routes (e.g. "500ms" on httproutes for canary work)
-        #   # or to absorb churn on EndpointSlices on large clusters (e.g. "30s").
+        #   # On EndpointSlices, keep the default — a longer debounce
+        #   # delays Pod removal from the HAProxy backend by that
+        #   # window, so traffic keeps landing on Terminating Pods.
         #   debounceInterval: ""
     # Template customization
     # The sections below (templateSnippets, maps, files, haproxyConfig, validationTests)
@@ -490,7 +499,8 @@ controller:
 # ValidatingWebhookConfiguration is created by Helm at installation time
 webhook:
   # Enable webhook validation
-  # Requires watched_resources to have enable_validation_webhook: true
+  # Requires at least one entry under controller.config.watchedResources (or a
+  # library-contributed one) to have enableValidationWebhook: true
   enabled: true
   # Webhook HTTPS server port is defined in controller.ports.webhook
 
@@ -852,8 +862,13 @@ monitoring:
     # Set to the namespace where Grafana is running if the sidecar is not configured
     # to search all namespaces (grafana.sidecar.dashboards.searchNamespace: ALL).
     namespace: ""
-    # Use built-in dashboard (includes all 11 controller metrics)
-    # Set to false to provide your own dashboard JSON via customDashboard
+    # Use the built-in dashboard. It covers a curated subset of the
+    # ~31 controller metrics — reconciliation, deployment, validation,
+    # events, leader election, and webhook health — which is enough
+    # for a single-pane operator view. The full metric catalogue lives
+    # in pkg/controller/metrics/README.md if you want to build a
+    # deeper dashboard yourself.
+    # Set to false to provide your own dashboard JSON via customDashboard.
     useBuiltIn: true
     # Custom dashboard JSON (only used when useBuiltIn: false)
     customDashboard: {}
@@ -897,14 +912,11 @@ haproxy:
   # Community defaults:
   #   haproxyBin: /usr/local/sbin/haproxy
   #   dataplaneBin: /usr/local/bin/dataplaneapi
-  #   user: haproxy
   # Enterprise defaults (when enterprise.enabled=true):
   #   haproxyBin: /opt/hapee-{version}/sbin/hapee-lb
   #   dataplaneBin: /opt/hapee-extras/sbin/hapee-dataplaneapi
-  #   user: hapee
   haproxyBin: ""
   dataplaneBin: ""
-  user: ""
   # HAProxy service configuration
   # Service exposes HAProxy container ports externally
   # targetPort references are defined in template using named ports
@@ -1180,30 +1192,6 @@ haproxy:
     #     start: 0 8 * * 1-5
     #     end: 0 18 * * 1-5
     #     desiredReplicas: "5"
-  # Initial HAProxy configuration
-  # This provides a minimal working config until the controller deploys the full config
-  initialConfig: |
-    global
-        log stdout len 4096 local0 info
-
-    defaults
-        mode http
-        log global
-        option httplog
-        timeout connect 5000
-        timeout client 50000
-        timeout server 50000
-
-    frontend status
-        bind *:8404
-        http-request return status 200 content-type text/plain string "OK" if { path /healthz }
-
-    frontend http_frontend
-        bind *:8080
-        default_backend default_backend
-
-    backend default_backend
-        http-request return status 404
   # NetworkPolicy configuration for HAProxy loadbalancer pods
   # This controls network access to/from HAProxy pods that handle incoming traffic
   #
@@ -1431,8 +1419,11 @@ spoaHub:
     maxConnections: 1000
     blockingThreadKeepAliveSecs: 30
 
-  # HAProxy-side wiring. Cycle 2 part 2 / cycle 4 will surface these into
-  # the rendered haproxy.cfg via the controller's templating engine.
+  # HAProxy-side wiring. The chart surfaces these into
+  # templatingSettings.extraContext.spoaHub (see
+  # templates/haproxytemplateconfig.yaml), and the spoa-hub template
+  # library reads them when emitting the `backend spoa-hub` block,
+  # the `filter spoe engine` directive, and the spoe.conf agent.
   haproxy:
     socketPath: /run/spoa/hub.sock
     # `mode spop` is the native SPOP backend mode, introduced in HAProxy
@@ -1457,10 +1448,12 @@ spoaHub:
   # so a plugin can auto-enable itself when the template libraries that
   # rely on it are turned on. Operator override is via a literal bool
   # (`--set spoaHub.plugins.<X>.enabled=true|false`); explicit bools always
-  # win over the templated default. Cycle 4 will replace each plugin's
-  # default with an OR over the libraries that need it (e.g. external-auth
-  # auto-enables when the nginx-ingress library is enabled and consumes
-  # nginx.ingress.kubernetes.io/auth-url).
+  # win over the templated default. `external-auth` already wires this up
+  # — its default is `'{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'`
+  # so flipping the nginx-ingress library on consumes
+  # `nginx.ingress.kubernetes.io/auth-url` annotations without a second
+  # toggle. Other plugins keep `'{{ false }}'` until a similar wire-up
+  # exists for the libraries that need them.
   #
   # IMPORTANT: `params:` is rendered *inside* the `[plugins.params]` scope,
   # so any bare table header in it (e.g. `[instrumentation]`) would close

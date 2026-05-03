@@ -1,16 +1,15 @@
-{{- if and .Values.ingressClass.enabled .Values.controller.templateLibraries.ingress.enabled }}
-{{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1/IngressClass" }}
+{{- $ic := .Values.ingressClass }}
+{{- if and $ic.enabled .Values.controller.templateLibraries.ingress.enabled (.Capabilities.APIVersions.Has "networking.k8s.io/v1/IngressClass") }}
 apiVersion: networking.k8s.io/v1
 kind: IngressClass
 metadata:
-  name: {{ .Values.ingressClass.name }}
+  name: {{ $ic.name }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
-  {{- if .Values.ingressClass.default }}
+  {{- if $ic.default }}
   annotations:
     ingressclass.kubernetes.io/is-default-class: "true"
   {{- end }}
 spec:
-  controller: {{ .Values.ingressClass.controllerName }}
-{{- end }}
+  controller: {{ $ic.controllerName }}
 {{- end }}

@@ -38,7 +38,7 @@ Verify the `haproxyVersion` value matches an available image tag:
 helm get values haptic | grep haproxyVersion
 ```
 
-The controller image tag is derived from both the chart `version` and `haproxyVersion`. If pulling from a private registry, configure `imagePullSecrets`.
+The controller image tag is derived from both the chart `version` and `haproxyVersion`. If pulling from a private registry, configure `controller.podSpec.imagePullSecrets` (and `haproxy.podSpec.imagePullSecrets` if the chart's HAProxy pods need the same registry).
 
 ## CRD Not Found
 
@@ -66,7 +66,7 @@ If creating an Ingress produces no HAProxy configuration change:
    kubectl get ingress <name> -o jsonpath='{.spec.ingressClassName}'
    ```
 
-2. **Check namespace filtering**: if `controller.config.watchedResources.ingresses.namespace` is set, the Ingress must be in that namespace
+2. **Check namespace filtering**: if `controller.config.watchedResources.ingresses.fieldSelector` is set (e.g. `metadata.namespace=foo`), the Ingress must match the selector
 
 3. **Check controller logs** for watch events:
 

@@ -1,9 +1,11 @@
-{{- if and .Values.controller.defaultSSLCertificate.enabled .Values.controller.defaultSSLCertificate.certManager.enabled .Values.controller.defaultSSLCertificate.certManager.createIssuer (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
+{{- $default := .Values.controller.defaultSSLCertificate }}
+{{- $cm := $default.certManager }}
+{{- if and $default.enabled $cm.enabled $cm.createIssuer (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: {{ include "haptic.fullname" . }}-ssl-selfsigned
-  namespace: {{ .Values.controller.defaultSSLCertificate.namespace | default .Release.Namespace }}
+  namespace: {{ $default.namespace | default .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
   annotations:

@@ -29,18 +29,25 @@ annotations:
       platforms:
         - linux/amd64
         - linux/arm64
+    - name: spoa-hub
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.1.0
+      platforms:
+        - linux/amd64
+        - linux/arm64
 
   # License
   artifacthub.io/license: Apache-2.0
 
-  # Changelog
+  # Changelog — summary of the most recently shipped chart version (0.1.0).
+  # See charts/haptic/CHANGELOG.md for the full record, including the
+  # [Unreleased] entries that will land in the next release.
   artifacthub.io/changes: |
     - kind: added
-      description: HAProxy Ingress annotation compatibility with 56 annotations
-    - kind: changed
-      description: HAProxy Ingress library enabled by default
-    - kind: fixed
-      description: Template validator currentConfig type declaration
+      description: Initial Helm chart deploying the controller and HAProxy pods with leader election and a default NetworkPolicy
+    - kind: added
+      description: Modular template library system (base / ssl / ingress / gateway / haproxytech / haproxy-ingress / nginx-ingress)
+    - kind: added
+      description: Gateway API and Ingress status reporting (LoadBalancer addresses propagated to .status)
 
   # Links
   artifacthub.io/links: |

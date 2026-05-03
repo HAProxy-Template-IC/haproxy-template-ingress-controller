@@ -15,8 +15,13 @@ Schema for `_helm_load:` is documented in charts/CLAUDE.md. See ADR-0002
 */}}
 
 {{/*
-Filter validationTests based on _helm_skip_test condition
-Evaluates _helm_skip_test Go template and excludes tests where it evaluates to "true"
+Strip skip-marked entries from the library's validationTests block, then
+return the (possibly modified) library as YAML. For each test, evaluates
+the optional `_helm_skip_test` template expression: if it trims to
+"true", the test is dropped; otherwise the test is kept with its
+`_helm_skip_test` metadata stripped. Libraries with no validationTests
+or no `_helm_skip_test` markers pass through untouched.
+Args (list): [library dict, root context]
 */}}
 {{- define "haptic.filterTests" -}}
 {{- $library := index . 0 }}
@@ -24,18 +29,9 @@ Evaluates _helm_skip_test Go template and excludes tests where it evaluates to "
 {{- if $library.validationTests }}
   {{- $filteredTests := dict }}
   {{- range $testName, $testDef := $library.validationTests }}
-    {{- $skipTest := false }}
-    {{- if $testDef._helm_skip_test }}
-      {{- /* Evaluate _helm_skip_test template expression */ -}}
-      {{- $skipCondition := tpl $testDef._helm_skip_test $context }}
-      {{- if eq $skipCondition "true" }}
-        {{- $skipTest = true }}
-      {{- end }}
-    {{- end }}
-    {{- if not $skipTest }}
-      {{- /* Include test, removing _helm_skip_test metadata */ -}}
-      {{- $cleanTest := omit $testDef "_helm_skip_test" }}
-      {{- $_ := set $filteredTests $testName $cleanTest }}
+    {{- /* Drop tests whose _helm_skip_test expression renders to "true"; keep the rest with the marker stripped. */ -}}
+    {{- if not (and $testDef._helm_skip_test (eq (tpl ($testDef._helm_skip_test | toString) $context | trim) "true")) }}
+      {{- $_ := set $filteredTests $testName (omit $testDef "_helm_skip_test") }}
     {{- end }}
   {{- end }}
   {{- $_ := set $library "validationTests" $filteredTests }}
@@ -49,12 +45,10 @@ Args (list): [obj dict, path string, value any]
 Returns: empty (mutates obj by side effect)
 */}}
 {{- define "haptic.setNested" -}}
-{{- $obj := index . 0 -}}
-{{- $path := index . 1 -}}
+{{- $cursor := index . 0 -}}
 {{- $value := index . 2 -}}
-{{- $parts := splitList "." $path -}}
+{{- $parts := splitList "." (index . 1) -}}
 {{- $lastIdx := sub (len $parts) 1 -}}
-{{- $cursor := $obj -}}
 {{- range $idx, $part := $parts -}}
   {{- if lt $idx $lastIdx -}}
     {{- if not (hasKey $cursor $part) -}}
@@ -74,10 +68,8 @@ Args (list): [obj dict, path string]
 Returns: JSON-encoded value, or "null" if path missing.
 */}}
 {{- define "haptic.getNested" -}}
-{{- $obj := index . 0 -}}
-{{- $path := index . 1 -}}
-{{- $parts := splitList "." $path -}}
-{{- $cursor := $obj -}}
+{{- $cursor := index . 0 -}}
+{{- $parts := splitList "." (index . 1) -}}
 {{- $reachable := true -}}
 {{- range $part := $parts -}}
   {{- if and $reachable (kindIs "map" $cursor) (hasKey $cursor $part) -}}
@@ -92,13 +84,12 @@ Returns: JSON-encoded value, or "null" if path missing.
 {{/*
 Unset a key at a dotted path within a dict. No-op if path missing.
 Args (list): [obj dict, path string]
+Returns: empty (mutates obj by side effect)
 */}}
 {{- define "haptic.unsetNested" -}}
-{{- $obj := index . 0 -}}
-{{- $path := index . 1 -}}
-{{- $parts := splitList "." $path -}}
+{{- $cursor := index . 0 -}}
+{{- $parts := splitList "." (index . 1) -}}
 {{- $lastIdx := sub (len $parts) 1 -}}
-{{- $cursor := $obj -}}
 {{- $reachable := true -}}
 {{- range $idx, $part := $parts -}}
   {{- if lt $idx $lastIdx -}}
@@ -133,18 +124,13 @@ Deep merge template libraries.
 {{- range $file := $libraryFiles }}
   {{- $library := $context.Files.Get $file | fromYaml }}
   {{- $loadHints := $library._helm_load | default dict }}
-  {{- $enableExpr := $loadHints.enable | default "true" }}
-  {{- $enabled := tpl $enableExpr $context | trim }}
-  {{- if eq $enabled "true" }}
+  {{- if eq (tpl ($loadHints.enable | default "true") $context | trim) "true" }}
     {{- range $inject := $loadHints.inject | default list }}
-      {{- $whenExpr := $inject.when | default "true" }}
-      {{- if eq (tpl $whenExpr $context | trim) "true" }}
+      {{- if eq (tpl ($inject.when | default "true") $context | trim) "true" }}
         {{- if hasKey $inject "from" }}
-          {{- $copied := include "haptic.getNested" (list $library $inject.from) | fromJson }}
-          {{- include "haptic.setNested" (list $library $inject.path $copied) }}
+          {{- include "haptic.setNested" (list $library $inject.path (include "haptic.getNested" (list $library $inject.from) | fromJson)) }}
         {{- else }}
-          {{- $value := tpl ($inject.value | toString) $context }}
-          {{- include "haptic.setNested" (list $library $inject.path $value) }}
+          {{- include "haptic.setNested" (list $library $inject.path (tpl ($inject.value | toString) $context)) }}
         {{- end }}
       {{- end }}
     {{- end }}
@@ -162,11 +148,9 @@ Deep merge template libraries.
        controller.config.* fields (routing, dataplane, …) are consumed
        directly by other templates. */ -}}
 {{- $userConfig := dict }}
-{{- $userConfigKeys := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
-{{- range $key := $userConfigKeys }}
-  {{- $value := index $context.Values.controller.config $key }}
-  {{- if $value }}
-    {{- $_ := set $userConfig $key $value }}
+{{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
+  {{- with index $context.Values.controller.config $key }}
+    {{- $_ := set $userConfig $key . }}
   {{- end }}
 {{- end }}
 {{- $merged = mustMergeOverwrite $merged $userConfig }}

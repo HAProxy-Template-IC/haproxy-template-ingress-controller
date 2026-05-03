@@ -15,7 +15,7 @@ _helm_load:
       value: 'app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=loadbalancer'
     - path: templateSnippets.frontend-routing-logic
       from: templateSnippets.frontend-routing-logic-regex-last
-      when: '{{- $r := "default" -}}{{- with .Values.controller.config.routing -}}{{- $r = .regexMatchOrder | default "default" -}}{{- end -}}{{- if eq $r "last" }}true{{ end -}}'
+      when: '{{- with .Values.controller.config.routing -}}{{- if eq .regexMatchOrder "last" }}true{{ end -}}{{- end -}}'
   unset:
     - templateSnippets.frontend-routing-logic-regex-last
 #   - Composable macros: import and extend utility functions
@@ -815,10 +815,9 @@ haproxyConfig:
 
 # Global fixtures merged with all validation tests
 # Test fixtures override global fixtures when same resource exists (by namespace/name)
-# NOTE: SSL certificate fixtures moved to ssl.yaml library
 validationTests:
   _global:
-    description: Global fixtures for all validation tests (SSL fixtures moved to ssl.yaml)
+    description: Global fixtures for all validation tests
     fixtures: {}
     assertions:
       - type: haproxy_valid

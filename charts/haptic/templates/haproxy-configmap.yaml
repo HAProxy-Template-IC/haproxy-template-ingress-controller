@@ -1,8 +1,9 @@
 {{- if .Values.haproxy.enabled }}
+{{- $ports := .Values.haproxy.ports }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "haptic.fullname" . }}-haproxy-config
+  name: {{ include "haptic.haproxyFullname" . }}-config
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
@@ -11,9 +12,8 @@ data:
   haproxy.cfg: |
     global
         log stdout len 4096 local0 info
-        {{- $nbthread := include "haptic.haproxy.nbthread" . }}
-        {{- if $nbthread }}
-        nbthread {{ $nbthread }}
+        {{- with include "haptic.haproxy.nbthread" . }}
+        nbthread {{ . }}
         {{- end }}
 
     defaults
@@ -25,12 +25,12 @@ data:
         timeout server 50000
 
     frontend status
-        bind *:{{ .Values.haproxy.ports.stats }}
+        bind *:{{ $ports.stats }}
         http-request return status 200 content-type text/plain string "OK" if { path /healthz }
         http-request return status 503 content-type text/plain string "Not ready - waiting for controller config" if { path /ready }
 
     frontend http_frontend
-        bind *:{{ .Values.haproxy.ports.http }}
+        bind *:{{ $ports.http }}
         default_backend default_backend
 
     backend default_backend

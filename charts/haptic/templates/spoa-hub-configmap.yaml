@@ -10,10 +10,12 @@ The chart never parses or validates the blob — see each upstream plugin's
 README for the schema.
 */}}
 {{- if include "haptic.spoaHub.enabled" . }}
+{{- $spoaHub := .Values.spoaHub }}
+{{- $hub := $spoaHub.hub }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "haptic.fullname" . }}-spoa-hub
+  name: {{ include "haptic.spoaHub.configMapName" . }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
     app.kubernetes.io/component: spoa-hub
@@ -21,18 +23,18 @@ data:
   config.toml: |
     plugin_dir = "/etc/haproxy-spoa-hub/plugins"
     default_timeout_ms = 500
-    log_level = {{ .Values.spoaHub.hub.logLevel | quote }}
-    max_connections = {{ .Values.spoaHub.hub.maxConnections }}
-    blocking_thread_keep_alive_secs = {{ .Values.spoaHub.hub.blockingThreadKeepAliveSecs }}
-    {{- with .Values.spoaHub.hub.workerThreads }}
+    log_level = {{ $hub.logLevel | quote }}
+    max_connections = {{ $hub.maxConnections }}
+    blocking_thread_keep_alive_secs = {{ $hub.blockingThreadKeepAliveSecs }}
+    {{- with $hub.workerThreads }}
     worker_threads = {{ . }}
     {{- end }}
 
     [[listeners]]
     type = "unix"
-    address = {{ .Values.spoaHub.haproxy.socketPath | quote }}
+    address = {{ $spoaHub.haproxy.socketPath | quote }}
 
-    {{- range $name, $plugin := .Values.spoaHub.plugins }}
+    {{- range $name, $plugin := $spoaHub.plugins }}
     {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
 
     {{- /* The hub builds SPOP response variable names as `<plugin>.<var>`,
@@ -45,9 +47,8 @@ data:
            snake_case form for this reason. Convert dashes to underscores
            here to keep the YAML key kebab-case (idiomatic) while emitting
            a HAProxy-friendly identifier. */}}
-    {{- $tomlName := regexReplaceAll "-" $name "_" }}
     [[plugins]]
-    name = {{ $tomlName | quote }}
+    name = {{ regexReplaceAll "-" $name "_" | quote }}
     library = {{ include "haptic.spoaHub.libName" (dict "name" $name) | quote }}
     messages = {{ $plugin.messages | toJson }}
     timeout_ms = {{ $plugin.timeoutMs }}

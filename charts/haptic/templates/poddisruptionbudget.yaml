@@ -1,4 +1,5 @@
-{{- if and .Values.podDisruptionBudget.enabled (gt (.Values.replicaCount | int) 1) }}
+{{- $pdb := .Values.podDisruptionBudget }}
+{{- if and $pdb.enabled (gt (.Values.replicaCount | int) 1) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -7,11 +8,11 @@ metadata:
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
-  {{- if .Values.podDisruptionBudget.minAvailable }}
-  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- with $pdb.minAvailable }}
+  minAvailable: {{ . }}
   {{- end }}
-  {{- if .Values.podDisruptionBudget.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- with $pdb.maxUnavailable }}
+  maxUnavailable: {{ . }}
   {{- end }}
   selector:
     matchLabels:

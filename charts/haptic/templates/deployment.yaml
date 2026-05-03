@@ -1,9 +1,17 @@
+{{- $controller := .Values.controller }}
+{{- $podSpec := $controller.podSpec }}
+{{- $ports := $controller.ports }}
+{{- $debugPort := $controller.debugPort }}
+{{- $debugPortInt := $debugPort | int }}
+{{- $webhookEnabled := .Values.webhook.enabled }}
+{{- $webhookSecretName := include "haptic.webhook.secretName" . }}
+{{- $labels := include "haptic.labels" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "haptic.controllerFullname" . }}
   labels:
-    {{- include "haptic.labels" . | nindent 4 }}
+    {{- $labels | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -33,20 +41,20 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/secret: {{ printf "%s-%s" (include "haptic.dataplane.username" .) (include "haptic.dataplane.password" .) | sha256sum }}
-        {{- with .Values.controller.podSpec.podAnnotations }}
+        checksum/secret: {{ include "haptic.dataplane.credentialsChecksum" . }}
+        {{- with $podSpec.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "haptic.labels" . | nindent 8 }}
+        {{- $labels | nindent 8 }}
         app.kubernetes.io/component: controller
-        {{- with .Values.controller.podSpec.podLabels }}
+        {{- with $podSpec.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
       serviceAccountName: {{ include "haptic.serviceAccountName" . }}
-      {{- include "haptic.podSpec" (list .Values.controller.podSpec .) | trim | nindent 6 }}
-      {{- with .Values.controller.podSpec.podSecurityContext }}
+      {{- include "haptic.podSpec" $podSpec | trim | nindent 6 }}
+      {{- with $podSpec.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -65,55 +73,53 @@ spec:
           command: ["/usr/local/bin/haptic-controller"]
           args: ["run"]
           ports:
-            - name: healthz
-              containerPort: {{ .Values.controller.ports.healthz }}
-              protocol: TCP
-            - name: metrics
-              containerPort: {{ .Values.controller.ports.metrics }}
-              protocol: TCP
-            {{- if and (gt (.Values.controller.debugPort | int) 0) (ne (.Values.controller.debugPort | int) (.Values.controller.ports.healthz | int)) }}
-            - name: debug
-              containerPort: {{ .Values.controller.debugPort }}
+            {{- range $name := list "healthz" "metrics" }}
+            - name: {{ $name }}
+              containerPort: {{ index $ports $name }}
               protocol: TCP
             {{- end }}
-            {{- if .Values.webhook.enabled }}
+            {{- if and (gt $debugPortInt 0) (ne $debugPortInt ($ports.healthz | int)) }}
+            - name: debug
+              containerPort: {{ $debugPort }}
+              protocol: TCP
+            {{- end }}
+            {{- if $webhookEnabled }}
             - name: webhook
-              containerPort: {{ .Values.controller.ports.webhook }}
+              containerPort: {{ $ports.webhook }}
               protocol: TCP
             {{- end }}
           env:
-            - name: POD_NAME
+            {{- range $env := list (dict "name" "POD_NAME" "field" "metadata.name") (dict "name" "POD_NAMESPACE" "field" "metadata.namespace") }}
+            - name: {{ $env.name }}
               valueFrom:
                 fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: CRD_NAME
-              value: {{ .Values.controller.crdName | quote }}
-            - name: SECRET_NAME
-              value: {{ include "haptic.fullname" . }}-credentials
-            - name: WEBHOOK_SERVICE_NAME
-              value: {{ include "haptic.fullname" . }}-webhook
-            - name: DEBUG_PORT
-              value: {{ .Values.controller.debugPort | quote }}
-            {{- if .Values.controller.logLevel }}
-            - name: LOG_LEVEL
-              value: {{ .Values.controller.logLevel | quote }}
+                  fieldPath: {{ $env.field }}
             {{- end }}
-            {{- if .Values.webhook.enabled }}
+            - name: CRD_NAME
+              value: {{ $controller.crdName | quote }}
+            - name: SECRET_NAME
+              value: {{ include "haptic.dataplane.credentialsSecretName" . }}
+            - name: WEBHOOK_SERVICE_NAME
+              value: {{ include "haptic.webhook.serviceName" . }}
+            - name: DEBUG_PORT
+              value: {{ $debugPort | quote }}
+            {{- with $controller.logLevel }}
+            - name: LOG_LEVEL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if $webhookEnabled }}
             - name: WEBHOOK_PORT
-              value: {{ .Values.controller.ports.webhook | quote }}
+              value: {{ $ports.webhook | quote }}
             - name: WEBHOOK_CERT_SECRET_NAME
-              value: {{ include "haptic.webhook.secretName" . | quote }}
+              value: {{ $webhookSecretName | quote }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- if .Values.startupProbe.enabled }}
+          {{- $startupProbe := .Values.startupProbe }}
+          {{- if $startupProbe.enabled }}
           startupProbe:
-            {{- toYaml (omit .Values.startupProbe "enabled") | nindent 12 }}
+            {{- toYaml (omit $startupProbe "enabled") | nindent 12 }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
@@ -134,7 +140,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.webhook.enabled }}
+            {{- if $webhookEnabled }}
             - name: webhook-certs
               mountPath: /etc/webhook/certs
               readOnly: true
@@ -148,10 +154,10 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
-        {{- if .Values.webhook.enabled }}
+        {{- if $webhookEnabled }}
         - name: webhook-certs
           secret:
-            secretName: {{ include "haptic.webhook.secretName" . }}
+            secretName: {{ $webhookSecretName }}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}

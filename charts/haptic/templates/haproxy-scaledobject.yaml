@@ -1,8 +1,10 @@
-{{- if and .Values.haproxy.enabled .Values.haproxy.keda.enabled }}
+{{- $keda := .Values.haproxy.keda }}
+{{- if and .Values.haproxy.enabled $keda.enabled }}
+{{- $haproxyFullname := include "haptic.haproxyFullname" . }}
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: {{ include "haptic.fullname" . }}-haproxy
+  name: {{ $haproxyFullname }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
@@ -18,20 +20,20 @@ spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "haptic.fullname" . }}-haproxy
-  pollingInterval: {{ .Values.haproxy.keda.pollingInterval }}
-  cooldownPeriod: {{ .Values.haproxy.keda.cooldownPeriod }}
-  minReplicaCount: {{ .Values.haproxy.keda.minReplicaCount }}
-  maxReplicaCount: {{ .Values.haproxy.keda.maxReplicaCount }}
-  {{- with .Values.haproxy.keda.fallback }}
+    name: {{ $haproxyFullname }}
+  pollingInterval: {{ $keda.pollingInterval }}
+  cooldownPeriod: {{ $keda.cooldownPeriod }}
+  minReplicaCount: {{ $keda.minReplicaCount }}
+  maxReplicaCount: {{ $keda.maxReplicaCount }}
+  {{- with $keda.fallback }}
   fallback:
     failureThreshold: {{ .failureThreshold }}
     replicas: {{ .replicas }}
   {{- end }}
-  {{- with .Values.haproxy.keda.advanced }}
+  {{- with $keda.advanced }}
   advanced:
     {{- toYaml . | nindent 4 }}
   {{- end }}
   triggers:
-    {{- toYaml .Values.haproxy.keda.triggers | nindent 4 }}
+    {{- toYaml $keda.triggers | nindent 4 }}
 {{- end }}

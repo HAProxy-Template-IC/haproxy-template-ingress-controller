@@ -2,7 +2,7 @@
 
 ## Overview
 
-The chart automatically creates an IngressClass resource when the ingress library is enabled and Kubernetes 1.18+ is detected. This page covers IngressClass configuration, capability detection, and multi-controller environments.
+The chart automatically creates an IngressClass resource when the ingress library is enabled and the cluster exposes `networking.k8s.io/v1/IngressClass` (Kubernetes 1.19+, the chart's minimum supported version). This page covers IngressClass configuration, capability detection, and multi-controller environments.
 
 For ingress class filtering (controlling which Ingress resources the controller watches), see [Configuration](./configuration.md#ingress-class-filtering).
 
@@ -20,7 +20,7 @@ The default name is `haptic` (not `haproxy`) so the chart can be installed along
 
 ## Capability Detection
 
-The chart uses `Capabilities.APIVersions.Has` to check for `networking.k8s.io/v1/IngressClass`. If the API is not available (Kubernetes < 1.18), the resource is silently skipped without error.
+The chart uses `Capabilities.APIVersions.Has` to check for `networking.k8s.io/v1/IngressClass`. If the API is not available (Kubernetes < 1.19, before the v1 graduation), the resource is silently skipped without error.
 
 ## Creation Conditions
 
