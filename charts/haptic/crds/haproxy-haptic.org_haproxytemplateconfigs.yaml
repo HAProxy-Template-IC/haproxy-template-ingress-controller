@@ -802,6 +802,92 @@ spec:
 
                   Tests ensure templates generate valid HAProxy configurations before deployment.
                 type: object
+              validators:
+                description: |-
+                  Validators declares pluggable validator sidecars consulted by the
+                  admission webhook before admitting changes that affect plugin
+                  configuration. See `docs/controller/docs/operations/pluggable-validators.md`
+                  for setup; the wire protocol is at
+                  `docs/development/validator-protocol.md`.
+
+                  An empty list (the default) disables pluggable validation — the
+                  webhook keeps performing template + HAProxy syntax dry-run only.
+                items:
+                  description: |-
+                    ValidatorConfig declares one pluggable validator sidecar that the
+                    controller will consult during admission webhook processing.
+
+                    The wire protocol between the controller and a validator sidecar is
+                    documented in `docs/development/validator-protocol.md`. The reference
+                    implementation is `haproxy-spoa-hub --validate-socket <path>` shipped
+                    alongside HAPTIC; any conforming implementation may be substituted.
+
+                    Operators declare zero, one, or many validators. Each one runs in its
+                    own sidecar container in the controller pod and shares a Unix domain
+                    socket via an emptyDir volume; the chart wires this up automatically
+                    when `spec.validators` is non-empty.
+                  properties:
+                    name:
+                      description: |-
+                        Name is the operator-facing identifier for this validator.
+
+                        MUST be a valid RFC 1123 label (lowercase alphanumeric and `-`,
+                        1-63 characters). MUST be unique across the validators array.
+                        Surfaces in admission denial messages so operators can identify
+                        which validator rejected a change.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    plugins:
+                      description: |-
+                        Plugins lists the `[plugins.params.<name>]` subtree names this
+                        validator handles in the rendered hub TOML.
+
+                        An empty list (the default) means "validate the whole hub TOML";
+                        the validator decides what to do with the full config (typically
+                        it dispatches to every loaded plugin's `validate()`). Listing
+                        specific plugins is a forward-compatible hook for the case where
+                        multiple validators each handle a disjoint subset; it is unused
+                        by the current single-validator-per-hub deployment shape but
+                        kept in the schema so a future change does not require a CRD
+                        version bump.
+                      items:
+                        type: string
+                      type: array
+                    socketPath:
+                      description: |-
+                        SocketPath is the absolute filesystem path to the validator's
+                        Unix domain socket inside the controller pod.
+
+                        The chart-rendered shared `emptyDir` volume mounts at
+                        `/var/run/haptic-validators/`; the conventional path is
+                        `/var/run/haptic-validators/<name>.sock`. Custom paths must
+                        still resolve inside the controller pod's filesystem.
+                      minLength: 1
+                      pattern: ^/
+                      type: string
+                    timeoutMs:
+                      description: |-
+                        TimeoutMs is the per-call deadline, in milliseconds, covering
+                        connect + write + read.
+
+                        Defaults to 5000 (5 seconds) when omitted. Validator calls
+                        exceeding this deadline yield a synthetic admission denial with
+                        `result: "error"` so a wedged sidecar does not stall the webhook
+                        path indefinitely.
+                      format: int32
+                      maximum: 60000
+                      minimum: 1
+                      type: integer
+                  required:
+                  - name
+                  - socketPath
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               watchedResources:
                 additionalProperties:
                   description: WatchedResource configures watching for a specific

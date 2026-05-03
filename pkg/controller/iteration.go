@@ -19,13 +19,49 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
+
+// buildPluggableValidatorManager constructs the validator manager from
+// the configured spec.validators. The returned Manager is always
+// non-nil — Manager.Configured() reports whether any validators are
+// registered, so callers don't need a nil check.
+//
+// The Manager is currently only constructed (and exposed via Healthy()
+// for the next change's /healthz integration). Wiring it into the
+// admission webhook is a follow-up MR.
+func buildPluggableValidatorManager(cfg *coreconfig.Config, logger *slog.Logger) (*pluggablevalidator.Manager, error) {
+	configs := make([]pluggablevalidator.ManagerConfig, 0, len(cfg.Validators))
+	for _, v := range cfg.Validators {
+		mc := pluggablevalidator.ManagerConfig{
+			Name:       v.Name,
+			SocketPath: v.SocketPath,
+			Plugins:    v.Plugins,
+		}
+		if v.TimeoutMs > 0 {
+			mc.Timeout = time.Duration(v.TimeoutMs) * time.Millisecond
+		}
+		configs = append(configs, mc)
+	}
+	mgr, err := pluggablevalidator.NewManager(logger, configs)
+	if err != nil {
+		return nil, fmt.Errorf("pluggable validators: %w", err)
+	}
+	if mgr.Configured() {
+		logger.Info("pluggable validators registered",
+			slog.Int("count", len(configs)),
+			slog.Any("names", mgr.Names()),
+		)
+	}
+	return mgr, nil
+}
 
 // runIteration runs a single controller iteration.
 //
@@ -155,6 +191,15 @@ func runIteration(
 		if errors.Is(err, errNoWebhookRules) {
 			logger.Debug("DryRunValidator not created: no webhook validation rules configured")
 		}
+	}
+
+	// 6.3. Construct the pluggable-validator Manager from spec.validators.
+	// Pure synchronous service (no event subs, no goroutines) so order
+	// relative to EventBus.Start() doesn't matter. This MR builds and
+	// validates it (catches duplicate names + bad socket paths early);
+	// the follow-up MR wires it into DryRunValidator and /healthz.
+	if _, err := buildPluggableValidatorManager(cfg, logger); err != nil {
+		return fmt.Errorf("constructing pluggable-validator manager: %w", err)
 	}
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
