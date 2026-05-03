@@ -43,7 +43,7 @@ The chart checks for `gateway.networking.k8s.io/v1/GatewayClass` before creating
 GatewayClass is created only when ALL of the following are true:
 
 1. `gatewayClass.enabled: true` (default)
-2. `controller.templateLibraries.gateway.enabled: true` (must be explicitly enabled)
+2. `controller.templateLibraries.gateway.enabled: true` (default)
 3. `gateway.networking.k8s.io/v1/GatewayClass` API exists in cluster
 
 ## parametersRef - Controller Configuration Link
@@ -99,7 +99,7 @@ You can create multiple GatewayClasses pointing to different HAProxyTemplateConf
 
 ```bash
 # Install chart with default config
-helm install haproxy-internet ./charts/haptic
+helm install haproxy-internet oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
 
 # Create separate HAProxyTemplateConfig for internal traffic with different templates
 kubectl apply -f - <<EOF

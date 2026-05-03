@@ -94,8 +94,8 @@ server-side `fieldSelector` (which only supports a handful of fields like
 `metadata.name`). The controller fetches all Ingresses the API server returns
 and drops the ones whose `spec.ingressClassName` doesn't match before adding
 them to the store. To narrow the watch *server-side* — the cheaper option
-when you can use it — also set `namespace` or `labelSelector` on the same
-entry. See [Watching Resources →
+when you can use it — set `labelSelector` (server-side label match) on the
+same entry. See [Watching Resources →
 Narrowing the Watch](https://haproxy-haptic.org/controller/latest/watching-resources/#narrowing-the-watch).
 
 ## Template Libraries
@@ -104,13 +104,15 @@ The controller uses a modular template library system where configuration files 
 
 | Library | Default | Values key | Description |
 |---------|---------|------------|-------------|
-| Base | Always enabled | `base` | Core HAProxy configuration, extension points |
+| Base | Enabled | `base` | Core HAProxy configuration, extension points; disabling drops the `haproxyConfig` the other libraries plug into |
 | SSL | Enabled | `ssl` | TLS certificates, HTTPS frontend |
 | Ingress | Enabled | `ingress` | Kubernetes Ingress support |
 | Gateway | Enabled | `gateway` | Gateway API (HTTPRoute, GRPCRoute) |
+| annotation-compat | Enabled | `annotationCompat` | Shared scaffold consumed by the vendor annotation libraries below (level 2.5) |
 | haproxytech | Enabled | `haproxytech` | `haproxy.org/*` annotation support |
 | haproxy-ingress | Enabled | `haproxyIngress` | `haproxy-ingress.github.io/*` annotation compatibility |
 | nginx-ingress | Disabled | `nginxIngress` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
+| spoa-hub | Auto | `spoaHub` | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
 ### Path Matching Order
 

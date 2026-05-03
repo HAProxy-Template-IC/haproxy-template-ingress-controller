@@ -1,8 +1,20 @@
-{{- if .Values.haproxy.enabled }}
+{{- $haproxy := .Values.haproxy }}
+{{- if $haproxy.enabled }}
+{{- $haproxyFullname := include "haptic.haproxyFullname" . }}
+{{- $credentialsSecretName := include "haptic.dataplane.credentialsSecretName" . }}
+{{- $haproxyImage := include "haptic.haproxy.image" . }}
+{{- $haproxyBin := include "haptic.haproxy.bin" . }}
+{{- $haproxyUid := include "haptic.haproxy.uid" . }}
+{{- $spoaHubEnabled := include "haptic.spoaHub.enabled" . }}
+{{- $dataplaneConfig := .Values.controller.config.dataplane }}
+{{- $podSpec := $haproxy.podSpec }}
+{{- $ports := $haproxy.ports }}
+{{- $dataplane := $haproxy.dataplane }}
+{{- $selectorLabels := include "haptic.selectorLabels" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "haptic.fullname" . }}-haproxy
+  name: {{ $haproxyFullname }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
@@ -15,49 +27,49 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if not .Values.haproxy.keda.enabled }}
-  replicas: {{ .Values.haproxy.replicaCount }}
+  {{- if not $haproxy.keda.enabled }}
+  replicas: {{ $haproxy.replicaCount }}
   {{- end }}
-  {{- with .Values.haproxy.updateStrategy }}
+  {{- with $haproxy.updateStrategy }}
   strategy:
     {{- toYaml . | nindent 4 }}
   {{- end }}
-  minReadySeconds: {{ .Values.haproxy.minReadySeconds }}
-  revisionHistoryLimit: {{ .Values.haproxy.revisionHistoryLimit }}
+  minReadySeconds: {{ $haproxy.minReadySeconds }}
+  revisionHistoryLimit: {{ $haproxy.revisionHistoryLimit }}
   selector:
     matchLabels:
-      {{- include "haptic.selectorLabels" . | nindent 6 }}
+      {{- $selectorLabels | nindent 6 }}
       app.kubernetes.io/component: loadbalancer
   template:
     metadata:
       annotations:
-        checksum/secret: {{ printf "%s-%s" (include "haptic.dataplane.username" .) (include "haptic.dataplane.password" .) | sha256sum }}
+        checksum/secret: {{ include "haptic.dataplane.credentialsChecksum" . }}
         checksum/config: {{ include "haptic.haproxy.bootstrapConfigChecksum" . }}
-        {{- with .Values.haproxy.podSpec.podAnnotations }}
+        {{- with $podSpec.podAnnotations }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "haptic.selectorLabels" . | nindent 8 }}
+        {{- $selectorLabels | nindent 8 }}
         app.kubernetes.io/component: loadbalancer
     spec:
-      {{- include "haptic.podSpec" (list .Values.haproxy.podSpec .) | trim | nindent 6 }}
-      {{- if .Values.haproxy.podSpec.shareProcessNamespace }}
+      {{- include "haptic.podSpec" $podSpec | trim | nindent 6 }}
+      {{- if $podSpec.shareProcessNamespace }}
       shareProcessNamespace: true
       {{- end }}
-      {{- with .Values.haproxy.initContainers }}
+      {{- with $haproxy.initContainers }}
       initContainers:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: {{ include "haptic.haproxy.uid" . }}
-        runAsGroup: {{ include "haptic.haproxy.uid" . }}
-        fsGroup: {{ include "haptic.haproxy.uid" . }}
-        {{- with .Values.haproxy.podSpec.podSecurityContext.seccompProfile }}
+        runAsUser: {{ $haproxyUid }}
+        runAsGroup: {{ $haproxyUid }}
+        fsGroup: {{ $haproxyUid }}
+        {{- with $podSpec.podSecurityContext.seccompProfile }}
         seccompProfile:
           {{- toYaml . | nindent 10 }}
         {{- end }}
-        {{- with .Values.haproxy.podSpec.podSecurityContext.sysctls }}
+        {{- with $podSpec.podSecurityContext.sysctls }}
         sysctls:
           {{- toYaml . | nindent 10 }}
         {{- end }}
@@ -68,15 +80,15 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
-              {{- if .Values.haproxy.enterprise.enabled }}
+              {{- if $haproxy.enterprise.enabled }}
               # Enterprise binaries have file capabilities requiring NET_BIND_SERVICE
               # PSS Restricted profile allows this capability
               add: [NET_BIND_SERVICE]
               {{- end }}
             runAsNonRoot: true
-            runAsUser: {{ include "haptic.haproxy.uid" . }}
-          image: {{ include "haptic.haproxy.image" . }}
-          imagePullPolicy: {{ .Values.haproxy.image.pullPolicy }}
+            runAsUser: {{ $haproxyUid }}
+          image: {{ $haproxyImage }}
+          imagePullPolicy: {{ $haproxy.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -90,41 +102,34 @@ spec:
               # Start HAProxy in master-worker mode with master socket
               # -dr: Skip DNS resolution failures - servers start in DOWN state instead of failing startup
               # -m: Memory limit in MB (derived from container memory requests, when set)
-              {{- $memLimitMB := "" -}}
-              {{- with .Values.haproxy.resources -}}{{- with .requests -}}{{- with .memory -}}
-              {{- $memLimitMB = include "haptic.memoryToMB" . -}}
-              {{- end -}}{{- end -}}{{- end }}
-              exec {{ include "haptic.haproxy.bin" . }} -dr -W -db{{ if $memLimitMB }} -m {{ $memLimitMB }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
-          {{- with .Values.haproxy.extraEnv }}
+              {{- $memReq := dig "requests" "memory" "" $haproxy.resources }}
+              exec {{ $haproxyBin }} -dr -W -db{{ if $memReq }} -m {{ include "haptic.memoryToMB" $memReq }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
+          {{- with $haproxy.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
-            - name: http
-              containerPort: {{ .Values.haproxy.ports.http }}
+            {{- range $name := list "http" "https" "stats" }}
+            - name: {{ $name }}
+              containerPort: {{ index $ports $name }}
               protocol: TCP
-            - name: https
-              containerPort: {{ .Values.haproxy.ports.https }}
-              protocol: TCP
-            - name: stats
-              containerPort: {{ .Values.haproxy.ports.stats }}
-              protocol: TCP
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /config
             - name: haproxy-runtime
               mountPath: /etc/haproxy
-            {{- if .Values.haproxy.shmStats.enabled }}
+            {{- if $haproxy.shmStats.enabled }}
             - name: devshm
               mountPath: /dev/shm
             {{- end }}
-            {{- if include "haptic.spoaHub.enabled" . }}
+            {{- if $spoaHubEnabled }}
             # Shared with the spoa-hub sidecar; HAProxy connects via a
             # unix socket the hub creates here at startup.
             - name: spoa-socket
               mountPath: /run/spoa
             {{- end }}
-            {{- with .Values.haproxy.extraVolumeMounts }}
+            {{- with $haproxy.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
           livenessProbe:
@@ -139,12 +144,12 @@ spec:
               port: stats
             initialDelaySeconds: 5
             periodSeconds: 5
-          {{- with .Values.haproxy.lifecycle }}
+          {{- with $haproxy.lifecycle }}
           lifecycle:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           resources:
-            {{- toYaml .Values.haproxy.resources | nindent 12 }}
+            {{- toYaml $haproxy.resources | nindent 12 }}
 
         # Dataplane API sidecar
         - name: dataplane
@@ -152,29 +157,26 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
-              {{- if .Values.haproxy.enterprise.enabled }}
+              {{- if $haproxy.enterprise.enabled }}
               # Enterprise: dataplaneapi calls HAProxy binary which has file capabilities
               # PSS Restricted profile allows this capability
               add: [NET_BIND_SERVICE]
               {{- end }}
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: {{ include "haptic.haproxy.uid" . }}
-          image: {{ include "haptic.haproxy.image" . }}
-          imagePullPolicy: {{ .Values.haproxy.image.pullPolicy }}
+            runAsUser: {{ $haproxyUid }}
+          image: {{ $haproxyImage }}
+          imagePullPolicy: {{ $haproxy.image.pullPolicy }}
           env:
-            - name: DATAPLANE_USERNAME
+            {{- range $env := list (dict "name" "DATAPLANE_USERNAME" "key" "dataplane_username") (dict "name" "DATAPLANE_PASSWORD" "key" "dataplane_password") }}
+            - name: {{ $env.name }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "haptic.fullname" . }}-credentials
-                  key: dataplane_username
-            - name: DATAPLANE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "haptic.fullname" . }}-credentials
-                  key: dataplane_password
-            {{- include "haptic.dataplane.autoGomaxprocs" .Values.haproxy.dataplane | nindent 12 }}
-            {{- with .Values.haproxy.dataplane.extraEnv }}
+                  name: {{ $credentialsSecretName }}
+                  key: {{ $env.key }}
+            {{- end }}
+            {{- include "haptic.dataplane.autoGomaxprocs" $dataplane | nindent 12 }}
+            {{- with $dataplane.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           command: ["/bin/sh", "-c"]
@@ -211,9 +213,9 @@ spec:
               name: haproxy-dataplaneapi
               dataplaneapi:
                 host: 0.0.0.0
-                port: {{ .Values.haproxy.ports.dataplane }}
+                port: {{ $ports.dataplane }}
                 disable_inotify: true
-                {{- with .Values.haproxy.dataplane.debugSocketPath }}
+                {{- with $dataplane.debugSocketPath }}
                 debug_socket_path: {{ . }}
                 {{- end }}
                 user:
@@ -228,16 +230,16 @@ spec:
                   backups_number: 10
                   backups_dir: /var/lib/dataplaneapi/backups
                 resources:
-                  maps_dir: {{ .Values.controller.config.dataplane.mapsDir }}
-                  ssl_certs_dir: {{ .Values.controller.config.dataplane.sslCertsDir }}
-                  general_storage_dir: {{ .Values.controller.config.dataplane.generalStorageDir }}
+                  maps_dir: {{ $dataplaneConfig.mapsDir }}
+                  ssl_certs_dir: {{ $dataplaneConfig.sslCertsDir }}
+                  general_storage_dir: {{ $dataplaneConfig.generalStorageDir }}
               haproxy:
-                config_file: {{ .Values.controller.config.dataplane.configFile }}
-                haproxy_bin: {{ include "haptic.haproxy.bin" . }}
-                {{- if .Values.haproxy.dataplane.validateConfig }}
+                config_file: {{ $dataplaneConfig.configFile }}
+                haproxy_bin: {{ $haproxyBin }}
+                {{- if $dataplane.validateConfig }}
                 # validate_cmd: Use -dr to skip DNS resolution failures during config validation
                 # This prevents config rejection when DNS is temporarily unavailable
-                validate_cmd: {{ include "haptic.haproxy.bin" . }} -dr -c -f %s
+                validate_cmd: {{ $haproxyBin }} -dr -c -f %s
                 {{- else }}
                 validate_cmd: /bin/true
                 {{- end }}
@@ -260,7 +262,7 @@ spec:
               exec {{ include "haptic.haproxy.dataplanebin" . }} -f /etc/haproxy/dataplaneapi.yaml
           ports:
             - name: dataplane
-              containerPort: {{ .Values.haproxy.ports.dataplane }}
+              containerPort: {{ $ports.dataplane }}
               protocol: TCP
           volumeMounts:
             - name: haproxy-runtime
@@ -280,22 +282,23 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
           resources:
-            {{- toYaml .Values.haproxy.dataplane.resources | nindent 12 }}
+            {{- toYaml $dataplane.resources | nindent 12 }}
 
-        {{- if include "haptic.spoaHub.enabled" . }}
+        {{- if $spoaHubEnabled }}
+        {{- $spoaHub := .Values.spoaHub }}
         # SPOA hub sidecar — bundles the haproxy-spoa-hub binary plus the
         # plugin .so files. Conditional on at least one plugin being
         # enabled. Communicates with HAProxy over /run/spoa/hub.sock.
         - name: spoa-hub
           image: {{ include "haptic.spoaHub.image" . }}
-          imagePullPolicy: {{ .Values.spoaHub.image.pullPolicy }}
+          imagePullPolicy: {{ $spoaHub.image.pullPolicy }}
           args:
             - --config
             - /etc/haproxy-spoa-hub/config.toml
           securityContext:
-            {{- toYaml .Values.spoaHub.securityContext | nindent 12 }}
+            {{- toYaml $spoaHub.securityContext | nindent 12 }}
           resources:
-            {{- toYaml .Values.spoaHub.resources | nindent 12 }}
+            {{- toYaml $spoaHub.resources | nindent 12 }}
           volumeMounts:
             - name: spoa-config
               mountPath: /etc/haproxy-spoa-hub/config.toml
@@ -303,21 +306,21 @@ spec:
               readOnly: true
             - name: spoa-socket
               mountPath: /run/spoa
-            {{- with .Values.spoaHub.extraVolumeMounts }}
+            {{- with $spoaHub.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
         {{- end }}
 
-        {{- with .Values.haproxy.sidecars }}
+        {{- with $haproxy.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
       volumes:
         - name: config
           configMap:
-            name: {{ include "haptic.fullname" . }}-haproxy-config
+            name: {{ $haproxyFullname }}-config
         - name: haproxy-runtime
           emptyDir: {}
-        {{- if .Values.haproxy.shmStats.enabled }}
+        {{- if $haproxy.shmStats.enabled }}
         - name: devshm
           emptyDir:
             medium: Memory
@@ -327,14 +330,14 @@ spec:
           emptyDir: {}
         - name: dataplane-tmp
           emptyDir: {}
-        {{- if include "haptic.spoaHub.enabled" . }}
+        {{- if $spoaHubEnabled }}
         - name: spoa-config
           configMap:
-            name: {{ include "haptic.fullname" . }}-spoa-hub
+            name: {{ include "haptic.spoaHub.configMapName" . }}
         - name: spoa-socket
           emptyDir: {}
         {{- end }}
-        {{- with .Values.haproxy.extraVolumes }}
+        {{- with $haproxy.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
 {{- end }}

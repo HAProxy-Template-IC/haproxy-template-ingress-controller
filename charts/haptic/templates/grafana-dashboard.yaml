@@ -1,26 +1,27 @@
-{{- if .Values.monitoring.grafanaDashboard.enabled }}
+{{- $gd := .Values.monitoring.grafanaDashboard }}
+{{- if $gd.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "haptic.fullname" . }}-grafana-dashboard
-  namespace: {{ .Values.monitoring.grafanaDashboard.namespace | default .Release.Namespace }}
+  namespace: {{ $gd.namespace | default .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- with .Values.monitoring.grafanaDashboard.labels }}
+    {{- with $gd.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   annotations:
     {{- with .Values.commonAnnotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- with .Values.monitoring.grafanaDashboard.annotations }}
+    {{- with $gd.annotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 data:
-  {{- if .Values.monitoring.grafanaDashboard.useBuiltIn }}
+  {{- if $gd.useBuiltIn }}
   haptic.json: |
     {
       "annotations": {
@@ -1575,6 +1576,6 @@ data:
     }
   {{- else }}
   haptic.json: |
-{{ .Values.monitoring.grafanaDashboard.customDashboard | toJson | indent 4 }}
+{{ $gd.customDashboard | toJson | indent 4 }}
   {{- end }}
 {{- end }}

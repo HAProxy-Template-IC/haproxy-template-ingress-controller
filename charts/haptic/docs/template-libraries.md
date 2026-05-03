@@ -15,7 +15,7 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 
 | Library | Default | Purpose |
 |---------|---------|---------|
-| [Base](libraries/base.md) | Always enabled | Core HAProxy configuration, extension point definitions |
+| [Base](libraries/base.md) | Enabled | Core HAProxy configuration, extension point definitions; disabling drops the `haproxyConfig` the other libraries plug into |
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
@@ -23,6 +23,7 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
+| spoa-hub | Auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
 ## Enabling and Disabling Libraries
 
@@ -32,7 +33,7 @@ Configure libraries in your values.yaml:
 controller:
   templateLibraries:
     base:
-      enabled: true   # Always enabled (cannot be disabled)
+      enabled: true   # Default — disabling drops the haproxyConfig the other libraries plug into
     ssl:
       enabled: true   # TLS/HTTPS support
     ingress:
@@ -64,7 +65,7 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 7. haproxy-ingress.yaml
 8. nginx-ingress.yaml
 9. spoa-hub.yaml         (auto-loaded when SPOA hub sidecar is enabled)
-10. values.yaml          (highest priority - your configuration)
+10. controller.config.*  (highest priority - your values.yaml overrides for templateSnippets / maps / files / sslCertificates / haproxyConfig / validationTests / watchedResources)
 ```
 
 Your custom configuration in `controller.config` always takes precedence.
@@ -237,30 +238,51 @@ controller:
 
 ## Library Architecture
 
+Each library sits at a hierarchy level that determines which other
+libraries it may reference and the order it merges in. Lower levels merge
+first; higher levels override. `controller.config` from values.yaml is
+applied last and overrides anything below it.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                            values.yaml                               │
-│                        (highest priority)                            │
+│                          values.yaml                                 │
+│                       (highest priority)                             │
 └──────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
+                                   ▲
 ┌──────────────────────────────────────────────────────────────────────┐
-│                    Optional Libraries (if enabled)                    │
-│       nginx-ingress.yaml  haproxy-ingress.yaml  gateway.yaml          │
+│ Level 3 — Vendor annotation libraries                                │
+│   haproxytech.yaml      haproxy-ingress.yaml      nginx-ingress.yaml │
+│   (each compat-layer for one ingress controller's annotation set)    │
 └──────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
+                                   ▲
 ┌──────────────────────────────────────────────────────────────────────┐
-│                         Core Libraries                               │
-│          haproxytech.yaml    ingress.yaml    ssl.yaml                │
+│ Level 2.5 — Annotation-compat scaffold                               │
+│   annotation-compat.yaml  (shared macros for the libraries above)    │
 └──────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
+                                   ▲
 ┌──────────────────────────────────────────────────────────────────────┐
-│                           base.yaml                                  │
-│            (defines extension points, lowest priority)               │
+│ Level 2 — Resource libraries                                         │
+│   ingress.yaml                          gateway.yaml                 │
+│   (Kubernetes Ingress)                  (Gateway API HTTPRoute /     │
+│                                          GRPCRoute)                  │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▲
+┌──────────────────────────────────────────────────────────────────────┐
+│ Level 1 — SSL/TLS infrastructure                                     │
+│   ssl.yaml                                                           │
+└──────────────────────────────────────────────────────────────────────┘
+                                   ▲
+┌──────────────────────────────────────────────────────────────────────┐
+│ Level 0 — Resource-agnostic core                                     │
+│   base.yaml  (defines extension points; lowest priority)             │
 └──────────────────────────────────────────────────────────────────────┘
 ```
+
+The `spoa-hub.yaml` library wires the SPOA hub sidecar into HAProxy
+and is auto-loaded whenever the sidecar is enabled (by an explicit
+`spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` truthy).
+It plugs into the same extension points as the level-3 libraries
+above.
 
 ## See Also
 
@@ -268,6 +290,7 @@ controller:
 - [SSL Library](libraries/ssl.md) - TLS certificate management and HTTPS frontend
 - [Ingress Library](libraries/ingress.md) - Kubernetes Ingress resource support
 - [Gateway API Library](libraries/gateway.md) - HTTPRoute and GRPCRoute support
+- [annotation-compat scaffold](libraries/annotation-compat.md) - Shared macros consumed by the vendor annotation libraries below (level 2.5)
 - [haproxytech library](libraries/haproxytech.md) - `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat)
 - [haproxy-ingress library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat)
 - [nginx-ingress library](libraries/nginx-ingress.md) - `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat)

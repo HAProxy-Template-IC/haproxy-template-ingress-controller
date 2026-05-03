@@ -2,10 +2,11 @@
 suite: haproxy deployment
 templates:
   - haproxy-deployment.yaml
+set:
+  # Default: HAProxy enabled. The single disabled-render test overrides.
+  haproxy.enabled: true
 tests:
   - it: should render deployment when haproxy enabled
-    set:
-      haproxy.enabled: true
     asserts:
       - isKind:
           of: Deployment
@@ -18,24 +19,18 @@ tests:
           count: 0
 
   - it: should have haproxy container
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.containers[0].name
           value: haproxy
 
   - it: should have dataplane container
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.containers[1].name
           value: dataplane
 
   - it: should configure readiness probe for haproxy
-    set:
-      haproxy.enabled: true
     asserts:
       - isNotNull:
           path: spec.template.spec.containers[0].readinessProbe
@@ -44,8 +39,6 @@ tests:
           value: /ready
 
   - it: should configure liveness probe for haproxy
-    set:
-      haproxy.enabled: true
     asserts:
       - isNotNull:
           path: spec.template.spec.containers[0].livenessProbe
@@ -54,8 +47,6 @@ tests:
           value: /healthz
 
   - it: should expose http port
-    set:
-      haproxy.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -65,8 +56,6 @@ tests:
             protocol: TCP
 
   - it: should expose https port
-    set:
-      haproxy.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -76,8 +65,6 @@ tests:
             protocol: TCP
 
   - it: should expose stats port
-    set:
-      haproxy.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -88,7 +75,6 @@ tests:
 
   - it: should set replica count from values
     set:
-      haproxy.enabled: true
       haproxy.replicaCount: 3
     asserts:
       - equal:
@@ -96,32 +82,24 @@ tests:
           value: 3
 
   - it: should run as non-root user
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.securityContext.runAsNonRoot
           value: true
 
   - it: should drop all capabilities for haproxy container
-    set:
-      haproxy.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[0].securityContext.capabilities.drop
           content: ALL
 
   - it: should drop all capabilities for dataplane container
-    set:
-      haproxy.enabled: true
     asserts:
       - contains:
           path: spec.template.spec.containers[1].securityContext.capabilities.drop
           content: ALL
 
   - it: should include loadbalancer component label
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.template.metadata.labels["app.kubernetes.io/component"]
@@ -129,7 +107,6 @@ tests:
 
   - it: should set priorityClassName when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.priorityClassName: system-cluster-critical
     asserts:
       - equal:
@@ -138,7 +115,6 @@ tests:
 
   - it: should set resources for haproxy container
     set:
-      haproxy.enabled: true
       haproxy.resources:
         limits:
           cpu: 1000m
@@ -157,7 +133,6 @@ tests:
   # Extra volumes and volume mounts
   - it: should include extra volumes when specified
     set:
-      haproxy.enabled: true
       haproxy.extraVolumes:
         - name: custom-config
           configMap:
@@ -172,7 +147,6 @@ tests:
 
   - it: should include extra volume mounts when specified
     set:
-      haproxy.enabled: true
       haproxy.extraVolumeMounts:
         - name: custom-config
           mountPath: /etc/custom
@@ -188,7 +162,6 @@ tests:
   # Init containers and sidecars
   - it: should include init containers when specified
     set:
-      haproxy.enabled: true
       haproxy.initContainers:
         - name: init-config
           image: busybox:1.28
@@ -203,7 +176,6 @@ tests:
 
   - it: should include sidecars when specified
     set:
-      haproxy.enabled: true
       haproxy.sidecars:
         - name: log-collector
           image: fluent/fluent-bit:latest
@@ -217,7 +189,6 @@ tests:
   # Lifecycle hooks
   - it: should include lifecycle hooks when specified
     set:
-      haproxy.enabled: true
       haproxy.lifecycle:
         preStop:
           exec:
@@ -229,8 +200,6 @@ tests:
 
   # Termination grace period
   - it: should set default termination grace period
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
@@ -238,7 +207,6 @@ tests:
 
   - it: should set custom termination grace period
     set:
-      haproxy.enabled: true
       haproxy.podSpec.terminationGracePeriodSeconds: 60
     asserts:
       - equal:
@@ -247,8 +215,6 @@ tests:
 
   # Update strategy
   - it: should set default update strategy
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.strategy.type
@@ -262,7 +228,6 @@ tests:
 
   - it: should set custom update strategy
     set:
-      haproxy.enabled: true
       haproxy.updateStrategy:
         type: Recreate
     asserts:
@@ -272,8 +237,6 @@ tests:
 
   # Min ready seconds and revision history
   - it: should set default minReadySeconds
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.minReadySeconds
@@ -281,7 +244,6 @@ tests:
 
   - it: should set custom minReadySeconds
     set:
-      haproxy.enabled: true
       haproxy.minReadySeconds: 10
     asserts:
       - equal:
@@ -289,8 +251,6 @@ tests:
           value: 10
 
   - it: should set default revisionHistoryLimit
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.revisionHistoryLimit
@@ -298,7 +258,6 @@ tests:
 
   - it: should set custom revisionHistoryLimit
     set:
-      haproxy.enabled: true
       haproxy.revisionHistoryLimit: 5
     asserts:
       - equal:
@@ -307,8 +266,6 @@ tests:
 
   # DNS configuration
   - it: should set default dnsPolicy
-    set:
-      haproxy.enabled: true
     asserts:
       - equal:
           path: spec.template.spec.dnsPolicy
@@ -316,7 +273,6 @@ tests:
 
   - it: should set custom dnsPolicy
     set:
-      haproxy.enabled: true
       haproxy.podSpec.dnsPolicy: None
     asserts:
       - equal:
@@ -325,7 +281,6 @@ tests:
 
   - it: should set dnsConfig when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.dnsConfig:
         nameservers:
           - 8.8.8.8
@@ -345,7 +300,6 @@ tests:
   # Host aliases
   - it: should set hostAliases when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.hostAliases:
         - ip: "127.0.0.1"
           hostnames:
@@ -360,15 +314,12 @@ tests:
 
   # Runtime class
   - it: should not set runtimeClassName by default
-    set:
-      haproxy.enabled: true
     asserts:
       - notExists:
           path: spec.template.spec.runtimeClassName
 
   - it: should set runtimeClassName when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.runtimeClassName: gvisor
     asserts:
       - equal:
@@ -378,7 +329,6 @@ tests:
   # Node selector
   - it: should set nodeSelector when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.nodeSelector:
         disktype: ssd
     asserts:
@@ -389,7 +339,6 @@ tests:
   # Tolerations
   - it: should set tolerations when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.tolerations:
         - key: node-role.kubernetes.io/master
           effect: NoSchedule
@@ -403,7 +352,6 @@ tests:
   # Affinity
   - it: should set affinity when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -420,7 +368,6 @@ tests:
   # Common labels and annotations
   - it: should include common labels
     set:
-      haproxy.enabled: true
       commonLabels:
         environment: production
         team: platform
@@ -434,7 +381,6 @@ tests:
 
   - it: should include common annotations
     set:
-      haproxy.enabled: true
       commonAnnotations:
         config.kubernetes.io/managed-by: helm
     asserts:
@@ -445,7 +391,6 @@ tests:
   # Topology spread constraints
   - it: should set topologySpreadConstraints when specified
     set:
-      haproxy.enabled: true
       haproxy.podSpec.topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone

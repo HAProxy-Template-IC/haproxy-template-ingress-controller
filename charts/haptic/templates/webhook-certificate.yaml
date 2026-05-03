@@ -1,29 +1,32 @@
-{{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
+{{- $cm := .Values.webhook.certManager }}
+{{- if and .Values.webhook.enabled $cm.enabled (.Capabilities.APIVersions.Has "cert-manager.io/v1") }}
+{{- $fullname := include "haptic.fullname" . }}
+{{- $svcName := include "haptic.webhook.serviceName" . }}
+{{- $secretName := include "haptic.webhook.secretName" . }}
+{{- $ns := .Release.Namespace }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "haptic.webhook.secretName" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ $secretName }}
+  namespace: {{ $ns }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
-  secretName: {{ include "haptic.webhook.secretName" . }}
-  duration: {{ .Values.webhook.certManager.duration | default "8760h" }}
-  renewBefore: {{ .Values.webhook.certManager.renewBefore | default "720h" }}
+  secretName: {{ $secretName }}
+  duration: {{ $cm.duration | default "8760h" }}
+  renewBefore: {{ $cm.renewBefore | default "720h" }}
   dnsNames:
-    - {{ include "haptic.fullname" . }}-webhook
-    - {{ include "haptic.fullname" . }}-webhook.{{ .Release.Namespace }}
-    - {{ include "haptic.fullname" . }}-webhook.{{ .Release.Namespace }}.svc
-    - {{ include "haptic.fullname" . }}-webhook.{{ .Release.Namespace }}.svc.cluster.local
+    - {{ $svcName }}
+    - {{ $svcName }}.{{ $ns }}
+    - {{ $svcName }}.{{ $ns }}.svc
+    - {{ $svcName }}.{{ $ns }}.svc.cluster.local
   issuerRef:
-    {{- if .Values.webhook.certManager.createIssuer }}
-    name: {{ include "haptic.fullname" . }}-webhook-selfsigned
+    {{- if $cm.createIssuer }}
+    name: {{ $fullname }}-webhook-selfsigned
     kind: Issuer
     {{- else }}
-    {{- if not .Values.webhook.certManager.issuerRef.name }}
-    {{- fail "webhook.certManager.issuerRef.name is required when createIssuer is false" }}
-    {{- end }}
-    {{- toYaml .Values.webhook.certManager.issuerRef | nindent 4 }}
+    {{- $_ := required "webhook.certManager.issuerRef.name is required when createIssuer is false" $cm.issuerRef.name }}
+    {{- toYaml $cm.issuerRef | nindent 4 }}
     {{- end }}
   usages:
     - digital signature

@@ -1,3 +1,5 @@
+{{- $svc := .Values.service }}
+{{- $ports := .Values.controller.ports }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,46 +7,44 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "haptic.labels" . | nindent 4 }}
-  {{- with .Values.service.annotations }}
+  {{- with $svc.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.service.type }}
-  {{- if .Values.service.clusterIP }}
-  clusterIP: {{ .Values.service.clusterIP }}
+  type: {{ $svc.type }}
+  {{- with $svc.clusterIP }}
+  clusterIP: {{ . }}
   {{- end }}
-  {{- if .Values.service.loadBalancerIP }}
-  loadBalancerIP: {{ .Values.service.loadBalancerIP }}
+  {{- with $svc.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
   {{- end }}
-  {{- if .Values.service.loadBalancerSourceRanges }}
+  {{- with $svc.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
-    {{- toYaml .Values.service.loadBalancerSourceRanges | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
-  {{- if .Values.service.loadBalancerClass }}
-  loadBalancerClass: {{ .Values.service.loadBalancerClass }}
+  {{- with $svc.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
   {{- end }}
-  {{- if .Values.service.externalTrafficPolicy }}
-  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- with $svc.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
   {{- end }}
-  {{- if .Values.service.internalTrafficPolicy }}
-  internalTrafficPolicy: {{ .Values.service.internalTrafficPolicy }}
+  {{- with $svc.internalTrafficPolicy }}
+  internalTrafficPolicy: {{ . }}
   {{- end }}
-  {{- if .Values.service.sessionAffinity }}
-  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  {{- with $svc.sessionAffinity }}
+  sessionAffinity: {{ . }}
   {{- end }}
-  {{- if .Values.service.sessionAffinityConfig }}
+  {{- with $svc.sessionAffinityConfig }}
   sessionAffinityConfig:
-    {{- toYaml .Values.service.sessionAffinityConfig | nindent 4 }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   ports:
-    - port: {{ .Values.controller.ports.healthz }}
-      targetPort: healthz
+    {{- range $name := list "healthz" "metrics" }}
+    - port: {{ index $ports $name }}
+      targetPort: {{ $name }}
       protocol: TCP
-      name: healthz
-    - port: {{ .Values.controller.ports.metrics }}
-      targetPort: metrics
-      protocol: TCP
-      name: metrics
+      name: {{ $name }}
+    {{- end }}
   selector:
     {{- include "haptic.selectorLabels" . | nindent 4 }}

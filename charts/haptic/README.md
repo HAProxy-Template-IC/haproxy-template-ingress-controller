@@ -60,15 +60,17 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 
 | Library | Default | Covers |
 |---------|---------|--------|
-| `base` | always on | Core `haproxyConfig`, extension points (`render_glob` patterns) — must stay resource-agnostic |
+| `base` | on | Core `haproxyConfig`, extension points (`render_glob` patterns) — must stay resource-agnostic; disabling drops the haproxyConfig the other libraries plug into |
 | `ssl` | on | Terminate TLS, crt-list management, SSL passthrough |
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` (requires Gateway CRDs installed) |
+| `annotationCompat` | on | Shared scaffold consumed by the vendor annotation libraries below (level 2.5) |
 | `haproxytech` | on | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
 | `haproxy-ingress` | on | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |
+| `spoaHub` | auto | HAProxy-side wiring for the SPOA hub sidecar (auto-loaded when `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` is truthy) |
 
-Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [`docs/template-libraries.md`](./docs/template-libraries.md) and [`CLAUDE.md`](../CLAUDE.md) for the library-merging design, extension points, and snippet priority ranges.
+Each library contributes entries under `watchedResources`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `haproxyConfig`, and `validationTests` — user-provided values in `controller.config` override library defaults. See [`docs/template-libraries.md`](./docs/template-libraries.md) and [`CLAUDE.md`](../CLAUDE.md) for the library-merging design, extension points, and snippet priority ranges.
 
 ## Documentation
 

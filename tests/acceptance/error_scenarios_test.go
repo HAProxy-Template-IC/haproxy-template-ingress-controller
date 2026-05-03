@@ -1119,6 +1119,13 @@ func buildWatchReconnectionFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("New pod completed reconciliation")
 
+			// Wait for the debug service to re-register the new pod as an endpoint
+			// before reusing the existing debugClient (Pod-Ready precedes
+			// Endpoints-Ready by a small but observable window, and the
+			// API-server proxy returns 404 if the Service has no Ready endpoints).
+			err = WaitForServiceEndpoints(ctx, client, namespace, ControllerDeploymentName+"-debug", 30*time.Second)
+			require.NoError(t, err)
+
 			// Verify new pod processed the update - reuse debugClient via NodePort
 			_, err = debugClient.WaitForConfig(ctx, 60*time.Second)
 			require.NoError(t, err)

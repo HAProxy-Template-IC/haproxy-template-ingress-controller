@@ -2,10 +2,22 @@
 suite: haproxy keda scaledobject
 templates:
   - haproxy-scaledobject.yaml
+set:
+  # Defaults: HAProxy + KEDA enabled with a single Prometheus trigger so the
+  # template renders. Tests that need a different setup override per-case;
+  # tests that only check rendering presence/absence override the enable
+  # flags.
+  haproxy.enabled: true
+  haproxy.keda.enabled: true
+  haproxy.keda.triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        threshold: "100"
+        query: sum(rate(haproxy_server_connections_total[1m]))
 tests:
   - it: should not render when keda is disabled
     set:
-      haproxy.enabled: true
       haproxy.keda.enabled: false
     asserts:
       - hasDocuments:
@@ -14,21 +26,11 @@ tests:
   - it: should not render when haproxy is disabled
     set:
       haproxy.enabled: false
-      haproxy.keda.enabled: true
     asserts:
       - hasDocuments:
           count: 0
 
   - it: should render when both haproxy and keda are enabled
-    set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - hasDocuments:
           count: 1
@@ -36,29 +38,11 @@ tests:
           of: ScaledObject
 
   - it: should set correct apiVersion
-    set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - isAPIVersion:
           of: keda.sh/v1alpha1
 
   - it: should reference haproxy deployment
-    set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: spec.scaleTargetRef.kind
@@ -68,15 +52,6 @@ tests:
           pattern: ".*-haproxy$"
 
   - it: should set default scaling parameters
-    set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: spec.pollingInterval
@@ -93,18 +68,10 @@ tests:
 
   - it: should set custom scaling parameters
     set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
       haproxy.keda.pollingInterval: 15
       haproxy.keda.cooldownPeriod: 600
       haproxy.keda.minReplicaCount: 3
       haproxy.keda.maxReplicaCount: 20
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: spec.pollingInterval
@@ -121,17 +88,9 @@ tests:
 
   - it: should set fallback configuration
     set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
       haproxy.keda.fallback:
         failureThreshold: 5
         replicas: 4
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: spec.fallback.failureThreshold
@@ -141,15 +100,6 @@ tests:
           value: 4
 
   - it: should include triggers
-    set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - contains:
           path: spec.triggers
@@ -161,15 +111,6 @@ tests:
               query: sum(rate(haproxy_server_connections_total[1m]))
 
   - it: should include loadbalancer component label
-    set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: metadata.labels["app.kubernetes.io/component"]
@@ -177,16 +118,8 @@ tests:
 
   - it: should include common labels when specified
     set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
       commonLabels:
         environment: production
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: metadata.labels.environment
@@ -194,16 +127,8 @@ tests:
 
   - it: should include common annotations when specified
     set:
-      haproxy.enabled: true
-      haproxy.keda.enabled: true
       commonAnnotations:
         team: platform
-      haproxy.keda.triggers:
-        - type: prometheus
-          metadata:
-            serverAddress: http://prometheus:9090
-            threshold: "100"
-            query: sum(rate(haproxy_server_connections_total[1m]))
     asserts:
       - equal:
           path: metadata.annotations.team

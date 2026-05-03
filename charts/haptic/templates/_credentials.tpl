@@ -1,6 +1,19 @@
 {{/*
-Dataplane API credentials.
+Dataplane API credentials helpers: Secret name, username, password
+(with upgrade-stable lookup fallback), and the rolling-update checksum.
 */}}
+
+{{/*
+Name of the Secret that holds the Dataplane API credentials. Referenced
+by templates/secret.yaml (the resource itself), templates/deployment.yaml
+and templates/haproxy-deployment.yaml (env vars on the controller and
+HAProxy pods), templates/haproxytemplateconfig.yaml (the
+credentialsSecretRef on the rendered HAProxyTemplateConfig), and
+haptic.dataplane.password below (lookup for upgrade-stable passwords).
+*/}}
+{{- define "haptic.dataplane.credentialsSecretName" -}}
+{{- printf "%s-credentials" (include "haptic.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end -}}
 
 {{/*
 Dataplane API username
@@ -19,16 +32,24 @@ Uses lookup to preserve password across helm upgrades. When lookup is unavailabl
 release name and namespace to prevent constant drift detection.
 */}}
 {{- define "haptic.dataplane.password" -}}
-{{- if .Values.credentials.dataplane.password -}}
-{{- .Values.credentials.dataplane.password -}}
+{{- with .Values.credentials.dataplane.password -}}
+{{- . -}}
 {{- else -}}
-{{- $secretName := printf "%s-credentials" (include "haptic.fullname" .) -}}
-{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $secretName -}}
-{{- if and $existingSecret $existingSecret.data (index $existingSecret.data "dataplane_password") -}}
-{{- index $existingSecret.data "dataplane_password" | b64dec -}}
+{{- with dig "data" "dataplane_password" "" (lookup "v1" "Secret" .Release.Namespace (include "haptic.dataplane.credentialsSecretName" .)) -}}
+{{- . | b64dec -}}
 {{- else -}}
 {{- /* Deterministic password for GitOps tools where lookup returns empty */ -}}
 {{- printf "%s-%s-haptic-dataplane-api" .Release.Name .Release.Namespace | sha256sum | trunc 32 -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+SHA256 checksum of the dataplane credentials, suitable for the
+`checksum/secret` pod-template annotation. Both the controller and
+HAProxy Deployments need to roll when the credentials change, so they
+share this computation.
+*/}}
+{{- define "haptic.dataplane.credentialsChecksum" -}}
+{{- printf "%s-%s" (include "haptic.dataplane.username" .) (include "haptic.dataplane.password" .) | sha256sum -}}
 {{- end -}}

@@ -1,4 +1,6 @@
-{{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $pr := .Values.monitoring.prometheusRule }}
+{{- if $pr.enabled }}
+{{- $defaults := $pr.defaultRules }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -9,7 +11,7 @@ metadata:
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
-    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- with $pr.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- with .Values.commonAnnotations }}
@@ -20,10 +22,10 @@ spec:
   groups:
     - name: haptic
       rules:
-        {{- if .Values.monitoring.prometheusRule.rules }}
-        {{- toYaml .Values.monitoring.prometheusRule.rules | nindent 8 }}
-        {{- else if .Values.monitoring.prometheusRule.defaultRules.enabled }}
-        {{- if .Values.monitoring.prometheusRule.defaultRules.reconciliationErrors }}
+        {{- if $pr.rules }}
+        {{- toYaml $pr.rules | nindent 8 }}
+        {{- else if $defaults.enabled }}
+        {{- if $defaults.reconciliationErrors }}
         - alert: HAProxyControllerReconciliationErrors
           expr: rate(haptic_reconciliation_errors_total[5m]) > 0
           for: 5m
@@ -33,7 +35,7 @@ spec:
             summary: "HAProxy controller has reconciliation errors"
             description: "Controller {{ `{{ $labels.pod }}` }} has {{ `{{ $value | humanize }}` }} reconciliation errors/sec"
         {{- end }}
-        {{- if .Values.monitoring.prometheusRule.defaultRules.deploymentFailures }}
+        {{- if $defaults.deploymentFailures }}
         - alert: HAProxyControllerDeploymentFailures
           expr: rate(haptic_deployment_errors_total[5m]) > 0
           for: 2m
@@ -43,7 +45,7 @@ spec:
             summary: "HAProxy configuration deployment failures"
             description: "Controller {{ `{{ $labels.pod }}` }} is failing to deploy configs to HAProxy"
         {{- end }}
-        {{- if .Values.monitoring.prometheusRule.defaultRules.highQueueDepth }}
+        {{- if $defaults.highQueueDepth }}
         - alert: HAProxyControllerHighQueueDepth
           expr: haptic_reconciliation_queue_size > 100
           for: 5m
@@ -53,7 +55,7 @@ spec:
             summary: "HAProxy controller reconciliation queue is backing up"
             description: "Queue depth is {{ `{{ $value }}` }} items, indicating processing delays"
         {{- end }}
-        {{- if .Values.monitoring.prometheusRule.defaultRules.leaderElectionLost }}
+        {{- if $defaults.leaderElectionLost }}
         - alert: HAProxyControllerNoLeader
           expr: sum(haptic_leader_election_status) == 0
           for: 1m
