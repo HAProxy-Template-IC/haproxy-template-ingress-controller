@@ -145,21 +145,34 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "extraContext": map from config,
 //	}
 func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatchCollector) {
-	// Create resources map with typed ResourceStore values
+	// Create resources map with typed ResourceStore values. Each wrapper
+	// gets the IndexBy that the watcher used to build the underlying
+	// store; the wrapper uses it to build its per-render snapshot index
+	// so List/Fetch/GetSingle on one wrapper instance all observe the
+	// same store state (see StoreWrapper docs).
 	resources := make(map[string]templating.ResourceStore)
 	if b.stores != nil {
 		for resourceTypeName, store := range b.stores {
 			b.logger.Debug("wrapping store for rendering context",
 				"resource_type", resourceTypeName)
+			var indexBy []string
+			if wr, ok := b.config.WatchedResources[resourceTypeName]; ok {
+				indexBy = wr.IndexBy
+			}
 			resources[resourceTypeName] = &StoreWrapper{
 				Store:        store,
 				ResourceType: resourceTypeName,
 				Logger:       b.logger,
+				IndexBy:      indexBy,
 			}
 		}
 	}
 
-	// Create controller namespace with typed ResourceStore values
+	// Create controller namespace with typed ResourceStore values. The
+	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent
+	// with a fixed IndexBy of ["metadata.namespace", "metadata.name"]
+	// (see pkg/controller/resourcewatcher/watcher.go) — mirror that here
+	// so the wrapper's snapshot index agrees with the underlying store.
 	controller := make(map[string]templating.ResourceStore)
 	if b.haproxyPodStore != nil {
 		b.logger.Debug("wrapping HAProxy pods store for rendering context")
@@ -167,6 +180,7 @@ func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatc
 			Store:        b.haproxyPodStore,
 			ResourceType: names.HAProxyPodsResourceType,
 			Logger:       b.logger,
+			IndexBy:      []string{"metadata.namespace", "metadata.name"},
 		}
 	}
 

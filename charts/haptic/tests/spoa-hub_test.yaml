@@ -22,7 +22,7 @@ tests:
       - notContains:
           path: spec.template.spec.volumes
           content:
-            name: spoa-config
+            name: spoa-hub-bootstrap
           any: true
 
   - it: should render no spoa-hub ConfigMap with default values
@@ -44,7 +44,7 @@ tests:
       - contains:
           path: spec.template.spec.volumes
           content:
-            name: spoa-config
+            name: spoa-hub-bootstrap
           any: true
       - contains:
           path: spec.template.spec.volumes
@@ -62,6 +62,101 @@ tests:
           content:
             name: spoa-socket
             mountPath: /run/spoa
+          any: true
+
+  # ADR-0007 Step 2 (MR2): the bootstrap-copy from the spoa-hub
+  # configmap into /etc/haproxy/general/spoa-hub-config.toml runs in
+  # an initContainer rather than the haproxy main container's shell
+  # init. K8s guarantees init containers complete before any regular
+  # container starts, so the spoa-hub sidecar can't race the copy and
+  # crash on a missing config file. HAPTIC's controller later
+  # overwrites the file via the dataplane API; the hub's file-watch
+  # picks up the change without a restart.
+  - it: should add the bootstrap-copy initContainer when spoa-hub is enabled
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.initContainers
+          content:
+            name: spoa-hub-bootstrap-copy
+          any: true
+      - contains:
+          path: spec.template.spec.initContainers[?(@.name == "spoa-hub-bootstrap-copy")].volumeMounts
+          content:
+            name: haproxy-runtime
+            mountPath: /etc/haproxy
+          any: true
+      - contains:
+          path: spec.template.spec.initContainers[?(@.name == "spoa-hub-bootstrap-copy")].volumeMounts
+          content:
+            name: spoa-hub-bootstrap
+            mountPath: /etc/spoa-hub-bootstrap
+            readOnly: true
+          any: true
+      - matchRegex:
+          path: spec.template.spec.initContainers[?(@.name == "spoa-hub-bootstrap-copy")].args[0]
+          pattern: 'cp /etc/spoa-hub-bootstrap/config\.toml /etc/haproxy/general/spoa-hub-config\.toml'
+
+  - it: should NOT add the bootstrap-copy initContainer when spoa-hub is disabled
+    template: haproxy-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.initContainers
+          content:
+            name: spoa-hub-bootstrap-copy
+          any: true
+
+  - it: haproxy main container does NOT carry the bootstrap copy logic
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      # The bootstrap copy lives in the initContainer, not the
+      # haproxy container's shell init. Keep this contract — moving
+      # it back into the main container's args would re-introduce the
+      # startup race Gitar caught on the first round of MR2.
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].args[0]
+          pattern: 'cp /etc/spoa-hub-bootstrap/config\.toml'
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: spoa-hub-bootstrap
+          any: true
+
+  - it: should mount haproxy-runtime/general into the spoa-hub container
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
+          content:
+            name: haproxy-runtime
+            subPath: general
+            mountPath: /var/run/spoa-hub-runtime
+            readOnly: true
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
+          content:
+            name: spoa-hub-bootstrap
+          any: true
+
+  - it: should pass --config pointing at the shared volume to the spoa-hub binary
+    template: haproxy-deployment.yaml
+    set:
+      spoaHub.plugins.fingerprinting.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].args
+          content: --config
+          any: true
+      - contains:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].args
+          content: /var/run/spoa-hub-runtime/spoa-hub-config.toml
           any: true
 
   - it: should render the spoa-hub ConfigMap when a plugin is enabled

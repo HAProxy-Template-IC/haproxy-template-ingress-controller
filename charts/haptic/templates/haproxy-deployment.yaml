@@ -56,9 +56,43 @@ spec:
       {{- if $podSpec.shareProcessNamespace }}
       shareProcessNamespace: true
       {{- end }}
-      {{- with $haproxy.initContainers }}
+      {{- if or $haproxy.initContainers $spoaHubEnabled }}
       initContainers:
+        {{- if $spoaHubEnabled }}
+        # Bootstrap copy for the spoa-hub config. Kubernetes guarantees
+        # init containers run to completion before regular containers
+        # start, so by the time the haproxy + spoa-hub containers come
+        # up, /etc/haproxy/general/spoa-hub-config.toml exists. Without
+        # this ordering the spoa-hub sidecar can race the haproxy
+        # container's init shell and crash on a missing config file —
+        # CrashLoopBackOff resolves on retry once the cp lands, but
+        # produces noisy startup events. HAPTIC's controller will
+        # later overwrite this file via the dataplane API; the hub's
+        # file-watch detects the change and gracefully reloads.
+        - name: spoa-hub-bootstrap-copy
+          image: {{ $haproxyImage }}
+          imagePullPolicy: {{ $haproxy.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            runAsNonRoot: true
+            runAsUser: {{ $haproxyUid }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              mkdir -p /etc/haproxy/general
+              cp /etc/spoa-hub-bootstrap/config.toml /etc/haproxy/general/spoa-hub-config.toml
+          volumeMounts:
+            - name: haproxy-runtime
+              mountPath: /etc/haproxy
+            - name: spoa-hub-bootstrap
+              mountPath: /etc/spoa-hub-bootstrap
+              readOnly: true
+        {{- end }}
+        {{- with $haproxy.initContainers }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
       securityContext:
         runAsNonRoot: true
@@ -293,16 +327,33 @@ spec:
           image: {{ include "haptic.spoaHub.image" . }}
           imagePullPolicy: {{ $spoaHub.image.pullPolicy }}
           args:
+            # Hub config lives in HAProxy's general-storage dir so the
+            # dataplane API can write to it. Mounted into this container
+            # via subPath at /var/run/spoa-hub-runtime/ — NOT at
+            # /etc/haproxy-spoa-hub/, because that path holds the
+            # bundled plugins (.so files) baked into the image, and
+            # mounting an emptyDir over it would hide them. The hub
+            # binary's file-watch (introduced in haproxy-spoa-hub
+            # v0.5.x via the file-watch-and-reload-metrics MR) attaches
+            # to the parent of this --config path, so HAPTIC overwriting
+            # the file via the dataplane API triggers a graceful reload
+            # without needing a SIGHUP. See docs/adr/0007 for the
+            # full architecture.
             - --config
-            - /etc/haproxy-spoa-hub/config.toml
+            - /var/run/spoa-hub-runtime/spoa-hub-config.toml
           securityContext:
             {{- toYaml $spoaHub.securityContext | nindent 12 }}
           resources:
             {{- toYaml $spoaHub.resources | nindent 12 }}
           volumeMounts:
-            - name: spoa-config
-              mountPath: /etc/haproxy-spoa-hub/config.toml
-              subPath: config.toml
+            # Shared with the haproxy + dataplane containers via the
+            # haproxy-runtime emptyDir; subPath: general scopes this
+            # mount to /etc/haproxy/general/ so the hub only sees
+            # general-storage files (its config and any future
+            # rendered plugin auxiliary files), not maps/certs/etc.
+            - name: haproxy-runtime
+              subPath: general
+              mountPath: /var/run/spoa-hub-runtime
               readOnly: true
             - name: spoa-socket
               mountPath: /run/spoa
@@ -331,7 +382,13 @@ spec:
         - name: dataplane-tmp
           emptyDir: {}
         {{- if $spoaHubEnabled }}
-        - name: spoa-config
+        # Helm-rendered bootstrap config for the spoa-hub. Mounted
+        # read-only into the haproxy container, which copies it into
+        # /etc/haproxy/general/spoa-hub-config.toml during init so the
+        # spoa-hub sidecar finds a valid config at its --config path
+        # on first start. HAPTIC's controller overwrites the
+        # destination via the dataplane API on first reconcile.
+        - name: spoa-hub-bootstrap
           configMap:
             name: {{ include "haptic.spoaHub.configMapName" . }}
         - name: spoa-socket
