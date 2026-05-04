@@ -33,6 +33,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
@@ -148,6 +149,7 @@ func createDryRunValidator(
 	storeManager *resourcestore.Manager,
 	capabilities dataplane.Capabilities,
 	httpStoreComponent *ctrlhttpstore.Component,
+	pluggableValidator *pluggablevalidator.Manager,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	// Check if there are any webhook rules - if not, no validator needed
@@ -285,6 +287,7 @@ func createDryRunValidator(
 		Capabilities:        capabilities,
 		Logger:              logger,
 		SkipValidationTests: true,
+		PluggableValidator:  pluggableValidator,
 	}), nil
 }
 

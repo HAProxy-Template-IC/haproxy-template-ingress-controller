@@ -282,7 +282,7 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	}
 
 	// Call validator with full context
-	allowed, reason, err := validator(ctx)
+	allowed, reason, warnings, err := validator(ctx)
 
 	if err != nil {
 		// Validation error (internal server error)
@@ -290,13 +290,18 @@ func (s *Server) validate(request *admissionv1.AdmissionRequest) *admissionv1.Ad
 	}
 
 	if !allowed {
-		// Validation failed
-		return deniedResponse(reason, http.StatusForbidden)
+		// Validation failed; warnings still surface so the user sees both
+		// the denial reason and any non-fatal diagnostics that ran before
+		// the denial path was taken.
+		resp := deniedResponse(reason, http.StatusForbidden)
+		resp.Warnings = warnings
+		return resp
 	}
 
 	// Validation passed
 	return &admissionv1.AdmissionResponse{
-		Allowed: true,
+		Allowed:  true,
+		Warnings: warnings,
 	}
 }
 

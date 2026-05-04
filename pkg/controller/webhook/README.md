@@ -39,7 +39,7 @@ if err := comp.Start(ctx); err != nil {
 | `Path` | URL path that handles `POST /…` AdmissionReview calls (default `/validate`) |
 | `CertPEM` / `KeyPEM` | PEM-encoded TLS material. Empty values cause `Start` to return an error. Rotate by restarting the component with new bytes — the server reads them once at `Start` time. |
 | `Rules` | `[]pkg/webhook.WebhookRule`, one per kind to register. Built from the CRD via `webhook.ExtractWebhookRules(cfg *config.Config)`. |
-| `DryRunValidator` | Interface with a single method: `ValidateDirect(ctx, gvk, namespace, name, object, operation) (allowed bool, reason string)`. Satisfied by `pkg/controller/dryrunvalidator.Component`. If `nil`, the component fails open (accepts everything) — useful only in tests. |
+| `DryRunValidator` | Interface with a single method: `ValidateDirect(ctx, gvk, namespace, name, object, operation) (allowed bool, reason string, warnings []string)`. Satisfied by `pkg/controller/dryrunvalidator.Component`. Warnings flow through to `AdmissionResponse.Warnings` on both allow and deny paths (e.g. soft diagnostics from pluggable validator sidecars). If `nil`, the component fails open (accepts everything) — useful only in tests. |
 
 `restMapper` is used to resolve `(APIGroup, APIVersion, Resource)` → `Kind` when wiring rules into `"group/version.Kind"` registration keys that the underlying `pkg/webhook.Server` expects. A live `meta.RESTMapper` from the controller's cluster connection is required.
 

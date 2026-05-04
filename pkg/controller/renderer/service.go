@@ -219,6 +219,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	auxFileCount := len(auxiliaryFiles.MapFiles) +
 		len(auxiliaryFiles.GeneralFiles) +
 		len(auxiliaryFiles.SSLCertificates) +
+		len(auxiliaryFiles.SSLCaFiles) +
 		len(auxiliaryFiles.CRTListFiles)
 
 	return &RenderResult{
