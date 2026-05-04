@@ -1314,9 +1314,11 @@ templateSnippets:
 
         Behavior:
           - When the annotation is present, registers its value as a
-            file at general/coraza/<namespace>-<name>.conf (absolute:
-            <GeneralStorageDir>/coraza/<namespace>-<name>.conf, e.g.
-            /etc/haproxy/general/coraza/<...>.conf at runtime).
+            file at general/coraza/<namespace>__<name>.conf (absolute:
+            <GeneralStorageDir>/coraza/<namespace>__<name>.conf, e.g.
+            /etc/haproxy/general/coraza/<...>.conf at runtime). The
+            "__" separator is collision-free because RFC 1123 K8s
+            names cannot contain underscore.
           - The file's only consumer is the Coraza pluggable-validator
             sidecar: its `validate()` override parses the snippet and
             surfaces line/col diagnostics through the admission webhook.
@@ -1329,7 +1331,7 @@ templateSnippets:
 
         Output:
           - One file per Ingress that carries the annotation, registered
-            via fileRegistry.Register("file", "coraza/<ns>-<name>.conf", snippet).
+            via fileRegistry.Register("file", "coraza/<ns>__<name>.conf", snippet).
 
         Wiring requirement:
           - The chart's spec.validators[] must include an entry whose
@@ -1339,12 +1341,22 @@ templateSnippets:
             the file is registered but never dispatched, and bad rules
             silently reach the running config.
       -#}
+      {#- Filename uses "__" between namespace and name, not "-" or "/".
+          RFC 1123 lower-case (which Kubernetes uses for namespace and name)
+          allows "[a-z0-9-]" only — underscore is illegal — so "__" is
+          guaranteed not to appear inside either field, and there's no
+          collision case where two distinct Ingresses map to the same
+          file. "-" would collide (ns="a-b" name="c" vs ns="a" name="b-c"
+          both → "a-b-c.conf"); "/" would force the validator glob into
+          a nested wildcard and the dataplane storage API into nested
+          paths, neither of which has precedent in the existing chart
+          file_registry usage. -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var snippet = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/modsecurity-snippet") | fallback("") | tostring() -%}
         {%- if snippet != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- var filename = "coraza/" + ns + "-" + name + ".conf" -%}
+          {%- var filename = "coraza/" + ns + "__" + name + ".conf" -%}
           {%- var _, regErr = fileRegistry.Register("file", filename, snippet) -%}
           {%- if regErr != nil -%}
             {{ fail("failed to register coraza snippet for ingress " + ns + "/" + name + ": " + tostring(regErr)) }}
