@@ -19,7 +19,31 @@ declare -A PLUGIN_LIBS=(
     [otel]="libotel_plugin.so"
     [sso-auth]="libhaproxy_spoa_hub_plugin_sso_auth.so"
 )
-PLUGINS=(coraza external-auth fingerprinting maxmind otel sso-auth)
+# Per-plugin minimal `[plugins.params]` body. The hub's plugin loader
+# runs each plugin's JSON-Schema validation before init(), so plugins
+# that declare required fields must be given enough config to pass.
+# The values below are placeholders chosen to satisfy schemas with
+# zero external-resource dependency:
+#  - sso-auth needs cookie_secret_1 (>=16 chars) + cookie_domain.
+#  - otel needs an `instrumentation` block (single name + scopes).
+#  - coraza / external-auth / fingerprinting tolerate empty params.
+# maxmind is excluded entirely because its schema requires at least
+# one `databases.<name>.path` pointing at a real MMDB file we can't
+# realistically synthesize in CI; smoke for that plugin happens via
+# the chart's test-integration / test-acceptance jobs which mount a
+# fixture MMDB into a real container.
+declare -A PLUGIN_PARAMS=(
+    [coraza]=""
+    [external-auth]=""
+    [fingerprinting]=""
+    [otel]='[plugins.params.instrumentation]
+name = "smoke-test"
+scopes = ["request"]'
+    [sso-auth]='[plugins.params]
+cookie_secret_1 = "0123456789abcdef0"
+cookie_domain = "smoke.example.com"'
+)
+PLUGINS=(coraza external-auth fingerprinting otel sso-auth)
 
 echo "==> Pulling ${IMAGE}"
 docker pull "${IMAGE}"
@@ -33,12 +57,21 @@ plugin_blocks=""
 for p in "${PLUGINS[@]}"; do
     name="${p//-/_}"
     lib="${PLUGIN_LIBS[${p}]}"
+    params="${PLUGIN_PARAMS[${p}]:-}"
     plugin_blocks="${plugin_blocks}
 [[plugins]]
 name = \"${name}\"
 library = \"${lib}\"
 messages = []
 "
+    # Only emit a params block when the plugin needs one; an empty
+    # `[plugins.params]` table is fine for schema-less plugins but the
+    # explicit body is what satisfies plugins with required fields.
+    if [ -n "${params}" ]; then
+        plugin_blocks="${plugin_blocks}
+${params}
+"
+    fi
 done
 
 cat > Dockerfile.smoke <<DOCKERFILE

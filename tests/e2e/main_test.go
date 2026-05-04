@@ -329,6 +329,22 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		"--set", "webhook.caBundle=" + caBundleB64,
 		"--timeout", DefaultHelmInstallTimeout.String(),
 	}
+	// dev-values.yaml hardcodes spoaHub.image.tag=main-latest. CI sets
+	// SPOA_TAG to ci-${CI_PIPELINE_ID} so the test loads the spoa-hub
+	// image freshly built by build-spoa-image-snapshot in the same
+	// pipeline. Without this override the test pulls the stale
+	// :main-latest image, which carries main's hub+plugin versions —
+	// not whatever versions-spoa.env points at on the MR branch. When
+	// an MR bumps versions-spoa.env (e.g. for a new --validate-socket
+	// flag the chart references), main-latest is the wrong image to
+	// load: the validator sidecar CrashLoopBackOffs on an unknown
+	// flag and every webhook call returns 'connection refused'. This
+	// is the same shape as the !890 chart-MR breakage; the e2e test
+	// was supposed to catch it on !893 but didn't because the helm
+	// install never honored the freshly-built image.
+	if spoaTag := os.Getenv("SPOA_TAG"); spoaTag != "" {
+		args = append(args, "--set", "spoaHub.image.tag="+spoaTag)
+	}
 	cmd := exec.CommandContext(ctx, "helm", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
