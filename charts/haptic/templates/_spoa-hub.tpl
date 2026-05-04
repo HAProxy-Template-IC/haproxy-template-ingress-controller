@@ -69,35 +69,6 @@ Example: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.1.0
 {{- end -}}
 
 {{/*
-Whether the validator sidecar should be rendered.
-True when:
-  - controller.validators.enabled is explicitly true, OR
-  - controller.validators.enabled is null AND `haptic.spoaHub.enabled`
-    is truthy (i.e. at least one plugin is on).
-False when controller.validators.enabled is explicitly false.
-Returns "true" or "" (Helm-truthy convention).
-*/}}
-{{- define "haptic.validators.enabled" -}}
-{{- $val := (default dict (default dict .Values.controller).validators).enabled -}}
-{{- if eq (kindOf $val) "bool" -}}
-  {{- if $val -}}true{{- end -}}
-{{- else -}}
-  {{- include "haptic.spoaHub.enabled" . -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Validator sidecar Unix-socket path. Concat of
-controller.validators.socketDir and controller.validators.socketName.
-Used as the shared mountpoint between controller and validator sidecar
-and as the dial address the controller writes into spec.validators[].
-*/}}
-{{- define "haptic.validators.socketPath" -}}
-{{- $v := .Values.controller.validators -}}
-{{- printf "%s/%s" (trimSuffix "/" $v.socketDir) $v.socketName -}}
-{{- end -}}
-
-{{/*
 SPOA hub plugin shared-library filename.
 Maps the plugin shortname (as it appears under spoaHub.plugins.<X>) to the
 .so filename produced by the upstream build. Most plugins use
