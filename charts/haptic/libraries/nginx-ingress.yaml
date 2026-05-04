@@ -1319,33 +1319,24 @@ templateSnippets:
       {%- if niVal == nil %}{% return %}{% end %}
       {%- var sslData = niVal.(map[string]any) %}
       {%- var backends = sslData["backends"].([]any) %}
+      {#- BuildAnnotationSSLPassthrough captures svcName/svcPort upfront so
+          the use_backend (in ssl-tcp) and the backend block here both come
+          from the same iteration of the resource store. Looking the
+          ingress up again here would re-introduce the dry-run race that
+          flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. -#}
       {%- for _, backendInfo := range backends %}
         {%- var info = backendInfo.(map[string]any) %}
         {%- var beNs = info["namespace"] | tostring() %}
         {%- var beIngress = info["ingress"] | tostring() %}
         {%- var beName = info["name"] | tostring() %}
+        {%- var svcName = info["svcName"] | tostring() %}
+        {%- var svcPort = info["svcPort"] | toint() %}
         {%- if first_seen("ni_sslPassthrough_backend", beNs + "/" + beIngress) %}
-          {%- var ingress = resources.ingresses.GetSingle(beNs, beIngress) %}
-          {%- var generated = false %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- if !generated %}
-              {%- var http = rule | dig("http") %}
-              {%- if http != nil %}
-                {%- for _, path := range http | dig("paths") | fallback([]any{}) %}
-                  {%- if !generated %}
-                    {%- var svcName = path | dig("backend", "service", "name") | fallback("") | tostring() %}
-                    {%- var svcPort = path | dig("backend", "service", "port", "number") | fallback(path | dig("backend", "service", "port", "name")) | toint() %}
       # nginx-ingress/backends-ssl-passthrough
 
       backend {{ beName }}
           mode tcp
           {{ BackendServers(svcName, 10, svcPort, nil, nil, beName, beNs) | indent(4) }}
-                    {%- generated = true %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
         {%- end %}
       {%- end %}
 
@@ -2428,6 +2419,53 @@ validationTests:
         target: haproxy.cfg
         pattern: "use_backend ssl-passthrough-ni-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
         description: TCP frontend must route by SNI
+
+  test-nginx-ingress-ssl-passthrough-skips-ingress-without-paths:
+    description: |
+      Regression test for the dry-run race that flaked
+      TestIngressAnnotations/nginx-ssl-passthrough on !893.
+
+      Pre-fix shape: BuildAnnotationSSLPassthrough added an entry to
+      gf["sslPassthroughBackends"] for any (host, ingress) pair where
+      the annotation was truthy. The use_backend in ssl-tcp was emitted
+      from that list. The corresponding `backend X` block came from a
+      separate `resources.ingresses.GetSingle` lookup that walked
+      spec.rules to find a service. If the ingress had a host but no
+      spec.rules[*].http.paths (or those paths had no backend.service),
+      the use_backend was emitted without a matching backend block —
+      `haproxy -c` rejected the config and the webhook denied the
+      unrelated dry-run as collateral damage.
+
+      Post-fix: the macro itself extracts svcName/svcPort up front and
+      refuses to add an entry without them. This fixture's ingress has
+      the annotation + a host but no http.paths, so neither
+      use_backend nor backend should appear in the rendered config.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: passthrough-ingress-no-paths
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: noservice.example.com
+                # Note: no `http:` block, so no paths.
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid (no use_backend without backend block)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "ssl-passthrough-ni-default-passthrough-ingress-no-paths"
+        description: |
+          Neither use_backend nor backend block must mention the
+          path-less ingress. If a use_backend slipped through without a
+          matching backend block, haproxy_valid would also fail with
+          'unable to find required use_backend' — but assert on the
+          string explicitly so a test failure points at the right cause.
 
   test-nginx-ingress-permanent-redirect:
     description: Nginx Ingress permanent-redirect generates 301 redirect
