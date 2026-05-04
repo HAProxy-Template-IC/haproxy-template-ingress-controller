@@ -1303,6 +1303,55 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  features-200-nginx-ingress-modsecurity-snippet:
+    template: |
+      {#-
+        Nginx Ingress ModSecurity Snippet
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#modsecurity-snippet
+
+        Annotation: nginx.ingress.kubernetes.io/modsecurity-snippet
+
+        Behavior:
+          - When the annotation is present, registers its value as a
+            file at general/coraza/<namespace>-<name>.conf (absolute:
+            <GeneralStorageDir>/coraza/<namespace>-<name>.conf, e.g.
+            /etc/haproxy/general/coraza/<...>.conf at runtime).
+          - The file's only consumer is the Coraza pluggable-validator
+            sidecar: its `validate()` override parses the snippet and
+            surfaces line/col diagnostics through the admission webhook.
+            The Ingress is denied with a precise error if the rules are
+            malformed.
+          - HAProxy itself does NOT read the file — there is no HAProxy
+            directive emission here. ModSecurity rules are evaluated at
+            request time inside the SPOA hub's coraza plugin via SPOE
+            messages, configured in spoaHub.plugins.coraza.params.
+
+        Output:
+          - One file per Ingress that carries the annotation, registered
+            via fileRegistry.Register("file", "coraza/<ns>-<name>.conf", snippet).
+
+        Wiring requirement:
+          - The chart's spec.validators[] must include an entry whose
+            socketPath points at the SPOA hub coraza socket and whose
+            files glob matches "/etc/haproxy/general/coraza/*.conf"
+            (or the GeneralStorageDir equivalent). Without that glob,
+            the file is registered but never dispatched, and bad rules
+            silently reach the running config.
+      -#}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var snippet = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/modsecurity-snippet") | fallback("") | tostring() -%}
+        {%- if snippet != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- var filename = "coraza/" + ns + "-" + name + ".conf" -%}
+          {%- var _, regErr = fileRegistry.Register("file", filename, snippet) -%}
+          {%- if regErr != nil -%}
+            {{ fail("failed to register coraza snippet for ingress " + ns + "/" + name + ": " + tostring(regErr)) }}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   backends-501-nginx-ingress-ssl-passthrough:
     template: |
       {#-

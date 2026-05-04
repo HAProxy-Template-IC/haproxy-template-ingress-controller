@@ -342,6 +342,76 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 	return ing
 }
 
+// NewIngressExpectDenied builds the same Ingress shape as NewIngress and
+// asserts the apiserver rejects the create with an admission-webhook
+// denial. Returns the denial reason (the user-facing message the
+// webhook server populated in AdmissionResponse.Result.Message), so the
+// caller can pattern-match on it.
+//
+// Any error other than an admission denial (network, parse, missing
+// CRD, RBAC) is treated as a fixture failure via t.Fatalf — the helper
+// is intentionally narrow so callers don't need to defensively check
+// the error type.
+//
+// No t.Cleanup deletion is registered because the resource is never
+// admitted in the first place; there is nothing in the cluster to
+// clean up.
+func NewIngressExpectDenied(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) string {
+	t.Helper()
+
+	if spec.Path == "" {
+		spec.Path = "/"
+	}
+	pathType := networkingv1.PathTypePrefix
+	ingressClassName := "haptic"
+
+	ing := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        spec.Name,
+			Namespace:   namespace,
+			Annotations: spec.Annotations,
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClassName,
+			Rules: []networkingv1.IngressRule{{
+				Host: spec.Host,
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{
+						Paths: []networkingv1.HTTPIngressPath{{
+							Path:     spec.Path,
+							PathType: &pathType,
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: spec.BackendService,
+									Port: networkingv1.ServiceBackendPort{Number: spec.BackendPort},
+								},
+							},
+						}},
+					},
+				},
+			}},
+		},
+	}
+
+	err := client.Resources(namespace).Create(ctx, ing)
+	if err == nil {
+		t.Fatalf("create Ingress %s/%s: expected admission denial, got success", namespace, spec.Name)
+	}
+	if !apierrors.IsForbidden(err) {
+		// Webhook denials surface as 403 Forbidden with the AdmissionResponse
+		// Result.Message in the StatusError's ErrStatus.Message. Anything
+		// else (5xx from apiserver, transport errors, missing CRD, RBAC)
+		// is a fixture failure — not the condition this helper exists to
+		// check.
+		t.Fatalf("create Ingress %s/%s: expected admission denial (HTTP 403), got %T: %v", namespace, spec.Name, err, err)
+	}
+	statusErr, ok := err.(*apierrors.StatusError)
+	if !ok {
+		t.Fatalf("create Ingress %s/%s: forbidden error not typed as *StatusError: %v", namespace, spec.Name, err)
+	}
+	return statusErr.ErrStatus.Message
+}
+
 // NewTLSSecret generates a self-signed certificate for the given hosts and
 // writes it as a kubernetes.io/tls Secret in the test namespace. Returns
 // the Secret name so the caller can reference it from IngressSpec.TLSSecretName.

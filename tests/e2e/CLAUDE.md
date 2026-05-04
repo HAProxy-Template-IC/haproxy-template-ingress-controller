@@ -57,7 +57,11 @@ Nothing outside the suite is required. `scripts/start-dev-env.sh` is the
 - `env.go` — `WaitForE2EEnvironmentReady`, debug-client construction,
   pod/log helpers.
 - `fixtures.go` — namespace and routing-resource (Ingress / HTTPRoute / Secret)
-  builders for per-test manifests.
+  builders for per-test manifests. `NewIngress` creates and waits for
+  admission to succeed; `NewIngressExpectDenied` is the inverted helper
+  for tests that *want* the admission webhook to reject the resource —
+  it returns the denial reason so the test can pattern-match on the
+  validator diagnostic.
 - `cleanup.go` — `DumpLogsOnFailure`.
 - `httpclient/` — fluent HTTP/HTTPS/mTLS client with retry/backoff and
   DinD-aware host resolution.

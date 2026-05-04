@@ -28,6 +28,19 @@ controller:
     nginxIngress:
       enabled: true
 
+  # Pluggable-validator sidecar: route nginx.ingress.kubernetes.io/modsecurity-snippet
+  # files at the SPOA hub's coraza socket. socketPath matches
+  # controller.validators.socketDir + socketName from values.yaml. The
+  # files glob is path-resolver-relative (paths rendered via
+  # fileRegistry.Register("file", ...) come through as "general/<filename>"
+  # — see pkg/controller/renderer/service.go:364).
+  validators:
+    entries:
+      - name: spoa-hub
+        socketPath: /var/run/haptic-validators/spoa-hub.sock
+        files:
+          - "general/coraza/*.conf"
+
   logLevel: DEBUG  # LOG_LEVEL env var for controller startup
   config:
     logging:
@@ -157,3 +170,15 @@ spoaHub:
           "x-forwarded-host", "x-forwarded-uri"
         ]
         extract_headers = ["x-auth-user", "x-auth-roles"]
+    # Enable coraza so the validator sidecar dispatches modsecurity-snippet
+    # files registered by features-200-nginx-ingress-modsecurity-snippet.
+    # We override the chart's default `directives` (which Includes
+    # @coraza.conf-recommended + OWASP CRS) with the smallest config that
+    # starts the plugin: just SecRuleEngine. The plugin's validate()
+    # override parses each dispatched snippet against this base, so the
+    # snippet's own SecRules don't need any of the recommended ruleset to
+    # surface their syntax errors.
+    coraza:
+      enabled: 'true'
+      params: |
+        directives = "SecRuleEngine On"
