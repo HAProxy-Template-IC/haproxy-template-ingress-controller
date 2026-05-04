@@ -63,9 +63,79 @@ func (o *orchestrator) executeFineGrainedSync(
 		return nil, auxFilesSynced, err
 	}
 
+	// Verify reload BEFORE PhasePostConfig deletes orphaned files.
+	//
+	// Why this ordering matters: the transaction commit triggers a reload
+	// asynchronously. The Dataplane API writes the new config to disk, then
+	// signals HAProxy to spawn a new worker. The new worker parses
+	// haproxy.cfg from disk and lazily opens any referenced map / cert files.
+	// If we delete an orphaned aux file *while* the new worker is still
+	// reading the on-disk config, an unrelated transient state in the
+	// running config (or a comparator op the diff missed) can leave the
+	// new worker dereferencing a path we just unlinked, and HAProxy aborts
+	// the reload with `failed to open pattern file <maps/X.map>`. After
+	// verifyReload returns success the new worker has loaded everything
+	// it needs into memory and an unlink no longer affects it.
+	//
+	// On verification failure we deliberately skip the post-config delete:
+	// keeping orphans is harmless (a few stale files in DataPlane storage),
+	// while deleting them while the running config still references them
+	// turns a recoverable failure into a stuck reload loop. The next
+	// successful reconcile will clean them up.
+	reloadVerified := false
+	if reloadTriggered && reloadID == "" {
+		// Synchronous forceReload (status 200) — reload already finished.
+		reloadVerified = true
+	} else if reloadTriggered && opts.VerifyReload {
+		if verifyErr := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); verifyErr != nil {
+			o.logger.Error("Fine-grained sync completed but reload verification failed; skipping orphan aux-file delete to avoid mid-reload race",
+				"operations", len(appliedOps),
+				"reload_id", reloadID,
+				"error", verifyErr)
+
+			result := &SyncResult{
+				Success:                 false,
+				AppliedOperations:       appliedOps,
+				ReloadTriggered:         reloadTriggered,
+				ReloadID:                reloadID,
+				ReloadVerified:          false,
+				ReloadVerificationError: verifyErr.Error(),
+				SyncMode:                SyncModeFineGrained,
+				Duration:                time.Since(startTime),
+				Retries:                 max(0, retries-1),
+				Details:                 convertDiffSummary(&diff.Summary),
+			}
+			return result, auxFilesSynced, &SyncError{
+				Stage:   "reload_verification",
+				Message: "reload verification failed",
+				Cause:   verifyErr,
+				Hints: []string{
+					"HAProxy reload failed, config may have been reverted",
+					hintCheckHAProxyLogs,
+				},
+			}
+		}
+		reloadVerified = true
+	}
+
 	// PhasePostConfig: delete auxiliary files the new config no longer
-	// references. Only safe after PhaseConfig succeeded.
-	o.deleteUnreferencedFilesPostConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
+	// references. Safe only after the reload triggered by PhaseConfig has
+	// fully verified — otherwise the new worker may still be reading the
+	// on-disk config and a delete races against its file open.
+	//
+	// Gate explicitly on reloadVerified rather than relying on the
+	// conditions above: if the caller disables VerifyReload (test
+	// fixtures today, but possibly production paths later) we'd
+	// otherwise fall through and re-introduce the race the reorder is
+	// trying to prevent. When no reload was triggered (config-only
+	// change with all runtime-eligible ops), there's nothing to wait
+	// for and the delete is also safe.
+	if !reloadTriggered || reloadVerified {
+		o.deleteUnreferencedFilesPostConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
+	} else {
+		o.logger.Info("Skipping orphan aux-file delete: reload not verified (VerifyReload disabled)",
+			"reload_id", reloadID)
+	}
 
 	// Build result
 	auxDiffs := &auxiliaryFileDiffs{
@@ -87,42 +157,12 @@ func (o *orchestrator) executeFineGrainedSync(
 		AppliedOperations: appliedOps,
 		ReloadTriggered:   reloadTriggered,
 		ReloadID:          reloadID,
+		ReloadVerified:    reloadVerified,
 		SyncMode:          SyncModeFineGrained,
 		Duration:          time.Since(startTime),
 		Retries:           max(0, retries-1),
 		Details:           details,
 		Message:           fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
-	}
-
-	// Verify reload (post-PhasePostConfig) if one was triggered and
-	// verification is enabled. When reloadID is empty (synchronous
-	// forceReload), the reload already succeeded — mark as verified without
-	// polling.
-	if reloadTriggered && reloadID == "" {
-		result.ReloadVerified = true
-	} else if reloadTriggered && opts.VerifyReload {
-		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
-			result.Success = false
-			result.ReloadVerified = false
-			result.ReloadVerificationError = err.Error()
-			result.Duration = time.Since(startTime)
-
-			o.logger.Error("Fine-grained sync completed but reload verification failed",
-				"operations", len(appliedOps),
-				"reload_id", reloadID,
-				"error", err)
-
-			return result, auxFilesSynced, &SyncError{
-				Stage:   "reload_verification",
-				Message: "reload verification failed",
-				Cause:   err,
-				Hints: []string{
-					"HAProxy reload failed, config may have been reverted",
-					hintCheckHAProxyLogs,
-				},
-			}
-		}
-		result.ReloadVerified = true
 	}
 
 	// Capture post-sync version for caller's cache
