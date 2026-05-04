@@ -14,13 +14,13 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub             | `v0.2.2`                     |
-| coraza          | `v0.1.1`           |
-| external-auth   | `v0.3.0`    |
-| fingerprinting  | `v0.1.1`   |
-| maxmind         | `v0.2.1`          |
-| otel            | `v0.1.1`             |
-| sso-auth        | `v0.1.1`         |
+| Hub             | `v0.5.0`                     |
+| coraza          | `v0.4.0`           |
+| external-auth   | `v0.4.0`    |
+| fingerprinting  | `v0.2.0`   |
+| maxmind         | `v0.3.0`          |
+| otel            | `v0.3.0`             |
+| sso-auth        | `v0.2.0`         |
 
 Plugin `.so` files target glibc `2.36` (Debian bookworm).
 

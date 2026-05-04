@@ -6,6 +6,8 @@
 {{- $webhookEnabled := .Values.webhook.enabled }}
 {{- $webhookSecretName := include "haptic.webhook.secretName" . }}
 {{- $labels := include "haptic.labels" . }}
+{{- $validatorsEnabled := include "haptic.validators.enabled" . }}
+{{- $validators := $controller.validators }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -145,9 +147,74 @@ spec:
               mountPath: /etc/webhook/certs
               readOnly: true
             {{- end }}
+            {{- if $validatorsEnabled }}
+            - name: validators-socket
+              mountPath: {{ $validators.socketDir }}
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
+        {{- if $validatorsEnabled }}
+        # Validator sidecar — runs the haproxy-spoa-hub binary in
+        # --validate-socket mode so the admission webhook can call into
+        # plugin validate() overrides at admission time. Loads the same
+        # plugins and config.toml as the HAProxy-side spoa-hub sidecar
+        # so the validator and the data plane see identical plugin
+        # behavior. Listens on a Unix socket on a shared emptyDir.
+        - name: validators
+          image: {{ include "haptic.spoaHub.image" . }}
+          imagePullPolicy: {{ .Values.spoaHub.image.pullPolicy }}
+          args:
+            - --config
+            - /etc/haproxy-spoa-hub/config.toml
+            - --validate-socket
+            - {{ include "haptic.validators.socketPath" . }}
+          securityContext:
+            {{- toYaml $validators.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $validators.resources | nindent 12 }}
+          # The pod is marked Ready only after this exec succeeds, so
+          # the haptic-webhook Service does not include the controller
+          # pod in its endpoints until the validator socket exists. Without
+          # the probe the pod's `Ready` condition flips on as soon as the
+          # controller container's /healthz responds, which can race the
+          # validator sidecar's socket-bind and produce 'connection refused'
+          # on early webhook calls. Mirrors the failure mode in the !890
+          # post-mortem and the e2e debug from !893.
+          readinessProbe:
+            exec:
+              command:
+                - test
+                - -S
+                - {{ include "haptic.validators.socketPath" . }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          # Liveness check on the same socket. `test -S` only verifies the
+          # socket file exists — it does not detect a deadlocked sidecar
+          # that's still holding the file open. A richer check (try a
+          # connect()) would catch that, but Kubernetes' exec-probe model
+          # makes it awkward and the hub's keep-alive loop has no known
+          # deadlock paths today. Worth a follow-up if hangs surface in
+          # production.
+          livenessProbe:
+            exec:
+              command:
+                - test
+                - -S
+                - {{ include "haptic.validators.socketPath" . }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: validators-config
+              mountPath: /etc/haproxy-spoa-hub/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: validators-socket
+              mountPath: {{ $validators.socketDir }}
+            {{- with $validators.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+        {{- end }}
         {{- with .Values.sidecars }}
         {{- tpl (toYaml .) $ | nindent 8 }}
         {{- end }}
@@ -158,6 +225,13 @@ spec:
         - name: webhook-certs
           secret:
             secretName: {{ $webhookSecretName }}
+        {{- end }}
+        {{- if $validatorsEnabled }}
+        - name: validators-config
+          configMap:
+            name: {{ include "haptic.spoaHub.configMapName" . }}
+        - name: validators-socket
+          emptyDir: {}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}
