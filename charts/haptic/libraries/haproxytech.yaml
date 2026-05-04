@@ -761,33 +761,24 @@ templateSnippets:
       {%- if htVal == nil %}{% return %}{% end %}
       {%- var sslData = htVal.(map[string]any) %}
       {%- var backends = sslData["backends"].([]any) %}
+      {#- BuildAnnotationSSLPassthrough (annotation-compat.yaml) captures
+          svcName/svcPort upfront so the use_backend in ssl-tcp and the
+          backend block here both come from the same iteration. Looking
+          the ingress up again here would re-introduce the dry-run race
+          that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. -#}
       {%- for _, backendInfo := range backends %}
         {%- var info = backendInfo.(map[string]any) %}
         {%- var beNs = info["namespace"] | tostring() %}
         {%- var beIngress = info["ingress"] | tostring() %}
         {%- var beName = info["name"] | tostring() %}
+        {%- var svcName = info["svcName"] | tostring() %}
+        {%- var svcPort = info["svcPort"] | toint() %}
         {%- if first_seen("sslPassthrough_backend", beNs + "/" + beIngress) %}
-          {%- var ingress = resources.ingresses.GetSingle(beNs, beIngress) %}
-          {%- var generated = false %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- if !generated %}
-              {%- var http = rule | dig("http") %}
-              {%- if http != nil %}
-                {%- for _, path := range http | dig("paths") | fallback([]any{}) %}
-                  {%- if !generated %}
-                    {%- var svcName = path | dig("backend", "service", "name") | fallback("") | tostring() %}
-                    {%- var svcPort = path | dig("backend", "service", "port", "number") | fallback(path | dig("backend", "service", "port", "name")) | toint() %}
       # haproxytech/backends-haproxytech-ssl-passthrough
 
       backend {{ beName }}
           mode tcp
           {{ BackendServers(svcName, 10, svcPort, nil, nil, beName, beNs) | indent(4) }}
-                    {%- generated = true %}
-                  {%- end %}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
         {%- end %}
       {%- end %}
 

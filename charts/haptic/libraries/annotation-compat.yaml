@@ -51,17 +51,41 @@ templateSnippets:
         Macro: BuildAnnotationSSLPassthrough(sslData, annotationKey, namePrefix, firstSeenKey)
 
         Populates sslData["backends"] with one entry per (host, ingress) pair
-        where the ingress carries a truthy annotationKey value. Deduplicates
-        hosts via first_seen(firstSeenKey, host).
+        where the ingress carries a truthy annotationKey value AND has a
+        well-formed first path with a service backend. Deduplicates hosts via
+        first_seen(firstSeenKey, host).
 
-        Backend entry shape (must stay identical across libraries — the ssl.yaml
-        consumer reads "name", "sni", and the ingress libraries' tests assert
-        backend names by exact string):
+        # Why service info is captured here, not by the consumer
+
+        Earlier versions had this macro store only the (name, sni, namespace,
+        ingress) tuple, leaving the consumer's `backends-*-ssl-passthrough`
+        snippet to look the ingress up again via
+        `resources.ingresses.GetSingle(ns, ingress)` and walk its rules to
+        find a service. That second lookup created a render-order race: the
+        macro's `resources.ingresses.List()` pass (which feeds the
+        `use_backend` directive in `frontends-500-ssl-tcp`) could see an
+        ingress that the later `GetSingle` did not — typically when an
+        ingress is being deleted concurrent with another's webhook dry-run.
+        The result was a config with `use_backend X` but no `backend X`
+        block, which `haproxy -c` rejects, and the webhook denied the
+        unrelated dry-run as collateral damage. (e2e
+        `TestIngressAnnotations/nginx-ssl-passthrough` flake on !893.)
+
+        Capturing svcName/svcPort here means both the use_backend directive
+        and the backend block are derived from the same single iteration of
+        the resource store, so they cannot disagree about set membership.
+        Ingresses that lack a usable first path (no rules, no http, no
+        backend.service) are dropped at build time so consumers never see
+        an entry without enough info to emit a complete backend block.
+
+        Backend entry shape (must stay identical across libraries):
           {
             "name":      namePrefix + ns + "-" + name,
             "sni":       host,
             "namespace": ns,
             "ingress":   name,
+            "svcName":   <first path's service name>,
+            "svcPort":   <first path's service port (int)>,
           }
       -#}
       {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
@@ -70,13 +94,36 @@ templateSnippets:
           {%- if passthrough == "true" %}
             {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
             {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {#- Find the first usable path's service to pair with each
+                host. The same service is used for every host on this
+                ingress (matches the prior consumer's "first path wins"
+                semantics; passthrough by SNI doesn't route by path). -#}
+            {%- var svcName = "" %}
+            {%- var svcPort = 0 %}
             {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var host = rule | dig("host") %}
-              {%- if host != nil && first_seen(firstSeenKey, tostring(host)) %}
-                {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
-                  "name": namePrefix + ns + "-" + name,
-                  "sni": host, "namespace": ns, "ingress": name,
-                }) %}
+              {%- if svcName == "" %}
+                {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) %}
+                  {%- if svcName == "" %}
+                    {%- var n = path | dig("backend", "service", "name") | fallback("") | tostring() %}
+                    {%- var p = path | dig("backend", "service", "port", "number") | fallback(path | dig("backend", "service", "port", "name")) | toint() %}
+                    {%- if n != "" && p != 0 %}
+                      {%- svcName = n %}
+                      {%- svcPort = p %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {%- if svcName != "" %}
+              {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+                {%- var host = rule | dig("host") %}
+                {%- if host != nil && first_seen(firstSeenKey, tostring(host)) %}
+                  {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
+                    "name": namePrefix + ns + "-" + name,
+                    "sni": host, "namespace": ns, "ingress": name,
+                    "svcName": svcName, "svcPort": svcPort,
+                  }) %}
+                {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
