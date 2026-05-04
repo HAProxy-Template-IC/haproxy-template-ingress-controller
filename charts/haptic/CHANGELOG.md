@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Bundled `haproxy-spoa-hub` binary bumped from v0.2.2 to v0.4.0. v0.4.0 adds keep-alive + parallel connections on the SPOP socket (lower webhook latency under bursts) and the `--validate-socket` mode the validator sidecar relies on. Without this bump the validator sidecar fails to start (unknown flag), the controller pod never becomes Ready, and the admission webhook is unreachable — caught only by the e2e suite, not the chart unit tests.
+
 ### Added
 
 - `controller.validators` values block plus a conditionally-rendered validator sidecar in the controller pod. The sidecar runs the same `haproxy-spoa-hub` image as the HAProxy-side spoa-hub but in `--validate-socket` mode, listening on a Unix socket on a shared `emptyDir` (default `/var/run/haptic-validators/spoa-hub.sock`) so the admission webhook can call into plugin `validate()` overrides at admission time. Auto-enabled when the spoa-hub sidecar is on (i.e. any plugin enabled); set `controller.validators.enabled` to `true` / `false` to force on/off. Loads the same `config.toml` ConfigMap as the HAProxy-side spoa-hub so validator and runtime see identical plugin behavior. `controller.validators.entries` is appended to `spec.validators` of the rendered HAProxyTemplateConfig (de-duplicated by `name` with operator-supplied entries winning); empty by default — operators wire globs based on which template snippets produce validate-able file content.
