@@ -133,8 +133,8 @@ func TestServer_RegisterValidator(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register validator
-	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(_ *ValidationContext) (bool, string, error) {
-		return true, "", nil
+	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(_ *ValidationContext) (bool, string, []string, error) {
+		return true, "", nil, nil
 	})
 
 	// Verify validator is registered
@@ -145,8 +145,8 @@ func TestServer_RegisterValidator(t *testing.T) {
 	assert.True(t, exists)
 
 	// Replace validator
-	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(_ *ValidationContext) (bool, string, error) {
-		return false, "replaced", nil
+	server.RegisterValidator("networking.k8s.io/v1.Ingress", func(_ *ValidationContext) (bool, string, []string, error) {
+		return false, "replaced", nil, nil
 	})
 
 	// Verify it was replaced
@@ -154,7 +154,7 @@ func TestServer_RegisterValidator(t *testing.T) {
 	newValidator := server.validators["networking.k8s.io/v1.Ingress"]
 	server.mu.RUnlock()
 
-	allowed, reason, err := newValidator(nil)
+	allowed, reason, _, err := newValidator(nil)
 	assert.NoError(t, err)
 	assert.False(t, allowed)
 	assert.Equal(t, "replaced", reason)
@@ -343,11 +343,11 @@ func TestServer_HandleValidation_ValidatorAllows(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register validator that allows
-	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, error) {
+	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, []string, error) {
 		assert.Equal(t, "test", ctx.Name)
 		assert.Equal(t, "default", ctx.Namespace)
 		assert.Equal(t, "CREATE", ctx.Operation)
-		return true, "", nil
+		return true, "", nil, nil
 	})
 
 	// Create a valid AdmissionReview request
@@ -401,8 +401,8 @@ func TestServer_HandleValidation_ValidatorDenies(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register validator that denies
-	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, error) {
-		return false, "validation failed: missing required field", nil
+	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
+		return false, "validation failed: missing required field", nil, nil
 	})
 
 	// Create a valid AdmissionReview request
@@ -457,8 +457,8 @@ func TestServer_HandleValidation_ValidatorError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register validator that returns an error
-	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, error) {
-		return false, "", fmt.Errorf("internal validation error")
+	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
+		return false, "", nil, fmt.Errorf("internal validation error")
 	})
 
 	// Create a valid AdmissionReview request
@@ -513,8 +513,8 @@ func TestServer_HandleValidation_InvalidObject(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register a validator
-	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, error) {
-		return true, "", nil
+	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
+		return true, "", nil, nil
 	})
 
 	// Create a request with invalid object JSON directly
@@ -562,7 +562,7 @@ func TestServer_HandleValidation_UpdateWithOldObject(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register validator that checks old object
-	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, error) {
+	server.RegisterValidator("v1.ConfigMap", func(ctx *ValidationContext) (bool, string, []string, error) {
 		assert.Equal(t, "UPDATE", ctx.Operation)
 		assert.NotNil(t, ctx.Object)
 		assert.NotNil(t, ctx.OldObject)
@@ -571,7 +571,7 @@ func TestServer_HandleValidation_UpdateWithOldObject(t *testing.T) {
 		oldName := ctx.OldObject.GetName()
 		assert.Equal(t, "test", oldName)
 
-		return true, "", nil
+		return true, "", nil, nil
 	})
 
 	// Create an UPDATE request with old object
@@ -627,8 +627,8 @@ func TestServer_HandleValidation_InvalidOldObject(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register a validator
-	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, error) {
-		return true, "", nil
+	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
+		return true, "", nil, nil
 	})
 
 	// Construct JSON manually to test invalid OldObject handling
@@ -721,8 +721,8 @@ func TestServer_Start_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Register a test validator
-	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, error) {
-		return true, "", nil
+	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
+		return true, "", nil, nil
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -881,11 +881,11 @@ func TestServer_ConcurrentValidation(t *testing.T) {
 	// Register validator
 	validationCount := 0
 	var mu sync.Mutex
-	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, error) {
+	server.RegisterValidator("v1.ConfigMap", func(_ *ValidationContext) (bool, string, []string, error) {
 		mu.Lock()
 		validationCount++
 		mu.Unlock()
-		return true, "", nil
+		return true, "", nil, nil
 	})
 
 	// Create test request body once

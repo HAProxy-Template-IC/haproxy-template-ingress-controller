@@ -87,8 +87,14 @@ type MetricsRecorder interface {
 // DryRunValidator defines the synchronous interface the webhook uses to
 // validate resources. The implementation in pkg/controller/dryrunvalidator
 // is a library, not a lifecycle component.
+//
+// Warnings are surfaced via AdmissionResponse.Warnings on both allow and
+// deny paths so kubectl prints them as "Warning:" lines without blocking
+// admission. Pluggable validators (e.g. the SPOA hub running in
+// --validate-socket mode) populate this slice from their non-fatal
+// diagnostics; the standard render+validate pipeline does not.
 type DryRunValidator interface {
-	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string)
+	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string)
 }
 
 // Config configures the webhook component.
@@ -357,7 +363,7 @@ func (c *Component) buildGVK(apiGroup, version, kind string) string {
 // 1. Basic structural validation (metadata checks)
 // 2. Dry-run validation via DryRunValidator (render + HAProxy validation).
 func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
-	return func(valCtx *webhook.ValidationContext) (bool, string, error) {
+	return func(valCtx *webhook.ValidationContext) (bool, string, []string, error) {
 		start := time.Now()
 
 		c.logger.Debug("Validating resource",
@@ -380,7 +386,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 				c.metrics.RecordWebhookValidation(gvk, "denied")
 			}
 
-			return false, err.Error(), nil
+			return false, err.Error(), nil, nil
 		}
 
 		// Dry-run validation (synchronous call into dryrunvalidator.ValidateDirect).
@@ -397,13 +403,13 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 				c.metrics.RecordWebhookValidation(gvk, "allowed")
 			}
 
-			return true, "", nil
+			return true, "", nil, nil
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		allowed, reason := c.dryRunValidator.ValidateDirect(
+		allowed, reason, warnings := c.dryRunValidator.ValidateDirect(
 			ctx,
 			gvk,
 			valCtx.Namespace,
@@ -430,9 +436,10 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			"name", valCtx.Name,
 			"allowed", allowed,
 			"reason", reason,
+			"warnings", len(warnings),
 			"duration_ms", time.Since(start).Milliseconds())
 
-		return allowed, reason, nil
+		return allowed, reason, warnings, nil
 	}
 }
 

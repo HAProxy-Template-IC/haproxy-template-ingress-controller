@@ -442,7 +442,7 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 
 	bus.Start()
 
-	allowed, reason := component.ValidateDirect(
+	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
 		"networking.k8s.io/v1.Ingress",
 		"staging",
@@ -484,7 +484,7 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 
 	bus.Start()
 
-	allowed, reason := component.ValidateDirect(
+	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
 		"networking.k8s.io/v1.Ingress",
 		"default",
@@ -553,7 +553,7 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 
 	bus.Start()
 
-	allowed, reason := component.ValidateDirect(
+	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
 		"networking.k8s.io/v1.Ingress",
 		"default",
@@ -595,7 +595,7 @@ func TestValidateDirect_Success(t *testing.T) {
 
 	bus.Start()
 
-	allowed, reason := component.ValidateDirect(
+	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
 		"networking.k8s.io/v1.Ingress",
 		"default",
@@ -636,7 +636,7 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 
 	bus.Start()
 
-	allowed, reason := component.ValidateDirect(
+	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
 		"invalid",
 		"default",
@@ -718,7 +718,7 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 
 	bus.Start()
 
-	allowed, reason := component.ValidateDirect(
+	allowed, reason, _ := component.ValidateDirect(
 		context.Background(),
 		"networking.k8s.io/v1.Ingress",
 		"default",

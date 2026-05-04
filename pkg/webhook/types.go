@@ -112,6 +112,10 @@ type ValidationContext struct {
 // Returns:
 //   - allowed: Whether the resource should be admitted
 //   - reason: Human-readable reason for denial (empty if allowed)
+//   - warnings: Soft warnings surfaced via AdmissionResponse.Warnings.
+//     Returned for both allowed and denied responses so kubectl prints
+//     them as "Warning:" lines without blocking admission. Each entry
+//     should fit in 256 chars; over that, the API server truncates.
 //   - err: Error during validation (500 response if non-nil)
 //
 // The function receives complete context including both old and new objects,
@@ -120,10 +124,10 @@ type ValidationContext struct {
 //
 // Example:
 //
-//	func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
+//	func validateIngress(ctx *webhook.ValidationContext) (bool, string, []string, error) {
 //	    // Access new object (already unstructured.Unstructured)
 //	    if ctx.Object == nil {
-//	        return false, "", errors.New("object is nil")
+//	        return false, "", nil, errors.New("object is nil")
 //	    }
 //
 //	    // For UPDATE operations, compare with old object
@@ -134,12 +138,12 @@ type ValidationContext struct {
 //
 //	    spec, found, err := unstructured.NestedMap(ctx.Object.Object, "spec")
 //	    if err != nil || !found {
-//	        return false, "spec is required", nil
+//	        return false, "spec is required", nil, nil
 //	    }
 //
-//	    return true, "", nil
+//	    return true, "", nil, nil
 //	}
-type ValidationFunc func(ctx *ValidationContext) (allowed bool, reason string, err error)
+type ValidationFunc func(ctx *ValidationContext) (allowed bool, reason string, warnings []string, err error)
 
 // ServerConfig configures the webhook HTTPS server.
 type ServerConfig struct {

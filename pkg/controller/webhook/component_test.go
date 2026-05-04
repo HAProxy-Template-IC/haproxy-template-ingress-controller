@@ -220,8 +220,8 @@ func TestComponent_RegisterValidator_BeforeServerCreated(t *testing.T) {
 	component := New(testutil.NewTestLogger(), config, nil, nil)
 
 	// Server is nil at this point, should log warning but not panic
-	component.RegisterValidator("v1.ConfigMap", func(_ *webhook.ValidationContext) (bool, string, error) {
-		return true, "", nil
+	component.RegisterValidator("v1.ConfigMap", func(_ *webhook.ValidationContext) (bool, string, []string, error) {
+		return true, "", nil, nil
 	})
 
 	// Verify server is still nil
@@ -420,12 +420,13 @@ func TestComponent_registerValidators(t *testing.T) {
 
 // mockDryRunValidator is a mock implementation of DryRunValidator.
 type mockDryRunValidator struct {
-	allowed bool
-	reason  string
+	allowed  bool
+	reason   string
+	warnings []string
 }
 
-func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string) {
-	return m.allowed, m.reason
+func (m *mockDryRunValidator) ValidateDirect(_ context.Context, _, _, _ string, _ any, _ string) (allowed bool, reason string, warnings []string) {
+	return m.allowed, m.reason, m.warnings
 }
 
 func TestComponent_createResourceValidator_ReturnsFunction(t *testing.T) {
@@ -460,7 +461,7 @@ func TestComponent_createResourceValidator_NilDryRunValidator(t *testing.T) {
 		Object:    obj,
 	}
 
-	allowed, reason, err := validator(valCtx)
+	allowed, reason, _, err := validator(valCtx)
 
 	// Should allow (fail-open) when no DryRunValidator configured
 	assert.True(t, allowed)
@@ -487,7 +488,7 @@ func TestComponent_createResourceValidator_BasicValidationFails(t *testing.T) {
 		Object:    obj,
 	}
 
-	allowed, reason, err := validator(valCtx)
+	allowed, reason, _, err := validator(valCtx)
 
 	// Should deny due to basic validation failure
 	assert.False(t, allowed)
@@ -519,7 +520,7 @@ func TestComponent_createResourceValidator_DryRunValidatorAllows(t *testing.T) {
 		Object:    obj,
 	}
 
-	allowed, reason, err := validator(valCtx)
+	allowed, reason, _, err := validator(valCtx)
 
 	assert.True(t, allowed)
 	assert.Empty(t, reason)
@@ -550,7 +551,7 @@ func TestComponent_createResourceValidator_DryRunValidatorDenies(t *testing.T) {
 		Object:    obj,
 	}
 
-	allowed, reason, err := validator(valCtx)
+	allowed, reason, _, err := validator(valCtx)
 
 	assert.False(t, allowed)
 	assert.Contains(t, reason, "invalid configuration")
@@ -582,7 +583,7 @@ func TestComponent_createResourceValidator_MetricsOnSuccess(t *testing.T) {
 		Object:    obj,
 	}
 
-	allowed, reason, err := validator(valCtx)
+	allowed, reason, _, err := validator(valCtx)
 
 	assert.True(t, allowed)
 	assert.Empty(t, reason)
@@ -616,7 +617,7 @@ func TestComponent_createResourceValidator_MetricsOnDenial(t *testing.T) {
 		Object:    obj,
 	}
 
-	allowed, reason, err := validator(valCtx)
+	allowed, reason, _, err := validator(valCtx)
 
 	assert.False(t, allowed)
 	assert.Contains(t, reason, "invalid configuration")

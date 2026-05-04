@@ -258,8 +258,12 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 //   - overlays: Map of store name to proposed changes
 //
 // Returns:
+//   - PipelineResult with the rendered HAProxy config + auxiliary files,
+//     populated only when ValidationResult.Valid is true. Callers wiring
+//     pluggable validators after the standard render+validate phases need
+//     these to feed Manager.ValidateAll. Nil on any failure.
 //   - ValidationResult with valid/invalid status and error details.
-func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*stores.StoreOverlay) *validation.ValidationResult {
+func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*stores.StoreOverlay) (*pipeline.PipelineResult, *validation.ValidationResult) {
 	startTime := time.Now()
 
 	// Build ValidationContext from K8s overlays
@@ -270,7 +274,7 @@ func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*store
 
 	// Validate overlays reference valid stores
 	if err := overlayProvider.Validate(); err != nil {
-		return &validation.ValidationResult{
+		return nil, &validation.ValidationResult{
 			Valid:      false,
 			Phase:      "setup",
 			Error:      err,
@@ -280,12 +284,12 @@ func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*store
 
 	outcome := c.runWithBaselineCheck(ctx, overlayProvider)
 	if outcome.Admit {
-		return &validation.ValidationResult{
+		return outcome.PipelineResult, &validation.ValidationResult{
 			Valid:      true,
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}
 	}
-	return &validation.ValidationResult{
+	return nil, &validation.ValidationResult{
 		Valid:      false,
 		Phase:      outcome.Phase,
 		Error:      outcome.Error,
@@ -298,12 +302,17 @@ func (c *Component) ValidateSync(ctx context.Context, overlays map[string]*store
 // proposed run succeeded, or it failed but baseline failed too); Admit=false
 // means "deny" with the proposed run's failure metadata. AdmittedViaBaseline
 // distinguishes the "proposed succeeded" case from the "baseline-also-fails"
-// case for log-level decisions.
+// case for log-level decisions. PipelineResult carries the rendered config +
+// auxiliary files for the success path; nil otherwise (including the
+// admitted-via-baseline path, since baseline rendered against the live store
+// not the proposed overlay and downstream consumers want the proposed-state
+// files, not the live-state ones).
 type validationOutcome struct {
 	Admit               bool
 	AdmittedViaBaseline bool
 	Phase               string
 	Error               error
+	PipelineResult      *pipeline.PipelineResult
 }
 
 // runWithBaselineCheck runs the render-validate pipeline twice: first with
@@ -320,9 +329,9 @@ type validationOutcome struct {
 // so in steady state (baseline healthy) the second pipeline execution is
 // only invoked on failure paths.
 func (c *Component) runWithBaselineCheck(ctx context.Context, overlayProvider *stores.OverlayStoreProvider) validationOutcome {
-	_, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
+	pipelineResult, proposedResult, proposedErr := c.pipeline.ExecuteWithResult(ctx, overlayProvider)
 	if proposedErr == nil && proposedResult.Valid {
-		return validationOutcome{Admit: true}
+		return validationOutcome{Admit: true, PipelineResult: pipelineResult}
 	}
 
 	baselineResult, baselineErr := c.runBaselineCheck(ctx)

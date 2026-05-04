@@ -190,14 +190,27 @@ func runIteration(
 	// 6.1. EventBuffer was already created early (step 0.25) for /debug/events handler
 	// It subscribes in constructor before EventBus.Start() for proper subscription ordering
 
-	// 6.2. Create DryRunValidator for webhook validation.
+	// 6.2. Construct the pluggable-validator Manager from spec.validators.
+	// Pure synchronous service (no event subs, no goroutines) so order
+	// relative to EventBus.Start() doesn't matter. The Manager's
+	// Healthy() output is plumbed into /healthz below; admission-time
+	// dispatch happens via the DryRunValidator wired up next. The helper
+	// registers Close() on the iteration cleanup hook so connection
+	// pools drain on teardown.
+	pluggableMgr := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
+
+	// 6.3. Create DryRunValidator for webhook validation.
 	// The validator is a synchronous library (ValidateDirect); the proposal
 	// validator it wires up subscribes to ProposalValidationRequestedEvent in
-	// its constructor, so this must run before EventBus.Start().
+	// its constructor, so this must run before EventBus.Start(). The
+	// pluggable-validator Manager is injected here so admission-time
+	// validation can dispatch the rendered file set to validator sidecars
+	// (e.g. SPOA hub --validate-socket) after the standard pipeline
+	// passes. A nil Manager is the no-validators-configured case.
 	var dryrunValidator *dryrunvalidator.Component
 	if webhook.HasWebhookEnabled(cfg) {
 		var err error
-		dryrunValidator, err = createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, logger)
+		dryrunValidator, err = createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, logger)
 		if err != nil && !errors.Is(err, errNoWebhookRules) {
 			return fmt.Errorf("creating dry-run validator: %w", err)
 		}
@@ -205,15 +218,6 @@ func runIteration(
 			logger.Debug("DryRunValidator not created: no webhook validation rules configured")
 		}
 	}
-
-	// 6.3. Construct the pluggable-validator Manager from spec.validators.
-	// Pure synchronous service (no event subs, no goroutines) so order
-	// relative to EventBus.Start() doesn't matter. The Manager's
-	// Healthy() output is plumbed into /healthz below; the actual
-	// admission-time invocation lands with the chart-side sidecar in
-	// the next MR. The helper registers Close() on the iteration
-	// cleanup hook so connection pools drain on teardown.
-	pluggableMgr := buildAndRegisterPluggableValidatorManager(setup, cfg, logger)
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
 	// All components have now subscribed during their construction, so we can safely start

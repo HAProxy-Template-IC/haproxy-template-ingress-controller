@@ -143,13 +143,18 @@ backend http_back
 	// Empty overlays should result in valid config
 	overlays := map[string]*stores.StoreOverlay{}
 
-	result := component.ValidateSync(context.Background(), overlays)
+	pipelineResult, result := component.ValidateSync(context.Background(), overlays)
 
 	require.NotNil(t, result)
 	assert.True(t, result.Valid)
 	assert.Nil(t, result.Error)
 	assert.Empty(t, result.Phase)
 	assert.GreaterOrEqual(t, result.DurationMs, int64(0))
+	// Successful validation must populate the pipeline result so callers
+	// can feed the rendered files to downstream consumers (e.g. pluggable
+	// validators in dryrunvalidator).
+	require.NotNil(t, pipelineResult)
+	assert.NotEmpty(t, pipelineResult.HAProxyConfig)
 }
 
 func TestComponent_ValidateSync_InvalidOverlay(t *testing.T) {
@@ -177,12 +182,13 @@ defaults
 		"nonexistent": stores.NewStoreOverlay(),
 	}
 
-	result := component.ValidateSync(context.Background(), overlays)
+	pipelineResult, result := component.ValidateSync(context.Background(), overlays)
 
 	require.NotNil(t, result)
 	assert.False(t, result.Valid)
 	assert.Equal(t, "setup", result.Phase)
 	assert.NotNil(t, result.Error)
+	assert.Nil(t, pipelineResult, "failed validation must not leak a partial pipeline result")
 }
 
 // TestComponent_ValidateSync_BaselineAlsoFails_Admits pins the load-bearing
@@ -216,7 +222,7 @@ func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
 
 	// Empty overlays — baseline and proposed render to the same config; the
 	// admission-relevant property is "broken state, no fix from this MR".
-	result := component.ValidateSync(context.Background(), map[string]*stores.StoreOverlay{})
+	pipelineResult, result := component.ValidateSync(context.Background(), map[string]*stores.StoreOverlay{})
 
 	require.NotNil(t, result)
 	assert.True(t, result.Valid,
@@ -229,6 +235,10 @@ func TestComponent_ValidateSync_BaselineAlsoFails_Admits(t *testing.T) {
 	assert.Nil(t, result.Error,
 		"on admit, no error should be reported — the proposed-render failure "+
 			"is logged at warn but not surfaced to the caller as a denial reason")
+	assert.Nil(t, pipelineResult,
+		"baseline-via-admit path must NOT return a pipeline result — baseline "+
+			"rendered against the live store, not the proposed overlay, so its "+
+			"files would mislead downstream consumers expecting proposed state")
 }
 
 func TestValidationResult_ErrorMessage(t *testing.T) {

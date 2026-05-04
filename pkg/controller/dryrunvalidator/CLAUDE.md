@@ -98,19 +98,24 @@ func (c *Component) validateWithOverlay(
     ctx context.Context,
     gvk, namespace, name string, object any,
     operation, requestID string, // operation is the admission verb string
-) (allowed bool, reason string) {
+) (allowed bool, reason string, warnings []string) {
     resourceType, err := c.mapGVKToResourceType(gvk) // "Ingress" -> "ingresses"
     if err != nil {
-        return false, fmt.Sprintf("unsupported resource type: %v", err)
+        return false, fmt.Sprintf("unsupported resource type: %v", err), nil
     }
 
     overlay := c.createOverlay(namespace, name, object, operation, requestID)
     overlays := map[string]*stores.StoreOverlay{resourceType: overlay}
 
-    result := c.proposalValidator.ValidateSync(ctx, overlays)
+    pipelineResult, result := c.proposalValidator.ValidateSync(ctx, overlays)
     if !result.Valid {
-        return false, c.simplifyError(result.Phase, result.Error)
+        return false, c.simplifyError(result.Phase, result.Error), nil
     }
+    // After the standard pipeline succeeds, dispatch the rendered files
+    // to any configured pluggable validators. Their errors deny admission;
+    // their warnings flow back to AdmissionResponse.Warnings via the
+    // returned `warnings` slice. PipelineResult is nil on the
+    // baseline-also-fails admit path, in which case dispatch is skipped.
 
     if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
         if err := c.runValidationTests(requestID); err != nil {
@@ -171,11 +176,15 @@ Webhook Admission Request
     ├─ Success → Continue
     └─ Error → SimplifyRenderingError → Deny
     ↓
-5. Validate HAProxy config
-    ├─ Valid → Allow
+5. Validate HAProxy config (three-phase: syntax + schema + semantic)
+    ├─ Valid → Continue
     └─ Invalid → SimplifyValidationError → Deny
     ↓
-Return (allowed bool, reason string) to webhook
+6. Dispatch rendered files to pluggable validators (if configured)
+    ├─ All valid → Allow (warnings → AdmissionResponse.Warnings)
+    └─ Any errors → Deny (errors → reason, warnings → still propagated)
+    ↓
+Return (allowed bool, reason string, warnings []string) to webhook
 ```
 
 ## Error Handling
@@ -219,14 +228,15 @@ The DryRunValidator delegates the render+validate work to a `*proposalvalidator.
 
 ```go
 type Component struct {
-    eventBus          *busevents.EventBus           // ValidationTests* observability events only
-    proposalValidator *proposalvalidator.Component  // Performs render + 3-phase validation
-    config            *config.Config                // Cached for testRunner construction
-    testRunner        *testrunner.Runner            // Optional: only built if ValidationTests is set
-    logger            *slog.Logger
+    eventBus           *busevents.EventBus            // ValidationTests* observability events only
+    proposalValidator  *proposalvalidator.Component   // Performs render + 3-phase validation
+    pluggableValidator *pluggablevalidator.Manager    // Optional: external validator sidecar dispatch
+    config             *config.Config                 // Cached for testRunner construction
+    testRunner         *testrunner.Runner             // Optional: only built if ValidationTests is set
+    logger             *slog.Logger
 }
 
-func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string) {
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string) {
     // Build the overlay store, delegate render+validate to proposalValidator.ValidateSync,
     // optionally run embedded validationTests, return a flat allow/deny + reason.
     // No event hop — the webhook holds the request open and gets the answer synchronously.
