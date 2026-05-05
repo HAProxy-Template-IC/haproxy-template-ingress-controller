@@ -1303,11 +1303,24 @@ test-helm-defaults:
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
+    # Same-pipeline spoa-hub snapshot. test-helm-defaults exercises chart
+    # defaults end-to-end (cluster install + smoke), and with coraza
+    # auto-enabled the chart now renders the spoa-hub sidecar by
+    # default. Pin its image tag to the snapshot built in this very
+    # pipeline (SPOA_TAG below) so the test sees the chart-branch
+    # version of the sidecar — pulling main-latest would silently
+    # mask chart-branch skew per !893's post-mortem.
+    - job: build-spoa-image-snapshot
   variables:
     # Unique cluster name - different from haproxy-test (integration) and haptic-dev (dev/routes)
     CLUSTER_NAME: helm-defaults
     NAMESPACE: haptic
     HAPROXY_VERSION: "3.2"
+    # Consumed by scripts/test-helm-defaults.sh — overrides
+    # spoaHub.image.tag to the per-pipeline snapshot built by
+    # build-spoa-image-snapshot above. Same scheme as test-e2e via
+    # start-dev-env.sh:734.
+    SPOA_TAG: "ci-${CI_PIPELINE_ID}"
   before_script:
     - |
       # Pull pre-built test image from registry

@@ -245,18 +245,26 @@ install_helm_chart() {
         "$PROJECT_ROOT/charts/haptic"
         "--namespace" "$NAMESPACE"
         "--create-namespace"
-        # The chart's `spoaHub.image.tag` default falls back to
-        # .Chart.AppVersion (HAPTIC's release version like 0.1.0), but
-        # the spoa-hub image is published on its own version track and
-        # there is no `spoa-hub:0.1.0` tag — only matched-AppVersion
-        # release tags exist after a real release pipeline runs.
-        # Override to `main-latest` (the always-available snapshot
-        # CI publishes on every main merge) so this test, which
-        # exercises chart defaults, can actually pull the sidecar
-        # image. Same override dev-values.yaml uses for the same
-        # reason.
-        "--set" "spoaHub.image.tag=main-latest"
     )
+
+    # Override the spoa-hub image tag from SPOA_TAG if set, so MR
+    # pipelines test against the per-pipeline `ci-${CI_PIPELINE_ID}`
+    # snapshot built by `build-spoa-image-snapshot` rather than
+    # whatever happens to be at `main-latest` (which would mask
+    # chart-branch version skew — see !893's post-mortem and the
+    # matching pattern in scripts/start-dev-env.sh:734).
+    #
+    # The chart's own default (`spoaHub.image.tag` empty → falls back
+    # to `.Chart.AppVersion`) is correct for release-version chart
+    # consumers: `build-spoa-image-release` publishes
+    # `spoa-hub:<haptic-version>` matching the chart's appVersion on
+    # tag pipelines. Pre-release main consumers between releases
+    # would still need an override; this script's caller supplies
+    # one via SPOA_TAG when it's running CI.
+    if [[ -n "${SPOA_TAG:-}" ]]; then
+        info "Using SPOA_TAG=${SPOA_TAG} for spoa-hub image"
+        helm_args+=("--set" "spoaHub.image.tag=${SPOA_TAG}")
+    fi
 
     # Add image override if specified
     # The chart always appends -haproxy<version> to the tag, so strip
