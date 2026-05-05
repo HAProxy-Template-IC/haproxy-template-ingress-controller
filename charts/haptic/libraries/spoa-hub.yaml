@@ -158,9 +158,20 @@ templateSnippets:
   # haproxy-ingress.yaml's map snippet.
   util-coraza-scan:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost %}
       {%%
         var _, _ = shared.ComputeIfAbsent("coraza_scan", func() any {
-          var modsecApps = []any{}
+          // Dedupe by `ns/name`. Under UPDATE admission overlays the
+          // dryrun-validator's resource list can carry both the
+          // existing Ingress AND the proposed-new version side-by-
+          // side; without dedupe we'd emit two
+          // `[plugins.params.applications."<ns>/<name>"]` headers and
+          // the validator's TOML parser would reject with
+          // `duplicate key`. The map keyed by ns/name keeps the LAST
+          // seen entry, which under the overlay's append-after-base
+          // ordering is the proposed version — exactly what the
+          // dryrun-validator should be checking.
+          var byKey = map[string]any{}
           var hasHaproxyIngressWaf = false
           for _, ingress := range resources.ingresses.List() {
             var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring()
@@ -175,25 +186,39 @@ templateSnippets:
               // per-app WAF. Host-less rules can't be enforced — the
               // map is keyed by host+path; without a host the lookup
               // never matches and the per-Ingress rules silently no-op.
+              // MapKeyForHost (ingress.yaml/util-ingress-host-key)
+              // normalises wildcards (`*.example.com` → `.example.com`)
+              // so the key matches the runtime form host.map produces
+              // for HAProxy's regsub-fallback path.
               var hostPaths = []any{}
               for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
                 var host = rule | dig("host") | fallback("") | tostring()
                 if host == "" {
                   fail("Ingress " + ns + "/" + name + " has 'nginx.ingress.kubernetes.io/modsecurity-snippet' set but a rule without a host. The coraza-app map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.")
                 }
+                var hostKey = MapKeyForHost(rule | dig("host"))
                 for _, path := range rule | dig("http", "paths") | fallback([]any{}) {
                   var pathStr = path | dig("path") | fallback("") | tostring()
-                  hostPaths = append(hostPaths, host + pathStr)
+                  hostPaths = append(hostPaths, hostKey + pathStr)
                 }
               }
-              modsecApps = append(modsecApps, map[string]any{
+              byKey[ns + "/" + name] = map[string]any{
                 "ns": ns, "name": name, "snippet": snippet, "host_paths": hostPaths,
-              })
+              }
             }
             var waf = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf") | fallback("") | tostring()
             if waf != "" {
               hasHaproxyIngressWaf = true
             }
+          }
+          // Reduce the map back to a deterministic-order slice for
+          // emission. Sort the keys so the rendered TOML's
+          // `[plugins.params.applications."<ns>/<name>"]` blocks come
+          // out in stable namespace+name order across reconciliations.
+          var sortedKeys = keys(byKey)
+          var modsecApps = []any{}
+          for _, k := range sortedKeys {
+            modsecApps = append(modsecApps, byKey[k])
           }
           return map[string]any{
             "modsec_apps": modsecApps,
@@ -571,11 +596,42 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-request" %}
-      http-request set-var(txn.coraza_app) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
-      http-request set-var(txn.coraza_mode) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
+      http-request set-var(txn.coraza_app) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
+      http-request set-var(txn.coraza_mode) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
       http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_app) -m found } || { var(txn.coraza_mode) -m found }
       http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny } !{ var(txn.coraza_mode) -m str detect }
       {%- end %}
+
+  # coraza-app.map population. Lives here in spoa-hub.yaml (not
+  # nginx-ingress.yaml) for the same reason util-coraza-scan does:
+  # the modsec-snippet annotation scan is cross-library precedent —
+  # spoa-hub renders the per-app blocks regardless of whether the
+  # nginx-ingress library is loaded, so the map that routes traffic
+  # to those apps must also render regardless. validate-helm-libraries
+  # CI renders the chart without nginx-ingress and would otherwise
+  # leave coraza-app.map empty while the per-app blocks still exist
+  # in the rendered TOML — apps configured but unreachable.
+  #
+  # Walks the cached util-coraza-scan output and emits one
+  # `<host><path> <ns>/<name>` line per Ingress's host+path. Sorted
+  # implicitly by MemoryStore.List() (namespace+name) for
+  # deterministic output across reconciliations.
+  map-coraza-app-500-spoa-hub:
+    template: |-
+      {%- var _ = render "util-coraza-scan" -%}
+      {%- var corazaScan, _ = shared.ComputeIfAbsent("coraza_scan", func() any { return nil }) -%}
+      {%- if corazaScan != nil -%}
+        {%- var modsecApps = corazaScan.(map[string]any)["modsec_apps"].([]any) -%}
+        {%- for _, app := range modsecApps -%}
+          {%- var a = app.(map[string]any) -%}
+          {%- var aNs = a["ns"].(string) -%}
+          {%- var aName = a["name"].(string) -%}
+          {%- var aHostPaths = a["host_paths"].([]any) -%}
+          {%- for _, hostPath := range aHostPaths -%}
+      {{ "\n" }}{{ hostPath.(string) }} {{ aNs }}/{{ aName }}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
 
   # External-auth wiring: looks up the per-ingress auth URL in
   # auth-url.map (populated by ingress libraries from their auth-url
@@ -646,11 +702,11 @@ maps:
       #
       # Empty / no entry → SPOE arg is empty → plugin falls through to
       # the default WAF (chart-default base directives only).
-      # Populated by ingress libraries' map-coraza-app-*-* snippets
-      # (currently nginx-ingress.yaml only; haproxy-ingress.github.io's
-      # /waf annotation routes to the default WAF unless the same
-      # Ingress also has a modsec-snippet, in which case nginx's
-      # snippet handler emits the entry).
+      # Populated by spoa-hub.yaml's own map-coraza-app-500-spoa-hub
+      # snippet (cross-library scan via util-coraza-scan; lives here
+      # rather than in nginx-ingress.yaml so the map renders even when
+      # the nginx-ingress library isn't loaded — matches where the
+      # per-app `[plugins.params.applications]` blocks are rendered).
       {{- render_glob "map-coraza-app-*" -}}
 
   haproxy-ingress-waf.map:

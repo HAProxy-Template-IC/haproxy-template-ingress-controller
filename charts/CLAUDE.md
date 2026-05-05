@@ -2025,4 +2025,6 @@ The chart CHANGELOG (`charts/haptic/CHANGELOG.md`) documents Helm chart configur
 - Internal implementation details
 - Development workflow changes
 
+**Don't call changes "BREAKING" when the feature being broken was itself introduced after the last released chart version.** The CHANGELOG is read by operators upgrading between released chart versions; if the affected behavior never shipped to a real release, the only people impacted are snapshot/main consumers — note the change but don't tag it as a `BREAKING` migration. Check `git tag -l 'haptic-chart-v*' | sort -V | tail` for the latest released chart and `git log <last-tag>..HEAD -- charts/haptic/` for post-release chart changes.
+
 For controller changes, see the root `CHANGELOG.md`.

@@ -618,6 +618,7 @@ templateSnippets:
         Purpose: Generates map file entries for a slice of sorted routes.
         This is the inner macro used by sharding.
       -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups map[string]any, pathType string, suffix string) string %}
       {%- for _, routeInfo := range sortedRoutes %}
         {%- var riHostname = routeInfo["hostname"] %}
@@ -651,7 +652,7 @@ templateSnippets:
           {%- if suffix == "" && len(frPath_val) > 1 && hasSuffix(frPath_val, "/") %}
             {%- frPath_val = frPath_val[:len(frPath_val)-1] %}
           {%- end %}
-      {{ "\n" }}{{ frHostname | replace("*", "") }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
+      {{ "\n" }}{{ MapKeyForHost(frHostname) }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
         {%- end %}
         {%- end %}
       {%- end %}
@@ -686,6 +687,7 @@ templateSnippets:
   util-generate-host-map-gateway:
     template: |
       {#- Macro to generate host map entries for Gateway API routes #}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
       {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
@@ -694,8 +696,8 @@ templateSnippets:
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
       # {{ route_type }}: {{ routeNs }}/{{ routeName }} ({{ len(hostnames) }} hosts)
       {% for _, hostname := range hostnames %}
-      {%- var hostWithoutAsterisk = hostname | replace("*", "") %}
-      {{ hostWithoutAsterisk }} {{ hostWithoutAsterisk }}
+      {%- var hostKey = MapKeyForHost(hostname) %}
+      {{ hostKey }} {{ hostKey }}
       {% end %}
       {%- end %}
       {%- end %}
@@ -750,6 +752,7 @@ templateSnippets:
     template: |
       {#- Macro to generate regex path map entries for HTTPRoute -#}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- macro GeneratePathRegexMap(routes []any) -%}
       {%- for _, route := range routes %}
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
@@ -782,7 +785,7 @@ templateSnippets:
       {%- if len(regexEntries) > 0 %}
       # HTTPRoute: {{ routeNs }}/{{ routeName }} ({{ len(regexEntries) }} regex paths)
       {% for _, entry := range regexEntries -%}
-      {{ entry["hostname"] }}{{ entry["pathValue"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {{ MapKeyForHost(entry["hostname"]) }}{{ entry["pathValue"] }} {{ BackendNameGateway(route, entry["backend"]) }}
       {% end -%}
       {%- end %}
       {%- end %}

@@ -1381,6 +1381,7 @@ templateSnippets:
   #
   map-auth-url-500-haproxy-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authUrl = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-url") | fallback("") | tostring() -%}
         {%- if authUrl != "" -%}
@@ -1395,7 +1396,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authUrl }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authUrl }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -1412,6 +1413,7 @@ templateSnippets:
   #   haproxy-ingress.github.io/auth-signin: "https://login.example/oauth2/start"
   map-auth-signin-500-haproxy-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authSignin = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-signin") | fallback("") | tostring() -%}
         {%- if authSignin != "" -%}
@@ -1424,7 +1426,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authSignin }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authSignin }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -1445,6 +1447,7 @@ templateSnippets:
   # the plugin does not forward the original request payload.
   map-auth-method-500-haproxy-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authMethod = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-method") | fallback("") | tostring() -%}
         {%- if authMethod != "" -%}
@@ -1457,7 +1460,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authMethod }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authMethod }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -1485,6 +1488,7 @@ templateSnippets:
   # forward custom headers.
   map-auth-forward-headers-500-haproxy-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-request") | fallback("") | tostring() -%}
         {%- if authHeaders != "" -%}
@@ -1497,7 +1501,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authHeaders }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authHeaders }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -1575,6 +1579,7 @@ templateSnippets:
   # so each var is available for whichever path runs.
   map-auth-extract-headers-500-haproxy-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") | fallback("") | tostring() -%}
         {%- var failHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") | fallback("") | tostring() -%}
@@ -1594,7 +1599,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ union }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ union }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -1714,6 +1719,7 @@ templateSnippets:
   # dispatch. See ADR-0007.
   map-haproxy-ingress-waf-500-haproxy-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
@@ -1746,9 +1752,10 @@ templateSnippets:
             {%- if host == "" -%}
               {{- fail("Ingress " + key + " has 'haproxy-ingress.github.io/waf' set but a rule without a host. The haproxy-ingress-waf map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
             {%- end -%}
+            {%- var hostKey = MapKeyForHost(rule | dig("host")) -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ resolvedMode }}
+      {{ "\n" }}{{ hostKey }}{{ pathStr }} {{ resolvedMode }}
             {%- end -%}
           {%- end -%}
         {%- end -%}

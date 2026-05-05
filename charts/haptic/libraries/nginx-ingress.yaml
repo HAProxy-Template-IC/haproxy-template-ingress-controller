@@ -353,6 +353,7 @@ templateSnippets:
   #     auth-headers-request)
   map-auth-url-500-nginx-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authUrl = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-url") | fallback("") | tostring() -%}
         {%- if authUrl != "" -%}
@@ -371,7 +372,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authUrl }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authUrl }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -393,6 +394,7 @@ templateSnippets:
   # oauth2-proxy that handles it server-side).
   map-auth-signin-500-nginx-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authSignin = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-signin") | fallback("") | tostring() -%}
         {%- if authSignin != "" -%}
@@ -405,7 +407,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authSignin }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authSignin }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -427,6 +429,7 @@ templateSnippets:
   # body — the plugin does not forward the original request payload.
   map-auth-method-500-nginx-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authMethod = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-method") | fallback("") | tostring() -%}
         {%- if authMethod != "" -%}
@@ -439,7 +442,7 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ authMethod }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authMethod }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -465,6 +468,7 @@ templateSnippets:
   # only fire on auth success.
   map-auth-extract-headers-500-nginx-ingress:
     template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-response-headers") | fallback("") | tostring() -%}
         {%- if passHeaders != "" -%}
@@ -477,45 +481,8 @@ templateSnippets:
             {%- end -%}
             {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
               {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ host }}{{ pathStr }} {{ passHeaders }}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ passHeaders }}
             {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
-
-  # Coraza WAF: per-Ingress per-app routing. Populates `coraza-app.map`
-  # with one entry per `<host><path>` for each Ingress carrying
-  # `nginx.ingress.kubernetes.io/modsecurity-snippet`. The value is the
-  # Ingress's app name (`<namespace>/<name>`), matching the
-  # `[plugins.params.applications."<ns>/<name>"]` block emitted in
-  # spoa-hub-config.toml by spoa-hub.yaml's spoa-hub-config-content
-  # snippet. The frontend filter sets `txn.coraza_app` from this lookup
-  # and the SPOE check-request message passes it as `app=` to the
-  # plugin, which routes the request to that app's WAF.
-  #
-  # The validation + host_paths collection lives in spoa-hub.yaml's
-  # util-coraza-scan (cached via `shared.ComputeIfAbsent`) so the
-  # render pass walks the Ingress list once. This snippet just emits
-  # the map entries from the cached scan result.
-  #
-  # Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#modsecurity
-  #
-  # Annotation:
-  #   nginx.ingress.kubernetes.io/modsecurity-snippet: |
-  #     SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
-  map-coraza-app-500-nginx-ingress:
-    template: |-
-      {%- var _ = render "util-coraza-scan" -%}
-      {%- var corazaScan, _ = shared.ComputeIfAbsent("coraza_scan", func() any { return nil }) -%}
-      {%- if corazaScan != nil -%}
-        {%- var modsecApps = corazaScan.(map[string]any)["modsec_apps"].([]any) -%}
-        {%- for _, app := range modsecApps -%}
-          {%- var a = app.(map[string]any) -%}
-          {%- var aNs = a["ns"].(string) -%}
-          {%- var aName = a["name"].(string) -%}
-          {%- var aHostPaths = a["host_paths"].([]any) -%}
-          {%- for _, hostPath := range aHostPaths -%}
-      {{ "\n" }}{{ hostPath.(string) }} {{ aNs }}/{{ aName }}
           {%- end -%}
         {%- end -%}
       {%- end -%}
