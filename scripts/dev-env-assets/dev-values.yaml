@@ -28,6 +28,21 @@ controller:
     nginxIngress:
       enabled: true
 
+  # Route the rendered SPOA-hub TOML through the validator sidecar at
+  # admission time. The webhook dry-renders the prospective config
+  # (including any per-Ingress nginx.ingress.kubernetes.io/modsecurity-snippet
+  # inlined into [plugins.params.coraza].directives) and the validator
+  # calls each loaded plugin's validate() — the coraza plugin compiles
+  # SecLang via Coraza and surfaces line-numbered diagnostics. Operators
+  # applying an Ingress with a typo'd SecRule see the parser error in
+  # the kubectl error message instead of a runtime hub crash.
+  validators:
+    entries:
+      - name: spoa-hub
+        socketPath: /var/run/haptic-validators/spoa-hub.sock
+        files:
+          - "general/spoa-hub-config.toml"
+
   logLevel: DEBUG  # LOG_LEVEL env var for controller startup
   config:
     logging:
