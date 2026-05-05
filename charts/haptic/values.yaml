@@ -1603,13 +1603,24 @@ spoaHub:
       timeoutMs: 15
       messages: ["check-request"]
       dependsOn: []
-      params: |
-        directives = """
+      # Coraza WAF rule directives. The chart appends these to the
+      # rendered TOML's `directives = """..."""` field, then appends
+      # any per-Ingress `nginx.ingress.kubernetes.io/modsecurity-snippet`
+      # values from watched Ingresses, so per-resource rules land in the
+      # runtime hub's coraza section without per-request SPOE shipping.
+      # Order is: this base, then snippets sorted by `<ns>/<name>` for
+      # determinism. Each appended snippet is preceded by a comment of
+      # the form `# nginx-ingress modsecurity-snippet from <ns>/<name>`.
+      #
+      # Do NOT also set `directives = "..."` inside `params:` below —
+      # the chart emits its own `directives = """..."""` line, so a
+      # duplicate would produce a coraza parse error.
+      directives: |
         SecRuleEngine On
         Include @coraza.conf-recommended
         Include @crs-setup.conf.example
         Include @owasp_crs/*.conf
-        """
+      params: |
         request_body_limit = 131072
         request_body_in_memory_limit = 131072
         response_body_limit = 131072

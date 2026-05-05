@@ -85,8 +85,8 @@ tests:
       - contains:
           path: spec.template.spec.initContainers[?(@.name == "spoa-hub-bootstrap-copy")].volumeMounts
           content:
-            name: haproxy-runtime
-            mountPath: /etc/haproxy
+            name: general-storage
+            mountPath: /etc/haproxy/general
           any: true
       - contains:
           path: spec.template.spec.initContainers[?(@.name == "spoa-hub-bootstrap-copy")].volumeMounts
@@ -134,15 +134,23 @@ tests:
       - contains:
           path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
           content:
-            name: haproxy-runtime
-            subPath: general
-            mountPath: /var/run/spoa-hub-runtime
+            name: general-storage
+            mountPath: /etc/haproxy/general
             readOnly: true
           any: true
       - notContains:
           path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
           content:
             name: spoa-hub-bootstrap
+          any: true
+      # The spoa-hub container MUST NOT mount haproxy-runtime — that
+      # volume carries SSL private keys, ingress maps, and other
+      # high-value content the hub has no business reading. The narrow
+      # general-storage overlay above gives it just the config file.
+      - notContains:
+          path: spec.template.spec.containers[?(@.name == "spoa-hub")].volumeMounts
+          content:
+            name: haproxy-runtime
           any: true
 
   - it: should pass --config pointing at the shared volume to the spoa-hub binary
@@ -156,7 +164,7 @@ tests:
           any: true
       - contains:
           path: spec.template.spec.containers[?(@.name == "spoa-hub")].args
-          content: /var/run/spoa-hub-runtime/spoa-hub-config.toml
+          content: /etc/haproxy/general/spoa-hub-config.toml
           any: true
 
   - it: should render the spoa-hub ConfigMap when a plugin is enabled
