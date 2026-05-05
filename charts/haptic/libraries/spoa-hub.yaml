@@ -596,9 +596,23 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-request" %}
+      {%- var dispatchMode = extraContext | dig("coraza", "dispatch", "mode") | fallback("opt-in") | tostring() %}
+      {%- var defaultEnforcement = extraContext | dig("coraza", "dispatch", "defaultEnforcement") | fallback("deny") | tostring() %}
+      {%- if dispatchMode != "opt-in" && dispatchMode != "default-on" %}
+        {%- fail("Invalid value for controller.templatingSettings.extraContext.coraza.dispatch.mode: '" + dispatchMode + "'; must be 'opt-in' or 'default-on'.") %}
+      {%- end %}
+      {%- if defaultEnforcement != "deny" && defaultEnforcement != "detect" %}
+        {%- fail("Invalid value for controller.templatingSettings.extraContext.coraza.dispatch.defaultEnforcement: '" + defaultEnforcement + "'; must be 'deny' or 'detect'.") %}
+      {%- end %}
       http-request set-var(txn.coraza_app) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
       http-request set-var(txn.coraza_mode) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
+      {%- if dispatchMode == "default-on" %}
+      http-request set-var(txn.coraza_disabled) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("coraza-disabled.map", "map") }}) unless { var(txn.coraza_disabled) -m found }
+      http-request set-var(txn.coraza_mode) str({{ defaultEnforcement }}) unless { var(txn.coraza_mode) -m found }
+      http-request send-spoe-group spoa-hub check-request-group unless { var(txn.coraza_disabled) -m found }
+      {%- else %}
       http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_app) -m found } || { var(txn.coraza_mode) -m found }
+      {%- end %}
       http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny } !{ var(txn.coraza_mode) -m str detect }
       {%- end %}
 
@@ -630,6 +644,54 @@ templateSnippets:
           {%- for _, hostPath := range aHostPaths -%}
       {{ "\n" }}{{ hostPath.(string) }} {{ aNs }}/{{ aName }}
           {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # Coraza WAF per-Ingress opt-out under default-on dispatch. Lives in
+  # spoa-hub.yaml (not nginx-ingress.yaml) for the same reason
+  # map-coraza-app-500-spoa-hub does: the dispatch logic in
+  # frontend-spoe-filters-050-coraza references coraza-disabled.map
+  # regardless of which annotation library is loaded, so the snippet
+  # populating it must render regardless too. Otherwise the validate-
+  # helm-libraries CI (which renders without nginx-ingress) would
+  # silently skip annotation-rejection diagnostics.
+  #
+  # Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#modsecurity
+  #
+  # Annotation:
+  #   nginx.ingress.kubernetes.io/enable-modsecurity: "false"
+  #     → entry in coraza-disabled.map; the path is excluded from the
+  #       unconditional default-on dispatch in
+  #       frontend-spoe-filters-050-coraza.
+  #
+  # `enable-modsecurity: "true"` is silently allowed but doesn't
+  # produce any map entry — opt-in under default `mode: opt-in` is
+  # already handled by `modsecurity-snippet` (rule customisation
+  # implies opt-in for that path) and the haproxy-ingress.github.io
+  # `waf: modsecurity` annotation. Adding a third opt-in path bloats
+  # scope without filling a gap. Other values fail loud.
+  map-coraza-disabled-500-spoa-hub:
+    template: |-
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var v = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/enable-modsecurity") | fallback("") | tostring() -%}
+        {%- if v == "false" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
+            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
+            {%- if host == "" -%}
+              {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"false\" set but a rule without a host. The coraza-disabled map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end -%}
+            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
+              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
+      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} 1
+            {%- end -%}
+          {%- end -%}
+        {%- else if v != "" && v != "true" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".") -}}
         {%- end -%}
       {%- end -%}
 
@@ -723,6 +785,21 @@ maps:
       # dispatch the path skips the SPOE roundtrip entirely. Populated
       # by haproxy-ingress.yaml's map-haproxy-ingress-waf-500-* snippet.
       {{- render_glob "map-haproxy-ingress-waf-*" -}}
+
+  coraza-disabled.map:
+    template: |
+      # Coraza WAF: per-Ingress opt-out under default-on dispatch
+      # (controller.templatingSettings.extraContext.coraza.dispatch.mode
+      # == "default-on"). Keyed by host+path; presence of an entry
+      # excludes the path from the unconditional send-spoe-group
+      # dispatch in `frontend-spoe-filters-050-coraza`.
+      #
+      # Populated by nginx-ingress.yaml's
+      # map-coraza-disabled-500-nginx-ingress snippet from the
+      # `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`
+      # annotation. Empty under default `mode: opt-in` (no opt-out
+      # gate is needed when the dispatch is already gated per-path).
+      {{- render_glob "map-coraza-disabled-*" -}}
 
   auth-url.map:
     template: |
@@ -1657,3 +1734,321 @@ validationTests:
         target: file:spoa-hub-config.toml
         pattern: 'ja4 = true'
         description: Fingerprinting params blob is spliced
+
+  # =============================================================================
+  # Coraza dispatch mode (controller.templatingSettings.extraContext.coraza.dispatch)
+  # =============================================================================
+
+  test-coraza-dispatch-opt-in-default:
+    # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
+    # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      Default dispatch mode (`opt-in`) keeps the per-Ingress-gated
+      send-spoe-group line and does NOT emit the coraza-disabled.map
+      lookup or the str(deny) fallback. Regression test that the new
+      branch doesn't leak into the default rendering.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid in opt-in mode
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
+        description: Conditional dispatch line is emitted (per-Ingress gated)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'coraza-disabled\.map'
+        description: coraza-disabled.map lookup is NOT emitted in opt-in mode
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.coraza_mode\) str\('
+        description: str(deny|detect) fallback is NOT emitted in opt-in mode
+
+  test-coraza-dispatch-default-on-no-annotations:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      With dispatch.mode=default-on and no per-Ingress annotations,
+      the rendered haproxy.cfg has the unconditional send-spoe-group
+      line gated only on the coraza-disabled map lookup, plus the
+      str(deny) fallback for txn.coraza_mode. coraza-disabled.map
+      is empty (no Ingress opted out).
+    extraContext:
+      haproxyVersion: "3.2"
+      coraza:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: deny
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid in default-on mode
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.coraza_disabled\).*coraza-disabled\.map'
+        description: coraza-disabled.map lookup is emitted
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.coraza_mode\) str\(deny\) unless \{ var\(txn\.coraza_mode\) -m found \}'
+        description: str(deny) fallback for coraza_mode is emitted
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'send-spoe-group spoa-hub check-request-group unless \{ var\(txn\.coraza_disabled\) -m found \}'
+        description: Unconditional dispatch line is emitted (gated only on opt-out)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\)'
+        description: Old per-Ingress-gated dispatch line is NOT emitted in default-on mode
+
+  test-coraza-dispatch-default-on-detect:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      With dispatch.mode=default-on and defaultEnforcement=detect, the
+      str fallback line uses str(detect) so the existing deny-rule
+      predicate `!{ var(txn.coraza_mode) -m str detect }` short-
+      circuits enforcement on every path that didn't have a per-path
+      waf-mode annotation override.
+    extraContext:
+      haproxyVersion: "3.2"
+      coraza:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: detect
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid in default-on detect mode
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.coraza_mode\) str\(detect\) unless \{ var\(txn\.coraza_mode\) -m found \}'
+        description: str(detect) fallback is emitted
+      - type: contains
+        target: haproxy.cfg
+        pattern: '!\{ var\(txn\.coraza_mode\) -m str detect \}'
+        description: Existing deny-rule short-circuit predicate is preserved
+
+  test-coraza-dispatch-default-on-with-opt-out:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      With dispatch.mode=default-on and one Ingress carrying
+      nginx.ingress.kubernetes.io/enable-modsecurity: "false", the
+      coraza-disabled.map gets a `<host><path> 1` entry; the
+      send-spoe-group dispatch line is gated only on
+      txn.coraza_disabled (so the opted-out path skips the WAF).
+    extraContext:
+      haproxyVersion: "3.2"
+      coraza:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: deny
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: opted-out
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/enable-modsecurity: "false"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: opted-out.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port: { number: 80 }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid with opt-out
+      - type: contains
+        target: map:coraza-disabled.map
+        pattern: 'opted-out\.example\.com/ 1'
+        description: coraza-disabled.map carries the opt-out entry
+
+  test-coraza-dispatch-enable-modsecurity-bogus-rejected:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity
+      set to a value other than "true" or "false" makes rendering fail
+      loud. Only "true"/"false" are accepted.
+    extraContext:
+      haproxyVersion: "3.2"
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: bogus
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/enable-modsecurity: "bogus"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bogus.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'allowed values are "true" or "false"'
+        description: Render fails with a message listing valid values
+      - type: contains
+        target: rendering_error
+        pattern: 'default/bogus'
+        description: Error identifies the offending Ingress
+
+  test-coraza-dispatch-enable-modsecurity-host-less-rejected:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity:
+      "false" but a rule lacking host fails loud — the coraza-disabled
+      map is keyed by host+path and host-less rules can't be enforced.
+    extraContext:
+      haproxyVersion: "3.2"
+      coraza:
+        dispatch:
+          mode: default-on
+          defaultEnforcement: deny
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: host-less
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/enable-modsecurity: "false"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: 'host-less rules can'
+        description: Render fails with a host-less message
+      - type: contains
+        target: rendering_error
+        pattern: 'default/host-less'
+        description: Error identifies the offending Ingress
