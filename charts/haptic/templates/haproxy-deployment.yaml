@@ -81,11 +81,14 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              mkdir -p /etc/haproxy/general
               cp /etc/spoa-hub-bootstrap/config.toml /etc/haproxy/general/spoa-hub-config.toml
           volumeMounts:
-            - name: haproxy-runtime
-              mountPath: /etc/haproxy
+            # general-storage (not haproxy-runtime) so the bootstrap
+            # placeholder lands in the same volume the spoa-hub
+            # sidecar mounts and the dataplane API later overwrites.
+            # See volumes section below for why general/ is split off.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
             - name: spoa-hub-bootstrap
               mountPath: /etc/spoa-hub-bootstrap
               readOnly: true
@@ -153,6 +156,13 @@ spec:
               mountPath: /config
             - name: haproxy-runtime
               mountPath: /etc/haproxy
+            # Overlay the dataplane API's general-storage dir on top of
+            # haproxy-runtime/general/ with a SEPARATE emptyDir. The
+            # spoa-hub sidecar (when enabled) mounts only this narrower
+            # volume so it can't read SSL private keys or other
+            # haproxy-runtime contents — see volumes section comment.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
             {{- if $haproxy.shmStats.enabled }}
             - name: devshm
               mountPath: /dev/shm
@@ -301,6 +311,14 @@ spec:
           volumeMounts:
             - name: haproxy-runtime
               mountPath: /etc/haproxy
+            # general-storage overlay — same shape as the haproxy
+            # container's mount. The dataplane API's
+            # general_storage_dir resolves through this overlay so
+            # writes to /etc/haproxy/general/<file> land in the
+            # narrow general-storage volume that the spoa-hub
+            # sidecar can also read.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
             - name: dataplane-data
               mountPath: /var/lib/dataplaneapi
             - name: dataplane-tmp
@@ -329,34 +347,58 @@ spec:
           args:
             # Hub config lives in HAProxy's general-storage dir so the
             # dataplane API can write to it. Mounted into this container
-            # via subPath at /var/run/spoa-hub-runtime/ — NOT at
-            # /etc/haproxy-spoa-hub/, because that path holds the
-            # bundled plugins (.so files) baked into the image, and
-            # mounting an emptyDir over it would hide them. The hub
-            # binary's file-watch (introduced in haproxy-spoa-hub
-            # v0.5.x via the file-watch-and-reload-metrics MR) attaches
-            # to the parent of this --config path, so HAPTIC overwriting
-            # the file via the dataplane API triggers a graceful reload
-            # without needing a SIGHUP. See docs/adr/0007 for the
-            # full architecture.
+            # at /etc/haproxy/ (the haproxy-runtime emptyDir, no
+            # subPath — see the volumeMounts comment below for why
+            # subPath is incompatible with the hub's file-watch).
+            # The hub binary's file-watch (introduced in
+            # haproxy-spoa-hub v0.5.x via the file-watch-and-reload-
+            # metrics MR) attaches to the parent of this --config
+            # path, so HAPTIC overwriting the file via the dataplane
+            # API triggers a graceful reload without needing a SIGHUP.
+            # See docs/adr/0007 for the full architecture.
             - --config
-            - /var/run/spoa-hub-runtime/spoa-hub-config.toml
+            - /etc/haproxy/general/spoa-hub-config.toml
           securityContext:
             {{- toYaml $spoaHub.securityContext | nindent 12 }}
           resources:
             {{- toYaml $spoaHub.resources | nindent 12 }}
           volumeMounts:
-            # Shared with the haproxy + dataplane containers via the
-            # haproxy-runtime emptyDir; subPath: general scopes this
-            # mount to /etc/haproxy/general/ so the hub only sees
-            # general-storage files (its config and any future
-            # rendered plugin auxiliary files), not maps/certs/etc.
-            - name: haproxy-runtime
-              subPath: general
-              mountPath: /var/run/spoa-hub-runtime
+            # ONLY the narrow general-storage volume — NOT
+            # haproxy-runtime. The hub needs to see the rendered
+            # spoa-hub-config.toml that the dataplane API writes
+            # (and the bootstrap initContainer seeded), but it has
+            # no business reading SSL private keys or backend maps
+            # from haproxy-runtime/{ssl,maps,errors,…}. By splitting
+            # general/ into its own emptyDir and mounting only that
+            # here, the spoa-hub container's blast radius is the
+            # config file alone.
+            #
+            # We deliberately do NOT use `subPath: general` on a
+            # haproxy-runtime mount — kubelet implements subPath as
+            # an isolated bind-mount that does NOT propagate inotify
+            # events from the source side. The hub binary relies on
+            # file-watch on the parent of `--config` to survive
+            # atomic-rename writes; through a subPath mount that
+            # watch never fires and the hub stays on the bootstrap
+            # config forever, silently breaking per-Ingress
+            # modsecurity-snippet enforcement. A separate-volume
+            # overlay (mounted on haproxy + dataplane at the same
+            # path) gives both narrow scope AND working inotify.
+            - name: general-storage
+              mountPath: /etc/haproxy/general
               readOnly: true
             - name: spoa-socket
               mountPath: /run/spoa
+            # The spoa-hub container runs with readOnlyRootFilesystem:true.
+            # Some plugins (e.g. coraza's filesystem-access verifier) need a
+            # writable scratch directory at startup; the hub also keeps a
+            # short-lived audit-log spool there for some plugin
+            # configurations. A small emptyDir mounted at /tmp gives them a
+            # place to write without weakening the container's read-only
+            # root filesystem. Memory-backed because the contents are
+            # ephemeral and tiny — no need for disk-backed storage.
+            - name: spoa-hub-tmp
+              mountPath: /tmp
             {{- with $spoaHub.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
@@ -370,7 +412,32 @@ spec:
           configMap:
             name: {{ $haproxyFullname }}-config
         - name: haproxy-runtime
-          emptyDir: {}
+          # tmpfs-backed emptyDir. Disk-backed emptyDir lands on the
+          # node's container-runtime filesystem (overlayfs on most
+          # clusters), where inotify events occasionally fail to
+          # propagate to bind-mount consumers in other containers.
+          # tmpfs sidesteps that — emptyDir contents never survive a
+          # pod restart anyway, so tmpfs vs disk has no semantic
+          # impact. 64 MiB ceiling — rendered maps + SSL files + …
+          # are well under that for any realistic ingress workload.
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        # Narrow overlay volume scoped to the dataplane API's
+        # general-storage dir. Mounted at /etc/haproxy/general/ on
+        # the haproxy + dataplane containers (overlaying the same
+        # subdirectory of haproxy-runtime), AND on the spoa-hub
+        # sidecar (its only volume from the haproxy-runtime tree).
+        # The split exists so the hub container can read its
+        # config file (and pick up file-watch reloads) without
+        # also gaining read access to ssl/ private keys, maps/,
+        # or other haproxy-runtime contents — least-privilege via
+        # the kubelet mount layout rather than via subPath, which
+        # would block inotify event propagation.
+        - name: general-storage
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
         {{- if $haproxy.shmStats.enabled }}
         - name: devshm
           emptyDir:
@@ -382,6 +449,15 @@ spec:
         - name: dataplane-tmp
           emptyDir: {}
         {{- if $spoaHubEnabled }}
+        # Memory-backed scratch directory for the spoa-hub container's
+        # /tmp. Some plugins (notably coraza) write probe files here to
+        # verify filesystem access at plugin init; without this the
+        # container's readOnlyRootFilesystem makes the writes EROFS
+        # and the plugin fails to load. tmpfs keeps the I/O off-disk.
+        - name: spoa-hub-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
         # Helm-rendered bootstrap config for the spoa-hub. Mounted
         # read-only into the haproxy container, which copies it into
         # /etc/haproxy/general/spoa-hub-config.toml during init so the

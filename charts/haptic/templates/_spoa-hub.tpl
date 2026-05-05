@@ -34,9 +34,20 @@ Returns "true" or "" (Helm-truthy convention).
 {{- if eq (kindOf $hub.enabled) "bool" -}}
   {{- if $hub.enabled -}}true{{- end -}}
 {{- else -}}
+  {{- /* Track "any plugin enabled" via a mutable wrapper so the answer is
+         emitted at most once. Emitting "true" inside the range concatenates
+         a separate "true" per enabled plugin (`"truetrue"`, …) which
+         compares not-equal to the literal `"true"` that callers like
+         libraries/spoa-hub.yaml's `_helm_load.enable` predicate test
+         against — silently dropping the spoa-hub library when ≥2 plugins
+         are enabled. */}}
+  {{- $any := dict "v" false -}}
   {{- range $name, $plugin := $hub.plugins -}}
-    {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $root) -}}true{{- end -}}
+    {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $root) -}}
+      {{- $_ := set $any "v" true -}}
+    {{- end -}}
   {{- end -}}
+  {{- if $any.v -}}true{{- end -}}
 {{- end -}}
 {{- end -}}
 

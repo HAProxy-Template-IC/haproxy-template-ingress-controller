@@ -9,6 +9,13 @@ metadata:
     {{- include "haptic.labels" . | nindent 4 }}
 spec:
   {{- $config := $controller.config | deepCopy }}
+  {{- /* routing.regexMatchOrder is a Helm-load-time switch consumed by
+         libraries/base.yaml's `_helm_load.inject.when` (it swaps in the
+         regex-last variant of frontend-routing-logic). The CRD has no
+         `routing` field, so leaving it on the rendered spec makes the
+         apiserver reject the manifest with `field not declared in
+         schema`. Drop it before serialising. */ -}}
+  {{- $_ := unset $config "routing" }}
   {{- with $config.credentialsSecretRef }}
     {{- $_ := set . "name" (.name | default (include "haptic.dataplane.credentialsSecretName" $)) }}
   {{- end }}
@@ -63,14 +70,43 @@ spec:
          so emitting nothing is the only safe behaviour. */ -}}
   {{- if include "haptic.spoaHub.enabled" . }}
     {{- $messages := list }}
+    {{- $pluginEntries := list }}
     {{- range $name, $plugin := .Values.spoaHub.plugins }}
       {{- if include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" $) }}
         {{- $messages = concat $messages $plugin.messages }}
+        {{- /* Plugin name in HAProxy variable namespace must be a valid identifier;
+               TOML/YAML allow kebab-case but HAProxy var lookups don't. Sanitize
+               dashes to underscores to match what the rendered TOML and the
+               chart's bootstrap configmap use. */}}
+        {{- $entry := dict
+            "name" (regexReplaceAll "-" $name "_")
+            "library" (include "haptic.spoaHub.libName" (dict "name" $name))
+            "messages" $plugin.messages
+            "timeoutMs" (int $plugin.timeoutMs)
+            "dependsOn" ($plugin.dependsOn | default list)
+            "params" ($plugin.params | default "")
+        }}
+        {{- /* Coraza-specific: surface the directives field separately so
+               the runtime render snippet can append per-Ingress
+               `nginx.ingress.kubernetes.io/modsecurity-snippet` values
+               into it. Other plugins splice `params` verbatim. */}}
+        {{- if eq $name "coraza" }}
+          {{- $_ := set $entry "directives" ($plugin.directives | default "") }}
+        {{- end }}
+        {{- $pluginEntries = append $pluginEntries $entry }}
       {{- end }}
     {{- end }}
     {{- with uniq $messages }}
       {{- $hub := $.Values.spoaHub.haproxy }}
-      {{- $_ := set $extraContext "spoaHub" (dict
+      {{- $hubRuntime := $.Values.spoaHub.hub }}
+      {{- /* pluginDir and defaultTimeoutMs aren't typically operator-tuned —
+             the plugin path is baked into the spoa-hub container image,
+             and the default-timeout floor matches the upstream hub's
+             example config. Read with `default` anyway so an operator
+             who DOES add them to values.yaml propagates through to the
+             runtime renderer's `hub | dig | fallback` path; otherwise
+             chart and library would silently disagree. */}}
+      {{- $spoaHubExtra := dict
           "enabled" true
           "socketPath" $hub.socketPath
           "modeSpop" $hub.modeSpop
@@ -80,7 +116,17 @@ spec:
           "timeoutProcessing" (toString $hub.timeoutProcessing)
           "poolMaxConn" (int $hub.poolMaxConn)
           "poolPurgeDelay" (toString $hub.poolPurgeDelay)
-      ) }}
+          "hub" (dict
+              "logLevel" $hubRuntime.logLevel
+              "maxConnections" (int $hubRuntime.maxConnections)
+              "blockingThreadKeepAliveSecs" (int $hubRuntime.blockingThreadKeepAliveSecs)
+              "workerThreads" $hubRuntime.workerThreads
+              "pluginDir" ($hubRuntime.pluginDir | default "/etc/haproxy-spoa-hub/plugins")
+              "defaultTimeoutMs" (int ($hubRuntime.defaultTimeoutMs | default 500))
+          )
+          "plugins" $pluginEntries
+      }}
+      {{- $_ := set $extraContext "spoaHub" $spoaHubExtra }}
     {{- end }}
   {{- end }}
 

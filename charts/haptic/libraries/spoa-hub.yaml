@@ -101,6 +101,15 @@ templateSnippets:
         {%- if regErr != nil %}
           {%- fail("failed to register spoe.conf: " + regErr.Error()) %}
         {%- end -%}
+        {#- Register the runtime hub config (TOML) at <GeneralStorageDir>/spoa-hub-config.toml.
+            The dataplane API delivers it to the haproxy pod's filesystem and the
+            spoa-hub sidecar's file-watch + graceful-reload picks it up without a
+            restart. ADR-0007 captures the end-to-end flow. -#}
+        {%- var hubConfig = render "spoa-hub-config-content" -%}
+        {%- var _, regErr2 = fileRegistry.Register("file", "spoa-hub-config.toml", hubConfig) -%}
+        {%- if regErr2 != nil %}
+          {%- fail("failed to register spoa-hub-config.toml: " + regErr2.Error()) %}
+        {%- end -%}
       {%- end -%}
 
   backends-100-spoa-hub:
@@ -121,6 +130,146 @@ templateSnippets:
           timeout server  {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
           server hub {{ extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "poolPurgeDelay") | fallback("30s") }}
       {%- end %}
+
+  # Renders the SPOA hub's runtime config.toml. Called from features-spoa-hub
+  # via fileRegistry.Register("file", "spoa-hub-config.toml", ...). The
+  # dataplane API delivers the rendered file to the haproxy pod, where the
+  # spoa-hub sidecar's file-watch + graceful-reload (haproxy-spoa-hub MR1)
+  # picks it up without a restart.
+  #
+  # The TOML mirrors the bootstrap configmap's shape (templates/spoa-hub-configmap.yaml)
+  # — same plugin_dir, default_timeout_ms, [[listeners]], one [[plugins]]
+  # block per enabled plugin, and a [plugins.params] block with the
+  # operator's params: blob spliced verbatim. The runtime version differs in
+  # one important place: for coraza, this snippet *appends* per-Ingress
+  # `nginx.ingress.kubernetes.io/modsecurity-snippet` values into the
+  # `directives = """..."""` field, sorted by `<ns>/<name>` for determinism,
+  # so each Ingress's WAF rules land in the runtime hub without per-request
+  # SPOE shipping. ADR-0007 captures the rationale.
+  spoa-hub-config-content:
+    template: |
+      {%- var hub = extraContext | dig("spoaHub", "hub") | fallback(map[string]any{}) -%}
+      {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+      {%- var socketPath = extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") | tostring() -%}
+
+      {#- Scan all watched Ingresses for nginx.ingress.kubernetes.io/modsecurity-snippet
+          annotations and group them by (namespace, name). MemoryStore.List() sorts by
+          namespace+name so iteration order is deterministic; we record each non-empty
+          snippet for inlining into coraza's directives field below.
+
+          Snippets are spliced verbatim into a TOML multi-line basic string
+          (`directives = """..."""`); a snippet containing `"""` would close
+          the string early and let an Ingress-write RBAC holder inject
+          arbitrary TOML keys into the rendered hub config (e.g. flip
+          `detect_only`, change the listener address). In multi-tenant
+          clusters where namespace-scoped users can edit Ingresses but
+          should not control WAF runtime behaviour this is a privilege
+          escalation. Reject snippets containing the closing delimiter
+          fail-loud — TOML 1.0 multi-line basic strings have no escape
+          for triple-quote, and SecRule values legitimately don't need it. -#}
+      {%- var modsecuritySnippets = []any{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var snippet = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/modsecurity-snippet") | fallback("") | tostring() -%}
+        {%- if snippet != "" -%}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- if strings_contains(snippet, "\"\"\"") -%}
+            {{- fail("Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).") -}}
+          {%- end -%}
+          {%- modsecuritySnippets = append(modsecuritySnippets, map[string]any{
+              "ns": ns, "name": name, "snippet": snippet,
+          }) -%}
+        {%- end -%}
+      {%- end -%}
+
+      {#- Fail-loud if any Ingress sets the annotation but coraza isn't enabled.
+          Silent ignore would hide a real misconfiguration: the operator wrote
+          a per-Ingress WAF rule and nothing enforces it. The fail() at render
+          time turns into a clear admission denial via the dryrun validator. -#}
+      {%- if len(modsecuritySnippets) > 0 -%}
+        {%- var corazaEnabled = false -%}
+        {%- for _, p := range plugins -%}
+          {%- var pName = p.(map[string]any)["name"].(string) -%}
+          {%- if pName == "coraza" -%}
+            {%- corazaEnabled = true -%}
+          {%- end -%}
+        {%- end -%}
+        {%- if !corazaEnabled -%}
+          {%- var first = modsecuritySnippets[0].(map[string]any) -%}
+          {{- fail("Ingress " + first["ns"].(string) + "/" + first["name"].(string) + " sets annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
+        {%- end -%}
+      {%- end -%}
+
+      plugin_dir = "{{ hub | dig("pluginDir") | fallback("/etc/haproxy-spoa-hub/plugins") }}"
+      default_timeout_ms = {{ hub | dig("defaultTimeoutMs") | fallback(500) }}
+      log_level = "{{ hub | dig("logLevel") | fallback("info") }}"
+      max_connections = {{ hub | dig("maxConnections") | fallback(1000) }}
+      blocking_thread_keep_alive_secs = {{ hub | dig("blockingThreadKeepAliveSecs") | fallback(30) }}
+      {%- var workerThreads = hub | dig("workerThreads") -%}
+      {%- if workerThreads != nil %}
+      worker_threads = {{ workerThreads }}
+      {%- end %}
+
+      [[listeners]]
+      type = "unix"
+      address = "{{ socketPath }}"
+      {% for _, plugin := range plugins %}
+        {%- var p = plugin.(map[string]any) -%}
+        {%- var pName = p["name"].(string) -%}
+        {%- var pLibrary = p["library"].(string) -%}
+        {%- var pMessages = p["messages"] | toSlice() -%}
+        {%- var pTimeoutMs = p["timeoutMs"] -%}
+        {%- var pDependsOn = p | dig("dependsOn") | fallback([]any{}) | toSlice() -%}
+        {%- var pParams = p | dig("params") | fallback("") | tostring() -%}
+
+      [[plugins]]
+      name = "{{ pName }}"
+      library = "{{ pLibrary }}"
+      messages = [
+        {%- for i, m := range pMessages -%}
+          {%- if i > 0 -%}, {% end -%}
+          "{{ m | tostring() }}"
+        {%- end -%}
+      ]
+      timeout_ms = {{ pTimeoutMs }}
+        {%- if len(pDependsOn) > 0 %}
+      depends_on = [
+          {%- for i, d := range pDependsOn -%}
+            {%- if i > 0 -%}, {% end -%}
+            "{{ d | tostring() }}"
+          {%- end -%}
+      ]
+        {%- end %}
+
+      [plugins.params]
+        {%- if pName == "coraza" %}
+          {#- Coraza-specific: emit the directives = """...""" block,
+              concatenating values-supplied directives with per-Ingress
+              modsecurity-snippet annotations sorted by <ns>/<name>. The
+              comment line above each appended snippet identifies the
+              source Ingress so `coraza-spoa --dump-config` output (and
+              the rendered TOML on the haproxy pod's filesystem) is
+              traceable back to whichever Ingress contributed each rule. -#}
+          {%- var corazaDirectives = p | dig("directives") | fallback("") | tostring() %}
+      directives = """
+      {{ corazaDirectives | trimSpace() }}
+          {%- for _, entry := range modsecuritySnippets %}
+            {%- var e = entry.(map[string]any) %}
+
+      # nginx-ingress modsecurity-snippet from {{ e["ns"].(string) }}/{{ e["name"].(string) }}
+      {{ e["snippet"].(string) | trimSpace() }}
+          {%- end %}
+      """
+        {%- end %}
+        {%- if pParams != "" %}
+      {{ pParams | trimSpace() }}
+        {%- end %}
+      {# Newline between plugin iterations so the next [[plugins]] table
+         header lands on its own line. Without it the rendered TOML
+         reads `transaction_ttl_ms = 10000[[plugins]]` and the hub's
+         reload bails with a parse error. {% end %} preserves the
+         trailing newline; {%- end -%} would strip it. #}
+      {% end %}
 
   spoe-conf-content:
     template: |
@@ -156,6 +305,8 @@ templateSnippets:
 
       {% if msg == "check-auth" -%}
       {{ render "spoe-message-check-auth-body" }}
+      {%- else if msg == "check-request" -%}
+      {{ render "spoe-message-check-request-body" }}
       {%- else -%}
       spoe-message {{ msg }}
           args ip=src
@@ -224,6 +375,40 @@ templateSnippets:
       spoe-message check-auth
           args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri){{- render_glob "spoe-message-check-auth-extra-args-*" -}}
 
+  # Canonical spoe-message check-request body. Args follow the
+  # haproxy-spoa-hub-plugin-coraza message contract (plugin.rs:266-307):
+  #
+  #   - src-ip / src-port / dst-ip / dst-port — connection metadata for
+  #     phase-1 connection rules and IP-based SecRules.
+  #   - method / path / query / version — URI and request-line fields
+  #     for phase-1 URI rules. Coraza canonicalizes path before
+  #     SecRule evaluation; query is appended to the URI internally.
+  #   - headers — the full request header block in HTTP wire format
+  #     (`Name: Value\r\n`). The coraza plugin's parser expects this
+  #     text shape (see `parse_haproxy_headers` in
+  #     haproxy-spoa-hub-plugin-coraza/src/plugin.rs); HAProxy emits
+  #     it via `req.hdrs`. **Not** `req.hdrs_bin` — that returns
+  #     varint-encoded SPOE-wire bytes which the plugin would split
+  #     wrong, leaving header-targeted SecRules
+  #     (`REQUEST_HEADERS:X-*`) silently unmatched.
+  #   - body — phase-2 body inspection. HAProxy buffers up to
+  #     `tune.bufsize` bytes; SecRules see whatever was buffered when
+  #     the request body completed (or was cut off by maxbody).
+  #
+  # `app` is intentionally omitted — single-WAF deployments use the
+  # default WAF instance the plugin loads from `params.directives`.
+  # Multi-tenant operators can add an `app=<expr>` to the args= line
+  # via a chart user-override snippet to route per-tenant rule sets.
+  #
+  # The plugin writes back txn.hub.coraza.{action,status,rule_id,
+  # anomaly_score,rules_hit,data}; the dispatcher in
+  # frontend-spoe-filters-050-coraza denies on
+  # rule_id >= 1 AND action == "deny".
+  spoe-message-check-request-body:
+    template: |-
+      spoe-message check-request
+          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body
+
   frontend-filters-100-spoa-hub:
     template: |-
       {%- if (render "util-spoa-hub-enabled") == "true" %}
@@ -237,6 +422,34 @@ templateSnippets:
   # annotation), triggers the SPOE check, and denies on failure.
   # Conditional on `check-auth` being in the chart's messages union —
   # only emits when the external-auth plugin is enabled.
+  # Coraza WAF dispatch. Triggers the check-request SPOE message on
+  # every request when the coraza plugin is enabled. The plugin's
+  # response sets `txn.hub.coraza.rule_id` (uint32, 0 if no rule
+  # matched) and `txn.hub.coraza.action` ("allow"/"deny"/...). We
+  # deny only when BOTH conditions hold:
+  #   - rule_id >= 1: a real SecRule matched. The plugin's
+  #     allowResult() and denyResult() error path both leave rule_id
+  #     at zero, so this gate filters out "WAF init failed and we're
+  #     denying every request" or "rule engine off" failure modes
+  #     that would otherwise turn the deny into a default-deny on the
+  #     whole frontend.
+  #   - action == "deny": the plugin's interruption decision was an
+  #     HTTP block (vs "drop" / "redirect" which would need different
+  #     HAProxy actions). Today the chart only emits 403 deny, so
+  #     drop/redirect actions correctly fall through to backend.
+  # Priority 050 runs the WAF pass BEFORE the external-auth
+  # subrequest at priority 100 — standard "WAF first, auth second"
+  # pipeline. Emits nothing unless `check-request` is in the chart's
+  # messages union (i.e. coraza is enabled).
+  frontend-spoe-filters-050-coraza:
+    template: |
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- if messages contains "check-request" %}
+      http-request send-spoe-group spoa-hub check-request-group
+      http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny }
+      {%- end %}
+
   frontend-spoe-filters-100-external-auth:
     template: |
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
@@ -552,3 +765,402 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend spoa-hub\\n    mode spop"
         description: Backend must NOT use mode spop on HAProxy 3.0
+
+  # ============================================================================
+  # spoa-hub-config.toml rendering (ADR-0007 / MR3)
+  # ============================================================================
+
+  test-spoa-hub-config-render-default:
+    description: |
+      With coraza enabled and no per-Ingress modsecurity-snippet
+      annotations, the rendered spoa-hub-config.toml contains the
+      top-level hub keys, the [[listeners]] block, and one [[plugins]]
+      block for coraza with the base directives wrapped in
+      `directives = """..."""`. No snippet comment markers appear.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+              Include @coraza.conf-recommended
+            params: |
+              request_body_limit = 131072
+              detect_only = false
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'plugin_dir = "/etc/haproxy-spoa-hub/plugins"'
+        description: Top-level plugin_dir is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'log_level = "info"'
+        description: Top-level log_level is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'max_connections = 1000'
+        description: Top-level max_connections is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[\[listeners\]\]'
+        description: Listeners block is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'address = "/run/spoa/hub.sock"'
+        description: Listener address points at the configured socketPath
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[\[plugins\]\]'
+        description: Coraza [[plugins]] block is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'name = "coraza"'
+        description: Plugin name is set
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'library = "libcoraza_plugin.so"'
+        description: Plugin library filename is set
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'timeout_ms = 15'
+        description: Plugin timeout_ms is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'SecRuleEngine On'
+        description: Base coraza directives are inlined into directives = """..."""
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'request_body_limit = 131072'
+        description: Free-form params blob is spliced under [plugins.params]
+      - type: not_contains
+        target: file:spoa-hub-config.toml
+        pattern: '# nginx-ingress modsecurity-snippet from'
+        description: No snippet markers appear when no Ingress carries the annotation
+
+  test-spoa-hub-config-render-modsecurity-snippet-single:
+    description: |
+      A single Ingress with nginx.ingress.kubernetes.io/modsecurity-snippet
+      sees its rule appended into the rendered coraza directives, with a
+      comment marker identifying the source Ingress. The rule sits BELOW
+      the values-supplied base directives.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: protected
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: echo
+                          port: { number: 80 }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid with snippet inlined
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '# nginx-ingress modsecurity-snippet from default/protected'
+        description: Snippet is preceded by a comment marker identifying the source Ingress
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"'
+        description: Snippet content is inlined verbatim
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'SecRuleEngine On'
+        description: Base directives are still present alongside the snippet
+
+  test-spoa-hub-config-render-modsecurity-snippet-multi-deterministic:
+    description: |
+      Multiple Ingresses with modsecurity-snippet annotations are
+      inlined into the rendered coraza directives in deterministic
+      order — sorted by `<namespace>/<name>` — so renders are
+      reproducible and don't churn the dataplane API push payload
+      across reconciliations.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: zeta
+            namespace: zone-z
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule ARGS "@contains evil" "id:3001,deny,status:403"
+          spec: { ingressClassName: haproxy, rules: [{ host: z.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: e, port: { number: 80 } } } }] } }] }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: alpha
+            namespace: zone-a
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule ARGS "@contains bad" "id:1001,deny,status:403"
+          spec: { ingressClassName: haproxy, rules: [{ host: a.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: e, port: { number: 80 } } } }] } }] }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: middle
+            namespace: zone-m
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule ARGS "@contains naughty" "id:2001,deny,status:403"
+          spec: { ingressClassName: haproxy, rules: [{ host: m.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: e, port: { number: 80 } } } }] } }] }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid with three Ingresses' snippets inlined
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '# nginx-ingress modsecurity-snippet from zone-a/alpha[\s\S]*# nginx-ingress modsecurity-snippet from zone-m/middle[\s\S]*# nginx-ingress modsecurity-snippet from zone-z/zeta'
+        description: Snippets are inlined sorted by namespace/name (alpha < middle < zeta)
+
+  test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
+    description: |
+      An Ingress whose modsecurity-snippet contains a TOML triple-quote
+      delimiter (""") is rejected at render time. The annotation value
+      lands inside `directives = """..."""`; allowing the delimiter
+      verbatim would let an Ingress-write RBAC holder break out of the
+      string and inject arbitrary TOML keys into the rendered hub
+      config. Fail-loud at admission keeps that escalation vector
+      closed.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: injector
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRuleEngine On
+                """
+                detect_only = true
+                directives = """
+          spec: { ingressClassName: haproxy, rules: [{ host: i.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: e, port: { number: 80 } } } }] } }] }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "default/injector annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote"
+        description: Render must fail with explicit triple-quote-rejection error
+
+  test-spoa-hub-config-render-modsecurity-without-coraza-fails:
+    description: |
+      An Ingress carrying nginx.ingress.kubernetes.io/modsecurity-snippet
+      while the spoaHub coraza plugin is NOT enabled fails the render
+      with an explicit error. Silent ignore would hide a real
+      misconfiguration; the operator wrote a per-Ingress WAF rule and
+      nothing enforces it.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-auth"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: external_auth
+            library: libhaproxy_spoa_hub_plugin_external_auth.so
+            messages: ["check-auth"]
+            timeoutMs: 6000
+            dependsOn: []
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: orphan-rule
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule ARGS "@contains attack" "id:4001,deny,status:403"
+          spec: { ingressClassName: haproxy, rules: [{ host: o.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: e, port: { number: 80 } } } }] } }] }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "default/orphan-rule sets annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' but the spoaHub coraza plugin is not enabled"
+        description: Render must fail with explicit annotation-without-coraza error
+
+  test-spoa-hub-config-render-multiple-plugins:
+    description: |
+      Multiple enabled plugins each get their own [[plugins]] block.
+      This pins the iteration over extraContext.spoaHub.plugins.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request", "get-fingerprint"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: "SecRuleEngine On"
+            params: ""
+          - name: fingerprinting
+            library: libfingerprinting_plugin.so
+            messages: ["get-fingerprint"]
+            timeoutMs: 5
+            dependsOn: []
+            params: |
+              ja4 = true
+    fixtures: {}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'name = "coraza"'
+        description: Coraza plugin block is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'name = "fingerprinting"'
+        description: Fingerprinting plugin block is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'library = "libfingerprinting_plugin.so"'
+        description: Fingerprinting library filename is rendered
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: 'ja4 = true'
+        description: Fingerprinting params blob is spliced
