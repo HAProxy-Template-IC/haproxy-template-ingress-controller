@@ -1599,7 +1599,19 @@ spoaHub:
   # Bare `[xxx]` headers inside `params:` will break the plugin's config.
   plugins:
     coraza:
-      enabled: '{{ false }}'
+      # Auto-enabled when nginx-ingress is enabled — that library is the
+      # only one whose annotation handlers feed coraza today (per-Ingress
+      # `nginx.ingress.kubernetes.io/modsecurity-snippet` values are
+      # appended into the rendered `directives = """..."""` block). The
+      # haproxy-ingress.github.io project upstream defines `/waf` and
+      # `/waf-mode` annotations that would also flow into coraza, but
+      # the haproxy-ingress library does not implement them yet; if it
+      # ever does, OR `.Values.controller.templateLibraries.haproxyIngress.enabled`
+      # in here so flipping that library on activates the WAF without a
+      # second toggle. haproxytech (haproxy.org/*) has no public WAF
+      # annotation. Operators wanting cluster-wide WAF without
+      # nginx-ingress can `--set spoaHub.plugins.coraza.enabled=true`.
+      enabled: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
       timeoutMs: 15
       messages: ["check-request"]
       dependsOn: []

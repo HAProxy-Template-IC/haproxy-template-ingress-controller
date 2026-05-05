@@ -172,16 +172,16 @@ spoaHub:
           "x-forwarded-host", "x-forwarded-uri"
         ]
         extract_headers = ["x-auth-user", "x-auth-roles"]
-    # Enable coraza so the controller renders the WAF section into
-    # /etc/haproxy/general/spoa-hub-config.toml. The runtime hub
-    # reloads on file-watch (haproxy-spoa-hub MR1), so per-Ingress
-    # `nginx.ingress.kubernetes.io/modsecurity-snippet` annotations
-    # land in the running config without a pod restart. Smallest
-    # viable directives — operators wanting OWASP CRS get the chart
-    # default; CI keeps it minimal so per-test snippets are the only
-    # rules surfacing 403s during e2e.
+    # Coraza is auto-enabled by chart values.yaml whenever the
+    # nginx-ingress library is on (which it is here), so we don't set
+    # `enabled` explicitly. Override `directives` to the smallest
+    # viable rule set — operators wanting OWASP CRS get the chart
+    # default; CI keeps it minimal so per-test
+    # `nginx.ingress.kubernetes.io/modsecurity-snippet` rules are the
+    # only ones surfacing 403s during e2e. The runtime hub reloads on
+    # file-watch (haproxy-spoa-hub MR1), so per-Ingress snippets land
+    # in the running config without a pod restart.
     coraza:
-      enabled: 'true'
       directives: |
         SecRuleEngine On
       params: |
