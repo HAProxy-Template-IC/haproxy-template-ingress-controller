@@ -2,7 +2,12 @@
 
 ## Status
 
-Proposed.
+Accepted.
+
+All four implementation steps merged: MR1 !147 (hub file-watch + reload
+metrics), MR2 !900 (chart shared emptyDir + bootstrap), MR3 !901 (chart
+libraries render the full hub TOML), MR4 !902 (admission validation +
+e2e test).
 
 ## Context
 
