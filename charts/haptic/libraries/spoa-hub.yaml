@@ -577,6 +577,37 @@ templateSnippets:
       http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny } !{ var(txn.coraza_mode) -m str detect }
       {%- end %}
 
+  # coraza-app.map population. Lives here in spoa-hub.yaml (not
+  # nginx-ingress.yaml) for the same reason util-coraza-scan does:
+  # the modsec-snippet annotation scan is cross-library precedent —
+  # spoa-hub renders the per-app blocks regardless of whether the
+  # nginx-ingress library is loaded, so the map that routes traffic
+  # to those apps must also render regardless. validate-helm-libraries
+  # CI renders the chart without nginx-ingress and would otherwise
+  # leave coraza-app.map empty while the per-app blocks still exist
+  # in the rendered TOML — apps configured but unreachable.
+  #
+  # Walks the cached util-coraza-scan output and emits one
+  # `<host><path> <ns>/<name>` line per Ingress's host+path. Sorted
+  # implicitly by MemoryStore.List() (namespace+name) for
+  # deterministic output across reconciliations.
+  map-coraza-app-500-spoa-hub:
+    template: |-
+      {%- var _ = render "util-coraza-scan" -%}
+      {%- var corazaScan, _ = shared.ComputeIfAbsent("coraza_scan", func() any { return nil }) -%}
+      {%- if corazaScan != nil -%}
+        {%- var modsecApps = corazaScan.(map[string]any)["modsec_apps"].([]any) -%}
+        {%- for _, app := range modsecApps -%}
+          {%- var a = app.(map[string]any) -%}
+          {%- var aNs = a["ns"].(string) -%}
+          {%- var aName = a["name"].(string) -%}
+          {%- var aHostPaths = a["host_paths"].([]any) -%}
+          {%- for _, hostPath := range aHostPaths -%}
+      {{ "\n" }}{{ hostPath.(string) }} {{ aNs }}/{{ aName }}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   # External-auth wiring: looks up the per-ingress auth URL in
   # auth-url.map (populated by ingress libraries from their auth-url
   # annotation), triggers the SPOE check, and denies on failure.
@@ -646,11 +677,11 @@ maps:
       #
       # Empty / no entry → SPOE arg is empty → plugin falls through to
       # the default WAF (chart-default base directives only).
-      # Populated by ingress libraries' map-coraza-app-*-* snippets
-      # (currently nginx-ingress.yaml only; haproxy-ingress.github.io's
-      # /waf annotation routes to the default WAF unless the same
-      # Ingress also has a modsec-snippet, in which case nginx's
-      # snippet handler emits the entry).
+      # Populated by spoa-hub.yaml's own map-coraza-app-500-spoa-hub
+      # snippet (cross-library scan via util-coraza-scan; lives here
+      # rather than in nginx-ingress.yaml so the map renders even when
+      # the nginx-ingress library isn't loaded — matches where the
+      # per-app `[plugins.params.applications]` blocks are rendered).
       {{- render_glob "map-coraza-app-*" -}}
 
   haproxy-ingress-waf.map:

@@ -770,6 +770,8 @@ The controller CHANGELOG (`CHANGELOG.md`) documents user-facing changes to the c
 - Development scripts and tooling
 - Internal testing infrastructure
 
+**Don't call changes "BREAKING" when the feature being broken was itself introduced after the last release.** The CHANGELOG is read by operators upgrading between released versions; if the affected behavior never shipped to a real release, the only people impacted are snapshot/main consumers — note the change but don't tag it as a `BREAKING` migration. Check `git tag -l | sort -V | tail` for the latest released version and `git log <last-tag>..HEAD -- <files>` to see what's actually post-release.
+
 For Helm chart changes, see `charts/haptic/CHANGELOG.md`.
 
 ## Release Process
