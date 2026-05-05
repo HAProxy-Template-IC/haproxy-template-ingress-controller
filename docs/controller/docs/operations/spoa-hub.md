@@ -14,8 +14,8 @@ The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<H
 
 | Component       | Pinned version                          |
 | --------------- | --------------------------------------- |
-| Hub             | `v0.5.1`                     |
-| coraza          | `v0.4.1`           |
+| Hub             | `v0.5.2`                     |
+| coraza          | `v0.4.2`           |
 | external-auth   | `v0.4.0`    |
 | fingerprinting  | `v0.2.0`   |
 | maxmind         | `v0.3.0`          |
