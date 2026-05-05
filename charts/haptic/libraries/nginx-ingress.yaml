@@ -483,6 +483,43 @@ templateSnippets:
         {%- end -%}
       {%- end -%}
 
+  # Coraza WAF: per-Ingress per-app routing. Populates `coraza-app.map`
+  # with one entry per `<host><path>` for each Ingress carrying
+  # `nginx.ingress.kubernetes.io/modsecurity-snippet`. The value is the
+  # Ingress's app name (`<namespace>/<name>`), matching the
+  # `[plugins.params.applications."<ns>/<name>"]` block emitted in
+  # spoa-hub-config.toml by spoa-hub.yaml's spoa-hub-config-content
+  # snippet. The frontend filter sets `txn.coraza_app` from this lookup
+  # and the SPOE check-request message passes it as `app=` to the
+  # plugin, which routes the request to that app's WAF.
+  #
+  # The validation + host_paths collection lives in spoa-hub.yaml's
+  # util-coraza-scan (cached via `shared.ComputeIfAbsent`) so the
+  # render pass walks the Ingress list once. This snippet just emits
+  # the map entries from the cached scan result.
+  #
+  # Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#modsecurity
+  #
+  # Annotation:
+  #   nginx.ingress.kubernetes.io/modsecurity-snippet: |
+  #     SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
+  map-coraza-app-500-nginx-ingress:
+    template: |-
+      {%- var _ = render "util-coraza-scan" -%}
+      {%- var corazaScan, _ = shared.ComputeIfAbsent("coraza_scan", func() any { return nil }) -%}
+      {%- if corazaScan != nil -%}
+        {%- var modsecApps = corazaScan.(map[string]any)["modsec_apps"].([]any) -%}
+        {%- for _, app := range modsecApps -%}
+          {%- var a = app.(map[string]any) -%}
+          {%- var aNs = a["ns"].(string) -%}
+          {%- var aName = a["name"].(string) -%}
+          {%- var aHostPaths = a["host_paths"].([]any) -%}
+          {%- for _, hostPath := range aHostPaths -%}
+      {{ "\n" }}{{ hostPath.(string) }} {{ aNs }}/{{ aName }}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
   # Companion to map-auth-extract-headers-500-nginx-ingress: emit one
   # `http-request set-header` line per UNIQUE header across all
   # ingresses with auth-response-headers, so the plugin's extracted

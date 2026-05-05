@@ -133,25 +133,34 @@ templateSnippets:
 
   # Single-pass scan over all watched Ingresses for the two annotation
   # flavours that drive coraza behaviour:
-  #   - nginx.ingress.kubernetes.io/modsecurity-snippet  (rule text appended
-  #     to coraza's global directives; when present, dispatch is global)
+  #   - nginx.ingress.kubernetes.io/modsecurity-snippet  (per-Ingress rule
+  #     text → its OWN per-app WAF instance, bound to the Ingress's
+  #     <host><path> via coraza-app.map; rules don't bleed into other
+  #     Ingresses' traffic)
   #   - haproxy-ingress.github.io/waf                    (path-scoped opt-in
-  #     dispatch via haproxy-ingress-waf.map; deny vs detect mode)
+  #     dispatch via haproxy-ingress-waf.map; deny vs detect mode; routes to
+  #     the default WAF unless the same Ingress also has a modsec-snippet)
   #
   # Cached via shared.ComputeIfAbsent("coraza_scan") so the scan runs at
-  # most once per render — both the spoa-hub-config-content snippet
-  # (modsec-snippet inlining + cross-annotation fail-loud) and the
-  # frontend-spoe-filters-050-coraza snippet (dispatch-mode decision)
-  # consume the same result. Validates the modsec-snippet triple-quote
-  # injection vector inline (TOML multi-line basic strings have no
-  # escape; allowing `"""` would let an Ingress-write RBAC holder break
-  # out of the directives string). Per-Ingress haproxy-ingress.github.io/waf
-  # validation lives in haproxy-ingress.yaml's map snippet.
+  # most once per render — `spoa-hub-config-content` (per-app
+  # `[plugins.params.applications."<ns>/<name>"]` block emission +
+  # cross-annotation fail-loud), `frontend-spoe-filters-050-coraza`
+  # (dispatch-mode decision), and `nginx-ingress.yaml`'s
+  # map-coraza-app-* (coraza-app.map population) all consume the
+  # same result. Validates the modsec-snippet triple-quote injection
+  # vector inline (TOML multi-line basic strings have no escape;
+  # allowing `"""` would let an Ingress-write RBAC holder break out of
+  # the directives string and inject arbitrary TOML keys). Validates
+  # host-less rules so a modsec-snippet without a host doesn't silently
+  # become a no-op (the Ingress would have its own [[applications]]
+  # entry but coraza-app.map wouldn't route any path to it).
+  # Per-Ingress haproxy-ingress.github.io/waf validation lives in
+  # haproxy-ingress.yaml's map snippet.
   util-coraza-scan:
     template: |-
       {%%
         var _, _ = shared.ComputeIfAbsent("coraza_scan", func() any {
-          var modsecSnippets = []any{}
+          var modsecApps = []any{}
           var hasHaproxyIngressWaf = false
           for _, ingress := range resources.ingresses.List() {
             var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring()
@@ -161,8 +170,24 @@ templateSnippets:
               if strings_contains(snippet, "\"\"\"") {
                 fail("Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
               }
-              modsecSnippets = append(modsecSnippets, map[string]any{
-                "ns": ns, "name": name, "snippet": snippet,
+              // Collect every <host><path> the Ingress carries so
+              // coraza-app.map can route those paths to this Ingress's
+              // per-app WAF. Host-less rules can't be enforced — the
+              // map is keyed by host+path; without a host the lookup
+              // never matches and the per-Ingress rules silently no-op.
+              var hostPaths = []any{}
+              for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
+                var host = rule | dig("host") | fallback("") | tostring()
+                if host == "" {
+                  fail("Ingress " + ns + "/" + name + " has 'nginx.ingress.kubernetes.io/modsecurity-snippet' set but a rule without a host. The coraza-app map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.")
+                }
+                for _, path := range rule | dig("http", "paths") | fallback([]any{}) {
+                  var pathStr = path | dig("path") | fallback("") | tostring()
+                  hostPaths = append(hostPaths, host + pathStr)
+                }
+              }
+              modsecApps = append(modsecApps, map[string]any{
+                "ns": ns, "name": name, "snippet": snippet, "host_paths": hostPaths,
               })
             }
             var waf = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf") | fallback("") | tostring()
@@ -171,7 +196,7 @@ templateSnippets:
             }
           }
           return map[string]any{
-            "modsec_snippets": modsecSnippets,
+            "modsec_apps": modsecApps,
             "has_haproxy_ingress_waf": hasHaproxyIngressWaf,
           }
         })
@@ -209,10 +234,10 @@ templateSnippets:
           admission denial via the dryrun validator. -#}
       {%- var _ = render "util-coraza-scan" -%}
       {%- var corazaScan, _ = shared.ComputeIfAbsent("coraza_scan", func() any { return nil }) -%}
-      {%- var modsecuritySnippets = corazaScan.(map[string]any)["modsec_snippets"].([]any) -%}
+      {%- var modsecApps = corazaScan.(map[string]any)["modsec_apps"].([]any) -%}
       {%- var hasHaproxyIngressWaf = corazaScan.(map[string]any)["has_haproxy_ingress_waf"].(bool) -%}
 
-      {%- if len(modsecuritySnippets) > 0 || hasHaproxyIngressWaf -%}
+      {%- if len(modsecApps) > 0 || hasHaproxyIngressWaf -%}
         {%- var corazaEnabled = false -%}
         {%- for _, p := range plugins -%}
           {%- var pName = p.(map[string]any)["name"].(string) -%}
@@ -221,8 +246,8 @@ templateSnippets:
           {%- end -%}
         {%- end -%}
         {%- if !corazaEnabled -%}
-          {%- if len(modsecuritySnippets) > 0 -%}
-            {%- var first = modsecuritySnippets[0].(map[string]any) -%}
+          {%- if len(modsecApps) > 0 -%}
+            {%- var first = modsecApps[0].(map[string]any) -%}
             {{- fail("Ingress " + first["ns"].(string) + "/" + first["name"].(string) + " sets annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
           {%- else -%}
             {#- has_haproxy_ingress_waf is true and modsec-snippets is empty —
@@ -281,27 +306,50 @@ templateSnippets:
         {%- end %}
 
       [plugins.params]
+        {%- var corazaDirectives = "" %}
         {%- if pName == "coraza" %}
-          {#- Coraza-specific: emit the directives = """...""" block,
-              concatenating values-supplied directives with per-Ingress
-              modsecurity-snippet annotations sorted by <ns>/<name>. The
-              comment line above each appended snippet identifies the
-              source Ingress so `coraza-spoa --dump-config` output (and
-              the rendered TOML on the haproxy pod's filesystem) is
-              traceable back to whichever Ingress contributed each rule. -#}
-          {%- var corazaDirectives = p | dig("directives") | fallback("") | tostring() %}
+          {#- Coraza-specific: emit the BASE directives only — no per-Ingress
+              modsec-snippets. Each Ingress with a snippet gets its OWN
+              [plugins.params.applications."<ns>/<name>"] block below, so
+              its rules are scoped to that Ingress's traffic via
+              coraza-app.map. Operators upgrading from the pre-multitenant
+              chart who relied on rule bleed (one Ingress's SecRule firing
+              on another Ingress's traffic) must move the shared rules
+              into the chart-level `spoaHub.plugins.coraza.directives`
+              values key. -#}
+          {%- corazaDirectives = p | dig("directives") | fallback("") | tostring() %}
       directives = """
       {{ corazaDirectives | trimSpace() }}
-          {%- for _, entry := range modsecuritySnippets %}
-            {%- var e = entry.(map[string]any) %}
-
-      # nginx-ingress modsecurity-snippet from {{ e["ns"].(string) }}/{{ e["name"].(string) }}
-      {{ e["snippet"].(string) | trimSpace() }}
-          {%- end %}
       """
         {%- end %}
         {%- if pParams != "" %}
       {{ pParams | trimSpace() }}
+        {%- end %}
+        {%- if pName == "coraza" && len(modsecApps) > 0 %}
+          {#- Per-app WAF instances. The plugin's config schema parses
+              `applications` as a TOML table keyed by app name (see
+              haproxy-spoa-hub-plugin-coraza/src/config.rs:124-130).
+              `<ns>/<name>` is quoted because the slash isn't a bare-key
+              char in TOML. Each block contains the chart-default base
+              directives PRE-PENDED to the per-Ingress modsec-snippet,
+              so per-app WAF instances inherit the base ruleset
+              (operator's chart-wide config) plus their own custom
+              rules. coraza-app.map (populated by nginx-ingress.yaml)
+              binds <host><path> → "<ns>/<name>" so SPOE check-request
+              sets `app=` and the plugin routes to this app's WAF. -#}
+          {%- for _, app := range modsecApps %}
+            {%- var a = app.(map[string]any) %}
+            {%- var aNs = a["ns"].(string) %}
+            {%- var aName = a["name"].(string) %}
+
+      [plugins.params.applications."{{ aNs }}/{{ aName }}"]
+      directives = """
+      {{ corazaDirectives | trimSpace() }}
+
+      # nginx-ingress modsecurity-snippet from {{ aNs }}/{{ aName }}
+      {{ a["snippet"].(string) | trimSpace() }}
+      """
+          {%- end %}
         {%- end %}
       {# Newline between plugin iterations so the next [[plugins]] table
          header lands on its own line. Without it the rendered TOML
@@ -443,10 +491,20 @@ templateSnippets:
   # anomaly_score,rules_hit,data}; the dispatcher in
   # frontend-spoe-filters-050-coraza denies on
   # rule_id >= 1 AND action == "deny".
+  #
+  # `app=var(txn.coraza_app)` carries the per-Ingress WAF identifier
+  # that the chart's `coraza-app.map` lookup populates from the
+  # request's host+path. The coraza plugin reads this in `process()`
+  # (haproxy-spoa-hub-plugin-coraza/src/plugin.rs:370) and routes the
+  # request to that app's WAF instance — the per-Ingress
+  # [plugins.params.applications."<ns>/<name>"] block. When unset, the
+  # plugin falls through to the default WAF (chart-default base
+  # directives only). This is the multi-tenancy lever: per-Ingress
+  # custom rules don't fire on other Ingresses' traffic.
   spoe-message-check-request-body:
     template: |-
       spoe-message check-request
-          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body
+          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body app=var(txn.coraza_app)
 
   frontend-filters-100-spoa-hub:
     template: |-
@@ -471,24 +529,38 @@ templateSnippets:
   #     actions). Today the chart only emits 403 deny, so drop/redirect
   #     actions correctly fall through to backend.
   #
-  # Dispatch mode (decided at chart-render time from util-coraza-scan):
+  # Multi-tenant per-path dispatch (no rule bleed across Ingresses):
   #
-  #   - UNCONDITIONAL: any nginx.ingress.kubernetes.io/modsecurity-snippet
-  #     present anywhere chart-wide, OR coraza enabled chart-wide with no
-  #     per-Ingress annotations. Rules are global → dispatch must run on
-  #     every request, matching nginx-ingress upstream semantics.
+  # Two maps drive the per-path lookup:
+  #   - coraza-app.map (populated by nginx-ingress.yaml's
+  #     map-coraza-app-* snippet): `<host><path>` → `<ns>/<name>` for
+  #     Ingresses that carry `nginx.ingress.kubernetes.io/modsecurity-snippet`.
+  #     The matching app's `[plugins.params.applications."<ns>/<name>"]`
+  #     block carries the chart-default base directives + that
+  #     Ingress's per-Ingress rules. The plugin routes via the `app=`
+  #     SPOE arg below.
+  #   - haproxy-ingress-waf.map (populated by haproxy-ingress.yaml's
+  #     map-haproxy-ingress-waf-* snippet): `<host><path>` → `deny|detect`
+  #     for Ingresses with `haproxy-ingress.github.io/waf`. Drives the
+  #     deny-skip predicate below for shadow-mode rollouts.
   #
-  #   - CONDITIONAL: only haproxy-ingress.github.io/waf annotations
-  #     present (no modsec-snippets). Dispatch is gated on a per-path
-  #     map lookup in haproxy-ingress-waf.map; paths without the
-  #     annotation skip the SPOE roundtrip entirely. Matches
-  #     haproxy-ingress.github.io upstream semantics.
+  # Dispatch fires when EITHER map matches the current host+path. Paths
+  # without any matching annotation skip the SPOE roundtrip entirely
+  # (matches haproxy-ingress.github.io upstream semantic). The
+  # haproxy-ingress.github.io/waf-mode annotation only matters when a
+  # `/waf` annotation is also present; without `/waf` the deny rule
+  # falls back to its default (deny on rule match).
   #
-  #   - When haproxy-ingress.github.io/waf is present (in either
-  #     dispatch mode), the map's value is the per-path enforcement mode
-  #     (`deny` or `detect` from `/waf-mode`). Detect mode runs the WAF
-  #     but skips the deny rule via `!{ var(txn.coraza_mode) -m str detect }`,
-  #     enabling shadow-mode rollouts.
+  # **Behavior change vs pre-multitenant chart:** previously, ANY
+  # nginx.ingress.kubernetes.io/modsecurity-snippet anywhere chart-wide
+  # caused unconditional dispatch on EVERY request (rules pooled into a
+  # single global WAF instance, evaluating against all traffic).
+  # That's a privilege-escalation vector in multi-tenant clusters.
+  # Now, modsec-snippets only fire on the host+path of their carrying
+  # Ingress. Operators who depended on the rule-bleed behavior must
+  # move shared rules into chart-level
+  # `spoaHub.plugins.coraza.directives` (the base ruleset, applied to
+  # every per-Ingress app + the default WAF).
   #
   # Priority 050 runs the WAF pass BEFORE the external-auth subrequest
   # at priority 100 — standard "WAF first, auth second" pipeline. Emits
@@ -499,20 +571,10 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-request" %}
-      {%- var _ = render "util-coraza-scan" %}
-      {%- var corazaScan, _ = shared.ComputeIfAbsent("coraza_scan", func() any { return nil }) %}
-      {%- var modsecuritySnippets = corazaScan.(map[string]any)["modsec_snippets"].([]any) %}
-      {%- var hasHaproxyIngressWaf = corazaScan.(map[string]any)["has_haproxy_ingress_waf"].(bool) %}
-      {%- var unconditional = len(modsecuritySnippets) > 0 || !hasHaproxyIngressWaf %}
-      {%- if hasHaproxyIngressWaf %}
+      http-request set-var(txn.coraza_app) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
       http-request set-var(txn.coraza_mode) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
-      {%- end %}
-      {%- if unconditional %}
-      http-request send-spoe-group spoa-hub check-request-group
-      {%- else %}
-      http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_mode) -m found }
-      {%- end %}
-      http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny }{%- if hasHaproxyIngressWaf %} !{ var(txn.coraza_mode) -m str detect }{%- end %}
+      http-request send-spoe-group spoa-hub check-request-group if { var(txn.coraza_app) -m found } || { var(txn.coraza_mode) -m found }
+      http-request deny deny_status 403 if { var(txn.hub.coraza.rule_id) -m int 1: } { var(txn.hub.coraza.action) -m str deny } !{ var(txn.coraza_mode) -m str detect }
       {%- end %}
 
   # External-auth wiring: looks up the per-ingress auth URL in
@@ -566,6 +628,31 @@ templateSnippets:
       {%- end %}
 
 maps:
+  coraza-app.map:
+    template: |
+      # Coraza WAF: per-Ingress per-app routing for multi-tenant rule
+      # isolation. Keyed by host+path (matching the routing-logic key
+      # in base.yaml); the value is the per-Ingress app name
+      # `<namespace>/<ingress-name>` matching the rendered
+      # `[plugins.params.applications."<ns>/<name>"]` block in
+      # spoa-hub-config.toml.
+      #
+      # The frontend filter sets `txn.coraza_app` from this lookup and
+      # the SPOE check-request message passes it as `app=` to the
+      # plugin, which routes the request to that app's WAF instance.
+      # Per-Ingress rules from `nginx.ingress.kubernetes.io/modsecurity-snippet`
+      # only fire on traffic matching their carrying Ingress's
+      # host+path — they don't bleed into other Ingresses' traffic.
+      #
+      # Empty / no entry → SPOE arg is empty → plugin falls through to
+      # the default WAF (chart-default base directives only).
+      # Populated by ingress libraries' map-coraza-app-*-* snippets
+      # (currently nginx-ingress.yaml only; haproxy-ingress.github.io's
+      # /waf annotation routes to the default WAF unless the same
+      # Ingress also has a modsec-snippet, in which case nginx's
+      # snippet handler emits the entry).
+      {{- render_glob "map-coraza-app-*" -}}
+
   haproxy-ingress-waf.map:
     template: |
       # Coraza WAF: per-Ingress path-scoped opt-in driven by
@@ -1105,6 +1192,249 @@ validationTests:
         target: file:spoa-hub-config.toml
         pattern: '# nginx-ingress modsecurity-snippet from zone-a/alpha[\s\S]*# nginx-ingress modsecurity-snippet from zone-m/middle[\s\S]*# nginx-ingress modsecurity-snippet from zone-z/zeta'
         description: Snippets are inlined sorted by namespace/name (alpha < middle < zeta)
+
+  # ============================================================================
+  # Multi-tenant per-app WAF tests (rules don't bleed across Ingresses)
+  # ============================================================================
+
+  test-spoa-hub-config-render-modsecurity-snippet-isolated-per-app:
+    # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
+    # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      Multi-tenant isolation: Two Ingresses with distinct
+      modsecurity-snippet annotations each get their own
+      [plugins.params.applications."<ns>/<name>"] block in the
+      rendered spoa-hub-config.toml. Ingress A's SecRule must NOT
+      appear inside Ingress B's app block (and vice versa). The
+      chart-default base directives ARE shared — they appear inside
+      every per-app block — but the per-Ingress rules stay scoped.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: alpha
+            namespace: tenant-a
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule REQUEST_HEADERS:X-Tenant-A-Block "@streq yes" "id:5001,phase:1,deny,status:403"
+          spec: { ingressClassName: haproxy, rules: [{ host: a.example.com, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }] } }] }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: bravo
+            namespace: tenant-b
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule REQUEST_HEADERS:X-Tenant-B-Block "@streq yes" "id:5002,phase:1,deny,status:403"
+          spec: { ingressClassName: haproxy, rules: [{ host: b.example.com, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }] } }] }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid
+      # Each Ingress gets its OWN [plugins.params.applications] block
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\]'
+        description: tenant-a/alpha gets its own per-app block
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[plugins\.params\.applications\."tenant-b/bravo"\]'
+        description: tenant-b/bravo gets its own per-app block
+      # Within tenant-a/alpha's block: alpha's rule appears, bravo's does NOT
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\][\s\S]*?5001[\s\S]*?"""[\s\S]*?\[plugins\.params\.applications\."tenant-b/bravo"\]'
+        description: alpha's rule (id:5001) appears inside alpha's app block (and the block ends with """ before bravo's block opens)
+      - type: not_contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\][\s\S]*?5002[\s\S]*?"""[\s\S]*?\[plugins\.params\.applications\."tenant-b/bravo"\]'
+        description: bravo's rule (id:5002) does NOT bleed into alpha's app block
+      # The base ruleset (SecRuleEngine On) IS shared — appears in both blocks
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\][\s\S]*?SecRuleEngine On[\s\S]*?\[plugins\.params\.applications\."tenant-b/bravo"\]'
+        description: Base ruleset (SecRuleEngine On) appears inside alpha's app block (shared base)
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: '\[plugins\.params\.applications\."tenant-b/bravo"\][\s\S]*?SecRuleEngine On'
+        description: Base ruleset (SecRuleEngine On) appears inside bravo's app block (shared base)
+
+  test-spoa-hub-coraza-app-map-routes-by-host-path:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      coraza-app.map carries one entry per `<host><path>` for each
+      Ingress with a modsecurity-snippet, mapping to the Ingress's
+      `<namespace>/<name>` app key. The frontend filter sets
+      `txn.coraza_app` from this lookup and the SPOE check-request
+      message passes it as `app=` so the plugin routes to the right
+      per-app WAF.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        hub:
+          logLevel: info
+          maxConnections: 1000
+          blockingThreadKeepAliveSecs: 30
+          pluginDir: /etc/haproxy-spoa-hub/plugins
+          defaultTimeoutMs: 500
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: echo }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: echo-abc
+            labels: { kubernetes.io/service-name: echo }
+          addressType: IPv4
+          endpoints: [{ addresses: ["10.0.0.1"] }]
+          ports: [{ port: 8080 }]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: protected
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRuleEngine On
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+                    - path: /api
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: map:coraza-app.map
+        pattern: 'protected.example.com/ default/protected'
+        description: Root path maps to the Ingress's app name
+      - type: contains
+        target: map:coraza-app.map
+        pattern: 'protected.example.com/api default/protected'
+        description: /api path also maps to the same app
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn.coraza_app\).*coraza-app\.map'
+        description: Frontend filter looks up coraza_app from the per-path map
+      - type: contains
+        target: file:spoe.conf
+        pattern: 'app=var\(txn.coraza_app\)'
+        description: SPOE check-request message passes app= per-request (lives in spoe.conf, not haproxy.cfg)
+
+  test-spoa-hub-config-render-modsecurity-snippet-host-less-rejected:
+    _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
+    description: |
+      An Ingress with modsecurity-snippet and a host-less rule fails
+      at render time. The coraza-app.map is keyed by `<host><path>`;
+      a host-less rule never matches the lookup, so the per-Ingress
+      WAF would silently no-op. Mirrors auth-url's host-less
+      rejection.
+    extraContext:
+      haproxyVersion: "3.2"
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: ""
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hostless-modsec
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRuleEngine On
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: any, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "'nginx\\.ingress\\.kubernetes\\.io/modsecurity-snippet' set but a rule without a host"
+        description: Render must fail with the host-less diagnostic
+      - type: contains
+        target: rendering_error
+        pattern: 'default/hostless-modsec'
+        description: Error must identify the offending Ingress
 
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
     description: |
