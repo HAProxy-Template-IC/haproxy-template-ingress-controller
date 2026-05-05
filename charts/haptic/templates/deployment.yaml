@@ -211,6 +211,18 @@ spec:
               readOnly: true
             - name: validators-socket
               mountPath: {{ $validators.socketDir }}
+            # Writable /tmp for the coraza plugin's pre-init filesystem-
+            # access probe. Coraza's WAF init writes a small `checkfs…`
+            # file under `/tmp` to verify it can do disk I/O before
+            # compiling SecRules; with `readOnlyRootFilesystem: true`
+            # on the validator sidecar the probe fails EROFS and every
+            # admission webhook call returns "create file: read-only
+            # file system. Use 'no_fs_access' build tag…" — the
+            # validator never reaches the SecRule parser. Memory-
+            # backed because the contents are tiny + ephemeral. Same
+            # pattern as the haproxy-pod's `spoa-hub-tmp` volume.
+            - name: validators-tmp
+              mountPath: /tmp
             {{- with $validators.extraVolumeMounts }}
             {{- tpl (toYaml .) $ | nindent 12 }}
             {{- end }}
@@ -232,6 +244,10 @@ spec:
             name: {{ include "haptic.spoaHub.configMapName" . }}
         - name: validators-socket
           emptyDir: {}
+        - name: validators-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- tpl (toYaml .) $ | nindent 8 }}

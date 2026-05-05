@@ -259,11 +259,11 @@ type IngressSpec struct {
 	TLSSecretName string
 }
 
-// NewIngress applies the Ingress described by spec. The IngressClass name
-// is "haptic" (matches the helm chart's default).
-func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) *networkingv1.Ingress {
-	t.Helper()
-
+// buildIngress materialises an `IngressSpec` into a typed Ingress object
+// without touching the apiserver. Shared by `NewIngress` (apply, expect
+// success) and `NewIngressExpectDenied` (apply, expect admission webhook
+// rejection).
+func buildIngress(namespace string, spec IngressSpec) *networkingv1.Ingress {
 	if spec.Path == "" {
 		spec.Path = "/"
 	}
@@ -309,6 +309,15 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 			SecretName: spec.TLSSecretName,
 		}}
 	}
+	return ing
+}
+
+// NewIngress applies the Ingress described by spec. The IngressClass name
+// is "haptic" (matches the helm chart's default).
+func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) *networkingv1.Ingress {
+	t.Helper()
+
+	ing := buildIngress(namespace, spec)
 	if err := client.Resources(namespace).Create(ctx, ing); err != nil {
 		t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, err)
 	}
@@ -340,6 +349,36 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 		waitForControllerForgetNamespace(bg, t, client, namespace)
 	})
 	return ing
+}
+
+// NewIngressExpectDenied applies the Ingress and asserts that the
+// admission webhook rejects it. Returns the error the apiserver
+// returned — assertions on the error message belong to the caller
+// (e.g. a webhook denial includes the controller's diagnostic, an
+// unrelated apiserver failure does not).
+//
+// On a successful Create the helper calls `t.Fatalf`: a passing
+// Create means the validator stack didn't catch the operator's typo,
+// which is itself the bug the test exists to detect. We do NOT
+// register a delete cleanup — the resource was either rejected
+// (nothing to clean up) or the test already failed.
+func NewIngressExpectDenied(ctx context.Context, t *testing.T, client klient.Client, namespace string, spec IngressSpec) error {
+	t.Helper()
+
+	ing := buildIngress(namespace, spec)
+	err := client.Resources(namespace).Create(ctx, ing)
+	if err == nil {
+		// Best-effort cleanup so the unexpected resource doesn't leak
+		// into a downstream test's namespace teardown wait. We don't
+		// gate the t.Fatalf below on this — the test outcome is
+		// already decided.
+		_ = client.Resources(namespace).Delete(context.Background(), ing)
+		t.Fatalf(
+			"expected admission webhook to deny Ingress %s/%s, but Create succeeded",
+			namespace, spec.Name,
+		)
+	}
+	return err
 }
 
 // NewTLSSecret generates a self-signed certificate for the given hosts and
