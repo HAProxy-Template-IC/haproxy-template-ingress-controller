@@ -497,6 +497,36 @@ controller:
         # Error message shown when password hash validation fails.
         # The actual error will include username, secret name, and pattern.
         password_hash_validation_error_message: "Invalid password hash"
+        # Coraza WAF dispatch behaviour. Controls which HTTP requests
+        # HAPTIC's rendered `frontend-spoe-filters-050-coraza` ships to
+        # the SPOA hub for WAF inspection. This is a HAPTIC-side
+        # template decision (it changes the rendered haproxy.cfg); it
+        # does NOT affect the SPOA hub TOML or the coraza plugin's
+        # runtime behaviour — for those, see `spoaHub.plugins.coraza.
+        # {directives,params}`.
+        #
+        # The hub passively processes whatever SPOE messages HAProxy
+        # sends; this block decides which requests reach it.
+        coraza:
+          dispatch:
+            # `opt-in` (default): WAF runs only on paths with a per-
+            # Ingress `nginx.ingress.kubernetes.io/modsecurity-snippet`
+            # or `haproxy-ingress.github.io/waf: "modsecurity"`.
+            # Matches the haproxy-ingress.github.io upstream's per-
+            # path-only model.
+            #
+            # `default-on`: WAF runs on every request unless the path
+            # is opted out via
+            # `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`.
+            # Mirrors ingress-nginx's `enable-modsecurity` ConfigMap
+            # key. haproxy-ingress.github.io has no upstream
+            # equivalent — this is a HAPTIC parity feature for
+            # operators migrating from ingress-nginx.
+            mode: opt-in
+            # WAF enforcement when `mode: default-on`. Per-path
+            # `haproxy-ingress.github.io/waf-mode: "detect"` overrides
+            # this for that path. Ignored when `mode: opt-in`.
+            defaultEnforcement: deny
     watchedResourcesIgnoreFields:
       - metadata.managedFields
       - metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']
@@ -1614,6 +1644,13 @@ spoaHub:
       # haproxytech (haproxy.org/*) has no public WAF annotation; nothing
       # to OR. Operators wanting cluster-wide WAF without either ingress
       # library can `--set spoaHub.plugins.coraza.enabled=true`.
+      #
+      # NOTE: this block configures the WAF service (rules, body
+      # limits, plugin runtime knobs — all rendered into the spoa-hub
+      # TOML). The dispatch decision — i.e., which HTTP requests
+      # HAProxy ships to the WAF — lives separately under
+      # `controller.templatingSettings.extraContext.coraza.dispatch`,
+      # because it changes the rendered haproxy.cfg, not the hub TOML.
       enabled: '{{ or .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
       timeoutMs: 15
       messages: ["check-request"]
