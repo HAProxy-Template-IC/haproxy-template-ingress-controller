@@ -27,8 +27,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"golang.org/x/sync/errgroup"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
@@ -82,48 +85,54 @@ func TestMain(m *testing.M) {
 		kindcluster.ProviderWithLogger(kindcmd.NewLogger()),
 	)
 
+	// Heartbeat: emit current setup phase + elapsed every 5s so the GitLab
+	// job trace shows progress instead of looking frozen for the ~4-minute
+	// window between `go: downloading` and the first test PASS line.
+	// `go test -v` + `t.Parallel()` buffers per-test output until parents
+	// complete, but TestMain-side writes from a goroutine to os.Stderr
+	// flush in real time.
+	heartbeatCtx, heartbeatStop := context.WithCancel(context.Background())
+	startSetupHeartbeat(heartbeatCtx)
+
 	// caBundleB64 is captured from the webhook-cert setup step and consumed
 	// by the helm-install step. Closure rather than context-passing because
 	// envconf.Config doesn't carry arbitrary values.
 	var caBundleB64 string
 
 	testEnv.Setup(
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		phase("cluster-create", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return setupCluster(ctx, cfg, provider)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		}),
+		phase("load-controller-image", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return loadControllerImage(ctx)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return installCRDs(ctx)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return installGatewayAPICRDs(ctx)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			b, err := setupWebhookCerts(ctx)
+		}),
+		phase("ensure-namespaces", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			return ctx, ensureNamespaces(ctx)
+		}),
+		phase("install-crds+certs (parallel)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			b, err := preInstallParallel(ctx)
 			if err != nil {
 				return ctx, err
 			}
 			caBundleB64 = b
 			return ctx, nil
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return ctx, setupDefaultSSLCert(ctx)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		}),
+		phase("helm-install", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return helmInstallChart(ctx, caBundleB64)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		}),
+		phase("apply-backend-fixtures (parallel)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return applyBackendFixtures(ctx)
-		},
-		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		}),
+		phase("wait-environment-ready", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			client, err := cfg.NewClient()
 			if err != nil {
 				return ctx, fmt.Errorf("new client: %w", err)
 			}
 			return ctx, WaitForE2EEnvironmentReady(ctx, client)
-		},
+		}),
+		phase("tests-running", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			return ctx, nil
+		}),
 	)
 
 	testEnv.Finish(
@@ -132,7 +141,51 @@ func TestMain(m *testing.M) {
 		},
 	)
 
-	os.Exit(testEnv.Run(m))
+	code := testEnv.Run(m)
+	heartbeatStop()
+	os.Exit(code)
+}
+
+// setupPhase is the current TestMain phase, read by the heartbeat goroutine
+// and updated by the phase() wrapper before each setup step runs.
+var setupPhase atomic.Pointer[string]
+
+// setupStart marks when TestMain began. The heartbeat reports
+// time-since-this so each line shows total elapsed setup time.
+var setupStart = time.Now()
+
+// phase wraps an env.Func to record the current setup-phase label before
+// running it, so the heartbeat reflects which step is currently executing.
+func phase(name string, fn env.Func) env.Func {
+	return func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+		setupPhase.Store(&name)
+		return fn(ctx, cfg)
+	}
+}
+
+// startSetupHeartbeat prints the current TestMain phase + elapsed-since-start
+// to stderr every 5 seconds until ctx is cancelled. Restores legibility to
+// the GitLab job trace, which otherwise sits silent for ~4 minutes during
+// compile + cluster-bring-up + helm install + fixture deploy.
+func startSetupHeartbeat(ctx context.Context) {
+	initial := "init"
+	setupPhase.Store(&initial)
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				p := setupPhase.Load()
+				if p == nil {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "[e2e] phase=%s elapsed=%ds\n", *p, int(time.Since(setupStart).Seconds()))
+			}
+		}
+	}()
 }
 
 // setupCluster creates the kind cluster if it doesn't already exist,
@@ -257,21 +310,78 @@ func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
 		return ctx, fmt.Errorf("install Gateway API CRDs: %w (output: %s)", err, out)
 	}
 
-	// Wait for CRDs to be Established before continuing — without this the
-	// chart's helm install can race the watcher's CRD lookup.
-	for _, crd := range []string{
+	// Single multi-arg `kubectl wait` — kubectl waits on all four CRDs in
+	// parallel, so we don't pay the sequential per-CRD shell-out overhead.
+	// The Established check guards against the chart's helm install racing
+	// the watcher's CRD lookup.
+	wait := exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
+		"--for=condition=Established", "--timeout=60s",
 		"crd/gatewayclasses.gateway.networking.k8s.io",
 		"crd/gateways.gateway.networking.k8s.io",
 		"crd/httproutes.gateway.networking.k8s.io",
 		"crd/grpcroutes.gateway.networking.k8s.io",
-	} {
-		wait := exec.CommandContext(ctx, "kubectl", "wait", "--kubeconfig", kubeconfigPath,
-			"--for=condition=Established", "--timeout=60s", crd)
-		if out, err := wait.CombinedOutput(); err != nil {
-			return ctx, fmt.Errorf("wait for %s established: %w (output: %s)", crd, err, out)
-		}
+	)
+	if out, err := wait.CombinedOutput(); err != nil {
+		return ctx, fmt.Errorf("wait for Gateway API CRDs established: %w (output: %s)", err, out)
 	}
 	return ctx, nil
+}
+
+// ensureNamespaces idempotently creates the controller and shared-fixture
+// namespaces upfront so the parallel install/fixture phases don't race on
+// namespace creation. echo-server.yaml ships its own Namespace block, but
+// the other fixtures only reference namespace: echo and would otherwise
+// race against echo-server's apply when fanned out.
+func ensureNamespaces(ctx context.Context) error {
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: %s
+`, ControllerNamespace, SharedFixturesNamespace)
+	return kubectlApplyStdin(ctx, []byte(manifest))
+}
+
+// preInstallParallel runs the helm-install prerequisites concurrently:
+// chart CRDs, Gateway API CRDs, the webhook CA + server-cert Secret, and
+// the default-ssl-cert Secret. They all depend only on the cluster + the
+// pre-created namespace, not on each other, so fanning them out cuts the
+// sequential cost of this phase.
+//
+// Returns the base64 CA bundle from setupWebhookCerts so the helm step
+// can pass it as --set webhook.caBundle=...
+func preInstallParallel(ctx context.Context) (string, error) {
+	g, gctx := errgroup.WithContext(ctx)
+	var caBundleB64 string
+
+	g.Go(func() error {
+		_, err := installCRDs(gctx)
+		return err
+	})
+	g.Go(func() error {
+		_, err := installGatewayAPICRDs(gctx)
+		return err
+	})
+	g.Go(func() error {
+		b, err := setupWebhookCerts(gctx)
+		if err != nil {
+			return err
+		}
+		caBundleB64 = b
+		return nil
+	})
+	g.Go(func() error {
+		return setupDefaultSSLCert(gctx)
+	})
+
+	if err := g.Wait(); err != nil {
+		return "", err
+	}
+	return caBundleB64, nil
 }
 
 // helmInstallChart installs the chart from charts/haptic with dev-values.yaml
@@ -356,12 +466,9 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 
 // applyBackendFixtures installs the stateless backend fixtures into the
 // SharedFixturesNamespace. These are deployed once per cluster and shared
-// across all tests; they don't carry per-test state. echo-server's YAML
-// includes the namespace declaration so we don't need to create it
-// separately.
-//
-// blocklist-server first so the controller can fetch from it during
-// template rendering.
+// across all tests; they don't carry per-test state. The namespace itself
+// is created by ensureNamespaces upstream so all five applies can fan out
+// concurrently without racing on namespace creation.
 func applyBackendFixtures(ctx context.Context) (context.Context, error) {
 	fixtures := []struct {
 		name string
@@ -373,12 +480,18 @@ func applyBackendFixtures(ctx context.Context) (context.Context, error) {
 		{"haproxy-demo-backend", devassets.HAProxyDemoBackendYAML},
 		{"haproxy-test-backend", devassets.HAProxyTestBackendYAML},
 	}
+
+	g, gctx := errgroup.WithContext(ctx)
 	for _, f := range fixtures {
-		if err := kubectlApplyStdin(ctx, f.yaml); err != nil {
-			return ctx, fmt.Errorf("apply %s: %w", f.name, err)
-		}
+		f := f
+		g.Go(func() error {
+			if err := kubectlApplyStdin(gctx, f.yaml); err != nil {
+				return fmt.Errorf("apply %s: %w", f.name, err)
+			}
+			return nil
+		})
 	}
-	return ctx, nil
+	return ctx, g.Wait()
 }
 
 // teardownCluster destroys the kind cluster unless KEEP_CLUSTER is true
@@ -499,4 +612,3 @@ func repoRoot() (string, error) {
 		dir = parent
 	}
 }
-
