@@ -4058,8 +4058,8 @@ validationTests:
         description: Frontend looks up coraza_mode from the map after routing
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_mode\\) -m found \\}"
-        description: Dispatch is conditional on the per-path map lookup
+        pattern: "http-request send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_app\\) -m found \\} \\|\\| \\{ var\\(txn.coraza_mode\\) -m found \\}"
+        description: Dispatch fires when EITHER coraza-app.map or haproxy-ingress-waf.map matches the request's host+path
       - type: contains
         target: haproxy.cfg
         pattern: "!\\{ var\\(txn.coraza_mode\\) -m str detect \\}"
