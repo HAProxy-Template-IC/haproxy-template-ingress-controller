@@ -173,17 +173,29 @@ spoaHub:
         ]
         extract_headers = ["x-auth-user", "x-auth-roles"]
     # Coraza is auto-enabled by chart values.yaml whenever the
-    # nginx-ingress library is on (which it is here), so we don't set
-    # `enabled` explicitly. Override `directives` to the smallest
-    # viable rule set — operators wanting OWASP CRS get the chart
-    # default; CI keeps it minimal so per-test
-    # `nginx.ingress.kubernetes.io/modsecurity-snippet` rules are the
-    # only ones surfacing 403s during e2e. The runtime hub reloads on
-    # file-watch (haproxy-spoa-hub MR1), so per-Ingress snippets land
-    # in the running config without a pod restart.
+    # nginx-ingress OR haproxy-ingress library is on (both are here),
+    # so we don't set `enabled` explicitly. Override `directives` to
+    # the smallest viable rule set — operators wanting OWASP CRS get
+    # the chart default; CI keeps it minimal so per-test
+    # `nginx.ingress.kubernetes.io/modsecurity-snippet` and
+    # `haproxy-ingress.github.io/waf` rules are the only ones surfacing
+    # 403s during e2e. The trigger SecRule (id:7700201) below is shared
+    # by the haproxy-ingress.github.io/waf e2e test
+    # (TestIngressHaproxyIngressWafDeny): it blocks any request with
+    # `User-Agent: haptic-waf-block-probe`, so the test can prove that
+    # /waf and /waf-mode wire dispatch + enforcement correctly without
+    # depending on the per-Ingress modsec-snippet path. The 7700xxx ID
+    # range is intentionally distant from the 91xx/92xx range used by
+    # per-Ingress modsec-snippet tests — coraza rejects duplicate rule
+    # IDs across global directives + per-Ingress snippet appends, so
+    # any e2e test inlining a SecRule must use a non-overlapping ID.
+    # The runtime hub reloads on file-watch (haproxy-spoa-hub MR1), so
+    # per-Ingress rules land in the running config without a pod
+    # restart.
     coraza:
       directives: |
         SecRuleEngine On
+        SecRule REQUEST_HEADERS:User-Agent "@streq haptic-waf-block-probe" "id:7700201,phase:1,deny,status:403,msg:'haptic-e2e-waf-probe blocked'"
       params: |
         request_body_limit = 131072
         request_body_in_memory_limit = 131072

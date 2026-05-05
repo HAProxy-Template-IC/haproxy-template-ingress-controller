@@ -6,8 +6,20 @@ templates:
   - haproxytemplateconfig.yaml
 
 tests:
-  - it: should render no spoa-hub sidecar with default values
+  # Baseline: with both ingress libraries off (so neither nginx-ingress
+  # nor haproxy-ingress auto-enables coraza) and no other plugin
+  # explicitly enabled, the spoa-hub sidecar is not rendered. The
+  # default chart values keep haproxyIngress.enabled=true, which
+  # auto-enables coraza via spoaHub.plugins.coraza.enabled's `or`
+  # predicate; that's the documented tradeoff for path-scoped
+  # `haproxy-ingress.github.io/waf` to work without a second toggle.
+  # These baseline tests pin the inverse — when an operator turns
+  # both ingress libraries off, no sidecar.
+  - it: should render no spoa-hub sidecar when both ingress libraries are disabled
     template: haproxy-deployment.yaml
+    set:
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
     asserts:
       - notContains:
           path: spec.template.spec.containers
@@ -25,8 +37,11 @@ tests:
             name: spoa-hub-bootstrap
           any: true
 
-  - it: should render no spoa-hub ConfigMap with default values
+  - it: should render no spoa-hub ConfigMap when both ingress libraries are disabled
     template: spoa-hub-configmap.yaml
+    set:
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -101,6 +116,9 @@ tests:
 
   - it: should NOT add the bootstrap-copy initContainer when spoa-hub is disabled
     template: haproxy-deployment.yaml
+    set:
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
     asserts:
       - notContains:
           path: spec.template.spec.initContainers
@@ -263,8 +281,11 @@ tests:
           path: data["config.toml"]
           pattern: 'name = "fingerprinting"'
 
-  - it: should not surface a spoaHub extraContext entry with default values
+  - it: should not surface a spoaHub extraContext entry when both ingress libraries are disabled
     template: haproxytemplateconfig.yaml
+    set:
+      controller.templateLibraries.haproxyIngress.enabled: false
+      controller.templateLibraries.nginxIngress.enabled: false
     asserts:
       - isNull:
           path: spec.templatingSettings.extraContext.spoaHub

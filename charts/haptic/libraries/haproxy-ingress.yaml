@@ -44,6 +44,10 @@
 # Authentication:
 #   - auth-secret, auth-realm
 #
+# WAF (Coraza, via SPOA hub):
+#   - waf: modsecurity (path-scoped opt-in; only "modsecurity" supported)
+#   - waf-mode: deny | detect (default deny; detect = shadow mode)
+#
 # Advanced:
 #   - limit-rps, limit-whitelist
 
@@ -1674,6 +1678,77 @@ templateSnippets:
               {%- if first_seen("haproxy-ingress-fail-header", varName) -%}
       {{ "\n" }}      http-after-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
               {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # WAF (Coraza, via SPOA hub): per-Ingress opt-in path-scoped WAF.
+  # Populates haproxy-ingress-waf.map with one entry per `<host><path>`
+  # for Ingresses carrying `haproxy-ingress.github.io/waf: "modsecurity"`.
+  # The map's *value* is the resolved enforcement mode (`deny` or
+  # `detect`) read from `haproxy-ingress.github.io/waf-mode` (default
+  # `deny`); this lets a single map drive both the dispatch gate
+  # (`if { var(txn.coraza_mode) -m found }`) and the deny-skip in detect
+  # mode (`!{ var(txn.coraza_mode) -m str detect }`) — see
+  # `frontend-spoe-filters-050-coraza` in spoa-hub.yaml.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#modsecurity
+  #
+  # Annotations:
+  #   haproxy-ingress.github.io/waf: "modsecurity"        (required to opt in; only "modsecurity" supported)
+  #   haproxy-ingress.github.io/waf-mode: "deny"|"detect" (default "deny"; "detect" runs WAF in shadow mode)
+  #
+  # Validation (fail-loud at render time → admission denial):
+  #   - waf set to anything other than "modsecurity"             → fail()
+  #   - waf-mode set to anything other than "deny" or "detect"   → fail()
+  #   - waf-mode set without waf (operator error; no-op upstream) → fail()
+  #   - rule lacks a host (map key needs <host><path>)            → fail()
+  #
+  # Coexistence with `nginx.ingress.kubernetes.io/modsecurity-snippet`:
+  # nginx-ingress's annotation appends to coraza's global directives so
+  # rules apply chart-wide and dispatch is unconditional. When BOTH
+  # styles are present, nginx wins for dispatch (everywhere) but this
+  # map's mode lookup still gates the deny rule per-path, so a
+  # `waf-mode: detect` path remains in shadow mode under nginx-driven
+  # dispatch. See ADR-0007.
+  map-haproxy-ingress-waf-500-haproxy-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
+        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+        {%- var key = ns + "/" + name -%}
+        {%- var waf = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf") | fallback("") | tostring() -%}
+        {%- var mode = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf-mode") | fallback("") | tostring() -%}
+        {#- waf-mode without waf is a no-op upstream; loud here per the
+            chart-wide fail-loud convention so operators don't silently
+            drop into shadow mode. -#}
+        {%- if waf == "" && mode != "" -%}
+          {{- fail("Ingress " + key + " sets 'haproxy-ingress.github.io/waf-mode' but not 'haproxy-ingress.github.io/waf'. waf-mode is meaningful only when waf is also set; remove waf-mode or add 'haproxy-ingress.github.io/waf: modsecurity'.") -}}
+        {%- end -%}
+        {%- if waf != "" -%}
+          {%- if waf != "modsecurity" -%}
+            {{- fail("Invalid value '" + waf + "' for annotation 'haproxy-ingress.github.io/waf' on Ingress '" + key + "'. Only 'modsecurity' is supported.") -}}
+          {%- end -%}
+          {%- var resolvedMode = mode -%}
+          {%- if resolvedMode == "" -%}
+            {%- resolvedMode = "deny" -%}
+          {%- end -%}
+          {%- if resolvedMode != "deny" && resolvedMode != "detect" -%}
+            {{- fail("Invalid value '" + mode + "' for annotation 'haproxy-ingress.github.io/waf-mode' on Ingress '" + key + "'. Valid values: 'deny', 'detect'.") -}}
+          {%- end -%}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
+            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
+            {#- Host-less rules can't be enforced — the map is keyed by
+                <host><path>; without a host the lookup never matches and
+                an operator-set WAF would silently no-op. Mirrors the
+                auth-url host-less rule rejection. -#}
+            {%- if host == "" -%}
+              {{- fail("Ingress " + key + " has 'haproxy-ingress.github.io/waf' set but a rule without a host. The haproxy-ingress-waf map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end -%}
+            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
+              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
+      {{ "\n" }}{{ host }}{{ pathStr }} {{ resolvedMode }}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -3901,3 +3976,536 @@ validationTests:
         target: rendering_error
         pattern: "default/hi-hostless"
         description: Error must identify the offending Ingress
+
+  # ============================================================================
+  # WAF (Coraza, via SPOA hub): /waf + /waf-mode annotation tests
+  # ============================================================================
+
+  test-haproxy-ingress-waf-deny-default:
+    # Needs the spoa-hub library loaded (the dispatch wiring lives there).
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      Single Ingress with haproxy-ingress.github.io/waf: "modsecurity"
+      and no /waf-mode populates haproxy-ingress-waf.map with mode
+      "deny" and produces conditional dispatch in the rendered HAProxy
+      config (set-var → map lookup → send-spoe-group if found).
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: hi-waf-svc }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: hi-waf-svc-abc
+            labels: { kubernetes.io/service-name: hi-waf-svc }
+          addressType: IPv4
+          endpoints: [{ addresses: ["10.0.0.1"] }]
+          ports: [{ port: 8080 }]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-waf
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hi-waf.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hi-waf-svc
+                          port: { number: 80 }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with the /waf annotation
+      - type: contains
+        target: map:haproxy-ingress-waf.map
+        pattern: "hi-waf.example.com/ deny"
+        description: waf.map must contain the host+path with default mode "deny"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn.coraza_mode\\).*haproxy-ingress-waf\\.map"
+        description: Frontend looks up coraza_mode from the map after routing
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_mode\\) -m found \\}"
+        description: Dispatch is conditional on the per-path map lookup
+      - type: contains
+        target: haproxy.cfg
+        pattern: "!\\{ var\\(txn.coraza_mode\\) -m str detect \\}"
+        description: Deny rule respects detect mode
+
+  test-haproxy-ingress-waf-detect-mode:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      Ingress with haproxy-ingress.github.io/waf: "modsecurity" and
+      /waf-mode: "detect" populates the map with "detect", which the
+      frontend deny rule then short-circuits via the detect-mode
+      predicate. The SPOE check still dispatches so observability vars
+      get populated for shadow-mode rollouts.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: hi-shadow-svc }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: hi-shadow-svc-abc
+            labels: { kubernetes.io/service-name: hi-shadow-svc }
+          addressType: IPv4
+          endpoints: [{ addresses: ["10.0.0.1"] }]
+          ports: [{ port: 8080 }]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-shadow
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+              haproxy-ingress.github.io/waf-mode: detect
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: shadow.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hi-shadow-svc
+                          port: { number: 80 }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with detect-mode WAF
+      - type: contains
+        target: map:haproxy-ingress-waf.map
+        pattern: "shadow.example.com/ detect"
+        description: waf.map must contain the host+path with mode "detect"
+
+  test-haproxy-ingress-waf-invalid-value-rejected:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      Ingress with /waf set to anything other than "modsecurity" must
+      fail-loud at render time. Only "modsecurity" is supported by the
+      bundled coraza plugin; silent ignore would hide an operator typo.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: ""
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-bad-waf
+            annotations:
+              haproxy-ingress.github.io/waf: bogus
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bad.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: any
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid value 'bogus' for annotation 'haproxy-ingress\\.github\\.io/waf'"
+        description: Render must fail with the unsupported-value diagnostic
+      - type: contains
+        target: rendering_error
+        pattern: "default/hi-bad-waf"
+        description: Error must identify the offending Ingress
+
+  test-haproxy-ingress-waf-mode-invalid-value-rejected:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      /waf-mode set to anything other than "deny" or "detect" must
+      fail-loud. Quietly defaulting to "deny" would mask a typo
+      ("detec" / "detct" → silent enforcement when the operator
+      intended shadow mode).
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: ""
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-bad-mode
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+              haproxy-ingress.github.io/waf-mode: detec
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bad.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: any
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid value 'detec' for annotation 'haproxy-ingress\\.github\\.io/waf-mode'"
+        description: Render must fail with the unsupported-mode diagnostic
+      - type: contains
+        target: rendering_error
+        pattern: "default/hi-bad-mode"
+        description: Error must identify the offending Ingress
+
+  test-haproxy-ingress-waf-mode-without-waf-rejected:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      /waf-mode set without /waf is an operator error (no-op upstream)
+      and must fail-loud. Silently ignoring would let an operator who
+      meant to enable WAF in detect mode silently run with no WAF at
+      all.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: ""
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-mode-only
+            annotations:
+              haproxy-ingress.github.io/waf-mode: detect
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mode-only.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: any
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "sets 'haproxy-ingress\\.github\\.io/waf-mode' but not 'haproxy-ingress\\.github\\.io/waf'"
+        description: Render must fail with the mode-without-waf diagnostic
+      - type: contains
+        target: rendering_error
+        pattern: "default/hi-mode-only"
+        description: Error must identify the offending Ingress
+
+  test-haproxy-ingress-waf-host-less-rejected:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      Ingress with /waf set AND a rule without a host must fail-loud.
+      The map is keyed by host+path; without a host the lookup never
+      matches and an operator-set WAF would silently no-op. Mirrors
+      the auth-url host-less rejection.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: ""
+            params: ""
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-waf-hostless
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: any
+                          port: { number: 80 }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "'haproxy-ingress\\.github\\.io/waf' set but a rule without a host"
+        description: Render must fail with the host-less diagnostic
+      - type: contains
+        target: rendering_error
+        pattern: "default/hi-waf-hostless"
+        description: Error must identify the offending Ingress
+
+  test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and
+      haproxy-ingress.github.io/waf are present in the cluster, nginx's
+      "global rules + always dispatch" wins for dispatch (the
+      send-spoe-group line has no `if` clause). The waf-map is still
+      populated so per-path detect mode is respected — the deny rule
+      still has its `!{ var(txn.coraza_mode) -m str detect }` predicate.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: ["check-request"]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins:
+          - name: coraza
+            library: libcoraza_plugin.so
+            messages: ["check-request"]
+            timeoutMs: 15
+            dependsOn: []
+            directives: |
+              SecRuleEngine On
+            params: ""
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { namespace: default, name: coexist-svc }
+          spec: { ports: [{ port: 80 }] }
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: coexist-svc-abc
+            labels: { kubernetes.io/service-name: coexist-svc }
+          addressType: IPv4
+          endpoints: [{ addresses: ["10.0.0.1"] }]
+          ports: [{ port: 8080 }]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nginx-modsec
+            annotations:
+              nginx.ingress.kubernetes.io/modsecurity-snippet: |
+                SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: nginx.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: coexist-svc, port: { number: 80 } } }
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: haproxy-shadow
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+              haproxy-ingress.github.io/waf-mode: detect
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: haproxy.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: coexist-svc, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with both annotation flavours
+      - type: contains
+        target: map:haproxy-ingress-waf.map
+        pattern: "haproxy.example.com/ detect"
+        description: waf-map carries the haproxy-ingress detect-mode entry
+      - type: contains
+        target: file:spoa-hub-config.toml
+        pattern: "# nginx-ingress modsecurity-snippet from default/nginx-modsec"
+        description: nginx-ingress modsec-snippet is still inlined
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_mode\\) -m found \\}"
+        description: Dispatch is unconditional (nginx wins) — no per-path gate
+      - type: contains
+        target: haproxy.cfg
+        pattern: "!\\{ var\\(txn.coraza_mode\\) -m str detect \\}"
+        description: Deny rule still respects detect mode under unconditional dispatch
+
+  test-haproxy-ingress-waf-without-coraza-fails:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      Ingress with haproxy-ingress.github.io/waf set while the spoaHub
+      coraza plugin is NOT enabled fails the render with an explicit
+      diagnostic. Silent ignore would hide a misconfiguration: the
+      operator wrote a per-Ingress WAF directive and nothing enforces
+      it. Mirrors the equivalent fail-loud for nginx-ingress's
+      /modsecurity-snippet.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: []
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+        plugins: []
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: orphan-waf
+            annotations:
+              haproxy-ingress.github.io/waf: modsecurity
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: orphan.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: { service: { name: any, port: { number: 80 } } }
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "default/orphan-waf sets annotation 'haproxy-ingress\\.github\\.io/waf' but the spoaHub coraza plugin is not enabled"
+        description: Render must fail with explicit annotation-without-coraza error
