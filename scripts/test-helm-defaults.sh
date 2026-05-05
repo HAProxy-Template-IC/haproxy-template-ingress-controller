@@ -245,6 +245,17 @@ install_helm_chart() {
         "$PROJECT_ROOT/charts/haptic"
         "--namespace" "$NAMESPACE"
         "--create-namespace"
+        # The chart's `spoaHub.image.tag` default falls back to
+        # .Chart.AppVersion (HAPTIC's release version like 0.1.0), but
+        # the spoa-hub image is published on its own version track and
+        # there is no `spoa-hub:0.1.0` tag — only matched-AppVersion
+        # release tags exist after a real release pipeline runs.
+        # Override to `main-latest` (the always-available snapshot
+        # CI publishes on every main merge) so this test, which
+        # exercises chart defaults, can actually pull the sidecar
+        # image. Same override dev-values.yaml uses for the same
+        # reason.
+        "--set" "spoaHub.image.tag=main-latest"
     )
 
     # Add image override if specified

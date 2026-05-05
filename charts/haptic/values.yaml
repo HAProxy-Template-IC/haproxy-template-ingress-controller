@@ -1599,19 +1599,22 @@ spoaHub:
   # Bare `[xxx]` headers inside `params:` will break the plugin's config.
   plugins:
     coraza:
-      # Auto-enabled when nginx-ingress is enabled — that library is the
-      # only one whose annotation handlers feed coraza today (per-Ingress
-      # `nginx.ingress.kubernetes.io/modsecurity-snippet` values are
-      # appended into the rendered `directives = """..."""` block). The
-      # haproxy-ingress.github.io project upstream defines `/waf` and
-      # `/waf-mode` annotations that would also flow into coraza, but
-      # the haproxy-ingress library does not implement them yet; if it
-      # ever does, OR `.Values.controller.templateLibraries.haproxyIngress.enabled`
-      # in here so flipping that library on activates the WAF without a
-      # second toggle. haproxytech (haproxy.org/*) has no public WAF
-      # annotation. Operators wanting cluster-wide WAF without
-      # nginx-ingress can `--set spoaHub.plugins.coraza.enabled=true`.
-      enabled: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
+      # Auto-enabled when EITHER nginx-ingress OR haproxy-ingress library
+      # is on. nginx-ingress feeds coraza via `nginx.ingress.kubernetes.io/modsecurity-snippet`
+      # (rule text appended to the global `directives = """..."""` block,
+      # always-dispatch). haproxy-ingress feeds it via `haproxy-ingress.github.io/waf`
+      # + `/waf-mode` (path-scoped opt-in dispatch via a single
+      # `haproxy-ingress-waf.map` whose value is the resolved enforcement
+      # mode for the path — `deny` or `detect`).
+      # haproxy-ingress is on by default in HAPTIC, so flipping coraza
+      # on by default with it adds the spoa-hub sidecar (~50 MB) to the
+      # baseline footprint — accepted in exchange for richer chart
+      # defaults: any user setting `/waf: modsecurity` on an Ingress
+      # gets the WAF wired without a second toggle.
+      # haproxytech (haproxy.org/*) has no public WAF annotation; nothing
+      # to OR. Operators wanting cluster-wide WAF without either ingress
+      # library can `--set spoaHub.plugins.coraza.enabled=true`.
+      enabled: '{{ or .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
       timeoutMs: 15
       messages: ["check-request"]
       dependsOn: []
