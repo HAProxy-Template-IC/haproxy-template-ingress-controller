@@ -621,6 +621,20 @@ templateSnippets:
       {%- var backendRefs = rule | dig("backendRefs") -%}
       {%- if backendRefs != nil %}
       {%- for _, backendRef := range backendRefs | toSlice() -%}
+      {#- Skip backendRefs the chart can't realise as a HAProxy backend.
+          Per Gateway API spec, only core/v1 Service refs are routable;
+          anything else (custom kind, wrong group) results in
+          ResolvedRefs=False/InvalidKind on the route. The backend
+          rendering below would otherwise silently use the ref's `name`
+          field (which can collide with a real Service of the same
+          name) and incorrectly route traffic. The route-matcher path
+          below detects all-invalid rules and routes them to
+          gw-invalid-backend (HTTP 500) instead. -#}
+      {%- var refGroup = backendRef | dig("group") | fallback("") | tostring() -%}
+      {%- var refKind = backendRef | dig("kind") | fallback("Service") | tostring() -%}
+      {%- if (refGroup != "" && refGroup != "core") || refKind != "Service" -%}
+        {%- continue -%}
+      {%- end -%}
       {%- var backendName = backendRef | dig("name") | fallback("") -%}
       {%- var backendPort = backendRef | dig("port") | fallback(80) -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
@@ -674,6 +688,28 @@ templateSnippets:
       # gateway/backends-gateway
       {{ ShardedGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") }}
       {{- ShardedGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
+
+  backends-501-gateway-invalid:
+    template: |
+      {#-
+        Sink backend for HTTPRoute rules where every backendRef is
+        invalid (unsupported kind, non-core group). Per Gateway API
+        spec, requests matching such a rule must receive HTTP 500.
+
+        The chart's frontend-matchers-advanced-900-path-match snippet
+        routes such rules' traffic here (qualifier
+        "BACKEND:gw-invalid-backend") rather than to a real Service-
+        backed backend whose `name` happened to collide with the
+        invalid ref's `name` field.
+
+        Always rendered (even when no Gateway API resources exist) so
+        the BACKEND qualifier always resolves; HAProxy refuses to load
+        a config that references a non-existent backend.
+      -#}
+      # gateway/backends-501-gateway-invalid
+      backend gw-invalid-backend
+          guid be:gw-invalid-backend
+          http-request return status 500
 
   backends-501-gateway-ssl-passthrough:
     template: |
@@ -1207,16 +1243,48 @@ templateSnippets:
       {% for _, routeInfo := range gatewayAllRoutes -%}
         {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | fallback([]any{}) %}
         {%- if len(backendRefs) > 0 %}
+          {#- Filter to backendRefs the chart can route to. Per Gateway API
+              spec, only core/v1 Service refs are routable; refs to other
+              kinds or non-core groups must result in HTTP 500 for
+              traffic that matches this rule (the route's ResolvedRefs
+              status condition also goes False/InvalidKind, set
+              elsewhere). Filter the list once here and dispatch on the
+              valid count. -#}
+          {%- var validRefs = []any{} %}
+          {%- for _, ref := range backendRefs %}
+            {%- var refMap map[string]any = ref %}
+            {%- var refGroup = refMap | dig("group") | fallback("") | tostring() %}
+            {%- var refKind = refMap | dig("kind") | fallback("Service") | tostring() %}
+            {%- if (refGroup == "" || refGroup == "core") && refKind == "Service" %}
+              {%- validRefs = append(validRefs, ref) %}
+            {%- end %}
+          {%- end %}
+
           {%- var qualifier = "" %}
-          {%- if len(backendRefs) == 1 %}
-            {#- Single backend: BACKEND qualifier #}
-            {%- var backendRef map[string]any = backendRefs[0] %}
+          {%- if len(validRefs) == 0 %}
+            {#- No valid backendRefs at all → route to the chart-level
+                500-returning sink. Conformance test
+                HTTPRouteInvalidBackendRefUnknownKind asserts that a rule
+                whose only backendRef has kind=NonExistent returns 500
+                for every matching request. -#}
+            {%- qualifier = "BACKEND:gw-invalid-backend" %}
+          {%- else if len(validRefs) == 1 %}
+            {#- Single valid backend: BACKEND qualifier #}
+            {%- var backendRef map[string]any = validRefs[0] %}
             {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef["name"]) + "_" + (backendRef["port"]) %}
             {%- qualifier = "BACKEND:" + backendName %}
           {%- else %}
-            {#- Multiple backends: MULTIBACKEND qualifier #}
+            {#- Multiple valid backends: MULTIBACKEND qualifier. Note: a
+                mixed (valid + invalid) rule renders as MULTIBACKEND with
+                only the valid refs counted in the weighted distribution.
+                The traffic share that should have gone to invalid refs
+                "leaks" to the valid ones — a coarse approximation of the
+                spec's "invalid share returns 500" rule. Refining to a
+                proper weighted invalid-sink is follow-up work; the
+                all-invalid case (the conformance test that gates this)
+                is handled correctly above. -#}
             {%- var totalWeight = 0 %}
-            {%- for _, ref := range backendRefs %}
+            {%- for _, ref := range validRefs %}
               {%- var refMap map[string]any = ref %}
               {%- var weight = refMap | dig("weight") | fallback(1) %}
               {%- totalWeight = totalWeight + (weight) %}
