@@ -246,6 +246,11 @@ type IngressSpec struct {
 	Host string
 	// Path is the request path prefix to match (default "/").
 	Path string
+	// PathType is the Ingress pathType ("Prefix" (default), "Exact", or
+	// "ImplementationSpecific"). The latter is required by the
+	// haproxy-ingress library's regex-path support, which keys on the
+	// pathType + the haproxy-ingress.github.io/path-type annotation.
+	PathType string
 	// Backend identifies the upstream Service in the test namespace,
 	// typically created by NewEchoServerBackend.
 	BackendService string
@@ -268,6 +273,12 @@ func buildIngress(namespace string, spec IngressSpec) *networkingv1.Ingress {
 		spec.Path = "/"
 	}
 	pathType := networkingv1.PathTypePrefix
+	switch spec.PathType {
+	case "Exact":
+		pathType = networkingv1.PathTypeExact
+	case "ImplementationSpecific":
+		pathType = networkingv1.PathTypeImplementationSpecific
+	}
 	ingressClassName := "haptic"
 
 	ing := &networkingv1.Ingress{

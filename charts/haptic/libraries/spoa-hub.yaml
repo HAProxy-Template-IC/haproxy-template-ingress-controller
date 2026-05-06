@@ -158,7 +158,6 @@ templateSnippets:
   # haproxy-ingress.yaml's map snippet.
   util-coraza-scan:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost %}
       {%%
         var _, _ = shared.ComputeIfAbsent("coraza_scan", func() any {
           // Dedupe by `ns/name`. Under UPDATE admission overlays the
@@ -181,29 +180,13 @@ templateSnippets:
               if strings_contains(snippet, "\"\"\"") {
                 fail("Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
               }
-              // Collect every <host><path> the Ingress carries so
-              // coraza-app.map can route those paths to this Ingress's
-              // per-app WAF. Host-less rules can't be enforced — the
-              // map is keyed by host+path; without a host the lookup
-              // never matches and the per-Ingress rules silently no-op.
-              // MapKeyForHost (ingress.yaml/util-ingress-host-key)
-              // normalises wildcards (`*.example.com` → `.example.com`)
-              // so the key matches the runtime form host.map produces
-              // for HAProxy's regsub-fallback path.
-              var hostPaths = []any{}
-              for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
-                var host = rule | dig("host") | fallback("") | tostring()
-                if host == "" {
-                  fail("Ingress " + ns + "/" + name + " has 'nginx.ingress.kubernetes.io/modsecurity-snippet' set but a rule without a host. The coraza-app map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.")
-                }
-                var hostKey = MapKeyForHost(rule | dig("host"))
-                for _, path := range rule | dig("http", "paths") | fallback([]any{}) {
-                  var pathStr = path | dig("path") | fallback("") | tostring()
-                  hostPaths = append(hostPaths, hostKey + pathStr)
-                }
-              }
+              // coraza-app.map is keyed by <ns>/<name> (resource id), not
+              // by <host><path> — see frontend-spoe-filters-050-coraza
+              // and base.yaml's resource_id extraction. Host-less rules
+              // are fine because the routing chain still produces a
+              // resource_id whatever path/host pattern matched.
               byKey[ns + "/" + name] = map[string]any{
-                "ns": ns, "name": name, "snippet": snippet, "host_paths": hostPaths,
+                "ns": ns, "name": name, "snippet": snippet,
               }
             }
             var waf = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf") | fallback("") | tostring()
@@ -519,7 +502,7 @@ templateSnippets:
   #
   # `app=var(txn.coraza_app)` carries the per-Ingress WAF identifier
   # that the chart's `coraza-app.map` lookup populates from the
-  # request's host+path. The coraza plugin reads this in `process()`
+  # request's resource_id. The coraza plugin reads this in `process()`
   # (haproxy-spoa-hub-plugin-coraza/src/plugin.rs:370) and routes the
   # request to that app's WAF instance — the per-Ingress
   # [plugins.params.applications."<ns>/<name>"] block. When unset, the
@@ -569,8 +552,8 @@ templateSnippets:
   #     for Ingresses with `haproxy-ingress.github.io/waf`. Drives the
   #     deny-skip predicate below for shadow-mode rollouts.
   #
-  # Dispatch fires when EITHER map matches the current host+path. Paths
-  # without any matching annotation skip the SPOE roundtrip entirely
+  # Dispatch fires when EITHER map matches the current resource_id.
+  # Resources without any matching annotation skip the SPOE roundtrip entirely
   # (matches haproxy-ingress.github.io upstream semantic). The
   # haproxy-ingress.github.io/waf-mode annotation only matters when a
   # `/waf` annotation is also present; without `/waf` the deny rule
@@ -581,8 +564,9 @@ templateSnippets:
   # caused unconditional dispatch on EVERY request (rules pooled into a
   # single global WAF instance, evaluating against all traffic).
   # That's a privilege-escalation vector in multi-tenant clusters.
-  # Now, modsec-snippets only fire on the host+path of their carrying
-  # Ingress. Operators who depended on the rule-bleed behavior must
+  # Now, modsec-snippets only fire on traffic owned by their carrying
+  # Ingress (resource_id keying). Operators who depended on the
+  # rule-bleed behavior must
   # move shared rules into chart-level
   # `spoaHub.plugins.coraza.directives` (the base ruleset, applied to
   # every per-Ingress app + the default WAF).
@@ -604,10 +588,10 @@ templateSnippets:
       {%- if defaultEnforcement != "deny" && defaultEnforcement != "detect" %}
         {%- fail("Invalid value for controller.templatingSettings.extraContext.coraza.dispatch.defaultEnforcement: '" + defaultEnforcement + "'; must be 'deny' or 'detect'.") %}
       {%- end %}
-      http-request set-var(txn.coraza_app) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
-      http-request set-var(txn.coraza_mode) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
+      http-request set-var(txn.coraza_app) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-app.map", "map") }}) unless { var(txn.coraza_app) -m found }
+      http-request set-var(txn.coraza_mode) var(txn.resource_id),map({{ pathResolver.GetPath("haproxy-ingress-waf.map", "map") }}) unless { var(txn.coraza_mode) -m found }
       {%- if dispatchMode == "default-on" %}
-      http-request set-var(txn.coraza_disabled) var(txn.host_match),concat(,txn.path,),map_beg({{ pathResolver.GetPath("coraza-disabled.map", "map") }}) unless { var(txn.coraza_disabled) -m found }
+      http-request set-var(txn.coraza_disabled) var(txn.resource_id),map({{ pathResolver.GetPath("coraza-disabled.map", "map") }}) unless { var(txn.coraza_disabled) -m found }
       http-request set-var(txn.coraza_mode) str({{ defaultEnforcement }}) unless { var(txn.coraza_mode) -m found }
       http-request send-spoe-group spoa-hub check-request-group unless { var(txn.coraza_disabled) -m found }
       {%- else %}
@@ -627,8 +611,11 @@ templateSnippets:
   # in the rendered TOML — apps configured but unreachable.
   #
   # Walks the cached util-coraza-scan output and emits one
-  # `<host><path> <ns>/<name>` line per Ingress's host+path. Sorted
-  # implicitly by MemoryStore.List() (namespace+name) for
+  # `<ns>/<name> <ns>/<name>` identity row per ingress that has the
+  # modsecurity-snippet annotation. The map is consumed via
+  # `var(txn.resource_id),map(...)` (see frontend-spoe-filters-050-coraza),
+  # so the value sent to the SPOE plugin is the resource id itself.
+  # Sorted implicitly by MemoryStore.List() (namespace+name) for
   # deterministic output across reconciliations.
   map-coraza-app-500-spoa-hub:
     template: |-
@@ -640,10 +627,7 @@ templateSnippets:
           {%- var a = app.(map[string]any) -%}
           {%- var aNs = a["ns"].(string) -%}
           {%- var aName = a["name"].(string) -%}
-          {%- var aHostPaths = a["host_paths"].([]any) -%}
-          {%- for _, hostPath := range aHostPaths -%}
-      {{ "\n" }}{{ hostPath.(string) }} {{ aNs }}/{{ aName }}
-          {%- end -%}
+      {{ "\n" }}{{ aNs }}/{{ aName }} {{ aNs }}/{{ aName }}
         {%- end -%}
       {%- end -%}
 
@@ -672,22 +656,16 @@ templateSnippets:
   # scope without filling a gap. Other values fail loud.
   map-coraza-disabled-500-spoa-hub:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {#- Keyed by `<ns>/<name>` (resource id), consumed at request time
+          via var(txn.resource_id),map(...). The host dimension is no
+          longer part of the key, so host-less Ingress rules are fine
+          (the routing chain still resolves them to a resource_id). -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var v = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/enable-modsecurity") | fallback("") | tostring() -%}
         {%- if v == "false" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"false\" set but a rule without a host. The coraza-disabled map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} 1
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} 1
         {%- else if v != "" && v != "true" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
@@ -706,11 +684,11 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-auth" %}
-      http-request set-var(txn.auth_url) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
-      http-request set-var(txn.auth_signin) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
-      http-request set-var(txn.auth_method) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
-      http-request set-var(txn.auth_forward_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
-      http-request set-var(txn.auth_extract_headers) var(txn.host_match),concat(,txn.path,),map({{ pathResolver.GetPath("auth-extract-headers.map", "map") }}) unless { var(txn.auth_extract_headers) -m found }
+      http-request set-var(txn.auth_url) var(txn.resource_id),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
+      http-request set-var(txn.auth_signin) var(txn.resource_id),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
+      http-request set-var(txn.auth_method) var(txn.resource_id),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
+      http-request set-var(txn.auth_forward_headers) var(txn.resource_id),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
+      http-request set-var(txn.auth_extract_headers) var(txn.resource_id),map({{ pathResolver.GetPath("auth-extract-headers.map", "map") }}) unless { var(txn.auth_extract_headers) -m found }
       http-request send-spoe-group spoa-hub check-auth-group if { var(txn.auth_url) -m found }
       {#- Pass-headers extension point: ingress libraries emit one
           `http-request set-header` per unique header in any
@@ -749,18 +727,19 @@ maps:
   coraza-app.map:
     template: |
       # Coraza WAF: per-Ingress per-app routing for multi-tenant rule
-      # isolation. Keyed by host+path (matching the routing-logic key
-      # in base.yaml); the value is the per-Ingress app name
-      # `<namespace>/<ingress-name>` matching the rendered
-      # `[plugins.params.applications."<ns>/<name>"]` block in
-      # spoa-hub-config.toml.
+      # isolation. Keyed by `<ns>/<name>` (resource id from
+      # `txn.resource_id`, set by base.yaml from the routing chain's
+      # qualifier value); the value is the same `<ns>/<name>` matching
+      # the rendered `[plugins.params.applications."<ns>/<name>"]`
+      # block in spoa-hub-config.toml.
       #
       # The frontend filter sets `txn.coraza_app` from this lookup and
       # the SPOE check-request message passes it as `app=` to the
       # plugin, which routes the request to that app's WAF instance.
       # Per-Ingress rules from `nginx.ingress.kubernetes.io/modsecurity-snippet`
-      # only fire on traffic matching their carrying Ingress's
-      # host+path — they don't bleed into other Ingresses' traffic.
+      # only fire on traffic the routing chain attributes to the
+      # carrying Ingress — they don't bleed into other Ingresses'
+      # traffic.
       #
       # Empty / no entry → SPOE arg is empty → plugin falls through to
       # the default WAF (chart-default base directives only).
@@ -773,16 +752,17 @@ maps:
 
   haproxy-ingress-waf.map:
     template: |
-      # Coraza WAF: per-Ingress path-scoped opt-in driven by
+      # Coraza WAF: per-Ingress opt-in driven by
       # haproxy-ingress.github.io/waf and /waf-mode annotations. Keyed
-      # by host+path (matching the routing-logic key in base.yaml). The
-      # value is the resolved enforcement mode for the path:
+      # by `<ns>/<name>` (resource id from `txn.resource_id`). The
+      # value is the resolved enforcement mode for the resource:
       #   - "deny"   — default; blocks on rule_id >= 1 && action == deny
       #   - "detect" — shadow mode; runs the WAF, txn.hub.coraza.* vars
       #                are populated, but the deny rule is skipped via
       #                `!{ var(txn.coraza_mode) -m str detect }`
-      # Empty / no entry → no opt-in for that path; under conditional
-      # dispatch the path skips the SPOE roundtrip entirely. Populated
+      # Empty / no entry → no opt-in for that resource; under
+      # conditional dispatch the request skips the SPOE roundtrip
+      # entirely. Populated
       # by haproxy-ingress.yaml's map-haproxy-ingress-waf-500-* snippet.
       {{- render_glob "map-haproxy-ingress-waf-*" -}}
 
@@ -804,7 +784,7 @@ maps:
   auth-url.map:
     template: |
       # External-auth: per-ingress auth-url annotation values.
-      # Keyed by host+path (matching the routing-logic key in base.yaml).
+      # Keyed by `<ns>/<name>` (resource id from `txn.resource_id`).
       # Populated by ingress libraries' map-auth-url-* contributions.
       {{- render_glob "map-auth-url-*" -}}
 
@@ -1420,15 +1400,15 @@ validationTests:
         pattern: '\[plugins\.params\.applications\."tenant-b/bravo"\][\s\S]*?SecRuleEngine On'
         description: Base ruleset (SecRuleEngine On) appears inside bravo's app block (shared base)
 
-  test-spoa-hub-coraza-app-map-routes-by-host-path:
+  test-spoa-hub-coraza-app-map-routes-by-resource-id:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
     description: |
-      coraza-app.map carries one entry per `<host><path>` for each
-      Ingress with a modsecurity-snippet, mapping to the Ingress's
-      `<namespace>/<name>` app key. The frontend filter sets
-      `txn.coraza_app` from this lookup and the SPOE check-request
-      message passes it as `app=` so the plugin routes to the right
-      per-app WAF.
+      coraza-app.map carries one identity row per Ingress with a
+      modsecurity-snippet, keyed by `<namespace>/<name>` (resource id).
+      The frontend filter sets `txn.coraza_app` from
+      `var(txn.resource_id),map(...)` and the SPOE check-request message
+      passes it as `app=` so the plugin routes to the right per-app
+      WAF, regardless of which path matched at the routing layer.
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1498,12 +1478,12 @@ validationTests:
         description: HAProxy config must be valid
       - type: contains
         target: map:coraza-app.map
-        pattern: 'protected.example.com/ default/protected'
-        description: Root path maps to the Ingress's app name
-      - type: contains
-        target: map:coraza-app.map
-        pattern: 'protected.example.com/api default/protected'
-        description: /api path also maps to the same app
+        pattern: '(?m)^default/protected default/protected$'
+        description: |
+          One identity row per ingress: key=value=<ns>/<name>. There's
+          no per-path fan-out — the routing chain has already resolved
+          which Ingress owns the request by the time coraza-app.map is
+          consulted via var(txn.resource_id).
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn.coraza_app\).*coraza-app\.map'
@@ -1513,14 +1493,13 @@ validationTests:
         pattern: 'app=var\(txn.coraza_app\)'
         description: SPOE check-request message passes app= per-request (lives in spoe.conf, not haproxy.cfg)
 
-  test-spoa-hub-config-render-modsecurity-snippet-host-less-rejected:
+  test-spoa-hub-config-render-modsecurity-snippet-host-less-accepted:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
     description: |
-      An Ingress with modsecurity-snippet and a host-less rule fails
-      at render time. The coraza-app.map is keyed by `<host><path>`;
-      a host-less rule never matches the lookup, so the per-Ingress
-      WAF would silently no-op. Mirrors auth-url's host-less
-      rejection.
+      An Ingress with modsecurity-snippet and a host-less rule renders
+      successfully — coraza-app.map is keyed by <ns>/<name> (resource
+      id), so the host dimension is irrelevant. The previous fail-loud
+      guard is obsolete.
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1560,14 +1539,14 @@ validationTests:
                       pathType: Prefix
                       backend: { service: { name: any, port: { number: 80 } } }
     assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
-        target: rendering_error
-        pattern: "'nginx\\.ingress\\.kubernetes\\.io/modsecurity-snippet' set but a rule without a host"
-        description: Render must fail with the host-less diagnostic
-      - type: contains
-        target: rendering_error
-        pattern: 'default/hostless-modsec'
-        description: Error must identify the offending Ingress
+        target: map:coraza-app.map
+        pattern: '(?m)^default/hostless-modsec default/hostless-modsec$'
+        description: |
+          coraza-app.map carries the host-less Ingress as an identity
+          row keyed by <ns>/<name>.
 
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
     description: |
@@ -1909,9 +1888,9 @@ validationTests:
     description: |
       With dispatch.mode=default-on and one Ingress carrying
       nginx.ingress.kubernetes.io/enable-modsecurity: "false", the
-      coraza-disabled.map gets a `<host><path> 1` entry; the
+      coraza-disabled.map gets a `<ns>/<name> 1` entry; the
       send-spoe-group dispatch line is gated only on
-      txn.coraza_disabled (so the opted-out path skips the WAF).
+      txn.coraza_disabled (so the opted-out resource skips the WAF).
     extraContext:
       haproxyVersion: "3.2"
       coraza:
@@ -1969,8 +1948,8 @@ validationTests:
         description: HAProxy config must remain valid with opt-out
       - type: contains
         target: map:coraza-disabled.map
-        pattern: 'opted-out\.example\.com/ 1'
-        description: coraza-disabled.map carries the opt-out entry
+        pattern: '(?m)^default/opted-out 1$'
+        description: coraza-disabled.map carries the opt-out entry keyed by <ns>/<name>
 
   test-coraza-dispatch-enable-modsecurity-bogus-rejected:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -2011,12 +1990,13 @@ validationTests:
         pattern: 'default/bogus'
         description: Error identifies the offending Ingress
 
-  test-coraza-dispatch-enable-modsecurity-host-less-rejected:
+  test-coraza-dispatch-enable-modsecurity-host-less-accepted:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
     description: |
       An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity:
-      "false" but a rule lacking host fails loud — the coraza-disabled
-      map is keyed by host+path and host-less rules can't be enforced.
+      "false" and a host-less rule renders successfully — coraza-disabled.map
+      is now keyed by <ns>/<name> (resource id), so the host dimension
+      is irrelevant and the previous fail-loud guard is obsolete.
     extraContext:
       haproxyVersion: "3.2"
       coraza:
@@ -2044,11 +2024,12 @@ validationTests:
                           name: echo
                           port: { number: 80 }
     assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
-        target: rendering_error
-        pattern: 'host-less rules can'
-        description: Render fails with a host-less message
-      - type: contains
-        target: rendering_error
-        pattern: 'default/host-less'
-        description: Error identifies the offending Ingress
+        target: map:coraza-disabled.map
+        pattern: '(?m)^default/host-less 1$'
+        description: |
+          coraza-disabled.map carries the host-less Ingress as a
+          resource-id-keyed entry; the routing chain still resolves it
+          to a stable resource_id so the WAF skip applies correctly.

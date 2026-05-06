@@ -148,6 +148,21 @@ templateSnippets:
       # BACKEND: direct routing
       http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
 
+      # Owner-resource identity for per-resource feature blocks
+      # (auth-url, auth-method, coraza-app, …). Derived from the qualifier
+      # value the routing chain has already produced — no extra map lookup.
+      # Format: <ns>/<name>. Backend names use `_` as separator
+      # (`<ns>_<name>_svc_<svc>_<port>` for Ingress, `<ns>_<name>_<ruleIdx>`
+      # for Gateway weighted routing); K8s names disallow `_` so field(1,_)
+      # / field(2,_) is collision-free.
+      http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
+      http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
+      http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.resource_namespace) var(req.gw_rule_id),field(1,_)   if { var(req.gw_rule_id) -m found }
+      http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
+      http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
+
   frontend-routing-logic-regex-last:
     template: |-
       {#-
@@ -194,6 +209,16 @@ templateSnippets:
 
       # BACKEND: direct routing
       http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
+
+      # Owner-resource identity (mirrors frontend-routing-logic; must stay
+      # in lockstep — see charts/CLAUDE.md "All other logic is identical").
+      http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
+      http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
+      http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
+      http-request set-var(txn.resource_namespace) var(req.gw_rule_id),field(1,_)   if { var(req.gw_rule_id) -m found }
+      http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
+      http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
 
   # ============================================================================
   # Backend Server Generation
