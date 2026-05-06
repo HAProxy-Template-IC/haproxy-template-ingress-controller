@@ -2000,8 +2000,14 @@ templateSnippets:
                     "kind":  "Gateway",
                     "name":  gwName,
                   }
-                  // Only include namespace if different from route namespace
-                  if gwNamespace != nsStr {
+                  // Mirror spec.parentRefs[].namespace exactly:
+                  // include the namespace whenever the spec set it,
+                  // omit only when the spec omitted it. The previous
+                  // "only when different from route namespace" rule
+                  // dropped the namespace whenever it happened to
+                  // match — which conformance reads as a status
+                  // mismatch (the spec said "X", status says nil).
+                  if dig(parentRef, "namespace") != nil {
                     parentRefStatus["namespace"] = gwNamespace
                   }
                   var sectionName = dig(parentRef, "sectionName")
