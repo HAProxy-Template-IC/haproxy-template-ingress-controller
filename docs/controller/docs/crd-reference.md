@@ -86,7 +86,7 @@ controller:
     leaseDuration: 15s   # default (DefaultLeaderElectionLeaseDuration)
     renewDeadline: 10s   # default (DefaultLeaderElectionRenewDeadline)
     retryPeriod: 2s      # default (DefaultLeaderElectionRetryPeriod)
-  reconciliationDebounceInterval: 5s  # default; refractory window between resource changes and a render+deploy cycle
+  reconciliationDebounceInterval: 1s  # default; refractory window between resource changes and a render+deploy cycle
 ```
 
 !!! note
@@ -189,7 +189,7 @@ watchedResources:
       - metadata.name
     labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
     store: full  # or "on-demand" for cached store
-    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 5s default
+    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 1s default
 ```
 
 See [Watching Resources](./watching-resources.md) for detailed configuration.

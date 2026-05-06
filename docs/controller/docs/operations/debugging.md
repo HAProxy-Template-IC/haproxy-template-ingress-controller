@@ -144,7 +144,7 @@ curl -s http://localhost:8080/debug/vars/events \
   | jq '[.[] | select(.type == "reconciliation.triggered")] | length'
 ```
 
-More than a few reconciliations per second under stable input usually means a watcher's debounce is undersized for the cluster's resource churn — raise `spec.watchedResources.<name>.debounceInterval` on the noisy resource type (typically EndpointSlice on large clusters). See [performance.md](./performance.md#debounce-interval-per-resource-override-5s-default) for details.
+More than a few reconciliations per second under stable input usually means a watcher's debounce is undersized for the cluster's resource churn — raise `spec.watchedResources.<name>.debounceInterval` on the noisy resource type (typically EndpointSlice on large clusters). See [performance.md](./performance.md#debounce-interval-per-resource-override-1s-default) for details.
 
 ## Security Reminders
 

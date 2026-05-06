@@ -16,7 +16,7 @@ watchedResources:
     labelSelector: ""                       # "app=myapp" — string, not matchLabels object
     enableValidationWebhook: false          # include this kind in the webhook fan-out
     store: full                             # "full" (default) or "on-demand"
-    debounceInterval: ""                    # Go duration string; empty / invalid uses the 5s default
+    debounceInterval: ""                    # Go duration string; empty / invalid uses the 1s default
 ```
 
 All selector fields are plain label-selector strings — the `matchLabels`/`matchExpressions` object form that Prometheus Operator and others use is *not* accepted here.
@@ -108,7 +108,7 @@ Setting `enableValidationWebhook: true` on an entry registers that kind with the
 
 ## Debounce Override
 
-Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler (which has its own separate, non-CRD-configurable debounce on top — see [architecture-overview](./development/design/architecture-overview.md) for the two-layer flow). The default is 5 seconds (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval`:
+Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler (which has its own separate, CRD-configurable debounce on top via `spec.controller.reconciliationDebounceInterval` — see [architecture-overview](./development/design/architecture-overview.md) for the two-layer flow). The default is 1 second (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval`:
 
 ```yaml
 watchedResources:

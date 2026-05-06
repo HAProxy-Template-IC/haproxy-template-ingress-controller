@@ -261,7 +261,7 @@ cfg := types.WatcherConfig{
     },
     IndexBy: []string{"metadata.namespace", "metadata.name"},
     StoreType: types.StoreTypeMemory,
-    // DebounceInterval omitted → defaults to types.DefaultDebounceInterval (5s, leading-edge)
+    // DebounceInterval omitted → defaults to types.DefaultDebounceInterval (1s, leading-edge)
 
     OnChange: func(store types.Store, stats types.ChangeStats) {
         if !stats.IsInitialSync {
@@ -306,11 +306,11 @@ err = w.WaitForSync(ctx)
 **Debouncing:**
 
 ```go
-// Rapid changes batched (default DebounceInterval = 5s, leading-edge)
-// t=0s:   Create Ingress A → fires immediately, refractory window starts
-// t=1s:   Update Ingress A → suppressed (within window)
-// t=3s:   Create Ingress B → suppressed (within window)
-// t=5s:   Window closes → OnChange called once with the suppressed stats
+// Rapid changes batched (default DebounceInterval = 1s, leading-edge)
+// t=0.0s: Create Ingress A → fires immediately, refractory window starts
+// t=0.3s: Update Ingress A → suppressed (within window)
+// t=0.7s: Create Ingress B → suppressed (within window)
+// t=1.0s: Window closes → OnChange called once with the suppressed stats
 ```
 
 ## Testing Strategies
@@ -532,7 +532,7 @@ cfg.FieldSelector = "spec.ingressClassName=haproxy-internal"
 1. Define GVR (GroupVersionResource)
 2. Choose index expressions (what lookups do you need?)
 3. Determine store type (Memory vs Cached)
-4. Leave `DebounceInterval` at zero to use `types.DefaultDebounceInterval` (5s, leading-edge); only override for resources that need a faster reaction
+4. Leave `DebounceInterval` at zero to use `types.DefaultDebounceInterval` (1s, leading-edge); only override for resources that need slower batching (e.g. high-volume EndpointSlice churn) or near-zero latency
 5. Implement callbacks
 6. Add validation for index expressions
 7. Write tests with fake client
@@ -566,7 +566,7 @@ cfg := types.WatcherConfig{
     },
     IndexBy:   indexBy,
     StoreType: types.StoreTypeMemory,
-    // DebounceInterval omitted → uses types.DefaultDebounceInterval (5s)
+    // DebounceInterval omitted → uses types.DefaultDebounceInterval (1s)
     OnChange: func(store types.Store, stats types.ChangeStats) {
         if !stats.IsInitialSync {
             handleConfigMapChange(stats)
