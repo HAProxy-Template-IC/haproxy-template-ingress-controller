@@ -1746,18 +1746,40 @@ templateSnippets:
               var wildcardKey = nsStr + "/" + nameStr + "/*"
               var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
 
+              // Per Gateway API spec, when a listener's references are
+              // unresolvable (cert invalid, kind unsupported, …) the
+              // listener also can't be Programmed — the dataplane
+              // can't realise a binding it has no cert for. Programmed
+              // mirrors ResolvedRefs in those cases (with reason
+              // "Invalid" because the spec's listener-Programmed reasons
+              // are coarser than ResolvedRefs's).
+              var programmedListenerStatus = "True"
+              var programmedListenerReason = "Programmed"
+              var programmedListenerMessage = "Listener programmed"
+              if resolvedRefsStatus != "True" {
+                programmedListenerStatus = "False"
+                programmedListenerReason = "Invalid"
+                programmedListenerMessage = resolvedRefsMessage
+              }
+
               listenerData = append(listenerData, map[string]any{
-                "name":                 listenerName,
-                "supportedKinds":       supportedKinds,
-                "attachedRoutes":       attached,
-                "resolvedRefsStatus":   resolvedRefsStatus,
-                "resolvedRefsReason":   resolvedRefsReason,
-                "resolvedRefsMessage":  resolvedRefsMessage,
+                "name":                  listenerName,
+                "supportedKinds":        supportedKinds,
+                "attachedRoutes":        attached,
+                "resolvedRefsStatus":    resolvedRefsStatus,
+                "resolvedRefsReason":    resolvedRefsReason,
+                "resolvedRefsMessage":   resolvedRefsMessage,
+                "programmedStatus":      programmedListenerStatus,
+                "programmedReason":      programmedListenerReason,
+                "programmedMessage":     programmedListenerMessage,
               })
             }
 
-            // Build the deployed-variant listener status. Programmed=True
-            // because the controller successfully pushed the config.
+            // Build the deployed-variant listener status. Programmed
+            // is taken from listenerData (which folds in the
+            // ResolvedRefs failure cases — listener with bad cert /
+            // unsupported kind can't be Programmed even if the
+            // chart's deploy succeeded for the other listeners).
             var deployedListeners = []any{}
             for _, ld := range listenerData {
               var ldm = ld.(map[string]any)
@@ -1768,8 +1790,12 @@ templateSnippets:
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
                     generation, transitionTime(gateway, "Accepted", "True")),
-                  condition("Programmed", "True", "Programmed", "Listener programmed",
-                    generation, transitionTime(gateway, "Programmed", "True")),
+                  condition("Programmed",
+                    tostring(ldm["programmedStatus"]),
+                    tostring(ldm["programmedReason"]),
+                    tostring(ldm["programmedMessage"]),
+                    generation,
+                    transitionTime(gateway, "Programmed", tostring(ldm["programmedStatus"]))),
                   condition("ResolvedRefs",
                     tostring(ldm["resolvedRefsStatus"]),
                     tostring(ldm["resolvedRefsReason"]),
@@ -1782,13 +1808,20 @@ templateSnippets:
               })
             }
 
-            // Build the deployFailed-variant. Programmed=False, but
-            // ResolvedRefs follows the same kinds-derived status as the
-            // deployed variant (the kinds filter is independent of
-            // dataplane deployment success).
+            // Build the deployFailed-variant. Programmed=False unless
+            // the listener's own programming was already False for
+            // ref-resolution reasons (in which case the more-specific
+            // listener-level reason wins).
             var failedListeners = []any{}
             for _, ld := range listenerData {
               var ldm = ld.(map[string]any)
+              var failProgrammedStatus = "False"
+              var failProgrammedReason = "Invalid"
+              var failProgrammedMessage = "Gateway not yet programmed"
+              if tostring(ldm["programmedStatus"]) == "False" {
+                failProgrammedReason = tostring(ldm["programmedReason"])
+                failProgrammedMessage = tostring(ldm["programmedMessage"])
+              }
               failedListeners = append(failedListeners, map[string]any{
                 "name":           ldm["name"],
                 "supportedKinds": ldm["supportedKinds"],
@@ -1796,8 +1829,8 @@ templateSnippets:
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
                     generation, transitionTime(gateway, "Accepted", "True")),
-                  condition("Programmed", "False", "Invalid", "Gateway not yet programmed",
-                    generation, transitionTime(gateway, "Programmed", "False")),
+                  condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
+                    generation, transitionTime(gateway, "Programmed", failProgrammedStatus)),
                   condition("ResolvedRefs",
                     tostring(ldm["resolvedRefsStatus"]),
                     tostring(ldm["resolvedRefsReason"]),
@@ -1910,9 +1943,17 @@ templateSnippets:
             var nameStr = tostring(name)
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
-            // Check if all backend refs resolve
+            // Per Gateway API spec, ResolvedRefs=False can carry one
+            // of these reasons (most-specific wins):
+            //   InvalidKind     — backendRef.kind is not Service
+            //   BackendNotFound — referenced Service doesn't exist
+            //   RefNotPermitted — cross-namespace ref without
+            //                      ReferenceGrant (not yet implemented)
+            // The first failure encountered drives the condition; later
+            // refs aren't probed (fail-fast).
             var allRefsResolved = true
-            var unresolvedRef = ""
+            var refFailReason = ""
+            var refFailMsg = ""
             for _, rule := range dig(route, "spec", "rules") | toSlice() {
               for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
                 var svcName = dig(backendRef, "name") | fallback("") | tostring()
@@ -1920,14 +1961,20 @@ templateSnippets:
                 var group = dig(backendRef, "group") | fallback("") | tostring()
                 var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
 
-                // Only check core v1 Services
-                if (group == "" || group == "core") && refKind == "Service" {
-                  var svc = resources.services.GetSingle(svcNamespace, svcName)
-                  if svc == nil {
-                    allRefsResolved = false
-                    unresolvedRef = svcNamespace + "/" + svcName
-                    break
-                  }
+                // Group must be core ("" or "core"), kind must be Service.
+                // Anything else is InvalidKind per spec.
+                if !((group == "" || group == "core") && refKind == "Service") {
+                  allRefsResolved = false
+                  refFailReason = "InvalidKind"
+                  refFailMsg = "Unsupported backend kind " + group + "/" + refKind
+                  break
+                }
+                var svc = resources.services.GetSingle(svcNamespace, svcName)
+                if svc == nil {
+                  allRefsResolved = false
+                  refFailReason = "BackendNotFound"
+                  refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
+                  break
                 }
               }
               if !allRefsResolved {
@@ -2065,14 +2112,17 @@ templateSnippets:
                     }
                   }
 
-                  // ResolvedRefs follows backend resolution
+                  // ResolvedRefs follows backend resolution. The
+                  // refFailReason / refFailMsg were set during the
+                  // backend-ref scan above (InvalidKind /
+                  // BackendNotFound, fail-fast on first violation).
                   var resolvedStatus = "True"
                   var resolvedReason = "ResolvedRefs"
                   var resolvedMsg = "All backend references resolved"
                   if !allRefsResolved {
                     resolvedStatus = "False"
-                    resolvedReason = "BackendNotFound"
-                    resolvedMsg = "Backend not found: " + unresolvedRef
+                    resolvedReason = refFailReason
+                    resolvedMsg = refFailMsg
                   }
 
                   parents = append(parents, map[string]any{
