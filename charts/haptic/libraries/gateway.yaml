@@ -2261,101 +2261,16 @@ templateSnippets:
               }
 
               // ResolvedRefs status / reason / message are derived from
-              // (1) the kinds filter result and (2) certificateRef
-              // validity for HTTPS/TLS listeners. InvalidRouteKinds and
-              // InvalidCertificateRef are mutually exclusive reasons in
-              // the spec; if both apply, kinds-based wins (the user
-              // can fix kinds first to get a clearer cert error).
-              // The transitionTime helper preserves the existing
-              // timestamp when status doesn't change so the patch is
-              // idempotent.
+              // the kinds filter result. The transitionTime helper
+              // preserves an existing timestamp when status doesn't
+              // change so the patch is idempotent.
               var resolvedRefsStatus = "True"
               var resolvedRefsReason = "ResolvedRefs"
               var resolvedRefsMessage = "All references resolved"
-
-              // Validate certificateRefs for HTTPS / TLS listeners.
-              // Per Gateway API spec: an unsupported group/kind, a
-              // missing target Secret, a Secret missing tls.crt /
-              // tls.key data, or a cross-namespace ref without a
-              // matching ReferenceGrant each makes the listener
-              // ResolvedRefs=False with a different reason:
-              //   InvalidCertificateRef — bad group/kind or malformed
-              //     Secret content
-              //   RefNotPermitted       — cross-ns ref without
-              //     a permitting ReferenceGrant
-              // The chart's existing TLS-cert rendering already
-              // gracefully skips invalid refs (no haproxy crash), but
-              // status didn't reflect the failure — conformance gates
-              // on this.
-              var hasInvalidCertRef = false
-              var hasRefNotPermitted = false
-              if protocol == "HTTPS" || protocol == "TLS" {
-                var listenerTls = listener | dig("tls")
-                if listenerTls != nil {
-                  for _, ref := range listenerTls | dig("certificateRefs") | toSlice() {
-                    var refGroup = dig(ref, "group") | fallback("") | tostring()
-                    var refKind = dig(ref, "kind") | fallback("Secret") | tostring()
-                    if refGroup != "" && refGroup != "core" {
-                      hasInvalidCertRef = true
-                      continue
-                    }
-                    if refKind != "Secret" {
-                      hasInvalidCertRef = true
-                      continue
-                    }
-                    var refName = dig(ref, "name") | fallback("") | tostring()
-                    var refNs = dig(ref, "namespace") | fallback(nsStr) | tostring()
-                    if refName == "" {
-                      hasInvalidCertRef = true
-                      continue
-                    }
-                    // Cross-namespace gate: requires a matching
-                    // ReferenceGrant in the target Secret's namespace.
-                    if refNs != nsStr {
-                      var permitted = ReferenceGrantPermitted(
-                        "gateway.networking.k8s.io", "Gateway", nsStr,
-                        "", "Secret", refNs, refName,
-                      )
-                      if permitted != "true" {
-                        hasRefNotPermitted = true
-                        continue
-                      }
-                    }
-                    var sec = resources.secrets.GetSingle(refNs, refName)
-                    if sec == nil {
-                      hasInvalidCertRef = true
-                      continue
-                    }
-                    var sd = sec | dig("data")
-                    var crtB64 = tostring(sd | dig("tls.crt") | fallback(""))
-                    var keyB64 = tostring(sd | dig("tls.key") | fallback(""))
-                    if crtB64 == "" || keyB64 == "" {
-                      hasInvalidCertRef = true
-                    } else {
-                      var crt, crtErr = b64decode(crtB64)
-                      var key, keyErr = b64decode(keyB64)
-                      if crtErr != nil || keyErr != nil {
-                        hasInvalidCertRef = true
-                      } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
-                        hasInvalidCertRef = true
-                      }
-                    }
-                  }
-                }
-              }
-
               if hasInvalidKind {
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidRouteKinds"
                 resolvedRefsMessage = "Listener references unsupported route kinds"
-              } else if hasRefNotPermitted {
-                resolvedRefsStatus = "False"
-                resolvedRefsReason = "RefNotPermitted"
-                resolvedRefsMessage = "Listener references a Secret across namespaces with no matching ReferenceGrant"
-              } else if hasInvalidCertRef {
-                resolvedRefsStatus = "False"
-                resolvedRefsReason = "InvalidCertificateRef"
-                resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
               }
 
               // Count attached routes: routes with sectionName matching
@@ -2365,99 +2280,64 @@ templateSnippets:
               var wildcardKey = nsStr + "/" + nameStr + "/*"
               var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
 
-              // Per Gateway API spec, when a listener's references are
-              // unresolvable (cert invalid, kind unsupported, …) the
-              // listener also can't be Programmed — the dataplane
-              // can't realise a binding it has no cert for. Programmed
-              // mirrors ResolvedRefs in those cases (with reason
-              // "Invalid" because the spec's listener-Programmed reasons
-              // are coarser than ResolvedRefs's).
-              var programmedListenerStatus = "True"
-              var programmedListenerReason = "Programmed"
-              var programmedListenerMessage = "Listener programmed"
-              if resolvedRefsStatus != "True" {
-                programmedListenerStatus = "False"
-                programmedListenerReason = "Invalid"
-                programmedListenerMessage = resolvedRefsMessage
-              }
-
               listenerData = append(listenerData, map[string]any{
-                "name":                  listenerName,
-                "supportedKinds":        supportedKinds,
-                "attachedRoutes":        attached,
-                "resolvedRefsStatus":    resolvedRefsStatus,
-                "resolvedRefsReason":    resolvedRefsReason,
-                "resolvedRefsMessage":   resolvedRefsMessage,
-                "programmedStatus":      programmedListenerStatus,
-                "programmedReason":      programmedListenerReason,
-                "programmedMessage":     programmedListenerMessage,
+                "name":                 listenerName,
+                "supportedKinds":       supportedKinds,
+                "attachedRoutes":       attached,
+                "resolvedRefsStatus":   resolvedRefsStatus,
+                "resolvedRefsReason":   resolvedRefsReason,
+                "resolvedRefsMessage":  resolvedRefsMessage,
               })
             }
 
-            // Build the deployed-variant listener status. Programmed
-            // is taken from listenerData (which folds in the
-            // ResolvedRefs failure cases — listener with bad cert /
-            // unsupported kind can't be Programmed even if the
-            // chart's deploy succeeded for the other listeners).
+            // Build the deployed-variant listener status. Programmed=True
+            // because the controller successfully pushed the config.
             var deployedListeners = []any{}
             for _, ld := range listenerData {
               var ldm = ld.(map[string]any)
-              var lname = tostring(ldm["name"])
               deployedListeners = append(deployedListeners, map[string]any{
                 "name":           ldm["name"],
                 "supportedKinds": ldm["supportedKinds"],
                 "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
-                    generation, ListenerTransitionTime(gateway, lname, "Accepted", "True")),
-                  condition("Programmed",
-                    tostring(ldm["programmedStatus"]),
-                    tostring(ldm["programmedReason"]),
-                    tostring(ldm["programmedMessage"]),
-                    generation,
-                    ListenerTransitionTime(gateway, lname, "Programmed", tostring(ldm["programmedStatus"]))),
+                    generation, transitionTime(gateway, "Accepted", "True")),
+                  condition("Programmed", "True", "Programmed", "Listener programmed",
+                    generation, transitionTime(gateway, "Programmed", "True")),
                   condition("ResolvedRefs",
                     tostring(ldm["resolvedRefsStatus"]),
                     tostring(ldm["resolvedRefsReason"]),
                     tostring(ldm["resolvedRefsMessage"]),
                     generation,
-                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                    transitionTime(gateway, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
                   condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
                     generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
                 },
               })
             }
 
-            // Build the deployFailed-variant. Programmed=False unless
-            // the listener's own programming was already False for
-            // ref-resolution reasons (in which case the more-specific
-            // listener-level reason wins).
+            // Build the deployFailed-variant. Programmed=False, but
+            // ResolvedRefs follows the same kinds-derived status as the
+            // deployed variant (the kinds filter is independent of
+            // dataplane deployment success).
             var failedListeners = []any{}
             for _, ld := range listenerData {
               var ldm = ld.(map[string]any)
-              var lname = tostring(ldm["name"])
-              var failProgrammedStatus = "False"
-              var failProgrammedReason = "Invalid"
-              var failProgrammedMessage = "Gateway not yet programmed"
-              if tostring(ldm["programmedStatus"]) == "False" {
-                failProgrammedReason = tostring(ldm["programmedReason"])
-                failProgrammedMessage = tostring(ldm["programmedMessage"])
-              }
               failedListeners = append(failedListeners, map[string]any{
                 "name":           ldm["name"],
                 "supportedKinds": ldm["supportedKinds"],
                 "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
-                    generation, ListenerTransitionTime(gateway, lname, "Accepted", "True")),
-                  condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
-                    generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
+                    generation, transitionTime(gateway, "Accepted", "True")),
+                  condition("Programmed", "False", "Invalid", "Gateway not yet programmed",
+                    generation, transitionTime(gateway, "Programmed", "False")),
                   condition("ResolvedRefs",
                     tostring(ldm["resolvedRefsStatus"]),
                     tostring(ldm["resolvedRefsReason"]),
                     tostring(ldm["resolvedRefsMessage"]),
                     generation,
-                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                    transitionTime(gateway, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
                   condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
                     generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
                 },
