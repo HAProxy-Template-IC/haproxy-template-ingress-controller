@@ -2390,6 +2390,29 @@ templateSnippets:
             // dedupes redundant patches, so emitting the same content
             // in two phases doesn't double the API traffic — it just
             // closes the timing window between render and deploy.
+            //
+            // Gateway-level Programmed reflects listener health: per
+            // spec, a Gateway is Programmed=True only when every
+            // listener it owns can also be programmed. If any listener
+            // failed to resolve refs (bad cert, unsupported kind, …)
+            // the Gateway-level condition flips to False/Invalid with
+            // a message pointing at the listener-side reason.
+            // Conformance GatewayInvalidTLSConfiguration explicitly
+            // checks this top-level Programmed=False alongside the
+            // listener-level ResolvedRefs=False/InvalidCertificateRef.
+            var gwProgrammedStatus = "True"
+            var gwProgrammedReason = "Programmed"
+            var gwProgrammedMessage = "Gateway programmed into the data plane"
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              if tostring(ldm["programmedStatus"]) == "False" {
+                gwProgrammedStatus = "False"
+                gwProgrammedReason = "Invalid"
+                gwProgrammedMessage = "Listener " + tostring(ldm["name"]) + " is not programmed: " + tostring(ldm["programmedMessage"])
+                break
+              }
+            }
+
             statusPatch(nsStr, nameStr,
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{
@@ -2398,8 +2421,8 @@ templateSnippets:
                   "conditions": []any{
                     condition("Accepted", "True", "Accepted", "Gateway accepted",
                       generation, transitionTime(gateway, "Accepted", "True")),
-                    condition("Programmed", "True", "Programmed", "Gateway programmed into the data plane",
-                      generation, transitionTime(gateway, "Programmed", "True")),
+                    condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
+                      generation, transitionTime(gateway, "Programmed", gwProgrammedStatus)),
                   },
                   "listeners": deployedListeners,
                 },
@@ -2407,9 +2430,9 @@ templateSnippets:
                   "addresses": gatewayAddresses,
                   "conditions": []any{
                     condition("Accepted", "True", "Accepted", "Gateway accepted",
-                      generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
+                      generation, transitionTime(gateway, "Accepted", "True")),
                     condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
-                      generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
+                      generation, transitionTime(gateway, "Programmed", gwProgrammedStatus)),
                   },
                   "listeners": deployedListeners,
                 },
