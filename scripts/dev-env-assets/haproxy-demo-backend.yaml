@@ -66,7 +66,7 @@ spec:
     spec:
       containers:
         - name: haproxy
-          image: haproxytech/haproxy-debian:3.2.17
+          image: haproxytech/haproxy-debian:3.2.18
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
