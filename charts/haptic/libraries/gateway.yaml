@@ -1202,6 +1202,54 @@ templateSnippets:
       {{- ShardedHostMap(resources.httproutes.List(), "HTTPRoute") -}}
       {{- ShardedHostMap(resources.grpcroutes.List(), "GRPCRoute") -}}
 
+  map-host-regex-500-gateway:
+    template: |
+      {#-
+        Wildcard listener hostnames as regex entries.
+
+        For each Gateway listener whose hostname starts with `*.`,
+        emit a regex map entry that matches the suffix at any depth
+        (per Gateway API spec — `*.example.com` matches both
+        `foo.example.com` and `a.b.foo.example.com`, but NOT
+        `example.com` itself). The mapped value reuses the existing
+        leading-dot host_match key (`.example.com`) so downstream
+        path map lookups don't need to change.
+
+        Why a regex map: HAProxy's `regsub(^[^.]*,,)` fallback in
+        base.yaml only strips one label, so a request to
+        `multiple.prefixes.bar.com` against an `*.bar.com` listener
+        misses both the exact host.map and the single-strip
+        fallback. `map_reg` lets a single entry match any depth.
+
+        Why the leading anchor `^[^.]+(?:\.[^.]+)*\.bar\.com$`:
+          - `[^.]+` requires at least one label,
+          - `(?:\.[^.]+)*` allows arbitrarily-many extra labels,
+          - the trailing `\.bar\.com$` pins the wildcard suffix.
+        This excludes `bar.com` itself (which would have been matched
+        already by the exact host.map entry for any sibling exact
+        listener — and per spec must not match `*.bar.com`).
+      -#}
+      # gateway/map-host-regex-gateway
+      {%%
+        var seen = map[string]bool{}
+        for _, gw := range resources.gateways.List() {
+          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+            var h = tostring(dig(listener, "hostname") | fallback(""))
+            if !hasPrefix(h, "*.") {
+              continue
+            }
+            var suffix = h[2:]
+            if seen[suffix] {
+              continue
+            }
+            seen[suffix] = true
+          }
+        }
+      %%}
+      {%- for suffix := range seen %}
+      ^[^.]+(?:\.[^.]+)*\.{{ replace(tostring(suffix), ".", "\\.") }}$ .{{ tostring(suffix) }}
+      {%- end %}
+
   map-path-exact-500-gateway:
     template: |
       {#- Generate exact path map entries for HTTPRoute #}
