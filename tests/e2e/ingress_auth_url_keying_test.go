@@ -136,23 +136,11 @@ func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
 // TestIngressAuthURLRegexPath uses the haproxy-ingress regex-path
 // flavour: pathType=ImplementationSpecific plus the
 // haproxy-ingress.github.io/path-type=regex annotation routes the path
-// into path-regex.map (consumed via map_reg() — works fine). auth-url.map
-// is on the broken side: it stores the literal regex pattern as the key,
-// then the consumer does an exact-match lookup on the actual request
-// path. After the fix, keying by `<ns>/<name>` decouples the auth lookup
-// from the path entirely.
-//
-// SKIPPED: in CI the request returns 404 (default_backend/<NOSRV>) instead
-// of 401, meaning the routing chain doesn't match the regex pattern at
-// all. That's a separate, pre-existing bug in either the
-// haproxy-ingress regex-path renderer or HAProxy's map_reg consumption,
-// orthogonal to this MR's auth-url keying fix. The validation-layer
-// equivalent (test-nginx-ingress-external-auth-resource-id-keying-regex-path)
-// still asserts the renderer + consumer shape and passes. Re-enable once
-// the routing-side bug is fixed.
+// into path-regex.map (consumed via map_reg()). auth-url.map is keyed
+// by `<ns>/<name>` (resource id), so the auth lookup is decoupled from
+// the path entirely — wildcard hosts, regex paths, prefix subpaths all
+// resolve to the same resource_id and the auth-url lookup hits.
 func TestIngressAuthURLRegexPath(t *testing.T) {
-	t.Skip("regex-path routing returns 404 in CI; tracked separately — see comment on this test")
-
 	const (
 		host        = "auth-regex.localdev.me"
 		regexPath   = "/api/v[0-9]+/.*"

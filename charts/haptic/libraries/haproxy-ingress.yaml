@@ -76,8 +76,15 @@ templateSnippets:
           - pathType: ImplementationSpecific
           - Annotation: haproxy-ingress.github.io/path-type: "regex"
 
+        Output: <MapKeyForHost(host)><path> BACKEND:<backend_name> — same
+        shape as ingress.yaml's standard renderers, so base.yaml's
+        frontend-routing-logic decodes the qualifier (`field(1,:)`) and
+        backend name (`field(2,:)`) from the value identically.
+
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
       -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
@@ -108,7 +115,7 @@ templateSnippets:
           {%- var paths = http | dig("paths") | fallback([]any{}) %}
           {%- for _, path := range paths %}
           {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-      {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ render "util-backend-name-ingress" -}}
+      {{ MapKeyForHost(rule | dig("host")) }}{{ path | dig("path") | fallback("") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -138,6 +145,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
@@ -153,7 +161,7 @@ templateSnippets:
           {%- var paths = http | dig("paths") | fallback([]any{}) %}
           {%- for _, path := range paths %}
           {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-      {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ BackendNameIngress(ingress, path) }}
+      {{ MapKeyForHost(rule | dig("host")) }}{{ path | dig("path") | fallback("") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -182,6 +190,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
@@ -202,7 +211,7 @@ templateSnippets:
             {%- if pathValue != "" && !hasSuffix(pathValue, "/") %}
               {%- pathValue = pathValue + "/" %}
             {%- end %}
-      {{ rule | dig("host") | fallback("") }}{{ pathValue }} {{ BackendNameIngress(ingress, path) }}
+      {{ MapKeyForHost(rule | dig("host")) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -234,6 +243,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
       -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
@@ -249,7 +259,7 @@ templateSnippets:
           {%- var paths = http | dig("paths") | fallback([]any{}) %}
           {%- for _, path := range paths %}
           {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-      {{ rule | dig("host") | fallback("") }}{{ path | dig("path") | fallback("") }} {{ BackendNameIngress(ingress, path) }}
+      {{ MapKeyForHost(rule | dig("host")) }}{{ path | dig("path") | fallback("") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
         {%- end %}
@@ -2462,8 +2472,15 @@ validationTests:
         description: HAProxy config must be valid
       - type: contains
         target: "map:path-exact.map"
-        pattern: "exact.example.com/api/users"
-        description: Must generate exact map entry
+        pattern: '(?m)^exact\.example\.com/api/users BACKEND:default_exact-ingress_svc_exact-service_80$'
+        description: |
+          Map entry must carry the `BACKEND:<backend_name>` qualifier
+          prefix so base.yaml's frontend-routing-logic can decode the
+          qualifier (`field(1,:)`) and dispatch to the named backend.
+          Asserting on the value (not just the key) is the assertion
+          that would have caught the historical breakage where the
+          renderer omitted the `BACKEND:` prefix and routing silently
+          fell through to default_backend.
 
   test-haproxy-ingress-path-type-prefix:
     description: HAProxy-Ingress path-type prefix annotation uses prefix map
@@ -2516,8 +2533,8 @@ validationTests:
         description: HAProxy config must be valid
       - type: contains
         target: "map:path-prefix.map"
-        pattern: "prefix.example.com/api/"
-        description: Must generate prefix map entry with trailing slash
+        pattern: '(?m)^prefix\.example\.com/api/ BACKEND:default_prefix-ingress_svc_prefix-service_80$'
+        description: Map entry must carry the `BACKEND:<backend_name>` qualifier prefix; trailing slash for prefix matching.
 
   test-haproxy-ingress-path-type-begin:
     description: HAProxy-Ingress path-type begin annotation uses prefix-exact map
@@ -2570,8 +2587,153 @@ validationTests:
         description: HAProxy config must be valid
       - type: contains
         target: "map:path-prefix-exact.map"
-        pattern: "begin.example.com/static"
-        description: Must generate prefix-exact map entry (no trailing slash)
+        pattern: '(?m)^begin\.example\.com/static BACKEND:default_begin-ingress_svc_begin-service_80$'
+        description: Map entry must carry the `BACKEND:<backend_name>` qualifier prefix.
+
+  test-haproxy-ingress-path-type-regex:
+    description: |
+      HAProxy-Ingress path-type=regex annotation produces a path-regex.map
+      row keyed by the literal regex pattern with a `BACKEND:<backend_name>`
+      qualifier value. base.yaml's frontend-routing-logic looks this up
+      via `map_reg(...)` so a request matching the regex resolves to the
+      named backend rather than falling through to default_backend.
+      Catches the historical three-way bug in
+      `map-path-regex-600-haproxy-ingress`: missing BACKEND: prefix,
+      `render` instead of macro call, and no MapKeyForHost normalisation.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: regex-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: regex-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: regex-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: regex-ingress
+            annotations:
+              haproxy-ingress.github.io/path-type: "regex"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: regex.example.com
+                http:
+                  paths:
+                    - path: /api/v[0-9]+/.*
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: regex-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid (regex must parse cleanly)
+      - type: contains
+        target: "map:path-regex.map"
+        pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
+        description: |
+          Map entry must carry the literal regex pattern as the key AND
+          the `BACKEND:<backend_name>` qualifier value. The historical
+          renderer wrote the row as `<host><pathRegex> ` (trailing space,
+          no backend name) because it used `render "util-backend-name-ingress"`
+          — which only defines the BackendNameIngress macro without
+          calling it. With the fix the renderer imports the macro and
+          calls it, so the row is well-formed.
+
+  test-haproxy-ingress-path-type-regex-wildcard-host:
+    description: |
+      HAProxy-Ingress path-type=regex annotation on a wildcard-host
+      Ingress produces a valid regex (no leading literal `*`). The
+      historical renderer used the raw rule.host value, leaking `*`
+      into the regex pattern; HAProxy then rejected the path-regex.map
+      at parse time with "regex '*.example.com/...' is invalid
+      (quantifier does not follow a repeatable item)" and the entire
+      config failed to load. With MapKeyForHost normalisation, the key
+      becomes `.example.com<pathRegex>` which is a well-formed regex.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: wild-regex-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: wild-regex-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: wild-regex-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: wild-regex-ingress
+            annotations:
+              haproxy-ingress.github.io/path-type: "regex"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: "*.example.com"
+                http:
+                  paths:
+                    - path: /api/v[0-9]+/.*
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: wild-regex-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: |
+          HAProxy must parse the rendered config (in particular,
+          path-regex.map) without error. Catches the wildcard-`*`
+          regex bug — without MapKeyForHost the key would start with
+          `*.example.com` and HAProxy would reject the regex.
+      - type: contains
+        target: "map:path-regex.map"
+        pattern: '(?m)^\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_wild-regex-ingress_svc_wild-regex-service_80$'
+        description: |
+          Wildcard host normalisation: `*.example.com` → `.example.com`
+          (leading `*` stripped via MapKeyForHost). The result is a
+          valid regex pattern that matches concrete subdomains via
+          base.yaml's regsub fallback at request time.
+      - type: not_contains
+        target: "map:path-regex.map"
+        pattern: '\*\.example\.com'
+        description: |
+          The leading `*` from the wildcard host MUST NOT appear in
+          the regex pattern (would make it an invalid regex).
 
   # ============================================================================
   # Phase 4: Session Affinity Tests
