@@ -1442,29 +1442,42 @@ templateSnippets:
         {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | fallback([]any{}) %}
         {%- if len(backendRefs) > 0 %}
           {#- Filter to backendRefs the chart can route to. Per Gateway API
-              spec, only core/v1 Service refs are routable; refs to other
-              kinds or non-core groups must result in HTTP 500 for
-              traffic that matches this rule (the route's ResolvedRefs
-              status condition also goes False/InvalidKind, set
-              elsewhere). Filter the list once here and dispatch on the
-              valid count. -#}
+              spec, a backendRef is "valid" only when:
+                - Group is "" or "core" (kept simple, the chart only
+                  supports core/v1 Services)
+                - Kind is Service
+                - The referenced Service actually exists
+              Anything else must result in HTTP 500 for traffic that
+              matches this rule. The route's ResolvedRefs status
+              condition reflects the failure separately
+              (InvalidKind / BackendNotFound, set elsewhere). Filter
+              once here and dispatch on the valid count. -#}
           {%- var validRefs = []any{} %}
+          {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
           {%- for _, ref := range backendRefs %}
             {%- var refMap map[string]any = ref %}
             {%- var refGroup = refMap | dig("group") | fallback("") | tostring() %}
             {%- var refKind = refMap | dig("kind") | fallback("Service") | tostring() %}
             {%- if (refGroup == "" || refGroup == "core") && refKind == "Service" %}
-              {%- validRefs = append(validRefs, ref) %}
+              {%- var refName = tostring(refMap | dig("name") | fallback("")) %}
+              {%- var refNs = tostring(refMap | dig("namespace") | fallback(routeNs)) %}
+              {%- var svc = resources.services.GetSingle(refNs, refName) %}
+              {%- if svc != nil %}
+                {%- validRefs = append(validRefs, ref) %}
+              {%- end %}
             {%- end %}
           {%- end %}
 
           {%- var qualifier = "" %}
           {%- if len(validRefs) == 0 %}
             {#- No valid backendRefs at all → route to the chart-level
-                500-returning sink. Conformance test
-                HTTPRouteInvalidBackendRefUnknownKind asserts that a rule
-                whose only backendRef has kind=NonExistent returns 500
-                for every matching request. -#}
+                500-returning sink. Spec calls for HTTP 500 (not 503)
+                whenever every backendRef in a rule is unresolvable.
+                Conformance tests gating this:
+                  HTTPRouteInvalidBackendRefUnknownKind — kind=NonExistent
+                  HTTPRouteInvalidNonExistentBackendRef — Service missing
+                Both share the same handling: route to gw-invalid-backend,
+                which carries `http-request return status 500`. -#}
             {%- qualifier = "BACKEND:gw-invalid-backend" %}
           {%- else if len(validRefs) == 1 %}
             {#- Single valid backend: BACKEND qualifier #}
