@@ -2454,8 +2454,6 @@ templateSnippets:
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
 
@@ -2664,10 +2662,7 @@ templateSnippets:
                     }
                   }
 
-                  // ResolvedRefs follows backend resolution. The
-                  // refFailReason / refFailMsg were set during the
-                  // backend-ref scan above (InvalidKind /
-                  // BackendNotFound, fail-fast on first violation).
+                  // ResolvedRefs follows backend resolution
                   var resolvedStatus = "True"
                   var resolvedReason = "ResolvedRefs"
                   var resolvedMsg = "All backend references resolved"
@@ -2682,7 +2677,7 @@ templateSnippets:
                     "controllerName": controllerName,
                     "conditions": []any{
                       condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                        generation, transitionTime(route, "Accepted", acceptedStatus, parentIdx)),
                       condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
                         generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
                     },
