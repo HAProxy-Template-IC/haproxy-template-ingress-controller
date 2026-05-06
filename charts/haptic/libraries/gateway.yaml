@@ -2906,7 +2906,6 @@ templateSnippets:
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
       -#}
-      {%- import "util-condition-transition-time" for TopLevelTransitionTime -%}
       {% macro GenerateGatewayClassStatusPatches(gatewayClasses []any) %}
         {%- for _, gc := range gatewayClasses %}
           {%%
@@ -2936,7 +2935,7 @@ templateSnippets:
               acceptedReason,
               acceptedMessage,
               generation,
-              TopLevelTransitionTime(gc, "Accepted", acceptedStatus),
+              transitionTime(gc, "Accepted", acceptedStatus),
             )
 
             // GatewayClass is cluster-scoped; pass empty namespace.

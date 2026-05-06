@@ -191,11 +191,7 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite against 
 	@echo "Running Gateway API conformance suite against the haptic-e2e cluster..."
 	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
 	@echo "      and left it running (KEEP_CLUSTER=true is the default)."
-	@echo "Environment variables:"
-	@echo "  TEST_RUN_PATTERN - Run a subset of conformance tests matching the pattern"
-	@echo "                     (forwarded to 'go test -run'); useful when iterating"
-	@echo "                     on a single failure. Empty = run the full suite."
-	$(GO) test -mod=mod -tags=gateway_conformance -v -timeout 30m $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") ./tests/conformance/...
+	$(GO) test -mod=mod -tags=gateway_conformance -v -timeout 30m ./tests/conformance/...
 
 test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
 	@echo "Running e2e tests..."
