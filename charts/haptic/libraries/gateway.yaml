@@ -1450,16 +1450,70 @@ templateSnippets:
               }
 
               // ResolvedRefs status / reason / message are derived from
-              // the kinds filter result. The transitionTime helper
-              // preserves an existing timestamp when status doesn't
-              // change so the patch is idempotent.
+              // (1) the kinds filter result and (2) certificateRef
+              // validity for HTTPS/TLS listeners. InvalidRouteKinds and
+              // InvalidCertificateRef are mutually exclusive reasons in
+              // the spec; if both apply, kinds-based wins (the user
+              // can fix kinds first to get a clearer cert error).
+              // The transitionTime helper preserves the existing
+              // timestamp when status doesn't change so the patch is
+              // idempotent.
               var resolvedRefsStatus = "True"
               var resolvedRefsReason = "ResolvedRefs"
               var resolvedRefsMessage = "All references resolved"
+
+              // Validate certificateRefs for HTTPS / TLS listeners.
+              // Per Gateway API spec: an unsupported group/kind, a
+              // missing target Secret, or a Secret missing tls.crt /
+              // tls.key data each makes the listener
+              // ResolvedRefs=False/InvalidCertificateRef. The chart's
+              // existing TLS-cert rendering already gracefully skips
+              // invalid refs (no haproxy crash), but it didn't surface
+              // the failure in status — conformance gates on this.
+              var hasInvalidCertRef = false
+              if protocol == "HTTPS" || protocol == "TLS" {
+                var listenerTls = listener | dig("tls")
+                if listenerTls != nil {
+                  for _, ref := range listenerTls | dig("certificateRefs") | toSlice() {
+                    var refGroup = dig(ref, "group") | fallback("") | tostring()
+                    var refKind = dig(ref, "kind") | fallback("Secret") | tostring()
+                    if refGroup != "" && refGroup != "core" {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    if refKind != "Secret" {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    var refName = dig(ref, "name") | fallback("") | tostring()
+                    var refNs = dig(ref, "namespace") | fallback(nsStr) | tostring()
+                    if refName == "" {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    var sec = resources.secrets.GetSingle(refNs, refName)
+                    if sec == nil {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    var sd = sec | dig("data")
+                    var crt = sd | dig("tls.crt") | fallback("")
+                    var key = sd | dig("tls.key") | fallback("")
+                    if tostring(crt) == "" || tostring(key) == "" {
+                      hasInvalidCertRef = true
+                    }
+                  }
+                }
+              }
+
               if hasInvalidKind {
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidRouteKinds"
                 resolvedRefsMessage = "Listener references unsupported route kinds"
+              } else if hasInvalidCertRef {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "InvalidCertificateRef"
+                resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
               }
 
               // Count attached routes: routes with sectionName matching
