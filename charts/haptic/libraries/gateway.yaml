@@ -1866,6 +1866,21 @@ templateSnippets:
         For each route, registers a status patch with parents[] entries
         containing parentRef, controllerName, and conditions (Accepted, ResolvedRefs).
 
+        Per-parent Accepted condition follows the Gateway API spec:
+          - True/Accepted              — at least one listener of the parent
+                                          gateway accepts this route (passing
+                                          all five listener-attachment
+                                          predicates: sectionName, kinds,
+                                          namespaces, hostname intersection)
+          - False/NoMatchingListenerHostname — every candidate listener has a
+                                          hostname that doesn't intersect
+                                          spec.hostnames
+          - False/NoMatchingParent     — sectionName references a listener
+                                          that doesn't exist on the gateway
+          - False/NotAllowedByListeners — every candidate listener excludes
+                                          the route via allowedRoutes.kinds
+                                          or allowedRoutes.namespaces
+
         Parameters:
           routes: Slice of route resources to process
           apiVersion: API version string (e.g. "gateway.networking.k8s.io/v1")
@@ -1873,6 +1888,7 @@ templateSnippets:
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
+      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
 
@@ -1892,6 +1908,7 @@ templateSnippets:
             var generation = dig(route, "metadata", "generation") | fallback(0)
             var nsStr = tostring(namespace)
             var nameStr = tostring(name)
+            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             // Check if all backend refs resolve
             var allRefsResolved = true
@@ -1941,11 +1958,114 @@ templateSnippets:
                     parentRefStatus["namespace"] = gwNamespace
                   }
                   var sectionName = dig(parentRef, "sectionName")
+                  var sectionNameStr = ""
                   if sectionName != nil {
                     parentRefStatus["sectionName"] = tostring(sectionName)
+                    sectionNameStr = tostring(sectionName)
                   }
 
-                  // Build conditions
+                  // Evaluate Accepted-by-listener for this parentRef.
+                  // Walk the gateway's listeners; the first that accepts
+                  // the route → Accepted=True. If none accepts, the most
+                  // specific failure-reason wins. The spec ranks the
+                  // reasons:
+                  //   NoMatchingParent (sectionName missing) > NotAllowedByListeners (kinds/namespaces) > NoMatchingListenerHostname
+                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+                  var acceptedStatus = "False"
+                  var acceptedReason = "NotAllowedByListeners"
+                  var acceptedMsg = "No listener accepts this route"
+                  var sawSectionMatch = false
+                  var sawKindNs = false
+                  var sawHostnameMismatch = false
+                  if gw != nil {
+                    for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                      var listenerName = dig(listener, "name") | fallback("") | tostring()
+
+                      if sectionNameStr != "" && listenerName != sectionNameStr {
+                        continue
+                      }
+                      if sectionNameStr != "" {
+                        sawSectionMatch = true
+                      }
+
+                      // Kind filter
+                      var kindOk = true
+                      var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
+                      if allowedKindsRaw != nil {
+                        kindOk = false
+                        for _, ak := range toSlice(allowedKindsRaw) {
+                          var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                          var akKind = dig(ak, "kind") | fallback("") | tostring()
+                          if akGroup == "gateway.networking.k8s.io" && akKind == kind {
+                            kindOk = true
+                            break
+                          }
+                        }
+                      }
+
+                      // Namespace filter
+                      var nsOk = false
+                      var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                      switch fromMode {
+                      case "Same":
+                        nsOk = nsStr == gwNamespace
+                      case "All":
+                        nsOk = true
+                      case "Selector":
+                        var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
+                        if ml != nil {
+                          var nsObj = resources.namespaces.GetSingle(nsStr)
+                          if nsObj != nil {
+                            var nsLabels = dig(nsObj, "metadata", "labels")
+                            if nsLabels != nil {
+                              var labelMap = nsLabels.(map[string]any)
+                              var allMatch = true
+                              for k, v := range ml.(map[string]any) {
+                                var actual, ok = labelMap[k]
+                                if !ok || tostring(actual) != tostring(v) {
+                                  allMatch = false
+                                  break
+                                }
+                              }
+                              nsOk = allMatch
+                            }
+                          }
+                        }
+                      }
+
+                      if !kindOk || !nsOk {
+                        sawKindNs = true
+                        continue
+                      }
+
+                      // Hostname intersection
+                      var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                      if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
+                        sawHostnameMismatch = true
+                        continue
+                      }
+
+                      // All five predicates passed.
+                      acceptedStatus = "True"
+                      acceptedReason = "Accepted"
+                      acceptedMsg = "Route accepted"
+                      break
+                    }
+                  }
+                  if acceptedStatus == "False" {
+                    if sectionNameStr != "" && !sawSectionMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "Section " + sectionNameStr + " not found on parent gateway"
+                    } else if sawHostnameMismatch && !sawKindNs {
+                      acceptedReason = "NoMatchingListenerHostname"
+                      acceptedMsg = "No listener hostname intersects the route's hostnames"
+                    } else {
+                      acceptedReason = "NotAllowedByListeners"
+                      acceptedMsg = "No listener accepts the route's namespace or kind"
+                    }
+                  }
+
+                  // ResolvedRefs follows backend resolution
                   var resolvedStatus = "True"
                   var resolvedReason = "ResolvedRefs"
                   var resolvedMsg = "All backend references resolved"
@@ -1959,8 +2079,8 @@ templateSnippets:
                     "parentRef":      parentRefStatus,
                     "controllerName": controllerName,
                     "conditions": []any{
-                      condition("Accepted", "True", "Accepted", "Route accepted",
-                        generation, transitionTime(route, "Accepted", "True", parentIdx)),
+                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                        generation, transitionTime(route, "Accepted", acceptedStatus, parentIdx)),
                       condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
                         generation, transitionTime(route, "ResolvedRefs", resolvedStatus, parentIdx)),
                     },
