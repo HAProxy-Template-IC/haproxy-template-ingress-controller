@@ -321,14 +321,19 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		}
 
 		// Build the SSA patch payload: wrap status content under .status.
+		// For cluster-scoped resources (e.g. GatewayClass) the namespace is
+		// empty; omit the field rather than serialising "namespace": "" so
+		// the API server's SSA codec doesn't claim ownership of an empty
+		// namespace string we'd then have to track.
+		metadata := map[string]any{"name": patch.Name}
+		if patch.Namespace != "" {
+			metadata["namespace"] = patch.Namespace
+		}
 		ssaPayload := map[string]any{
 			"apiVersion": patch.APIVersion,
 			"kind":       patch.Kind,
-			"metadata": map[string]any{
-				"namespace": patch.Namespace,
-				"name":      patch.Name,
-			},
-			statusKey: statusPayload,
+			"metadata":   metadata,
+			statusKey:    statusPayload,
 		}
 
 		ssaBytes, err := json.Marshal(ssaPayload)

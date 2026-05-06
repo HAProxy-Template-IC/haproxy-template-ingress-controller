@@ -461,6 +461,9 @@ templateSnippets:
         Used By:
           - status-patches-200-ingress
           - status-patches-200-gateway
+
+        Not used by:
+          - status-patches-100-gatewayclass — GatewayClass status doesn't carry addresses.
       -#}
 
       {#- Ensure globalFeatures is initialized (may not exist if SSL library is disabled) -#}
@@ -497,8 +500,41 @@ templateSnippets:
             }
           }
         }
+
+        // Cluster-IP fallback: when no LoadBalancer ingress is
+        // available (NodePort / ClusterIP service types, bare-metal
+        // clusters without metallb), fall back to the service's own
+        // ClusterIPs so Gateway/Ingress status carries SOMETHING. The
+        // fallback runs only when LB discovery returned nothing — we
+        // don't want to mix LB-external IPs with cluster-internal
+        // IPs in the same status block.
+        if len(addresses) == 0 {
+          for _, svc := range resources.controller_services.List() {
+            var clusterIPs = dig(svc, "spec", "clusterIPs") | toSlice()
+            for _, ip := range clusterIPs {
+              var ipStr = tostring(ip)
+              // "None" is a sentinel for headless services and is
+              // never a routable IP. Skip empty values too.
+              if ipStr != "" && ipStr != "None" {
+                if !seen[ipStr+"/"] {
+                  seen[ipStr+"/"] = true
+                  addresses = append(addresses, map[string]any{"ip": ipStr})
+                }
+              }
+            }
+          }
+        }
         var statusPatchesDisabled bool = extraContext | dig("statusPatchesDisabled") | fallback(false)
-        if !statusPatchesDisabled && len(addresses) > 0 {
+        if !statusPatchesDisabled {
+          // Always set gf["addresses"] when status patches are enabled
+          // (even as an empty slice). Downstream snippets gate on
+          // `gf["addresses"] != nil`, so leaving it nil would suppress
+          // ALL status patches — including Gateway Accepted=True, which
+          // the Gateway API spec requires regardless of whether the
+          // implementation has assigned an external address yet.
+          // Empty addresses → conditions still get written; the macros
+          // surface that as Programmed=False / AddressNotAssigned via
+          // the deployFailed variant.
           gf["addresses"] = addresses
         }
       %%}

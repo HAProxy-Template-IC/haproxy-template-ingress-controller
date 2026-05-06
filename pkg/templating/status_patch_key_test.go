@@ -42,7 +42,7 @@ import (
 //
 // These tests pin all three contracts directly with table-driven cases.
 
-func TestStatusPatchCollector_Register_RequiresAllFourFields(t *testing.T) {
+func TestStatusPatchCollector_Register_RequiresThreeOfFourFields(t *testing.T) {
 	tests := []struct {
 		name       string
 		namespace  string
@@ -62,12 +62,12 @@ func TestStatusPatchCollector_Register_RequiresAllFourFields(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:       "empty namespace → error",
+			name:       "empty namespace → ok (cluster-scoped resource like GatewayClass)",
 			namespace:  "",
-			resName:    "x",
-			apiVersion: "v1",
-			kind:       "Pod",
-			wantErr:    true,
+			resName:    "haptic",
+			apiVersion: "gateway.networking.k8s.io/v1",
+			kind:       "GatewayClass",
+			wantErr:    false,
 		},
 		{
 			name:       "empty name → error",

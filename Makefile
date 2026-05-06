@@ -187,10 +187,10 @@ test-acceptance-parallel: docker-build-test ## Run acceptance tests in parallel 
 	@echo "  PARALLEL        - Max concurrent tests (default: 4)"
 	$(GO) test -tags=acceptance -v -timeout 30m -parallel $${PARALLEL:-4} -run TestAllAcceptanceParallel ./tests/acceptance/...
 
-test-gateway-conformance: ## Run upstream Gateway API conformance suite against the chart (currently SKIPPED — see tests/conformance/)
-	@echo "Running Gateway API conformance suite..."
-	@echo "Note: skipped until chart-side HTTPRoute bugs are resolved."
-	@echo "      See tests/conformance/gateway_conformance_test.go package doc."
+test-gateway-conformance: ## Run upstream Gateway API conformance suite against the chart (requires `make test-e2e` cluster up)
+	@echo "Running Gateway API conformance suite against the haptic-e2e cluster..."
+	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
+	@echo "      and left it running (KEEP_CLUSTER=true is the default)."
 	$(GO) test -mod=mod -tags=gateway_conformance -v -timeout 30m ./tests/conformance/...
 
 test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)

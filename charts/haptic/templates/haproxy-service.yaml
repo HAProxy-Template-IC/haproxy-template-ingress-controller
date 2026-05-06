@@ -64,10 +64,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- $labels | nindent 4 }}
-    app.kubernetes.io/component: loadbalancer
+    # Distinct from the haproxy-frontend service: the dataplane service
+    # is the internal HAProxy Dataplane API (used by the controller to
+    # push config), NOT user-facing traffic. Selectors that look up the
+    # user-facing loadbalancer (e.g. status-address discovery, network
+    # policy ingress rules) intentionally exclude this service.
+    app.kubernetes.io/component: dataplane-api
 spec:
   type: {{ $haproxy.dataplane.service.type }}
   selector:
+    # Pods are still labeled `component: loadbalancer` (the HAProxy
+    # pod hosts the dataplane sidecar). The mismatch between Service
+    # label and pod label is intentional.
     {{- $selectorLabels | nindent 4 }}
     app.kubernetes.io/component: loadbalancer
   ports:
