@@ -124,7 +124,19 @@ templateSnippets:
                     name: example-tls
                     namespace: default  # optional, defaults to Gateway namespace
       #}
-      {%- var registeredSecrets = []any{} %}
+      {#- Two-pass cert registration:
+          Pass 1: walk every (gateway, listener, certRef) triple to compute
+                  a per-secret aggregate — which SNIs it should bind, and
+                  whether at least one of its listeners has no hostname
+                  (in which case it qualifies as the chart's TLS default).
+          Pass 2: emit one tlsCert entry per unique secret, with the
+                  aggregated sni_patterns and is_gateway_default.
+          The previous single-pass scheme used first_seen() to dedup
+          per-secret, which dropped the SNI patterns of every listener
+          after the first — so a Gateway whose listeners "https-A" and
+          "https-B" share a cert ended up with only "https-A"'s SNI
+          bound. Conformance HTTPRouteHTTPSListener exposes that gap. -#}
+      {%- var certAggregates = map[string]map[string]any{} %}
       {%- for _, gateway := range resources.gateways.List() %}
         {%%
           var gwSpec = gateway | dig("spec")
@@ -134,7 +146,6 @@ templateSnippets:
         %%}
         {%- for _, listener := range gwSpec | dig("listeners") | toSlice() %}
           {%%
-            // Only process listeners with TLS Terminate mode
             var listenerTls = listener | dig("tls")
             var tlsMode = listenerTls | dig("mode") | fallback("")
             if listenerTls == nil || tlsMode != "Terminate" {
@@ -143,63 +154,83 @@ templateSnippets:
           %%}
           {%- for _, certRef := range listenerTls | dig("certificateRefs") | toSlice() %}
             {%%
-              // Determine secret namespace (defaults to Gateway namespace)
               var gatewayNs = gateway | dig("metadata", "namespace") | fallback("")
               var certNamespace = certRef | dig("namespace") | fallback(gatewayNs)
               var certName = certRef | dig("name") | fallback("")
 
-              // Only process Secret references (skip other kinds)
-              var certKind = certRef | dig("kind") | fallback("")
-              if certKind != "" && certKind != "Secret" {
+              var certKind = certRef | dig("kind") | fallback("Secret")
+              if certKind != "Secret" {
                 continue
               }
 
-              // Unique key for this secret
-              var secretKey = certNamespace + "/" + certName
-              if !first_seen("gateway_tls_certs", secretKey) {
-                continue
-              }
-              registeredSecrets = append(registeredSecrets, secretKey)
-
-              // Fetch Secret and extract cert+key
-              var secret = resources.secrets.GetSingle(certNamespace, certName)
-              var secretData = secret | dig("data")
-              var tlsCrt = secretData | dig("tls.crt") | fallback("")
-              var tlsKey = secretData | dig("tls.key") | fallback("")
-              if secret == nil || secretData == nil || tlsCrt == "" || tlsKey == "" {
-                continue
-              }
-
-              // Combine cert and key into single PEM (HAProxy format)
-              var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
-
-              // Register certificate file dynamically using fileRegistry
-              // The filename is sanitized by PathResolver (dots replaced with underscores, etc.)
-              var certFilename = certNamespace + "_" + certName + ".pem"
-              var certPath, _ = fileRegistry.Register("cert", certFilename, combinedPem)
-
-              // Extract the sanitized filename from the returned path
-              // This is needed because HAProxy client-native sanitizes filenames for storage
-              var sanitizedFilename = basename(certPath)
-
-              // Register with SSL infrastructure for crt-list generation
-              // Use sanitized_filename to ensure crt-list matches the actual file on disk
-              var sniPatterns = []any{}
+              var secretKey = tostring(certNamespace) + "/" + tostring(certName)
               var listenerHostname = listener | dig("hostname") | fallback("")
-              if listenerHostname != "" {
-                sniPatterns = append(sniPatterns, listenerHostname)
+              var listenerHostnameStr = tostring(listenerHostname)
+
+              var existing = certAggregates[secretKey]
+              if existing == nil {
+                certAggregates[secretKey] = map[string]any{
+                  "secret_namespace":   certNamespace,
+                  "secret_name":        certName,
+                  "sni_patterns":       []any{},
+                  "is_gateway_default": false,
+                }
+                existing = certAggregates[secretKey]
               }
-              var tlsCert = map[string]any{
-                "secret_namespace": certNamespace,
-                "secret_name": certName,
-                "sni_patterns": sniPatterns,
-                "sanitized_filename": sanitizedFilename,
+              if listenerHostnameStr != "" {
+                existing["sni_patterns"] = append(existing["sni_patterns"].([]any), listenerHostnameStr)
+              } else {
+                // Listener with no hostname → cert is a default
+                // candidate (per spec, any SNI accepted).
+                existing["is_gateway_default"] = true
               }
-              var tlsCerts []any = gf["tlsCertificates"]
-              gf["tlsCertificates"] = append(tlsCerts, tlsCert)
+              certAggregates[secretKey] = existing
             %%}
           {%- end %}
         {%- end %}
+      {%- end %}
+
+      {#- Pass 2: emit one tlsCert entry per unique secret. Keys sorted
+          for deterministic ordering — Scriggo map iteration is not stable
+          and a reordered tlsCerts list would churn the rendered crt-list
+          (HAProxy reload thrash on otherwise-identical input). -#}
+      {%- var aggKeys = []any{} %}
+      {%- for k := range certAggregates %}
+        {%- aggKeys = append(aggKeys, k) %}
+      {%- end %}
+      {%- var sortedAggKeys = sort_strings(aggKeys) %}
+      {%- for _, secretKey := range sortedAggKeys %}
+        {%%
+          var agg = certAggregates[tostring(secretKey)]
+          var certNamespace = tostring(agg["secret_namespace"])
+          var certName = tostring(agg["secret_name"])
+
+          var secret = resources.secrets.GetSingle(certNamespace, certName)
+          if secret == nil {
+            continue
+          }
+          var secretData = secret | dig("data")
+          var tlsCrt = secretData | dig("tls.crt") | fallback("")
+          var tlsKey = secretData | dig("tls.key") | fallback("")
+          if secretData == nil || tlsCrt == "" || tlsKey == "" {
+            continue
+          }
+
+          var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
+          var certFilename = certNamespace + "_" + certName + ".pem"
+          var certPath, _ = fileRegistry.Register("cert", certFilename, combinedPem)
+          var sanitizedFilename = basename(certPath)
+
+          var tlsCert = map[string]any{
+            "secret_namespace":   certNamespace,
+            "secret_name":        certName,
+            "sni_patterns":       agg["sni_patterns"],
+            "sanitized_filename": sanitizedFilename,
+            "is_gateway_default": agg["is_gateway_default"],
+          }
+          var tlsCerts []any = gf["tlsCertificates"]
+          gf["tlsCertificates"] = append(tlsCerts, tlsCert)
+        %%}
       {%- end %}
 
   # ============================================================================

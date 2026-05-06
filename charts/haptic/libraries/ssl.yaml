@@ -99,10 +99,50 @@ templateSnippets:
           options — including `verify`. If a per-host auth-tls-secret line
           (verify required) ends up first instead, every unmatched-SNI
           handshake demands a client cert and fails with
-          PEER_DID_NOT_RETURN_A_CERTIFICATE. Putting default.pem first
-          (with no verify) gives unmatched SNIs a permissive fallback. -#}
-      {%- var crtlistLines = []any{"default.pem [ocsp-update on]"} -%}
+          PEER_DID_NOT_RETURN_A_CERTIFICATE.
+
+          Default-cert selection order:
+            1. A Gateway HTTPS listener with no hostname registered as
+               is_gateway_default — the spec says "no hostname = any
+               hostname", which makes that listener's cert the right
+               default for unmatched SNIs.
+            2. The chart-level default.pem (the admin's default cert,
+               loaded from values.yaml's default_ssl_cert_* secret).
+          Without (1), tests like HTTPRouteHTTPSListener whose client
+          trusts only the Gateway's specific cert reject the handshake
+          for any unconfigured hostname (HAProxy presents default.pem,
+          which is signed by a different CA).
+
+          When multiple Gateway listeners qualify (rare; conformance
+          tests one at a time), the first one in iteration order wins.
+          Map iteration is non-deterministic; we lexically sort by
+          (namespace, name) so the choice is reproducible across renders. -#}
       {%- var clientCertVerifyHosts = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) -%}
+      {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
+
+      {%- var defaultCertFilename = "default.pem" -%}
+      {%- var gatewayDefaultCandidates = []any{} -%}
+      {%- for _, tlsCert := range tlsCerts -%}
+        {%- var tc map[string]any = tlsCert -%}
+        {%- if dig(tc, "is_gateway_default") | fallback(false) -%}
+          {%- gatewayDefaultCandidates = append(gatewayDefaultCandidates, tc) -%}
+        {%- end -%}
+      {%- end -%}
+      {%- if len(gatewayDefaultCandidates) > 0 -%}
+        {#- Pick deterministically: sort by ns/name. -#}
+        {%- var keyMap = map[string]map[string]any{} -%}
+        {%- var keys = []any{} -%}
+        {%- for _, tc := range gatewayDefaultCandidates -%}
+          {%- var tcm = tc.(map[string]any) -%}
+          {%- var k = tostring(tcm["secret_namespace"]) + "/" + tostring(tcm["secret_name"]) -%}
+          {%- keyMap[k] = tcm -%}
+          {%- keys = append(keys, k) -%}
+        {%- end -%}
+        {%- var sortedKeys = sort_strings(keys) -%}
+        {%- var winner = keyMap[tostring(sortedKeys[0])] -%}
+        {%- defaultCertFilename = tostring(winner["sanitized_filename"] | fallback(tostring(winner["secret_namespace"]) + "_" + tostring(winner["secret_name"]) + ".pem")) -%}
+      {%- end -%}
+      {%- var crtlistLines = []any{tostring(defaultCertFilename) + " [ocsp-update on]"} -%}
 
       {# Generate entries for each registered TLS certificate.
          Per-host client-cert verification (driven by the ingress
@@ -112,7 +152,6 @@ templateSnippets:
          their (ca_path, verify_mode) tuple and emit one crt-list
          line per group — the same cert can appear multiple times
          in a crt-list with different options, which is supported. #}
-      {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) -%}
       {%- for _, tlsCert := range tlsCerts -%}
         {%- var tc map[string]any = tlsCert -%}
         {# Use sanitized_filename from the registration (set by ingress.yaml/gateway.yaml) #}
