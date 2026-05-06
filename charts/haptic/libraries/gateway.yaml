@@ -1383,97 +1383,150 @@ templateSnippets:
             var nsStr = tostring(namespace)
             var nameStr = tostring(name)
 
-            // Build listener status for deployed variant
-            var deployedListeners = []any{}
+            // Pre-compute per-listener data the deployed and deployFailed
+            // variants both consume. Specifically: allowedRoutes.kinds
+            // intersection with the protocol-default kinds (per Gateway
+            // API spec — ResolvedRefs goes False/InvalidRouteKinds when
+            // the user requests an unsupported kind, supportedKinds
+            // shrinks to the intersection). Computing once and reusing
+            // ensures the two variants stay in lockstep.
+            var listenerData = []any{}
             for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
               var listenerName = dig(listener, "name") | fallback("") | tostring()
               var protocol = dig(listener, "protocol") | fallback("HTTP") | tostring()
 
-              var supportedKinds = []any{}
+              // Default kinds the chart's data-plane supports per
+              // listener protocol. The conformance suite treats this
+              // as the "core" set; any user-requested kind not in this
+              // set is rejected with InvalidRouteKinds.
+              var defaultKinds = []any{}
               switch protocol {
               case "HTTP", "HTTPS":
-                supportedKinds = []any{
+                defaultKinds = []any{
                   map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
                   map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
                 }
               case "TLS":
-                supportedKinds = []any{
+                defaultKinds = []any{
                   map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"},
                 }
               case "TCP":
-                supportedKinds = []any{
+                defaultKinds = []any{
                   map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"},
                 }
               case "UDP":
-                supportedKinds = []any{
+                defaultKinds = []any{
                   map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
                 }
               }
 
-              // Count attached routes: specific listener + wildcard (no sectionName)
+              // If the listener spec declares allowedRoutes.kinds, the
+              // intersection with defaultKinds is what we report. If
+              // anything was filtered out, ResolvedRefs goes False with
+              // reason InvalidRouteKinds (per the Gateway API spec for
+              // listener-status conditions).
+              var requestedKinds = dig(listener, "allowedRoutes", "kinds")
+              var supportedKinds = []any{}
+              var hasInvalidKind = false
+              if requestedKinds == nil {
+                supportedKinds = defaultKinds
+              } else {
+                for _, reqEntry := range toSlice(requestedKinds) {
+                  var reqGroup = dig(reqEntry, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                  var reqKind = dig(reqEntry, "kind") | fallback("") | tostring()
+                  var matched = false
+                  for _, def := range defaultKinds {
+                    if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                      matched = true
+                      break
+                    }
+                  }
+                  if matched {
+                    supportedKinds = append(supportedKinds, map[string]any{"group": reqGroup, "kind": reqKind})
+                  } else {
+                    hasInvalidKind = true
+                  }
+                }
+              }
+
+              // ResolvedRefs status / reason / message are derived from
+              // the kinds filter result. The transitionTime helper
+              // preserves an existing timestamp when status doesn't
+              // change so the patch is idempotent.
+              var resolvedRefsStatus = "True"
+              var resolvedRefsReason = "ResolvedRefs"
+              var resolvedRefsMessage = "All references resolved"
+              if hasInvalidKind {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "InvalidRouteKinds"
+                resolvedRefsMessage = "Listener references unsupported route kinds"
+              }
+
+              // Count attached routes: routes with sectionName matching
+              // this listener + wildcard routes (no sectionName) on the
+              // same gateway.
               var specificKey = nsStr + "/" + nameStr + "/" + listenerName
               var wildcardKey = nsStr + "/" + nameStr + "/*"
               var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
 
+              listenerData = append(listenerData, map[string]any{
+                "name":                 listenerName,
+                "supportedKinds":       supportedKinds,
+                "attachedRoutes":       attached,
+                "resolvedRefsStatus":   resolvedRefsStatus,
+                "resolvedRefsReason":   resolvedRefsReason,
+                "resolvedRefsMessage":  resolvedRefsMessage,
+              })
+            }
+
+            // Build the deployed-variant listener status. Programmed=True
+            // because the controller successfully pushed the config.
+            var deployedListeners = []any{}
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
               deployedListeners = append(deployedListeners, map[string]any{
-                "name":           listenerName,
-                "supportedKinds": supportedKinds,
-                "attachedRoutes": attached,
+                "name":           ldm["name"],
+                "supportedKinds": ldm["supportedKinds"],
+                "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
                     generation, transitionTime(gateway, "Accepted", "True")),
                   condition("Programmed", "True", "Programmed", "Listener programmed",
                     generation, transitionTime(gateway, "Programmed", "True")),
-                  condition("ResolvedRefs", "True", "ResolvedRefs", "All references resolved",
-                    generation, transitionTime(gateway, "ResolvedRefs", "True")),
+                  condition("ResolvedRefs",
+                    tostring(ldm["resolvedRefsStatus"]),
+                    tostring(ldm["resolvedRefsReason"]),
+                    tostring(ldm["resolvedRefsMessage"]),
+                    generation,
+                    transitionTime(gateway, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
                   condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
                     generation, transitionTime(gateway, "Conflicted", "False")),
                 },
               })
             }
 
-            // Build listener status for deployFailed variant (same but Programmed=False)
+            // Build the deployFailed-variant. Programmed=False, but
+            // ResolvedRefs follows the same kinds-derived status as the
+            // deployed variant (the kinds filter is independent of
+            // dataplane deployment success).
             var failedListeners = []any{}
-            for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-              var listenerName = dig(listener, "name") | fallback("") | tostring()
-              var protocol = dig(listener, "protocol") | fallback("HTTP") | tostring()
-
-              var supportedKinds = []any{}
-              switch protocol {
-              case "HTTP", "HTTPS":
-                supportedKinds = []any{
-                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
-                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
-                }
-              case "TLS":
-                supportedKinds = []any{
-                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"},
-                }
-              case "TCP":
-                supportedKinds = []any{
-                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"},
-                }
-              case "UDP":
-                supportedKinds = []any{
-                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
-                }
-              }
-
-              var specificKey = nsStr + "/" + nameStr + "/" + listenerName
-              var wildcardKey = nsStr + "/" + nameStr + "/*"
-              var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
-
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
               failedListeners = append(failedListeners, map[string]any{
-                "name":           listenerName,
-                "supportedKinds": supportedKinds,
-                "attachedRoutes": attached,
+                "name":           ldm["name"],
+                "supportedKinds": ldm["supportedKinds"],
+                "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
                     generation, transitionTime(gateway, "Accepted", "True")),
                   condition("Programmed", "False", "Invalid", "Gateway not yet programmed",
                     generation, transitionTime(gateway, "Programmed", "False")),
-                  condition("ResolvedRefs", "True", "ResolvedRefs", "All references resolved",
-                    generation, transitionTime(gateway, "ResolvedRefs", "True")),
+                  condition("ResolvedRefs",
+                    tostring(ldm["resolvedRefsStatus"]),
+                    tostring(ldm["resolvedRefsReason"]),
+                    tostring(ldm["resolvedRefsMessage"]),
+                    generation,
+                    transitionTime(gateway, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
                   condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
                     generation, transitionTime(gateway, "Conflicted", "False")),
                 },

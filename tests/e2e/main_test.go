@@ -109,6 +109,9 @@ func TestMain(m *testing.M) {
 		phase("ensure-namespaces", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return ctx, ensureNamespaces(ctx)
 		}),
+		phase("install-metallb", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			return installMetalLB(ctx)
+		}),
 		phase("install-crds+certs (parallel)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			b, err := preInstallParallel(ctx)
 			if err != nil {
@@ -439,6 +442,16 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		// Every other matrix entry hits ImagePullBackOff.
 		"--set", "haproxyVersion=" + ChartHAProxyVersion,
 		"--set", "webhook.caBundle=" + caBundleB64,
+		// LoadBalancer for the haproxy frontend service so MetalLB
+		// (installed in the install-metallb phase above) assigns a
+		// real reachable IP. The Gateway API conformance suite uses
+		// Gateway.status.addresses to construct test traffic URLs;
+		// without a LoadBalancer IP the suite times out waiting for
+		// the address to populate. Existing e2e tests still work via
+		// the same Service: kind+MetalLB allocates a NodePort on
+		// LoadBalancer-typed Services too, and the dind-aware
+		// httpclient picks the right destination automatically.
+		"--set", "haproxy.service.type=LoadBalancer",
 		"--timeout", DefaultHelmInstallTimeout.String(),
 	}
 	// dev-values.yaml hardcodes spoaHub.image.tag=main-latest. CI sets
