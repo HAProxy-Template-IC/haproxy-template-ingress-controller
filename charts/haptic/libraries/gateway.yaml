@@ -83,18 +83,6 @@ watchedResources:
     # from what conformance expects.
     indexBy: ["metadata.name"]
 
-  referencegrants:
-    apiVersion: gateway.networking.k8s.io/v1beta1
-    resources: referencegrants
-    # ReferenceGrant lives in the namespace that GRANTS access. Index by
-    # namespace+name so the cert/backend-ref validators can list grants
-    # in a target namespace efficiently. Per Gateway API spec, a
-    # cross-namespace cert ref or backendRef is permitted iff a
-    # ReferenceGrant in the TARGET namespace lists the source's
-    # group/kind/namespace under spec.from and the target's group/kind
-    # (and optional name) under spec.to.
-    indexBy: ["metadata.namespace", "metadata.name"]
-
 templateSnippets:
   # ============================================================================
   # Feature Registration
@@ -715,62 +703,6 @@ templateSnippets:
         {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
       {%- end macro %}
 
-  util-reference-grant-permitted:
-    template: |
-      {#-
-        ReferenceGrantPermitted — cross-namespace ref check.
-
-        Per Gateway API spec, a cross-namespace reference is permitted only
-        when there's a ReferenceGrant in the target namespace whose `from`
-        clause matches the source (group/kind/namespace) and whose `to`
-        clause matches the target (group/kind, optionally name). Same-
-        namespace refs are always permitted (no grant needed).
-
-        Returns "true" / "false" — Scriggo macro return-type constraint
-        (see HostnamesIntersect doc). Callers use `== "true"`.
-
-        Args:
-          fromGroup, fromKind, fromNs — the source resource (e.g. Gateway)
-          toGroup, toKind, toNs, toName — the target resource (Secret /
-          Service). toName is optional in the grant; matches any if grant
-          omits the name.
-      -#}
-      {%- macro ReferenceGrantPermitted(
-          fromGroup string, fromKind string, fromNs string,
-          toGroup string, toKind string, toNs string, toName string) -%}
-        {%- if fromNs == toNs -%}
-          true
-        {%- else -%}
-          {%- var permitted = "false" -%}
-          {%- for _, g := range resources.referencegrants.Fetch(toNs) -%}
-            {%- if permitted == "false" -%}
-              {%- var fromOk = false -%}
-              {%- for _, fr := range dig(g, "spec", "from") | toSlice() -%}
-                {%- var frGroup = tostring(dig(fr, "group") | fallback("")) -%}
-                {%- var frKind = tostring(dig(fr, "kind") | fallback("")) -%}
-                {%- var frNs = tostring(dig(fr, "namespace") | fallback("")) -%}
-                {%- if frGroup == fromGroup && frKind == fromKind && frNs == fromNs -%}
-                  {%- fromOk = true -%}
-                {%- end -%}
-              {%- end -%}
-              {%- if fromOk -%}
-                {%- for _, to := range dig(g, "spec", "to") | toSlice() -%}
-                  {%- if permitted == "false" -%}
-                    {%- var toG = tostring(dig(to, "group") | fallback("")) -%}
-                    {%- var toK = tostring(dig(to, "kind") | fallback("")) -%}
-                    {%- var toN = tostring(dig(to, "name") | fallback("")) -%}
-                    {%- if toG == toGroup && toK == toKind && (toN == "" || toN == toName) -%}
-                      {%- permitted = "true" -%}
-                    {%- end -%}
-                  {%- end -%}
-                {%- end -%}
-              {%- end -%}
-            {%- end -%}
-          {%- end -%}
-          {{ permitted -}}
-        {%- end -%}
-      {%- end macro -%}
-
   util-hostname-intersect-gateway:
     template: |
       {#-
@@ -813,57 +745,54 @@ templateSnippets:
       {%- end macro -%}
 
       {#- HostnameSinglePairMatch — one listener hostname × one route hostname.
-          Returns "true" / "false" string. The match boolean is just
-          whether the intersection is non-empty. -#}
+          Returns "true" / "false" string. -#}
       {%- macro HostnameSinglePairMatch(lh string, rh string) -%}
-        {%- if HostnameSinglePairIntersection(lh, rh) == "" -%}
-          false
-        {%- else -%}
-          true
-        {%- end -%}
-      {%- end macro -%}
-
-      {#- HostnameSinglePairIntersection — one listener hostname × one route
-          hostname. Returns the *effective* hostname per Gateway API
-          intersection rules:
-
-            - lh exact, rh exact, equal           → that exact hostname
-            - lh wildcard (*.X), rh exact (y.X)   → rh (the more specific exact)
-            - lh exact (y.X), rh wildcard (*.X)   → lh (the more specific exact)
-            - both wildcard, equal bases          → that wildcard
-            - both wildcard, one base nested      → the more specific wildcard
-            - else                                → "" (no intersection)
-
-          Returns "" when there is no intersection.
-
-          Wildcard semantics (Gateway API v1 spec, NOT RFC 1034):
-            "*.X" matches any host that ends with ".X" and has at
-            least one label before it. Both `foo.X` and
-            `multi.label.foo.X` match (wildcards match any number of
-            labels), but the bare `X` does not. -#}
-      {%- macro HostnameSinglePairIntersection(lh string, rh string) -%}
         {%- if lh == rh -%}
-          {{ lh }}
+          true
         {%- else if hasPrefix(lh, "*.") && !hasPrefix(rh, "*.") -%}
+          {#- Listener wildcard, route exact: route must end with the
+              listener's base and have exactly one DNS label in the gap. -#}
           {%- var lhBase = lh[2:] -%}
-          {%- if hasSuffix(rh, "."+lhBase) && len(rh) > len("."+lhBase) -%}
-            {{ rh }}
+          {%- if hasSuffix(rh, "."+lhBase) -%}
+            {%- var prefix = rh[:len(rh)-len("."+lhBase)] -%}
+            {%- if prefix != "" && index(prefix, ".") == -1 -%}
+              true
+            {%- else -%}
+              false
+            {%- end -%}
+          {%- else -%}
+            false
           {%- end -%}
         {%- else if !hasPrefix(lh, "*.") && hasPrefix(rh, "*.") -%}
+          {#- Route wildcard, listener exact — symmetric of above. -#}
           {%- var rhBase = rh[2:] -%}
-          {%- if hasSuffix(lh, "."+rhBase) && len(lh) > len("."+rhBase) -%}
-            {{ lh }}
+          {%- if hasSuffix(lh, "."+rhBase) -%}
+            {%- var prefix = lh[:len(lh)-len("."+rhBase)] -%}
+            {%- if prefix != "" && index(prefix, ".") == -1 -%}
+              true
+            {%- else -%}
+              false
+            {%- end -%}
+          {%- else -%}
+            false
           {%- end -%}
         {%- else if hasPrefix(lh, "*.") && hasPrefix(rh, "*.") -%}
+          {#- Both wildcards: bases must match exactly OR one base is a
+              suffix of the other (the longer matches a strict subdomain
+              of the shorter). -#}
           {%- var lhBase = lh[2:] -%}
           {%- var rhBase = rh[2:] -%}
           {%- if lhBase == rhBase -%}
-            {{ lh }}
+            true
           {%- else if hasSuffix(lhBase, "."+rhBase) -%}
-            {{ lh }}
+            true
           {%- else if hasSuffix(rhBase, "."+lhBase) -%}
-            {{ rh }}
+            true
+          {%- else -%}
+            false
           {%- end -%}
+        {%- else -%}
+          false
         {%- end -%}
       {%- end macro -%}
 
@@ -2004,8 +1933,6 @@ templateSnippets:
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
