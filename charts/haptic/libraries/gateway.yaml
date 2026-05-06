@@ -2220,6 +2220,7 @@ templateSnippets:
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
 
@@ -2242,13 +2243,15 @@ templateSnippets:
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             // Per Gateway API spec, ResolvedRefs=False can carry one
-            // of these reasons (most-specific wins):
+            // of these reasons (most-specific wins; first failure
+            // wins fail-fast):
             //   InvalidKind     — backendRef.kind is not Service
+            //   RefNotPermitted — cross-namespace ref without a
+            //                      matching ReferenceGrant
             //   BackendNotFound — referenced Service doesn't exist
-            //   RefNotPermitted — cross-namespace ref without
-            //                      ReferenceGrant (not yet implemented)
-            // The first failure encountered drives the condition; later
-            // refs aren't probed (fail-fast).
+            // RefNotPermitted is checked before BackendNotFound so a
+            // user fixing cross-ns auth doesn't first see the
+            // not-found error.
             var allRefsResolved = true
             var refFailReason = ""
             var refFailMsg = ""
@@ -2259,13 +2262,23 @@ templateSnippets:
                 var group = dig(backendRef, "group") | fallback("") | tostring()
                 var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
 
-                // Group must be core ("" or "core"), kind must be Service.
-                // Anything else is InvalidKind per spec.
                 if !((group == "" || group == "core") && refKind == "Service") {
                   allRefsResolved = false
                   refFailReason = "InvalidKind"
                   refFailMsg = "Unsupported backend kind " + group + "/" + refKind
                   break
+                }
+                if svcNamespace != nsStr {
+                  // Cross-namespace backend ref: requires a matching
+                  // ReferenceGrant in the target Service's namespace.
+                  if ReferenceGrantPermitted(
+                    "gateway.networking.k8s.io", kind, nsStr,
+                    "", "Service", svcNamespace, svcName) != "true" {
+                    allRefsResolved = false
+                    refFailReason = "RefNotPermitted"
+                    refFailMsg = "Cross-namespace backend ref " + svcNamespace + "/" + svcName + " requires a matching ReferenceGrant"
+                    break
+                  }
                 }
                 var svc = resources.services.GetSingle(svcNamespace, svcName)
                 if svc == nil {
