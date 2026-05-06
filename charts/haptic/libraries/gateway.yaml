@@ -136,14 +136,7 @@ templateSnippets:
           per-secret, which dropped the SNI patterns of every listener
           after the first — so a Gateway whose listeners "https-A" and
           "https-B" share a cert ended up with only "https-A"'s SNI
-          bound. Conformance HTTPRouteHTTPSListener exposes that gap.
-
-          Cross-namespace refs are gated by ReferenceGrant: a Gateway
-          referencing a Secret in a different namespace requires a
-          ReferenceGrant in the Secret's namespace whose `from` matches
-          the Gateway and `to` matches the Secret. Without a matching
-          grant the cert is skipped (status patch reflects this with
-          ResolvedRefs=False/RefNotPermitted, set elsewhere). -#}
+          bound. Conformance HTTPRouteHTTPSListener exposes that gap. -#}
       {%- var certAggregates = map[string]map[string]any{} %}
       {%- for _, gateway := range resources.gateways.List() %}
         {%%
@@ -169,21 +162,6 @@ templateSnippets:
               var certKind = certRef | dig("kind") | fallback("Secret")
               if certKind != "Secret" {
                 continue
-              }
-
-              // Cross-namespace gate. Same-namespace refs are always
-              // permitted (no grant needed); cross-ns refs without a
-              // matching ReferenceGrant are skipped (the listener-status
-              // path elsewhere surfaces this as ResolvedRefs=False
-              // /RefNotPermitted).
-              var nsStr = tostring(gatewayNs)
-              var refNsStr = tostring(certNamespace)
-              if refNsStr != nsStr {
-                if ReferenceGrantPermitted(
-                  "gateway.networking.k8s.io", "Gateway", nsStr,
-                  "", "Secret", refNsStr, tostring(certName)) != "true" {
-                  continue
-                }
               }
 
               var secretKey = tostring(certNamespace) + "/" + tostring(certName)
@@ -233,32 +211,13 @@ templateSnippets:
             continue
           }
           var secretData = secret | dig("data")
-          var tlsCrtB64 = tostring(secretData | dig("tls.crt") | fallback(""))
-          var tlsKeyB64 = tostring(secretData | dig("tls.key") | fallback(""))
-          if secretData == nil || tlsCrtB64 == "" || tlsKeyB64 == "" {
-            continue
-          }
-          // Decode and verify the data really is PEM. The conformance
-          // suite's malformed-cert fixture has non-empty tls.crt /
-          // tls.key fields whose decoded bytes aren't valid PEM —
-          // writing such a cert into the crt-list crashes HAProxy at
-          // reload time, which in turn fails the entire render-validate
-          // pipeline so NO status patch ever reaches the API server
-          // (the listener-level InvalidCertificateRef condition our
-          // status macro produces is silently dropped). Skip the
-          // registration; the listener-status path elsewhere already
-          // surfaces the failure as ResolvedRefs=False
-          // /InvalidCertificateRef.
-          var tlsCrt, crtErr = b64decode(tlsCrtB64)
-          var tlsKey, keyErr = b64decode(tlsKeyB64)
-          if crtErr != nil || keyErr != nil {
-            continue
-          }
-          if !hasPrefix(tlsCrt, "-----BEGIN ") || !hasPrefix(tlsKey, "-----BEGIN ") {
+          var tlsCrt = secretData | dig("tls.crt") | fallback("")
+          var tlsKey = secretData | dig("tls.key") | fallback("")
+          if secretData == nil || tlsCrt == "" || tlsKey == "" {
             continue
           }
 
-          var combinedPem = tlsCrt + "\n" + tlsKey
+          var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
           var certFilename = certNamespace + "_" + certName + ".pem"
           var certPath, _ = fileRegistry.Register("cert", certFilename, combinedPem)
           var sanitizedFilename = basename(certPath)
