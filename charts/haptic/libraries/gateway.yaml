@@ -245,13 +245,32 @@ templateSnippets:
             continue
           }
           var secretData = secret | dig("data")
-          var tlsCrt = secretData | dig("tls.crt") | fallback("")
-          var tlsKey = secretData | dig("tls.key") | fallback("")
-          if secretData == nil || tlsCrt == "" || tlsKey == "" {
+          var tlsCrtB64 = tostring(secretData | dig("tls.crt") | fallback(""))
+          var tlsKeyB64 = tostring(secretData | dig("tls.key") | fallback(""))
+          if secretData == nil || tlsCrtB64 == "" || tlsKeyB64 == "" {
+            continue
+          }
+          // Decode and verify the data really is PEM. The conformance
+          // suite's malformed-cert fixture has non-empty tls.crt /
+          // tls.key fields whose decoded bytes aren't valid PEM —
+          // writing such a cert into the crt-list crashes HAProxy at
+          // reload time, which in turn fails the entire render-validate
+          // pipeline so NO status patch ever reaches the API server
+          // (the listener-level InvalidCertificateRef condition our
+          // status macro produces is silently dropped). Skip the
+          // registration; the listener-status path elsewhere already
+          // surfaces the failure as ResolvedRefs=False
+          // /InvalidCertificateRef.
+          var tlsCrt, crtErr = b64decode(tlsCrtB64)
+          var tlsKey, keyErr = b64decode(tlsKeyB64)
+          if crtErr != nil || keyErr != nil {
+            continue
+          }
+          if !hasPrefix(tlsCrt, "-----BEGIN ") || !hasPrefix(tlsKey, "-----BEGIN ") {
             continue
           }
 
-          var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
+          var combinedPem = tlsCrt + "\n" + tlsKey
           var certFilename = certNamespace + "_" + certName + ".pem"
           var certPath, _ = fileRegistry.Register("cert", certFilename, combinedPem)
           var sanitizedFilename = basename(certPath)
