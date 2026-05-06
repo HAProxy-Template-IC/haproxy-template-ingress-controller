@@ -876,61 +876,6 @@ templateSnippets:
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}
 
-  util-condition-transition-time:
-    template: |
-      {#-
-        Gateway-API-shaped wrappers around the resource-agnostic
-        `transitionTime(existingConditions, type, status)` helper. These
-        macros encode the Gateway-API spec's structure for where conditions
-        live (.status.conditions for Gateway/GatewayClass top-level,
-        .status.listeners[byName].conditions for Gateway listeners,
-        .status.parents[byIdx].conditions for HTTPRoute/GRPCRoute parents);
-        the Go-side filter knows nothing about these paths and just
-        compares the supplied conditions list to the proposed status,
-        keeping the templating layer resource-agnostic.
-
-        Why these macros exist at all: re-stamping lastTransitionTime on
-        every render is a metav1.Condition spec violation AND breaks the
-        status-applier checksum dedup, producing a self-feeding write loop
-        where each SSA write triggers a watch event that re-renders. The
-        generic helper preserves the existing timestamp when status is
-        unchanged — these macros just make sure the helper sees the right
-        conditions list.
-
-        Usage:
-          {%- import "util-condition-transition-time" for
-                TopLevelTransitionTime, ListenerTransitionTime,
-                RouteParentTransitionTime -%}
-          {{ TopLevelTransitionTime(gateway, "Programmed", "True") }}
-          {{ ListenerTransitionTime(gateway, "https", "Programmed", "True") }}
-          {{ RouteParentTransitionTime(route, parentIdx, "Accepted", "True") }}
-      -#}
-      {%- macro TopLevelTransitionTime(resource any, conditionType string, newStatus string) string -%}
-      {{- transitionTime(dig(resource, "status", "conditions"), conditionType, newStatus) -}}
-      {%- end macro -%}
-
-      {%- macro ListenerTransitionTime(gateway any, listenerName string, conditionType string, newStatus string) string -%}
-      {%- var listeners = dig(gateway, "status", "listeners") | toSlice() -%}
-      {%- var found []any = nil -%}
-      {%- for _, l := range listeners -%}
-        {%- var lm = l.(map[string]any) -%}
-        {%- if found == nil && tostring(lm["name"]) == listenerName -%}
-          {%- found = dig(lm, "conditions") | toSlice() -%}
-        {%- end -%}
-      {%- end -%}
-      {{- transitionTime(found, conditionType, newStatus) -}}
-      {%- end macro -%}
-
-      {%- macro RouteParentTransitionTime(route any, parentIdx int, conditionType string, newStatus string) string -%}
-      {%- var parents = dig(route, "status", "parents") | toSlice() -%}
-      {%- var found []any = nil -%}
-      {%- if parentIdx >= 0 && parentIdx < len(parents) -%}
-        {%- var pm = parents[parentIdx].(map[string]any) -%}
-        {%- found = dig(pm, "conditions") | toSlice() -%}
-      {%- end -%}
-      {{- transitionTime(found, conditionType, newStatus) -}}
-      {%- end macro -%}
-
   util-generate-backends-gateway:
     template: |
       {#- Macro to generate backends for Gateway API routes (HTTPRoute/GRPCRoute) #}
