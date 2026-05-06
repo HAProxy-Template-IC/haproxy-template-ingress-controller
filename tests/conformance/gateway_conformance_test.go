@@ -103,6 +103,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// (h2c, mirror, HTTPRoute redirect filters) map to filter shapes the
 	// chart doesn't yet support; conformance tests for those are skipped
 	// by the suite when the feature isn't in this set.
+	// SupportedFeatures pin the chart's actual coverage. Each entry must
+	// correspond to template logic that's been verified end-to-end against
+	// the conformance fixtures — never declare a feature the chart only
+	// half-implements (the suite exists to catch the gap).
+	//
+	// Gateway API v1.5 treats request-header modification (set/add/remove)
+	// as a CORE HTTPRoute capability — gated by SupportHTTPRoute alone, no
+	// extra feature flag. Tests for it run automatically.
 	supported := sets.New[features.FeatureName](
 		features.SupportGateway,
 		features.SupportHTTPRoute,
