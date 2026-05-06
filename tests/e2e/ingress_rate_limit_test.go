@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -81,12 +82,19 @@ func TestIngressRateLimit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("get namespace: %v", err)
 			}
-			ok, blocked := rateLimitBurstFromCluster(ctx, t, ns, host, burstTotal)
-			if blocked == 0 {
-				t.Fatalf("expected at least one 429 from a burst of %d requests, got %d×200 / %d×429",
-					burstTotal, ok, blocked)
+			result := rateLimitBurstFromCluster(ctx, t, ns, host, burstTotal)
+			t.Logf("rate-limit burst: %s", result)
+			if result.byCode["429"] == 0 {
+				// Expand the failure message with the full status-code
+				// distribution so the next flake tells us *what* happened
+				// (e.g. 5×200 / 0×429 / 15×000 = connection drops, vs.
+				// 20×200 = stick-table reset, vs. 5×200 / 15×5xx = a
+				// reload-window backend transition). The previous failure
+				// message silently dropped non-200/non-429 codes which
+				// hid the real cause across multiple investigations.
+				t.Fatalf("expected at least one 429 from a burst of %d requests; got %s",
+					burstTotal, result)
 			}
-			t.Logf("rate-limit fired: %d×200, %d×429 over %d requests", ok, blocked, burstTotal)
 			return ctx
 		}).
 		Feature()
@@ -115,15 +123,76 @@ func GetNamespaceFromContext(ctx context.Context) (string, error) {
 	return v, nil
 }
 
+// rateLimitBurstResult captures the full outcome of a burst — every
+// status code seen, with counts, plus wall-clock duration. The earlier
+// (ok, blocked int) signature silently dropped non-200/non-429 codes,
+// which made flakes look like "stick-table reset" when they could have
+// been any of: connection drops (000), backend transition (5xx),
+// routing race (404), or admission webhook errors (4xx). The full
+// distribution makes the next flake self-diagnosing.
+//
+// `requested` is what the test asked for; `parsed` is the sum of
+// `byCode`. They can diverge if a curl instance is killed before
+// writing its status to stdout (e.g. xargs -P10 SIGKILL'd by the pod
+// terminating). The failure message shows both so a missing-line
+// gap doesn't masquerade as a status mismatch.
+type rateLimitBurstResult struct {
+	requested int
+	duration  time.Duration
+	byCode    map[string]int
+}
+
+// parsed returns the total number of status codes actually captured
+// from curl's stdout — i.e. the sum of byCode values.
+func (r rateLimitBurstResult) parsed() int {
+	n := 0
+	for _, c := range r.byCode {
+		n += c
+	}
+	return n
+}
+
+// String renders the result as `20 reqs over 0.42s: 5×200 / 0×429 /
+// 15×000`. Codes are sorted by count desc so the dominant bucket
+// appears first.
+func (r rateLimitBurstResult) String() string {
+	type cc struct {
+		code  string
+		count int
+	}
+	var pairs []cc
+	for k, v := range r.byCode {
+		pairs = append(pairs, cc{k, v})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].count != pairs[j].count {
+			return pairs[i].count > pairs[j].count
+		}
+		return pairs[i].code < pairs[j].code
+	})
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, fmt.Sprintf("%d×%s", p.count, p.code))
+	}
+	parsed := r.parsed()
+	if parsed == r.requested {
+		return fmt.Sprintf("%d reqs over %.2fs: %s", r.requested, r.duration.Seconds(), strings.Join(parts, " / "))
+	}
+	// Missing lines means curls were killed before writing their
+	// status. Report both numbers so the gap is visible.
+	return fmt.Sprintf("%d requested / %d parsed over %.2fs: %s",
+		r.requested, parsed, r.duration.Seconds(), strings.Join(parts, " / "))
+}
+
 // rateLimitBurstFromCluster runs `total` concurrent curls against
 // http://<host>/ from inside a kubectl-run alpine/curl pod, returning
-// (ok, blocked) counts (200 vs 429). Other status codes are silently
-// dropped (transient; not load-bearing for this test).
+// the full status-code distribution + duration. curl is invoked with
+// `--max-time 5` so connection failures surface as `000` (curl's
+// own convention) rather than hanging.
 //
 // The pod is created and deleted per call. We use --restart=Never +
-// --rm so the pod tears down even if the test fails. Logs come from
-// the curl exit-code list piped through awk for accumulation.
-func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, host string, total int) (ok, blocked int) {
+// --rm so the pod tears down even if the test fails.
+func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, host string, total int) rateLimitBurstResult {
 	t.Helper()
 
 	// alpine/curl includes both `curl` and `xargs`. The HAProxy NodePort
@@ -131,8 +200,12 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 	// header sets the route), so we go via the chart's haptic-haproxy
 	// Service rather than the host-side NodePort to keep the source
 	// IP consistent.
+	//
+	// `--max-time 5` bounds each curl so reload-window connection
+	// drops produce `000` quickly rather than hanging the whole
+	// burst on the slowest one.
 	cmdScript := fmt.Sprintf(
-		`seq 1 %d | xargs -P 10 -I{} curl -s -o /dev/null -w "%%{http_code}\n" `+
+		`seq 1 %d | xargs -P 10 -I{} curl -s --max-time 5 -o /dev/null -w "%%{http_code}\n" `+
 			`-H "Host: %s" http://haptic-haproxy.haptic.svc/`,
 		total, host)
 
@@ -151,17 +224,23 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("rate-limit burst pod failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errBuf.String())
 	}
+	elapsed := time.Since(start)
 
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		switch strings.TrimSpace(line) {
-		case "200":
-			ok++
-		case "429":
-			blocked++
-		}
+	result := rateLimitBurstResult{
+		requested: total,
+		duration:  elapsed,
+		byCode:    map[string]int{},
 	}
-	return ok, blocked
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		code := strings.TrimSpace(line)
+		if code == "" {
+			continue
+		}
+		result.byCode[code]++
+	}
+	return result
 }
