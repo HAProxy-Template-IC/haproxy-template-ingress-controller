@@ -72,6 +72,17 @@ watchedResources:
     resources: endpointslices
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
 
+  namespaces:
+    apiVersion: v1
+    resources: namespaces
+    # Cluster-scoped; metadata.name is globally unique. Watched so the
+    # listener-attachment evaluator can resolve `allowedRoutes.namespaces.from:
+    # Selector` against namespace labels (per Gateway API spec). Without this
+    # the chart can't tell whether a route's namespace matches the listener's
+    # namespace selector and the listener's `attachedRoutes` count drifts
+    # from what conformance expects.
+    indexBy: ["metadata.name"]
+
 templateSnippets:
   # ============================================================================
   # Feature Registration
@@ -475,6 +486,99 @@ templateSnippets:
         {%- result["hasRedirect_filter"] = hasRedirect %}
         {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
       {%- end macro %}
+
+  util-hostname-intersect-gateway:
+    template: |
+      {#-
+        HostnamesIntersect — listener.hostname × route.spec.hostnames
+
+        Per Gateway API spec, an HTTPRoute attaches to a listener only when
+        the hostname sets intersect. Wildcard rules (per spec):
+          - Both empty → match (listener accepts everything, route claims everything)
+          - Listener empty, route any → match (route narrows the listener)
+          - Listener "*.example.com", route empty → match (route inherits listener)
+          - Exact ↔ exact: byte-equal
+          - Wildcard ↔ exact: route ends with `.<base>` where listener was `*.<base>`
+            and the prefix part has no further dots (one DNS label only)
+          - Wildcard ↔ wildcard: bases match, OR one base is a suffix of the other
+            with the gap covering exactly one DNS label
+
+        Returns true if any (listener-hostname, route-hostname) pair matches
+        — listener carries one hostname, route may carry several. A single
+        match is sufficient for attachment.
+      -#}
+      {#- Macros return "true" / "false" strings rather than bool because
+          Scriggo macros only allow text-format return types. Callers use
+          == "true" comparisons on the result. -#}
+      {%- macro HostnamesIntersect(listenerHostname string, routeHostnames []any) -%}
+        {%- if listenerHostname == "" -%}
+          true
+        {%- else if len(routeHostnames) == 0 -%}
+          true
+        {%- else -%}
+          {%- var matched = "false" -%}
+          {%- for _, rh := range routeHostnames -%}
+            {%- if matched == "false" -%}
+              {%- if HostnameSinglePairMatch(listenerHostname, tostring(rh)) == "true" -%}
+                {%- matched = "true" -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+          {{ matched -}}
+        {%- end -%}
+      {%- end macro -%}
+
+      {#- HostnameSinglePairMatch — one listener hostname × one route hostname.
+          Returns "true" / "false" string. -#}
+      {%- macro HostnameSinglePairMatch(lh string, rh string) -%}
+        {%- if lh == rh -%}
+          true
+        {%- else if hasPrefix(lh, "*.") && !hasPrefix(rh, "*.") -%}
+          {#- Listener wildcard, route exact: route must end with the
+              listener's base and have exactly one DNS label in the gap. -#}
+          {%- var lhBase = lh[2:] -%}
+          {%- if hasSuffix(rh, "."+lhBase) -%}
+            {%- var prefix = rh[:len(rh)-len("."+lhBase)] -%}
+            {%- if prefix != "" && index(prefix, ".") == -1 -%}
+              true
+            {%- else -%}
+              false
+            {%- end -%}
+          {%- else -%}
+            false
+          {%- end -%}
+        {%- else if !hasPrefix(lh, "*.") && hasPrefix(rh, "*.") -%}
+          {#- Route wildcard, listener exact — symmetric of above. -#}
+          {%- var rhBase = rh[2:] -%}
+          {%- if hasSuffix(lh, "."+rhBase) -%}
+            {%- var prefix = lh[:len(lh)-len("."+rhBase)] -%}
+            {%- if prefix != "" && index(prefix, ".") == -1 -%}
+              true
+            {%- else -%}
+              false
+            {%- end -%}
+          {%- else -%}
+            false
+          {%- end -%}
+        {%- else if hasPrefix(lh, "*.") && hasPrefix(rh, "*.") -%}
+          {#- Both wildcards: bases must match exactly OR one base is a
+              suffix of the other (the longer matches a strict subdomain
+              of the shorter). -#}
+          {%- var lhBase = lh[2:] -%}
+          {%- var rhBase = rh[2:] -%}
+          {%- if lhBase == rhBase -%}
+            true
+          {%- else if hasSuffix(lhBase, "."+rhBase) -%}
+            true
+          {%- else if hasSuffix(rhBase, "."+lhBase) -%}
+            true
+          {%- else -%}
+            false
+          {%- end -%}
+        {%- else -%}
+          false
+        {%- end -%}
+      {%- end macro -%}
 
   util-backend-name-gateway:
     template: |
@@ -1313,6 +1417,7 @@ templateSnippets:
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
+      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -1337,43 +1442,161 @@ templateSnippets:
           %%}
         {%- end %}
 
-        {#- Count routes attached to each gateway/listener for status -#}
+        {#- Count routes attached to each gateway/listener for status.
+
+            The Gateway API spec defines route attachment as the AND of:
+              1. parentRef matches the gateway (ns + name)
+              2. parentRef.sectionName, if set, matches the listener's name
+              3. listener.allowedRoutes.kinds, if set, contains the route kind
+              4. listener.allowedRoutes.namespaces.from selects the route's
+                 namespace (Same / All / Selector(matchLabels))
+              5. The hostname intersection of listener.hostname and
+                 route.spec.hostnames is non-empty (or both empty)
+
+            All five must be true for a route to be "attached" — surfaced
+            both as listener.attachedRoutes in Gateway status and (in a
+            later commit) as the route's parents[].conditions[Accepted].
+
+            Implementation: walk every (route × listener-of-target-gateway)
+            pair and increment the count when all predicates hold. Indexed
+            by `<gw_ns>/<gw_name>/<listener_name>`; the listener-status
+            loop reads back via the same key. This replaces the earlier
+            naive scheme (count per gateway+section, plus a "*" bucket for
+            sectionless routes) which over-counted routes that targeted
+            the gateway but didn't match the listener's hostname /
+            allowedRoutes filters.
+        -#}
         {%- var routeCounts = map[string]int{} %}
-        {%- for _, route := range resources.httproutes.List() %}
-          {%%
-            var routeNs = dig(route, "metadata", "namespace") | fallback("")
+        {%%
+          // Gather all routes (HTTPRoute + GRPCRoute) into a single
+          // iteration so the predicate evaluation is uniform.
+          var allRoutesForCount = []any{}
+          for _, r := range resources.httproutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "HTTPRoute",
+              "route": r,
+            })
+          }
+          for _, r := range resources.grpcroutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "GRPCRoute",
+              "route": r,
+            })
+          }
+
+          for _, entry := range allRoutesForCount {
+            var em = entry.(map[string]any)
+            var routeKind = em["kind"].(string)
+            var route = em["route"]
+            var routeNs = dig(route, "metadata", "namespace") | fallback("") | tostring()
+            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
+
             for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
+              // Default group/kind for parentRef is gateway.networking.k8s.io/Gateway.
+              // Skip any parentRef that targets something else (e.g. Mesh
+              // Service ref); those don't apply to Gateway listener counts.
+              var prGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
+              var prKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
+              if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+                continue
+              }
               var gwNs = dig(parentRef, "namespace") | fallback(routeNs) | tostring()
               var gwName = dig(parentRef, "name") | fallback("") | tostring()
               var section = dig(parentRef, "sectionName") | fallback("") | tostring()
-              if section != "" {
-                var key = gwNs + "/" + gwName + "/" + section
+
+              var gw = resources.gateways.GetSingle(gwNs, gwName)
+              if gw == nil {
+                continue
+              }
+
+              for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                var listenerName = dig(listener, "name") | fallback("") | tostring()
+
+                // (2) sectionName filter
+                if section != "" && listenerName != section {
+                  continue
+                }
+
+                // (3) allowedRoutes.kinds — if specified, the route's
+                //     group/kind must be in the list. Default group is
+                //     gateway.networking.k8s.io.
+                var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
+                if allowedKindsRaw != nil {
+                  var kindOk = false
+                  for _, ak := range toSlice(allowedKindsRaw) {
+                    var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                    var akKind = dig(ak, "kind") | fallback("") | tostring()
+                    if akGroup == "gateway.networking.k8s.io" && akKind == routeKind {
+                      kindOk = true
+                      break
+                    }
+                  }
+                  if !kindOk {
+                    continue
+                  }
+                }
+
+                // (4) allowedRoutes.namespaces.from — Same | All | Selector
+                var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                switch fromMode {
+                case "Same":
+                  if routeNs != gwNs {
+                    continue
+                  }
+                case "All":
+                  // anything goes
+                case "Selector":
+                  // Resolve the route's namespace and match its labels
+                  // against the selector's matchLabels. matchExpressions
+                  // is intentionally not supported yet (no conformance
+                  // test exercises it; if/when one does, this falls
+                  // through and the predicate fails — which is the safe
+                  // default for an unrecognised label-selector shape).
+                  var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
+                  if ml == nil {
+                    continue
+                  }
+                  var nsObj = resources.namespaces.GetSingle(routeNs)
+                  if nsObj == nil {
+                    continue
+                  }
+                  var nsLabels = dig(nsObj, "metadata", "labels")
+                  if nsLabels == nil {
+                    continue
+                  }
+                  var nsMap = nsLabels.(map[string]any)
+                  var allMatch = true
+                  for k, v := range ml.(map[string]any) {
+                    var actual, ok = nsMap[k]
+                    if !ok || tostring(actual) != tostring(v) {
+                      allMatch = false
+                      break
+                    }
+                  }
+                  if !allMatch {
+                    continue
+                  }
+                default:
+                  // Unknown `from` mode — treat as no match, since the
+                  // implementation can't safely guess intent.
+                  continue
+                }
+
+                // (5) hostname intersection
+                var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                // HostnamesIntersect returns "true"/"false" string —
+                // Scriggo macro return-type constraint, see macro doc.
+                if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
+                  continue
+                }
+
+                // All predicates passed; this route attaches to this listener.
+                var key = gwNs + "/" + gwName + "/" + listenerName
                 routeCounts[key] = routeCounts[key] + 1
-              } else {
-                // No sectionName: attach to all listeners of this gateway
-                var gwKey = gwNs + "/" + gwName + "/*"
-                routeCounts[gwKey] = routeCounts[gwKey] + 1
               }
             }
-          %%}
-        {%- end %}
-        {%- for _, route := range resources.grpcroutes.List() %}
-          {%%
-            var routeNs = dig(route, "metadata", "namespace") | fallback("")
-            for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-              var gwNs = dig(parentRef, "namespace") | fallback(routeNs) | tostring()
-              var gwName = dig(parentRef, "name") | fallback("") | tostring()
-              var section = dig(parentRef, "sectionName") | fallback("") | tostring()
-              if section != "" {
-                var key = gwNs + "/" + gwName + "/" + section
-                routeCounts[key] = routeCounts[key] + 1
-              } else {
-                var gwKey = gwNs + "/" + gwName + "/*"
-                routeCounts[gwKey] = routeCounts[gwKey] + 1
-              }
-            }
-          %%}
-        {%- end %}
+          }
+        %%}
 
         {%- for _, gateway := range gateways %}
           {%%
