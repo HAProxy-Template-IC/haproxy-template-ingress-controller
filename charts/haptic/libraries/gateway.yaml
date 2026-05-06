@@ -876,6 +876,61 @@ templateSnippets:
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}
 
+  util-condition-transition-time:
+    template: |
+      {#-
+        Gateway-API-shaped wrappers around the resource-agnostic
+        `transitionTime(existingConditions, type, status)` helper. These
+        macros encode the Gateway-API spec's structure for where conditions
+        live (.status.conditions for Gateway/GatewayClass top-level,
+        .status.listeners[byName].conditions for Gateway listeners,
+        .status.parents[byIdx].conditions for HTTPRoute/GRPCRoute parents);
+        the Go-side filter knows nothing about these paths and just
+        compares the supplied conditions list to the proposed status,
+        keeping the templating layer resource-agnostic.
+
+        Why these macros exist at all: re-stamping lastTransitionTime on
+        every render is a metav1.Condition spec violation AND breaks the
+        status-applier checksum dedup, producing a self-feeding write loop
+        where each SSA write triggers a watch event that re-renders. The
+        generic helper preserves the existing timestamp when status is
+        unchanged — these macros just make sure the helper sees the right
+        conditions list.
+
+        Usage:
+          {%- import "util-condition-transition-time" for
+                TopLevelTransitionTime, ListenerTransitionTime,
+                RouteParentTransitionTime -%}
+          {{ TopLevelTransitionTime(gateway, "Programmed", "True") }}
+          {{ ListenerTransitionTime(gateway, "https", "Programmed", "True") }}
+          {{ RouteParentTransitionTime(route, parentIdx, "Accepted", "True") }}
+      -#}
+      {%- macro TopLevelTransitionTime(resource any, conditionType string, newStatus string) string -%}
+      {{- transitionTime(dig(resource, "status", "conditions"), conditionType, newStatus) -}}
+      {%- end macro -%}
+
+      {%- macro ListenerTransitionTime(gateway any, listenerName string, conditionType string, newStatus string) string -%}
+      {%- var listeners = dig(gateway, "status", "listeners") | toSlice() -%}
+      {%- var found []any = nil -%}
+      {%- for _, l := range listeners -%}
+        {%- var lm = l.(map[string]any) -%}
+        {%- if found == nil && tostring(lm["name"]) == listenerName -%}
+          {%- found = dig(lm, "conditions") | toSlice() -%}
+        {%- end -%}
+      {%- end -%}
+      {{- transitionTime(found, conditionType, newStatus) -}}
+      {%- end macro -%}
+
+      {%- macro RouteParentTransitionTime(route any, parentIdx int, conditionType string, newStatus string) string -%}
+      {%- var parents = dig(route, "status", "parents") | toSlice() -%}
+      {%- var found []any = nil -%}
+      {%- if parentIdx >= 0 && parentIdx < len(parents) -%}
+        {%- var pm = parents[parentIdx].(map[string]any) -%}
+        {%- found = dig(pm, "conditions") | toSlice() -%}
+      {%- end -%}
+      {{- transitionTime(found, conditionType, newStatus) -}}
+      {%- end macro -%}
+
   util-generate-backends-gateway:
     template: |
       {#- Macro to generate backends for Gateway API routes (HTTPRoute/GRPCRoute) #}
@@ -1936,6 +1991,7 @@ templateSnippets:
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -2332,25 +2388,26 @@ templateSnippets:
             var deployedListeners = []any{}
             for _, ld := range listenerData {
               var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
               deployedListeners = append(deployedListeners, map[string]any{
                 "name":           ldm["name"],
                 "supportedKinds": ldm["supportedKinds"],
                 "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
-                    generation, transitionTime(gateway, "Accepted", "True")),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", "True")),
                   condition("Programmed",
                     tostring(ldm["programmedStatus"]),
                     tostring(ldm["programmedReason"]),
                     tostring(ldm["programmedMessage"]),
                     generation,
-                    transitionTime(gateway, "Programmed", tostring(ldm["programmedStatus"]))),
+                    ListenerTransitionTime(gateway, lname, "Programmed", tostring(ldm["programmedStatus"]))),
                   condition("ResolvedRefs",
                     tostring(ldm["resolvedRefsStatus"]),
                     tostring(ldm["resolvedRefsReason"]),
                     tostring(ldm["resolvedRefsMessage"]),
                     generation,
-                    transitionTime(gateway, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
                   condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
                     generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
                 },
@@ -2364,6 +2421,7 @@ templateSnippets:
             var failedListeners = []any{}
             for _, ld := range listenerData {
               var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
               var failProgrammedStatus = "False"
               var failProgrammedReason = "Invalid"
               var failProgrammedMessage = "Gateway not yet programmed"
@@ -2377,15 +2435,15 @@ templateSnippets:
                 "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
                   condition("Accepted", "True", "Accepted", "Listener accepted",
-                    generation, transitionTime(gateway, "Accepted", "True")),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", "True")),
                   condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
-                    generation, transitionTime(gateway, "Programmed", failProgrammedStatus)),
+                    generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
                   condition("ResolvedRefs",
                     tostring(ldm["resolvedRefsStatus"]),
                     tostring(ldm["resolvedRefsReason"]),
                     tostring(ldm["resolvedRefsMessage"]),
                     generation,
-                    transitionTime(gateway, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
                   condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
                     generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
                 },
@@ -2439,9 +2497,9 @@ templateSnippets:
                   "addresses": gatewayAddresses,
                   "conditions": []any{
                     condition("Accepted", "True", "Accepted", "Gateway accepted",
-                      generation, transitionTime(gateway, "Accepted", "True")),
+                      generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
                     condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
-                      generation, transitionTime(gateway, "Programmed", gwProgrammedStatus)),
+                      generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
                   },
                   "listeners": deployedListeners,
                 },
@@ -2449,9 +2507,9 @@ templateSnippets:
                   "addresses": gatewayAddresses,
                   "conditions": []any{
                     condition("Accepted", "True", "Accepted", "Gateway accepted",
-                      generation, transitionTime(gateway, "Accepted", "True")),
+                      generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
                     condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
-                      generation, transitionTime(gateway, "Programmed", gwProgrammedStatus)),
+                      generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
                   },
                   "listeners": deployedListeners,
                 },
@@ -2522,6 +2580,7 @@ templateSnippets:
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
 
@@ -2755,7 +2814,7 @@ templateSnippets:
                     "controllerName": controllerName,
                     "conditions": []any{
                       condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
-                        generation, transitionTime(route, "Accepted", acceptedStatus, parentIdx)),
+                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
                       condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
                         generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
                     },
@@ -2840,6 +2899,7 @@ templateSnippets:
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
       -#}
+      {%- import "util-condition-transition-time" for TopLevelTransitionTime -%}
       {% macro GenerateGatewayClassStatusPatches(gatewayClasses []any) %}
         {%- for _, gc := range gatewayClasses %}
           {%%
@@ -2869,7 +2929,7 @@ templateSnippets:
               acceptedReason,
               acceptedMessage,
               generation,
-              transitionTime(gc, "Accepted", acceptedStatus),
+              TopLevelTransitionTime(gc, "Accepted", acceptedStatus),
             )
 
             // GatewayClass is cluster-scoped; pass empty namespace.
