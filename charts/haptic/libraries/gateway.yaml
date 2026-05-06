@@ -384,43 +384,82 @@ templateSnippets:
 
         {#- Process HTTPRoutes #}
         {%- for _, route := range resources.httproutes.List() %}
-          {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
-          {%- if len(hostnames) == 0 %}
-            {#- Inherit hostnames from attached listeners. Walk parentRefs,
-                resolve to Gateways, then for each listener we attach to
-                emit the listener's hostname. Listeners with no hostname
-                produce "" (frontend-wide match, host.map handles it).
-                Deduplicate so a route attached to two listeners with the
-                same hostname doesn't double-count. -#}
-            {%- var inheritedHostsSet = map[string]bool{} %}
-            {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
-            {%- for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() %}
-              {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
-              {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
-              {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
-                {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
-                {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
-                {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
-                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
-                {%- if gw != nil %}
-                  {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
-                    {%- if section == "" || section == listenerName %}
-                      {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
-                      {%- inheritedHostsSet[listenerHostname] = true %}
+          {#- Compute the effective hostnames per Gateway API intersection
+              rules. For each parentRef we accept (Gateway-targeted) and
+              each attached listener:
+                - route empty + listener empty           → ""        (catch-all)
+                - route empty + listener H               → H         (route inherits)
+                - route H... + listener ""               → each H    (route narrows)
+                - route H... + listener L                → per-pair intersection
+                                                            (drops pairs with no intersection)
+              The aggregated set is what the chart should emit map entries for;
+              hostnames that don't intersect any attached listener fall away,
+              which is what the spec requires (a route with `wildcard.io` in
+              spec.hostnames must NOT route to a `*.wildcard.io` listener,
+              because `*.wildcard.io` doesn't match the bare `wildcard.io`).
+              Routes with no surviving intersection produce no entries. -#}
+          {%- var routeHostnames = route | dig("spec", "hostnames") | toSlice() %}
+          {%- var parentRefs = dig(route, "spec", "parentRefs") | toSlice() %}
+          {%- var effectiveHosts = map[string]bool{} %}
+          {%- var resolvedGwCount = 0 %}
+          {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
+          {%- for _, parentRef := range parentRefs %}
+            {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
+            {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
+            {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
+              {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
+              {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
+              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+              {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
+              {%- if gw != nil %}
+                {%- resolvedGwCount = resolvedGwCount + 1 %}
+                {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+                  {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                  {%- if section == "" || section == listenerName %}
+                    {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                    {%- if len(routeHostnames) == 0 %}
+                      {%- effectiveHosts[listenerHostname] = true %}
+                    {%- else if listenerHostname == "" %}
+                      {%- for _, rh := range routeHostnames %}
+                        {%- effectiveHosts[tostring(rh)] = true %}
+                      {%- end %}
+                    {%- else %}
+                      {%- for _, rh := range routeHostnames %}
+                        {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
+                        {%- if inter != "" %}
+                          {%- effectiveHosts[inter] = true %}
+                        {%- end %}
+                      {%- end %}
                     {%- end %}
                   {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}
-            {%- if len(inheritedHostsSet) == 0 %}
-              {%- hostnames = []any{""} %}
+          {%- end %}
+          {#- Two fallbacks share the "use route hostnames as-is" branch:
+                1. No parentRefs at all (true orphan).
+                2. parentRefs present but none resolve to a known Gateway
+                   (typical for chart-test fixtures that omit Gateway
+                   resources to keep the fixture small).
+              When at least one parentRef DID resolve, we trust the
+              intersection result — an empty effectiveHosts there means
+              the spec-correct outcome that no listener intersects, and
+              the route correctly produces no entries. -#}
+          {%- if resolvedGwCount == 0 %}
+            {%- if len(routeHostnames) == 0 %}
+              {%- effectiveHosts[""] = true %}
             {%- else %}
-              {%- hostnames = []any{} %}
-              {%- for h := range inheritedHostsSet %}
-                {%- hostnames = append(hostnames, h) %}
+              {%- for _, rh := range routeHostnames %}
+                {%- effectiveHosts[tostring(rh)] = true %}
               {%- end %}
             {%- end %}
+          {%- end %}
+          {%- if len(effectiveHosts) == 0 %}
+            {%- continue %}
+          {%- end %}
+          {%- var hostnames = []any{} %}
+          {%- for h := range effectiveHosts %}
+            {%- hostnames = append(hostnames, h) %}
           {%- end %}
           {%- for _, hostname := range hostnames %}
             {%- var ruleIdx = 0 %}
@@ -457,36 +496,63 @@ templateSnippets:
         {#- Process GRPCRoutes similarly. Mirror the listener-inheritance
             logic so GRPCRoutes don't bleed across Gateways either. -#}
         {%- for _, route := range resources.grpcroutes.List() %}
-          {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
-          {%- if len(hostnames) == 0 %}
-            {%- var inheritedHostsSet = map[string]bool{} %}
-            {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
-            {%- for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() %}
-              {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
-              {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
-              {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
-                {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
-                {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
-                {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
-                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
-                {%- if gw != nil %}
-                  {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
-                    {%- if section == "" || section == listenerName %}
-                      {%- inheritedHostsSet[tostring(dig(listener, "hostname") | fallback(""))] = true %}
+          {#- Same listener-intersection treatment as HTTPRoutes above —
+              see the HTTPRoute branch's comment for the full case
+              breakdown. -#}
+          {%- var routeHostnames = route | dig("spec", "hostnames") | toSlice() %}
+          {%- var parentRefs = dig(route, "spec", "parentRefs") | toSlice() %}
+          {%- var effectiveHosts = map[string]bool{} %}
+          {%- var resolvedGwCount = 0 %}
+          {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
+          {%- for _, parentRef := range parentRefs %}
+            {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
+            {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
+            {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
+              {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
+              {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
+              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+              {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
+              {%- if gw != nil %}
+                {%- resolvedGwCount = resolvedGwCount + 1 %}
+                {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+                  {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                  {%- if section == "" || section == listenerName %}
+                    {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                    {%- if len(routeHostnames) == 0 %}
+                      {%- effectiveHosts[listenerHostname] = true %}
+                    {%- else if listenerHostname == "" %}
+                      {%- for _, rh := range routeHostnames %}
+                        {%- effectiveHosts[tostring(rh)] = true %}
+                      {%- end %}
+                    {%- else %}
+                      {%- for _, rh := range routeHostnames %}
+                        {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
+                        {%- if inter != "" %}
+                          {%- effectiveHosts[inter] = true %}
+                        {%- end %}
+                      {%- end %}
                     {%- end %}
                   {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}
-            {%- if len(inheritedHostsSet) == 0 %}
-              {%- hostnames = []any{""} %}
+          {%- end %}
+          {#- Same fallback as HTTPRoute branch — see comment there. -#}
+          {%- if resolvedGwCount == 0 %}
+            {%- if len(routeHostnames) == 0 %}
+              {%- effectiveHosts[""] = true %}
             {%- else %}
-              {%- hostnames = []any{} %}
-              {%- for h := range inheritedHostsSet %}
-                {%- hostnames = append(hostnames, h) %}
+              {%- for _, rh := range routeHostnames %}
+                {%- effectiveHosts[tostring(rh)] = true %}
               {%- end %}
             {%- end %}
+          {%- end %}
+          {%- if len(effectiveHosts) == 0 %}
+            {%- continue %}
+          {%- end %}
+          {%- var hostnames = []any{} %}
+          {%- for h := range effectiveHosts %}
+            {%- hostnames = append(hostnames, h) %}
           {%- end %}
           {%- for _, hostname := range hostnames %}
             {%- var ruleIdx = 0 %}
@@ -747,54 +813,57 @@ templateSnippets:
       {%- end macro -%}
 
       {#- HostnameSinglePairMatch — one listener hostname × one route hostname.
-          Returns "true" / "false" string. -#}
+          Returns "true" / "false" string. The match boolean is just
+          whether the intersection is non-empty. -#}
       {%- macro HostnameSinglePairMatch(lh string, rh string) -%}
-        {%- if lh == rh -%}
+        {%- if HostnameSinglePairIntersection(lh, rh) == "" -%}
+          false
+        {%- else -%}
           true
+        {%- end -%}
+      {%- end macro -%}
+
+      {#- HostnameSinglePairIntersection — one listener hostname × one route
+          hostname. Returns the *effective* hostname per Gateway API
+          intersection rules:
+
+            - lh exact, rh exact, equal           → that exact hostname
+            - lh wildcard (*.X), rh exact (y.X)   → rh (the more specific exact)
+            - lh exact (y.X), rh wildcard (*.X)   → lh (the more specific exact)
+            - both wildcard, equal bases          → that wildcard
+            - both wildcard, one base nested      → the more specific wildcard
+            - else                                → "" (no intersection)
+
+          Returns "" when there is no intersection.
+
+          Wildcard semantics (Gateway API v1 spec, NOT RFC 1034):
+            "*.X" matches any host that ends with ".X" and has at
+            least one label before it. Both `foo.X` and
+            `multi.label.foo.X` match (wildcards match any number of
+            labels), but the bare `X` does not. -#}
+      {%- macro HostnameSinglePairIntersection(lh string, rh string) -%}
+        {%- if lh == rh -%}
+          {{ lh }}
         {%- else if hasPrefix(lh, "*.") && !hasPrefix(rh, "*.") -%}
-          {#- Listener wildcard, route exact: route must end with the
-              listener's base and have exactly one DNS label in the gap. -#}
           {%- var lhBase = lh[2:] -%}
-          {%- if hasSuffix(rh, "."+lhBase) -%}
-            {%- var prefix = rh[:len(rh)-len("."+lhBase)] -%}
-            {%- if prefix != "" && index(prefix, ".") == -1 -%}
-              true
-            {%- else -%}
-              false
-            {%- end -%}
-          {%- else -%}
-            false
+          {%- if hasSuffix(rh, "."+lhBase) && len(rh) > len("."+lhBase) -%}
+            {{ rh }}
           {%- end -%}
         {%- else if !hasPrefix(lh, "*.") && hasPrefix(rh, "*.") -%}
-          {#- Route wildcard, listener exact — symmetric of above. -#}
           {%- var rhBase = rh[2:] -%}
-          {%- if hasSuffix(lh, "."+rhBase) -%}
-            {%- var prefix = lh[:len(lh)-len("."+rhBase)] -%}
-            {%- if prefix != "" && index(prefix, ".") == -1 -%}
-              true
-            {%- else -%}
-              false
-            {%- end -%}
-          {%- else -%}
-            false
+          {%- if hasSuffix(lh, "."+rhBase) && len(lh) > len("."+rhBase) -%}
+            {{ lh }}
           {%- end -%}
         {%- else if hasPrefix(lh, "*.") && hasPrefix(rh, "*.") -%}
-          {#- Both wildcards: bases must match exactly OR one base is a
-              suffix of the other (the longer matches a strict subdomain
-              of the shorter). -#}
           {%- var lhBase = lh[2:] -%}
           {%- var rhBase = rh[2:] -%}
           {%- if lhBase == rhBase -%}
-            true
+            {{ lh }}
           {%- else if hasSuffix(lhBase, "."+rhBase) -%}
-            true
+            {{ lh }}
           {%- else if hasSuffix(rhBase, "."+lhBase) -%}
-            true
-          {%- else -%}
-            false
+            {{ rh }}
           {%- end -%}
-        {%- else -%}
-          false
         {%- end -%}
       {%- end macro -%}
 
@@ -1122,54 +1191,86 @@ templateSnippets:
       {#-
         Generate host map entries for Gateway API routes.
 
-        For each route, the effective hostnames are:
-          - route.spec.hostnames if non-empty
-          - otherwise: every attached listener's hostname (per Gateway
-            API spec — "If the listener has hostnames specified and the
-            HTTPRoute does not, the route inherits the listener's
-            hostname"). Without this inheritance, a sectionName-
-            targeted route with no spec.hostnames attaches to a
-            listener but no host.map entry advertises it, so the
-            request 404s even though the chart accepted the route.
+        Per Gateway API spec the effective hostname set for a route is
+        the *intersection* of the route's `spec.hostnames` with each
+        attached listener's hostname:
 
-        AnalyzeRoutes does the equivalent inheritance for the
-        per-route routeInfo.hostname field that drives advanced
-        matchers; this snippet keeps the host-map view in sync.
+          - route empty + listener empty           → "" (catch-all)
+          - route empty + listener H               → H  (route inherits)
+          - route H... + listener "" (catch-all)   → each H (route narrows)
+          - route H... + listener L                → per-pair intersection
+            (drops pairs with no intersection — e.g. `wildcard.io` against
+             `*.wildcard.io` does NOT intersect, since `*.wildcard.io`
+             matches at least one prefix label, not the bare base)
+
+        AnalyzeRoutes does the same computation for the per-route
+        routeInfo entries that drive advanced matchers; this snippet
+        mirrors the logic so host.map and the route-analysis view stay
+        consistent.
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection -%}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
       {%%
-        var hostnames = route | dig("spec", "hostnames") | toSlice()
-        if len(hostnames) == 0 {
-          var inheritedHostsSet = map[string]bool{}
-          var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
-          for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-            var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
-            var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
-            if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+        var routeHostnames = route | dig("spec", "hostnames") | toSlice()
+        var parentRefs = dig(route, "spec", "parentRefs") | toSlice()
+        var effectiveHosts = map[string]bool{}
+        var resolvedGwCount = 0
+        var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+        for _, parentRef := range parentRefs {
+          var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+          var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+          if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+            continue
+          }
+          var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+          var gwName = tostring(dig(parentRef, "name") | fallback(""))
+          var section = tostring(dig(parentRef, "sectionName") | fallback(""))
+          var gw = resources.gateways.GetSingle(gwNs, gwName)
+          if gw == nil {
+            continue
+          }
+          resolvedGwCount = resolvedGwCount + 1
+          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+            var listenerName = tostring(dig(listener, "name") | fallback(""))
+            if section != "" && section != listenerName {
               continue
             }
-            var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
-            var gwName = tostring(dig(parentRef, "name") | fallback(""))
-            var section = tostring(dig(parentRef, "sectionName") | fallback(""))
-            var gw = resources.gateways.GetSingle(gwNs, gwName)
-            if gw == nil {
-              continue
-            }
-            for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-              var listenerName = tostring(dig(listener, "name") | fallback(""))
-              if section != "" && section != listenerName {
-                continue
+            var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+            if len(routeHostnames) == 0 {
+              effectiveHosts[listenerHostname] = true
+            } else if listenerHostname == "" {
+              for _, rh := range routeHostnames {
+                effectiveHosts[tostring(rh)] = true
               }
-              inheritedHostsSet[tostring(dig(listener, "hostname") | fallback(""))] = true
+            } else {
+              for _, rh := range routeHostnames {
+                var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
+                if inter != "" {
+                  effectiveHosts[inter] = true
+                }
+              }
             }
           }
-          hostnames = []any{}
-          for h := range inheritedHostsSet {
-            hostnames = append(hostnames, h)
+        }
+        // Fallback when no parentRef resolves to a known Gateway:
+        //   - true orphan (no parentRefs at all), or
+        //   - chart-test fixture with parentRefs but no Gateway resource.
+        // Routes that DID resolve at least one Gateway but found no
+        // intersecting listener produce no entries (spec-correct).
+        if resolvedGwCount == 0 {
+          if len(routeHostnames) == 0 {
+            effectiveHosts[""] = true
+          } else {
+            for _, rh := range routeHostnames {
+              effectiveHosts[tostring(rh)] = true
+            }
           }
+        }
+        var hostnames = []any{}
+        for h := range effectiveHosts {
+          hostnames = append(hostnames, h)
         }
       %%}
       {%- if len(hostnames) > 0 %}
