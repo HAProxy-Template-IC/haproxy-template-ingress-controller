@@ -2141,9 +2141,36 @@ templateSnippets:
               })
             }
 
+            // Emit BOTH a "rendered" and "deployed" variant carrying the
+            // same content. The "rendered" variant fires after every
+            // successful render — that's what the Gateway API spec
+            // expects: status reflects the latest spec the controller
+            // observed, even when the resulting HAProxy config is
+            // byte-identical to the previous render and deployment is
+            // skipped. Without it, a Gateway whose .spec mutates
+            // without producing a HAProxy config diff (e.g. listener
+            // hostname change that doesn't shift any path-map rows)
+            // would have stale observedGeneration in its conditions.
+            // The conformance test GatewayObservedGenerationBump pins
+            // exactly this behaviour.
+            //
+            // The applier's per-(resource, gvr) checksum cache
+            // dedupes redundant patches, so emitting the same content
+            // in two phases doesn't double the API traffic — it just
+            // closes the timing window between render and deploy.
             statusPatch(nsStr, nameStr,
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{
+                "rendered": map[string]interface{}{
+                  "addresses": gatewayAddresses,
+                  "conditions": []any{
+                    condition("Accepted", "True", "Accepted", "Gateway accepted",
+                      generation, transitionTime(gateway, "Accepted", "True")),
+                    condition("Programmed", "True", "Programmed", "Gateway programmed into the data plane",
+                      generation, transitionTime(gateway, "Programmed", "True")),
+                  },
+                  "listeners": deployedListeners,
+                },
                 "deployed": map[string]interface{}{
                   "addresses": gatewayAddresses,
                   "conditions": []any{
@@ -2458,8 +2485,19 @@ templateSnippets:
             }
 
             if len(parents) > 0 {
+              // Emit both rendered + deployed phases (same content) so
+              // the patch fires after render even when deployment is
+              // skipped because the rendered HAProxy config is byte-
+              // identical to the previous render. Without this,
+              // observedGeneration in the route's parent.conditions
+              // lags behind spec.metadata.generation whenever a route
+              // mutation doesn't shift any HAProxy maps. Conformance
+              // GatewayObservedGenerationBump pins this for routes too.
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
+                  "rendered": map[string]interface{}{
+                    "parents": parents,
+                  },
                   "deployed": map[string]interface{}{
                     "parents": parents,
                   },
