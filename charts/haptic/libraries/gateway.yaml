@@ -278,6 +278,20 @@ templateSnippets:
         - allRoutes: flat list of normalized route objects
         - pathGroups: routes grouped by host+path for conflict detection
         - sortedRoutes: routes sorted by precedence (method > headers > query > order)
+
+        Hostname expansion: a route with `spec.hostnames` set produces one
+        entry per declared hostname. A route with NO hostnames inherits
+        the hostname(s) of every listener it attaches to (per Gateway
+        API spec — "If the listener has hostnames specified and the
+        HTTPRoute does not, the route inherits the listener's
+        hostname"). This is what makes a sectionName-targeted route
+        scope to its listener's hostname instead of bleeding across
+        every Gateway sharing the frontend port.
+
+        For each (route, attaching-listener) pair the routeInfo's
+        hostname becomes the listener's hostname (or "" when the
+        listener has no hostname either, which the host map handles via
+        the regsub wildcard fallback).
       -#}
       {%- macro AnalyzeRoutes(result map[string]any) %}
         {%- var allRoutes = []any{} %}
@@ -286,7 +300,41 @@ templateSnippets:
         {%- for _, route := range resources.httproutes.List() %}
           {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
           {%- if len(hostnames) == 0 %}
-            {%- hostnames = []any{""} %}
+            {#- Inherit hostnames from attached listeners. Walk parentRefs,
+                resolve to Gateways, then for each listener we attach to
+                emit the listener's hostname. Listeners with no hostname
+                produce "" (frontend-wide match, host.map handles it).
+                Deduplicate so a route attached to two listeners with the
+                same hostname doesn't double-count. -#}
+            {%- var inheritedHostsSet = map[string]bool{} %}
+            {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
+            {%- for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() %}
+              {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
+              {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
+              {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
+                {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
+                {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
+                {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
+                {%- if gw != nil %}
+                  {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                    {%- if section == "" || section == listenerName %}
+                      {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {%- inheritedHostsSet[listenerHostname] = true %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {%- if len(inheritedHostsSet) == 0 %}
+              {%- hostnames = []any{""} %}
+            {%- else %}
+              {%- hostnames = []any{} %}
+              {%- for h := range inheritedHostsSet %}
+                {%- hostnames = append(hostnames, h) %}
+              {%- end %}
+            {%- end %}
           {%- end %}
           {%- for _, hostname := range hostnames %}
             {%- var ruleIdx = 0 %}
@@ -320,11 +368,39 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Process GRPCRoutes similarly #}
+        {#- Process GRPCRoutes similarly. Mirror the listener-inheritance
+            logic so GRPCRoutes don't bleed across Gateways either. -#}
         {%- for _, route := range resources.grpcroutes.List() %}
           {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
           {%- if len(hostnames) == 0 %}
-            {%- hostnames = []any{""} %}
+            {%- var inheritedHostsSet = map[string]bool{} %}
+            {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
+            {%- for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() %}
+              {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
+              {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
+              {%- if prGroup == "gateway.networking.k8s.io" && prKind == "Gateway" %}
+                {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
+                {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
+                {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
+                {%- if gw != nil %}
+                  {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                    {%- if section == "" || section == listenerName %}
+                      {%- inheritedHostsSet[tostring(dig(listener, "hostname") | fallback(""))] = true %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {%- if len(inheritedHostsSet) == 0 %}
+              {%- hostnames = []any{""} %}
+            {%- else %}
+              {%- hostnames = []any{} %}
+              {%- for h := range inheritedHostsSet %}
+                {%- hostnames = append(hostnames, h) %}
+              {%- end %}
+            {%- end %}
           {%- end %}
           {%- for _, hostname := range hostnames %}
             {%- var ruleIdx = 0 %}
