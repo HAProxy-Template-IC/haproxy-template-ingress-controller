@@ -93,7 +93,13 @@ func TestIngressHaproxyIngressWafDeny(t *testing.T) {
 			// dataplane API push and arrive while the map is still
 			// empty (skip-WAF) — the test would silently see 200s for
 			// the deny-mode probe and pass for the wrong reason.
-			waitForHaproxyIngressWafMap(ctx, t, []string{denyHost + "/ deny", detectHost + "/ detect"})
+			//
+			// Map is keyed by `<ns>/<name>` (resource id), not host+path —
+			// see charts/haptic/CHANGELOG.md.
+			waitForHaproxyIngressWafMap(ctx, t, []string{
+				ns + "/echo-deny deny",
+				ns + "/echo-detect detect",
+			})
 
 			return ctx
 		}).

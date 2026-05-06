@@ -1370,9 +1370,9 @@ templateSnippets:
 
   # External-auth (auth-url) map contribution. The spoa-hub library
   # defines auth-url.map and the SPOE wiring; this snippet feeds the
-  # map with one entry per ingress+path that has the auth-url
-  # annotation set. The frontend then looks up the URL by host+path
-  # (matching the existing routing key) and triggers the SPOE plugin.
+  # map with one entry per Ingress that has the auth-url annotation
+  # set. The frontend looks up the URL by `txn.resource_id`
+  # (= `<ns>/<name>`) and triggers the SPOE plugin.
   #
   # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-external
   #
@@ -1381,24 +1381,16 @@ templateSnippets:
   #
   map-auth-url-500-haproxy-ingress:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {#- Keyed by <ns>/<name> (resource identity). The frontend looks up
+          via var(txn.resource_id),map(...) — see spoa-hub.yaml's
+          frontend-spoe-filters-100-external-auth and base.yaml's
+          resource_id extraction at the end of frontend-routing-logic. -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authUrl = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-url") | fallback("") | tostring() -%}
         {%- if authUrl != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {#- Host-less ingress rules can't be enforced — see the
-                matching nginx-ingress snippet for the rationale. -#}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-url set but a rule without a host. The auth-url map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authUrl }}
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
         {%- end -%}
       {%- end -%}
 
@@ -1413,22 +1405,12 @@ templateSnippets:
   #   haproxy-ingress.github.io/auth-signin: "https://login.example/oauth2/start"
   map-auth-signin-500-haproxy-ingress:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authSignin = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-signin") | fallback("") | tostring() -%}
         {%- if authSignin != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-signin set but a rule without a host. The auth-signin map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authSignin }}
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
         {%- end -%}
       {%- end -%}
 
@@ -1447,22 +1429,12 @@ templateSnippets:
   # the plugin does not forward the original request payload.
   map-auth-method-500-haproxy-ingress:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authMethod = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-method") | fallback("") | tostring() -%}
         {%- if authMethod != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-method set but a rule without a host. The auth-method map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authMethod }}
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
         {%- end -%}
       {%- end -%}
 
@@ -1488,22 +1460,12 @@ templateSnippets:
   # forward custom headers.
   map-auth-forward-headers-500-haproxy-ingress:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-request") | fallback("") | tostring() -%}
         {%- if authHeaders != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-headers-request set but a rule without a host. The auth-forward-headers map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ authHeaders }}
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authHeaders }}
         {%- end -%}
       {%- end -%}
 
@@ -1579,7 +1541,6 @@ templateSnippets:
   # so each var is available for whichever path runs.
   map-auth-extract-headers-500-haproxy-ingress:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") | fallback("") | tostring() -%}
         {%- var failHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") | fallback("") | tostring() -%}
@@ -1592,16 +1553,7 @@ templateSnippets:
         {%- if union != "" -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-headers-succeed or auth-headers-fail set but a rule without a host. The auth-extract-headers map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ MapKeyForHost(host) }}{{ pathStr }} {{ union }}
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ union }}
         {%- end -%}
       {%- end -%}
 
@@ -1719,7 +1671,9 @@ templateSnippets:
   # dispatch. See ADR-0007.
   map-haproxy-ingress-waf-500-haproxy-ingress:
     template: |-
-      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {#- Keyed by <ns>/<name>. The validation guards (unsupported waf
+          value, waf-mode without waf, invalid mode) still apply because
+          they run at render time regardless of map keying. -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
         {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
@@ -1743,21 +1697,7 @@ templateSnippets:
           {%- if resolvedMode != "deny" && resolvedMode != "detect" -%}
             {{- fail("Invalid value '" + mode + "' for annotation 'haproxy-ingress.github.io/waf-mode' on Ingress '" + key + "'. Valid values: 'deny', 'detect'.") -}}
           {%- end -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- var host = rule | dig("host") | fallback("") | tostring() -%}
-            {#- Host-less rules can't be enforced — the map is keyed by
-                <host><path>; without a host the lookup never matches and
-                an operator-set WAF would silently no-op. Mirrors the
-                auth-url host-less rule rejection. -#}
-            {%- if host == "" -%}
-              {{- fail("Ingress " + key + " has 'haproxy-ingress.github.io/waf' set but a rule without a host. The haproxy-ingress-waf map is keyed by host+path; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
-            {%- end -%}
-            {%- var hostKey = MapKeyForHost(rule | dig("host")) -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var pathStr = path | dig("path") | fallback("") | tostring() -%}
-      {{ "\n" }}{{ hostKey }}{{ pathStr }} {{ resolvedMode }}
-            {%- end -%}
-          {%- end -%}
+      {{ "\n" }}{{ key }} {{ resolvedMode }}
         {%- end -%}
       {%- end -%}
 
@@ -3262,8 +3202,8 @@ validationTests:
         description: HAProxy config must be valid with auth-url annotation
       - type: contains
         target: map:auth-url.map
-        pattern: "hi-protected.example.com/ https://auth.example/check"
-        description: auth-url.map must contain the host+path → URL entry
+        pattern: "default/hi-protected https://auth.example/check"
+        description: auth-url.map must contain the <ns>/<name> → URL entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_url\\).*auth-url\\.map"
@@ -3348,8 +3288,8 @@ validationTests:
         description: HAProxy config must be valid with auth-signin annotation
       - type: contains
         target: map:auth-signin.map
-        pattern: "hi-protected.example.com/ https://login.example/oauth2/start"
-        description: auth-signin.map must contain the host+path → URL entry
+        pattern: "default/hi-protected https://login.example/oauth2/start"
+        description: auth-signin.map must contain the <ns>/<name> → URL entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_signin\\).*auth-signin\\.map"
@@ -3432,8 +3372,8 @@ validationTests:
         description: HAProxy config must be valid with auth-method annotation
       - type: contains
         target: map:auth-method.map
-        pattern: "protected.example.com/api POST"
-        description: auth-method.map must contain the host+path → method entry
+        pattern: "default/protected POST"
+        description: auth-method.map must contain the <ns>/<name> → method entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_method\\).*auth-method\\.map"
@@ -3515,8 +3455,8 @@ validationTests:
         description: HAProxy config must be valid with auth-headers-request annotation
       - type: contains
         target: map:auth-forward-headers.map
-        pattern: "protected.example.com/api Authorization, X-Forwarded-For"
-        description: auth-forward-headers.map must contain the host+path → comma-list entry
+        pattern: "default/protected Authorization, X-Forwarded-For"
+        description: auth-forward-headers.map must contain the <ns>/<name> → comma-list entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_forward_headers\\).*auth-forward-headers\\.map"
@@ -3810,7 +3750,7 @@ validationTests:
         description: HAProxy config must be valid with auth-headers-succeed and auth-headers-fail annotations
       - type: contains
         target: map:auth-extract-headers.map
-        pattern: "protected.example.com/api X-Auth-User, X-Auth-Roles, WWW-Authenticate, X-Error-Reason"
+        pattern: "default/protected X-Auth-User, X-Auth-Roles, WWW-Authenticate, X-Error-Reason"
         description: auth-extract-headers.map must hold the union of pass and fail headers per ingress (with consistent comma+space spacing)
       - type: contains
         target: file:spoe.conf
@@ -3910,15 +3850,13 @@ validationTests:
         pattern: "default/bad-header"
         description: Error must identify the offending Ingress
 
-  test-haproxy-ingress-external-auth-hostless-rejected:
-    # Same as test-haproxy-ingress-external-auth: needs the spoa-hub
-    # library loaded.
+  test-haproxy-ingress-external-auth-hostless-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
       Ingress with haproxy-ingress.github.io/auth-url AND a host-less
-      rule must fail loudly at template-render time. Same security
-      contract as the nginx-ingress flavour: silent skip is a
-      security failure mode.
+      rule must render successfully — auth-url.map is keyed by
+      <ns>/<name>, so the host dimension is irrelevant. The previous
+      fail-loud guard is obsolete.
     extraContext:
       spoaHub:
         enabled: true
@@ -3975,14 +3913,14 @@ validationTests:
                           port:
                             number: 80
     assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
-        target: rendering_error
-        pattern: "auth-url set but a rule without a host"
-        description: Template render must fail with the host-less error message
-      - type: contains
-        target: rendering_error
-        pattern: "default/hi-hostless"
-        description: Error must identify the offending Ingress
+        target: map:auth-url.map
+        pattern: '(?m)^default/hi-hostless https://auth\.example/check$'
+        description: |
+          auth-url.map must contain the host-less Ingress keyed by
+          <ns>/<name>.
 
   # ============================================================================
   # WAF (Coraza, via SPOA hub): /waf + /waf-mode annotation tests
@@ -4057,8 +3995,8 @@ validationTests:
         description: HAProxy config must be valid with the /waf annotation
       - type: contains
         target: map:haproxy-ingress-waf.map
-        pattern: "hi-waf.example.com/ deny"
-        description: waf.map must contain the host+path with default mode "deny"
+        pattern: "default/hi-waf deny"
+        description: waf.map must contain the <ns>/<name> with default mode "deny"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.coraza_mode\\).*haproxy-ingress-waf\\.map"
@@ -4066,7 +4004,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_app\\) -m found \\} \\|\\| \\{ var\\(txn.coraza_mode\\) -m found \\}"
-        description: Dispatch fires when EITHER coraza-app.map or haproxy-ingress-waf.map matches the request's host+path
+        description: Dispatch fires when EITHER coraza-app.map or haproxy-ingress-waf.map matches the request's resource_id
       - type: contains
         target: haproxy.cfg
         pattern: "!\\{ var\\(txn.coraza_mode\\) -m str detect \\}"
@@ -4142,8 +4080,8 @@ validationTests:
         description: HAProxy config must be valid with detect-mode WAF
       - type: contains
         target: map:haproxy-ingress-waf.map
-        pattern: "shadow.example.com/ detect"
-        description: waf.map must contain the host+path with mode "detect"
+        pattern: "default/hi-shadow detect"
+        description: waf.map must contain the <ns>/<name> with mode "detect"
 
   test-haproxy-ingress-waf-invalid-value-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -4316,13 +4254,13 @@ validationTests:
         pattern: "default/hi-mode-only"
         description: Error must identify the offending Ingress
 
-  test-haproxy-ingress-waf-host-less-rejected:
+  test-haproxy-ingress-waf-host-less-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: |
-      Ingress with /waf set AND a rule without a host must fail-loud.
-      The map is keyed by host+path; without a host the lookup never
-      matches and an operator-set WAF would silently no-op. Mirrors
-      the auth-url host-less rejection.
+      Ingress with /waf set AND a rule without a host must render
+      successfully — the WAF map is now keyed by <ns>/<name>, so the
+      host dimension is irrelevant. The previous fail-loud guard is
+      obsolete.
     extraContext:
       spoaHub:
         enabled: true
@@ -4363,14 +4301,14 @@ validationTests:
                           name: any
                           port: { number: 80 }
     assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
-        target: rendering_error
-        pattern: "'haproxy-ingress\\.github\\.io/waf' set but a rule without a host"
-        description: Render must fail with the host-less diagnostic
-      - type: contains
-        target: rendering_error
-        pattern: "default/hi-waf-hostless"
-        description: Error must identify the offending Ingress
+        target: map:haproxy-ingress-waf.map
+        pattern: '(?m)^default/hi-waf-hostless deny$'
+        description: |
+          haproxy-ingress-waf.map must contain the host-less Ingress keyed
+          by <ns>/<name> with the default deny mode.
 
   test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -4457,8 +4395,8 @@ validationTests:
         description: HAProxy config must be valid with both annotation flavours
       - type: contains
         target: map:haproxy-ingress-waf.map
-        pattern: "haproxy.example.com/ detect"
-        description: waf-map carries the haproxy-ingress detect-mode entry
+        pattern: "default/haproxy-shadow detect"
+        description: waf-map carries the haproxy-ingress detect-mode entry keyed by <ns>/<name>
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: "# nginx-ingress modsecurity-snippet from default/nginx-modsec"

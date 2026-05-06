@@ -48,6 +48,12 @@ type SimpleIngressTest struct {
 	// Path is the Ingress rule's path. Defaults to "/" when empty.
 	Path string
 
+	// PathType is the Ingress pathType ("Prefix" (default), "Exact",
+	// or "ImplementationSpecific"). Use "ImplementationSpecific" for
+	// the haproxy-ingress regex-path flavour (combined with the
+	// haproxy-ingress.github.io/path-type annotation).
+	PathType string
+
 	// Annotations are applied verbatim to the Ingress. Pass nil for
 	// the chart's default behaviour with no annotations.
 	Annotations map[string]string
@@ -118,6 +124,7 @@ func RunSimpleIngressTest(t *testing.T, sit SimpleIngressTest) {
 				Name:           "echo",
 				Host:           sit.Host,
 				Path:           sit.Path,
+				PathType:       sit.PathType,
 				BackendService: backend.Service,
 				BackendPort:    backend.Port,
 				Annotations:    sit.Annotations,
