@@ -1112,18 +1112,67 @@ templateSnippets:
 
   util-generate-host-map-gateway:
     template: |
-      {#- Macro to generate host map entries for Gateway API routes #}
+      {#-
+        Generate host map entries for Gateway API routes.
+
+        For each route, the effective hostnames are:
+          - route.spec.hostnames if non-empty
+          - otherwise: every attached listener's hostname (per Gateway
+            API spec — "If the listener has hostnames specified and the
+            HTTPRoute does not, the route inherits the listener's
+            hostname"). Without this inheritance, a sectionName-
+            targeted route with no spec.hostnames attaches to a
+            listener but no host.map entry advertises it, so the
+            request 404s even though the chart accepted the route.
+
+        AnalyzeRoutes does the equivalent inheritance for the
+        per-route routeInfo.hostname field that drives advanced
+        matchers; this snippet keeps the host-map view in sync.
+      -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
-      {%- var hostnames = route | dig("spec", "hostnames") | toSlice() %}
+      {%%
+        var hostnames = route | dig("spec", "hostnames") | toSlice()
+        if len(hostnames) == 0 {
+          var inheritedHostsSet = map[string]bool{}
+          var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+          for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
+            var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+            var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+            if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+              continue
+            }
+            var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+            var gwName = tostring(dig(parentRef, "name") | fallback(""))
+            var section = tostring(dig(parentRef, "sectionName") | fallback(""))
+            var gw = resources.gateways.GetSingle(gwNs, gwName)
+            if gw == nil {
+              continue
+            }
+            for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+              var listenerName = tostring(dig(listener, "name") | fallback(""))
+              if section != "" && section != listenerName {
+                continue
+              }
+              inheritedHostsSet[tostring(dig(listener, "hostname") | fallback(""))] = true
+            }
+          }
+          hostnames = []any{}
+          for h := range inheritedHostsSet {
+            hostnames = append(hostnames, h)
+          }
+        }
+      %%}
       {%- if len(hostnames) > 0 %}
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
       # {{ route_type }}: {{ routeNs }}/{{ routeName }} ({{ len(hostnames) }} hosts)
       {% for _, hostname := range hostnames %}
-      {%- var hostKey = MapKeyForHost(hostname) %}
+      {%- if tostring(hostname) != "" %}
+      {%- var hostKey = MapKeyForHost(tostring(hostname)) %}
       {{ hostKey }} {{ hostKey }}
+      {%- end %}
       {% end %}
       {%- end %}
       {%- end %}
