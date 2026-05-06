@@ -34,10 +34,6 @@ watchedResources:
     indexBy: ["metadata.name"]
     enableValidationWebhook: false
     statusPatch: true
-    # 1s debounce: GatewayClass changes are rare and per-spec status must
-    # land quickly so dependent Gateways/HTTPRoutes don't sit in
-    # observedGeneration drift.
-    debounceInterval: 1s
     # fieldSelector: injected by Helm to scope to GatewayClasses we own
     # (spec.controllerName == .Values.gatewayClass.controllerName).
 
@@ -47,16 +43,6 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: false
     statusPatch: true
-    # 1s debounce (default 5s): conformance polls Gateway status with
-    # 30s timeouts. The default 5s leading-edge refractory window
-    # plus reconciliation latency means an early poll right after a
-    # spec mutation can miss the expected observedGeneration update
-    # — the chart eventually catches up but conformance has already
-    # given up. Lowering to 1s pulls the chart's reaction time well
-    # inside the suite's polling cadence without flooding (1s is
-    # still plenty of room for kube-apiserver watch coalescing and
-    # the chart's own per-render dedup).
-    debounceInterval: 1s
     # fieldSelector: injected by Helm from gatewayClass.name
 
   httproutes:
@@ -65,7 +51,6 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
     statusPatch: true
-    debounceInterval: 1s
     # Filter by Gateway reference using label selector
     # Users can label HTTPRoutes to target specific Gateways
     # Example: kubectl label httproute my-route gateway=haproxy
@@ -76,7 +61,6 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: true
     statusPatch: true
-    debounceInterval: 1s
 
   services:
     apiVersion: v1
