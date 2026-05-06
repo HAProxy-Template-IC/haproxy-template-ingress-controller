@@ -83,6 +83,18 @@ watchedResources:
     # from what conformance expects.
     indexBy: ["metadata.name"]
 
+  referencegrants:
+    apiVersion: gateway.networking.k8s.io/v1beta1
+    resources: referencegrants
+    # ReferenceGrant lives in the namespace that GRANTS access. Index by
+    # namespace+name so the cert/backend-ref validators can list grants
+    # in a target namespace efficiently. Per Gateway API spec, a
+    # cross-namespace cert ref or backendRef is permitted iff a
+    # ReferenceGrant in the TARGET namespace lists the source's
+    # group/kind/namespace under spec.from and the target's group/kind
+    # (and optional name) under spec.to.
+    indexBy: ["metadata.namespace", "metadata.name"]
+
 templateSnippets:
   # ============================================================================
   # Feature Registration
@@ -108,6 +120,7 @@ templateSnippets:
   # Register Gateway TLS Terminate mode certificates with SSL infrastructure
   features-100-gateway-tls:
     template: |
+      {% import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
       {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
       {#- Dynamically generates certificate files using fileRegistry.Register() #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
@@ -135,7 +148,14 @@ templateSnippets:
           per-secret, which dropped the SNI patterns of every listener
           after the first — so a Gateway whose listeners "https-A" and
           "https-B" share a cert ended up with only "https-A"'s SNI
-          bound. Conformance HTTPRouteHTTPSListener exposes that gap. -#}
+          bound. Conformance HTTPRouteHTTPSListener exposes that gap.
+
+          Cross-namespace refs are gated by ReferenceGrant: a Gateway
+          referencing a Secret in a different namespace requires a
+          ReferenceGrant in the Secret's namespace whose `from` matches
+          the Gateway and `to` matches the Secret. Without a matching
+          grant the cert is skipped (status patch reflects this with
+          ResolvedRefs=False/RefNotPermitted, set elsewhere). -#}
       {%- var certAggregates = map[string]map[string]any{} %}
       {%- for _, gateway := range resources.gateways.List() %}
         {%%
@@ -161,6 +181,21 @@ templateSnippets:
               var certKind = certRef | dig("kind") | fallback("Secret")
               if certKind != "Secret" {
                 continue
+              }
+
+              // Cross-namespace gate. Same-namespace refs are always
+              // permitted (no grant needed); cross-ns refs without a
+              // matching ReferenceGrant are skipped (the listener-status
+              // path elsewhere surfaces this as ResolvedRefs=False
+              // /RefNotPermitted).
+              var nsStr = tostring(gatewayNs)
+              var refNsStr = tostring(certNamespace)
+              if refNsStr != nsStr {
+                if ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", "Gateway", nsStr,
+                  "", "Secret", refNsStr, tostring(certName)) != "true" {
+                  continue
+                }
               }
 
               var secretKey = tostring(certNamespace) + "/" + tostring(certName)
@@ -593,6 +628,62 @@ templateSnippets:
         {%- result["hasRedirect_filter"] = hasRedirect %}
         {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
       {%- end macro %}
+
+  util-reference-grant-permitted:
+    template: |
+      {#-
+        ReferenceGrantPermitted — cross-namespace ref check.
+
+        Per Gateway API spec, a cross-namespace reference is permitted only
+        when there's a ReferenceGrant in the target namespace whose `from`
+        clause matches the source (group/kind/namespace) and whose `to`
+        clause matches the target (group/kind, optionally name). Same-
+        namespace refs are always permitted (no grant needed).
+
+        Returns "true" / "false" — Scriggo macro return-type constraint
+        (see HostnamesIntersect doc). Callers use `== "true"`.
+
+        Args:
+          fromGroup, fromKind, fromNs — the source resource (e.g. Gateway)
+          toGroup, toKind, toNs, toName — the target resource (Secret /
+          Service). toName is optional in the grant; matches any if grant
+          omits the name.
+      -#}
+      {%- macro ReferenceGrantPermitted(
+          fromGroup string, fromKind string, fromNs string,
+          toGroup string, toKind string, toNs string, toName string) -%}
+        {%- if fromNs == toNs -%}
+          true
+        {%- else -%}
+          {%- var permitted = "false" -%}
+          {%- for _, g := range resources.referencegrants.Fetch(toNs) -%}
+            {%- if permitted == "false" -%}
+              {%- var fromOk = false -%}
+              {%- for _, fr := range dig(g, "spec", "from") | toSlice() -%}
+                {%- var frGroup = tostring(dig(fr, "group") | fallback("")) -%}
+                {%- var frKind = tostring(dig(fr, "kind") | fallback("")) -%}
+                {%- var frNs = tostring(dig(fr, "namespace") | fallback("")) -%}
+                {%- if frGroup == fromGroup && frKind == fromKind && frNs == fromNs -%}
+                  {%- fromOk = true -%}
+                {%- end -%}
+              {%- end -%}
+              {%- if fromOk -%}
+                {%- for _, to := range dig(g, "spec", "to") | toSlice() -%}
+                  {%- if permitted == "false" -%}
+                    {%- var toG = tostring(dig(to, "group") | fallback("")) -%}
+                    {%- var toK = tostring(dig(to, "kind") | fallback("")) -%}
+                    {%- var toN = tostring(dig(to, "name") | fallback("")) -%}
+                    {%- if toG == toGroup && toK == toKind && (toN == "" || toN == toName) -%}
+                      {%- permitted = "true" -%}
+                    {%- end -%}
+                  {%- end -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+          {{ permitted -}}
+        {%- end -%}
+      {%- end macro -%}
 
   util-hostname-intersect-gateway:
     template: |
@@ -1593,6 +1684,7 @@ templateSnippets:
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -1862,13 +1954,20 @@ templateSnippets:
 
               // Validate certificateRefs for HTTPS / TLS listeners.
               // Per Gateway API spec: an unsupported group/kind, a
-              // missing target Secret, or a Secret missing tls.crt /
-              // tls.key data each makes the listener
-              // ResolvedRefs=False/InvalidCertificateRef. The chart's
-              // existing TLS-cert rendering already gracefully skips
-              // invalid refs (no haproxy crash), but it didn't surface
-              // the failure in status — conformance gates on this.
+              // missing target Secret, a Secret missing tls.crt /
+              // tls.key data, or a cross-namespace ref without a
+              // matching ReferenceGrant each makes the listener
+              // ResolvedRefs=False with a different reason:
+              //   InvalidCertificateRef — bad group/kind or malformed
+              //     Secret content
+              //   RefNotPermitted       — cross-ns ref without
+              //     a permitting ReferenceGrant
+              // The chart's existing TLS-cert rendering already
+              // gracefully skips invalid refs (no haproxy crash), but
+              // status didn't reflect the failure — conformance gates
+              // on this.
               var hasInvalidCertRef = false
+              var hasRefNotPermitted = false
               if protocol == "HTTPS" || protocol == "TLS" {
                 var listenerTls = listener | dig("tls")
                 if listenerTls != nil {
@@ -1889,6 +1988,18 @@ templateSnippets:
                       hasInvalidCertRef = true
                       continue
                     }
+                    // Cross-namespace gate: requires a matching
+                    // ReferenceGrant in the target Secret's namespace.
+                    if refNs != nsStr {
+                      var permitted = ReferenceGrantPermitted(
+                        "gateway.networking.k8s.io", "Gateway", nsStr,
+                        "", "Secret", refNs, refName,
+                      )
+                      if permitted != "true" {
+                        hasRefNotPermitted = true
+                        continue
+                      }
+                    }
                     var sec = resources.secrets.GetSingle(refNs, refName)
                     if sec == nil {
                       hasInvalidCertRef = true
@@ -1900,14 +2011,6 @@ templateSnippets:
                     if crtB64 == "" || keyB64 == "" {
                       hasInvalidCertRef = true
                     } else {
-                      // Verify the data actually looks like PEM. The
-                      // conformance suite's "malformed" secret has
-                      // non-empty tls.crt / tls.key fields whose
-                      // contents are random bytes — HAProxy would
-                      // reject the cert at parse time. Pre-validating
-                      // the PEM marker here lets the chart surface
-                      // InvalidCertificateRef in status (matching
-                      // spec) rather than crashing HAProxy on reload.
                       var crt, crtErr = b64decode(crtB64)
                       var key, keyErr = b64decode(keyB64)
                       if crtErr != nil || keyErr != nil {
@@ -1924,6 +2027,10 @@ templateSnippets:
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidRouteKinds"
                 resolvedRefsMessage = "Listener references unsupported route kinds"
+              } else if hasRefNotPermitted {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "RefNotPermitted"
+                resolvedRefsMessage = "Listener references a Secret across namespaces with no matching ReferenceGrant"
               } else if hasInvalidCertRef {
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidCertificateRef"
