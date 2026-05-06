@@ -2235,10 +2235,26 @@ templateSnippets:
                       continue
                     }
                     var sd = sec | dig("data")
-                    var crt = sd | dig("tls.crt") | fallback("")
-                    var key = sd | dig("tls.key") | fallback("")
-                    if tostring(crt) == "" || tostring(key) == "" {
+                    var crtB64 = tostring(sd | dig("tls.crt") | fallback(""))
+                    var keyB64 = tostring(sd | dig("tls.key") | fallback(""))
+                    if crtB64 == "" || keyB64 == "" {
                       hasInvalidCertRef = true
+                    } else {
+                      // Verify the data actually looks like PEM. The
+                      // conformance suite's "malformed" secret has
+                      // non-empty tls.crt / tls.key fields whose
+                      // contents are random bytes — HAProxy would
+                      // reject the cert at parse time. Pre-validating
+                      // the PEM marker here lets the chart surface
+                      // InvalidCertificateRef in status (matching
+                      // spec) rather than crashing HAProxy on reload.
+                      var crt, crtErr = b64decode(crtB64)
+                      var key, keyErr = b64decode(keyB64)
+                      if crtErr != nil || keyErr != nil {
+                        hasInvalidCertRef = true
+                      } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                        hasInvalidCertRef = true
+                      }
                     }
                   }
                 }
