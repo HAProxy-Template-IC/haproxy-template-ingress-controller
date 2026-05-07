@@ -442,7 +442,45 @@ templateSnippets:
             }
           }
 
-          for _, listener := range gwSpec | dig("listeners") | toSlice() {
+          // Walk the Gateway's own HTTPS listeners + the HTTPS listeners
+          // of every accepted ListenerSet attached to this Gateway. Per
+          // Gateway API spec the parent Gateway's spec.tls.frontend
+          // applies to all listeners under it (Gateway + ListenerSets);
+          // there is no per-ListenerSet mTLS config slot.
+          var allListeners = []any{}
+          for _, l := range gwSpec | dig("listeners") | toSlice() {
+            allListeners = append(allListeners, l)
+          }
+          var allowed = gwSpec | dig("allowedListeners")
+          var allowedFrom = "None"
+          if allowed != nil {
+            allowedFrom = tostring(allowed | dig("namespaces", "from") | fallback("None"))
+          }
+          for _, ls := range resources.listenersets.List() {
+            var pRef = dig(ls, "spec", "parentRef")
+            if tostring(dig(pRef, "name") | fallback("")) != gwName {
+              continue
+            }
+            var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+            var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+            if pNs != gwNs {
+              continue
+            }
+            var permitted = false
+            switch allowedFrom {
+            case "All":
+              permitted = true
+            case "Same":
+              permitted = (lsNs == gwNs)
+            }
+            if !permitted {
+              continue
+            }
+            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+              allListeners = append(allListeners, l)
+            }
+          }
+          for _, listener := range allListeners {
             var protocol = tostring(listener | dig("protocol") | fallback("HTTP"))
             if protocol != "HTTPS" {
               continue
