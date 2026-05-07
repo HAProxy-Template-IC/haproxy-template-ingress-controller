@@ -481,6 +481,116 @@ templateSnippets:
         })
       %%}
 
+  util-effective-listeners:
+    template: |
+      {#-
+        Effective listeners per Gateway = the Gateway's own
+        spec.listeners + spec.listeners from every accepted ListenerSet
+        whose parentRef points at it.
+
+        Caches a `map[gatewayKey][]listener` in shared so each
+        consumer pays one ComputeIfAbsent + one map-key lookup
+        regardless of how many sites read it.
+
+        Each listener entry is a map[string]any with the original
+        Listener fields plus a `_source` provenance map carrying
+        {kind: "Gateway"|"ListenerSet", namespace, name}. Status
+        patching uses _source to split conditions back to the right
+        owning resource; routing/binding/cert-collection sites can
+        treat the merged set uniformly.
+
+        The acceptance gate mirrors the F3 status-patches snippet:
+        default-deny when allowedListeners is unset; from=All admits
+        every namespace; from=Same admits ListenerSets in the parent
+        Gateway's namespace; from=Selector is conservatively denied
+        until selector matching against `resources.namespaces` lands
+        in a follow-up.
+      -#}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
+          var out = map[string][]any{}
+          for _, gw := range resources.gateways.List() {
+            var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
+            var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+            var gwKey = gwNs + "/" + gwName
+            var listeners = []any{}
+
+            // Gateway's own listeners.
+            for _, l := range dig(gw, "spec", "listeners") | toSlice() {
+              var lc = map[string]any{}
+              if m, ok := l.(map[string]any); ok {
+                for k, v := range m {
+                  lc[k] = v
+                }
+              }
+              lc["_source"] = map[string]any{
+                "kind":      "Gateway",
+                "namespace": gwNs,
+                "name":      gwName,
+              }
+              listeners = append(listeners, lc)
+            }
+
+            // ListenerSets whose parentRef points at this Gateway.
+            // resources.listenersets is indexed by metadata.namespace +
+            // spec.parentRef.name (see watchedResources). Fetch returns
+            // every ListenerSet in any namespace whose parentRef.name
+            // matches; we filter further by parentRef.namespace below.
+            // Use List() + manual filter when index miss is acceptable
+            // (cluster-wide ListenerSet count is small).
+            for _, ls := range resources.listenersets.List() {
+              var pRef = dig(ls, "spec", "parentRef")
+              var pName = tostring(dig(pRef, "name") | fallback(""))
+              if pName != gwName {
+                continue
+              }
+              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+              if pNs != gwNs {
+                continue
+              }
+
+              // Acceptance gate. Matches F3's logic byte-for-byte
+              // so status and routing agree on which sets are live.
+              var allowed = dig(gw, "spec", "allowedListeners")
+              var allowedFrom = "None"
+              if allowed != nil {
+                allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
+              }
+              var permitted = false
+              switch allowedFrom {
+              case "All":
+                permitted = true
+              case "Same":
+                permitted = (lsNs == gwNs)
+              }
+              if !permitted {
+                continue
+              }
+
+              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+              for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+                var lc = map[string]any{}
+                if m, ok := l.(map[string]any); ok {
+                  for k, v := range m {
+                    lc[k] = v
+                  }
+                }
+                lc["_source"] = map[string]any{
+                  "kind":      "ListenerSet",
+                  "namespace": lsNs,
+                  "name":      lsName,
+                }
+                listeners = append(listeners, lc)
+              }
+            }
+
+            out[gwKey] = listeners
+          }
+          return out
+        })
+      %}
+
   util-gateway-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
@@ -3819,18 +3929,55 @@ templateSnippets:
               condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
                 generation, TopLevelTransitionTime(gateway, "ResolvedRefs", gwResolvedRefsStatus)),
             }
+            // attachedListenerSets count: how many ListenerSets attach
+            // to this Gateway and are admitted by spec.allowedListeners.
+            // Conformance test ListenerSetDefaultNotAllowed asserts =0
+            // when allowedListeners is unset (default-deny). Mirrors
+            // the gate logic in F3 and util-effective-listeners exactly
+            // so all three sites agree. Counted once per render —
+            // cheap because resources.listenersets is already in memory.
+            var attachedLSCount = 0
+            for _, ls := range resources.listenersets.List() {
+              var pRef = dig(ls, "spec", "parentRef")
+              if tostring(dig(pRef, "name") | fallback("")) != nameStr {
+                continue
+              }
+              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+              if pNs != nsStr {
+                continue
+              }
+              var allowed = dig(gateway, "spec", "allowedListeners")
+              var allowedFrom = "None"
+              if allowed != nil {
+                allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
+              }
+              var permitted = false
+              switch allowedFrom {
+              case "All":
+                permitted = true
+              case "Same":
+                permitted = (lsNs == nsStr)
+              }
+              if permitted {
+                attachedLSCount++
+              }
+            }
+
             statusPatch(nsStr, nameStr,
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
-                  "addresses":  gwEffectiveAddresses,
-                  "conditions": gwTopConditions,
-                  "listeners":  deployedListeners,
+                  "addresses":            gwEffectiveAddresses,
+                  "conditions":           gwTopConditions,
+                  "listeners":            deployedListeners,
+                  "attachedListenerSets": attachedLSCount,
                 },
                 "deployed": map[string]interface{}{
-                  "addresses":  gwEffectiveAddresses,
-                  "conditions": gwTopConditions,
-                  "listeners":  deployedListeners,
+                  "addresses":            gwEffectiveAddresses,
+                  "conditions":           gwTopConditions,
+                  "listeners":            deployedListeners,
+                  "attachedListenerSets": attachedLSCount,
                 },
                 "deployFailed": map[string]interface{}{
                   "addresses": []any{},
@@ -3842,7 +3989,8 @@ templateSnippets:
                     condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
                       generation, TopLevelTransitionTime(gateway, "ResolvedRefs", gwResolvedRefsStatus)),
                   },
-                  "listeners": failedListeners,
+                  "listeners":            failedListeners,
+                  "attachedListenerSets": attachedLSCount,
                 },
               })
           %%}
