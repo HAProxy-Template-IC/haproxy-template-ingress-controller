@@ -53,13 +53,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -98,12 +101,13 @@ type GVRResolver = statusapplier.GVRResolver
 // statusapplier.Component. State (cachedResources, checksum cache) lives
 // only on the active leader; replicas in standby just observe events.
 type Component struct {
-	eventBus      *busevents.EventBus
-	eventChan     <-chan busevents.Event
-	dynamicClient dynamic.Interface
-	gvrResolver   GVRResolver
-	logger        *slog.Logger
-	healthTracker *lifecycle.HealthTracker
+	eventBus        *busevents.EventBus
+	eventChan       <-chan busevents.Event
+	dynamicClient   dynamic.Interface
+	discoveryClient discovery.DiscoveryInterface
+	gvrResolver     GVRResolver
+	logger          *slog.Logger
+	healthTracker   *lifecycle.HealthTracker
 
 	// ownNamespace is the namespace the controller is deployed into. Used
 	// to enforce RestrictToOwnNamespace; also the safe target for the
@@ -114,11 +118,11 @@ type Component struct {
 	managedByValue         string
 
 	// mu protects all mutable state below.
-	mu               sync.RWMutex
-	isLeader         bool
-	cachedResources  []templating.RenderedResource
-	checksumCache    map[string]string // key: "ns/name/gvr" → sha256(payload)
-	lastAppliedKeys  map[string]appliedKeyMeta
+	mu              sync.RWMutex
+	isLeader        bool
+	cachedResources []templating.RenderedResource
+	checksumCache   map[string]string // key: "ns/name/gvr" → sha256(payload)
+	lastAppliedKeys map[string]appliedKeyMeta
 }
 
 // appliedKeyMeta tracks the GVR + namespace + name needed to delete an
@@ -133,8 +137,21 @@ type appliedKeyMeta struct {
 type Config struct {
 	EventBus      *busevents.EventBus
 	DynamicClient dynamic.Interface
-	GVRResolver   GVRResolver
-	Logger        *slog.Logger
+
+	// DiscoveryClient is used on leader-acquire to enumerate every
+	// namespace-scoped API resource type the cluster supports, so the
+	// applier can rebuild its in-memory `lastAppliedKeys` from cluster
+	// state via the managed-by label selector. Without this, resources
+	// the controller applied before a crash but whose desired state was
+	// removed while the controller was down (e.g. user deleted the
+	// Gateway during a controller upgrade) would leak as orphans until
+	// manually swept. Optional: when nil, startup-orphan recovery is
+	// skipped and operators must rely on the
+	// `kubectl get … -l haproxy-haptic.org/managed-by=<name>` mitigation.
+	DiscoveryClient discovery.DiscoveryInterface
+
+	GVRResolver GVRResolver
+	Logger      *slog.Logger
 
 	// OwnNamespace is the namespace the controller pod runs in. Required
 	// when RestrictToOwnNamespace is true.
@@ -176,6 +193,7 @@ func New(cfg *Config) *Component {
 		eventBus:               bus,
 		eventChan:              eventChan,
 		dynamicClient:          cfg.DynamicClient,
+		discoveryClient:        cfg.DiscoveryClient,
 		gvrResolver:            cfg.GVRResolver,
 		logger:                 logger.With("component", ComponentName),
 		healthTracker:          lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
@@ -254,9 +272,19 @@ func (c *Component) handleReconciliationCompleted(ctx context.Context) {
 	c.applyAndPrune(ctx, resources)
 }
 
-// handleBecameLeader clears the checksum cache. The previous leader's
-// checksums aren't valid for us — the API server's resource versions
-// reflect their applies, not ours.
+// handleBecameLeader clears the checksum cache and rebuilds
+// lastAppliedKeys from cluster state via the managed-by label so
+// orphans surviving controller-down deletions get pruned on the next
+// reconciliation. The previous leader's *checksums* aren't valid for
+// us (API resource versions reflect their applies, not ours), but the
+// *set* of resources we own is determined by the cluster, not by any
+// in-memory state — recovering it from the cluster is the only way
+// to guarantee no leaks.
+//
+// Discovery is best-effort: types we don't have RBAC to list (most of
+// them — chart Role only grants a handful) return 403/Forbidden and
+// are silently skipped. The recovery completes regardless; missed
+// types just keep the existing manual-sweep mitigation as fallback.
 func (c *Component) handleBecameLeader(ctx context.Context) {
 	c.mu.Lock()
 	c.isLeader = true
@@ -265,9 +293,117 @@ func (c *Component) handleBecameLeader(ctx context.Context) {
 	resources := c.cachedResources
 	c.mu.Unlock()
 	c.logger.Info("became leader, clearing resource checksum cache")
+
+	if c.discoveryClient != nil {
+		c.recoverManagedResources(ctx)
+	}
+
 	if len(resources) > 0 {
 		c.applyAndPrune(ctx, resources)
 	}
+}
+
+// recoverManagedResources populates lastAppliedKeys from cluster state by
+// listing every namespace-scoped resource type that supports list+delete
+// and matches our managed-by label. Resource-agnostic by design: the
+// applier discovers what it owns via the label, not via a hardcoded
+// type list.
+func (c *Component) recoverManagedResources(ctx context.Context) {
+	if c.ownNamespace == "" {
+		c.logger.Debug("skipping managed-resource recovery — OwnNamespace is empty")
+		return
+	}
+	apiResourceLists, err := c.discoveryClient.ServerPreferredNamespacedResources()
+	// ServerPreferredNamespacedResources returns partial results when some
+	// API groups are unavailable (e.g. APIService not ready). We process
+	// what we got rather than aborting — the missing groups will be
+	// covered by subsequent reconciliations as the controller observes
+	// applies on those types.
+	if err != nil && len(apiResourceLists) == 0 {
+		c.logger.Warn("managed-resource recovery failed: discovery returned no resources", "error", err)
+		return
+	}
+
+	labelSelector := fmt.Sprintf("%s=%s", LabelManagedBy, c.managedByValue)
+	recovered := 0
+	skipped := 0
+	for _, list := range apiResourceLists {
+		gv, err := schema.ParseGroupVersion(list.GroupVersion)
+		if err != nil {
+			continue
+		}
+		for _, r := range list.APIResources {
+			// Subresources (e.g. /status, /scale) appear in discovery with
+			// "/" in their name; skip them — they aren't independently
+			// listable as parents.
+			if strings.Contains(r.Name, "/") {
+				continue
+			}
+			if !verbsContain(r.Verbs, "list") || !verbsContain(r.Verbs, "delete") {
+				continue
+			}
+			gvr := gv.WithResource(r.Name)
+			items, err := c.listSafely(ctx, gvr, labelSelector)
+			if err != nil {
+				// 403 (no RBAC), 404 (CRD removed since discovery), and
+				// MethodNotSupported (virtual resources) are expected and
+				// silently skipped — the applier discovers what it can,
+				// not what it must.
+				skipped++
+				continue
+			}
+			for i := range items.Items {
+				obj := &items.Items[i]
+				key := fmt.Sprintf("%s/%s/%s", obj.GetNamespace(), obj.GetName(), gvr.String())
+				c.mu.Lock()
+				c.lastAppliedKeys[key] = appliedKeyMeta{
+					GVR:       gvr,
+					Namespace: obj.GetNamespace(),
+					Name:      obj.GetName(),
+				}
+				c.mu.Unlock()
+				recovered++
+			}
+		}
+	}
+	if recovered > 0 || skipped > 0 {
+		c.logger.Info("managed-resource recovery complete",
+			"recovered", recovered, "skipped_types", skipped)
+	}
+}
+
+// listSafely wraps the dynamic client's List with panic recovery. The
+// real Kubernetes client never panics on a missing GVR — discovery
+// already vouched for the type — but the dynamic-client fake (and any
+// future test double or mis-registered scheme) does, and we'd rather
+// skip the type than blow up the whole recovery on one buggy entry.
+func (c *Component) listSafely(ctx context.Context, gvr schema.GroupVersionResource, labelSelector string) (items *unstructuredList, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Debug("dynamic-client panic during managed-resource recovery, skipping",
+				"gvr", gvr.String(), "panic", r)
+			items = nil
+			err = fmt.Errorf("recovered: %v", r)
+		}
+	}()
+	return c.dynamicClient.Resource(gvr).Namespace(c.ownNamespace).List(
+		ctx, metav1.ListOptions{LabelSelector: labelSelector})
+}
+
+// unstructuredList aliases the dynamic-client return type so the
+// listSafely signature stays readable.
+type unstructuredList = unstructured.UnstructuredList
+
+// verbsContain returns true if the verb is present in the slice.
+// Mirrors what k8s.io/apimachinery does internally; kept private here
+// to avoid a wider import surface.
+func verbsContain(verbs metav1.Verbs, target string) bool {
+	for _, v := range verbs {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }
 
 // handleLostLeadership clears the leader flag and pauses applies. The

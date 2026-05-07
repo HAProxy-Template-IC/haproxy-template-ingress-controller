@@ -246,6 +246,7 @@ func createReconciliationComponents(
 	resourceApplierComponent := resourceapplier.New(&resourceapplier.Config{
 		EventBus:               bus,
 		DynamicClient:          k8sClient.DynamicClient(),
+		DiscoveryClient:        k8sClient.Clientset().Discovery(),
 		GVRResolver:            statusapplier.NewRestMapperResolver(),
 		Logger:                 logger,
 		OwnNamespace:           ownNamespace,
