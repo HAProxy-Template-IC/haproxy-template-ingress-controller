@@ -3293,6 +3293,76 @@ templateSnippets:
                 }
               }
 
+              // Validate frontend client-cert validation refs for HTTPS
+              // listeners. Implements the listener-status side of
+              // GatewayFrontendInvalidDefaultClientCertificateValidation:
+              // if spec.tls.frontend.default.validation (or the perPort
+              // override matching this listener's port) carries
+              // caCertificateRefs that all fail to resolve, the spec
+              // requires:
+              //   ResolvedRefs=False/InvalidCACertificateRef
+              //   Accepted=False/NoValidCACertificate
+              // These are mutually exclusive with the InvalidCertificateRef
+              // reason the chart already sets for frontend cert failures
+              // (above). InvalidCertificateRef wins when both apply since
+              // the listener can't bind without a server cert at all.
+              var hasNoValidFrontendCA = false
+              var listenerAcceptedStatus = "True"
+              var listenerAcceptedReason = "Accepted"
+              var listenerAcceptedMessage = "Listener accepted"
+              if protocol == "HTTPS" && resolvedRefsStatus == "True" {
+                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var feValidation any = nil
+                var fe = dig(gateway, "spec", "tls", "frontend")
+                if fe != nil {
+                  feValidation = dig(fe, "default", "validation")
+                  for _, pp := range dig(fe, "perPort") | toSlice() {
+                    if toint(dig(pp, "port") | fallback(0)) == listenerPort {
+                      var ppV = dig(pp, "tls", "validation")
+                      if ppV != nil {
+                        feValidation = ppV
+                      }
+                      break
+                    }
+                  }
+                }
+                if feValidation != nil {
+                  var feRefs = dig(feValidation, "caCertificateRefs") | toSlice()
+                  if feRefs != nil && len(feRefs) > 0 {
+                    var feHasValid = false
+                    for _, ref := range feRefs {
+                      var refGroup = tostring(dig(ref, "group") | fallback(""))
+                      var refKind = tostring(dig(ref, "kind") | fallback(""))
+                      var refName = tostring(dig(ref, "name") | fallback(""))
+                      if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" && refName != "" {
+                        var cm = resources.configmaps.GetSingle(nsStr, refName)
+                        if cm != nil {
+                          var data = dig(cm, "data") | fallback(map[string]any{})
+                          var dataMap = data.(map[string]any)
+                          var caCrt, ok = dataMap["ca.crt"]
+                          if ok && tostring(caCrt) != "" {
+                            feHasValid = true
+                          }
+                        }
+                      } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" && refName != "" {
+                        var sec = resources.secrets.GetSingle(nsStr, refName)
+                        if sec != nil {
+                          var data = dig(sec, "data") | fallback(map[string]any{})
+                          var dataMap = data.(map[string]any)
+                          var caCrt, ok = dataMap["ca.crt"]
+                          if ok && tostring(caCrt) != "" {
+                            feHasValid = true
+                          }
+                        }
+                      }
+                    }
+                    if !feHasValid {
+                      hasNoValidFrontendCA = true
+                    }
+                  }
+                }
+              }
+
               if hasInvalidKind {
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidRouteKinds"
@@ -3305,6 +3375,13 @@ templateSnippets:
                 resolvedRefsStatus = "False"
                 resolvedRefsReason = "InvalidCertificateRef"
                 resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
+              } else if hasNoValidFrontendCA {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "InvalidCACertificateRef"
+                resolvedRefsMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
+                listenerAcceptedStatus = "False"
+                listenerAcceptedReason = "NoValidCACertificate"
+                listenerAcceptedMessage = resolvedRefsMessage
               }
 
               // Count attached routes: routes with sectionName matching
@@ -3337,6 +3414,9 @@ templateSnippets:
                 "resolvedRefsStatus":    resolvedRefsStatus,
                 "resolvedRefsReason":    resolvedRefsReason,
                 "resolvedRefsMessage":   resolvedRefsMessage,
+                "acceptedStatus":        listenerAcceptedStatus,
+                "acceptedReason":        listenerAcceptedReason,
+                "acceptedMessage":       listenerAcceptedMessage,
                 "programmedStatus":      programmedListenerStatus,
                 "programmedReason":      programmedListenerReason,
                 "programmedMessage":     programmedListenerMessage,
@@ -3357,8 +3437,11 @@ templateSnippets:
                 "supportedKinds": ldm["supportedKinds"],
                 "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
-                  condition("Accepted", "True", "Accepted", "Listener accepted",
-                    generation, ListenerTransitionTime(gateway, lname, "Accepted", "True")),
+                  condition("Accepted",
+                    tostring(ldm["acceptedStatus"]),
+                    tostring(ldm["acceptedReason"]),
+                    tostring(ldm["acceptedMessage"]),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
                   condition("Programmed",
                     tostring(ldm["programmedStatus"]),
                     tostring(ldm["programmedReason"]),
@@ -3397,8 +3480,11 @@ templateSnippets:
                 "supportedKinds": ldm["supportedKinds"],
                 "attachedRoutes": ldm["attachedRoutes"],
                 "conditions": []any{
-                  condition("Accepted", "True", "Accepted", "Listener accepted",
-                    generation, ListenerTransitionTime(gateway, lname, "Accepted", "True")),
+                  condition("Accepted",
+                    tostring(ldm["acceptedStatus"]),
+                    tostring(ldm["acceptedReason"]),
+                    tostring(ldm["acceptedMessage"]),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
                   condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
                     generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
                   condition("ResolvedRefs",
