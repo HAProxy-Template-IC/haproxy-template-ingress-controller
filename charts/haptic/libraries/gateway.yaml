@@ -4049,6 +4049,15 @@ templateSnippets:
             var resolvedStatus = "True"
             var resolvedReason = "ResolvedRefs"
             var resolvedMsg = "All references resolved"
+            // noValidCA tracks the spec-defined "Accepted=False/NoValidCACertificate"
+            // condition, distinct from "ResolvedRefs". Per Gateway API
+            // BackendTLSPolicy types, NoValidCACertificate is the *Accepted*
+            // reason emitted when every CACertificateRef on the policy is
+            // unresolvable; the *ResolvedRefs* reason for that same case is
+            // InvalidCACertificateRef. Conformance test
+            // BackendTLSPolicyInvalidCACertificateRef asserts both conditions.
+            var noValidCA = false
+            var noValidCAMsg = ""
 
             if len(caRefs) > 0 {
               var hasValid = false
@@ -4090,11 +4099,13 @@ templateSnippets:
               if !hasValid {
                 resolvedStatus = "False"
                 if hasInvalidGroupKind {
-                  resolvedReason = "InvalidCACertificateRef"
+                  resolvedReason = "InvalidKind"
                   resolvedMsg = "CACertificateRef points at an unsupported group / kind"
                 } else {
-                  resolvedReason = "NoValidCACertificate"
-                  resolvedMsg = "No CACertificateRef resolves to a valid CA certificate"
+                  resolvedReason = "InvalidCACertificateRef"
+                  resolvedMsg = "No CACertificateRef resolves to a valid CA certificate (missing or malformed)"
+                  noValidCA = true
+                  noValidCAMsg = resolvedMsg
                 }
               }
             } else if wkca != "" {
@@ -4106,8 +4117,10 @@ templateSnippets:
             } else {
               // Spec invariants reject this at admission, but be defensive
               resolvedStatus = "False"
-              resolvedReason = "NoValidCACertificate"
+              resolvedReason = "InvalidCACertificateRef"
               resolvedMsg = "Validation must specify caCertificateRefs or wellKnownCACertificates"
+              noValidCA = true
+              noValidCAMsg = resolvedMsg
             }
 
             // Conflict detection: another BackendTLSPolicy targets the
@@ -4167,6 +4180,20 @@ templateSnippets:
               if acceptedStatus == "False" {
                 break
               }
+            }
+
+            // NoValidCACertificate wins over Accepted=True. Per
+            // BackendTLSPolicy spec the Accepted=False/NoValidCACertificate
+            // condition is set when every CACertificateRef is unresolvable.
+            // Conflicted (already-False) keeps precedence — the spec leaves
+            // the relative ordering unspecified but a conflicting policy
+            // with an unresolvable CA bundle should not silently flip to
+            // NoValidCACertificate (the conflict is the more actionable
+            // signal for the operator).
+            if noValidCA && acceptedStatus == "True" {
+              acceptedStatus = "False"
+              acceptedReason = "NoValidCACertificate"
+              acceptedMsg = noValidCAMsg
             }
 
             // Compute ancestors: the set of Gateways whose routes
