@@ -112,7 +112,7 @@ type Config struct {
 // There is intentionally no Kind field; the controller derives the kind from
 // the GroupVersionResource at watch time. DebounceInterval is optional —
 // when empty or unparseable, the watcher falls back to
-// pkg/k8s/types.DefaultDebounceInterval (5s); the field exists so noisy
+// pkg/k8s/types.DefaultDebounceInterval (1s); the field exists so noisy
 // resources (HTTPRoute, EndpointSlice) can override the global window.
 type WatchedResource struct {
     APIVersion              string            `yaml:"api_version"`
@@ -320,17 +320,17 @@ const (
     DefaultMinDeploymentInterval   = 2 * time.Second
     DefaultDriftPreventionInterval = 60 * time.Second
     // The watcher debounce window is intentionally NOT redefined here;
-    // reuse pkg/k8s/types.DefaultDebounceInterval (5 * time.Second).
+    // reuse pkg/k8s/types.DefaultDebounceInterval (1 * time.Second).
 )
 
 // The reconciler refractory window mirrors the watcher debounce default
-// (5s) so a single timing default drives both debouncers. pkg/core/config
+// (1s) so a single timing default drives both debouncers. pkg/core/config
 // can't import pkg/k8s/types (arch-go.yml forbids it), so the constant is
 // duplicated by design and a test in tests/defaults_consistency_test.go
 // pins the equality. Both tunables surface to operators on the CRD —
 // per-watcher debounce on spec.watchedResources.<name>.debounceInterval,
 // reconciler refractory on spec.controller.reconciliationDebounceInterval.
-const DefaultReconciliationDebounceInterval = 5 * time.Second
+const DefaultReconciliationDebounceInterval = 1 * time.Second
 
 // Each Get* accessor parses the user's duration string and falls back to
 // the constant when the field is empty or invalid.

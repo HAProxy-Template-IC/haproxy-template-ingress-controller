@@ -24,9 +24,9 @@ Stage 5 component that debounces resource changes and triggers reconciliation ev
 ## Architecture
 
 ```
-ResourceIndexUpdatedEvent  → Debounce (5s default, leading-edge)
+ResourceIndexUpdatedEvent  → Debounce (1s default, leading-edge)
 IndexSynchronizedEvent     → Immediate Trigger (initial reconciliation)
-HTTPResourceUpdatedEvent   → Debounce (5s default, leading-edge)
+HTTPResourceUpdatedEvent   → Debounce (1s default, leading-edge)
 HTTPResourceAcceptedEvent  → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
 BecameLeaderEvent          → Immediate Trigger (bootstraps the new leader)
@@ -42,13 +42,13 @@ ReconciliationTriggeredEvent → Coordinator
 The debouncer uses leading-edge triggering: the first change fires immediately if no callback has fired recently. Subsequent changes within the refractory period are batched.
 
 ```
-t=0s:   Resource change → Immediate callback (no recent activity)
-t=1s:   Resource change → Queued (refractory period active)
-t=3s:   Resource change → Queued (refractory period active)
-t=5s:   Refractory expires → Callback with batched changes
+t=0.0s: Resource change → Immediate callback (no recent activity)
+t=0.3s: Resource change → Queued (refractory period active)
+t=0.7s: Resource change → Queued (refractory period active)
+t=1.0s: Refractory expires → Callback with batched changes
 ```
 
-The refractory period defaults to `pkg/k8s/types.DefaultDebounceInterval` (5s) and is overridable via `spec.controller.reconciliationDebounceInterval` on the CRD. The default is shared with the per-watcher debounce default so the two debouncers come from one source of truth (see "centralized defaults" in `pkg/core/CLAUDE.md`). This ensures fast response (0ms delay) for isolated changes while batching rapid successive changes during busy periods.
+The refractory period defaults to `pkg/k8s/types.DefaultDebounceInterval` (1s) and is overridable via `spec.controller.reconciliationDebounceInterval` on the CRD. The default is shared with the per-watcher debounce default so the two debouncers come from one source of truth (see "centralized defaults" in `pkg/core/CLAUDE.md`). This ensures fast response (0ms delay) for isolated changes while batching rapid successive changes during busy periods.
 
 ### Index Synchronized (Immediate)
 
@@ -76,14 +76,14 @@ reconciler := reconciler.New(bus, logger, &reconciler.Config{
 })
 ```
 
-The default interval is defined in `pkg/k8s/types.DefaultDebounceInterval` (5s) and shared across all debouncing components. Operators override it on the CRD via `spec.controller.reconciliationDebounceInterval`; the controller passes the parsed value into `Config{DebounceInterval}` at construction in `pkg/controller/reconciliation.go`.
+The default interval is defined in `pkg/k8s/types.DefaultDebounceInterval` (1s) and shared across all debouncing components. Operators override it on the CRD via `spec.controller.reconciliationDebounceInterval`; the controller passes the parsed value into `Config{DebounceInterval}` at construction in `pkg/controller/reconciliation.go`.
 
 ## Common Patterns
 
 ### Default Configuration
 
 ```go
-// Uses types.DefaultDebounceInterval (5s)
+// Uses types.DefaultDebounceInterval (1s)
 reconciler := reconciler.New(bus, logger, nil)
 go reconciler.Start(ctx)
 ```

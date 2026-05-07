@@ -20,8 +20,15 @@ import (
 const (
 	// DefaultDebounceInterval is the default minimum time between callback invocations.
 	// This value is shared across all components that use debouncing.
-	// Set to 5s to reduce reconciliation frequency and GC pressure during high EndpointSlice churn.
-	DefaultDebounceInterval = 5 * time.Second
+	//
+	// 1s is the leading-edge refractory window: the first change in a quiet
+	// period fires immediately, then any further change inside the window is
+	// suppressed. With 1s the chart reacts well inside Gateway API
+	// conformance polling cadences (the suite uses 30s timeouts but polls
+	// at sub-second intervals after spec changes) without flooding —
+	// kube-apiserver watch coalescing and the chart's per-render dedup
+	// keep the actual render rate proportional to real spec churn.
+	DefaultDebounceInterval = 1 * time.Second
 )
 
 const (
@@ -273,11 +280,12 @@ type WatcherConfig struct {
 	// Rapid resource changes within this interval are batched into a single callback
 	// with aggregated statistics.
 	//
-	// Default: DefaultDebounceInterval (5s) — applied in WatcherConfig.SetDefaults
-	// when DebounceInterval is zero. The 5s value reduces reconciliation frequency
-	// and GC pressure during high EndpointSlice churn; lower it only if you have a
-	// resource that needs faster reaction and you've measured that it doesn't add
-	// to controller load.
+	// Default: DefaultDebounceInterval (1s) — applied in WatcherConfig.SetDefaults
+	// when DebounceInterval is zero. With leading-edge triggering, the first
+	// change in a quiet period fires immediately; only subsequent changes
+	// within the window are batched. Override only when a specific resource
+	// needs slower batching (e.g. high-volume EndpointSlice churn on large
+	// clusters where 1s renders are too frequent) or near-zero latency.
 	DebounceInterval time.Duration
 
 	// OnChange is called when resources in the store change.

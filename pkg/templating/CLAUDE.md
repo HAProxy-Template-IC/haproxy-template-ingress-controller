@@ -39,9 +39,12 @@ Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standa
 
 **DO NOT add functions that:**
 
-- Parse or navigate specific K8s resource structures (Service, Ingress, HTTPRoute, etc.)
+- Parse or navigate specific K8s resource structures (Service, Ingress, HTTPRoute, Gateway, GatewayClass, etc.)
 - Provide shortcuts for specific resource fields (e.g., `lookup_port_name(service, port)`)
 - Assume knowledge of any particular resource schema
+- Take an argument that *encodes* a resource path even if the function body is technically generic (e.g. `listenerTransitionTime(gateway, listenerName, type, status)` is wrong — the `gateway` + `listenerName` parameters embed `.status.listeners[byName].conditions` knowledge in the function signature)
+
+**Sweep when refactoring:** if you touch one resource-coupled helper, sweep ALL helpers in the package — `filters_status.go`, `filters_navigation.go`, etc. — and remove every other one too. The principle is per-package, not per-helper.
 
 **Instead:**
 

@@ -94,15 +94,33 @@ func TestStatusPatchCollector_Register(t *testing.T) {
 func TestStatusPatchCollector_Register_Validation(t *testing.T) {
 	c := NewStatusPatchCollector()
 
-	t.Run("empty namespace", func(t *testing.T) {
-		err := c.Register("", "name", "v1", "Pod", map[string]map[string]any{"deployed": {"a": 1}})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "required")
+	t.Run("empty namespace is allowed for cluster-scoped resources", func(t *testing.T) {
+		// Cluster-scoped resources (GatewayClass, ClusterRole, …)
+		// have no namespace; the Register validation explicitly
+		// accepts an empty namespace. The applier passes
+		// Namespace("") to the dynamic client, which client-go
+		// treats as cluster-scoped.
+		err := c.Register("", "haptic", "gateway.networking.k8s.io/v1", "GatewayClass",
+			map[string]map[string]any{"deployed": {"conditions": []any{}}})
+		assert.NoError(t, err)
 	})
 
 	t.Run("empty name", func(t *testing.T) {
 		err := c.Register("ns", "", "v1", "Pod", map[string]map[string]any{"deployed": {"a": 1}})
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "required")
+	})
+
+	t.Run("empty apiVersion", func(t *testing.T) {
+		err := c.Register("ns", "name", "", "Pod", map[string]map[string]any{"deployed": {"a": 1}})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "required")
+	})
+
+	t.Run("empty kind", func(t *testing.T) {
+		err := c.Register("ns", "name", "v1", "", map[string]map[string]any{"deployed": {"a": 1}})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "required")
 	})
 
 	t.Run("empty variants", func(t *testing.T) {

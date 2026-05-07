@@ -103,7 +103,7 @@ func buildLeaderElectionTwoReplicasFeature() types.Feature {
 
 			// Wait for leader election to complete
 			t.Log("Waiting for leader election...")
-			if err := WaitForLeaderElection(ctx, clientset, namespace, LeaderElectionLeaseName, PodRestartTimeout); err != nil {
+			if _, err := WaitForLeaderElection(ctx, clientset, namespace, LeaderElectionLeaseName, PodRestartTimeout); err != nil {
 				// Dump pod logs for debugging
 				t.Log("Leader election failed, dumping pod logs...")
 				pods, podErr := GetAllControllerPods(ctx, client, namespace)
@@ -339,15 +339,10 @@ func buildLeaderElectionFailoverFeature() types.Feature {
 				t.Fatal("Controller pods did not become ready:", err)
 			}
 
-			// Wait for leader election
-			if err := WaitForLeaderElection(ctx, clientset, namespace, LeaderElectionLeaseName, PodRestartTimeout); err != nil {
-				t.Fatal("Leader election did not complete:", err)
-			}
-
-			// Get initial leader
-			holderIdentity, err := GetLeaseHolder(ctx, clientset, namespace, LeaderElectionLeaseName)
+			// Wait for leader election (returns the stable holder identity)
+			holderIdentity, err := WaitForLeaderElection(ctx, clientset, namespace, LeaderElectionLeaseName, PodRestartTimeout)
 			if err != nil {
-				t.Fatal("Failed to get lease holder:", err)
+				t.Fatal("Leader election did not complete:", err)
 			}
 
 			t.Logf("✓ Initial leader elected: %s", holderIdentity)

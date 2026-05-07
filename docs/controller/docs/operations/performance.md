@@ -69,9 +69,9 @@ rate(container_cpu_usage_seconds_total{container="haptic"}[5m])
 
 ## Reconciliation Tuning
 
-### Debounce Interval (per-resource override, 5s default)
+### Debounce Interval (per-resource override, 1s default)
 
-The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 5-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 5 s are batched.
+The resource watchers coalesce bursts of Kubernetes events via a leading-edge debouncer with a 1-second refractory period (`pkg/k8s/types.DefaultDebounceInterval`). The first change in a quiet period fires immediately, so isolated updates are fast; only subsequent changes arriving within 1 s are batched.
 
 Each watched resource can override the window via `spec.watchedResources.<name>.debounceInterval`:
 
@@ -80,20 +80,20 @@ watchedResources:
   httproutes:
     apiVersion: gateway.networking.k8s.io/v1
     resources: httproutes
-    debounceInterval: "500ms"  # react fast on canary rollouts
+    debounceInterval: "200ms"  # react fast on canary rollouts
   endpointslices:
     apiVersion: discovery.k8s.io/v1
     resources: endpointslices
     debounceInterval: "30s"    # absorb churn on large clusters
 ```
 
-Empty / invalid strings fall back to the 5s default silently. The Reconciler downstream applies its own *separate* leading-edge refractory (default 5s, configurable via `spec.controller.reconciliationDebounceInterval`) on top of the per-watcher window — see [architecture-overview](../development/design/architecture-overview.md) for the two-layer flow.
+Empty / invalid strings fall back to the 1s default silently. The Reconciler downstream applies its own *separate* leading-edge refractory (default 1s, configurable via `spec.controller.reconciliationDebounceInterval`) on top of the per-watcher window — see [architecture-overview](../development/design/architecture-overview.md) for the two-layer flow.
 
 If you need to change the global default in a custom build, edit `DefaultDebounceInterval` in `pkg/k8s/types/types.go`.
 
 ### Reconciliation Pacing
 
-`spec.controller.reconciliationDebounceInterval` (default 5s) is the leading-edge refractory window the Reconciler applies between resource-change events and a render+deploy cycle. The first change after the window fires immediately; further changes within the window are batched and the timer fires once at window end. Lower it for faster response on small clusters; raise it on high-churn clusters to absorb more changes per render.
+`spec.controller.reconciliationDebounceInterval` (default 1s) is the leading-edge refractory window the Reconciler applies between resource-change events and a render+deploy cycle. The first change after the window fires immediately; further changes within the window are batched and the timer fires once at window end. Lower it for faster response on small clusters; raise it on high-churn clusters to absorb more changes per render.
 
 ### Deployment Pacing
 
@@ -538,7 +538,7 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 ### Initial Deployment
 
 - [ ] Set appropriate resource requests/limits
-- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the 5s default is wrong for a specific kind (e.g. faster on HTTPRoute, slower on EndpointSlice)
+- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the 1s default is wrong for a specific kind (e.g. slower on EndpointSlice on large clusters)
 - [ ] Set HAProxy maxconn based on expected load
 - [ ] Match nbthread to CPU allocation
 

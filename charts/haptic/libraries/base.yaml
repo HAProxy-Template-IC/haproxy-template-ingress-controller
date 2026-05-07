@@ -124,6 +124,7 @@ templateSnippets:
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }})
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Regex > Prefix-exact > Prefix
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
@@ -186,6 +187,7 @@ templateSnippets:
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }})
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Prefix-exact > Prefix > Regex
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
@@ -461,6 +463,9 @@ templateSnippets:
         Used By:
           - status-patches-200-ingress
           - status-patches-200-gateway
+
+        Not used by:
+          - status-patches-100-gatewayclass — GatewayClass status doesn't carry addresses.
       -#}
 
       {#- Ensure globalFeatures is initialized (may not exist if SSL library is disabled) -#}
@@ -497,8 +502,41 @@ templateSnippets:
             }
           }
         }
+
+        // Cluster-IP fallback: when no LoadBalancer ingress is
+        // available (NodePort / ClusterIP service types, bare-metal
+        // clusters without metallb), fall back to the service's own
+        // ClusterIPs so Gateway/Ingress status carries SOMETHING. The
+        // fallback runs only when LB discovery returned nothing — we
+        // don't want to mix LB-external IPs with cluster-internal
+        // IPs in the same status block.
+        if len(addresses) == 0 {
+          for _, svc := range resources.controller_services.List() {
+            var clusterIPs = dig(svc, "spec", "clusterIPs") | toSlice()
+            for _, ip := range clusterIPs {
+              var ipStr = tostring(ip)
+              // "None" is a sentinel for headless services and is
+              // never a routable IP. Skip empty values too.
+              if ipStr != "" && ipStr != "None" {
+                if !seen[ipStr+"/"] {
+                  seen[ipStr+"/"] = true
+                  addresses = append(addresses, map[string]any{"ip": ipStr})
+                }
+              }
+            }
+          }
+        }
         var statusPatchesDisabled bool = extraContext | dig("statusPatchesDisabled") | fallback(false)
-        if !statusPatchesDisabled && len(addresses) > 0 {
+        if !statusPatchesDisabled {
+          // Always set gf["addresses"] when status patches are enabled
+          // (even as an empty slice). Downstream snippets gate on
+          // `gf["addresses"] != nil`, so leaving it nil would suppress
+          // ALL status patches — including Gateway Accepted=True, which
+          // the Gateway API spec requires regardless of whether the
+          // implementation has assigned an external address yet.
+          // Empty addresses → conditions still get written; the macros
+          // surface that as Programmed=False / AddressNotAssigned via
+          // the deployFailed variant.
           gf["addresses"] = addresses
         }
       %%}
@@ -665,6 +703,17 @@ maps:
     template: |
       # Host to normalized host mapping (strips port, wildcards)
       {{- render_glob "map-host-*" -}}
+
+  host-regex.map:
+    template: |
+      # Wildcard hostname matches via regex. Used as a fallback after
+      # exact host.map lookup and the single-label regsub-strip miss,
+      # to handle multi-label hosts under a wildcard listener (e.g.
+      # `multiple.prefixes.bar.com` against an `*.bar.com` listener).
+      # Each entry: <regex pattern> <normalized host key>. The
+      # normalized key reuses the existing `.<wildcard-suffix>` form
+      # so the downstream path-map lookups don't need to change.
+      {{- render_glob "map-host-regex-*" -}}
 
   path-exact.map:
     template: |
