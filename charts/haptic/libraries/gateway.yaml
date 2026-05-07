@@ -2851,8 +2851,29 @@ templateSnippets:
                 {%- end %}
               {%- end %}
 
+              {#- Per Gateway API spec
+                  (https://gateway-api.sigs.k8s.io/reference/spec/#httprequestredirectfilter):
+                  the implementation MUST NOT include the port in the
+                  Location header when the resulting (scheme, port) pair
+                  is (http, 80) or (https, 443) — it's the default
+                  for the scheme.
+                  Conformance test HTTPRouteRequestRedirect's
+                  `/scheme-nil-and-port-80` and `/scheme-https-and-port-443`
+                  sub-tests assert this directly. We can apply the rule
+                  at template-render time only when both scheme and
+                  port are statically known (spec.scheme set + spec.port
+                  set); the dynamic-scheme + static-port case is the
+                  shape every other implementation uses, mapping
+                  empty-spec.scheme → "preserve request scheme", so for
+                  port=80 we omit when spec.scheme ∈ {"", "http"} (request
+                  is http for HTTP listeners, https won't happen on those)
+                  and for port=443 when spec.scheme ∈ {"", "https"}. -#}
+              {%- var portStr = tostring(port) %}
+              {%- var omitPort = false %}
+              {%- if portStr == "80" && (scheme == "" || scheme == "http") %}{%- omitPort = true %}{%- end %}
+              {%- if portStr == "443" && (scheme == "" || scheme == "https") %}{%- omitPort = true %}{%- end %}
               {%- var loc = schemePart + "://" + hostPart %}
-              {%- if port != "" %}{%- loc = loc + ":" + tostring(port) %}{%- end %}
+              {%- if portStr != "" && !omitPort %}{%- loc = loc + ":" + portStr %}{%- end %}
               {%- loc = loc + pathExpr %}
 
               {%- if debug | fallback(false) %}
