@@ -76,6 +76,24 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+HAProxy pod selector labels — match the labelset the HAProxy Deployment
+applies to its Pods. Templates that emit Services targeting the shared
+HAProxy front-door use this so Service.spec.selector resolves to the
+right pods. The labelset is the chart-wide selectorLabels plus the
+component=loadbalancer discriminator that distinguishes HAProxy pods
+from controller / spoa-hub / dataplane-api pods.
+
+This helper exists so templates which emit per-Gateway LoadBalancer
+Services via renderResource() (SupportGatewayStaticAddresses) can
+construct the same selector the chart's static haproxy-service.yaml
+uses, keeping the two in lockstep automatically.
+*/}}
+{{- define "haptic.haproxy.selectorLabels" -}}
+{{ include "haptic.selectorLabels" . }}
+app.kubernetes.io/component: loadbalancer
+{{- end }}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "haptic.serviceAccountName" -}}

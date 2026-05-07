@@ -58,6 +58,17 @@ spec:
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
+  {{- /* Controller's own namespace + HAProxy pod selector. Templates that
+         emit owned resources via renderResource() (e.g. per-Gateway
+         LoadBalancer Services for SupportGatewayStaticAddresses) need
+         both: the namespace because the resourceapplier refuses to
+         apply outside the controller's namespace by default, and the
+         selector so the spawned Service routes traffic to the shared
+         HAProxy pods. We compute these here from chart values once
+         rather than asking Scriggo to reach for them. */ -}}
+  {{- $_ := set $extraContext "controllerNamespace" .Release.Namespace }}
+  {{- $_ := set $extraContext "haproxyPodSelector" (include "haptic.haproxy.selectorLabels" . | fromYaml) }}
+
   {{- /* Pass spoaHub wiring through extraContext when the sidecar is
          enabled AND at least one plugin contributes an SPOE message.
          The spoa-hub template library reads this to render spoe.conf
