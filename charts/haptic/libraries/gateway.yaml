@@ -344,6 +344,7 @@ templateSnippets:
   # listener whose `port` matches.
   features-110-gateway-frontend-mtls:
     template: |
+      {{ render "util-effective-listeners" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var clientCertVerifyHosts map[string]any = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) %}
       {%- for _, gateway := range resources.gateways.List() %}
@@ -451,11 +452,10 @@ templateSnippets:
           for _, l := range gwSpec | dig("listeners") | toSlice() {
             allListeners = append(allListeners, l)
           }
-          var allowed = gwSpec | dig("allowedListeners")
-          var allowedFrom = "None"
-          if allowed != nil {
-            allowedFrom = tostring(allowed | dig("namespaces", "from") | fallback("None"))
-          }
+          // Read pre-computed admission state from the
+          // listenersetStatuses cache (populated by util-effective-
+          // listeners) so the gate matches what F3 emits as
+          // Accepted/Programmed conditions on each ListenerSet.
           for _, ls := range resources.listenersets.List() {
             var pRef = dig(ls, "spec", "parentRef")
             if tostring(dig(pRef, "name") | fallback("")) != gwName {
@@ -466,12 +466,18 @@ templateSnippets:
             if pNs != gwNs {
               continue
             }
+            var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+            var lsKey = lsNs + "/" + lsName
+            var statusesAny = shared.Get("listenersetStatuses")
             var permitted = false
-            switch allowedFrom {
-            case "All":
-              permitted = true
-            case "Same":
-              permitted = (lsNs == gwNs)
+            if statusesAny != nil {
+              var statuses, ok = statusesAny.(map[string]any)
+              if ok {
+                var entryAny, hasEntry = statuses[lsKey]
+                if hasEntry {
+                  permitted = entryAny.(map[string]any)["permitted"].(bool)
+                }
+              }
             }
             if !permitted {
               continue
@@ -527,6 +533,91 @@ templateSnippets:
           return analysis
         })
       %%}
+
+  util-listenerset-routing-gate:
+    template: |
+      {#-
+        IsListenerSetAdmitted — the routing-layer ListenerSet gate.
+
+        Returns "true" / "false" — Scriggo macro return-type constraint
+        (text-format only). Callers compare with `== "true"`.
+
+        Implements the same gate util-effective-listeners uses, in macro
+        form so the routing sites (multi-port-bind, misdirected map,
+        host-map, mTLS) can apply it without re-deriving the logic. The
+        F3 status patch (status-patches-220-listenerset) reads the
+        listenersetStatuses cache directly rather than calling this
+        macro, but they agree on the gate result.
+
+        Gate:
+          1. parentRef.name + parentRef.namespace points at `gw`
+          2. allowedListeners admits this LS's namespace
+             (default-deny → deny; from=All → admit; from=Same →
+             ns equality; from=Selector → matchLabels against
+             resources.namespaces[lsNs].metadata.labels)
+          3. cross-namespace parentRef requires a ReferenceGrant in
+             the Gateway's namespace permitting from
+             {ListenerSet, lsNs} to {Gateway, gwName}.
+      -#}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- macro IsListenerSetAdmitted(gw any, ls any) -%}
+        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) -%}
+        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) -%}
+        {%- var pRef = dig(ls, "spec", "parentRef") -%}
+        {%- var result = "false" -%}
+        {%- if tostring(dig(pRef, "name") | fallback("")) == gwName -%}
+          {%- var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback("")) -%}
+          {%- var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs)) -%}
+          {%- if pNs == gwNs -%}
+            {%- var allowed = dig(gw, "spec", "allowedListeners") -%}
+            {%- var allowedFrom = "None" -%}
+            {%- var allowedSelector any = nil -%}
+            {%- if allowed != nil -%}
+              {%- allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None")) -%}
+              {%- allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels") -%}
+            {%- end -%}
+            {%- var permitted = "false" -%}
+            {%- if allowedFrom == "All" -%}
+              {%- permitted = "true" -%}
+            {%- else if allowedFrom == "Same" -%}
+              {%- if lsNs == gwNs -%}
+                {%- permitted = "true" -%}
+              {%- end -%}
+            {%- else if allowedFrom == "Selector" -%}
+              {%- if allowedSelector != nil -%}
+                {%- var nsObj = resources.namespaces.GetSingle(lsNs) -%}
+                {%- if nsObj != nil -%}
+                  {%- var nsLabels = dig(nsObj, "metadata", "labels") -%}
+                  {%- if nsLabels != nil -%}
+                    {%- var nsMap = nsLabels.(map[string]any) -%}
+                    {%- var selMap = allowedSelector.(map[string]any) -%}
+                    {%- var allMatch = "true" -%}
+                    {%- for k, v := range selMap -%}
+                      {%- var actual, ok = nsMap[k] -%}
+                      {%- if !ok -%}
+                        {%- allMatch = "false" -%}
+                      {%- else if tostring(actual) != tostring(v) -%}
+                        {%- allMatch = "false" -%}
+                      {%- end -%}
+                    {%- end -%}
+                    {%- permitted = allMatch -%}
+                  {%- end -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+            {%- if permitted == "true" -%}
+              {%- if lsNs == gwNs -%}
+                {%- result = "true" -%}
+              {%- else -%}
+                {%- if ReferenceGrantPermitted("gateway.networking.k8s.io", "ListenerSet", lsNs, "gateway.networking.k8s.io", "Gateway", gwNs, gwName) == "true" -%}
+                  {%- result = "true" -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {{ result -}}
+      {%- end macro -%}
 
   util-effective-listeners:
     template: |
@@ -2501,29 +2592,18 @@ templateSnippets:
           so non-default HTTP ports declared on either get a bind line.
           Inlines the F3 allowedListeners gate (default-deny when unset;
           from=Same admits ListenerSets in the parent's namespace,
-          from=All admits everywhere) so binds match what
-          status-patches-220-listenerset accepts.
-
-          We iterate directly rather than through the
-          util-effective-listeners cache because the cache stores the
-          per-Gateway listener slice as `any` and the type assertion
-          for `map[string][]any` is brittle in the Scriggo runtime —
-          duplicating the gate logic here is ~20 lines and avoids that
-          fragility. The conflict-detection / RG / Selector handling
-          stays in util-effective-listeners (and is consumed by the
-          status-patch loop), so the routing layer doesn't need to
-          re-compute that part. -#}
+          from=All admits everywhere; from=Selector matches the
+          ListenerSet's namespace labels against
+          allowedListeners.namespaces.selector.matchLabels) plus the
+          cross-namespace ReferenceGrant gate, so binds match what
+          status-patches-220-listenerset accepts. -#}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- var defaultPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
       {%- var seen = map[int]bool{} %}
       {%- seen[defaultPort] = true %}
       {%- for _, gw := range resources.gateways.List() | toSlice() %}
         {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
         {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
-        {%- var gwKey = gwNs + "/" + gwName %}
-        {#- Walk Gateway listeners + accepted ListenerSet listeners. We iterate
-            the Gateway's own listeners first (always accepted) then the
-            ListenerSets attached to this Gateway, applying the same
-            allowedListeners gate util-effective-listeners uses. -#}
         {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
           {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
           {%- if protocol == "HTTP" %}
@@ -2534,35 +2614,15 @@ templateSnippets:
             {%- end %}
           {%- end %}
         {%- end %}
-        {#- ListenerSet listeners. Apply the F3 allowedListeners gate inline
-            so binds match what status-patches-220-listenerset accepts. -#}
-        {%- var allowed = dig(gw, "spec", "allowedListeners") %}
-        {%- var allowedFrom = "None" %}
-        {%- if allowed != nil %}
-          {%- allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None")) %}
-        {%- end %}
         {%- for _, ls := range resources.listenersets.List() | toSlice() %}
-          {%- var pRef = dig(ls, "spec", "parentRef") %}
-          {%- if tostring(dig(pRef, "name") | fallback("")) == gwName %}
-            {%- var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback("")) %}
-            {%- var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs)) %}
-            {%- if pNs == gwNs %}
-              {%- var permitted = false %}
-              {%- if allowedFrom == "All" %}
-                {%- permitted = true %}
-              {%- else if allowedFrom == "Same" %}
-                {%- permitted = (lsNs == gwNs) %}
-              {%- end %}
-              {%- if permitted %}
-                {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-                  {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
-                  {%- if protocol == "HTTP" %}
-                    {%- var port = toint(listener | dig("port") | fallback(0)) %}
-                    {%- if port > 0 && !seen[port] %}
-                      {%- seen[port] = true %}
+          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+              {%- if protocol == "HTTP" %}
+                {%- var port = toint(listener | dig("port") | fallback(0)) %}
+                {%- if port > 0 && !seen[port] %}
+                  {%- seen[port] = true %}
       bind *:{{ port }}
-                    {%- end %}
-                  {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}
@@ -2594,6 +2654,7 @@ templateSnippets:
   # Otherwise the listener doesn't own the requested host → 421.
   frontend-extra-100-gateway-misdirected:
     template: |
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- var exactEntries = []any{} %}
       {%- var regexEntries = []any{} %}
       {%- for _, gw := range resources.gateways.List() | toSlice() %}
@@ -2618,40 +2679,20 @@ templateSnippets:
         {%- end %}
         {#- Walk accepted ListenerSet listeners on this Gateway too so
             the misdirected-listener detection covers ListenerSet-claimed
-            HTTPS hostnames. Apply the same allowedListeners gate
-            util-effective-listeners uses (default-deny when
-            allowedListeners is unset; from=Same / from=All admit). -#}
-        {%- var allowed = dig(gw, "spec", "allowedListeners") %}
-        {%- var allowedFrom = "None" %}
-        {%- if allowed != nil %}
-          {%- allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None")) %}
-        {%- end %}
+            HTTPS hostnames. -#}
         {%- for _, ls := range resources.listenersets.List() | toSlice() %}
-          {%- var pRef = dig(ls, "spec", "parentRef") %}
-          {%- if tostring(dig(pRef, "name") | fallback("")) == gwName %}
-            {%- var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback("")) %}
-            {%- var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs)) %}
-            {%- if pNs == gwNs %}
-              {%- var permitted = false %}
-              {%- if allowedFrom == "All" %}
-                {%- permitted = true %}
-              {%- else if allowedFrom == "Same" %}
-                {%- permitted = (lsNs == gwNs) %}
-              {%- end %}
-              {%- if permitted %}
-                {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-                  {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
-                  {%- if protocol == "HTTPS" || protocol == "TLS" %}
-                    {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
-                    {%- if lh != "" %}
-                      {%- if regex_search(lh, "^\\*\\.") %}
-                        {%- var suffix = lh[2:] %}
-                        {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
-                        {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
-                      {%- else %}
-                        {%- exactEntries = append(exactEntries, lh + " " + lh) %}
-                      {%- end %}
-                    {%- end %}
+          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+              {%- if protocol == "HTTPS" || protocol == "TLS" %}
+                {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+                {%- if lh != "" %}
+                  {%- if regex_search(lh, "^\\*\\.") %}
+                    {%- var suffix = lh[2:] %}
+                    {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
+                    {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
+                  {%- else %}
+                    {%- exactEntries = append(exactEntries, lh + " " + lh) %}
                   {%- end %}
                 {%- end %}
               {%- end %}
@@ -8561,6 +8602,275 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
+
+  test-listenerset-allowed-namespace-selector:
+    description: |
+      `allowedListeners.namespaces.from=Selector` admits ListenerSets
+      whose namespace's labels match the selector's matchLabels, denies
+      others. Pins the ListenerSetAllowedNamespaceSelector conformance
+      test status assertion. Includes a ReferenceGrant in the Gateway's
+      namespace covering both candidate ListenerSet namespaces — RG
+      matching is independent of the Selector gate, so a permitted
+      ListenerSet still needs an RG to attach cross-namespace.
+    fixtures:
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: rg-allow-listenersets
+            namespace: default
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: selector-allowed-ns
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: selector-not-allowed-ns
+            to:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: selector-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: selector-not-allowed-ns
+            labels:
+              other: label
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-selector
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Selector
+                selector:
+                  matchLabels:
+                    allowed: ns
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-permitted
+            namespace: selector-allowed-ns
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-selector
+              namespace: default
+            listeners:
+              - name: extra-permitted
+                protocol: HTTP
+                port: 8082
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-denied
+            namespace: selector-not-allowed-ns
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-selector
+              namespace: default
+            listeners:
+              - name: extra-denied
+                protocol: HTTP
+                port: 8083
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8082'
+        description: Permitted ListenerSet's port must be bound
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8083'
+        description: Denied ListenerSet's port must NOT be bound
+
+  test-listenerset-cross-namespace-parentref-without-grant:
+    description: |
+      ListenerSet in a different namespace from its parent Gateway
+      (with allowedListeners.from=All) must still be rejected when no
+      ReferenceGrant in the Gateway's namespace permits the cross-ns
+      parentRef from {ListenerSet, lsNs} to {Gateway, gwName}.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-allow-all
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-cross-ns-no-grant
+            namespace: tenant-a
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-allow-all
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8090'
+        description: Cross-ns ListenerSet without RG must NOT be bound
+
+  test-listenerset-cross-namespace-parentref-with-grant:
+    description: |
+      ListenerSet in a different namespace from its parent Gateway
+      (with allowedListeners.from=All) must be admitted when a
+      ReferenceGrant in the Gateway's namespace permits the cross-ns
+      parentRef.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-allow-all
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-cross-ns-with-grant
+            namespace: tenant-a
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-allow-all
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8091
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: rg-allow-ls
+            namespace: default
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: tenant-a
+            to:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: gw-allow-all
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8091'
+        description: Cross-ns ListenerSet WITH RG must be bound
+
+  test-listenerset-listener-multi-port-bind:
+    description: |
+      Multi-port HTTP bind must include ports declared on accepted
+      ListenerSet listeners (in addition to the Gateway's own listeners).
+      Pins the routing-layer side of F2 listener-merge integration.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-port-with-ls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-listener
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: extra-ports-ls
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: multi-port-with-ls
+            listeners:
+              - name: extra-1
+                protocol: HTTP
+                port: 8085
+              - name: extra-2
+                protocol: HTTP
+                port: 8086
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:80\b'
+        description: Gateway's HTTP listener must be bound on port 80
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8085\b'
+        description: Accepted ListenerSet listener must be bound on port 8085
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8086\b'
+        description: Accepted ListenerSet listener must be bound on port 8086
 
   test-httproute-request-redirect-default-port-omission:
     description: |
