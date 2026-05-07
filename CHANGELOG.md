@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- New `renderResource()` template function lets templates declare full Kubernetes resources for the controller to own and reconcile via Server-Side Apply. Mirrors `statusPatch()` but for whole resources rather than `.status` sub-paths. Resource-agnostic — the controller never names "Service" or "Gateway"; templates emit any apiVersion/kind. The new leader-only `resourceapplier` component subscribes to template-render + reconciliation events, applies via SSA with field manager `haptic`, prunes orphans (resources no longer in the rendered set), and dedupes redundant API calls via per-resource SHA-256 checksum cache. `RestrictToOwnNamespace=true` defense-in-depth refuses cross-namespace and cluster-scoped applies even if RBAC were misconfigured. Dry-run paths (testrunner, dryrunvalidator, webhook) are structurally safe — they don't publish the events the applier subscribes to, and the per-render `RenderedResourceCollector` is discarded by validation callers; see `pkg/controller/resourceapplier/README.md` for the full safety contract.
+
 ### Fixed
 
 - ConfigChangeHandler now triggers iteration restart on credentials-Secret and webhook-cert Secret rotation, not only on CRD changes. Previously the certloader / credentialsloader would publish `CertParsedEvent` / `CredentialsUpdatedEvent` into the void — components held references to whichever PEM bytes they parsed at startup, so rotating the underlying Secret silently left the running pod serving the stale cert (or stale credentials) until it was manually restarted. The handler now records each Secret's resourceVersion at iteration startup and signals reinitialization through the existing `configChangeCh` path the moment a watcher event reports a different version. The next iteration re-fetches the rotated Secret as part of `fetchAndValidateInitialConfig` and constructs a fresh webhook server / dataplane client with the new bytes — no per-component hot-rotation, just one reload path that already covers CRD changes too.
