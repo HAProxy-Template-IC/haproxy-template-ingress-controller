@@ -6925,6 +6925,85 @@ validationTests:
         pattern: 'http-request redirect location "https://new\.example\.com%\[var\(txn\.gw_redirect_path\)\]" code 301 if'
         description: Must emit redirect with full Location URL referencing the rewritten path
 
+  test-httproute-request-redirect-default-port-omission:
+    description: |
+      RequestRedirect MUST NOT include the port in Location when the
+      resulting (scheme, port) pair is the scheme's default
+      ((http, 80) or (https, 443)) per Gateway API spec. Conformance
+      test HTTPRouteRequestRedirect's `/scheme-nil-and-port-80` and
+      `/scheme-https-and-port-443` sub-tests assert this directly;
+      previously the chart appended the port unconditionally and both
+      sub-tests silently failed.
+    fixtures:
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: redirect-default-ports
+            namespace: default
+          spec:
+            hostnames:
+              - example.org
+            rules:
+              # Empty spec.scheme + port:80 → http://example.org (no :80)
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /scheme-nil-and-port-80
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      hostname: example.org
+                      port: 80
+                      statusCode: 302
+              # spec.scheme=https + port:443 → https://example.org (no :443)
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /scheme-https-and-port-443
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: https
+                      hostname: example.org
+                      port: 443
+                      statusCode: 302
+              # Non-default port stays in Location: spec.scheme=http + port:8080.
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /non-default-port
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      scheme: http
+                      hostname: example.org
+                      port: 8080
+                      statusCode: 302
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'http://example\.org:80(?:[^0-9]|$)'
+        description: |
+          (http, 80) is the http scheme's default port — Location
+          must omit it. Detects the unconditional-append regression.
+          Anchor with non-digit lookahead so `:80` doesn't match `:8080`.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'https://example\.org:443(?:[^0-9]|$)'
+        description: |
+          (https, 443) is the https scheme's default port — Location
+          must omit it.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http://example\.org:8080'
+        description: Non-default ports remain in Location (sanity check)
+
   test-httproute-url-rewrite:
     description: HTTPRoute with URLRewrite filter (hostname and path rewrite)
     fixtures:
