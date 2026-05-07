@@ -2743,6 +2743,11 @@ templateSnippets:
           {%- if len(exposeList) > 0 %}
       http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found }
           {%- end %}
+      {# A literal blank-line separator — the `{%-` end markers below strip
+         the trailing whitespace + newline of the prior directive, which
+         fuses successive routes' last + first CORS directives onto one
+         malformed line. The `{% show "\n" %}` is the only Scriggo form
+         that survives the strip. #}{% show "\n" %}
         {%- end %}
       {%- end %}
   # Filter: RequestRedirect - redirects requests to different locations
