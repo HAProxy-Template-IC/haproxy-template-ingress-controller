@@ -2465,10 +2465,33 @@ templateSnippets:
   # binds are emitted by a sibling snippet (https-bind-extra-*).
   http-bind-extra-050-gateway-multi-port-bind:
     template: |
+      {#- Walk Gateway-owned listeners + accepted ListenerSet listeners
+          so non-default HTTP ports declared on either get a bind line.
+          Inlines the F3 allowedListeners gate (default-deny when unset;
+          from=Same admits ListenerSets in the parent's namespace,
+          from=All admits everywhere) so binds match what
+          status-patches-220-listenerset accepts.
+
+          We iterate directly rather than through the
+          util-effective-listeners cache because the cache stores the
+          per-Gateway listener slice as `any` and the type assertion
+          for `map[string][]any` is brittle in the Scriggo runtime —
+          duplicating the gate logic here is ~20 lines and avoids that
+          fragility. The conflict-detection / RG / Selector handling
+          stays in util-effective-listeners (and is consumed by the
+          status-patch loop), so the routing layer doesn't need to
+          re-compute that part. -#}
       {%- var defaultPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
       {%- var seen = map[int]bool{} %}
       {%- seen[defaultPort] = true %}
       {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
+        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+        {%- var gwKey = gwNs + "/" + gwName %}
+        {#- Walk Gateway listeners + accepted ListenerSet listeners. We iterate
+            the Gateway's own listeners first (always accepted) then the
+            ListenerSets attached to this Gateway, applying the same
+            allowedListeners gate util-effective-listeners uses. -#}
         {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
           {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
           {%- if protocol == "HTTP" %}
@@ -2476,6 +2499,40 @@ templateSnippets:
             {%- if port > 0 && !seen[port] %}
               {%- seen[port] = true %}
       bind *:{{ port }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {#- ListenerSet listeners. Apply the F3 allowedListeners gate inline
+            so binds match what status-patches-220-listenerset accepts. -#}
+        {%- var allowed = dig(gw, "spec", "allowedListeners") %}
+        {%- var allowedFrom = "None" %}
+        {%- if allowed != nil %}
+          {%- allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None")) %}
+        {%- end %}
+        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+          {%- var pRef = dig(ls, "spec", "parentRef") %}
+          {%- if tostring(dig(pRef, "name") | fallback("")) == gwName %}
+            {%- var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback("")) %}
+            {%- var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs)) %}
+            {%- if pNs == gwNs %}
+              {%- var permitted = false %}
+              {%- if allowedFrom == "All" %}
+                {%- permitted = true %}
+              {%- else if allowedFrom == "Same" %}
+                {%- permitted = (lsNs == gwNs) %}
+              {%- end %}
+              {%- if permitted %}
+                {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+                  {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+                  {%- if protocol == "HTTP" %}
+                    {%- var port = toint(listener | dig("port") | fallback(0)) %}
+                    {%- if port > 0 && !seen[port] %}
+                      {%- seen[port] = true %}
+      bind *:{{ port }}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -2508,6 +2565,8 @@ templateSnippets:
       {%- var exactEntries = []any{} %}
       {%- var regexEntries = []any{} %}
       {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
+        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
         {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
           {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
           {%- if protocol == "HTTPS" || protocol == "TLS" %}
@@ -2521,6 +2580,48 @@ templateSnippets:
                 {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
               {%- else %}
                 {%- exactEntries = append(exactEntries, lh + " " + lh) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {#- Walk accepted ListenerSet listeners on this Gateway too so
+            the misdirected-listener detection covers ListenerSet-claimed
+            HTTPS hostnames. Apply the same allowedListeners gate
+            util-effective-listeners uses (default-deny when
+            allowedListeners is unset; from=Same / from=All admit). -#}
+        {%- var allowed = dig(gw, "spec", "allowedListeners") %}
+        {%- var allowedFrom = "None" %}
+        {%- if allowed != nil %}
+          {%- allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None")) %}
+        {%- end %}
+        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+          {%- var pRef = dig(ls, "spec", "parentRef") %}
+          {%- if tostring(dig(pRef, "name") | fallback("")) == gwName %}
+            {%- var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback("")) %}
+            {%- var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs)) %}
+            {%- if pNs == gwNs %}
+              {%- var permitted = false %}
+              {%- if allowedFrom == "All" %}
+                {%- permitted = true %}
+              {%- else if allowedFrom == "Same" %}
+                {%- permitted = (lsNs == gwNs) %}
+              {%- end %}
+              {%- if permitted %}
+                {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+                  {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+                  {%- if protocol == "HTTPS" || protocol == "TLS" %}
+                    {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+                    {%- if lh != "" %}
+                      {%- if regex_search(lh, "^\\*\\.") %}
+                        {%- var suffix = lh[2:] %}
+                        {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
+                        {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
+                      {%- else %}
+                        {%- exactEntries = append(exactEntries, lh + " " + lh) %}
+                      {%- end %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
