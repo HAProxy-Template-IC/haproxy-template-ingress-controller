@@ -29,4 +29,20 @@ rules:
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxymapfiles/status"]
     verbs: ["get", "update", "patch"]
+  # Services (namespace-scoped — tightens blast radius)
+  #
+  # Templates that declare Kubernetes resources via the renderResource()
+  # template function need RBAC on those resource types. The
+  # GatewayStaticAddresses feature spawns one LoadBalancer Service per
+  # Gateway with spec.addresses[] in *this* (controller) namespace, with
+  # spec.loadBalancerIP plumbed from the Gateway's spec.addresses[].value.
+  # Same pattern every other Gateway API implementation uses
+  # (envoy-gateway, cilium, istio, NGF) — but scoped to the controller's
+  # namespace via Role (not ClusterRole) so a misbehaving template can't
+  # escalate beyond the controller's own namespace, even if the
+  # in-process RestrictToOwnNamespace guard in resourceapplier were
+  # somehow bypassed.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 {{- end }}
