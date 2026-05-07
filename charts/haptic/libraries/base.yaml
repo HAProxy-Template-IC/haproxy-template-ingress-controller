@@ -866,6 +866,9 @@ haproxyConfig:
     frontend http_frontend
         guid fe:http_frontend
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
+        {# Extension point for additional bind directives (Gateway listener ports, etc.). #}
+        {# Only fires inside the HTTP frontend; ssl.yaml has its own https-bind-extra-* hook. #}
+        {{- render_glob "http-bind-extra-*" | indent(2, true) }}
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
         {{- render_glob "frontend-extra-*" | indent(2, true) }}

@@ -2100,16 +2100,14 @@ templateSnippets:
   # Comparing via strcmp(<var>) in a converter chain — sample-fetch
   # to-sample-fetch comparison isn't expressible with `-m str`, but
   # strcmp returns 0 on equality which we negate.
-  # gateway/frontend-extra-050-gateway-multi-port-bind:
+  # gateway/http-bind-extra-050-gateway-multi-port-bind:
   # Emits an additional `bind *:<port>` directive for every unique
-  # non-default Gateway listener port we observe. Without this the HTTP
-  # frontend only listens on the chart's `httpPort`, so any HTTPRoute
-  # whose parent listener uses a different port (e.g. 8090) is
-  # unreachable. The default port (`httpPort`) is already bound by
-  # base.yaml; we filter it out so we don't emit a duplicate bind line.
-  # HTTPS listeners are intentionally excluded — TLS binds need a crt
-  # list and live in ssl.yaml.
-  frontend-extra-050-gateway-multi-port-bind:
+  # non-default Gateway HTTP listener port we observe. Hooks into the
+  # HTTP-frontend-only http-bind-extra-* extension point so the binds
+  # don't double-render into the HTTPS frontend (where they would
+  # conflict with the existing https port bind). HTTPS-listener-port
+  # binds are emitted by a sibling snippet (https-bind-extra-*).
+  http-bind-extra-050-gateway-multi-port-bind:
     template: |
       {%- var defaultPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
       {%- var seen = map[int]bool{} %}
@@ -2689,44 +2687,61 @@ templateSnippets:
           {%- if originRegex != "" %}
             {%- originCond = originCond + " { req.fhdr(Origin) -m reg \"" + originRegex + "\" }" %}
           {%- end %}
-          {#- HAProxy caps each directive at 64 tokens; one big
-              http-request return with all CORS headers blew that limit.
-              We split into:
-                1. set-var(txn.gw_cors_preflight) on preflight match
-                2. http-request return status 200 if preflight
-                3. http-response set-header per CORS header — preflight
-                   ones gated on txn.gw_cors_preflight, always-on ones
-                   on Origin + rule match.
-              http-response runs after http-request return too, so the
-              synthetic 200 picks up all the response-side directives. #}
+          {#- HAProxy quirk: synthetic responses from `http-request return`
+              do NOT flow through the frontend http-response phase, so any
+              CORS response header set via `http-response set-header` is
+              dropped on the floor for preflight requests. We carry the
+              CORS headers inline on the `http-request return` directive
+              itself (via repeated `hdr <name> <value>` arguments), which
+              is the only way they reach the synthesised 200 / 204
+              response. Simple (non-preflight) cross-origin responses
+              still flow through the backend, so for those we keep the
+              http-response set-header path which DOES apply on
+              backend-served responses. -#}
       http-request set-var(txn.gw_cors_origin) req.fhdr(Origin) if {{ originCond }} {{ ruleCond }}
-      http-request set-var(txn.gw_cors_preflight) str(1) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
           {%- if len(headersList) > 0 && headersList[0] == "*" %}
-      http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if { var(txn.gw_cors_preflight) -m str "1" }
+      http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
           {%- end %}
-      http-request return status 200 if { var(txn.gw_cors_preflight) -m str "1" }
+          {#- Build the http-request return directive's hdr arguments.
+              All CORS preflight responses share the same set of mandatory
+              headers; some are gated on policy options (allowCreds,
+              exposeHeaders, headers list, maxAge). HAProxy caps each
+              directive at 64 tokens; the smallest practical CORS policy
+              already needs ~10 hdr triples (3 tokens each) plus the
+              return statement itself, so the chart prefers the inline
+              hdr form over multiple set-header lines. -#}
+          {%- var preflightHdrs = []any{} %}
+          {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-origin \"%[var(txn.gw_cors_origin)]\"") %}
+          {%- if allowCreds %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-credentials \"true\"") %}
+          {%- end %}
+          {%- if len(methodsList) > 0 %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"" + join(methodsList, ", ") + "\"") %}
+          {%- end %}
+          {%- if len(headersList) > 0 %}
+            {%- if headersList[0] == "*" %}
+              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"%[var(txn.gw_cors_acrh)]\"") %}
+            {%- else %}
+              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"" + join(headersList, ", ") + "\"") %}
+            {%- end %}
+          {%- end %}
+          {%- if toint(maxAge) > 0 %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-max-age \"" + tostring(maxAge) + "\"") %}
+          {%- end %}
+          {%- if len(exposeList) > 0 %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + join(exposeList, ", ") + "\"") %}
+          {%- end %}
+      http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
+          {#- Simple cross-origin responses (non-preflight): backend-served
+              responses still flow through http-response normally so the
+              set-header path works. Same allow-origin / allow-credentials
+              / expose-headers semantics as preflight. -#}
       http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found }
           {%- if allowCreds %}
       http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found }
           {%- end %}
           {%- if len(exposeList) > 0 %}
       http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found }
-          {%- end %}
-          {#- Preflight-only response headers — gated on
-              txn.gw_cors_preflight so they don't appear on
-              regular cross-origin responses. -#}
-          {%- if len(methodsList) > 0 %}
-      http-response set-header "access-control-allow-methods" "{{ join(methodsList, ", ") }}" if { var(txn.gw_cors_preflight) -m str "1" }
-          {%- end %}
-          {%- if len(headersList) > 0 %}
-            {%- if headersList[0] == "*" %}
-      http-response set-header "access-control-allow-headers" "%[var(txn.gw_cors_acrh)]" if { var(txn.gw_cors_preflight) -m str "1" } { var(txn.gw_cors_acrh) -m found }
-            {%- else %}
-      http-response set-header "access-control-allow-headers" "{{ join(headersList, ", ") }}" if { var(txn.gw_cors_preflight) -m str "1" }
-            {%- end %}
-          {%- end %}
-          {%- if toint(maxAge) > 0 %}
-      http-response set-header "access-control-max-age" "{{ maxAge }}" if { var(txn.gw_cors_preflight) -m str "1" }
           {%- end %}
         {%- end %}
       {%- end %}
@@ -7148,28 +7163,23 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request set-var\\(txn\\.gw_cors_preflight\\) str\\(1\\) if METH_OPTIONS"
-        description: Must emit gw_cors_preflight set-var
+        pattern: "http-request return status 200 hdr access-control-allow-origin .* if METH_OPTIONS \\{ var\\(txn\\.gw_cors_origin\\) -m found \\} \\{ req\\.fhdr\\(Access-Control-Request-Method\\) -m found \\}"
+        description: Inline return status 200 carries CORS preflight headers (synthetic responses skip http-response phase)
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request return status 200 if \\{ var\\(txn\\.gw_cors_preflight\\) -m str \"1\" \\}"
-        description: Must emit return status 200 for preflight
+        pattern: "hdr access-control-allow-methods \"GET, POST\""
+        description: Preflight return includes allow-methods header
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "hdr access-control-allow-headers \"X-Custom-Header\""
+        description: Preflight return includes allow-headers header
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-response set-header \"access-control-allow-origin\" \"%\\[var\\(txn\\.gw_cors_origin\\)\\]\""
-        description: Must emit allow-origin response header
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-response set-header \"access-control-allow-methods\" \"GET, POST\""
-        description: Must emit allow-methods response header
-
-      - type: contains
-        target: haproxy.cfg
-        pattern: "http-response set-header \"access-control-allow-headers\" \"X-Custom-Header\""
-        description: Must emit allow-headers response header
+        description: Simple cross-origin (backend-served) responses emit allow-origin via http-response set-header
 
   test-httproute-backend-request-header-modifier:
     description: HTTPRoute with per-backendRef RequestHeaderModifier emits set-header in correct backend
@@ -7411,8 +7421,8 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request return status 200 if \\{ var\\(txn\\.gw_cors_preflight\\) -m str \"1\" \\}"
-        description: CORS template must emit return 200 for preflight
+        pattern: "http-request return status 200 hdr access-control-allow-origin .* if METH_OPTIONS \\{ var\\(txn\\.gw_cors_origin\\) -m found \\}"
+        description: CORS template must emit inline-hdr return 200 for preflight
 
   test-gateway-https-misdirected-listener-claim-maps:
     description: HTTPS listener hostnames are emitted as listener-claim maps and the misdirected directive references them
