@@ -61,7 +61,7 @@ variables:
         - .tool-versions
         - Makefile
         - Dockerfile
-        - scripts/**
+        - scripts/**/*
         - .gitlab-ci.yml
         - .golangci.yml
         # Config files (ensures lint job runs for config-only changes)
@@ -74,14 +74,14 @@ variables:
 .rules-helm:
   rules:
     - changes:
-        - charts/**
+        - charts/**/*
         - .gitlab-ci.yml
 
 .rules-docs:
   rules:
     - changes:
-        - docs/**
-        - charts/**/docs/**
+        - docs/**/*
+        - charts/**/docs/**/*
         - charts/**/mkdocs.yml
         - .gitlab-ci.yml
 
@@ -399,7 +399,7 @@ test:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**
+        - charts/**/*
         - .gitlab-ci.yml
   before_script:
     - haproxy -v
@@ -610,8 +610,8 @@ publish-chart-snapshot:
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
         - scripts/start-dev-env.sh
-        - tests/e2e/**
-        - scripts/dev-env-assets/**
+        - tests/e2e/**/*
+        - scripts/dev-env-assets/**/*
 
 # Chart-side trigger for the SPOA image-build pipeline. Composed with
 # `.rules-spoa` (via `!reference`) on `prep-spoa-plugins` and
@@ -644,8 +644,8 @@ publish-chart-snapshot:
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
         - scripts/start-dev-env.sh
-        - tests/e2e/**
-        - scripts/dev-env-assets/**
+        - tests/e2e/**/*
+        - scripts/dev-env-assets/**/*
 
 # Drift guard: the bundled-versions table in spoa-hub.md is auto-rendered
 # from versions-spoa.env. Fail CI if the doc and the env file disagree.
@@ -1143,8 +1143,8 @@ test-acceptance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**
-        - scripts/**
+        - charts/**/*
+        - scripts/**/*
         - .gitlab-ci.yml
   before_script:
     - |
@@ -1330,8 +1330,8 @@ test-gateway-conformance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**
-        - scripts/**
+        - charts/**/*
+        - scripts/**/*
         - .gitlab-ci.yml
   before_script:
     # Reuse the test-e2e prep: pull the controller + spoa-hub snapshots
@@ -1675,8 +1675,8 @@ pages-preview:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &pages-preview-changes
-        - docs/**
-        - charts/**/docs/**
+        - docs/**/*
+        - charts/**/docs/**/*
         - charts/**/mkdocs.yml
   script:
     - |
