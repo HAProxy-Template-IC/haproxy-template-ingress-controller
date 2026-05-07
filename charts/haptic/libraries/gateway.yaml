@@ -3146,6 +3146,137 @@ templateSnippets:
             var nsStr = tostring(namespace)
             var nameStr = tostring(name)
 
+            // Static-addresses handling (per Gateway).
+            //
+            // SupportGatewayStaticAddresses lets users pin a Gateway to a
+            // specific IP via spec.addresses[]. Per the universal pattern
+            // every other Gateway API implementation follows (envoy-gateway,
+            // cilium, istio, NGF), we provision a per-Gateway LoadBalancer
+            // Service in the controller's own namespace with
+            // spec.loadBalancerIP set from the Gateway's spec.addresses[].value.
+            // MetalLB / cloud LB-IPAM does the actual binding; the shared
+            // HAProxy serves the traffic via the Service's selector.
+            //
+            // We never bind HAProxy itself to specific IPs — that would
+            // require per-Gateway HAProxy instances, a different product
+            // architecture. Instead we let MetalLB issue the user-requested
+            // IP to a per-Gateway Service that points to the same shared
+            // HAProxy pods.
+            //
+            // Gateway API status conditions per spec:
+            //   Accepted=False/UnsupportedAddress when spec.addresses
+            //     contains a type the implementation doesn't support
+            //     (anything other than IPAddress / Hostname / NamedAddress).
+            //   Programmed=False/AddressNotUsable when spec.addresses are
+            //     all of supported types but at least one isn't realized
+            //     by the LB (e.g. MetalLB hasn't allocated yet, or the
+            //     requested IP is outside any IPAddressPool).
+            //   status.addresses contains only those spec.addresses that
+            //     are supported AND realized by the LB. Empty when none
+            //     are realized; full LB-discovered set when spec.addresses
+            //     is unset (no per-Gateway pinning).
+            var gwSpecAddrs []any = dig(gateway, "spec", "addresses") | toSlice()
+            var gwAcceptedStatus = "True"
+            var gwAcceptedReason = "Accepted"
+            var gwAcceptedMessage = "Gateway accepted"
+            var gwEffectiveAddresses []any = gatewayAddresses
+            var hasUnsupportedAddrType = false
+            var hasUnusableAddr = false
+            if gwSpecAddrs != nil && len(gwSpecAddrs) > 0 {
+              var validIPs = []any{}
+              for _, addr := range gwSpecAddrs {
+                var addrType = tostring(dig(addr, "type") | fallback("IPAddress"))
+                var addrValue = tostring(dig(addr, "value") | fallback(""))
+                if addrType != "IPAddress" && addrType != "Hostname" && addrType != "NamedAddress" {
+                  hasUnsupportedAddrType = true
+                  continue
+                }
+                if addrType == "IPAddress" && addrValue != "" {
+                  validIPs = append(validIPs, addrValue)
+                }
+              }
+              if hasUnsupportedAddrType {
+                gwAcceptedStatus = "False"
+                gwAcceptedReason = "UnsupportedAddress"
+                gwAcceptedMessage = "spec.addresses contains an unsupported address type"
+                gwEffectiveAddresses = []any{}
+              } else if len(validIPs) > 0 {
+                // Emit a per-Gateway LoadBalancer Service in the controller
+                // namespace. RBAC scopes Service create to that namespace
+                // (chart Role, not ClusterRole), and resourceapplier's
+                // RestrictToOwnNamespace=true enforces the same boundary.
+                var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+                var podSelector = extraContext | dig("haproxyPodSelector")
+                if ctrlNs != "" && podSelector != nil {
+                  var svcName = "gw-" + nsStr + "-" + nameStr
+                  var svcPorts = []any{}
+                  var seenPorts = map[int]bool{}
+                  for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
+                    var lport = toint(dig(listener, "port") | fallback(0))
+                    if lport <= 0 || seenPorts[lport] {
+                      continue
+                    }
+                    seenPorts[lport] = true
+                    svcPorts = append(svcPorts, map[string]any{
+                      "name":       "p" + tostring(lport),
+                      "port":       lport,
+                      "targetPort": lport,
+                      "protocol":   "TCP",
+                    })
+                  }
+                  if len(svcPorts) > 0 {
+                    // Set spec.loadBalancerIP to the first IPAddress; if
+                    // the user listed multiple, the others get reported
+                    // as "not usable" since a single Service can only
+                    // bind one IP. Operators wanting multi-IP Gateways
+                    // need multiple Gateway resources.
+                    var firstIP = tostring(validIPs[0])
+                    renderResource("v1", "Service", ctrlNs, svcName, map[string]any{
+                      "spec": map[string]any{
+                        "type":           "LoadBalancer",
+                        "loadBalancerIP": firstIP,
+                        "selector":       podSelector,
+                        "ports":          svcPorts,
+                      },
+                    })
+
+                    // Read the Service back to determine which spec.addresses
+                    // are actually realized. resources.services watches all
+                    // Services across the cluster, so this works even though
+                    // the Service we just emitted was applied by the
+                    // resourceapplier (not by us inline) — by the next
+                    // reconciliation, the watcher will have it.
+                    var svc = resources.services.GetSingle(ctrlNs, svcName)
+                    var realizedIPs = map[string]bool{}
+                    if svc != nil {
+                      for _, ing := range dig(svc, "status", "loadBalancer", "ingress") | toSlice() {
+                        var realIP = tostring(dig(ing, "ip") | fallback(""))
+                        if realIP != "" {
+                          realizedIPs[realIP] = true
+                        }
+                      }
+                    }
+
+                    // status.addresses = intersection(spec, realized).
+                    // Every spec address not in realized contributes to
+                    // AddressNotUsable below.
+                    gwEffectiveAddresses = []any{}
+                    for _, validIP := range validIPs {
+                      var ipStr = tostring(validIP)
+                      if realizedIPs[ipStr] {
+                        gwEffectiveAddresses = append(gwEffectiveAddresses, map[string]any{
+                          "type":  "IPAddress",
+                          "value": ipStr,
+                        })
+                      } else {
+                        hasUnusableAddr = true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
             // Pre-compute per-listener data the deployed and deployFailed
             // variants both consume. Specifically: allowedRoutes.kinds
             // intersection with the protocol-default kinds (per Gateway
@@ -3601,9 +3732,21 @@ templateSnippets:
               }
             }
 
+            // Static-addresses Programmed override: spec.addresses set,
+            // types all valid, but at least one isn't realized by the LB
+            // yet → Programmed=False/AddressNotUsable per Gateway API
+            // spec. Listener-side Programmed problems (cert refs, etc.)
+            // already detected above take precedence — the most specific
+            // failure wins.
+            if hasUnusableAddr && gwProgrammedStatus == "True" {
+              gwProgrammedStatus = "False"
+              gwProgrammedReason = "AddressNotUsable"
+              gwProgrammedMessage = "Some addresses in spec.addresses are not yet realized by the LoadBalancer"
+            }
+
             var gwTopConditions = []any{
-              condition("Accepted", "True", "Accepted", "Gateway accepted",
-                generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
+              condition("Accepted", gwAcceptedStatus, gwAcceptedReason, gwAcceptedMessage,
+                generation, TopLevelTransitionTime(gateway, "Accepted", gwAcceptedStatus)),
               condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
                 generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
               condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
@@ -3613,20 +3756,20 @@ templateSnippets:
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
-                  "addresses":  gatewayAddresses,
+                  "addresses":  gwEffectiveAddresses,
                   "conditions": gwTopConditions,
                   "listeners":  deployedListeners,
                 },
                 "deployed": map[string]interface{}{
-                  "addresses":  gatewayAddresses,
+                  "addresses":  gwEffectiveAddresses,
                   "conditions": gwTopConditions,
                   "listeners":  deployedListeners,
                 },
                 "deployFailed": map[string]interface{}{
                   "addresses": []any{},
                   "conditions": []any{
-                    condition("Accepted", "True", "Accepted", "Gateway accepted",
-                      generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
+                    condition("Accepted", gwAcceptedStatus, gwAcceptedReason, gwAcceptedMessage,
+                      generation, TopLevelTransitionTime(gateway, "Accepted", gwAcceptedStatus)),
                     condition("Programmed", "False", "AddressNotAssigned", "Gateway addresses not yet assigned",
                       generation, TopLevelTransitionTime(gateway, "Programmed", "False")),
                     condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
