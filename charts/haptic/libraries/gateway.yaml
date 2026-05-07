@@ -62,6 +62,15 @@ watchedResources:
     enableValidationWebhook: true
     statusPatch: true
 
+  tlsroutes:
+    # Gateway API v1.5 ships TLSRoute on the Standard channel with v1
+    # served+storage (v1alpha2 / v1alpha3 are still served for backwards
+    # compatibility). The conformance fixtures use the v1 apiVersion.
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: tlsroutes
+    indexBy: ["metadata.namespace", "metadata.name"]
+    statusPatch: true
+
   services:
     apiVersion: v1
     resources: services
@@ -486,37 +495,132 @@ templateSnippets:
       {#-
         Effective listeners per Gateway = the Gateway's own
         spec.listeners + spec.listeners from every accepted ListenerSet
-        whose parentRef points at it.
+        whose parentRef points at it AND whose listener does not lose a
+        precedence-based hostname/protocol conflict.
 
         Caches a `map[gatewayKey][]listener` in shared so each
         consumer pays one ComputeIfAbsent + one map-key lookup
-        regardless of how many sites read it.
+        regardless of how many sites read it. Also caches a per-
+        ListenerSet acceptance/conflict map under
+        "listenersetStatuses" so the F3 status patch and the routing
+        sites agree byte-for-byte on which listeners survived.
 
         Each listener entry is a map[string]any with the original
         Listener fields plus a `_source` provenance map carrying
-        {kind: "Gateway"|"ListenerSet", namespace, name}. Status
-        patching uses _source to split conditions back to the right
-        owning resource; routing/binding/cert-collection sites can
-        treat the merged set uniformly.
+        {kind: "Gateway"|"ListenerSet", namespace, name}, an
+        `_index` field with the listener's position in its owning
+        resource (used for transition-time keying), and an `_accepted`
+        bool indicating whether the listener's owning resource passed
+        the parent gate. Routing/binding sites can treat the merged
+        set uniformly; status patching consumes the auxiliary
+        listenersetStatuses cache for per-listener conditions.
 
-        The acceptance gate mirrors the F3 status-patches snippet:
-        default-deny when allowedListeners is unset; from=All admits
-        every namespace; from=Same admits ListenerSets in the parent
-        Gateway's namespace; from=Selector is conservatively denied
-        until selector matching against `resources.namespaces` lands
-        in a follow-up.
+        Acceptance gate (matches the F3 status patch byte-for-byte):
+          default-deny when allowedListeners is unset
+          from=All       admit every namespace
+          from=Same      admit ListenerSets in the parent Gateway namespace
+          from=Selector  admit when the ListenerSet namespace labels
+                         match allowedListeners.namespaces.selector.matchLabels
+          cross-namespace parentRef requires a ReferenceGrant in the
+          Gateway namespace permitting from {ListenerSet, lsNs} to
+          {Gateway, gwName}.
+
+        Conflict detection (per Gateway API spec):
+          ProtocolConflict - multiple listeners on the same port use
+            different protocols. Earlier (Gateway > earlier ListenerSet
+            > later ListenerSet, then index) wins.
+          HostnameConflict - multiple listeners on the same port use
+            the same hostname. Earlier wins.
+          Conflicting losers are dropped from the active routing set
+          but recorded in listenersetStatuses for status emission.
       -#}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
+          // listenersetStatuses[<ns>/<name>] = map carrying the
+          // pre-computed acceptance state F3 emits as conditions.
+          // Fields:
+          //   permitted (bool)        - passed allowedListeners + RG gate
+          //   rejectionReason (string)
+          //   rejectionMessage (string)
+          //   listenerConflicts ([]any) - per-listener {name, index,
+          //     conflicted (string or ""), accepted (bool)}.
+          var statuses = map[string]any{}
+
           var out = map[string][]any{}
+
           for _, gw := range resources.gateways.List() {
             var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
             var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
             var gwKey = gwNs + "/" + gwName
-            var listeners = []any{}
 
-            // Gateway's own listeners.
-            for _, l := range dig(gw, "spec", "listeners") | toSlice() {
+            // Determine the Gateway allowedListeners gate once per
+            // Gateway. A Gateway with no allowedListeners default-denies
+            // (per Gateway API spec for SupportListenerSet).
+            var allowed = dig(gw, "spec", "allowedListeners")
+            var allowedFrom = "None"
+            var allowedSelector any = nil
+            if allowed != nil {
+              allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
+              allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels")
+            }
+
+            // Sort the ListenerSets attached to this Gateway by
+            // (creationTimestamp, namespace, name) so precedence is
+            // deterministic across renders.
+            var attachedSets = []any{}
+            for _, ls := range resources.listenersets.List() {
+              var pRef = dig(ls, "spec", "parentRef")
+              if tostring(dig(pRef, "name") | fallback("")) != gwName {
+                continue
+              }
+              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+              if pNs != gwNs {
+                continue
+              }
+              attachedSets = append(attachedSets, ls)
+            }
+            // Bubble-sort: O(n^2) but ListenerSet counts per Gateway are
+            // tiny (<10 typical, hundreds in pathological cases). Avoids
+            // pulling in a Scriggo sort helper.
+            for i := 0; i < len(attachedSets); i++ {
+              for j := i + 1; j < len(attachedSets); j++ {
+                var a = attachedSets[i]
+                var b = attachedSets[j]
+                var aTs = tostring(dig(a, "metadata", "creationTimestamp") | fallback(""))
+                var bTs = tostring(dig(b, "metadata", "creationTimestamp") | fallback(""))
+                var aKey = tostring(dig(a, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(a, "metadata", "name") | fallback(""))
+                var bKey = tostring(dig(b, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(b, "metadata", "name") | fallback(""))
+                var swap = false
+                if aTs == bTs {
+                  if aKey > bKey {
+                    swap = true
+                  }
+                } else if aTs == "" {
+                  // Empty creationTimestamp sorts last so resources without
+                  // an explicit timestamp (test fixtures) don't displace
+                  // real ListenerSets in production.
+                  swap = true
+                } else if bTs != "" && aTs > bTs {
+                  swap = true
+                }
+                if swap {
+                  attachedSets[i] = b
+                  attachedSets[j] = a
+                }
+              }
+            }
+
+            // Build the candidate listener list for conflict detection.
+            // Each entry is a map carrying the listener fields plus
+            // _source / _index / _accepted (bool - whether this
+            // listener owning resource passed the parent gate).
+            var candidates = []any{}
+
+            // Gateway own listeners come first; they always pass the
+            // parent gate (no ListenerSet involved), so _accepted=true.
+            for li, l := range dig(gw, "spec", "listeners") | toSlice() {
               var lc = map[string]any{}
               if m, ok := l.(map[string]any); ok {
                 for k, v := range m {
@@ -528,48 +632,83 @@ templateSnippets:
                 "namespace": gwNs,
                 "name":      gwName,
               }
-              listeners = append(listeners, lc)
+              lc["_index"] = li
+              lc["_accepted"] = true
+              candidates = append(candidates, lc)
             }
 
-            // ListenerSets whose parentRef points at this Gateway.
-            // resources.listenersets is indexed by metadata.namespace +
-            // spec.parentRef.name (see watchedResources). Fetch returns
-            // every ListenerSet in any namespace whose parentRef.name
-            // matches; we filter further by parentRef.namespace below.
-            // Use List() + manual filter when index miss is acceptable
-            // (cluster-wide ListenerSet count is small).
-            for _, ls := range resources.listenersets.List() {
-              var pRef = dig(ls, "spec", "parentRef")
-              var pName = tostring(dig(pRef, "name") | fallback(""))
-              if pName != gwName {
-                continue
-              }
+            // ListenerSet listeners, in precedence order.
+            for _, ls := range attachedSets {
               var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
-              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
-              if pNs != gwNs {
-                continue
-              }
+              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+              var lsKey = lsNs + "/" + lsName
 
-              // Acceptance gate. Matches F3's logic byte-for-byte
-              // so status and routing agree on which sets are live.
-              var allowed = dig(gw, "spec", "allowedListeners")
-              var allowedFrom = "None"
-              if allowed != nil {
-                allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
-              }
+              // Parent acceptance gate.
               var permitted = false
+              var rejectionReason = "NotAllowed"
+              var rejectionMessage = "Parent Gateway does not allow ListenerSets from this namespace"
               switch allowedFrom {
               case "All":
                 permitted = true
               case "Same":
                 permitted = (lsNs == gwNs)
-              }
-              if !permitted {
-                continue
+              case "Selector":
+                if allowedSelector == nil {
+                  permitted = false
+                } else {
+                  var nsObj = resources.namespaces.GetSingle(lsNs)
+                  if nsObj == nil {
+                    permitted = false
+                  } else {
+                    var nsLabels = dig(nsObj, "metadata", "labels")
+                    if nsLabels == nil {
+                      permitted = false
+                    } else {
+                      var nsMap = nsLabels.(map[string]any)
+                      var allMatch = true
+                      for k, v := range allowedSelector.(map[string]any) {
+                        var actual, ok = nsMap[k]
+                        if !ok || tostring(actual) != tostring(v) {
+                          allMatch = false
+                          break
+                        }
+                      }
+                      permitted = allMatch
+                    }
+                  }
+                }
+              default:
+                permitted = false
               }
 
-              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
-              for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+              // Cross-namespace parentRef -> require a ReferenceGrant in
+              // the Gateway namespace permitting this ListenerSet.
+              if permitted && lsNs != gwNs {
+                var rg = ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                  "gateway.networking.k8s.io", "Gateway", gwNs, gwName)
+                if rg != "true" {
+                  permitted = false
+                  rejectionReason = "NotAllowed"
+                  rejectionMessage = "Cross-namespace parentRef from " + lsNs + " requires a ReferenceGrant in " + gwNs
+                }
+              }
+
+              // Pre-stash the per-LS status entry so F3 can read it
+              // back. listenerConflicts gets filled in further below
+              // after conflict detection runs.
+              statuses[lsKey] = map[string]any{
+                "permitted":         permitted,
+                "rejectionReason":   rejectionReason,
+                "rejectionMessage":  rejectionMessage,
+                "listenerConflicts": []any{},
+              }
+
+              // Even when not permitted we still want listener entries
+              // for the per-listener status output (Programmed=False/
+              // NotAllowed flows via _accepted=false). They are flagged
+              // _accepted=false so routing/binding loops skip them.
+              for li, l := range dig(ls, "spec", "listeners") | toSlice() {
                 var lc = map[string]any{}
                 if m, ok := l.(map[string]any); ok {
                   for k, v := range m {
@@ -581,12 +720,99 @@ templateSnippets:
                   "namespace": lsNs,
                   "name":      lsName,
                 }
-                listeners = append(listeners, lc)
+                lc["_index"] = li
+                lc["_accepted"] = permitted
+                candidates = append(candidates, lc)
               }
             }
 
+            // Conflict detection across the precedence-ordered list.
+            //   ProtocolConflict - multiple listeners on the same port
+            //     with different protocols. Earlier (higher precedence)
+            //     wins; later listeners get Conflicted=True/ProtocolConflict.
+            //   HostnameConflict - multiple listeners on the same port
+            //     using the same hostname. Earlier wins; later listeners
+            //     get Conflicted=True/HostnameConflict.
+            var winningProtoByPort = map[int]string{}
+            var claimedHostByPort = map[string]bool{}
+            for ci := 0; ci < len(candidates); ci++ {
+              var lc = candidates[ci].(map[string]any)
+              if !lc["_accepted"].(bool) {
+                continue
+              }
+              var port = toint(lc["port"] | fallback(0))
+              var protocol = tostring(lc["protocol"] | fallback("HTTP"))
+              if port <= 0 {
+                continue
+              }
+              var winner, hasWinner = winningProtoByPort[port]
+              if !hasWinner {
+                winningProtoByPort[port] = protocol
+              } else if winner != protocol {
+                lc["_conflicted"] = "ProtocolConflict"
+                continue
+              }
+              var hostname = tostring(lc["hostname"] | fallback(""))
+              var hostKey = tostring(port) + "|" + hostname
+              if claimedHostByPort[hostKey] {
+                lc["_conflicted"] = "HostnameConflict"
+                continue
+              }
+              claimedHostByPort[hostKey] = true
+            }
+
+            // Surface per-listener conflicts back into the
+            // listenersetStatuses map so F3 can emit them as
+            // Conflicted=True/<reason> on the ListenerSet
+            // status.listeners[].
+            for ci := 0; ci < len(candidates); ci++ {
+              var lc = candidates[ci].(map[string]any)
+              var src = lc["_source"].(map[string]any)
+              if tostring(src["kind"]) != "ListenerSet" {
+                continue
+              }
+              var lsKey = tostring(src["namespace"]) + "/" + tostring(src["name"])
+              var entry = statuses[lsKey].(map[string]any)
+              var conflicts = entry["listenerConflicts"].([]any)
+              var conflictReason = ""
+              var c, hasC = lc["_conflicted"]
+              if hasC {
+                conflictReason = tostring(c)
+              }
+              conflicts = append(conflicts, map[string]any{
+                "name":           tostring(lc["name"] | fallback("")),
+                "index":          lc["_index"],
+                "conflicted":     conflictReason,
+                "accepted":       lc["_accepted"],
+              })
+              entry["listenerConflicts"] = conflicts
+              statuses[lsKey] = entry
+            }
+
+            // Routing/binding/cert sites consume the merged list. Drop
+            // entries whose owning ListenerSet was not permitted (they
+            // do not program into HAProxy) and entries flagged
+            // _conflicted (a conflicting listener does not program; its
+            // claim is held by the precedence-winning sibling).
+            var listeners = []any{}
+            for _, c := range candidates {
+              var lc = c.(map[string]any)
+              if !lc["_accepted"].(bool) {
+                continue
+              }
+              if _, conflicted := lc["_conflicted"]; conflicted {
+                continue
+              }
+              listeners = append(listeners, lc)
+            }
             out[gwKey] = listeners
           }
+
+          // Cache the per-LS status map under a separate key so F3
+          // does not re-derive the gate / RG / conflict logic.
+          var _, _ = shared.ComputeIfAbsent("listenersetStatuses", func() any {
+            return statuses
+          })
           return out
         })
       %}
