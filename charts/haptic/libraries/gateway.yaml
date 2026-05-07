@@ -1979,6 +1979,7 @@ templateSnippets:
       {%- var btlsCaPath = "" -%}
       {%- var btlsHostname = "" -%}
       {%- var btlsConflictedReason = "" -%}
+      {%- var btlsBroken = false -%}
       {#- gw client-cert: per Gateway API spec, when the route's parent
           Gateway carries `spec.tls.backend.clientCertificateRef`, the
           backend connection MUST present that cert. Resolve once per
@@ -2095,6 +2096,15 @@ templateSnippets:
           } else if wkca == "System" {
             btlsCaPath = "@system-ca"
           }
+          // Per Gateway API spec, when a BackendTLSPolicy targets a
+          // backend but its caCertificateRefs all fail to resolve (and
+          // no System wellKnownCACertificates fallback), the policy is
+          // *invalid* and the backend MUST not be reachable — clients
+          // must see 5xx, not be silently downgraded to plaintext.
+          // Conformance: BackendTLSPolicyInvalidCACertificateRef.
+          if btlsCaPath == "" {
+            btlsBroken = true
+          }
         }
         // Resolve gateway client cert ref via the route's parentRefs.
         // Walk the route's parents in declaration order and pick the
@@ -2158,6 +2168,13 @@ templateSnippets:
       {%- else if gwClientCertPath != "" %} ssl verify none
       {%- end -%}
       {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
+      {%- end %}
+      {%- if btlsBroken %}
+          # BackendTLSPolicy targeting this backend has unresolved
+          # caCertificateRefs (and no wellKnownCACertificates: System
+          # fallback). Refuse all traffic per Gateway API spec —
+          # silently downgrading to plaintext would defeat the policy.
+          http-request return status 503
       {%- end %}
       {#- Per-rule HTTPRoute timeouts: applied here in the backend
           (HAProxy doesn't allow `set-timeout server` in the frontend
@@ -10871,6 +10888,101 @@ validationTests:
         target: haproxy.cfg
         pattern: "default-server check ssl ca-file [^\\s]+ verify required sni str\\(backend\\.example\\.com\\) verifyhost backend\\.example\\.com"
         description: Targeted backend default-server gets ssl/ca-file/verify/sni from the policy
+
+  test-backendtlspolicy-invalid-ca-cert-ref-rejects:
+    description: |
+      BackendTLSPolicy with caCertificateRefs that don't resolve (no
+      matching ConfigMap or Secret in the cluster) and no
+      wellKnownCACertificates: System fallback marks the targeted
+      backend as broken. Per Gateway API spec the data plane must
+      refuse those requests rather than silently downgrading to
+      plaintext — pins conformance test
+      BackendTLSPolicyInvalidCACertificateRef.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend-svc
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 443
+                targetPort: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: backend-svc-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: backend-svc
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8443
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: btls-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gw
+            rules:
+              - backendRefs:
+                  - name: backend-svc
+                    port: 443
+      backendtlspolicies:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: BackendTLSPolicy
+          metadata:
+            name: btls-policy
+            namespace: gateway-conformance-infra
+          spec:
+            targetRefs:
+              - group: ""
+                kind: Service
+                name: backend-svc
+            validation:
+              caCertificateRefs:
+                - group: ""
+                  kind: ConfigMap
+                  name: nonexistent-ca-cm
+              hostname: backend.example.com
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid when a BackendTLSPolicy points at a missing CA ConfigMap
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request return status 503"
+        description: Backend with unresolvable BackendTLSPolicy refuses traffic (5xx)
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "default-server check ssl ca-file"
+        description: No ssl ca-file is emitted when caCertificateRefs failed to resolve
 
   test-gateway-http-listener-isolation:
     description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
