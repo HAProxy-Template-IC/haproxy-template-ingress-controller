@@ -96,7 +96,7 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
 
   backendtlspolicies:
-    apiVersion: gateway.networking.k8s.io/v1alpha3
+    apiVersion: gateway.networking.k8s.io/v1
     resources: backendtlspolicies
     indexBy: ["metadata.namespace", "metadata.name"]
     enableValidationWebhook: false
@@ -3990,7 +3990,7 @@ templateSnippets:
             var policyNs = tostring(dig(policy, "metadata", "namespace") | fallback(""))
             var policyName = tostring(dig(policy, "metadata", "name") | fallback(""))
             var generation = dig(policy, "metadata", "generation") | fallback(0)
-            var apiVersion = "gateway.networking.k8s.io/v1alpha3"
+            var apiVersion = "gateway.networking.k8s.io/v1"
             var kind = "BackendTLSPolicy"
 
             // Validate caCertificateRefs / wellKnownCACertificates.
@@ -7575,7 +7575,7 @@ validationTests:
                   - name: backend-svc
                     port: 443
       backendtlspolicies:
-        - apiVersion: gateway.networking.k8s.io/v1alpha3
+        - apiVersion: gateway.networking.k8s.io/v1
           kind: BackendTLSPolicy
           metadata:
             name: btls-policy
