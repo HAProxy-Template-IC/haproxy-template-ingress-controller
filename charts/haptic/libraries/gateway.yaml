@@ -5266,7 +5266,11 @@ templateSnippets:
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {% macro GenerateTLSRouteStatusPatches(routes []any) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
-        {%- var apiVersion = "gateway.networking.k8s.io/v1alpha2" %}
+        {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
+            was retired and the API server returns 404 on patch attempts to
+            gateway.networking.k8s.io/v1alpha2. Use v1 to match the
+            current CRD storageVersion. -#}
+        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
         {%- var kind = "TLSRoute" %}
 
         {%- var ourGateways = map[string]bool{} %}
