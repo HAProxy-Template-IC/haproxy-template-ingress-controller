@@ -53,6 +53,7 @@ import (
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
@@ -264,9 +265,12 @@ func discoverStaticAddressPools(ctx context.Context, restConfig *rest.Config) ([
 	// Pool addresses are recorded under spec.addresses as a string slice
 	// like ["172.18.255.200-172.18.255.250"]. Pull the high end (.249)
 	// for Usable; treat anything outside as Unusable.
-	addresses, found, _ := unstructuredNestedSlice(pool.Object, "spec", "addresses")
+	addresses, _, err := unstructured.NestedStringSlice(pool.Object, "spec", "addresses")
+	if err != nil {
+		return nil, nil, err
+	}
 	usableValue := "192.0.2.10"
-	if found && len(addresses) > 0 {
+	if len(addresses) > 0 {
 		// Best-effort parse of the first range entry's high octet+249.
 		// We intentionally pick a single deterministic IP rather than
 		// scanning for a free one; MetalLB takes care of allocation.
@@ -277,36 +281,6 @@ func discoverStaticAddressPools(ctx context.Context, restConfig *rest.Config) ([
 	usable := []v1beta1.GatewaySpecAddress{{Type: &ipAddr, Value: usableValue}}
 	unusable := []v1beta1.GatewaySpecAddress{{Type: &ipAddr, Value: "192.0.2.1"}}
 	return usable, unusable, nil
-}
-
-// unstructuredNestedSlice lifts nested string-slice access from
-// unstructured.Unstructured without introducing a hard dep on the
-// helper package. Returns (slice, found, error-not-applicable).
-func unstructuredNestedSlice(obj map[string]any, fields ...string) ([]string, bool, error) {
-	cur := any(obj)
-	for _, f := range fields {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false, nil
-		}
-		cur, ok = m[f]
-		if !ok {
-			return nil, false, nil
-		}
-	}
-	raw, ok := cur.([]any)
-	if !ok {
-		return nil, false, nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, e := range raw {
-		s, ok := e.(string)
-		if !ok {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out, true, nil
 }
 
 // pickAddressFromRange returns a single IP from a "<start>-<end>" range
