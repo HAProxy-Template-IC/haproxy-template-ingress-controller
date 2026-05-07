@@ -301,6 +301,154 @@ templateSnippets:
         %%}
       {%- end %}
 
+  # gateway/features-110-gateway-frontend-mtls:
+  #
+  # Implements GatewayFrontendClientCertificateValidation. When a Gateway
+  # carries `spec.tls.frontend.default.validation.caCertificateRefs` (or
+  # the per-port variant), HAProxy's bind line for that listener must
+  # carry `ca-file <path> verify required` so the TLS handshake demands
+  # a client certificate signed by the configured CA bundle.
+  #
+  # We piggyback on the existing per-SNI client-cert verify machinery
+  # in ssl.yaml: write the CA bundle into a registered file and
+  # register an entry in `clientCertVerifyHosts[sni]` for every
+  # SNI the listener exposes. The crt-list emitter picks up the
+  # ca-file/verify pair and adds it on the cert's crt-list line, so
+  # HAProxy applies the right CA per matched SNI.
+  #
+  # Per-port overrides are supported via spec.tls.frontend.perPort —
+  # a port entry's validation block replaces the default for any
+  # listener whose `port` matches.
+  features-110-gateway-frontend-mtls:
+    template: |
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var clientCertVerifyHosts map[string]any = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) %}
+      {%- for _, gateway := range resources.gateways.List() %}
+        {%%
+          var gwSpec = gateway | dig("spec")
+          if gwSpec == nil {
+            continue
+          }
+          var gwNs = tostring(gateway | dig("metadata", "namespace") | fallback(""))
+          var gwName = tostring(gateway | dig("metadata", "name") | fallback(""))
+          var frontend = gwSpec | dig("tls", "frontend")
+          if frontend == nil {
+            continue
+          }
+          var defaultValidation = frontend | dig("default", "validation")
+          var perPortValidations = map[int]any{}
+          for _, pp := range frontend | dig("perPort") | toSlice() {
+            var p = toint(pp | dig("port") | fallback(0))
+            if p > 0 {
+              var v = pp | dig("tls", "validation")
+              if v != nil {
+                perPortValidations[p] = v
+              }
+            }
+          }
+
+          // Helper: resolve a validation block to (caPath, "required")
+          // or ("", "") when it can't be resolved.
+          var resolveValidation = func(validation any, suffix string) (string, string) {
+            if validation == nil {
+              return "", ""
+            }
+            var refs []any = validation | dig("caCertificateRefs") | toSlice()
+            if refs == nil {
+              return "", ""
+            }
+            var parts = []any{}
+            for _, ref := range refs {
+              var refGroup = tostring(dig(ref, "group") | fallback(""))
+              var refKind = tostring(dig(ref, "kind") | fallback(""))
+              var refName = tostring(dig(ref, "name") | fallback(""))
+              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+                var cm = resources.configmaps.GetSingle(gwNs, refName)
+                if cm == nil {
+                  continue
+                }
+                var data = dig(cm, "data") | fallback(map[string]any{})
+                var dataMap = data.(map[string]any)
+                var caCrt, ok = dataMap["ca.crt"]
+                if ok && tostring(caCrt) != "" {
+                  parts = append(parts, tostring(caCrt))
+                }
+              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+                var sec = resources.secrets.GetSingle(gwNs, refName)
+                if sec == nil {
+                  continue
+                }
+                var data = dig(sec, "data") | fallback(map[string]any{})
+                var dataMap = data.(map[string]any)
+                var b64 = ""
+                var caCrt, ok = dataMap["ca.crt"]
+                if ok && tostring(caCrt) != "" {
+                  b64 = tostring(caCrt)
+                } else {
+                  var tlsCrt, ok2 = dataMap["tls.crt"]
+                  if ok2 && tostring(tlsCrt) != "" {
+                    b64 = tostring(tlsCrt)
+                  }
+                }
+                if b64 != "" {
+                  var decoded, decodeErr = b64decode(b64)
+                  if decodeErr == nil {
+                    parts = append(parts, decoded)
+                  }
+                }
+              }
+            }
+            if len(parts) == 0 {
+              return "", ""
+            }
+            var bundle = join(parts, "\n")
+            var fname = "frontend-mtls-" + gwNs + "-" + gwName + suffix + ".crt"
+            var p, fErr = fileRegistry.Register("file", fname, bundle)
+            if fErr != nil {
+              return "", ""
+            }
+            return p, "required"
+          }
+
+          var defaultPath, defaultMode = resolveValidation(defaultValidation, "-default")
+          var perPortResolved = map[int][]string{}
+          for port, v := range perPortValidations {
+            var p, m = resolveValidation(v, "-port-" + tostring(port))
+            if p != "" && m != "" {
+              perPortResolved[port] = []string{p, m}
+            }
+          }
+
+          for _, listener := range gwSpec | dig("listeners") | toSlice() {
+            var protocol = tostring(listener | dig("protocol") | fallback("HTTP"))
+            if protocol != "HTTPS" {
+              continue
+            }
+            var listenerPort = toint(listener | dig("port") | fallback(0))
+            var caPath = defaultPath
+            var verifyMode = defaultMode
+            var override, hasOverride = perPortResolved[listenerPort]
+            if hasOverride {
+              caPath = override[0]
+              verifyMode = override[1]
+            }
+            if caPath == "" || verifyMode == "" {
+              continue
+            }
+            var listenerHostname = tostring(listener | dig("hostname") | fallback(""))
+            var key = listenerHostname
+            if key == "" {
+              key = "*"
+            }
+            clientCertVerifyHosts[key] = map[string]any{
+              "ca_path":     caPath,
+              "verify_mode": verifyMode,
+            }
+          }
+        %%}
+      {%- end %}
+      {%- gf["clientCertVerifyHosts"] = clientCertVerifyHosts %}
+
   # ============================================================================
   # Route Analysis (Cached)
   # ============================================================================
