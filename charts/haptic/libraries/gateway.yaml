@@ -6372,10 +6372,23 @@ templateSnippets:
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {{ render "util-effective-listeners" }}
-      {%- var statusesAny, _ = shared.ComputeIfAbsent("listenersetStatuses", func() any {
-            return map[string]any{}
-          }) %}
-      {%- var statuses map[string]any = statusesAny.(map[string]any) %}
+      {#- Use shared.Get rather than ComputeIfAbsent. ComputeIfAbsent here
+          would race with util-effective-listeners' own nested call: if
+          this F3 macro reached its ComputeIfAbsent before util-effective-
+          listeners' inner write completed, F3's fallback (an empty map)
+          would land in the cache first and util-effective-listeners'
+          real statuses would be silently dropped. Manifested as every
+          ListenerSet emitting Accepted=False/Pending instead of the
+          intended NotAllowed / Accepted reasons (conformance:
+          ListenerSetAllowedNamespaceNone / ListenerSetAllowedNamespaceSame).
+          Get() reads whatever util-effective-listeners published; the
+          nil-fallback covers the (unreachable from this macro) case
+          where util-effective-listeners didn't run. -#}
+      {%- var statusesAny = shared.Get("listenersetStatuses") %}
+      {%- var statuses = map[string]any{} %}
+      {%- if statusesAny != nil %}
+        {%- statuses = statusesAny.(map[string]any) %}
+      {%- end %}
       {%- for _, ls := range resources.listenersets.List() %}
         {%%
           var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
