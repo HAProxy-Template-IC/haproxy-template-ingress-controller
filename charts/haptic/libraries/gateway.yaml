@@ -3189,7 +3189,15 @@ templateSnippets:
             var hasUnsupportedAddrType = false
             var hasUnusableAddr = false
             if gwSpecAddrs != nil && len(gwSpecAddrs) > 0 {
+              // Spec invariant: when spec.addresses is set the implementation
+              // honours *only* those addresses; the LB-derived gf["addresses"]
+              // set is no longer the source of truth. Reset upfront so a
+              // partial-realize path doesn't silently leak the LB IPs in
+              // status. Sets hasUnusableAddr unless every spec entry is
+              // realized below.
+              gwEffectiveAddresses = []any{}
               var validIPs = []any{}
+              var nonIPCount = 0
               for _, addr := range gwSpecAddrs {
                 var addrType = tostring(dig(addr, "type") | fallback("IPAddress"))
                 var addrValue = tostring(dig(addr, "value") | fallback(""))
@@ -3199,13 +3207,24 @@ templateSnippets:
                 }
                 if addrType == "IPAddress" && addrValue != "" {
                   validIPs = append(validIPs, addrValue)
+                } else {
+                  // Hostname / NamedAddress entries are spec-supported types
+                  // but the chart's shared-frontend HAProxy can't realize
+                  // them (would need DNS provisioning or cloud-LB hostname
+                  // wiring). Surface as AddressNotUsable so the operator
+                  // sees the gap in status — this matches every other
+                  // shared-frontend Gateway implementation's behaviour.
+                  nonIPCount++
                 }
               }
               if hasUnsupportedAddrType {
                 gwAcceptedStatus = "False"
                 gwAcceptedReason = "UnsupportedAddress"
                 gwAcceptedMessage = "spec.addresses contains an unsupported address type"
-                gwEffectiveAddresses = []any{}
+              } else if nonIPCount > 0 && len(validIPs) == 0 {
+                // Hostname / NamedAddress only — no Service to spawn,
+                // nothing the chart can realize.
+                hasUnusableAddr = true
               } else if len(validIPs) > 0 {
                 // Emit a per-Gateway LoadBalancer Service in the controller
                 // namespace. RBAC scopes Service create to that namespace
