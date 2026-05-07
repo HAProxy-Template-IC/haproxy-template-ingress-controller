@@ -1297,6 +1297,12 @@ templateSnippets:
       {%- var btlsCaPath = "" -%}
       {%- var btlsHostname = "" -%}
       {%- var btlsConflictedReason = "" -%}
+      {#- gw client-cert: per Gateway API spec, when the route's parent
+          Gateway carries `spec.tls.backend.clientCertificateRef`, the
+          backend connection MUST present that cert. Resolve once per
+          backend so the default-server line below can emit
+          `crt <path>` alongside any BackendTLSPolicy-driven options. -#}
+      {%- var gwClientCertPath = "" -%}
       {%%
         var portNameForBackend = ""
         if protoFlag == "" {
@@ -1408,6 +1414,58 @@ templateSnippets:
             btlsCaPath = "@system-ca"
           }
         }
+        // Resolve gateway client cert ref via the route's parentRefs.
+        // Walk the route's parents in declaration order and pick the
+        // first one with a working clientCertificateRef.
+        for _, parentRef := range route | dig("spec", "parentRefs") | toSlice() {
+          if gwClientCertPath != "" {
+            break
+          }
+          var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+          var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+          if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+            continue
+          }
+          var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+          var gwName = tostring(dig(parentRef, "name") | fallback(""))
+          var gw = resources.gateways.GetSingle(gwNs, gwName)
+          if gw == nil {
+            continue
+          }
+          var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
+          if ccRef == nil {
+            continue
+          }
+          var refGroup = tostring(dig(ccRef, "group") | fallback(""))
+          var refKind = tostring(dig(ccRef, "kind") | fallback("Secret"))
+          var refName = tostring(dig(ccRef, "name") | fallback(""))
+          var refNs = tostring(dig(ccRef, "namespace") | fallback(gwNs))
+          if (refGroup != "" && refGroup != "core") || refKind != "Secret" || refName == "" {
+            continue
+          }
+          var sec = resources.secrets.GetSingle(refNs, refName)
+          if sec == nil {
+            continue
+          }
+          var data = dig(sec, "data") | fallback(map[string]any{})
+          var dataMap = data.(map[string]any)
+          var crtB64, ok1 = dataMap["tls.crt"]
+          var keyB64, ok2 = dataMap["tls.key"]
+          if !ok1 || !ok2 || tostring(crtB64) == "" || tostring(keyB64) == "" {
+            continue
+          }
+          var crtPem, e1 = b64decode(tostring(crtB64))
+          var keyPem, e2 = b64decode(tostring(keyB64))
+          if e1 != nil || e2 != nil {
+            continue
+          }
+          var combined = crtPem + "\n" + keyPem
+          var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
+          var p, fErr = fileRegistry.Register("file", fname, combined)
+          if fErr == nil {
+            gwClientCertPath = p
+          }
+        }
       %%}
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
@@ -1415,6 +1473,9 @@ templateSnippets:
         default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
       {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
       {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- else if gwClientCertPath != "" %} ssl verify none
+      {%- end -%}
+      {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
       {%- end %}
       {#- Per-rule HTTPRoute timeouts: applied here in the backend
           (HAProxy doesn't allow `set-timeout server` in the frontend
@@ -3356,28 +3417,85 @@ templateSnippets:
               }
             }
 
+            // Aggregate top-level Gateway ResolvedRefs from listener
+            // ResolvedRefs and the optional spec.tls.backend.client
+            // CertificateRef. Per Gateway API spec, the Gateway-level
+            // condition surfaces overall reference resolution; the
+            // GatewayBackendClientCertificate conformance test reads
+            // it directly. False/InvalidCertificateRef wins over
+            // RefNotPermitted (matching listener-status precedence).
+            var gwResolvedRefsStatus = "True"
+            var gwResolvedRefsReason = "ResolvedRefs"
+            var gwResolvedRefsMessage = "All references resolved"
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              if tostring(ldm["resolvedRefsStatus"]) != "True" {
+                gwResolvedRefsStatus = "False"
+                gwResolvedRefsReason = tostring(ldm["resolvedRefsReason"])
+                gwResolvedRefsMessage = "Listener " + tostring(ldm["name"]) + ": " + tostring(ldm["resolvedRefsMessage"])
+                break
+              }
+            }
+            // Validate spec.tls.backend.clientCertificateRef when set.
+            // The chart's util-generate-backends-gateway resolves this
+            // ref at backend-emit time; we replay the same checks here
+            // so the Gateway status reflects the same resolution.
+            var ccRef = dig(gateway, "spec", "tls", "backend", "clientCertificateRef")
+            if ccRef != nil && gwResolvedRefsStatus == "True" {
+              var ccGroup = tostring(dig(ccRef, "group") | fallback(""))
+              var ccKind = tostring(dig(ccRef, "kind") | fallback("Secret"))
+              var ccName = tostring(dig(ccRef, "name") | fallback(""))
+              var ccNs = tostring(dig(ccRef, "namespace") | fallback(nsStr))
+              if (ccGroup != "" && ccGroup != "core") || ccKind != "Secret" || ccName == "" {
+                gwResolvedRefsStatus = "False"
+                gwResolvedRefsReason = "InvalidCertificateRef"
+                gwResolvedRefsMessage = "spec.tls.backend.clientCertificateRef must reference a core/v1 Secret"
+              } else if ccNs != nsStr && ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", "Gateway", nsStr,
+                  "", "Secret", ccNs, ccName) != "true" {
+                gwResolvedRefsStatus = "False"
+                gwResolvedRefsReason = "RefNotPermitted"
+                gwResolvedRefsMessage = "Cross-namespace clientCertificateRef requires a matching ReferenceGrant"
+              } else {
+                var ccSec = resources.secrets.GetSingle(ccNs, ccName)
+                if ccSec == nil {
+                  gwResolvedRefsStatus = "False"
+                  gwResolvedRefsReason = "InvalidCertificateRef"
+                  gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " not found"
+                } else {
+                  var ccData = dig(ccSec, "data") | fallback(map[string]any{})
+                  var ccDataMap = ccData.(map[string]any)
+                  var ccCrt, hasCrt = ccDataMap["tls.crt"]
+                  var ccKey, hasKey = ccDataMap["tls.key"]
+                  if !hasCrt || !hasKey || tostring(ccCrt) == "" || tostring(ccKey) == "" {
+                    gwResolvedRefsStatus = "False"
+                    gwResolvedRefsReason = "InvalidCertificateRef"
+                    gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " missing tls.crt or tls.key"
+                  }
+                }
+              }
+            }
+
+            var gwTopConditions = []any{
+              condition("Accepted", "True", "Accepted", "Gateway accepted",
+                generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
+              condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
+                generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
+              condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
+                generation, TopLevelTransitionTime(gateway, "ResolvedRefs", gwResolvedRefsStatus)),
+            }
             statusPatch(nsStr, nameStr,
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
-                  "addresses": gatewayAddresses,
-                  "conditions": []any{
-                    condition("Accepted", "True", "Accepted", "Gateway accepted",
-                      generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
-                    condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
-                      generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
-                  },
-                  "listeners": deployedListeners,
+                  "addresses":  gatewayAddresses,
+                  "conditions": gwTopConditions,
+                  "listeners":  deployedListeners,
                 },
                 "deployed": map[string]interface{}{
-                  "addresses": gatewayAddresses,
-                  "conditions": []any{
-                    condition("Accepted", "True", "Accepted", "Gateway accepted",
-                      generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
-                    condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
-                      generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus)),
-                  },
-                  "listeners": deployedListeners,
+                  "addresses":  gatewayAddresses,
+                  "conditions": gwTopConditions,
+                  "listeners":  deployedListeners,
                 },
                 "deployFailed": map[string]interface{}{
                   "addresses": []any{},
@@ -3386,6 +3504,8 @@ templateSnippets:
                       generation, TopLevelTransitionTime(gateway, "Accepted", "True")),
                     condition("Programmed", "False", "AddressNotAssigned", "Gateway addresses not yet assigned",
                       generation, TopLevelTransitionTime(gateway, "Programmed", "False")),
+                    condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
+                      generation, TopLevelTransitionTime(gateway, "ResolvedRefs", gwResolvedRefsStatus)),
                   },
                   "listeners": failedListeners,
                 },
