@@ -1622,11 +1622,61 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end %}
+  # gateway/frontend-extra-100-gateway-misdirected:
+  # Implements HTTPS listener-isolation 421 detection per the
+  # HTTPRouteHTTPSListenerDetectMisdirectedRequests conformance test.
+  #
+  # The naive "SNI != Host → 421" check is wrong: it returns 421 when
+  # SNI=example.org and Host=unknown-example.org (no listener claims
+  # `unknown-example.org`, so the request just routes through the
+  # catch-all listener and 404s on the path lookup).
+  #
+  # The spec-correct rule is: a request is misdirected only when its
+  # Host belongs to a *different* HTTPS listener than the one selected
+  # by SNI. To express that we materialise two maps from the chart's
+  # known HTTPS listeners (one per Gateway, the chart loops them
+  # below):
+  #   - listener-hostname-claim.map: exact hostname → itself
+  #   - listener-hostname-claim-regex.map: regex (matching the wildcard
+  #       expansion of `*.example.com` etc.) → the wildcard pattern
+  #
+  # The 421 check looks up SNI and Host in both maps; whichever
+  # listener claims them. If both lookups produce the same listener
+  # identity (including both being unclaimed → empty string → catch-all
+  # listener), the request is on the right listener — let routing run.
+  # Otherwise the listener doesn't own the requested host → 421.
   frontend-extra-100-gateway-misdirected:
     template: |
+      {%- var exactEntries = []any{} %}
+      {%- var regexEntries = []any{} %}
+      {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+          {%- if protocol == "HTTPS" || protocol == "TLS" %}
+            {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+            {%- if lh != "" %}
+              {%- if regex_search(lh, "^\\*\\.") %}
+                {#- Wildcard hostname — match exactly one DNS label
+                    in front of the suffix, per Gateway API spec. -#}
+                {%- var suffix = lh[2:] %}
+                {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
+                {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
+              {%- else %}
+                {%- exactEntries = append(exactEntries, lh + " " + lh) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- var exactPath, _ = fileRegistry.Register("map", "listener-hostname-claim.map", join(exactEntries, "\n") + "\n") %}
+      {%- var regexPath, _ = fileRegistry.Register("map", "listener-hostname-claim-regex.map", join(regexEntries, "\n") + "\n") %}
       # gateway/frontend-extra-misdirected
       http-request set-var(txn.gw_host_canonical) req.fhdr(Host),lower,field(1,:)
-      http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ ssl_fc_sni,lower,strcmp(txn.gw_host_canonical) eq 0 }
+      http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map({{ exactPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 }
+      http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map_reg({{ regexPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_sni_listener) -m len 0 }
+      http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map({{ exactPath }},'') if { var(txn.gw_host_canonical) -m found }
+      http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map_reg({{ regexPath }},'') if { var(txn.gw_host_canonical) -m found } { var(txn.gw_host_listener) -m len 0 }
+      http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
   # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
   # Named with 010- prefix so alphabetical sort matches intended execution order
   frontend-matchers-advanced-010-route-id-setup:
@@ -6513,3 +6563,79 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request return status 200 if \\{ var\\(txn\\.gw_cors_preflight\\) -m str \"1\" \\}"
         description: CORS template must emit return 200 for preflight
+
+  test-gateway-https-misdirected-listener-claim-maps:
+    description: HTTPS listener hostnames are emitted as listener-claim maps and the misdirected directive references them
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: catch-all
+                port: 443
+                protocol: HTTPS
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+              - name: with-host
+                port: 443
+                hostname: second-example.org
+                protocol: HTTPS
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+              - name: with-wildcard
+                port: 443
+                hostname: "*.wildcard.org"
+                protocol: HTTPS
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0psYjJOaGJHaHZjM1F3SUJjTk1qVXhNVEU1TVRneU5UVXhXaGdQTWpFeU5URXcKTWpZeE9ESTFOVEZhTUJReEVqQVFCZ05WQkFNTUNXeHZZMkZzYUc5emREQ0NBU0l3RFFZSktvWklodmNOQVFFQgpCUUFEZ2dFUEFEQ0NBUW9DZ2dFQkFKZllaR25oWXo2VkgrREp6L2dzWXlNL0xpWVlTb3BSdWVxRlpDWTZEWEhqCktBVWpmWWJiMTljWlp5QVdaV0h4c1ZGNUNxN1MyQmpvZ24wODZCbURMR3hxSWZmTllEYi9TY1lQUG1qdUJmTEsKQVFxTHRoeXp1V3dUckhoekluNlJpRmFoOEl5SFlLczBybDRGYjFCSEhCTE52SGRVTVdOVDhhNVJrRzBCU1VjTQpyQjhHZ1Vid2V5RVVJL0s5eW1jMUlxWWFrb3ZTQVRhemNBdXpMbU9OdmlMYk9zSEh6Ykhoekg5NGdId3JPc0xUCnFnQzZtallLNHRrRFV2WUw1NC9KRlBnQ1ZBOXczK0xCbUNQZjdER2o5a0FpSXMvNXhhWVhtNFpiTHBNTW5hWHIKNW9wcG8yUFVGUTlVa3RLNmk5ZGNIYURxTVhXNlVmZFJYbGM3WlFzSld4RUNBd0VBQWFOVE1GRXdIUVlEVlIwTwpCQllFRk1hLzlSZWVDQ1FtVDZJMEsxbXFuWDVJajhpR01COEdBMVVkSXdRWU1CYUFGTWEvOVJlZUNDUW1UNkkwCksxbXFuWDVJajhpR01BOEdBMVVkRXdFQi93UUZNQU1CQWY4d0RRWUpLb1pJaHZjTkFRRUxCUUFEZ2dFQkFBb0sKM290MkE0ckdOQ1hKbmRweTlpQWtHVFJ5NklsQnBMSlJTSWdSTlppWUJFOEhLZVp1MkdyZ1BiN1dGVC9UclpCNgpuYzI4c1Y3bGFDQzV5cmVVMXhlaS9mY05ZT0h5bHFnQUdpRWJrdlJtc2tYU3duMEpRWmp6VDVpdWtoTm1QZFdECklsdG1oQlNxbGZUbFhUWGsrYzFZc3lCa1ZDeU1TTnVGTHd6ZDg5S2pyZVNsbGcxOXJUVVJpS0c2RlNKNmswT0kKa1RNZW1nM0RmWm5XWUsrTWZwcXY5VUgyUm5QYTFSZWxyeGkzS01maFdIdm9sMXlJVUhnZ09INzJBOFpHenhWTApYeC9Pa0kvMHl6M1BYbzNMbVJEanMzM1lKV0s0UzJkcGhacktwTGtoanBBSGcyNTZPM1JTdW1ndndjaWM2VUVjCmhKb1orZ3lmWnFHQXJyejNXVk05Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2dad2d4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGNZSytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaellNTjB6SEY2dEhkM2R4Y21FQ2dZQXNFYk1kClZWU1Vkdmxtczg0NzZSVS9yazFPeVg4N3UvMTB3WXptQWl4WU9jRk0zQWhaT3VMa3BWaGg3Y2tsMmlJaGFoSEEKbFpoUVN2UCt4NFlWblhoRytUb1RCQzNsd0dhNVBEamNqSEZCVXdBNzJpbzUrdndVdnVQVFNIUnA0cno2dEU5YQpWN2RjaXZtdVVQMm5ETzdab2hzcnFkZmZ5bSttOEg3cXJ3NEV3UUtCZ0RXVGowTzZNenJRRWFBWWtRVW5wRFUvClg4V3k4aU9xK0VhTll6M1ZZS0pKbnFWQlN6V0tkMitEVFBWaW9UdmovWFViSEYrWncxb2J5eWNyVENvUFwrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: map:listener-hostname-claim.map
+        pattern: "(?m)^second-example\\.org second-example\\.org$"
+        description: Exact-hostname HTTPS listener appears in claim map
+
+      - type: contains
+        target: map:listener-hostname-claim-regex.map
+        pattern: "(?m)^\\^\\[\\^\\.\\]\\+\\\\\\.wildcard\\\\\\.org\\\\\\$ \\*\\.wildcard\\.org$"
+        description: Wildcard-hostname HTTPS listener appears as regex entry
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_sni_listener\\) ssl_fc_sni,lower,map\\("
+        description: Misdirected directive looks up SNI in claim map
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request return status 421 if .* var\\(txn\\.gw_sni_listener\\),strcmp\\(txn\\.gw_host_listener\\) eq 0"
+        description: 421 logic compares SNI vs Host listener identities
