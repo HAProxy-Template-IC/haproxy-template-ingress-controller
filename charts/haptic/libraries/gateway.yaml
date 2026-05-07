@@ -1799,6 +1799,7 @@ templateSnippets:
   # Named with 900- prefix so alphabetical sort matches intended execution order (runs last)
   frontend-matchers-advanced-900-path-match:
     template: |
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {{- "" }}
       {# Set txn.path_match for backend selection based on winning rule
          Runs after frontend-matchers-advanced-500-gateway sets txn.gw_rule_id (900 prefix ensures late ordering) #}
@@ -1826,6 +1827,7 @@ templateSnippets:
               once here and dispatch on the valid count. -#}
           {%- var validRefs = []any{} %}
           {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
+          {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
           {%- for _, ref := range backendRefs %}
             {%- var refMap map[string]any = ref %}
             {%- var refGroup = refMap | dig("group") | fallback("") | tostring() %}
@@ -1835,7 +1837,22 @@ templateSnippets:
               {%- var refNs = tostring(refMap | dig("namespace") | fallback(routeNs)) %}
               {%- var svc = resources.services.GetSingle(refNs, refName) %}
               {%- if svc != nil %}
-                {%- validRefs = append(validRefs, ref) %}
+                {#- Cross-namespace backend refs require a permitting
+                    ReferenceGrant (per Gateway API spec). Without one,
+                    the route should set ResolvedRefs=False/RefNotPermitted
+                    AND traffic must NOT flow to the unauthorized backend
+                    (we route those rules to gw-invalid-backend → 500). -#}
+                {%- var refPermitted = true %}
+                {%- if refNs != routeNs %}
+                  {%- if ReferenceGrantPermitted(
+                        "gateway.networking.k8s.io", routeKind, routeNs,
+                        "", "Service", refNs, refName) != "true" %}
+                    {%- refPermitted = false %}
+                  {%- end %}
+                {%- end %}
+                {%- if refPermitted %}
+                  {%- validRefs = append(validRefs, ref) %}
+                {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
