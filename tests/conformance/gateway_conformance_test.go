@@ -98,48 +98,21 @@ func TestGatewayAPIConformance(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(c.Scheme()))
 	require.NoError(t, apiextensionsv1.AddToScheme(c.Scheme()))
 
-	// SupportedFeatures pin the chart's actual coverage. Each entry must
-	// correspond to template logic that's been verified end-to-end against
-	// the conformance fixtures — never declare a feature the chart only
-	// half-implements (the suite exists to catch the gap).
-	//
-	// Gateway API v1.5 treats request-header modification (set/add/remove)
-	// as a CORE HTTPRoute capability — gated by SupportHTTPRoute alone, no
-	// extra feature flag. Tests for it run automatically.
-	//
-	// The redirect/rewrite features all map to the same two HAProxy
-	// filter blocks in `charts/haptic/libraries/gateway.yaml`:
-	//   - `requestRedirect` filter (~L1897) emits `http-request redirect`
-	//     with scheme / hostname / port / path / status-code parts. The
-	//     status-code is taken straight from spec, so 301/302/303/307/308
-	//     all flow through unchanged.
-	//   - `URLRewrite` filter (~L1953) emits `http-request set-header Host`
-	//     for hostname rewrites and `http-request set-path` /
-	//     `http-request replace-path` for ReplaceFullPath /
-	//     ReplacePrefixMatch path rewrites.
-	//
-	// Excluded features (h2c, websocket protocols, request mirroring,
-	// CORS filter, request/backend timeouts, named route rules, parent-ref
-	// port matching, destination-port matching, backend-request header
-	// modification, ReferenceGrant cross-namespace authorization, mTLS
-	// frontend/backend client certs) are HTTPRoute capabilities the chart
-	// doesn't yet implement. Adding them requires both chart work and a
-	// feature declaration here.
-	supported := sets.New[features.FeatureName](
-		features.SupportGateway,
-		features.SupportHTTPRoute,
-		features.SupportHTTPRouteQueryParamMatching,
-		features.SupportHTTPRouteMethodMatching,
-		features.SupportHTTPRouteResponseHeaderModification,
-		features.SupportHTTPRoutePortRedirect,
-		features.SupportHTTPRouteSchemeRedirect,
-		features.SupportHTTPRoutePathRedirect,
-		features.SupportHTTPRouteHostRewrite,
-		features.SupportHTTPRoutePathRewrite,
-		features.SupportHTTPRoute303RedirectStatusCode,
-		features.SupportHTTPRoute307RedirectStatusCode,
-		features.SupportHTTPRoute308RedirectStatusCode,
-	)
+	// Declare every standard-channel conformance feature. Per the
+	// directive (no undeclared features), the only filter we apply is the
+	// upstream stability tier — features.AllFeatures includes
+	// experimental-channel resources (TLSRoute / TCPRoute / UDPRoute /
+	// XListenerSet / experimental BackendTLSPolicy fields), and the e2e
+	// install only ships the standard CRDs. Filtering to FeatureChannelStandard
+	// keeps the assertion surface aligned with what the cluster actually
+	// has installed; no test is silently dropped because of a missing
+	// declaration.
+	supported := sets.Set[features.FeatureName]{}
+	for _, f := range features.AllFeatures.UnsortedList() {
+		if f.Channel == features.FeatureChannelStandard {
+			supported.Insert(f.Name)
+		}
+	}
 
 	timeoutCfg := conformanceconfig.DefaultTimeoutConfig()
 	debug := os.Getenv("CONFORMANCE_DEBUG") != ""
