@@ -83,7 +83,7 @@ func TestTemplateInsight_RenderedEvent_TriggerReasonConditional(t *testing.T) {
 			ec := emptyECommentator()
 			evt := ctlevents.NewTemplateRenderedEvent(
 				"some haproxy config text",
-				nil, nil, 5, // 5 aux files
+				nil, nil, nil, 5, // 5 aux files
 				42, // 42ms render
 				tt.triggerReason,
 				"checksum",

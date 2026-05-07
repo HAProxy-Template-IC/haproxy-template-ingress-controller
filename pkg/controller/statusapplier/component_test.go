@@ -161,7 +161,7 @@ func TestHandleTemplateRendered_CachesPatches(t *testing.T) {
 
 	// Not leader — should cache but not apply
 	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, patches, 0, 100, "test", "abc123", false,
+		"haproxy config", nil, patches, nil, 0, 100, "test", "abc123", false,
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
@@ -186,7 +186,7 @@ func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 	})
 
 	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, patches, 0, 100, "test", "abc123", false,
+		"haproxy config", nil, patches, nil, 0, 100, "test", "abc123", false,
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
@@ -210,7 +210,7 @@ func TestHandleTemplateRendered_SkipsWhenNotLeader(t *testing.T) {
 		"rendered": {"conditions": []any{}},
 	})
 	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, patches, 0, 100, "test", "abc123", false,
+		"haproxy config", nil, patches, nil, 0, 100, "test", "abc123", false,
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
@@ -229,7 +229,7 @@ func TestHandleTemplateRendered_SkipsEmptyPatches(t *testing.T) {
 	setLeader(comp)
 
 	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, nil, 0, 100, "test", "abc123", false,
+		"haproxy config", nil, nil, nil, 0, 100, "test", "abc123", false,
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
@@ -674,7 +674,7 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Accepted"}}},
 	})
 	bus.Publish(events.NewTemplateRenderedEvent(
-		"config", nil, patches, 0, 50, "test", "hash1", false,
+		"config", nil, patches, nil, 0, 50, "test", "hash1", false,
 	))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
@@ -694,7 +694,7 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 		"rendered": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
 	})
 	bus.Publish(events.NewTemplateRenderedEvent(
-		"config2", nil, patches2, 0, 50, "test", "hash2", false,
+		"config2", nil, patches2, nil, 0, 50, "test", "hash2", false,
 	))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -791,7 +791,7 @@ func TestHandleEvent_RoutesCorrectly(t *testing.T) {
 
 	// Verify each event type is routed without panics
 	comp.handleEvent(ctx, events.NewTemplateRenderedEvent(
-		"config", nil, nil, 0, 50, "test", "hash", false,
+		"config", nil, nil, nil, 0, 50, "test", "hash", false,
 	))
 	comp.handleEvent(ctx, events.NewReconciliationCompletedEvent(100))
 	comp.handleEvent(ctx, events.NewReconciliationFailedEvent("err", "deploy"))

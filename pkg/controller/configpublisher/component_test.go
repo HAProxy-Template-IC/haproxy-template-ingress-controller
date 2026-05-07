@@ -88,6 +88,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 		testHAProxyConfig,
 		nil,  // auxiliary files
 		nil,  // statusPatches
+		nil,  // renderedResources
 		0,    // aux file count
 		100,  // duration ms
 		"",   // trigger reason
@@ -420,6 +421,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 		testHAProxyConfig,
 		nil,
 		nil, // statusPatches
+		nil, // renderedResources
 		0,
 		100,
 		"",
@@ -509,6 +511,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 		testHAProxyConfig,
 		nil,
 		nil, // statusPatches
+		nil, // renderedResources
 		0,
 		100,
 		"",

@@ -195,6 +195,7 @@ func (c *Coordinator) handlePipelineSuccess(
 		result.HAProxyConfig,
 		result.AuxiliaryFiles,
 		result.StatusPatches,
+		result.RenderedResources,
 		result.AuxFileCount,
 		result.RenderDurationMs,
 		triggerEvent.Reason,
