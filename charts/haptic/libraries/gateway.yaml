@@ -2381,6 +2381,11 @@ templateSnippets:
       {%- var ga = gaVal.(map[string]any) %}
       {%- if ga["hasRedirect_filter"] %}
       # gateway/frontend-filters-gateway-redirect
+      {#- txn.gw_request_scheme captures the inbound request's scheme
+          so a RequestRedirect with no spec.scheme can preserve it.
+          Set once per request, reused by every redirect's URL template. -#}
+      http-request set-var(txn.gw_request_scheme) str(http) unless { ssl_fc }
+      http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
           {%- if (filter | dig("type")) == "RequestRedirect" && (routeInfo | dig("resource_type")) == "httproute" %}
@@ -2413,10 +2418,16 @@ templateSnippets:
               {%- var pathMod = redir | dig("path") %}
               {%- var statusCode = redir | dig("statusCode") | fallback(302) %}
 
+              {#- Per Gateway API spec for RequestRedirect: when
+                  spec.scheme is unset the redirect MUST keep the
+                  request's scheme, not silently downgrade to http.
+                  Use ssl_fc to discover the inbound scheme at request
+                  time (set in a txn-scope var so the redirect URL
+                  template can interpolate it). -#}
               {%- var schemePart = scheme %}
-              {%- if schemePart == "" %}{%- schemePart = "http" %}{%- end %}
+              {%- if schemePart == "" %}{%- schemePart = "%[var(txn.gw_request_scheme)]" %}{%- end %}
               {%- var hostPart = hostname %}
-              {%- if hostPart == "" %}{%- hostPart = "%[req.hdr(Host)]" %}{%- end %}
+              {%- if hostPart == "" %}{%- hostPart = "%[req.hdr(Host),field(1,:)]" %}{%- end %}
 
               {#- For ReplacePrefixMatch, set a per-request variable holding
                   the rewritten path (matched prefix → replacement, rest of
@@ -7323,3 +7334,104 @@ validationTests:
         target: map:host-regex.map
         pattern: "(?ms)foo\\\\\\.example\\\\\\.com\\$ \\.foo\\.example\\.com.*\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.example\\\\\\.com\\$ \\.example\\.com"
         description: More-specific wildcard regex entry comes before less-specific (so map_reg first-match-wins picks the right listener)
+
+  test-httproute-redirect-preserves-request-scheme:
+    description: RequestRedirect without spec.scheme preserves the request's scheme via txn.gw_request_scheme
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend-svc
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: backend-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: backend-svc
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: redir-route
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /scheme-nil-and-port-nil
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      hostname: example.org
+                backendRefs:
+                  - name: backend-svc
+                    port: 8080
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /scheme-https-and-port-nil
+                filters:
+                  - type: RequestRedirect
+                    requestRedirect:
+                      hostname: example.org
+                      scheme: https
+                backendRefs:
+                  - name: backend-svc
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_request_scheme\\) str\\(http\\) unless \\{ ssl_fc \\}"
+        description: Sets gw_request_scheme=http for non-SSL requests
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_request_scheme\\) str\\(https\\) if \\{ ssl_fc \\}"
+        description: Sets gw_request_scheme=https for SSL requests
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request redirect location "%\[var\(txn\.gw_request_scheme\)\]://example\.org%\[path\]" code 302'
+        description: Redirect URL uses gw_request_scheme when spec.scheme is unset
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request redirect location "https://example\.org%\[path\]" code 302'
+        description: Redirect URL uses literal scheme when spec.scheme=https
