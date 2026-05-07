@@ -1863,6 +1863,46 @@ templateSnippets:
         {%- end %}
       {%- end %}
       {%- end %}
+  # Filter: HTTPRoute timeouts - per-rule request / backendRequest timeouts
+  frontend-filters-450-gateway-timeouts:
+    template: |
+      {#-
+        HTTPRoute spec.rules[].timeouts maps to HAProxy `set-timeout server`
+        for the matched route. Gateway API exposes:
+          - request:        total request lifetime including retries
+          - backendRequest: a single backend attempt
+        HAProxy doesn't separate retries the same way, so we collapse both
+        to `timeout server`. If both are set, request wins (it's the outer
+        envelope). The "0s" / unset cases mean "disabled" per spec — we
+        emit nothing in that case (HAProxy keeps its default backend
+        timeout).
+      -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- var emittedSet = map[string]bool{} %}
+      {%- var anyEmitted = false %}
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
+        {%- var rule = routeInfo | dig("rule") %}
+        {%- var timeouts = rule | dig("timeouts") %}
+        {%- if timeouts == nil %}{%- continue %}{%- end %}
+        {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+        {%- if emittedSet[routeId] %}{%- continue %}{%- end %}
+        {%- emittedSet[routeId] = true %}
+        {%- var req = timeouts | dig("request") | fallback("") | tostring() %}
+        {%- var beReq = timeouts | dig("backendRequest") | fallback("") | tostring() %}
+        {%- var t = req %}
+        {%- if t == "" || t == "0s" %}{%- t = beReq %}{%- end %}
+        {%- if t == "" || t == "0s" %}{%- continue %}{%- end %}
+        {%- if !anyEmitted %}
+      # gateway/frontend-filters-gateway-timeouts
+        {%- end %}
+        {%- anyEmitted = true %}
+      http-request set-timeout server {{ t }} if {{ RouteIdCondition(routeId) }}
+      {%- end %}
   # Filter: ResponseHeaderModifier - modifies response headers before sending to client
   frontend-filters-500-gateway-response-header:
     template: |
