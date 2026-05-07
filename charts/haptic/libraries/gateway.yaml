@@ -2048,9 +2048,30 @@ templateSnippets:
                 {%- if pathType == "ReplaceFullPath" %}
       http-request set-path "{{ pathMod | dig("replaceFullPath") }}" if {{ cond }}
                 {%- else if pathType == "ReplacePrefixMatch" %}
-                  {%- var origPrefix = routeInfo | dig("path", "value") %}
+                  {%- var origPrefix = routeInfo | dig("path", "value") | tostring() %}
+                  {#- Strip a trailing slash from origPrefix so "/foo/" matches
+                      the same paths as "/foo" — Gateway API treats them
+                      equivalently for prefix purposes. -#}
+                  {%- if hasSuffix(origPrefix, "/") && origPrefix != "/" %}
+                    {%- origPrefix = origPrefix[:len(origPrefix)-1] %}
+                  {%- end %}
                   {%- var regexPrefix = origPrefix | replace(".", "\\.") | replace("/", "\\/") %}
-      http-request replace-path "^{{ regexPrefix }}(.*)" "{{ pathMod | dig("replacePrefixMatch") }}\\1" if {{ cond }}
+                  {%- var rp = pathMod | dig("replacePrefixMatch") | tostring() %}
+                  {#- Trim trailing slash from the replacement; we always
+                      add the slash separator ourselves before the capture
+                      group so we never produce "//rest" when rp == "/" or
+                      "/foo/" + "/rest". The exact-match line uses rp as-is
+                      (or "/" if empty) so a request that exactly equals
+                      the matched prefix gets exactly the replacement. -#}
+                  {%- var rpExact = rp %}
+                  {%- if rpExact == "" %}{%- rpExact = "/" %}{%- end %}
+                  {%- var rpStripped = rp %}
+                  {%- if hasSuffix(rpStripped, "/") && rpStripped != "/" %}
+                    {%- rpStripped = rpStripped[:len(rpStripped)-1] %}
+                  {%- end %}
+                  {%- if rpStripped == "/" %}{%- rpStripped = "" %}{%- end %}
+      http-request replace-path "^{{ regexPrefix }}/?\$" "{{ rpExact }}" if {{ cond }}
+      http-request replace-path "^{{ regexPrefix }}/(.*)\$" "{{ rpStripped }}/\\1" if {{ cond }}
                 {%- end %}
               {%- end %}
             {%- end %}
