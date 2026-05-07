@@ -1580,8 +1580,35 @@ templateSnippets:
               {%- var escapedPathOnly = replace(pathOnlyValue, "$", "\\$") %}
               {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
             {%- else %}
-              {#- PathPrefix (default). Trailing-slash semantics match the path map: /foo matches both /foo and /foo/* -#}
-              {%- conditions = append(conditions, "{ path_beg \"" + pathOnlyValue + "\" }") %}
+              {#- PathPrefix (default). Per Gateway API spec, PathPrefix
+                  matches whole segments — `/v2` matches `/v2`, `/v2/`,
+                  `/v2/foo`, but NOT `/v2example`. HAProxy's plain
+                  `path_beg` is byte-prefix (no boundary) and matches
+                  the last case incorrectly; `path_dir` does a segment
+                  match but it matches a directory ANYWHERE in the
+                  path (so `/v2` would match `/foo/v2/example`). The
+                  spec requires anchoring at the START of the path.
+
+                  Use a regex anchored to ^ that matches either the
+                  exact prefix or the prefix followed by a slash:
+
+                      ^<prefix>(/|$)
+
+                  Special case: bare `/` (root) matches every path —
+                  emit a trivial path_beg "/" condition that's cheaper
+                  than a regex and still always satisfied. -#}
+              {%- if pathOnlyValue == "/" || pathOnlyValue == "" %}
+                {%- conditions = append(conditions, "{ path_beg \"/\" }") %}
+              {%- else %}
+                {%- var pathPrefixValue = pathOnlyValue %}
+                {%- if hasSuffix(pathPrefixValue, "/") %}
+                  {%- pathPrefixValue = pathPrefixValue[:len(pathPrefixValue)-1] %}
+                {%- end %}
+                {%- var escaped = sanitize_regex(pathPrefixValue) %}
+                {#- HAProxy expands $VAR / ${VAR} in config strings; the
+                    documented escape for a literal dollar is `\$`. -#}
+                {%- conditions = append(conditions, "{ path -m reg \"^" + escaped + "(/|\\$)\" }") %}
+              {%- end %}
             {%- end %}
           {%- end %}
         {%- else %}
