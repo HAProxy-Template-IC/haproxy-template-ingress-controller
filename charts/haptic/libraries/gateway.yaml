@@ -2732,10 +2732,10 @@ templateSnippets:
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + join(exposeList, ", ") + "\"") %}
           {%- end %}
       http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
-          {#- Simple cross-origin responses (non-preflight): backend-served
+          {# Simple cross-origin responses (non-preflight): backend-served
               responses still flow through http-response normally so the
               set-header path works. Same allow-origin / allow-credentials
-              / expose-headers semantics as preflight. -#}
+              / expose-headers semantics as preflight. #}
       http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found }
           {%- if allowCreds %}
       http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found }
