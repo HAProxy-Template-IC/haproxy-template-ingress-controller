@@ -24,6 +24,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // metallbVersion is the MetalLB version we install into the e2e cluster.
@@ -121,12 +122,14 @@ spec:
 		if attempt >= 12 {
 			return ctx, fmt.Errorf("apply metallb address pool after %d retries: %w (output: %s)", attempt, err, out)
 		}
-		// Don't sleep on the final attempt; the loop's exit branch
-		// runs immediately on err==nil so we never reach 'sleep then return success'.
+		// Wait between attempts: the metallb webhook may need a few seconds
+		// after its Deployment reports Available before it can serve admission.
+		// Without this sleep, all 12 retries fall through `default` in well
+		// under a second and the loop exits before the webhook is ready.
 		select {
 		case <-ctx.Done():
 			return ctx, fmt.Errorf("apply metallb address pool: %w (last error: %v, output: %s)", ctx.Err(), err, out)
-		default:
+		case <-time.After(5 * time.Second):
 		}
 	}
 }
