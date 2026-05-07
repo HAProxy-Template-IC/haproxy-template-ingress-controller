@@ -1223,6 +1223,7 @@ templateSnippets:
         the regsub wildcard fallback).
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted %}
       {%- macro AnalyzeRoutes(result map[string]any) %}
         {%- var allRoutes = []any{} %}
 
@@ -1320,6 +1321,59 @@ templateSnippets:
                           {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                           {%- if inter != "" %}
                             {%- effectiveHosts[inter + portSuffix] = true %}
+                          {%- end %}
+                        {%- end %}
+                      {%- end %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- else if prGroup == "gateway.networking.k8s.io" && prKind == "ListenerSet" %}
+              {#- ListenerSet parentRef (GEP-1713 SupportListenerSet routing).
+                  Resolves the ListenerSet, walks its parent Gateway, and
+                  applies the same listener filters / hostname intersection
+                  as the Gateway branch above — only over the ListenerSet's
+                  own spec.listeners. ListenerSet admission state is
+                  authoritative on the LS status side; we inline the gate
+                  here so route resolution doesn't depend on the side-effect
+                  ordering of the status patch. -#}
+              {%- var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
+              {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
+              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
+              {%- var ls = resources.listenersets.GetSingle(lsNs, lsName) %}
+              {%- if ls != nil %}
+                {%- var lsParentRef = dig(ls, "spec", "parentRef") %}
+                {%- var gwName = tostring(dig(lsParentRef, "name") | fallback("")) %}
+                {%- var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs)) %}
+                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
+                {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+                  {%- resolvedGwCount = resolvedGwCount + 1 %}
+                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                    {%- if section == "" || section == listenerName %}
+                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                      {%- if prPort == 0 || prPort == listenerPort %}
+                        {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                        {%- var portSuffix = "" %}
+                        {%- if listenerPort > 0 %}
+                          {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
+                            {%- portSuffix = ":" + tostring(listenerPort) %}
+                          {%- end %}
+                        {%- end %}
+                        {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                        {%- if len(routeHostnames) == 0 %}
+                          {%- effectiveHosts[listenerHostname + portSuffix] = true %}
+                        {%- else if listenerHostname == "" %}
+                          {%- for _, rh := range routeHostnames %}
+                            {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
+                          {%- end %}
+                        {%- else %}
+                          {%- for _, rh := range routeHostnames %}
+                            {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
+                            {%- if inter != "" %}
+                              {%- effectiveHosts[inter + portSuffix] = true %}
+                            {%- end %}
                           {%- end %}
                         {%- end %}
                       {%- end %}
@@ -1470,6 +1524,52 @@ templateSnippets:
                           {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                           {%- if inter != "" %}
                             {%- effectiveHosts[inter + portSuffix] = true %}
+                          {%- end %}
+                        {%- end %}
+                      {%- end %}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- else if prGroup == "gateway.networking.k8s.io" && prKind == "ListenerSet" %}
+              {#- ListenerSet parentRef — same shape as HTTPRoute branch. -#}
+              {%- var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
+              {%- var lsName = tostring(dig(parentRef, "name") | fallback("")) %}
+              {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
+              {%- var ls = resources.listenersets.GetSingle(lsNs, lsName) %}
+              {%- if ls != nil %}
+                {%- var lsParentRef = dig(ls, "spec", "parentRef") %}
+                {%- var gwName = tostring(dig(lsParentRef, "name") | fallback("")) %}
+                {%- var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs)) %}
+                {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
+                {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+                  {%- resolvedGwCount = resolvedGwCount + 1 %}
+                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                    {%- if section == "" || section == listenerName %}
+                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                      {%- if prPort == 0 || prPort == listenerPort %}
+                        {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                        {%- var portSuffix = "" %}
+                        {%- if listenerPort > 0 %}
+                          {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
+                            {%- portSuffix = ":" + tostring(listenerPort) %}
+                          {%- end %}
+                        {%- end %}
+                        {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                        {%- if len(routeHostnames) == 0 %}
+                          {%- effectiveHosts[listenerHostname + portSuffix] = true %}
+                        {%- else if listenerHostname == "" %}
+                          {%- for _, rh := range routeHostnames %}
+                            {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
+                          {%- end %}
+                        {%- else %}
+                          {%- for _, rh := range routeHostnames %}
+                            {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
+                            {%- if inter != "" %}
+                              {%- effectiveHosts[inter + portSuffix] = true %}
+                            {%- end %}
                           {%- end %}
                         {%- end %}
                       {%- end %}
@@ -2476,6 +2576,7 @@ templateSnippets:
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
       {%%
@@ -2487,7 +2588,65 @@ templateSnippets:
         for _, parentRef := range parentRefs {
           var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
           var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
-          if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+          if prGroup != "gateway.networking.k8s.io" {
+            continue
+          }
+          // ListenerSet parentRef branch: treat the ListenerSet's
+          // own spec.listeners as additional attach candidates,
+          // gated through IsListenerSetAdmitted (same admission
+          // contract as the F2 status side).
+          if prKind == "ListenerSet" {
+            var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+            var lsName = tostring(dig(parentRef, "name") | fallback(""))
+            var section = tostring(dig(parentRef, "sectionName") | fallback(""))
+            var prPort = toint(dig(parentRef, "port") | fallback(0))
+            var ls = resources.listenersets.GetSingle(lsNs, lsName)
+            if ls == nil {
+              continue
+            }
+            var lsParentRef = dig(ls, "spec", "parentRef")
+            var gwName = tostring(dig(lsParentRef, "name") | fallback(""))
+            var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs))
+            var gw = resources.gateways.GetSingle(gwNs, gwName)
+            if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
+              continue
+            }
+            resolvedGwCount = resolvedGwCount + 1
+            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+              var listenerName = tostring(dig(listener, "name") | fallback(""))
+              if section != "" && section != listenerName {
+                continue
+              }
+              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              if prPort != 0 && prPort != listenerPort {
+                continue
+              }
+              var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+              var portSuffix = ""
+              if listenerPort > 0 {
+                if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
+                  portSuffix = ":" + tostring(listenerPort)
+                }
+              }
+              var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+              if len(routeHostnames) == 0 {
+                effectiveHosts[listenerHostname + portSuffix] = true
+              } else if listenerHostname == "" {
+                for _, rh := range routeHostnames {
+                  effectiveHosts[tostring(rh) + portSuffix] = true
+                }
+              } else {
+                for _, rh := range routeHostnames {
+                  var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
+                  if inter != "" {
+                    effectiveHosts[inter + portSuffix] = true
+                  }
+                }
+              }
+            }
+            continue
+          }
+          if prKind != "Gateway" {
             continue
           }
           var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
@@ -2568,7 +2727,7 @@ templateSnippets:
           }
         }
         var hostnames = []any{}
-        for h := range effectiveHosts {
+        for h, _ := range effectiveHosts {
           hostnames = append(hostnames, h)
         }
       %%}
