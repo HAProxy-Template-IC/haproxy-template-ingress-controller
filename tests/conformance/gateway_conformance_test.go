@@ -45,13 +45,19 @@
 package conformance
 
 import (
+	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -64,6 +70,18 @@ import (
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
 )
+
+// metalLBPoolGVR identifies the IPAddressPool CRD MetalLB ships. The e2e
+// suite (tests/e2e/metallb.go) creates a pool named "e2e-pool" in the
+// metallb-system namespace covering the upper sliver of the kind Docker
+// network. We discover that pool here so the SupportGatewayStaticAddresses
+// tests get realistic Usable / Unusable addresses without hardcoding IPs
+// (kind's network can shift host-to-host).
+var metalLBPoolGVR = schema.GroupVersionResource{
+	Group:    "metallb.io",
+	Version:  "v1beta1",
+	Resource: "ipaddresspools",
+}
 
 // kubeconfigPath matches the path the e2e suite (tests/e2e/main_test.go)
 // writes when it provisions the kind cluster, so the conformance suite
@@ -147,6 +165,18 @@ func TestGatewayAPIConformance(t *testing.T) {
 	rt, err := newNodePortRoundTripper(timeoutCfg, debug)
 	require.NoError(t, err, "build NodePort RoundTripper")
 
+	// SupportGatewayStaticAddresses substitutes PLACEHOLDER_USABLE_ADDRS /
+	// PLACEHOLDER_UNUSABLE_ADDRS in its Gateway fixture with the entries
+	// of UsableNetworkAddresses / UnusableNetworkAddresses we pass below.
+	// Without these, the test panics on
+	// `require.Len(currentGW.Spec.Addresses, 3)` because the placeholder
+	// substitution drops the entries entirely. We discover the realistic
+	// pool from MetalLB at suite setup time so the Usable IP is one
+	// MetalLB will actually allocate; Unusable is a reserved-test
+	// (RFC 5737 TEST-NET-1) IP MetalLB will never bind.
+	usable, unusable, err := discoverStaticAddressPools(t.Context(), cfg)
+	require.NoError(t, err, "derive static-addresses pools from MetalLB IPAddressPool")
+
 	opts := suite.ConformanceOptions{
 		Client:               c,
 		ClientOptions:        clientOpts,
@@ -172,7 +202,130 @@ func TestGatewayAPIConformance(t *testing.T) {
 		SkipTests: []string{
 			// (none yet — populate as conformance reveals genuine gaps)
 		},
+		UsableNetworkAddresses:   usable,
+		UnusableNetworkAddresses: unusable,
 	}
 
 	gwconformance.RunConformanceWithOptions(t, opts)
+}
+
+// discoverStaticAddressPools returns sample Usable and Unusable
+// GatewaySpecAddress entries for the SupportGatewayStaticAddresses tests
+// to substitute into the placeholder fixtures. We discover them at suite
+// startup time rather than hardcoding, because kind's docker network can
+// shift host-to-host and the e2e suite's IPAddressPool is sized to that
+// network.
+//
+//   - Usable: pulled from the e2e MetalLB IPAddressPool's high end
+//     (.249), which is reserved-by-convention for this purpose. The pool
+//     covers .200-.250 (see tests/e2e/metallb.go); we pick a single IP
+//     from the top so a real allocation against it is improbable but
+//     possible.
+//
+//   - Unusable: 192.0.2.1, the first address of TEST-NET-1 (RFC 5737).
+//     MetalLB will never allocate this since it isn't in any
+//     IPAddressPool, so the conformance test sees Programmed=False/
+//     AddressNotUsable as the spec requires.
+//
+// Both lists return one address each — the conformance test asserts
+// `require.Len(currentGW.Spec.Addresses, 3)` (one invalid type +
+// one Usable + one Unusable) so any other count breaks the fixture.
+//
+// Returns an error rather than t.Fatal so the caller can attach a
+// helpful require.NoError message.
+func discoverStaticAddressPools(ctx context.Context, restConfig *rest.Config) ([]v1beta1.GatewaySpecAddress, []v1beta1.GatewaySpecAddress, error) {
+	// Apply a short timeout so a misconfigured cluster fails fast rather
+	// than blocking the whole conformance suite on the static-addresses
+	// fixture setup.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	dyn, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pool, err := dyn.Resource(metalLBPoolGVR).
+		Namespace("metallb-system").
+		Get(ctx, "e2e-pool", metav1.GetOptions{})
+	if err != nil {
+		// The e2e-pool only exists when the test was set up by
+		// tests/e2e/main_test.go (not in CI matrix where MetalLB is
+		// installed differently). Fall back to documented sentinels:
+		// the conformance suite will use them and SupportGatewayStaticAddresses
+		// tests will fail with a clearer message than a panic.
+		ipAddr := v1beta1.IPAddressType
+		usableAddr := v1beta1.GatewaySpecAddress{Type: &ipAddr, Value: "192.0.2.10"}
+		unusableAddr := v1beta1.GatewaySpecAddress{Type: &ipAddr, Value: "192.0.2.1"}
+		return []v1beta1.GatewaySpecAddress{usableAddr},
+			[]v1beta1.GatewaySpecAddress{unusableAddr}, nil
+	}
+
+	// Pool addresses are recorded under spec.addresses as a string slice
+	// like ["172.18.255.200-172.18.255.250"]. Pull the high end (.249)
+	// for Usable; treat anything outside as Unusable.
+	addresses, found, _ := unstructuredNestedSlice(pool.Object, "spec", "addresses")
+	usableValue := "192.0.2.10"
+	if found && len(addresses) > 0 {
+		// Best-effort parse of the first range entry's high octet+249.
+		// We intentionally pick a single deterministic IP rather than
+		// scanning for a free one; MetalLB takes care of allocation.
+		usableValue = pickAddressFromRange(addresses[0])
+	}
+
+	ipAddr := v1beta1.IPAddressType
+	usable := []v1beta1.GatewaySpecAddress{{Type: &ipAddr, Value: usableValue}}
+	unusable := []v1beta1.GatewaySpecAddress{{Type: &ipAddr, Value: "192.0.2.1"}}
+	return usable, unusable, nil
+}
+
+// unstructuredNestedSlice lifts nested string-slice access from
+// unstructured.Unstructured without introducing a hard dep on the
+// helper package. Returns (slice, found, error-not-applicable).
+func unstructuredNestedSlice(obj map[string]any, fields ...string) ([]string, bool, error) {
+	cur := any(obj)
+	for _, f := range fields {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false, nil
+		}
+		cur, ok = m[f]
+		if !ok {
+			return nil, false, nil
+		}
+	}
+	raw, ok := cur.([]any)
+	if !ok {
+		return nil, false, nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		s, ok := e.(string)
+		if !ok {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, true, nil
+}
+
+// pickAddressFromRange returns a single IP from a "<start>-<end>" range
+// expression. Picks the second-from-end (.249 of a .200-.250 pool) so
+// a colliding e2e test allocation is improbable. Falls back to a
+// reserved-test sentinel if the format isn't parseable.
+func pickAddressFromRange(rangeStr string) string {
+	// Split on "-"; expect "172.18.255.200-172.18.255.250" shape.
+	for i := 0; i < len(rangeStr)-1; i++ {
+		if rangeStr[i] == '-' {
+			high := rangeStr[i+1:]
+			// Replace last octet with .249 if the high end ends in .250.
+			for j := len(high) - 1; j >= 0; j-- {
+				if high[j] == '.' {
+					return high[:j+1] + "249"
+				}
+			}
+			break
+		}
+	}
+	return "192.0.2.10"
 }
