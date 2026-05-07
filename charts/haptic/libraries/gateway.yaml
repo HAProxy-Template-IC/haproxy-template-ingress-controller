@@ -4190,9 +4190,15 @@ templateSnippets:
                 } else {
                   resolvedReason = "InvalidCACertificateRef"
                   resolvedMsg = "No CACertificateRef resolves to a valid CA certificate (missing or malformed)"
-                  noValidCA = true
-                  noValidCAMsg = resolvedMsg
                 }
+                // BackendTLSPolicyInvalidKind expects Accepted=False/
+                // NoValidCACertificate even when the failure is purely
+                // invalid kind — Accepted reflects "every CACertificateRef
+                // is invalid" regardless of *why*. The ResolvedRefs reason
+                // (InvalidKind vs InvalidCACertificateRef) is the more
+                // specific signal.
+                noValidCA = true
+                noValidCAMsg = resolvedMsg
               }
             } else if wkca != "" {
               if wkca != "System" {
