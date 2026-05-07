@@ -1031,6 +1031,34 @@ templateSnippets:
           {%- end %}
           {%- ruleIdxLocal = ruleIdxLocal + 1 %}
         {%- end %}
+        {#- Per-backendRef RequestHeaderModifier
+            (SupportHTTPRouteBackendRequestHeaderModification): emit
+            set/add/remove header directives that apply unconditionally
+            within this per-backendRef backend (the entire backend serves
+            exactly one (route, service, port) tuple, so the directives
+            run for every request landing here). -#}
+        {%- for _, bRef := range backendRefs | toSlice() %}
+          {%- if (bRef | dig("name") | fallback("") | tostring()) == backendName -%}
+          {%- if (toint(bRef | dig("port") | fallback(0))) == toint(backendPort) %}
+            {%- for _, bf := range bRef | dig("filters") | fallback([]any{}) %}
+              {%- if (bf | dig("type")) == "RequestHeaderModifier" %}
+                {%- var mod = bf | dig("requestHeaderModifier") %}
+                {%- if mod != nil %}
+                  {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+        http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}'
+                  {%- end %}
+                  {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+        http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}'
+                  {%- end %}
+                  {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+        http-request del-header {{ name }}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+          {%- end %}
+        {%- end %}
       {%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, tostring(routeNs)) | indent(2, true) -}}
       {%- end -%}
