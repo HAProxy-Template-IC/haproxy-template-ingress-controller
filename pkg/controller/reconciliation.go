@@ -17,6 +17,7 @@ package controller
 import (
 	"fmt"
 	"log/slog"
+	"os"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
@@ -30,6 +31,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceapplier"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
@@ -55,11 +57,12 @@ type reconciliationComponents struct {
 	deploymentScheduler *deployer.DeploymentScheduler
 	driftMonitor        *deployer.DriftPreventionMonitor
 	configPublisher     *ctrlconfigpublisher.Component
-	statusUpdater       *configchange.StatusUpdater  // Updates CRD status with validation results
-	statusApplier       *statusapplier.Component     // Applies template-driven status patches via SSA
-	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
-	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
-	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
+	statusUpdater       *configchange.StatusUpdater     // Updates CRD status with validation results
+	statusApplier       *statusapplier.Component        // Applies template-driven status patches via SSA
+	resourceApplier     *resourceapplier.Component      // Applies template-declared owned resources (e.g. per-Gateway LB Services) via SSA
+	httpStore           *httpstore.Component            // HTTP resource fetcher for dynamic content
+	proposalValidator   *proposalvalidator.Component    // Validates HTTP content and webhook proposals
+	capabilities        dataplane.Capabilities          // HAProxy/DataPlane API capabilities
 }
 
 // createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
@@ -229,6 +232,26 @@ func createReconciliationComponents(
 		Logger:        logger,
 	})
 
+	// Create ResourceApplier (applies template-declared owned resources via SSA).
+	// All-replica subscriber, leader-only applier — same shape as StatusApplier.
+	// Resource-agnostic: the controller never names "Service" or "Gateway"; templates
+	// emit via the renderResource() filter and the applier reconciles whatever they
+	// produced, with checksum dedup so unchanged resources don't hammer kube-api.
+	// RestrictToOwnNamespace=true gates the apply at the controller boundary as
+	// defense-in-depth on top of the chart's namespace-scoped Role RBAC.
+	ownNamespace := os.Getenv("POD_NAMESPACE")
+	if ownNamespace == "" {
+		ownNamespace = k8sClient.Namespace()
+	}
+	resourceApplierComponent := resourceapplier.New(&resourceapplier.Config{
+		EventBus:               bus,
+		DynamicClient:          k8sClient.DynamicClient(),
+		GVRResolver:            statusapplier.NewRestMapperResolver(),
+		Logger:                 logger,
+		OwnNamespace:           ownNamespace,
+		RestrictToOwnNamespace: true,
+	})
+
 	// Register components with the lifecycle registry using builder pattern
 	// Coordinator is leader-only because it performs rendering (state changes).
 	// DriftMonitor is leader-only to avoid multi-replica race conditions.
@@ -241,6 +264,7 @@ func createReconciliationComponents(
 			httpStoreComponent,
 			proposalValidatorComponent,
 			statusApplierComponent,
+			resourceApplierComponent,
 		).
 		LeaderOnly(
 			coordinatorComponent,
@@ -262,6 +286,7 @@ func createReconciliationComponents(
 		configPublisher:     configPublisherComponent,
 		statusUpdater:       statusUpdaterComponent,
 		statusApplier:       statusApplierComponent,
+		resourceApplier:     resourceApplierComponent,
 		httpStore:           httpStoreComponent,
 		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
