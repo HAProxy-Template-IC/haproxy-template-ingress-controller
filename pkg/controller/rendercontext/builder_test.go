@@ -80,11 +80,12 @@ func TestBuilder_Build_BasicContext(t *testing.T) {
 	logger := testutil.NewTestLogger()
 
 	builder := NewBuilder(cfg, pathResolver, logger)
-	ctx, fileRegistry, statusPatchCollector := builder.Build()
+	ctx, fileRegistry, statusPatchCollector, renderedResourceCollector := builder.Build()
 
 	require.NotNil(t, ctx)
 	require.NotNil(t, fileRegistry)
 	require.NotNil(t, statusPatchCollector)
+	require.NotNil(t, renderedResourceCollector)
 
 	// Check required keys exist
 	assert.Contains(t, ctx, "resources")
@@ -92,6 +93,7 @@ func TestBuilder_Build_BasicContext(t *testing.T) {
 	assert.Contains(t, ctx, "templateSnippets")
 	assert.Contains(t, ctx, "fileRegistry")
 	assert.Contains(t, ctx, "statusPatchCollector")
+	assert.Contains(t, ctx, "renderedResourceCollector")
 	assert.Contains(t, ctx, "pathResolver")
 	assert.Contains(t, ctx, "shared")
 	assert.Contains(t, ctx, "runtimeEnvironment")
@@ -115,7 +117,7 @@ func TestBuilder_Build_WithStores(t *testing.T) {
 	}
 
 	builder := NewBuilder(cfg, pathResolver, logger, WithStores(storeMap))
-	ctx, _, _ := builder.Build()
+	ctx, _, _, _ := builder.Build()
 
 	resources := ctx["resources"].(map[string]templating.ResourceStore)
 	require.Len(t, resources, 2)
@@ -131,7 +133,7 @@ func TestBuilder_Build_WithHAProxyPodStore(t *testing.T) {
 	haproxyPodStore := &storetest.MockStore{}
 
 	builder := NewBuilder(cfg, pathResolver, logger, WithHAProxyPodStore(haproxyPodStore))
-	ctx, _, _ := builder.Build()
+	ctx, _, _, _ := builder.Build()
 
 	controller := ctx["controller"].(map[string]templating.ResourceStore)
 	require.Len(t, controller, 1)
@@ -149,7 +151,7 @@ func TestBuilder_Build_WithCapabilities(t *testing.T) {
 	}
 
 	builder := NewBuilder(cfg, pathResolver, logger, WithCapabilities(capabilities))
-	ctx, _, _ := builder.Build()
+	ctx, _, _, _ := builder.Build()
 
 	caps := ctx["capabilities"].(map[string]any)
 	assert.True(t, caps["supports_waf"].(bool))
@@ -172,7 +174,7 @@ func TestBuilder_Build_WithExtraContext(t *testing.T) {
 	logger := testutil.NewTestLogger()
 
 	builder := NewBuilder(cfg, pathResolver, logger)
-	ctx, _, _ := builder.Build()
+	ctx, _, _, _ := builder.Build()
 
 	// Check extraContext map is populated
 	extraContext := ctx["extraContext"].(map[string]any)
