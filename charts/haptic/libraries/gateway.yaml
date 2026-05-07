@@ -1577,6 +1577,24 @@ templateSnippets:
       # gateway/map-weighted-backend-gateway
       {{ ShardedWeightedBackendMap(resources.httproutes.List()) }}
 
+  # Frontend-extra: HTTPS misdirected-request detection (Gateway API
+  # SupportGatewayHTTPSListenerDetectMisdirectedRequests).
+  #
+  # Per RFC 9110 §15.5.20 / Gateway API spec, an HTTPS listener that
+  # carves up TLS connections by SNI must reject requests whose Host
+  # header doesn't match the SNI: the client connected to a server
+  # certificate the route doesn't authorise for that hostname.
+  #
+  # We only emit the directive on the HTTPS path (`{ ssl_fc }`); the
+  # HTTP frontend renders the same snippet but the guards skip it.
+  # Comparing via strcmp(<var>) in a converter chain — sample-fetch
+  # to-sample-fetch comparison isn't expressible with `-m str`, but
+  # strcmp returns 0 on equality which we negate.
+  frontend-extra-100-gateway-misdirected:
+    template: |
+      # gateway/frontend-extra-misdirected
+      http-request set-var(txn.gw_host_canonical) req.fhdr(Host),lower,field(1,:)
+      http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ ssl_fc_sni,lower,strcmp(txn.gw_host_canonical) eq 0 }
   # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
   # Named with 010- prefix so alphabetical sort matches intended execution order
   frontend-matchers-advanced-010-route-id-setup:
