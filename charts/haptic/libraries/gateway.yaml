@@ -4383,13 +4383,22 @@ templateSnippets:
                     // infrastructure annotations don't get clobbered.
                     var firstIP = tostring(validIPs[0])
                     var ipParts = []any{}
-                    for _, ip := range validIPs {
-                      ipParts = append(ipParts, tostring(ip))
+                    for _, ipv := range validIPs {
+                      ipParts = append(ipParts, tostring(ipv))
                     }
                     var lbIPsAnnotation = join(ipParts, ",")
+                    // Build annotations in-place from ownedAnnotations, then
+                    // overlay the metallb annotation. Scope `k`/`v` to a
+                    // dedicated block so they don't leak into the surrounding
+                    // gateway-loop scope and clobber per-gateway state
+                    // (`nameStr` was the visible casualty: a stray `k` value
+                    // of "key1" from an infrastructure annotation flowed into
+                    // the next statusPatch call, producing "Gateway not found"
+                    // errors for fictitious gateways named after annotation
+                    // keys).
                     var mergedAnnotations = map[string]any{}
-                    for k, v := range ownedAnnotations {
-                      mergedAnnotations[k] = v
+                    for annK, annV := range ownedAnnotations {
+                      mergedAnnotations[annK] = annV
                     }
                     mergedAnnotations["metallb.universe.tf/loadBalancerIPs"] = lbIPsAnnotation
                     renderResource("v1", "Service", ctrlNs, svcName, map[string]any{
