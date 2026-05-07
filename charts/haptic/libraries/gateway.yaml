@@ -815,7 +815,7 @@ templateSnippets:
           })
           return out
         })
-      %}
+      %%}
 
   util-gateway-ssl-passthrough:
     template: |
@@ -1573,217 +1573,6 @@ templateSnippets:
         {%- found = dig(pm, "conditions") | toSlice() -%}
       {%- end -%}
       {{- transitionTime(found, conditionType, newStatus) -}}
-      {%- end macro -%}
-
-  util-listener-data:
-    template: |
-      {#-
-        ComputeListenerData — per-listener supportedKinds + ResolvedRefs +
-        Accepted derivation, factored out so both the Gateway listener loop
-        (util-generate-gateway-status-patches) and the ListenerSet
-        listener loop (status-patches-220-listenerset) emit byte-identical
-        per-listener status for shared concerns.
-
-        Returns a map with the following fields:
-          name                  string  — listener.name
-          supportedKinds        []any   — intersection of allowedRoutes.kinds
-                                          with the chart's per-protocol
-                                          defaults (HTTP/HTTPS->HTTPRoute+
-                                          GRPCRoute, TLS->TLSRoute, TCP->
-                                          TCPRoute, UDP->UDPRoute)
-          attachedRoutes        int     — caller-populated; macro returns 0
-          resolvedRefsStatus    string  — "True" / "False"
-          resolvedRefsReason    string  — Spec reason
-                                          (ResolvedRefs / InvalidRouteKinds /
-                                           InvalidCertificateRef /
-                                           RefNotPermitted)
-          resolvedRefsMessage   string
-          acceptedStatus        string  — "True" / "False"
-          acceptedReason        string  — Accepted / NoValidCACertificate
-                                          (extends are caller-applied)
-          acceptedMessage       string
-          programmedStatus      string  — mirrors ResolvedRefs failure
-          programmedReason      string  — Programmed / Invalid
-          programmedMessage     string
-
-        Args:
-          ownerResource any   — the Gateway or ListenerSet whose listener
-                                this is (only used for transition-time
-                                preservation by callers; the macro itself
-                                doesn't read it)
-          listener      any   — the listener spec (map[string]any)
-          ownerNs       string — the owner's namespace, used as the
-                                source ns for cross-ns Secret RG checks
-          ownerKindNs   string — same value as ownerNs in normal use
-                                (Gateway listeners read tls.frontend on the
-                                Gateway itself; ListenerSet listeners do
-                                NOT — see callerOwnsTlsFrontend below)
-          ownerName     string — the owner's name (informational)
-
-        Cross-ns cert ref handling: for Gateway-owned listeners, RG
-        source-kind is "Gateway"; for ListenerSet-owned listeners, source
-        kind is "ListenerSet". The macro takes the kind from the
-        ownerResource's metadata.* shape — when the resource has
-        spec.parentRef it's treated as a ListenerSet, else Gateway.
-      -#}
-      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- macro ComputeListenerData(ownerResource any, listener any, ownerNs string, ownerKindNs string, ownerName string) any -%}
-      {%%
-        var listenerName = tostring(dig(listener, "name") | fallback(""))
-        var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
-
-        var defaultKinds = []any{}
-        switch protocol {
-        case "HTTP", "HTTPS":
-          defaultKinds = []any{
-            map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
-            map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
-          }
-        case "TLS":
-          defaultKinds = []any{
-            map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"},
-          }
-        case "TCP":
-          defaultKinds = []any{
-            map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"},
-          }
-        case "UDP":
-          defaultKinds = []any{
-            map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
-          }
-        }
-
-        var requestedKinds = dig(listener, "allowedRoutes", "kinds")
-        var supportedKinds = []any{}
-        var hasInvalidKind = false
-        if requestedKinds == nil {
-          supportedKinds = defaultKinds
-        } else {
-          for _, reqEntry := range toSlice(requestedKinds) {
-            var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
-            var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
-            var matched = false
-            for _, def := range defaultKinds {
-              if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
-                matched = true
-                break
-              }
-            }
-            if matched {
-              supportedKinds = append(supportedKinds, map[string]any{"group": reqGroup, "kind": reqKind})
-            } else {
-              hasInvalidKind = true
-            }
-          }
-        }
-
-        // Determine source kind for cross-ns Secret RG check.
-        // ListenerSet has spec.parentRef; Gateway doesn't.
-        var ownerKind = "Gateway"
-        if dig(ownerResource, "spec", "parentRef") != nil {
-          ownerKind = "ListenerSet"
-        }
-
-        // Cert ref validation for HTTPS / TLS listeners.
-        var hasInvalidCertRef = false
-        var hasRefNotPermitted = false
-        if protocol == "HTTPS" || protocol == "TLS" {
-          var listenerTls = dig(listener, "tls")
-          if listenerTls != nil {
-            for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
-              var refGroup = tostring(dig(ref, "group") | fallback(""))
-              var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
-              if refGroup != "" && refGroup != "core" {
-                hasInvalidCertRef = true
-                continue
-              }
-              if refKind != "Secret" {
-                hasInvalidCertRef = true
-                continue
-              }
-              var refName = tostring(dig(ref, "name") | fallback(""))
-              var refNs = tostring(dig(ref, "namespace") | fallback(ownerNs))
-              if refName == "" {
-                hasInvalidCertRef = true
-                continue
-              }
-              if refNs != ownerNs {
-                var permitted = ReferenceGrantPermitted(
-                  "gateway.networking.k8s.io", ownerKind, ownerNs,
-                  "", "Secret", refNs, refName)
-                if permitted != "true" {
-                  hasRefNotPermitted = true
-                  continue
-                }
-              }
-              var sec = resources.secrets.GetSingle(refNs, refName)
-              if sec == nil {
-                hasInvalidCertRef = true
-                continue
-              }
-              var sd = dig(sec, "data")
-              var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
-              var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
-              if crtB64 == "" || keyB64 == "" {
-                hasInvalidCertRef = true
-              } else {
-                var crt, crtErr = b64decode(crtB64)
-                var key, keyErr = b64decode(keyB64)
-                if crtErr != nil || keyErr != nil {
-                  hasInvalidCertRef = true
-                } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
-                  hasInvalidCertRef = true
-                }
-              }
-            }
-          }
-        }
-
-        var resolvedRefsStatus = "True"
-        var resolvedRefsReason = "ResolvedRefs"
-        var resolvedRefsMessage = "All references resolved"
-        if hasInvalidKind {
-          resolvedRefsStatus = "False"
-          resolvedRefsReason = "InvalidRouteKinds"
-          resolvedRefsMessage = "Listener references unsupported route kinds"
-        } else if hasRefNotPermitted {
-          resolvedRefsStatus = "False"
-          resolvedRefsReason = "RefNotPermitted"
-          resolvedRefsMessage = "Listener references a Secret across namespaces with no matching ReferenceGrant"
-        } else if hasInvalidCertRef {
-          resolvedRefsStatus = "False"
-          resolvedRefsReason = "InvalidCertificateRef"
-          resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
-        }
-
-        var acceptedStatus = "True"
-        var acceptedReason = "Accepted"
-        var acceptedMessage = "Listener accepted"
-
-        var programmedStatus = "True"
-        var programmedReason = "Programmed"
-        var programmedMessage = "Listener programmed"
-        if resolvedRefsStatus != "True" {
-          programmedStatus = "False"
-          programmedReason = "Invalid"
-          programmedMessage = resolvedRefsMessage
-        }
-
-        return map[string]any{
-          "name":                listenerName,
-          "supportedKinds":      supportedKinds,
-          "attachedRoutes":      0,
-          "resolvedRefsStatus":  resolvedRefsStatus,
-          "resolvedRefsReason":  resolvedRefsReason,
-          "resolvedRefsMessage": resolvedRefsMessage,
-          "acceptedStatus":      acceptedStatus,
-          "acceptedReason":      acceptedReason,
-          "acceptedMessage":     acceptedMessage,
-          "programmedStatus":    programmedStatus,
-          "programmedReason":    programmedReason,
-          "programmedMessage":   programmedMessage,
-        }
-      %%}
       {%- end macro -%}
 
   util-generate-backends-gateway:
@@ -5681,21 +5470,29 @@ templateSnippets:
           Programmed=True/Programmed      mirrors Accepted=True (after F2
                                           listener-merge the listeners
                                           actually program into HAProxy)
-          Programmed=False/NotAllowed     mirrors Accepted=False/NotAllowed
-          Programmed=False/ListenersNotValid
-                                          mirrors Accepted=False/ListenersNotValid
 
         Per-listener status emits Accepted, Programmed, ResolvedRefs,
         and Conflicted conditions plus supportedKinds (intersection of
         allowedRoutes.kinds with the chart's per-protocol defaults) and
-        attachedRoutes count. ResolvedRefs reports the same
-        cert-ref / kind-validation result the Gateway listener loop
-        emits, factored through util-listener-data.
+        attachedRoutes count.
+
+        ResolvedRefs cert-ref validation matches the Gateway listener
+        loop (util-generate-gateway-status-patches): unsupported group/
+        kind, missing Secret, missing tls.crt/tls.key, malformed PEM,
+        and cross-ns ref without ReferenceGrant. The RG check uses
+        source kind="ListenerSet" (vs "Gateway" for the Gateway loop)
+        so the ListenerSetReferenceGrant conformance test sees
+        ResolvedRefs=False/RefNotPermitted on listeners whose Secret
+        ns has no matching RG for ListenerSets.
+
+        attachedRoutes counts routes whose parentRef.kind="ListenerSet"
+        resolves to this LS + sectionName (sectionless parentRefs
+        attach to every listener on this LS).
 
         Resource-agnostic: no controller code change.
       -#}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
-      {%- import "util-listener-data" for ComputeListenerData -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {{ render "util-effective-listeners" }}
       {%- var statusesAny, _ = shared.ComputeIfAbsent("listenersetStatuses", func() any {
             return map[string]any{}
@@ -5721,17 +5518,14 @@ templateSnippets:
           var lsProgrammedReason = "Pending"
           var lsProgrammedMsg = "Awaiting parent Gateway acceptance"
 
-          // Attached-routes count keyed by listener name. attachedRoutes for
-          // ListenerSet listeners counts routes whose parentRef.kind is
-          // "ListenerSet" and resolves to this LS + section. Cross-namespace
-          // routes that omit parentRef.namespace are skipped because they
-          // would resolve to a same-named ListenerSet in their own namespace
-          // (per Gateway API spec for cross-namespace parentRefs).
+          // attachedRoutes per listener name. Routes whose parentRef.kind
+          // is "ListenerSet" matching this LS's ns/name. Sectionless
+          // parentRefs attach to every listener (matching the
+          // Gateway-listener counter's sectionless-fallback logic).
           var lsAttachedRoutes = map[string]int{}
-          var listenerSpecsByName = map[string]any{}
+          var listenerNamesInLS = []any{}
           for _, l := range dig(ls, "spec", "listeners") | toSlice() {
-            var lname = tostring(dig(l, "name") | fallback(""))
-            listenerSpecsByName[lname] = l
+            listenerNamesInLS = append(listenerNamesInLS, tostring(dig(l, "name") | fallback("")))
           }
           var routeKindsForCount = []any{}
           for _, r := range resources.httproutes.List() {
@@ -5762,82 +5556,78 @@ templateSnippets:
               if prSection != "" {
                 lsAttachedRoutes[prSection] = lsAttachedRoutes[prSection] + 1
               } else {
-                // No sectionName -> attaches to every listener in this LS
-                // that also passes the listener-side allowedRoutes gate.
-                // Conservative count: bump every listener; the chart's
-                // accuracy here is bounded by the same approximation the
-                // Gateway-listener counter uses (sectionless routes attach
-                // to every listener that accepts them).
-                for ln := range listenerSpecsByName {
+                for _, lnAny := range listenerNamesInLS {
+                  var ln = tostring(lnAny)
                   lsAttachedRoutes[ln] = lsAttachedRoutes[ln] + 1
                 }
               }
             }
           }
 
-          // Pull pre-computed entry from the shared cache. statuses[lsKey]
-          // is set whenever util-effective-listeners observes a parentRef
-          // pointing at a known Gateway (i.e. parentGw != nil).
           var statusEntryAny, hasEntry = statuses[lsKey]
+          var permitted = false
+          var rejectReason = "Pending"
+          var rejectMsg = "Parent Gateway not yet observed"
+          var conflictByName = map[string]any{}
+          if hasEntry {
+            var statusEntry = statusEntryAny.(map[string]any)
+            permitted = statusEntry["permitted"].(bool)
+            rejectReason = tostring(statusEntry["rejectionReason"])
+            rejectMsg = tostring(statusEntry["rejectionMessage"])
+            for _, c := range statusEntry["listenerConflicts"].([]any) {
+              var cm = c.(map[string]any)
+              conflictByName[tostring(cm["name"])] = cm
+            }
+          }
 
+          // Top-level acceptance derivation.
           if parentGw == nil {
             lsAcceptedReason = "Pending"
             lsAcceptedMsg = "Parent Gateway " + parentNs + "/" + parentName + " not found"
             lsProgrammedReason = "Pending"
             lsProgrammedMsg = lsAcceptedMsg
           } else if !hasEntry {
-            // Defensive: parent exists but cache miss — should not happen.
             lsAcceptedReason = "Pending"
             lsAcceptedMsg = "ListenerSet acceptance state not yet computed"
             lsProgrammedReason = "Pending"
             lsProgrammedMsg = lsAcceptedMsg
+          } else if !permitted {
+            lsAcceptedReason = rejectReason
+            lsAcceptedMsg = rejectMsg
+            lsProgrammedReason = rejectReason
+            lsProgrammedMsg = rejectMsg
           } else {
-            var statusEntry = statusEntryAny.(map[string]any)
-            var permitted = statusEntry["permitted"].(bool)
-            if !permitted {
-              lsAccepted = "False"
-              lsAcceptedReason = tostring(statusEntry["rejectionReason"])
-              lsAcceptedMsg = tostring(statusEntry["rejectionMessage"])
-              lsProgrammed = "False"
-              lsProgrammedReason = lsAcceptedReason
-              lsProgrammedMsg = lsAcceptedMsg
-            } else {
-              // Permitted by parent Gateway. Drill into per-listener
-              // conflict state to pick the top-level reason: if every
-              // listener is conflicted, the LS itself is rejected with
-              // ListenersNotValid (per ListenerSetHostnameConflict /
-              // ListenerSetProtocolConflict conformance tests).
-              var conflicts = statusEntry["listenerConflicts"].([]any)
-              var anyValid = false
-              for _, lc := range conflicts {
-                var lcm = lc.(map[string]any)
-                if tostring(lcm["conflicted"]) == "" && lcm["accepted"].(bool) {
-                  anyValid = true
-                  break
-                }
-              }
-              // Empty listener list: nothing to program but nothing
-              // explicitly conflicted either. Treat as accepted but
-              // unprogrammed (matches an LS that exists but has yet to
-              // declare any listeners).
-              if len(conflicts) == 0 {
+            // Permitted by parent Gateway. Drill into per-listener
+            // conflict state to pick the top-level reason: if every
+            // declared listener is conflicted, the LS itself is rejected
+            // with ListenersNotValid (per ListenerSetHostnameConflict /
+            // ListenerSetProtocolConflict conformance tests).
+            var anyValid = false
+            var allConflicts = statusEntryAny.(map[string]any)["listenerConflicts"].([]any)
+            for _, lc := range allConflicts {
+              var lcm = lc.(map[string]any)
+              if tostring(lcm["conflicted"]) == "" && lcm["accepted"].(bool) {
                 anyValid = true
+                break
               }
-              if anyValid {
-                lsAccepted = "True"
-                lsAcceptedReason = "Accepted"
-                lsAcceptedMsg = "ListenerSet accepted by parent Gateway"
-                lsProgrammed = "True"
-                lsProgrammedReason = "Programmed"
-                lsProgrammedMsg = "ListenerSet listeners programmed into the data plane"
-              } else {
-                lsAccepted = "False"
-                lsAcceptedReason = "ListenersNotValid"
-                lsAcceptedMsg = "All listeners on this ListenerSet lost a hostname or protocol conflict"
-                lsProgrammed = "False"
-                lsProgrammedReason = "ListenersNotValid"
-                lsProgrammedMsg = lsAcceptedMsg
-              }
+            }
+            if len(allConflicts) == 0 {
+              anyValid = true
+            }
+            if anyValid {
+              lsAccepted = "True"
+              lsAcceptedReason = "Accepted"
+              lsAcceptedMsg = "ListenerSet accepted by parent Gateway"
+              lsProgrammed = "True"
+              lsProgrammedReason = "Programmed"
+              lsProgrammedMsg = "ListenerSet listeners programmed into the data plane"
+            } else {
+              lsAccepted = "False"
+              lsAcceptedReason = "ListenersNotValid"
+              lsAcceptedMsg = "All listeners on this ListenerSet lost a hostname or protocol conflict"
+              lsProgrammed = "False"
+              lsProgrammedReason = "ListenersNotValid"
+              lsProgrammedMsg = lsAcceptedMsg
             }
           }
 
@@ -5848,127 +5638,202 @@ templateSnippets:
               lsGen, TopLevelTransitionTime(ls, "Programmed", lsProgrammed)),
           }
 
-          // Per-listener status array. Each entry combines:
-          //   - the cached conflict state (for the Conflicted condition)
-          //   - the parent-gate permitted bool (for Accepted=False/NotAllowed
-          //     when the LS itself was rejected)
-          //   - ComputeListenerData for ResolvedRefs / supportedKinds /
-          //     listener-Accepted (kind / cert-ref validation, factored
-          //     into util-listener-data so the Gateway listener loop and
-          //     this LS loop stay in lockstep)
-          var lsListeners = []any{}
-          var conflicts = []any{}
-          if hasEntry {
-            conflicts = statusEntryAny.(map[string]any)["listenerConflicts"].([]any)
-          }
-          // statuses-driven fallback when the gateway is missing; emit
-          // every listener as Pending so operators see the LS shape even
-          // before reconciliation observes the parent.
-          if parentGw == nil {
-            for li, l := range dig(ls, "spec", "listeners") | toSlice() {
-              var lname = tostring(dig(l, "name") | fallback(""))
-              var ld = ComputeListenerData(ls, l, lsNs, lsNs, lsName)
-              var ldm = ld.(map[string]any)
-              ldm["acceptedStatus"] = "False"
-              ldm["acceptedReason"] = "Pending"
-              ldm["acceptedMessage"] = "Parent Gateway not yet observed"
-              ldm["programmedStatus"] = "False"
-              ldm["programmedReason"] = "Pending"
-              ldm["programmedMessage"] = ldm["acceptedMessage"]
-              ldm["attachedRoutes"] = lsAttachedRoutes[lname]
-              ldm["_index"] = li
-              lsListeners = append(lsListeners, ldm)
-            }
-          } else if !hasEntry {
-            // No-op: hasEntry should be true when parentGw != nil.
-          } else {
-            // Map listener-name -> conflict entry for fast lookup.
-            var conflictByName = map[string]any{}
-            for _, c := range conflicts {
-              var cm = c.(map[string]any)
-              conflictByName[tostring(cm["name"])] = cm
-            }
-            var statusEntry = statusEntryAny.(map[string]any)
-            var permitted = statusEntry["permitted"].(bool)
-            var rejectReason = tostring(statusEntry["rejectionReason"])
-            var rejectMsg = tostring(statusEntry["rejectionMessage"])
-            for li, l := range dig(ls, "spec", "listeners") | toSlice() {
-              var lname = tostring(dig(l, "name") | fallback(""))
-              var ld = ComputeListenerData(ls, l, lsNs, lsNs, lsName)
-              var ldm = ld.(map[string]any)
-              ldm["attachedRoutes"] = lsAttachedRoutes[lname]
-              ldm["_index"] = li
+          // Per-listener data: supportedKinds, ResolvedRefs (cert refs
+          // with RG check using source kind="ListenerSet"), and
+          // Accepted/Programmed/Conflicted.
+          var renderedListeners = []any{}
+          for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+            var listenerName = tostring(dig(l, "name") | fallback(""))
+            var protocol = tostring(dig(l, "protocol") | fallback("HTTP"))
 
-              // Apply parent-gate result over ComputeListenerData's
-              // listener-local Accepted/Programmed when the LS itself was
-              // rejected.
-              if !permitted {
-                ldm["acceptedStatus"] = "False"
-                ldm["acceptedReason"] = rejectReason
-                ldm["acceptedMessage"] = rejectMsg
-                ldm["programmedStatus"] = "False"
-                ldm["programmedReason"] = rejectReason
-                ldm["programmedMessage"] = rejectMsg
+            // supportedKinds
+            var defaultKinds = []any{}
+            switch protocol {
+            case "HTTP", "HTTPS":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
               }
-
-              // Apply conflict state.
-              var cAny, hasC = conflictByName[lname]
-              var conflictedStatus = "False"
-              var conflictedReason = "NoConflicts"
-              var conflictedMsg = "No conflicts detected"
-              if hasC {
-                var cm = cAny.(map[string]any)
-                var cReason = tostring(cm["conflicted"])
-                if cReason != "" {
-                  conflictedStatus = "True"
-                  conflictedReason = cReason
-                  conflictedMsg = "Listener conflicts with a higher-precedence sibling on the same port"
-                  // Conflicted listeners can't be Accepted or Programmed.
-                  ldm["acceptedStatus"] = "False"
-                  ldm["acceptedReason"] = cReason
-                  ldm["acceptedMessage"] = conflictedMsg
-                  ldm["programmedStatus"] = "False"
-                  ldm["programmedReason"] = cReason
-                  ldm["programmedMessage"] = conflictedMsg
+            case "TLS":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"},
+              }
+            case "TCP":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"},
+              }
+            case "UDP":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
+              }
+            }
+            var requestedKinds = dig(l, "allowedRoutes", "kinds")
+            var supportedKinds = []any{}
+            var hasInvalidKind = false
+            if requestedKinds == nil {
+              supportedKinds = defaultKinds
+            } else {
+              for _, reqEntry := range toSlice(requestedKinds) {
+                var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
+                var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
+                var matched = false
+                for _, def := range defaultKinds {
+                  if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                    matched = true
+                    break
+                  }
+                }
+                if matched {
+                  supportedKinds = append(supportedKinds, map[string]any{"group": reqGroup, "kind": reqKind})
+                } else {
+                  hasInvalidKind = true
                 }
               }
-              ldm["conflictedStatus"] = conflictedStatus
-              ldm["conflictedReason"] = conflictedReason
-              ldm["conflictedMessage"] = conflictedMsg
-              lsListeners = append(lsListeners, ldm)
             }
-          }
 
-          // Emit per-listener status array.
-          var renderedListeners = []any{}
-          for _, ldAny := range lsListeners {
-            var ldm = ldAny.(map[string]any)
-            var lname = tostring(ldm["name"])
+            // Cert ref validation for HTTPS/TLS listeners. RG source is
+            // ListenerSet (not Gateway) so cross-ns Secret refs need a RG
+            // matching from {ListenerSet, lsNs}.
+            var hasInvalidCertRef = false
+            var hasRefNotPermitted = false
+            if protocol == "HTTPS" || protocol == "TLS" {
+              var listenerTls = dig(l, "tls")
+              if listenerTls != nil {
+                for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
+                  var refGroup = tostring(dig(ref, "group") | fallback(""))
+                  var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
+                  if refGroup != "" && refGroup != "core" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  if refKind != "Secret" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  var refName = tostring(dig(ref, "name") | fallback(""))
+                  var refNs = tostring(dig(ref, "namespace") | fallback(lsNs))
+                  if refName == "" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  if refNs != lsNs {
+                    var rgOk = ReferenceGrantPermitted(
+                      "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                      "", "Secret", refNs, refName)
+                    if rgOk != "true" {
+                      hasRefNotPermitted = true
+                      continue
+                    }
+                  }
+                  var sec = resources.secrets.GetSingle(refNs, refName)
+                  if sec == nil {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  var sd = dig(sec, "data")
+                  var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
+                  var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
+                  if crtB64 == "" || keyB64 == "" {
+                    hasInvalidCertRef = true
+                  } else {
+                    var crt, crtErr = b64decode(crtB64)
+                    var key, keyErr = b64decode(keyB64)
+                    if crtErr != nil || keyErr != nil {
+                      hasInvalidCertRef = true
+                    } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                      hasInvalidCertRef = true
+                    }
+                  }
+                }
+              }
+            }
+
+            var resolvedRefsStatus = "True"
+            var resolvedRefsReason = "ResolvedRefs"
+            var resolvedRefsMessage = "All references resolved"
+            if hasInvalidKind {
+              resolvedRefsStatus = "False"
+              resolvedRefsReason = "InvalidRouteKinds"
+              resolvedRefsMessage = "Listener references unsupported route kinds"
+            } else if hasRefNotPermitted {
+              resolvedRefsStatus = "False"
+              resolvedRefsReason = "RefNotPermitted"
+              resolvedRefsMessage = "Listener references a Secret across namespaces with no matching ReferenceGrant"
+            } else if hasInvalidCertRef {
+              resolvedRefsStatus = "False"
+              resolvedRefsReason = "InvalidCertificateRef"
+              resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
+            }
+
+            // Default Accepted/Programmed: mirrors ResolvedRefs. Then
+            // overridden by parent-gate rejection or conflict state.
+            var listenerAcceptedStatus = "True"
+            var listenerAcceptedReason = "Accepted"
+            var listenerAcceptedMessage = "Listener accepted"
+            var listenerProgrammedStatus = "True"
+            var listenerProgrammedReason = "Programmed"
+            var listenerProgrammedMessage = "Listener programmed"
+            if resolvedRefsStatus != "True" {
+              listenerProgrammedStatus = "False"
+              listenerProgrammedReason = "Invalid"
+              listenerProgrammedMessage = resolvedRefsMessage
+            }
+
+            // Apply parent-gate rejection.
+            if parentGw == nil {
+              listenerAcceptedStatus = "False"
+              listenerAcceptedReason = "Pending"
+              listenerAcceptedMessage = "Parent Gateway not yet observed"
+              listenerProgrammedStatus = "False"
+              listenerProgrammedReason = "Pending"
+              listenerProgrammedMessage = listenerAcceptedMessage
+            } else if hasEntry && !permitted {
+              listenerAcceptedStatus = "False"
+              listenerAcceptedReason = rejectReason
+              listenerAcceptedMessage = rejectMsg
+              listenerProgrammedStatus = "False"
+              listenerProgrammedReason = rejectReason
+              listenerProgrammedMessage = rejectMsg
+            }
+
+            // Apply conflict state.
+            var conflictedStatus = "False"
+            var conflictedReason = "NoConflicts"
+            var conflictedMessage = "No conflicts detected"
+            var cAny, hasC = conflictByName[listenerName]
+            if hasC {
+              var cm = cAny.(map[string]any)
+              var cReason = tostring(cm["conflicted"])
+              if cReason != "" {
+                conflictedStatus = "True"
+                conflictedReason = cReason
+                conflictedMessage = "Listener conflicts with a higher-precedence sibling on the same port"
+                listenerAcceptedStatus = "False"
+                listenerAcceptedReason = cReason
+                listenerAcceptedMessage = conflictedMessage
+                listenerProgrammedStatus = "False"
+                listenerProgrammedReason = cReason
+                listenerProgrammedMessage = conflictedMessage
+              }
+            }
+
             renderedListeners = append(renderedListeners, map[string]any{
-              "name":           lname,
-              "supportedKinds": ldm["supportedKinds"],
-              "attachedRoutes": ldm["attachedRoutes"],
+              "name":           listenerName,
+              "supportedKinds": supportedKinds,
+              "attachedRoutes": lsAttachedRoutes[listenerName],
               "conditions": []any{
                 condition("Accepted",
-                  tostring(ldm["acceptedStatus"]),
-                  tostring(ldm["acceptedReason"]),
-                  tostring(ldm["acceptedMessage"]),
-                  lsGen, ListenerTransitionTime(ls, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
+                  listenerAcceptedStatus, listenerAcceptedReason, listenerAcceptedMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "Accepted", listenerAcceptedStatus)),
                 condition("Programmed",
-                  tostring(ldm["programmedStatus"]),
-                  tostring(ldm["programmedReason"]),
-                  tostring(ldm["programmedMessage"]),
-                  lsGen, ListenerTransitionTime(ls, lname, "Programmed", tostring(ldm["programmedStatus"]))),
+                  listenerProgrammedStatus, listenerProgrammedReason, listenerProgrammedMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "Programmed", listenerProgrammedStatus)),
                 condition("ResolvedRefs",
-                  tostring(ldm["resolvedRefsStatus"]),
-                  tostring(ldm["resolvedRefsReason"]),
-                  tostring(ldm["resolvedRefsMessage"]),
-                  lsGen, ListenerTransitionTime(ls, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                  resolvedRefsStatus, resolvedRefsReason, resolvedRefsMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "ResolvedRefs", resolvedRefsStatus)),
                 condition("Conflicted",
-                  tostring(ldm["conflictedStatus"]),
-                  tostring(ldm["conflictedReason"]),
-                  tostring(ldm["conflictedMessage"]),
-                  lsGen, ListenerTransitionTime(ls, lname, "Conflicted", tostring(ldm["conflictedStatus"]))),
+                  conflictedStatus, conflictedReason, conflictedMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "Conflicted", conflictedStatus)),
               },
             })
           }
@@ -8989,6 +8854,526 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend gtw_default_grpc-route"
         description: Must generate backend for GRPCRoute
+
+  test-tlsroute-passthrough-basic:
+    description: |
+      TLSRoute attached to a TLS Passthrough listener emits a TCP-mode
+      backend named gtw_tls_<ns>_<route>_<rule> and a SNI-keyed
+      use_backend rule on the ssl-tcp frontend.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: "*.example.com"
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with TLSRoute passthrough
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-app_0"
+        description: TLSRoute backend uses gtw_tls_<ns>_<name>_<ruleIdx> naming
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend gtw_tls_default_tls-app_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
+        description: ssl-tcp frontend dispatches by SNI to the TLSRoute backend
+      - type: contains
+        target: haproxy.cfg
+        pattern: "frontend ssl-tcp"
+        description: ssl-tcp frontend exists when TLSRoute passthrough is configured
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "use_backend gtw_tls_default_tls-app_0 if .*ssl_fc_sni"
+        description: SSL passthrough must use req_ssl_sni (TCP mode) NOT ssl_fc_sni (HTTPS mode)
+
+  test-tlsroute-no-tls-listener:
+    description: |
+      TLSRoute parented to an HTTP-only Gateway (no TLS listener) must NOT
+      produce a TLSRoute backend. Mirrors conformance
+      tlsroute-invalid-no-matching-listener for the HTTP / HTTPS case.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-http-only
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-http-only
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid even when TLSRoute has no matching listener
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-app"
+        description: TLSRoute attached to HTTP-only Gateway must not produce a backend
+
+  test-tlsroute-mixed-termination-protocol-conflict:
+    description: |
+      Gateway with both Passthrough and Terminate TLS listeners on the
+      same port triggers ProtocolConflict. The Passthrough listener must
+      not produce a backend (the data-plane refuses to dispatch
+      conflicted listeners). Pins conformance test
+      tlsroute-listener-mixed-termination-not-supported.
+
+      Note: no Secret fixture is provided for the Terminate listener's
+      certificateRef. That's fine — the chart skips invalid cert refs
+      (status side surfaces InvalidCertificateRef) AND the Terminate
+      listener is itself ProtocolConflict, so no cert ever gets
+      consulted at runtime. Avoiding the secret fixture also avoids the
+      cross-library YAML anchor (defined in ssl.yaml's
+      _test_tls_crt/_test_tls_key) which doesn't resolve when libraries
+      are loaded as independent files.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-mixed
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls-terminate
+                protocol: TLS
+                port: 8443
+                hostname: terminate.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - name: tls-cert
+              - name: tls-passthrough
+                protocol: TLS
+                port: 8443
+                hostname: passthrough.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: route-passthrough
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-mixed
+                sectionName: tls-passthrough
+            hostnames:
+              - passthrough.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid even when listeners are ProtocolConflict
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_route-passthrough"
+        description: ProtocolConflict listener must not produce a passthrough backend
+
+  test-tlsroute-hostname-mismatch:
+    description: |
+      TLSRoute hostname not intersecting the listener hostname does NOT
+      produce a passthrough backend. Mirrors conformance
+      tlsroute-invalid-no-matching-listener-hostname.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-mismatch
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tls
+            hostnames:
+              - other.test
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when TLSRoute hostname doesn't intersect
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-mismatch"
+        description: TLSRoute with non-intersecting hostname produces no backend
+
+  test-tlsroute-wildcard-listener-exact-route:
+    description: |
+      Wildcard listener "*.example.com" + exact route "abc.example.com"
+      produces a backend keyed on the exact route hostname (per Gateway
+      API HostnameSinglePairIntersection).
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-wildcard
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: "*.example.com"
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-exact
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-wildcard
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when listener wildcard intersects route exact
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend gtw_tls_default_tls-exact_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
+        description: SNI uses the exact route hostname (intersection result)
+
+  test-tlsroute-section-name-no-match:
+    description: |
+      TLSRoute parentRef.sectionName referencing a nonexistent listener
+      must not attach (NoMatchingParent on status side; backend not
+      emitted on data plane). Mirrors conformance test case
+      tlsroute-no-matching-section-name.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls-passthrough
+                protocol: TLS
+                port: 443
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-bad-section
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tls
+                sectionName: nonexistent-listener
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when sectionName doesn't match
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-bad-section"
+        description: TLSRoute with mismatched sectionName produces no backend
+
+  test-tlsroute-invalid-backend-kind-no-attach:
+    description: |
+      TLSRoute backendRef with non-Service kind must not produce a
+      backend (status side reports ResolvedRefs=False/InvalidKind).
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-bad-kind
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tls
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - group: example.com
+                    kind: NotAService
+                    name: not-a-service
+                    port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when TLSRoute has non-Service backend
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-bad-kind"
+        description: TLSRoute with non-Service backendRef produces no backend
 
   test-httproute-cors-filter:
     description: HTTPRoute CORS filter generates set-var, return 200, and response headers
