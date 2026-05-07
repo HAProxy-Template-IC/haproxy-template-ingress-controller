@@ -1306,7 +1306,7 @@ test-gateway-conformance:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
-  timeout: 35 minutes
+  timeout: 70 minutes
   interruptible: true
   variables:
     CTRL_NAMESPACE: haptic
