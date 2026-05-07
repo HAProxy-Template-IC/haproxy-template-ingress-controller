@@ -3293,6 +3293,13 @@ templateSnippets:
                     }
                   }
                 }
+                // Mixed spec.addresses (IP + Hostname/NamedAddress):
+                // even if the IPAddress entries realize cleanly, the
+                // Hostname / NamedAddress entries can't. Mark
+                // AddressNotUsable so the operator sees the gap.
+                if nonIPCount > 0 {
+                  hasUnusableAddr = true
+                }
               }
             }
 
