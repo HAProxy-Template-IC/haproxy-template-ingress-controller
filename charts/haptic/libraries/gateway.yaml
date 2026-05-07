@@ -985,10 +985,30 @@ templateSnippets:
       {%- var routeTypeLabel = "GRPCRoute" -%}
       {%- if protoFlag == "" -%}{%- routeTypeLabel = "HTTPRoute" -%}{%- end -%}
       {%- var beKey = BackendNameGateway(route, backend) -%}
+      {#- Per Gateway API spec, when the target Service port declares
+          appProtocol (kubernetes.io/h2c, kubernetes.io/ws[s]), the data
+          plane MUST honour that protocol. HAProxy's `proto` directive on
+          default-server gives us h2c; WebSocket flows through native HTTP
+          handling without any directive. We look up the Service by
+          (namespace, name) and find the port matching backendRef.port. -#}
+      {%- var resolvedProtoFlag = protoFlag -%}
+      {%- if protoFlag == "" -%}
+        {%- var svc = resources.services.GetSingle(tostring(routeNs), tostring(backendName)) -%}
+        {%- if svc != nil -%}
+          {%- for _, p := range svc | dig("spec", "ports") | toSlice() -%}
+            {%- if (p | dig("port") | toint()) == toint(backendPort) -%}
+              {%- var ap = p | dig("appProtocol") | fallback("") | tostring() -%}
+              {%- if ap == "kubernetes.io/h2c" -%}
+                {%- resolvedProtoFlag = "h2" -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
-        default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
+        default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, tostring(routeNs)) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
