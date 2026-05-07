@@ -424,24 +424,42 @@ templateSnippets:
               {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
               {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
               {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
               {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
               {%- if gw != nil %}
                 {%- resolvedGwCount = resolvedGwCount + 1 %}
                 {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
                   {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
                   {%- if section == "" || section == listenerName %}
-                    {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
-                    {%- if len(routeHostnames) == 0 %}
-                      {%- effectiveHosts[listenerHostname] = true %}
-                    {%- else if listenerHostname == "" %}
-                      {%- for _, rh := range routeHostnames %}
-                        {%- effectiveHosts[tostring(rh)] = true %}
+                    {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                    {#- parentRef.port pin: per Gateway API spec, attach
+                        only to listeners on the named port. -#}
+                    {%- if prPort == 0 || prPort == listenerPort %}
+                      {#- Compose a port suffix for non-default HTTP/HTTPS
+                          ports so the host_match key includes it. The
+                          inbound Host header carries the port verbatim for
+                          non-default ports, so the host-map lookup with
+                          un-stripped Host directly matches `<host>:<port>`. -#}
+                      {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                      {%- var portSuffix = "" %}
+                      {%- if listenerPort > 0 %}
+                        {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
+                          {%- portSuffix = ":" + tostring(listenerPort) %}
+                        {%- end %}
                       {%- end %}
-                    {%- else %}
-                      {%- for _, rh := range routeHostnames %}
-                        {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
-                        {%- if inter != "" %}
-                          {%- effectiveHosts[inter] = true %}
+                      {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {%- if len(routeHostnames) == 0 %}
+                        {%- effectiveHosts[listenerHostname + portSuffix] = true %}
+                      {%- else if listenerHostname == "" %}
+                        {%- for _, rh := range routeHostnames %}
+                          {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
+                        {%- end %}
+                      {%- else %}
+                        {%- for _, rh := range routeHostnames %}
+                          {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
+                          {%- if inter != "" %}
+                            {%- effectiveHosts[inter + portSuffix] = true %}
+                          {%- end %}
                         {%- end %}
                       {%- end %}
                     {%- end %}
@@ -525,24 +543,42 @@ templateSnippets:
               {%- var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs)) %}
               {%- var gwName = tostring(dig(parentRef, "name") | fallback("")) %}
               {%- var section = tostring(dig(parentRef, "sectionName") | fallback("")) %}
+              {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
               {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
               {%- if gw != nil %}
                 {%- resolvedGwCount = resolvedGwCount + 1 %}
                 {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
                   {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
                   {%- if section == "" || section == listenerName %}
-                    {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
-                    {%- if len(routeHostnames) == 0 %}
-                      {%- effectiveHosts[listenerHostname] = true %}
-                    {%- else if listenerHostname == "" %}
-                      {%- for _, rh := range routeHostnames %}
-                        {%- effectiveHosts[tostring(rh)] = true %}
+                    {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                    {#- parentRef.port pin: per Gateway API spec, attach
+                        only to listeners on the named port. -#}
+                    {%- if prPort == 0 || prPort == listenerPort %}
+                      {#- Compose a port suffix for non-default HTTP/HTTPS
+                          ports so the host_match key includes it. The
+                          inbound Host header carries the port verbatim for
+                          non-default ports, so the host-map lookup with
+                          un-stripped Host directly matches `<host>:<port>`. -#}
+                      {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                      {%- var portSuffix = "" %}
+                      {%- if listenerPort > 0 %}
+                        {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
+                          {%- portSuffix = ":" + tostring(listenerPort) %}
+                        {%- end %}
                       {%- end %}
-                    {%- else %}
-                      {%- for _, rh := range routeHostnames %}
-                        {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
-                        {%- if inter != "" %}
-                          {%- effectiveHosts[inter] = true %}
+                      {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {%- if len(routeHostnames) == 0 %}
+                        {%- effectiveHosts[listenerHostname + portSuffix] = true %}
+                      {%- else if listenerHostname == "" %}
+                        {%- for _, rh := range routeHostnames %}
+                          {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
+                        {%- end %}
+                      {%- else %}
+                        {%- for _, rh := range routeHostnames %}
+                          {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
+                          {%- if inter != "" %}
+                            {%- effectiveHosts[inter + portSuffix] = true %}
+                          {%- end %}
                         {%- end %}
                       {%- end %}
                     {%- end %}
@@ -1433,6 +1469,7 @@ templateSnippets:
           var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
           var gwName = tostring(dig(parentRef, "name") | fallback(""))
           var section = tostring(dig(parentRef, "sectionName") | fallback(""))
+          var prPort = toint(dig(parentRef, "port") | fallback(0))
           var gw = resources.gateways.GetSingle(gwNs, gwName)
           if gw == nil {
             continue
@@ -1443,18 +1480,31 @@ templateSnippets:
             if section != "" && section != listenerName {
               continue
             }
+            var listenerPort = toint(dig(listener, "port") | fallback(0))
+            if prPort != 0 && prPort != listenerPort {
+              continue
+            }
+            // Per-port suffix for non-default HTTP/HTTPS ports, see
+            // analyze_routes for the same logic.
+            var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+            var portSuffix = ""
+            if listenerPort > 0 {
+              if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
+                portSuffix = ":" + tostring(listenerPort)
+              }
+            }
             var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
             if len(routeHostnames) == 0 {
-              effectiveHosts[listenerHostname] = true
+              effectiveHosts[listenerHostname + portSuffix] = true
             } else if listenerHostname == "" {
               for _, rh := range routeHostnames {
-                effectiveHosts[tostring(rh)] = true
+                effectiveHosts[tostring(rh) + portSuffix] = true
               }
             } else {
               for _, rh := range routeHostnames {
                 var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
                 if inter != "" {
-                  effectiveHosts[inter] = true
+                  effectiveHosts[inter + portSuffix] = true
                 }
               }
             }
@@ -7435,3 +7485,120 @@ validationTests:
         target: haproxy.cfg
         pattern: 'http-request redirect location "https://example\.org%\[path\]" code 302'
         description: Redirect URL uses literal scheme when spec.scheme=https
+
+  test-httproute-listener-port-matching:
+    description: Routes attached to listeners on different ports get port-suffixed host map entries
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: l-80
+                port: 80
+                hostname: foo.com
+                protocol: HTTP
+              - name: l-8080
+                port: 8080
+                hostname: foo.com
+                protocol: HTTP
+              - name: l-8090
+                port: 8090
+                hostname: foo.com
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: backend
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-on-80
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                port: 80
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-on-8080
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                port: 8080
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-on-8090-by-section
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: l-8090
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^foo\\.com foo\\.com$"
+        description: Port-80 route emits unsuffixed host entry
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^foo\\.com:8080 foo\\.com:8080$"
+        description: Port-8080 route emits :8080 suffixed host entry
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^foo\\.com:8090 foo\\.com:8090$"
+        description: Port-8090 route emits :8090 suffixed host entry
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.host_full\\) req\\.hdr\\(Host\\),lower"
+        description: Routing logic captures full Host header (with port) for port-aware lookup
