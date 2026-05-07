@@ -2245,6 +2245,16 @@ templateSnippets:
                   continue
                 }
 
+                // (2.5) parentRef.port filter (Gateway API spec): if the
+                //       route's parentRef sets `.port`, only attach to
+                //       listeners with the same `spec.port`. Mismatched
+                //       routes get Accepted=False/NoMatchingParent.
+                var parentPort = toint(dig(parentRef, "port") | fallback(0))
+                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                if parentPort != 0 && listenerPort != parentPort {
+                  continue
+                }
+
                 // (3) allowedRoutes.kinds — if specified, the route's
                 //     group/kind must be in the list. Default group is
                 //     gateway.networking.k8s.io.
@@ -2848,6 +2858,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = tostring(sectionName)
                     sectionNameStr = tostring(sectionName)
                   }
+                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
 
                   // Evaluate Accepted-by-listener for this parentRef.
                   // Walk the gateway's listeners; the first that accepts
@@ -2860,6 +2871,7 @@ templateSnippets:
                   var acceptedReason = "NotAllowedByListeners"
                   var acceptedMsg = "No listener accepts this route"
                   var sawSectionMatch = false
+                  var sawPortMatch = false
                   var sawKindNs = false
                   var sawHostnameMismatch = false
                   if gw != nil {
@@ -2871,6 +2883,18 @@ templateSnippets:
                       }
                       if sectionNameStr != "" {
                         sawSectionMatch = true
+                      }
+                      // parentRef.port (Gateway API): when the route's
+                      // parentRef sets `.port`, only the listener with
+                      // the same `spec.port` is a match. Mismatched
+                      // parents fail with NoMatchingParent (more specific
+                      // than NotAllowedByListeners).
+                      var listenerPort = toint(dig(listener, "port") | fallback(0))
+                      if parentPort != 0 && listenerPort != parentPort {
+                        continue
+                      }
+                      if parentPort != 0 {
+                        sawPortMatch = true
                       }
 
                       // Kind filter
@@ -2941,6 +2965,9 @@ templateSnippets:
                     if sectionNameStr != "" && !sawSectionMatch {
                       acceptedReason = "NoMatchingParent"
                       acceptedMsg = "Section " + sectionNameStr + " not found on parent gateway"
+                    } else if parentPort != 0 && !sawPortMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "No listener with port " + tostring(parentPort) + " on parent gateway"
                     } else if sawHostnameMismatch && !sawKindNs {
                       acceptedReason = "NoMatchingListenerHostname"
                       acceptedMsg = "No listener hostname intersects the route's hostnames"
