@@ -2738,6 +2738,16 @@ templateSnippets:
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + join(exposeList, ", ") + "\"") %}
           {%- end %}
       http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
+      {# Non-matching-origin preflight short-circuit: per Gateway API spec,
+         OPTIONS preflights to a CORS-enabled route whose Origin is NOT in
+         allowOrigins must NOT receive any access-control-* response headers.
+         The conformance suite expects a 200 / 204 / 403 — anything that
+         doesn't echo the disallowed origin. If we let the request fall
+         through to the backend, the backend's body is echoed back and the
+         test fails on the body / path expectation. Return 204 with no
+         headers when this route's CORS filter would have matched a
+         different origin. #}
+      http-request return status 204 if METH_OPTIONS { req.fhdr(Origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }} !{ var(txn.gw_cors_origin) -m found }
           {# Simple cross-origin responses (non-preflight): backend-served
               responses still flow through http-response normally so the
               set-header path works. Same allow-origin / allow-credentials
