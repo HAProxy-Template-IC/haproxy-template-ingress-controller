@@ -4652,6 +4652,8 @@ templateSnippets:
               // (above). InvalidCertificateRef wins when both apply since
               // the listener can't bind without a server cert at all.
               var hasNoValidFrontendCA = false
+              var feFailReason = "InvalidCACertificateRef"
+              var feFailMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
               var listenerAcceptedStatus = "True"
               var listenerAcceptedReason = "Accepted"
               var listenerAcceptedMessage = "Listener accepted"
@@ -4675,34 +4677,86 @@ templateSnippets:
                   var feRefs = dig(feValidation, "caCertificateRefs") | toSlice()
                   if feRefs != nil && len(feRefs) > 0 {
                     var feHasValid = false
+                    // Per-ref failure tracking. Spec precedence on the
+                    // ResolvedRefs reason when no ref resolves:
+                    //   InvalidCACertificateKind  (group/kind unsupported)
+                    //   RefNotPermitted           (cross-ns, no RG)
+                    //   InvalidCACertificateRef   (nonexistent / malformed)
+                    // The first match wins; conformance
+                    // GatewayInvalidFrontendClientCertificateValidation
+                    // sets up listeners exhibiting each failure mode and
+                    // verifies the listener's ResolvedRefs reason.
+                    var sawInvalidKind = false
+                    var sawRefNotPermitted = false
+                    var sawInvalidCARef = false
                     for _, ref := range feRefs {
                       var refGroup = tostring(dig(ref, "group") | fallback(""))
                       var refKind = tostring(dig(ref, "kind") | fallback(""))
                       var refName = tostring(dig(ref, "name") | fallback(""))
-                      if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" && refName != "" {
-                        var cm = resources.configmaps.GetSingle(nsStr, refName)
-                        if cm != nil {
-                          var data = dig(cm, "data") | fallback(map[string]any{})
-                          var dataMap = data.(map[string]any)
-                          var caCrt, ok = dataMap["ca.crt"]
-                          if ok && tostring(caCrt) != "" {
-                            feHasValid = true
-                          }
+                      var refNs = tostring(dig(ref, "namespace") | fallback(nsStr))
+                      // Only core-group ConfigMap and Secret are supported
+                      // by the chart for frontend CA refs.
+                      if (refGroup != "" && refGroup != "core") || (refKind != "ConfigMap" && refKind != "Secret") {
+                        sawInvalidKind = true
+                        continue
+                      }
+                      if refName == "" {
+                        sawInvalidCARef = true
+                        continue
+                      }
+                      // Cross-namespace ref needs a ReferenceGrant in the
+                      // ref's target namespace allowing the Gateway in
+                      // gateway.namespace to point at this Kind/name.
+                      if refNs != nsStr {
+                        if ReferenceGrantPermitted(
+                          "gateway.networking.k8s.io", "Gateway", nsStr,
+                          "", refKind, refNs, refName) != "true" {
+                          sawRefNotPermitted = true
+                          continue
                         }
-                      } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" && refName != "" {
-                        var sec = resources.secrets.GetSingle(nsStr, refName)
-                        if sec != nil {
-                          var data = dig(sec, "data") | fallback(map[string]any{})
-                          var dataMap = data.(map[string]any)
-                          var caCrt, ok = dataMap["ca.crt"]
-                          if ok && tostring(caCrt) != "" {
-                            feHasValid = true
-                          }
+                      }
+                      if refKind == "ConfigMap" {
+                        var cm = resources.configmaps.GetSingle(refNs, refName)
+                        if cm == nil {
+                          sawInvalidCARef = true
+                          continue
                         }
+                        var data = dig(cm, "data") | fallback(map[string]any{})
+                        var dataMap = data.(map[string]any)
+                        var caCrt, ok = dataMap["ca.crt"]
+                        if !ok || tostring(caCrt) == "" {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        feHasValid = true
+                      } else {
+                        var sec = resources.secrets.GetSingle(refNs, refName)
+                        if sec == nil {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        var data = dig(sec, "data") | fallback(map[string]any{})
+                        var dataMap = data.(map[string]any)
+                        var caCrt, ok = dataMap["ca.crt"]
+                        if !ok || tostring(caCrt) == "" {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        feHasValid = true
                       }
                     }
                     if !feHasValid {
                       hasNoValidFrontendCA = true
+                      if sawInvalidKind {
+                        feFailReason = "InvalidCACertificateKind"
+                        feFailMessage = "Frontend client-cert validation caCertificateRef uses an unsupported group/kind"
+                      } else if sawRefNotPermitted {
+                        feFailReason = "RefNotPermitted"
+                        feFailMessage = "Frontend client-cert validation caCertificateRef crosses namespaces without a matching ReferenceGrant"
+                      } else if sawInvalidCARef {
+                        feFailReason = "InvalidCACertificateRef"
+                        feFailMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
+                      }
                     }
                   }
                 }
@@ -4722,11 +4776,11 @@ templateSnippets:
                 resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
               } else if hasNoValidFrontendCA {
                 resolvedRefsStatus = "False"
-                resolvedRefsReason = "InvalidCACertificateRef"
-                resolvedRefsMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
+                resolvedRefsReason = feFailReason
+                resolvedRefsMessage = feFailMessage
                 listenerAcceptedStatus = "False"
                 listenerAcceptedReason = "NoValidCACertificate"
-                listenerAcceptedMessage = resolvedRefsMessage
+                listenerAcceptedMessage = feFailMessage
               }
 
               // Count attached routes: routes with sectionName matching
