@@ -98,11 +98,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(c.Scheme()))
 	require.NoError(t, apiextensionsv1.AddToScheme(c.Scheme()))
 
-	// Conservative SupportedFeatures pin: gateway, HTTPRoute core, plus
-	// the matchers this chart genuinely implements. Excluded features
-	// (h2c, mirror, HTTPRoute redirect filters) map to filter shapes the
-	// chart doesn't yet support; conformance tests for those are skipped
-	// by the suite when the feature isn't in this set.
 	// SupportedFeatures pin the chart's actual coverage. Each entry must
 	// correspond to template logic that's been verified end-to-end against
 	// the conformance fixtures — never declare a feature the chart only
@@ -111,12 +106,39 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// Gateway API v1.5 treats request-header modification (set/add/remove)
 	// as a CORE HTTPRoute capability — gated by SupportHTTPRoute alone, no
 	// extra feature flag. Tests for it run automatically.
+	//
+	// The redirect/rewrite features all map to the same two HAProxy
+	// filter blocks in `charts/haptic/libraries/gateway.yaml`:
+	//   - `requestRedirect` filter (~L1897) emits `http-request redirect`
+	//     with scheme / hostname / port / path / status-code parts. The
+	//     status-code is taken straight from spec, so 301/302/303/307/308
+	//     all flow through unchanged.
+	//   - `URLRewrite` filter (~L1953) emits `http-request set-header Host`
+	//     for hostname rewrites and `http-request set-path` /
+	//     `http-request replace-path` for ReplaceFullPath /
+	//     ReplacePrefixMatch path rewrites.
+	//
+	// Excluded features (h2c, websocket protocols, request mirroring,
+	// CORS filter, request/backend timeouts, named route rules, parent-ref
+	// port matching, destination-port matching, backend-request header
+	// modification, ReferenceGrant cross-namespace authorization, mTLS
+	// frontend/backend client certs) are HTTPRoute capabilities the chart
+	// doesn't yet implement. Adding them requires both chart work and a
+	// feature declaration here.
 	supported := sets.New[features.FeatureName](
 		features.SupportGateway,
 		features.SupportHTTPRoute,
 		features.SupportHTTPRouteQueryParamMatching,
 		features.SupportHTTPRouteMethodMatching,
 		features.SupportHTTPRouteResponseHeaderModification,
+		features.SupportHTTPRoutePortRedirect,
+		features.SupportHTTPRouteSchemeRedirect,
+		features.SupportHTTPRoutePathRedirect,
+		features.SupportHTTPRouteHostRewrite,
+		features.SupportHTTPRoutePathRewrite,
+		features.SupportHTTPRoute303RedirectStatusCode,
+		features.SupportHTTPRoute307RedirectStatusCode,
+		features.SupportHTTPRoute308RedirectStatusCode,
 	)
 
 	timeoutCfg := conformanceconfig.DefaultTimeoutConfig()
