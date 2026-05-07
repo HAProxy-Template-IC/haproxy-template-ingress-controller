@@ -2178,7 +2178,16 @@ templateSnippets:
       http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map_reg({{ regexPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_sni_listener) -m len 0 }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map({{ exactPath }},'') if { var(txn.gw_host_canonical) -m found }
       http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map_reg({{ regexPath }},'') if { var(txn.gw_host_canonical) -m found } { var(txn.gw_host_listener) -m len 0 }
-      http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
+      # 421 only when SNI matched a listener AND that listener differs
+      # from the Host's listener. If SNI matches no listener at all,
+      # HAProxy serves whatever default cert it has and routing decides
+      # the response — returning 421 there would mis-flag a request the
+      # server never *claimed* belonged to a different listener (per
+      # RFC 9110 §15.5.20). Fixes the
+      # HTTPRouteHTTPSListenerDetectMisdirectedRequests subtests
+      # `unknown-example.org → example.org` (expects 200) and
+      # `unknown-example.org → unknown-example.org` (expects 404).
+      http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
   # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
   # Named with 010- prefix so alphabetical sort matches intended execution order
   frontend-matchers-advanced-010-route-id-setup:
