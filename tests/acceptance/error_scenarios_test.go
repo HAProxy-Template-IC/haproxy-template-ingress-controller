@@ -940,17 +940,11 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			err = WaitForPodReady(ctx, client, namespace, "app="+ControllerDeploymentName, DefaultTimeout)
 			require.NoError(t, err)
 
-			// Wait for leader election to complete
+			// Wait for leader election to complete (returns the stable holder)
 			t.Log("Waiting for leader election...")
-			err = WaitForLeaderElection(ctx, clientset, namespace, "haptic-leader", 60*time.Second)
+			initialLeader, err := WaitForLeaderElection(ctx, clientset, namespace, "haptic-leader", 60*time.Second)
 			if err != nil {
 				t.Logf("Leader election wait failed: %v (continuing anyway)", err)
-			}
-
-			// Get current leader
-			initialLeader, err := GetLeaseHolder(ctx, clientset, namespace, "haptic-leader")
-			if err != nil {
-				t.Logf("Could not get initial leader: %v", err)
 				initialLeader = ""
 			} else {
 				t.Logf("Initial leader: %s", initialLeader)
@@ -988,14 +982,10 @@ func buildLeadershipDuringReconciliationFeature() types.Feature {
 			require.NoError(t, err)
 			t.Logf("After leadership transition: %d pods", len(pods.Items))
 
-			// Wait for leader election to complete
-			err = WaitForLeaderElection(ctx, clientset, namespace, "haptic-leader", 30*time.Second)
+			// Wait for leader election to complete (returns the stable holder)
+			newLeader, err := WaitForLeaderElection(ctx, clientset, namespace, "haptic-leader", 30*time.Second)
 			if err != nil {
 				t.Logf("Leader election wait failed: %v (continuing anyway)", err)
-			}
-			newLeader, err := GetLeaseHolder(ctx, clientset, namespace, "haptic-leader")
-			if err != nil {
-				t.Logf("Could not get new leader: %v", err)
 			} else {
 				t.Logf("Leader after transition: %s", newLeader)
 			}
