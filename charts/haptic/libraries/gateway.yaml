@@ -1553,6 +1553,7 @@ templateSnippets:
       # gateway/map-host-regex-gateway
       {%%
         var seen = map[string]bool{}
+        var suffixEntries = []any{}
         for _, gw := range resources.gateways.List() {
           for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
             var h = tostring(dig(listener, "hostname") | fallback(""))
@@ -1564,11 +1565,19 @@ templateSnippets:
               continue
             }
             seen[suffix] = true
+            suffixEntries = append(suffixEntries, map[string]any{"suffix": suffix})
           }
         }
+        // Most-specific (longest) suffix wins HAProxy `map_reg` ties — that's
+        // first-match-wins on file order, so emit longer suffixes first. Per
+        // Gateway API spec: when a request Host matches multiple listeners'
+        // wildcard hostnames, the most-specific one owns the request (e.g.
+        // `bar.foo.example.com` belongs to `*.foo.example.com`, not `*.example.com`).
       %%}
-      {%- for suffix := range seen %}
-      ^[^.]+(?:\.[^.]+)*\.{{ replace(tostring(suffix), ".", "\\.") }}$ .{{ tostring(suffix) }}
+      {%- var sortedSuffixEntries = suffixEntries | sort_by([]string{"$.suffix | length:desc"}) %}
+      {%- for _, entry := range sortedSuffixEntries %}
+      {%- var suffix = tostring(entry | dig("suffix")) %}
+      ^[^.]+(?:\.[^.]+)*\.{{ replace(suffix, ".", "\\.") }}$ .{{ suffix }}
       {%- end %}
 
   map-path-exact-500-gateway:
@@ -7173,3 +7182,157 @@ validationTests:
         target: haproxy.cfg
         pattern: "default-server check ssl ca-file [^\\s]+ verify required sni str\\(backend\\.example\\.com\\) verifyhost backend\\.example\\.com"
         description: Targeted backend default-server gets ssl/ca-file/verify/sni from the policy
+
+  test-gateway-http-listener-isolation:
+    description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: empty-hostname
+                port: 80
+                protocol: HTTP
+              - name: wildcard-example-com
+                port: 80
+                hostname: "*.example.com"
+                protocol: HTTP
+              - name: wildcard-foo-example-com
+                port: 80
+                hostname: "*.foo.example.com"
+                protocol: HTTP
+              - name: abc-foo-example-com
+                port: 80
+                hostname: abc.foo.example.com
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v1-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: infra-backend-v1
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-empty-hostname
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: empty-hostname
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /empty-hostname
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-wildcard-example-com
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: wildcard-example-com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /wildcard-example-com
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-wildcard-foo-example-com
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: wildcard-foo-example-com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /wildcard-foo-example-com
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-abc-foo-example-com
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: abc-foo-example-com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /abc-foo-example-com
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles with multi-listener isolation Gateway
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^/empty-hostname/ GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        description: Empty-hostname route's path map entry has no host prefix
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
+        description: wildcard-example-com route's path map entry uses .example.com host prefix
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
+        description: wildcard-foo-example-com route's path map entry uses .foo.example.com host prefix
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
+        description: abc-foo-example-com route's path map entry uses exact host prefix
+
+      - type: contains
+        target: map:host-regex.map
+        pattern: "(?ms)foo\\\\\\.example\\\\\\.com\\$ \\.foo\\.example\\.com.*\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.example\\\\\\.com\\$ \\.example\\.com"
+        description: More-specific wildcard regex entry comes before less-specific (so map_reg first-match-wins picks the right listener)
