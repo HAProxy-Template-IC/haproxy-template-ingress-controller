@@ -2752,12 +2752,12 @@ templateSnippets:
               responses still flow through http-response normally so the
               set-header path works. Same allow-origin / allow-credentials
               / expose-headers semantics as preflight. #}
-      http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found }
+      http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- if allowCreds %}
-      http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found }
+      http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- end %}
           {%- if len(exposeList) > 0 %}
-      http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found }
+      http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
           {%- end %}
       {# A literal blank-line separator — the `{%-` end markers below strip
          the trailing whitespace + newline of the prior directive, which
