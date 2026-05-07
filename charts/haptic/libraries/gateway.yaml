@@ -392,7 +392,7 @@ templateSnippets:
         listener has no hostname either, which the host map handles via
         the regsub wildcard fallback).
       -#}
-      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection %}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
       {%- macro AnalyzeRoutes(result map[string]any) %}
         {%- var allRoutes = []any{} %}
 
@@ -448,11 +448,42 @@ templateSnippets:
                         {%- end %}
                       {%- end %}
                       {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {#- Listener isolation: per Gateway API spec, when a
+                          route on a less-specific listener (e.g. catch-all)
+                          declares a hostname that's more-specifically owned
+                          by a sibling listener, the sibling owns the host.
+                          We only need to filter when the host CATEGORY
+                          would land in a different listener's regex bucket;
+                          for routes attached to a non-empty listener via
+                          intersection, the intersection result already
+                          falls in the listener's own bucket. So drop the
+                          filter when listenerHostname is non-empty (the
+                          intersection guarantees the candidate is at-or-
+                          inside the listener's claim). For catch-all
+                          listeners, drop any route hostname whose host
+                          category is fully owned by a sibling — i.e. the
+                          sibling matches the candidate. -#}
+                      {%- var currentRank = toint(HostnameRank(listenerHostname)) %}
                       {%- if len(routeHostnames) == 0 %}
                         {%- effectiveHosts[listenerHostname + portSuffix] = true %}
                       {%- else if listenerHostname == "" %}
                         {%- for _, rh := range routeHostnames %}
-                          {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
+                          {%- var rhStr = tostring(rh) %}
+                          {%- var ownedBySibling = false %}
+                          {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                            {%- if !ownedBySibling %}
+                              {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                              {%- if sibName != listenerName %}
+                                {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                {%- if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank %}
+                                  {%- ownedBySibling = true %}
+                                {%- end %}
+                              {%- end %}
+                            {%- end %}
+                          {%- end %}
+                          {%- if !ownedBySibling %}
+                            {%- effectiveHosts[rhStr + portSuffix] = true %}
+                          {%- end %}
                         {%- end %}
                       {%- else %}
                         {%- for _, rh := range routeHostnames %}
@@ -567,11 +598,42 @@ templateSnippets:
                         {%- end %}
                       {%- end %}
                       {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {#- Listener isolation: per Gateway API spec, when a
+                          route on a less-specific listener (e.g. catch-all)
+                          declares a hostname that's more-specifically owned
+                          by a sibling listener, the sibling owns the host.
+                          We only need to filter when the host CATEGORY
+                          would land in a different listener's regex bucket;
+                          for routes attached to a non-empty listener via
+                          intersection, the intersection result already
+                          falls in the listener's own bucket. So drop the
+                          filter when listenerHostname is non-empty (the
+                          intersection guarantees the candidate is at-or-
+                          inside the listener's claim). For catch-all
+                          listeners, drop any route hostname whose host
+                          category is fully owned by a sibling — i.e. the
+                          sibling matches the candidate. -#}
+                      {%- var currentRank = toint(HostnameRank(listenerHostname)) %}
                       {%- if len(routeHostnames) == 0 %}
                         {%- effectiveHosts[listenerHostname + portSuffix] = true %}
                       {%- else if listenerHostname == "" %}
                         {%- for _, rh := range routeHostnames %}
-                          {%- effectiveHosts[tostring(rh) + portSuffix] = true %}
+                          {%- var rhStr = tostring(rh) %}
+                          {%- var ownedBySibling = false %}
+                          {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                            {%- if !ownedBySibling %}
+                              {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                              {%- if sibName != listenerName %}
+                                {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                {%- if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank %}
+                                  {%- ownedBySibling = true %}
+                                {%- end %}
+                              {%- end %}
+                            {%- end %}
+                          {%- end %}
+                          {%- if !ownedBySibling %}
+                            {%- effectiveHosts[rhStr + portSuffix] = true %}
+                          {%- end %}
                         {%- end %}
                       {%- else %}
                         {%- for _, rh := range routeHostnames %}
@@ -891,6 +953,26 @@ templateSnippets:
             least one label before it. Both `foo.X` and
             `multi.label.foo.X` match (wildcards match any number of
             labels), but the bare `X` does not. -#}
+      {#- HostnameRank — coarse "specificity" rank for a Gateway listener
+          hostname. Higher rank = more specific. Used to determine which
+          listener on a Gateway most specifically claims a given host so
+          listener-isolation can drop a hostname from a less-specific
+          listener's effective set when a more-specific sibling owns it.
+            ""        → 0           (catch-all; lowest)
+            "*.X"     → 100 + len(X) (wildcard; tied to suffix length)
+            "X"       → 100000 + len(X) (exact; always beats any wildcard)
+          The 100/100000 jumps make rank-comparisons safe across the
+          three categories without needing tuple ordering. -#}
+      {%- macro HostnameRank(h string) -%}
+        {%- if h == "" -%}
+          0
+        {%- else if hasPrefix(h, "*.") -%}
+          {{ 100 + len(h[2:]) }}
+        {%- else -%}
+          {{ 100000 + len(h) }}
+        {%- end -%}
+      {%- end macro -%}
+
       {%- macro HostnameSinglePairIntersection(lh string, rh string) -%}
         {%- if lh == rh -%}
           {{ lh }}
@@ -1457,7 +1539,7 @@ templateSnippets:
         consistent.
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
-      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection -%}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
       {%%
@@ -1500,11 +1582,30 @@ templateSnippets:
               }
             }
             var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+            // Listener isolation (catch-all only — see analyze_routes for
+            // the rationale): drop a route hostname when a sibling listener
+            // on the same Gateway claims it more specifically.
+            var currentRank = toint(HostnameRank(listenerHostname))
             if len(routeHostnames) == 0 {
               effectiveHosts[listenerHostname + portSuffix] = true
             } else if listenerHostname == "" {
               for _, rh := range routeHostnames {
-                effectiveHosts[tostring(rh) + portSuffix] = true
+                var rhStr = tostring(rh)
+                var ownedBySibling = false
+                for _, sibling := range dig(gw, "spec", "listeners") | toSlice() {
+                  var sibName = tostring(dig(sibling, "name") | fallback(""))
+                  if sibName == listenerName {
+                    continue
+                  }
+                  var sibHost = tostring(dig(sibling, "hostname") | fallback(""))
+                  if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank {
+                    ownedBySibling = true
+                    break
+                  }
+                }
+                if !ownedBySibling {
+                  effectiveHosts[rhStr + portSuffix] = true
+                }
               }
             } else {
               for _, rh := range routeHostnames {
@@ -7615,3 +7716,96 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.host_full\\) req\\.hdr\\(Host\\),lower"
         description: Routing logic captures full Host header (with port) for port-aware lookup
+
+  test-gateway-listener-isolation-hostname-intersection:
+    description: Catch-all listener routes drop hostnames more-specifically claimed by sibling listeners
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: empty-hostname
+                port: 80
+                protocol: HTTP
+              - name: wildcard-example-com
+                port: 80
+                hostname: "*.example.com"
+                protocol: HTTP
+              - name: abc-example-com
+                port: 80
+                hostname: abc.example.com
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: backend
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: empty-listener-route
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: empty-hostname
+            hostnames:
+              - bar.com
+              - "*.example.com"
+              - abc.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /empty
+                backendRefs:
+                  - name: backend
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^bar\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        description: bar.com path entry kept (no sibling claims bar.com)
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "(?m)^\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        description: "*.example.com dropped (claimed by wildcard-example-com sibling)"
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "(?m)^abc\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        description: abc.example.com dropped (claimed by abc-example-com sibling)
