@@ -48,6 +48,13 @@ type RenderResult struct {
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
 	StatusPatches []templating.StatusPatch
 
+	// RenderedResources contains full Kubernetes resources the templates declared
+	// the controller should own and reconcile (e.g. per-Gateway LoadBalancer
+	// Services for SupportGatewayStaticAddresses). The applier compares each
+	// against the last-applied checksum and skips unchanged entries to avoid
+	// hammering the API server.
+	RenderedResources []templating.RenderedResource
+
 	// DurationMs is the total render duration in milliseconds.
 	DurationMs int64
 
@@ -187,7 +194,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}
 
 	// Build rendering context from stores
-	renderContext, fileRegistry, statusPatchCollector := s.buildRenderingContext(ctx, provider)
+	renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector := s.buildRenderingContext(ctx, provider)
 
 	// Render main HAProxy config
 	haproxyConfig, err := s.engine.Render(ctx, names.MainTemplateName, renderContext)
@@ -222,17 +229,25 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		len(auxiliaryFiles.SSLCaFiles) +
 		len(auxiliaryFiles.CRTListFiles)
 
+	// Validate rendered resources before surfacing them. Any structural
+	// problem aborts the render so the deployment scheduler doesn't get a
+	// half-formed payload.
+	if err := renderedResourceCollector.Validate(); err != nil {
+		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+	}
+
 	return &RenderResult{
-		HAProxyConfig:  haproxyConfig,
-		AuxiliaryFiles: auxiliaryFiles,
-		StatusPatches:  statusPatchCollector.Patches(),
-		DurationMs:     time.Since(startTime).Milliseconds(),
-		AuxFileCount:   auxFileCount,
+		HAProxyConfig:     haproxyConfig,
+		AuxiliaryFiles:    auxiliaryFiles,
+		StatusPatches:     statusPatchCollector.Patches(),
+		RenderedResources: renderedResourceCollector.Resources(),
+		DurationMs:        time.Since(startTime).Milliseconds(),
+		AuxFileCount:      auxFileCount,
 	}, nil
 }
 
 // buildRenderingContext constructs the template rendering context from stores.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector, *templating.RenderedResourceCollector) {
 	renderContext := make(map[string]any)
 
 	// Add path resolver for file path resolution in templates
@@ -290,6 +305,14 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	statusPatchCollector := templating.NewStatusPatchCollector()
 	renderContext["statusPatchCollector"] = statusPatchCollector
 
+	// Create rendered resource collector for template-driven owned-resource
+	// reconciliation. Same shape as statusPatchCollector but for whole
+	// resources instead of status-only updates. Resource-agnostic by design
+	// (the controller never names "Service" or "Gateway" in code — it
+	// applies whatever the template emits via SSA).
+	renderedResourceCollector := templating.NewRenderedResourceCollector()
+	renderContext["renderedResourceCollector"] = renderedResourceCollector
+
 	// Create shared cache for cross-template data sharing
 	renderContext["shared"] = templating.NewSharedContext()
 
@@ -323,7 +346,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		renderContext["http"] = httpFetcher
 	}
 
-	return renderContext, fileRegistry, statusPatchCollector
+	return renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.

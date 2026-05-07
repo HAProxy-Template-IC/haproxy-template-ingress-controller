@@ -26,7 +26,7 @@
 //	    rendercontext.WithStores(stores),
 //	    rendercontext.WithCapabilities(capabilities),
 //	)
-//	ctx, fileRegistry, statusPatchCollector := builder.Build()
+//	ctx, fileRegistry, statusPatchCollector, renderedResourceCollector := builder.Build()
 package rendercontext
 
 import (
@@ -125,7 +125,8 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 	return b
 }
 
-// Build creates the template rendering context, file registry, and status patch collector.
+// Build creates the template rendering context, file registry, status patch
+// collector, and rendered resource collector.
 //
 // The context structure is:
 //
@@ -135,6 +136,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "templateSnippets": []string,
 //	  "fileRegistry": FileRegistry,
 //	  "statusPatchCollector": StatusPatchCollector,
+//	  "renderedResourceCollector": RenderedResourceCollector,
 //	  "pathResolver": PathResolver,
 //	  "dataplane": Config.Dataplane,
 //	  "capabilities": map[string]bool (if set),
@@ -144,7 +146,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "http": HTTPFetcher (if set),
 //	  "extraContext": map from config,
 //	}
-func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatchCollector) {
+func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatchCollector, *templating.RenderedResourceCollector) {
 	// Create resources map with typed ResourceStore values. Each wrapper
 	// gets the IndexBy that the watcher used to build the underlying
 	// store; the wrapper uses it to build its per-render snapshot index
@@ -193,6 +195,13 @@ func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatc
 	// Create status patch collector for template-driven status updates
 	statusPatchCollector := templating.NewStatusPatchCollector()
 
+	// Create rendered resource collector for template-driven owned-resource
+	// reconciliation (per-Gateway Services for SupportGatewayStaticAddresses,
+	// Listener-set membership, etc. — anything where the chart needs the
+	// controller to spawn / update / prune Kubernetes resources). The
+	// collector is resource-agnostic: templates pass any apiVersion / kind.
+	renderedResourceCollector := templating.NewRenderedResourceCollector()
+
 	b.logger.Debug("rendering context built",
 		"resource_count", len(resources),
 		"controller_fields", len(controller),
@@ -200,14 +209,15 @@ func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatc
 
 	// Build final context
 	templateContext := map[string]any{
-		"resources":            resources,
-		"controller":           controller,
-		"templateSnippets":     snippetNames,
-		"fileRegistry":         fileRegistry,
-		"statusPatchCollector": statusPatchCollector,
-		"pathResolver":         b.pathResolver,
-		"dataplane":            b.config.Dataplane,
-		"shared":               templating.NewSharedContext(),
+		"resources":                 resources,
+		"controller":                controller,
+		"templateSnippets":          snippetNames,
+		"fileRegistry":              fileRegistry,
+		"statusPatchCollector":      statusPatchCollector,
+		"renderedResourceCollector": renderedResourceCollector,
+		"pathResolver":              b.pathResolver,
+		"dataplane":                 b.config.Dataplane,
+		"shared":                    templating.NewSharedContext(),
 		"runtimeEnvironment": &templating.RuntimeEnvironment{
 			GOMAXPROCS: runtime.GOMAXPROCS(0),
 		},
@@ -239,7 +249,7 @@ func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatc
 			"variable_count", len(b.config.TemplatingSettings.ExtraContext))
 	}
 
-	return templateContext, fileRegistry, statusPatchCollector
+	return templateContext, fileRegistry, statusPatchCollector, renderedResourceCollector
 }
 
 // SortSnippetNames sorts template snippet names alphabetically.

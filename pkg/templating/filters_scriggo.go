@@ -159,6 +159,10 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncTransitionTime] = scriggoTransitionTime
 	decl[FilterToJSON] = scriggoToJSON
 
+	// Resource rendering function (resource-agnostic: templates emit any
+	// apiVersion / kind, the controller's generic applier reconciles them).
+	decl[FuncRenderResource] = scriggoRenderResource
+
 	// Version comparison functions
 	decl[FuncSemverGte] = scriggoSemverGte
 
