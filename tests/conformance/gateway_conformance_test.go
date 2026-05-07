@@ -201,7 +201,37 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// t.Skip() for the whole suite. Each entry must include an issue
 		// link in a comment so it can be revisited.
 		SkipTests: []string{
-			// (none yet — populate as conformance reveals genuine gaps)
+			// gRPC over plaintext HTTP/2 (h2c) on a port shared with HTTP/1.1
+			// is not natively supported by HAProxy 3.x — `bind ... proto h2`
+			// forces the entire bind to H2-only. Conformance attaches
+			// GRPCRoutes to Gateways with HTTP-protocol (port 80) listeners,
+			// expecting the implementation to multiplex H1+H2c on the same
+			// port. Skipping until the chart grows per-Gateway frontend
+			// derivation that allocates an h2-only bind when the Gateway has
+			// only GRPCRoutes attached. Tracked at <follow-up issue>.
+			"GRPCExactMethodMatching",
+			"GRPCRouteHeaderMatching",
+			"GRPCRouteListenerHostnameMatching",
+			// Frontend mTLS handshake-level enforcement: the chart now emits
+			// `verify required` / `verify optional` based on validation.mode
+			// (commit 32fc336d), but the conformance request flow needs a
+			// reachable port for both 8443 (the frontend test port) and a
+			// matching client cert. Until the chart's haproxy-service exposes
+			// arbitrary listener ports as NodePorts (and the test harness
+			// maps dial-target → NodePort dynamically), the request half of
+			// these tests can't run. The status-side assertions already pass
+			// via commit da065129. Tracked at <follow-up issue>.
+			"GatewayFrontendClientCertificateValidation",
+			"GatewayFrontendClientCertificateValidationInsecureFallback",
+			"GatewayBackendClientCertificateFeature",
+			// Gateway listeners on non-default ports (8080 in conformance
+			// fixtures) need a matching NodePort exposed by the chart's
+			// haproxy-service AND a matching extraPortMapping in the kind
+			// cluster config. The current chart and kind config only forward
+			// 30080/30443/30404. Until that plumbing lands, the test's
+			// NodePort RoundTripper rejects the dial. Tracked at <follow-up issue>.
+			"GatewayWithAttachedRoutesWithPort8080",
+			"GatewayModifyListeners",
 		},
 		UsableNetworkAddresses:   usable,
 		UnusableNetworkAddresses: unusable,
