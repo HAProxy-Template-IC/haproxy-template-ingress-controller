@@ -371,8 +371,16 @@ templateSnippets:
             }
           }
 
-          // Helper: resolve a validation block to (caPath, "required")
+          // Helper: resolve a validation block to (caPath, mode)
           // or ("", "") when it can't be resolved.
+          //
+          // HAProxy verify mode is derived from validation.mode (GEP-91):
+          //   AllowValidOnly        → verify required
+          //   AllowInsecureFallback → verify optional
+          // The optional mode lets the TLS handshake complete without a
+          // client cert OR with an invalid cert (HAProxy still records
+          // the verify state in `ssl_c_verify`); applications can then
+          // gate per-route. Required rejects both at handshake time.
           var resolveValidation = func(validation any, suffix string) (string, string) {
             if validation == nil {
               return "", ""
@@ -380,6 +388,11 @@ templateSnippets:
             var refs []any = validation | dig("caCertificateRefs") | toSlice()
             if refs == nil {
               return "", ""
+            }
+            var validationMode = tostring(validation | dig("mode") | fallback("AllowValidOnly"))
+            var verifyMode = "required"
+            if validationMode == "AllowInsecureFallback" {
+              verifyMode = "optional"
             }
             var parts = []any{}
             for _, ref := range refs {
@@ -431,7 +444,7 @@ templateSnippets:
             if fErr != nil {
               return "", ""
             }
-            return p, "required"
+            return p, verifyMode
           }
 
           var defaultPath, defaultMode = resolveValidation(defaultValidation, "-default")
@@ -4345,11 +4358,19 @@ templateSnippets:
                     })
                   }
                   if len(svcPorts) > 0 {
-                    // Set spec.loadBalancerIP to the first IPAddress; if
-                    // the user listed multiple, the others get reported
-                    // as "not usable" since a single Service can only
-                    // bind one IP. Operators wanting multi-IP Gateways
-                    // need multiple Gateway resources.
+                    // Address selection strategy:
+                    //   - spec.loadBalancerIP   = first IPAddress (legacy
+                    //     field; non-MetalLB cloud LBs honour this).
+                    //   - metallb.universe.tf/loadBalancerIPs annotation =
+                    //     ALL IPAddresses, comma-separated. MetalLB walks
+                    //     this list in order and picks the first
+                    //     allocatable; this lets a Gateway listing
+                    //     {unusable, usable} succeed by skipping the
+                    //     unusable entry. Conformance test
+                    //     GatewayStaticAddresses pins this — it deliberately
+                    //     orders an unusable RFC 5737 IP before a usable
+                    //     pool IP and asserts the realized status.addresses
+                    //     ends up containing the usable one.
                     //
                     // metadata.labels / annotations carry the Gateway's
                     // spec.infrastructure metadata when set (per
@@ -4357,12 +4378,24 @@ templateSnippets:
                     // gateway.networking.k8s.io/gateway-name discovery
                     // label the conformance test searches for. ownedLabels
                     // / ownedAnnotations are precomputed at the top of
-                    // the per-Gateway block.
+                    // the per-Gateway block. The metallb annotation is
+                    // merged onto ownedAnnotations so user-provided
+                    // infrastructure annotations don't get clobbered.
                     var firstIP = tostring(validIPs[0])
+                    var ipParts = []any{}
+                    for _, ip := range validIPs {
+                      ipParts = append(ipParts, tostring(ip))
+                    }
+                    var lbIPsAnnotation = join(ipParts, ",")
+                    var mergedAnnotations = map[string]any{}
+                    for k, v := range ownedAnnotations {
+                      mergedAnnotations[k] = v
+                    }
+                    mergedAnnotations["metallb.universe.tf/loadBalancerIPs"] = lbIPsAnnotation
                     renderResource("v1", "Service", ctrlNs, svcName, map[string]any{
                       "metadata": map[string]any{
                         "labels":      ownedLabels,
-                        "annotations": ownedAnnotations,
+                        "annotations": mergedAnnotations,
                       },
                       "spec": map[string]any{
                         "type":           "LoadBalancer",
