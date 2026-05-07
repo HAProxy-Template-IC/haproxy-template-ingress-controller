@@ -691,35 +691,48 @@ func GetLeaseHolder(ctx context.Context, clientset kubernetes.Interface, namespa
 	return *lease.Spec.HolderIdentity, nil
 }
 
-// WaitForLeaderElection waits until a Lease exists with a holder identity.
-// Returns error if timeout occurs before leader is elected.
+// WaitForLeaderElection waits until a Lease exists with a stable, non-empty
+// holder identity, and returns that identity. "Stable" means the same holder
+// is observed across two consecutive ticks — startup races can briefly flip
+// the lease between holders, and a single sample can also catch a transient
+// empty HolderIdentity right after a release. Requiring back-to-back agreement
+// avoids both pitfalls.
 //
 // IMPORTANT: This function accepts a pre-created clientset to avoid rate limiter exhaustion
 // under parallel test execution.
-func WaitForLeaderElection(ctx context.Context, clientset kubernetes.Interface, namespace, leaseName string, timeout time.Duration) error {
+func WaitForLeaderElection(ctx context.Context, clientset kubernetes.Interface, namespace, leaseName string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	var lastSeen string
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for leader election")
+			return "", fmt.Errorf("timeout waiting for leader election")
 
 		case <-ticker.C:
 			lease, err := clientset.CoordinationV1().Leases(namespace).Get(ctx, leaseName, metav1.GetOptions{})
 			if err != nil {
 				// Lease doesn't exist yet, keep waiting
+				lastSeen = ""
 				continue
 			}
 
-			if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != "" {
-				// Leader elected
-				return nil
+			if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity == "" {
+				// Empty holder — either no leader yet, or a holder just released.
+				// Reset the run of consecutive observations.
+				lastSeen = ""
+				continue
 			}
-			// Lease exists but no holder yet, keep waiting
+
+			holder := *lease.Spec.HolderIdentity
+			if holder == lastSeen {
+				return holder, nil
+			}
+			lastSeen = holder
 		}
 	}
 }

@@ -422,11 +422,14 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			require.NoError(t, err)
 			t.Log("At least one controller pod ready")
 
-			// Wait for leader election
+			// Wait for leader election to stabilise (returns a holder seen
+			// across consecutive samples — avoids the empty-string window
+			// that occurs when a leader briefly releases the lease during
+			// startup churn).
 			leaseName := "haptic-leader"
-			err = WaitForLeaderElection(ctx, clientset, namespace, leaseName, 60*time.Second)
+			leaderIdentity, err := WaitForLeaderElection(ctx, clientset, namespace, leaseName, 60*time.Second)
 			require.NoError(t, err)
-			t.Log("Leader election complete")
+			t.Logf("Leader election complete: %s", leaderIdentity)
 
 			// Wait for leader to complete first reconciliation (renderer is leader-only,
 			// so aux files won't be available until reconciliation completes)
@@ -435,11 +438,6 @@ func buildHTTPStoreFailoverFeature() types.Feature {
 			_, err = WaitForControllerReadyWithMetrics(ctx, client, namespace, metricsClient, DefaultPodReadyTimeout)
 			require.NoError(t, err)
 			t.Log("Leader completed first reconciliation")
-
-			// Get the current leader
-			leaderIdentity, err := GetLeaseHolder(ctx, clientset, namespace, leaseName)
-			require.NoError(t, err)
-			t.Logf("Current leader: %s", leaderIdentity)
 
 			// Get leader pod to identify it for deletion
 			allPods, err := GetAllControllerPods(ctx, client, namespace)

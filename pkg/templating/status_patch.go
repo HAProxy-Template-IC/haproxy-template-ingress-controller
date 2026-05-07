@@ -81,8 +81,12 @@ func NewStatusPatchCollector() *StatusPatchCollector {
 //   - "renderFailed": applied when later render phases fail
 //   - "deployFailed": applied when deployment fails
 func (c *StatusPatchCollector) Register(namespace, name, apiVersion, kind string, variants map[string]map[string]any) error {
-	if namespace == "" || name == "" || apiVersion == "" || kind == "" {
-		return errors.New("statusPatch: namespace, name, apiVersion, and kind are required")
+	// Namespace is intentionally optional: cluster-scoped resources
+	// (GatewayClass, ClusterRole, etc.) have no namespace. The applier
+	// passes Namespace("") to the dynamic client, which the client-go
+	// dynamic interface treats as cluster-scoped automatically.
+	if name == "" || apiVersion == "" || kind == "" {
+		return errors.New("statusPatch: name, apiVersion, and kind are required")
 	}
 
 	if len(variants) == 0 {

@@ -72,7 +72,7 @@ func TestScriggoCondition(t *testing.T) {
 }
 
 func TestScriggoTransitionTime(t *testing.T) {
-	t.Run("nil resource returns now", func(t *testing.T) {
+	t.Run("nil conditions returns now", func(t *testing.T) {
 		before := time.Now().UTC()
 		result := scriggoTransitionTime(nil, "Accepted", "True")
 		after := time.Now().UTC()
@@ -84,37 +84,29 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("status unchanged preserves existing time", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{
-					map[string]any{
-						"type":               "Accepted",
-						"status":             "True",
-						"lastTransitionTime": "2025-01-15T10:30:00Z",
-					},
-				},
+		conditions := []any{
+			map[string]any{
+				"type":               "Accepted",
+				"status":             "True",
+				"lastTransitionTime": "2025-01-15T10:30:00Z",
 			},
 		}
 
-		result := scriggoTransitionTime(resource, "Accepted", "True")
+		result := scriggoTransitionTime(conditions, "Accepted", "True")
 		assert.Equal(t, "2025-01-15T10:30:00Z", result)
 	})
 
 	t.Run("status changed returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{
-					map[string]any{
-						"type":               "Accepted",
-						"status":             "True",
-						"lastTransitionTime": "2025-01-15T10:30:00Z",
-					},
-				},
+		conditions := []any{
+			map[string]any{
+				"type":               "Accepted",
+				"status":             "True",
+				"lastTransitionTime": "2025-01-15T10:30:00Z",
 			},
 		}
 
 		before := time.Now().UTC()
-		result := scriggoTransitionTime(resource, "Accepted", "False")
+		result := scriggoTransitionTime(conditions, "Accepted", "False")
 		after := time.Now().UTC()
 
 		assert.NotEqual(t, "2025-01-15T10:30:00Z", result)
@@ -125,20 +117,16 @@ func TestScriggoTransitionTime(t *testing.T) {
 	})
 
 	t.Run("condition not found returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{
-					map[string]any{
-						"type":               "Ready",
-						"status":             "True",
-						"lastTransitionTime": "2025-01-15T10:30:00Z",
-					},
-				},
+		conditions := []any{
+			map[string]any{
+				"type":               "Ready",
+				"status":             "True",
+				"lastTransitionTime": "2025-01-15T10:30:00Z",
 			},
 		}
 
 		before := time.Now().UTC()
-		result := scriggoTransitionTime(resource, "Accepted", "True")
+		result := scriggoTransitionTime(conditions, "Accepted", "True")
 		after := time.Now().UTC()
 
 		parsed, err := time.Parse(time.RFC3339, result)
@@ -147,149 +135,55 @@ func TestScriggoTransitionTime(t *testing.T) {
 		assert.False(t, parsed.After(after.Add(time.Second)))
 	})
 
-	t.Run("no status field returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"metadata": map[string]any{
-				"name": "test",
-			},
-		}
-
-		result := scriggoTransitionTime(resource, "Accepted", "True")
+	t.Run("non-slice conditions returns now", func(t *testing.T) {
+		// Caller passed something that isn't a []any (e.g. dig hit a
+		// string-typed leaf, or the resource hasn't been initialised) —
+		// the helper should treat this exactly like nil.
+		result := scriggoTransitionTime("not-a-slice", "Accepted", "True")
 		_, err := time.Parse(time.RFC3339, result)
 		require.NoError(t, err)
 	})
 
 	t.Run("empty conditions returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{},
-			},
-		}
-
-		result := scriggoTransitionTime(resource, "Accepted", "True")
+		result := scriggoTransitionTime([]any{}, "Accepted", "True")
 		_, err := time.Parse(time.RFC3339, result)
 		require.NoError(t, err)
 	})
 
 	t.Run("status unchanged but no lastTransitionTime returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{
-					map[string]any{
-						"type":   "Accepted",
-						"status": "True",
-					},
-				},
+		conditions := []any{
+			map[string]any{
+				"type":   "Accepted",
+				"status": "True",
 			},
 		}
 
-		result := scriggoTransitionTime(resource, "Accepted", "True")
+		result := scriggoTransitionTime(conditions, "Accepted", "True")
 		_, err := time.Parse(time.RFC3339, result)
 		require.NoError(t, err)
 	})
 
 	t.Run("multiple conditions finds matching one", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{
-					map[string]any{
-						"type":               "Ready",
-						"status":             "True",
-						"lastTransitionTime": "2025-01-10T00:00:00Z",
-					},
-					map[string]any{
-						"type":               "Accepted",
-						"status":             "True",
-						"lastTransitionTime": "2025-01-15T10:30:00Z",
-					},
-					map[string]any{
-						"type":               "ResolvedRefs",
-						"status":             "True",
-						"lastTransitionTime": "2025-01-12T00:00:00Z",
-					},
-				},
+		conditions := []any{
+			map[string]any{
+				"type":               "Ready",
+				"status":             "True",
+				"lastTransitionTime": "2025-01-10T00:00:00Z",
+			},
+			map[string]any{
+				"type":               "Accepted",
+				"status":             "True",
+				"lastTransitionTime": "2025-01-15T10:30:00Z",
+			},
+			map[string]any{
+				"type":               "ResolvedRefs",
+				"status":             "True",
+				"lastTransitionTime": "2025-01-12T00:00:00Z",
 			},
 		}
 
-		result := scriggoTransitionTime(resource, "Accepted", "True")
+		result := scriggoTransitionTime(conditions, "Accepted", "True")
 		assert.Equal(t, "2025-01-15T10:30:00Z", result)
-	})
-}
-
-func TestScriggoTransitionTime_ParentConditions(t *testing.T) {
-	t.Run("finds condition in parent by index", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"parents": []any{
-					map[string]any{
-						"conditions": []any{
-							map[string]any{
-								"type":               "Accepted",
-								"status":             "True",
-								"lastTransitionTime": "2025-02-01T00:00:00Z",
-							},
-						},
-					},
-					map[string]any{
-						"conditions": []any{
-							map[string]any{
-								"type":               "Accepted",
-								"status":             "False",
-								"lastTransitionTime": "2025-03-01T00:00:00Z",
-							},
-						},
-					},
-				},
-			},
-		}
-
-		// Parent 0: status unchanged → preserve
-		result := scriggoTransitionTime(resource, "Accepted", "True", 0)
-		assert.Equal(t, "2025-02-01T00:00:00Z", result)
-
-		// Parent 1: status changed → now
-		result = scriggoTransitionTime(resource, "Accepted", "True", 1)
-		assert.NotEqual(t, "2025-03-01T00:00:00Z", result)
-		_, err := time.Parse(time.RFC3339, result)
-		require.NoError(t, err)
-	})
-
-	t.Run("parent index out of range returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"parents": []any{
-					map[string]any{
-						"conditions": []any{},
-					},
-				},
-			},
-		}
-
-		result := scriggoTransitionTime(resource, "Accepted", "True", 5)
-		_, err := time.Parse(time.RFC3339, result)
-		require.NoError(t, err)
-	})
-
-	t.Run("negative parent index returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"parents": []any{},
-			},
-		}
-
-		result := scriggoTransitionTime(resource, "Accepted", "True", -1)
-		_, err := time.Parse(time.RFC3339, result)
-		require.NoError(t, err)
-	})
-
-	t.Run("no parents field returns now", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{},
-		}
-
-		result := scriggoTransitionTime(resource, "Accepted", "True", 0)
-		_, err := time.Parse(time.RFC3339, result)
-		require.NoError(t, err)
 	})
 }
 
@@ -348,82 +242,10 @@ func TestScriggoToJSON(t *testing.T) {
 	})
 }
 
-func TestFindTopLevelConditions(t *testing.T) {
-	t.Run("extracts conditions from status", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": []any{
-					map[string]any{"type": "Ready"},
-				},
-			},
-		}
-
-		conditions := findTopLevelConditions(resource)
-		require.Len(t, conditions, 1)
-	})
-
-	t.Run("returns nil for missing status", func(t *testing.T) {
-		resource := map[string]any{}
-		assert.Nil(t, findTopLevelConditions(resource))
-	})
-
-	t.Run("returns nil for missing conditions", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{},
-		}
-		assert.Nil(t, findTopLevelConditions(resource))
-	})
-
-	t.Run("returns nil for non-slice conditions", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"conditions": "not-a-slice",
-			},
-		}
-		assert.Nil(t, findTopLevelConditions(resource))
-	})
-}
-
-func TestFindParentConditions(t *testing.T) {
-	t.Run("extracts conditions from parent by index", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"parents": []any{
-					map[string]any{
-						"conditions": []any{
-							map[string]any{"type": "Accepted"},
-						},
-					},
-				},
-			},
-		}
-
-		conditions := findParentConditions(resource, 0)
-		require.Len(t, conditions, 1)
-	})
-
-	t.Run("returns nil for out of range index", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"parents": []any{},
-			},
-		}
-		assert.Nil(t, findParentConditions(resource, 0))
-	})
-
-	t.Run("returns nil for missing parents", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{},
-		}
-		assert.Nil(t, findParentConditions(resource, 0))
-	})
-
-	t.Run("returns nil for non-slice parents", func(t *testing.T) {
-		resource := map[string]any{
-			"status": map[string]any{
-				"parents": "not-a-slice",
-			},
-		}
-		assert.Nil(t, findParentConditions(resource, 0))
-	})
-}
+// Note: the previous TestFindTopLevelConditions / TestFindParentConditions
+// tests are gone with the helpers themselves. They were resource-shape-coupled
+// (knew about .status.conditions, .status.parents[i].conditions) — which
+// violates pkg/templating's resource-agnostic contract. Equivalent navigation
+// now lives in chart-side macros (charts/haptic/libraries/gateway.yaml's
+// `util-condition-transition-time` library) where Gateway-API knowledge
+// belongs; the Go helper just compares a supplied conditions list.

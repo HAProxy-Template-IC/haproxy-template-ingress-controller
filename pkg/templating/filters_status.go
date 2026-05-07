@@ -108,32 +108,44 @@ func scriggoCondition(condType, status, reason, message string, observedGenerati
 	}
 }
 
-// scriggoTransitionTime determines the correct lastTransitionTime for a condition.
-// If the condition's status hasn't changed, the existing transition time is preserved.
-// Otherwise, the current time is returned.
+// scriggoTransitionTime determines the correct lastTransitionTime for a
+// metav1.Condition-shaped entry given the existing list of conditions for
+// the target field. Resource-agnostic: the caller is responsible for
+// navigating to the correct conditions list with `dig` / index lookups —
+// the templating layer never assumes any specific resource shape.
+//
+// Behaviour:
+//   - if existingConditions contains an entry whose `type` matches
+//     conditionType and whose `status` matches newStatus, the existing
+//     `lastTransitionTime` is returned (preserves the original transition
+//     timestamp through unchanged renders, which is what the
+//     metav1.Condition spec requires and what status-patch dedup needs).
+//   - otherwise the current time is returned (status changed, condition
+//     is new, or the resource has no prior conditions).
+//
+// existingConditions is typed as `any` for caller ergonomics — Scriggo's
+// `dig` returns `any`, and the helper accepts both `nil` (no prior
+// conditions) and `[]any` (the conventional shape for unstructured
+// metav1.Condition lists).
 //
 // Usage in Scriggo templates:
 //
-//	{% var tt = transitionTime(resource, "Accepted", "True") %}
-//	{% var tt = transitionTime(resource, "Accepted", "True", 0) %}  // with parentIndex for route status
-func scriggoTransitionTime(resource any, conditionType, newStatus string, parentIndex ...int) string {
+//	{# top-level: .status.conditions #}
+//	{%% var tt = transitionTime(dig(resource, "status", "conditions"),
+//	                           "Accepted", "True") %%}
+//
+//	{# nested: .status.listeners[i].conditions — caller navigates first #}
+//	{%% var tt = transitionTime(dig(listener, "conditions"),
+//	                           "Programmed", "True") %%}
+func scriggoTransitionTime(existingConditions any, conditionType, newStatus string) string {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	if resource == nil {
+	condSlice, ok := existingConditions.([]any)
+	if !ok {
 		return now
 	}
 
-	var conditions []any
-
-	if len(parentIndex) > 0 {
-		// Search in .status.parents[parentIndex].conditions
-		conditions = findParentConditions(resource, parentIndex[0])
-	} else {
-		// Search in .status.conditions
-		conditions = findTopLevelConditions(resource)
-	}
-
-	for _, c := range conditions {
+	for _, c := range condSlice {
 		condMap, ok := c.(map[string]any)
 		if !ok {
 			continue
@@ -148,58 +160,12 @@ func scriggoTransitionTime(resource any, conditionType, newStatus string, parent
 				return existingTime
 			}
 		}
-		// Status changed or no existing time - return now
+		// Status changed or no existing time — return now.
 		return now
 	}
 
-	// Condition not found - new condition
+	// Condition not found — treat as newly added.
 	return now
-}
-
-// findTopLevelConditions extracts .status.conditions from a resource.
-func findTopLevelConditions(resource any) []any {
-	status := scriggoDig(resource, "status")
-	if status == nil {
-		return nil
-	}
-	conditions := scriggoDig(status, "conditions")
-	if conditions == nil {
-		return nil
-	}
-	condSlice, ok := conditions.([]any)
-	if !ok {
-		return nil
-	}
-	return condSlice
-}
-
-// findParentConditions extracts .status.parents[idx].conditions from a route resource.
-func findParentConditions(resource any, idx int) []any {
-	status := scriggoDig(resource, "status")
-	if status == nil {
-		return nil
-	}
-	parents := scriggoDig(status, "parents")
-	if parents == nil {
-		return nil
-	}
-	parentSlice, ok := parents.([]any)
-	if !ok {
-		return nil
-	}
-	if idx < 0 || idx >= len(parentSlice) {
-		return nil
-	}
-	parent := parentSlice[idx]
-	conditions := scriggoDig(parent, "conditions")
-	if conditions == nil {
-		return nil
-	}
-	condSlice, ok := conditions.([]any)
-	if !ok {
-		return nil
-	}
-	return condSlice
 }
 
 // scriggoToJSON serializes any Go value to a JSON string.

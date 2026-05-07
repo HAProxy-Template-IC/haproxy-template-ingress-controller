@@ -196,9 +196,18 @@ const (
 	// Syntax: condition(type, status, reason, message, observedGeneration, lastTransitionTime).
 	FuncCondition = "condition"
 
-	// FuncTransitionTime determines the correct lastTransitionTime for a condition.
-	// Preserves existing time if status hasn't changed, returns current time otherwise.
-	// Syntax: transitionTime(resource, conditionType, newStatus) or transitionTime(resource, conditionType, newStatus, parentIndex).
+	// FuncTransitionTime determines the correct lastTransitionTime for a
+	// metav1.Condition-shaped entry. Given the *existing* list of conditions
+	// for the target field (e.g. .status.conditions, or
+	// .status.listeners[i].conditions, or .status.parents[i].conditions —
+	// the helper is resource-agnostic, the caller navigates to the list),
+	// the existing lastTransitionTime is preserved if a condition with the
+	// same type AND status is already present; otherwise the current time
+	// is returned. Pass nil when no prior conditions exist (e.g. the
+	// resource was just created) — the helper will treat every condition
+	// as new.
+	//
+	// Syntax: transitionTime(existingConditions, conditionType, newStatus).
 	FuncTransitionTime = "transitionTime"
 
 	// FilterToJSON serializes any value to a JSON string.

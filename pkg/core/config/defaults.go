@@ -90,7 +90,7 @@ const (
 // We can't import pkg/k8s/types from pkg/core (arch-go.yml forbids it), so
 // the equality is enforced by a sanity test in pkg/k8s/types that imports
 // this constant. If you change one, change the other.
-const DefaultReconciliationDebounceInterval = 5 * time.Second
+const DefaultReconciliationDebounceInterval = 1 * time.Second
 
 // SetDefaults applies default values to unset configuration fields.
 // This modifies the config in-place and should be called after parsing
