@@ -119,16 +119,29 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteResponseHeaderModification,
 	)
 
+	timeoutCfg := conformanceconfig.DefaultTimeoutConfig()
+	debug := os.Getenv("CONFORMANCE_DEBUG") != ""
+
+	// Conformance traffic targets Gateway.Status addresses (metallb LB IPs
+	// on kind's docker network), which are unreachable from the test
+	// process when running in DinD or on a separate docker network. Route
+	// every dial through the chart's NodePort on the resolved kind host
+	// instead; the Host header and TLS SNI stay untouched so HAProxy still
+	// sees the gateway hostname for routing and cert selection.
+	rt, err := newNodePortRoundTripper(timeoutCfg, debug)
+	require.NoError(t, err, "build NodePort RoundTripper")
+
 	opts := suite.ConformanceOptions{
 		Client:               c,
 		ClientOptions:        clientOpts,
 		Clientset:            cs,
 		RestConfig:           cfg,
 		GatewayClassName:     gatewayClassName,
-		Debug:                os.Getenv("CONFORMANCE_DEBUG") != "",
+		Debug:                debug,
 		CleanupBaseResources: true,
 		SupportedFeatures:    supported,
-		TimeoutConfig:        conformanceconfig.DefaultTimeoutConfig(),
+		RoundTripper:         rt,
+		TimeoutConfig:        timeoutCfg,
 		Implementation: suite.ParseImplementation(
 			"haproxy-haptic",
 			"haptic",
