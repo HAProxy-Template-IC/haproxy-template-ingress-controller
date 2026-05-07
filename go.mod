@@ -1,6 +1,6 @@
 module gitlab.com/haproxy-haptic/haptic
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5
