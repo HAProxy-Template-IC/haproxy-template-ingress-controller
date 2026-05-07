@@ -380,6 +380,7 @@ func TestTemplateEvents(t *testing.T) {
 			"haproxy config",
 			auxFiles,
 			nil, // statusPatches
+			nil, // renderedResources
 			5,
 			100,
 			"resource_change",
@@ -397,7 +398,7 @@ func TestTemplateEvents(t *testing.T) {
 	})
 
 	t.Run("TemplateRenderedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", true,
+		event := NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true,
 			WithCorrelation("corr-123", "cause-456"))
 		require.NotNil(t, event)
 		assert.Equal(t, "corr-123", event.CorrelationID())
@@ -926,7 +927,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},
 		// Template events
-		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", true)},
+		{"TemplateRendered", NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true)},
 		{"TemplateRenderFailed", NewTemplateRenderFailedEvent("name", "error", "stack")},
 		// Validation events
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
