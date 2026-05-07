@@ -111,22 +111,56 @@ any key in `lastAppliedKeys` not in the new set is *deleted* via the
 dynamic client. This handles the common case where a Gateway is
 deleted and the per-Gateway Service should disappear with it.
 
-**Documented gap — startup orphans:** if the controller crashes between
-applying resources and being restarted, the new instance's
-`lastAppliedKeys` is empty. Resources the previous incarnation applied
-will not be detected as orphans on the first reconciliation. Operators
-should periodically sweep with:
+### Startup-orphan recovery
+
+If the controller crashes (or is upgraded) between applying a resource
+and observing the user's deletion of its driver, the orphan would
+otherwise persist indefinitely — the new controller process starts
+with an empty `lastAppliedKeys` and has no way to know what the
+previous incarnation applied.
+
+To close this gap, `handleBecameLeader` runs a discovery pass on every
+leader-acquire:
+
+1. `discoveryClient.ServerPreferredNamespacedResources()` enumerates
+   every namespace-scoped API resource type the cluster supports.
+2. For each type that supports both `list` and `delete` verbs, the
+   applier issues `dynamicClient.Resource(gvr).Namespace(ownNs).List(opts)`
+   with a label selector pinning the managed-by label
+   (`haproxy-haptic.org/managed-by=<controller-name>`).
+3. Each returned resource is added to `lastAppliedKeys`.
+
+Errors are silent: types we don't have RBAC for return `403 Forbidden`,
+unsupported list operations return `405 MethodNotSupported`, CRDs that
+disappeared between discovery and list return `404 NotFound`. None of
+these abort recovery — the applier discovers what it can, not what it
+must.
+
+The discovery loop has a `recover()` fence around `List` calls so a
+panicking dynamic-client implementation (e.g. a test fake with a
+mis-registered scheme) skips the offending type rather than blowing
+up the whole recovery.
+
+After recovery completes, the next reconciliation's `applyAndPrune`
+sees the orphans in `lastAppliedKeys` and (since the new render
+doesn't include them) deletes them. Single-reconciliation convergence,
+fully resource-agnostic — no hardcoded GVR list, no extra persistence
+layer.
+
+The discovery cost is one round-trip per cluster API resource type
+(typically ~50–100 calls), incurred once per leader-acquire. Routine
+operation is unaffected.
+
+### Manual sweep (still useful)
+
+The managed-by label is also useful for operator audits:
 
 ```bash
-kubectl get <kind> -A -l haproxy-haptic.org/managed-by=haptic-controller
+kubectl get services,configmaps,secrets -A -l haproxy-haptic.org/managed-by=haptic-controller
 ```
 
-and delete resources that don't match a current Gateway. A future
-iteration could populate `lastAppliedKeys` on `BecameLeaderEvent` by
-listing resources matching the managed-by label across the GVRs the
-chart uses, but that requires either a discovery step or a hardcoded
-list of types — neither of which fits the resource-agnostic principle
-without explicit chart-side configuration.
+Lists everything the controller currently owns. Useful for diagnosing
+unexpected behaviour or for migration scenarios.
 
 ## Namespace restriction
 
