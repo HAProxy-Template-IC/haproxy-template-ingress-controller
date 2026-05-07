@@ -1596,6 +1596,32 @@ templateSnippets:
   # Comparing via strcmp(<var>) in a converter chain — sample-fetch
   # to-sample-fetch comparison isn't expressible with `-m str`, but
   # strcmp returns 0 on equality which we negate.
+  # gateway/frontend-extra-050-gateway-multi-port-bind:
+  # Emits an additional `bind *:<port>` directive for every unique
+  # non-default Gateway listener port we observe. Without this the HTTP
+  # frontend only listens on the chart's `httpPort`, so any HTTPRoute
+  # whose parent listener uses a different port (e.g. 8090) is
+  # unreachable. The default port (`httpPort`) is already bound by
+  # base.yaml; we filter it out so we don't emit a duplicate bind line.
+  # HTTPS listeners are intentionally excluded — TLS binds need a crt
+  # list and live in ssl.yaml.
+  frontend-extra-050-gateway-multi-port-bind:
+    template: |
+      {%- var defaultPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+      {%- var seen = map[int]bool{} %}
+      {%- seen[defaultPort] = true %}
+      {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+          {%- if protocol == "HTTP" %}
+            {%- var port = toint(listener | dig("port") | fallback(0)) %}
+            {%- if port > 0 && !seen[port] %}
+              {%- seen[port] = true %}
+      bind *:{{ port }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
   frontend-extra-100-gateway-misdirected:
     template: |
       # gateway/frontend-extra-misdirected
@@ -6358,3 +6384,45 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend 'backend-v1'"
         description: backend-v1 must have its own Backend header within first few lines (not v2's)
+
+  test-gateway-multi-port-listener-bind:
+    description: Gateway with listeners on extra HTTP ports emits additional bind directives
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-port-gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: l-80
+                port: 80
+                protocol: HTTP
+              - name: l-8080
+                port: 8080
+                protocol: HTTP
+              - name: l-8090
+                port: 8090
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^\\s*bind \\*:80$"
+        description: Must emit bind on port 80
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^\\s*bind \\*:8090$"
+        description: Must emit bind on port 8090
