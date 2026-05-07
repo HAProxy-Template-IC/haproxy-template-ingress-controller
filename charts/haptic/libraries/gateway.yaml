@@ -1019,10 +1019,137 @@ templateSnippets:
           {%- end -%}
         {%- end -%}
       {%- end -%}
+      {#- BackendTLSPolicy lookup: per Gateway API spec, when a
+          BackendTLSPolicy in the same namespace targets this Service
+          (optionally pinned to a sectionName matching the port name),
+          the data plane MUST connect to the backend over TLS, validate
+          the server cert against the policy's CA bundle, and use
+          policy.validation.hostname for SNI + cert hostname check.
+          We resolve the policy's CA refs to a single PEM blob and
+          stash it via fileRegistry; the default-server line below picks
+          up the resulting `ssl ca-file ... verify required sni ...`. -#}
+      {%- var btlsCaPath = "" -%}
+      {%- var btlsHostname = "" -%}
+      {%- var btlsConflictedReason = "" -%}
+      {%%
+        var portNameForBackend = ""
+        if protoFlag == "" {
+          var svcLookup = resources.services.GetSingle(tostring(routeNs), tostring(backendName))
+          if svcLookup != nil {
+            for _, p := range svcLookup | dig("spec", "ports") | toSlice() {
+              if (p | dig("port") | toint()) == toint(backendPort) {
+                portNameForBackend = tostring(p | dig("name") | fallback(""))
+              }
+            }
+          }
+        }
+        var winningPolicy any = nil
+        var winningPolicyTs = ""
+        var winningPolicyKey = ""
+        for _, pol := range resources.backendtlspolicies.List() {
+          var polNs = tostring(dig(pol, "metadata", "namespace") | fallback(""))
+          if polNs != tostring(routeNs) {
+            continue
+          }
+          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
+            var trGroup = tostring(dig(tr, "group") | fallback(""))
+            var trKind = tostring(dig(tr, "kind") | fallback(""))
+            var trName = tostring(dig(tr, "name") | fallback(""))
+            var trSec = tostring(dig(tr, "sectionName") | fallback(""))
+            if (trGroup != "" && trGroup != "core") || trKind != "Service" {
+              continue
+            }
+            if trName != tostring(backendName) {
+              continue
+            }
+            if trSec != "" && trSec != portNameForBackend {
+              continue
+            }
+            // Conflict tiebreak — earliest creationTimestamp wins.
+            var polTs = tostring(dig(pol, "metadata", "creationTimestamp") | fallback(""))
+            var polKey = polNs + "/" + tostring(dig(pol, "metadata", "name") | fallback(""))
+            if winningPolicy == nil {
+              winningPolicy = pol
+              winningPolicyTs = polTs
+              winningPolicyKey = polKey
+            } else if polTs != "" && (winningPolicyTs == "" || polTs < winningPolicyTs) {
+              winningPolicy = pol
+              winningPolicyTs = polTs
+              winningPolicyKey = polKey
+            } else if polTs == winningPolicyTs && polKey < winningPolicyKey {
+              winningPolicy = pol
+              winningPolicyTs = polTs
+              winningPolicyKey = polKey
+            }
+            break
+          }
+        }
+        if winningPolicy != nil {
+          var validation = dig(winningPolicy, "spec", "validation")
+          btlsHostname = tostring(dig(validation, "hostname") | fallback(""))
+          var caRefs []any = dig(validation, "caCertificateRefs") | toSlice()
+          var caBundleParts = []any{}
+          if caRefs != nil {
+            for _, ref := range caRefs {
+              var refGroup = tostring(dig(ref, "group") | fallback(""))
+              var refKind = tostring(dig(ref, "kind") | fallback(""))
+              var refName = tostring(dig(ref, "name") | fallback(""))
+              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+                var cm = resources.configmaps.GetSingle(tostring(routeNs), refName)
+                if cm != nil {
+                  var data = dig(cm, "data") | fallback(map[string]any{})
+                  var dataMap = data.(map[string]any)
+                  var caCrt, ok = dataMap["ca.crt"]
+                  if ok && tostring(caCrt) != "" {
+                    caBundleParts = append(caBundleParts, tostring(caCrt))
+                  }
+                }
+              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+                var sec = resources.secrets.GetSingle(tostring(routeNs), refName)
+                if sec != nil {
+                  var data = dig(sec, "data") | fallback(map[string]any{})
+                  var dataMap = data.(map[string]any)
+                  var caCrt, ok = dataMap["ca.crt"]
+                  var b64 = ""
+                  if ok && tostring(caCrt) != "" {
+                    b64 = tostring(caCrt)
+                  } else {
+                    var tlsCrt, ok2 = dataMap["tls.crt"]
+                    if ok2 && tostring(tlsCrt) != "" {
+                      b64 = tostring(tlsCrt)
+                    }
+                  }
+                  if b64 != "" {
+                    var decoded, decodeErr = b64decode(b64)
+                    if decodeErr == nil {
+                      caBundleParts = append(caBundleParts, decoded)
+                    }
+                  }
+                }
+              }
+            }
+          }
+          var wkca = tostring(dig(validation, "wellKnownCACertificates") | fallback(""))
+          if len(caBundleParts) > 0 {
+            var caBundle = join(caBundleParts, "\n")
+            var policyName = tostring(dig(winningPolicy, "metadata", "name") | fallback(""))
+            var caFilename = "btls-" + tostring(routeNs) + "-" + policyName + ".crt"
+            var resolvedPath, fileErr = fileRegistry.Register("file", caFilename, caBundle)
+            if fileErr == nil {
+              btlsCaPath = resolvedPath
+            }
+          } else if wkca == "System" {
+            btlsCaPath = "@system-ca"
+          }
+        }
+      %%}
       # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
-        default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end %}
+        default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
+      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- end %}
       {#- Per-rule HTTPRoute timeouts: applied here in the backend
           (HAProxy doesn't allow `set-timeout server` in the frontend
           section, since no backend is bound at frontend phase). The
@@ -6978,6 +7105,22 @@ validationTests:
             ca.crt: |
               -----BEGIN CERTIFICATE-----
               MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+              hJoZ+gyfZqGArrz3WVM9
               -----END CERTIFICATE-----
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -7012,3 +7155,8 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with a BackendTLSPolicy in the watch set
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check ssl ca-file [^\\s]+ verify required sni str\\(backend\\.example\\.com\\) verifyhost backend\\.example\\.com"
+        description: Targeted backend default-server gets ssl/ca-file/verify/sni from the policy
