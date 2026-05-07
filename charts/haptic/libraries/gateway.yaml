@@ -4381,21 +4381,26 @@ templateSnippets:
                     // the per-Gateway block. The metallb annotation is
                     // merged onto ownedAnnotations so user-provided
                     // infrastructure annotations don't get clobbered.
-                    var firstIP = tostring(validIPs[0])
                     var ipParts = []any{}
                     for _, ipv := range validIPs {
                       ipParts = append(ipParts, tostring(ipv))
                     }
                     var lbIPsAnnotation = join(ipParts, ",")
-                    // Build annotations in-place from ownedAnnotations, then
-                    // overlay the metallb annotation. Scope `k`/`v` to a
-                    // dedicated block so they don't leak into the surrounding
-                    // gateway-loop scope and clobber per-gateway state
-                    // (`nameStr` was the visible casualty: a stray `k` value
-                    // of "key1" from an infrastructure annotation flowed into
-                    // the next statusPatch call, producing "Gateway not found"
-                    // errors for fictitious gateways named after annotation
-                    // keys).
+                    // MetalLB's allocation logic rejects Services that
+                    // carry BOTH spec.loadBalancerIP and a
+                    // `metallb.io/loadBalancerIPs` annotation
+                    // (AllocationFailed: "service can not have both"). To
+                    // get multi-IP fallback (Gateway lists usable+unusable,
+                    // MetalLB picks the first allocatable), we set only
+                    // the annotation — the legacy spec.loadBalancerIP
+                    // field is omitted. Non-MetalLB cloud LBs without
+                    // annotation support will assign their own IP, which
+                    // won't appear in the Gateway's spec.addresses set;
+                    // operators on those clouds should rely on the
+                    // existing static-IP cloud annotations instead.
+                    //
+                    // Loop vars are `annK`/`annV` to avoid clobbering
+                    // outer-scope `k`/`v` (Scriggo's loop scope leaks).
                     var mergedAnnotations = map[string]any{}
                     for annK, annV := range ownedAnnotations {
                       mergedAnnotations[annK] = annV
@@ -4407,10 +4412,9 @@ templateSnippets:
                         "annotations": mergedAnnotations,
                       },
                       "spec": map[string]any{
-                        "type":           "LoadBalancer",
-                        "loadBalancerIP": firstIP,
-                        "selector":       podSelector,
-                        "ports":          svcPorts,
+                        "type":     "LoadBalancer",
+                        "selector": podSelector,
+                        "ports":    svcPorts,
                       },
                     })
 
