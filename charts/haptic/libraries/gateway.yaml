@@ -1012,6 +1012,29 @@ templateSnippets:
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
         default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end %}
+      {#- Per-rule HTTPRoute timeouts: applied here in the backend
+          (HAProxy doesn't allow `set-timeout server` in the frontend
+          section, since no backend is bound at frontend phase). The
+          matched rule's id is stashed in txn.gw_rule_id by the
+          frontend matcher; we gate set-timeout on it. Only emit for
+          HTTPRoute (protoFlag == ""), not GRPCRoute. -#}
+      {%- if protoFlag == "" %}
+        {%- var ruleIdxLocal = 0 %}
+        {%- for _, rl := range route | dig("spec", "rules") | toSlice() %}
+          {%- var rlTimeouts = rl | dig("timeouts") %}
+          {%- if rlTimeouts != nil %}
+            {%- var rlReq = rlTimeouts | dig("request") | fallback("") | tostring() %}
+            {%- var rlBeReq = rlTimeouts | dig("backendRequest") | fallback("") | tostring() %}
+            {%- var tval = rlReq %}
+            {%- if tval == "" || tval == "0s" %}{%- tval = rlBeReq %}{%- end %}
+            {%- if tval != "" && tval != "0s" %}
+              {%- var ruleRouteId = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxLocal) %}
+        http-request set-timeout server {{ tval }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteId }}" }
+            {%- end %}
+          {%- end %}
+          {%- ruleIdxLocal = ruleIdxLocal + 1 %}
+        {%- end %}
+      {%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, tostring(routeNs)) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
@@ -1869,46 +1892,12 @@ templateSnippets:
         {%- end %}
       {%- end %}
       {%- end %}
-  # Filter: HTTPRoute timeouts - per-rule request / backendRequest timeouts
-  frontend-filters-450-gateway-timeouts:
-    template: |
-      {#-
-        HTTPRoute spec.rules[].timeouts maps to HAProxy `set-timeout server`
-        for the matched route. Gateway API exposes:
-          - request:        total request lifetime including retries
-          - backendRequest: a single backend attempt
-        HAProxy doesn't separate retries the same way, so we collapse both
-        to `timeout server`. If both are set, request wins (it's the outer
-        envelope). The "0s" / unset cases mean "disabled" per spec — we
-        emit nothing in that case (HAProxy keeps its default backend
-        timeout).
-      -#}
-      {%- import "util-route-condition" for RouteIdCondition -%}
-      {{- render "util-gateway-analysis" -}}
-      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
-      {%- if gaVal == nil %}{% return %}{% end %}
-      {%- var ga = gaVal.(map[string]any) %}
-      {%- var emittedSet = map[string]bool{} %}
-      {%- var anyEmitted = false %}
-      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
-        {%- var rule = routeInfo | dig("rule") %}
-        {%- var timeouts = rule | dig("timeouts") %}
-        {%- if timeouts == nil %}{%- continue %}{%- end %}
-        {%- var routeId = routeInfo | dig("routeId") | tostring() %}
-        {%- if emittedSet[routeId] %}{%- continue %}{%- end %}
-        {%- emittedSet[routeId] = true %}
-        {%- var req = timeouts | dig("request") | fallback("") | tostring() %}
-        {%- var beReq = timeouts | dig("backendRequest") | fallback("") | tostring() %}
-        {%- var t = req %}
-        {%- if t == "" || t == "0s" %}{%- t = beReq %}{%- end %}
-        {%- if t == "" || t == "0s" %}{%- continue %}{%- end %}
-        {%- if !anyEmitted %}
-      # gateway/frontend-filters-gateway-timeouts
-        {%- end %}
-        {%- anyEmitted = true %}
-      http-request set-timeout server {{ t }} if {{ RouteIdCondition(routeId) }}
-      {%- end %}
+  # HTTPRoute spec.rules[].timeouts is rendered directly into each
+  # gateway backend (see GenerateGatewayBackends). HAProxy doesn't allow
+  # `http-request set-timeout server` in the frontend section, so the
+  # frontend just sets txn.gw_rule_id (already done by the route matcher
+  # at frontend-matchers-advanced-900-path-match time) and the backend
+  # gates set-timeout on that variable.
   # Filter: ResponseHeaderModifier - modifies response headers before sending to client
   frontend-filters-500-gateway-response-header:
     template: |
