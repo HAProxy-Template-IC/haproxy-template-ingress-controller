@@ -3478,7 +3478,7 @@ templateSnippets:
               var ccNs = tostring(dig(ccRef, "namespace") | fallback(nsStr))
               if (ccGroup != "" && ccGroup != "core") || ccKind != "Secret" || ccName == "" {
                 gwResolvedRefsStatus = "False"
-                gwResolvedRefsReason = "InvalidCertificateRef"
+                gwResolvedRefsReason = "InvalidClientCertificateRef"
                 gwResolvedRefsMessage = "spec.tls.backend.clientCertificateRef must reference a core/v1 Secret"
               } else if ccNs != nsStr && ReferenceGrantPermitted(
                   "gateway.networking.k8s.io", "Gateway", nsStr,
@@ -3490,7 +3490,7 @@ templateSnippets:
                 var ccSec = resources.secrets.GetSingle(ccNs, ccName)
                 if ccSec == nil {
                   gwResolvedRefsStatus = "False"
-                  gwResolvedRefsReason = "InvalidCertificateRef"
+                  gwResolvedRefsReason = "InvalidClientCertificateRef"
                   gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " not found"
                 } else {
                   var ccData = dig(ccSec, "data") | fallback(map[string]any{})
@@ -3499,7 +3499,7 @@ templateSnippets:
                   var ccKey, hasKey = ccDataMap["tls.key"]
                   if !hasCrt || !hasKey || tostring(ccCrt) == "" || tostring(ccKey) == "" {
                     gwResolvedRefsStatus = "False"
-                    gwResolvedRefsReason = "InvalidCertificateRef"
+                    gwResolvedRefsReason = "InvalidClientCertificateRef"
                     gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " missing tls.crt or tls.key"
                   }
                 }
