@@ -2048,8 +2048,17 @@ templateSnippets:
       {%- end -%}
       {%- var backendName = backendRef | dig("name") | fallback("") -%}
       {%- var backendPort = backendRef | dig("port") | fallback(80) -%}
+      {#- backendRef.namespace defaults to the route's namespace (per
+          Gateway API spec). For cross-namespace backendRefs, the
+          target Service + EndpointSlice live in the ref's namespace,
+          so endpoint resolution must look there — not in routeNs.
+          Conformance test HTTPRouteReferenceGrant sets up a
+          cross-namespace HTTPRoute → Service ref permitted by RG;
+          previously the chart resolved endpoints in routeNs which
+          turned up nothing and HAProxy returned 503 / no server. -#}
+      {%- var backendNs = tostring(backendRef | dig("namespace") | fallback(routeNs)) -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
-      {%- var backendKey = routeNs + "_" + routeName + "_" + backendName + "_" + (backendPort) -%}
+      {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + (backendPort) -%}
       {%- if first_seen(dedupCategory, backendKey) -%}
       {%- var routeTypeLabel = "GRPCRoute" -%}
       {%- if protoFlag == "" -%}{%- routeTypeLabel = "HTTPRoute" -%}{%- end -%}
@@ -2062,7 +2071,7 @@ templateSnippets:
           (namespace, name) and find the port matching backendRef.port. -#}
       {%- var resolvedProtoFlag = protoFlag -%}
       {%- if protoFlag == "" -%}
-        {%- var svc = resources.services.GetSingle(tostring(routeNs), tostring(backendName)) -%}
+        {%- var svc = resources.services.GetSingle(backendNs, tostring(backendName)) -%}
         {%- if svc != nil -%}
           {%- for _, p := range svc | dig("spec", "ports") | toSlice() -%}
             {%- if (p | dig("port") | toint()) == toint(backendPort) -%}
@@ -2334,7 +2343,7 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, tostring(routeNs)) | indent(2, true) -}}
+        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
