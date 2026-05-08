@@ -1017,6 +1017,14 @@ haproxy:
   # its own bind and dst_port is unambiguous. The HAProxy container has
   # `CAP_NET_BIND_SERVICE` granted (see haproxy-deployment.yaml) so
   # privileged ports work as non-root.
+  #
+  # Plumbing: the chart automatically threads these values into the
+  # template engine via `extraContext.httpPort` / `extraContext.httpsPort`
+  # so HAProxy's bind directives (in base/ssl) and the redirect-filter's
+  # well-known-port omit logic (in gateway) all reference the same
+  # values. Override via this knob — no need to also set
+  # `controller.config.templatingSettings.extraContext.httpPort`
+  # explicitly.
   ports:
     http: 80 # HTTP frontend
     https: 443 # HTTPS frontend

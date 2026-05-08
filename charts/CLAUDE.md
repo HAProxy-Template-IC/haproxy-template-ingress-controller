@@ -247,6 +247,8 @@ The base template uses `render_glob` to discover and render snippets from all li
 | `features-*` | Feature registration (SSL, TLS certs) | gateway, haproxytech, ingress, ssl |
 | `backends-*` | Backend definitions | gateway, ingress, ssl |
 | `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
+| `http-bind-extra-*` | Additional HTTP-frontend `bind *:<port>` directives (Gateway HTTP listener ports) | gateway |
+| `https-bind-extra-*` | Additional HTTPS-frontend `bind *:<port> ssl crt-list ...` directives (Gateway HTTPS listener ports) | gateway |
 | `frontend-extra-*` | Early frontend directives after bind (options, captures, ACLs) | (user) |
 | `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
 | `frontend-filters-*` | Request/response filters (after routing) | gateway, haproxytech |

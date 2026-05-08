@@ -50,6 +50,8 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-filters-*` | `frontend-filters-500-gateway-response-header` | `ResponseHeaderModifier` filter |
 | `frontend-filters-*` | `frontend-filters-500-gateway-redirect` | `RequestRedirect` filter |
 | `frontend-filters-*` | `frontend-filters-500-gateway-urlrewrite` | `URLRewrite` filter |
+| `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
+| `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
 | `status-patches-*` | `status-patches-200-gateway` | Patches Gateway / HTTPRoute / GRPCRoute `status` (Accepted, ResolvedRefs, attachedRoutes, addresses) |
 
 ### Injecting Custom Configuration
