@@ -87,7 +87,10 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 // When profileIncludes is enabled, it returns timing statistics for included templates.
 // The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
 // The testExtraContext parameter allows test-specific extraContext values to override global ones.
-func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+//
+// Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
+// and include-stats (when profiling).
+func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (string, *dataplane.AuxiliaryFiles, map[string]string, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig)
 
@@ -117,13 +120,26 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		haproxyConfig, err = engine.Render(context.Background(), names.MainTemplateName, renderCtx)
 	}
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+		return "", nil, nil, nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("rendering auxiliary files: %w", err)
+		return "", nil, nil, nil, fmt.Errorf("rendering auxiliary files: %w", err)
+	}
+
+	// Render k8sResources templates using the worker-specific engine. These
+	// are surfaced into the test result so assertions can target them via
+	// `target: k8s:<template-name>` and the --dump-rendered flag can show
+	// them alongside haproxy.cfg / map files.
+	k8sResources := make(map[string]string, len(r.config.K8sResources))
+	for name := range r.config.K8sResources {
+		rendered, err := engine.Render(context.Background(), name, renderCtx)
+		if err != nil {
+			return "", nil, nil, nil, fmt.Errorf("rendering k8sResources %s: %w", name, err)
+		}
+		k8sResources[name] = rendered
 	}
 
 	// Extract dynamic files registered during template rendering
@@ -142,7 +158,7 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 			"dynamic_count", dynamicCount)
 	}
 
-	return haproxyConfig, auxiliaryFiles, includeStats, nil
+	return haproxyConfig, auxiliaryFiles, k8sResources, includeStats, nil
 }
 
 // buildRenderingContext builds the template rendering context using fixture stores.

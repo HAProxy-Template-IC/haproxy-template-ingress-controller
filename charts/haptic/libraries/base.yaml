@@ -860,6 +860,214 @@ files:
       <p>The server didn't respond in time.</p>
       </body></html>
 
+k8sResources:
+  # User-facing HAProxy LoadBalancer Service. Replaces the chart-static
+  # templates/haproxy-service.yaml main-Service block so the controller
+  # owns the Service end-to-end:
+  #
+  #   - The set of `spec.ports` is derived from listener state at render
+  #     time, not from chart-install-time defaults: the static
+  #     http/https/stats triple is augmented with `gw-<port>-<proto>`
+  #     entries for every Gateway / admitted ListenerSet listener whose
+  #     port is not one of {80, 443, 8404}.
+  #   - The resourceapplier injects an OwnerReference at apply time
+  #     (controller=true, blockOwnerDeletion=true), so `helm uninstall`
+  #     cascade-GCs this Service when the HAProxyTemplateConfig CR
+  #     disappears.
+  #
+  # Service identity (name + namespace) and chart-shaped fields
+  # (`type`, `loadBalancerIP`, `loadBalancerClass`,
+  # `loadBalancerSourceRanges`, `externalTrafficPolicy`,
+  # `internalTrafficPolicy`, `healthCheckNodePort`,
+  # `publishNotReadyAddresses`, annotations, labels, selector,
+  # per-port `nodePort`) are plumbed in from values.yaml via
+  # `extraContext.haproxyService` by `templates/haproxytemplateconfig.yaml`.
+  haproxy-service:
+    template: |
+      {%- var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback("")) %}
+      {%- var svcName = tostring(extraContext | dig("haproxyServiceName") | fallback("")) %}
+      {%- var svc = extraContext | dig("haproxyService") %}
+      {%- if ctrlNs == "" || svcName == "" || svc == nil %}{# Service identity not plumbed — chart bug; emit nothing. #}{%- else %}
+      {%%
+        var svcMap = svc.(map[string]any)
+        var svcType = tostring(svcMap | dig("type") | fallback("LoadBalancer"))
+        var exposesNodePort = svcType == "NodePort" || svcType == "LoadBalancer"
+
+        var httpPort = toint(svcMap | dig("httpPort") | fallback(80))
+        var httpNodePort = toint(svcMap | dig("httpNodePort") | fallback(0))
+        var httpsPort = toint(svcMap | dig("httpsPort") | fallback(443))
+        var httpsNodePort = toint(svcMap | dig("httpsNodePort") | fallback(0))
+        var statsPort = toint(svcMap | dig("statsPort") | fallback(8404))
+        var statsNodePort = toint(svcMap | dig("statsNodePort") | fallback(0))
+
+        // Static port set: stats is always present (chart's health
+        // endpoint, used by HAProxy liveness probe). http and https
+        // mirror chart-static behaviour for backwards compatibility
+        // with Ingress users; per-listener gating is a follow-up
+        // refactor (see plan: out-of-scope for this iteration).
+        var ports = []any{
+          map[string]any{
+            "name":       "http",
+            "port":       httpPort,
+            "targetPort": "http",
+            "protocol":   "TCP",
+          },
+          map[string]any{
+            "name":       "https",
+            "port":       httpsPort,
+            "targetPort": "https",
+            "protocol":   "TCP",
+          },
+          map[string]any{
+            "name":       "stats",
+            "port":       statsPort,
+            "targetPort": "stats",
+            "protocol":   "TCP",
+          },
+        }
+        if exposesNodePort {
+          if httpNodePort > 0 {
+            ports[0].(map[string]any)["nodePort"] = httpNodePort
+          }
+          if httpsNodePort > 0 {
+            ports[1].(map[string]any)["nodePort"] = httpsNodePort
+          }
+          if statsNodePort > 0 {
+            ports[2].(map[string]any)["nodePort"] = statsNodePort
+          }
+        }
+
+        // Dynamic gw-<port>-<proto> entries: mirror the deleted
+        // features-090-gateway-listener-ports-service snippet, but
+        // emit the entries directly into the Service we own rather
+        // than as a partial-SSA patch onto a chart-managed object.
+        // Skip the chart's static {80, 443, 8404} so they don't
+        // collide with the entries above. Skip Gateways with
+        // spec.addresses set — those get their own dedicated
+        // LoadBalancer Service via the gateway-static-addresses
+        // k8sResources template.
+        var staticPorts = map[int]bool{httpPort: true, httpsPort: true, statsPort: true}
+        var seen = map[string]bool{}
+      %%}
+      {%- if resources != nil && resources.gateways != nil %}
+      {%- for _, gw := range resources.gateways.List() %}
+      {%%
+        var gwAddrs = dig(gw, "spec", "addresses") | toSlice()
+        if len(gwAddrs) > 0 {
+          continue
+        }
+        for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+          var port = toint(dig(listener, "port") | fallback(0))
+          var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+          if port <= 0 || staticPorts[port] {
+            continue
+          }
+          var key = tostring(port) + "-" + toLower(protocol[0:1])
+          if seen[key] {
+            continue
+          }
+          seen[key] = true
+          ports = append(ports, map[string]any{
+            "name":       "gw-" + key,
+            "port":       port,
+            "targetPort": port,
+            "protocol":   "TCP",
+          })
+        }
+      %%}
+      {%- if resources.listenersets != nil %}
+      {%- for _, ls := range resources.listenersets.List() %}
+      {%%
+        // Conservative: we don't re-import the listenerset admission
+        // gate here (would add a knowledge dependency from base on
+        // gateway). All declared listenersets contribute their ports
+        // to the Service surface; the admission decision still
+        // applies at the routing layer. A future refactor can plumb
+        // the admitted set through extraContext for stricter gating.
+        var lsParents = dig(ls, "spec", "parentRef") | toSlice()
+        _ = lsParents
+        for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+          var port = toint(dig(listener, "port") | fallback(0))
+          var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+          if port <= 0 || staticPorts[port] {
+            continue
+          }
+          var key = tostring(port) + "-" + toLower(protocol[0:1])
+          if seen[key] {
+            continue
+          }
+          seen[key] = true
+          ports = append(ports, map[string]any{
+            "name":       "gw-" + key,
+            "port":       port,
+            "targetPort": port,
+            "protocol":   "TCP",
+          })
+        }
+      %%}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%%
+        var labels = svcMap | dig("labels") | fallback(map[string]any{})
+        var selector = svcMap | dig("selector") | fallback(map[string]any{})
+        var annotations = svcMap | dig("annotations") | fallback(map[string]any{})
+        var spec = map[string]any{
+          "type":     svcType,
+          "selector": selector,
+          "ports":    ports,
+        }
+        // Optional spec fields — only set when non-empty so the rendered
+        // YAML stays compact and SSA doesn't track empty-string fields.
+        var lbIP = tostring(svcMap | dig("loadBalancerIP") | fallback(""))
+        if lbIP != "" {
+          spec["loadBalancerIP"] = lbIP
+        }
+        var lbClass = tostring(svcMap | dig("loadBalancerClass") | fallback(""))
+        if lbClass != "" {
+          spec["loadBalancerClass"] = lbClass
+        }
+        var lbRanges = svcMap | dig("loadBalancerSourceRanges") | toSlice()
+        if len(lbRanges) > 0 {
+          spec["loadBalancerSourceRanges"] = lbRanges
+        }
+        var extPolicy = tostring(svcMap | dig("externalTrafficPolicy") | fallback(""))
+        if extPolicy != "" {
+          spec["externalTrafficPolicy"] = extPolicy
+        }
+        var intPolicy = tostring(svcMap | dig("internalTrafficPolicy") | fallback(""))
+        if intPolicy != "" {
+          spec["internalTrafficPolicy"] = intPolicy
+        }
+        var hcNodePort = toint(svcMap | dig("healthCheckNodePort") | fallback(0))
+        if hcNodePort > 0 {
+          spec["healthCheckNodePort"] = hcNodePort
+        }
+        var publishNotReady = svcMap | dig("publishNotReadyAddresses") | fallback(false)
+        if tostring(publishNotReady) == "true" {
+          spec["publishNotReadyAddresses"] = true
+        }
+        var meta = map[string]any{
+          "name":      svcName,
+          "namespace": ctrlNs,
+          "labels":    labels,
+        }
+        var annotationsMap = annotations.(map[string]any)
+        if len(annotationsMap) > 0 {
+          meta["annotations"] = annotationsMap
+        }
+        var resource = map[string]any{
+          "apiVersion": "v1",
+          "kind":       "Service",
+          "metadata":   meta,
+          "spec":       spec,
+        }
+        var rendered, _ = marshalYAML(resource)
+      %%}
+      {{ rendered }}
+      {%- end %}
+
 haproxyConfig:
   template: |
     global

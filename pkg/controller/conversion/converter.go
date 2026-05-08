@@ -160,6 +160,15 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		}
 	}
 
+	// Convert k8s resources
+	k8sResources := make(map[string]config.K8sResource)
+	for name, crdRes := range spec.K8sResources {
+		k8sResources[name] = config.K8sResource{
+			Template:       crdRes.Template,
+			PostProcessing: convertPostProcessors(crdRes.PostProcessing),
+		}
+	}
+
 	// Convert HAProxy config
 	haproxyConfig := config.HAProxyConfig{
 		Template:       spec.HAProxyConfig.Template,
@@ -201,6 +210,7 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		Maps:                         maps,
 		Files:                        files,
 		SSLCertificates:              sslCertificates,
+		K8sResources:                 k8sResources,
 		HAProxyConfig:                haproxyConfig,
 		ValidationTests:              validationTests,
 	}

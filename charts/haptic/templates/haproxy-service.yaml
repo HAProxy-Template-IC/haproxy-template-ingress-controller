@@ -1,61 +1,22 @@
 {{- $haproxy := .Values.haproxy }}
 {{- if $haproxy.enabled }}
-{{- $svc := $haproxy.service }}
 {{- $haproxyFullname := include "haptic.haproxyFullname" . }}
 {{- $labels := include "haptic.labels" . }}
 {{- $selectorLabels := include "haptic.selectorLabels" . }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ $haproxyFullname }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- $labels | nindent 4 }}
-    app.kubernetes.io/component: loadbalancer
-  {{- with $svc.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-spec:
-  type: {{ $svc.type }}
-  {{- $exposesNodePort := or (eq $svc.type "NodePort") (eq $svc.type "LoadBalancer") }}
-  {{- with $svc.loadBalancerIP }}
-  loadBalancerIP: {{ . }}
-  {{- end }}
-  {{- with $svc.loadBalancerSourceRanges }}
-  loadBalancerSourceRanges:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-  {{- with $svc.loadBalancerClass }}
-  loadBalancerClass: {{ . }}
-  {{- end }}
-  {{- with $svc.externalTrafficPolicy }}
-  externalTrafficPolicy: {{ . }}
-  {{- end }}
-  {{- with $svc.internalTrafficPolicy }}
-  internalTrafficPolicy: {{ . }}
-  {{- end }}
-  {{- with $svc.healthCheckNodePort }}
-  healthCheckNodePort: {{ . }}
-  {{- end }}
-  {{- with $svc.publishNotReadyAddresses }}
-  publishNotReadyAddresses: {{ . }}
-  {{- end }}
-  selector:
-    {{- $selectorLabels | nindent 4 }}
-    app.kubernetes.io/component: loadbalancer
-  ports:
-    {{- range $name := list "http" "https" "stats" }}
-    {{- $port := index $svc $name }}
-    - name: {{ $name }}
-      port: {{ $port.port }}
-      targetPort: {{ $name }}
-      protocol: TCP
-      {{- if $exposesNodePort }}
-      nodePort: {{ $port.nodePort }}
-      {{- end }}
-    {{- end }}
+{{- /* The user-facing HAProxy LoadBalancer Service is no longer
+       chart-static. It is now declared in
+       `libraries/base.yaml` as a `k8sResources.haproxy-service`
+       template, rendered by the controller from listener state, and
+       applied via Server-Side Apply. The controller injects an
+       OwnerReference at apply time pointing at the
+       HAProxyTemplateConfig CR (controller=true,
+       blockOwnerDeletion=true) so `helm uninstall` cascade-GCs the
+       Service when this chart goes away.
+
+       The chart-internal dataplane Service remains static — it is
+       internal controller-to-haproxy plumbing (no listener-derived
+       state) and has no functional reason to participate in the
+       declarative resource flow. */}}
 ---
 apiVersion: v1
 kind: Service

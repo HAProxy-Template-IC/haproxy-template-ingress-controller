@@ -90,6 +90,12 @@ type Config struct {
 	// These generate SSL certificate files for HAProxy.
 	SSLCertificates map[string]SSLCertificate `yaml:"ssl_certificates"`
 
+	// K8sResources maps resource template names to their template
+	// definitions. Each entry's rendered output is parsed as one or
+	// more Kubernetes resources (multi-doc YAML separated by `---`)
+	// and applied via Server-Side Apply by the controller.
+	K8sResources map[string]K8sResource `yaml:"k8s_resources"`
+
 	// CRTLists maps crt-list file names to their template definitions.
 	//
 	// These generate crt-list files for SSL certificate lists with per-certificate options.
@@ -433,6 +439,18 @@ type MapFile struct {
 // GeneralFile is a general-purpose auxiliary file template.
 type GeneralFile struct {
 	// Template is the template content that generates the file.
+	Template string `yaml:"template"`
+
+	// PostProcessing defines optional post-processors to apply after rendering.
+	// Post-processors are applied in order to transform the rendered output.
+	PostProcessing []PostProcessorConfig `yaml:"post_processing,omitempty"`
+}
+
+// K8sResource is a Kubernetes-resource-emitting template. The
+// rendered output is parsed as one or more YAML documents and applied
+// via SSA by the resourceapplier component.
+type K8sResource struct {
+	// Template is the template content that generates the resource YAML.
 	Template string `yaml:"template"`
 
 	// PostProcessing defines optional post-processors to apply after rendering.

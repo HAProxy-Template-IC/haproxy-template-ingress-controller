@@ -66,7 +66,7 @@ func (r *Runner) assertDeterministic(
 	}
 
 	// Render a second time
-	secondConfig, secondAuxFiles, _, err := r.renderWithStores(
+	secondConfig, secondAuxFiles, _, _, err := r.renderWithStores(
 		deps.Engine,
 		deps.Stores,
 		deps.ValidationPaths,
@@ -195,12 +195,13 @@ func (r *Runner) executeAssertions(
 	test *config.ValidationTest,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	k8sResources map[string]string,
 	templateContext map[string]any,
 	validationPaths *dataplane.ValidationPaths,
 	renderDeps *RenderDependencies,
 ) {
 	for i := range test.Assertions {
-		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, templateContext, result.RenderError, validationPaths, renderDeps)
+		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, k8sResources, templateContext, result.RenderError, validationPaths, renderDeps)
 		result.Assertions = append(result.Assertions, assertionResult)
 
 		if !assertionResult.Passed {
@@ -226,6 +227,7 @@ func (r *Runner) runAssertion(
 	assertion *config.ValidationAssertion,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	k8sResources map[string]string,
 	templateContext map[string]any,
 	renderError string,
 	validationPaths *dataplane.ValidationPaths,
@@ -242,22 +244,22 @@ func (r *Runner) runAssertion(
 		result = r.assertHAProxyValid(ctx, haproxyConfig, auxiliaryFiles, assertion, validationPaths)
 
 	case "contains":
-		result = r.assertContains(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertContains(haproxyConfig, auxiliaryFiles, k8sResources, assertion, renderError)
 
 	case "not_contains":
-		result = r.assertNotContains(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertNotContains(haproxyConfig, auxiliaryFiles, k8sResources, assertion, renderError)
 
 	case "match_count":
-		result = r.assertMatchCount(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertMatchCount(haproxyConfig, auxiliaryFiles, k8sResources, assertion, renderError)
 
 	case "equals":
-		result = r.assertEquals(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertEquals(haproxyConfig, auxiliaryFiles, k8sResources, assertion, renderError)
 
 	case "jsonpath":
 		result = r.assertJSONPath(templateContext, assertion)
 
 	case "match_order":
-		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, k8sResources, assertion, renderError)
 
 	case "deterministic":
 		if renderDeps == nil {

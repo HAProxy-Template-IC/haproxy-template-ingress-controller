@@ -137,6 +137,7 @@ type Component struct {
 	ownNamespace           string
 	restrictToOwnNamespace bool
 	managedByValue         string
+	ownerRef               OwnerReference
 
 	// mu protects all mutable state below.
 	mu              sync.RWMutex
@@ -191,6 +192,29 @@ type Config struct {
 	// ("haptic-controller") so multiple haptic deployments in the same
 	// cluster don't clobber each other's managed sets.
 	ManagedByValue string
+
+	// OwnerRef identifies the HAProxyTemplateConfig CR that owns the
+	// applied resources. The applier injects an `ownerReferences`
+	// entry pointing at this object on every full-ownership SSA
+	// payload, with `controller: true` and `blockOwnerDeletion: true`
+	// so Kubernetes garbage collection cascade-deletes the rendered
+	// resources when the CR is removed (e.g. `helm uninstall`).
+	//
+	// Optional: when zero (UID empty), no OwnerReference is injected.
+	// Partial-ownership entries never get an OwnerReference regardless
+	// (the chart-static or other field manager already owns the
+	// resource end-to-end).
+	OwnerRef OwnerReference
+}
+
+// OwnerReference is the minimal identity of the HAProxyTemplateConfig
+// CR — duplicated here so this package doesn't depend on the apis/
+// types just to read four strings.
+type OwnerReference struct {
+	APIVersion string
+	Kind       string
+	Name       string
+	UID        string
 }
 
 // New constructs an applier and subscribes to the events it needs.
@@ -221,6 +245,7 @@ func New(cfg *Config) *Component {
 		ownNamespace:           cfg.OwnNamespace,
 		restrictToOwnNamespace: cfg.RestrictToOwnNamespace,
 		managedByValue:         managedBy,
+		ownerRef:               cfg.OwnerRef,
 		checksumCache:          make(map[string]string),
 		lastAppliedKeys:        make(map[string]appliedKeyMeta),
 	}
@@ -575,6 +600,14 @@ func (c *Component) refused(r *templating.RenderedResource) bool {
 	return false
 }
 
+// metadataNamespace reads metadata.namespace from a metadata map,
+// returning "" when absent (cluster-scoped resources, or the
+// namespace simply not yet injected).
+func metadataNamespace(metadata map[string]any) string {
+	ns, _ := metadata["namespace"].(string)
+	return ns
+}
+
 // isPartialOwnership returns true when the rendered resource carries
 // the AnnotationOwnership=OwnershipPartial annotation. Templates set this
 // to flag a resource as jointly owned with another field manager.
@@ -638,6 +671,25 @@ func (c *Component) prepareForApply(object map[string]any, partial bool) map[str
 		}
 		copiedLabels[LabelManagedBy] = c.managedByValue
 		metadata["labels"] = copiedLabels
+
+		// Inject OwnerReference to the HAProxyTemplateConfig CR so
+		// Kubernetes garbage collection cascade-deletes resources
+		// when the CR is removed (e.g. `helm uninstall`). Skipped
+		// when the chart hasn't supplied a CR identity (UID empty)
+		// or for cross-namespace resources — Kubernetes rejects
+		// cross-namespace ownerRefs.
+		if c.ownerRef.UID != "" && (c.ownNamespace == "" || metadataNamespace(metadata) == c.ownNamespace) {
+			metadata["ownerReferences"] = []any{
+				map[string]any{
+					"apiVersion":         c.ownerRef.APIVersion,
+					"kind":               c.ownerRef.Kind,
+					"name":               c.ownerRef.Name,
+					"uid":                c.ownerRef.UID,
+					"controller":         true,
+					"blockOwnerDeletion": true,
+				},
+			}
+		}
 	}
 
 	out["metadata"] = metadata
