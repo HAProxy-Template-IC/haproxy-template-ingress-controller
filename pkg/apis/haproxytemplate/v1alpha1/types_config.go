@@ -123,6 +123,27 @@ type HAProxyTemplateConfigSpec struct {
 	// +optional
 	SSLCertificates map[string]SSLCertificate `json:"sslCertificates,omitempty"`
 
+	// K8sResources maps resource template names to their template
+	// definitions. Each entry's rendered output is parsed as one or
+	// more Kubernetes resources (multi-doc YAML, separated by `---`)
+	// and applied via Server-Side Apply with field manager `haptic`.
+	//
+	// The controller injects an OwnerReference to the
+	// HAProxyTemplateConfig CR (controller=true,
+	// blockOwnerDeletion=true) on every applied resource so cascade
+	// garbage collection removes them when the CR is deleted (e.g.
+	// `helm uninstall`). Resources that disappear from the rendered
+	// set across reconciliations are pruned via the
+	// `haproxy-haptic.org/managed-by` label the applier injects.
+	//
+	// Templates have full access to the same engine context as
+	// haproxyConfig — `resources`, filters, `templateSnippets`,
+	// `fileRegistry`, `extraContext`, etc. — so a k8sResources
+	// template can render extension points (`render_glob` patterns)
+	// and consume cached state (`shared.ComputeIfAbsent`).
+	// +optional
+	K8sResources map[string]K8sResource `json:"k8sResources,omitempty"`
+
 	// HAProxyConfig contains the main HAProxy configuration template.
 	// +kubebuilder:validation:Required
 	HAProxyConfig HAProxyConfig `json:"haproxyConfig"`
@@ -584,6 +605,30 @@ type MapFile struct {
 //   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - files section)
 type GeneralFile struct {
 	// Template is the template for generating the file content.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Template string `json:"template"`
+
+	// PostProcessing defines optional post-processors to apply after rendering.
+	//
+	// Post-processors run in the order specified and can transform the rendered output.
+	// +optional
+	PostProcessing []PostProcessorConfig `json:"postProcessing,omitempty"`
+}
+
+// K8sResource defines a template that emits one or more Kubernetes
+// resources via multi-doc YAML.
+//
+// IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+//   - The internal config type: pkg/core/config/types.go (K8sResource)
+//   - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - k8sResources section)
+type K8sResource struct {
+	// Template is the template for generating the resource YAML.
+	//
+	// The rendered output is parsed as one or more Kubernetes
+	// resources (separate documents with `---`). Each document must
+	// declare `apiVersion`, `kind`, and `metadata.name` (plus
+	// `metadata.namespace` for namespaced kinds).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	Template string `json:"template"`

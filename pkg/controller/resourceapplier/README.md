@@ -4,11 +4,20 @@ Generic, leader-only applier for template-declared Kubernetes resources.
 
 ## Purpose
 
-Templates declare desired Kubernetes resources via the `renderResource()`
-template function. This component reconciles those declarations to the
-cluster via Server-Side Apply (SSA), with checksum dedup so unchanged
-resources don't hammer the API server, and orphan pruning so resources
-removed from later renders are deleted.
+Templates declare desired Kubernetes resources via the
+`spec.k8sResources` map on `HAProxyTemplateConfig`. Each entry's template
+renders to one or more YAML documents (`---`-separated) describing full
+Kubernetes resources. The renderer parses each document, validates
+required fields (`apiVersion`, `kind`, `metadata.{name,namespace}`),
+and hands the resulting set to this component, which reconciles it to
+the cluster via Server-Side Apply (SSA), with checksum dedup so
+unchanged resources don't hammer the API server, and orphan pruning so
+resources removed from later renders are deleted.
+
+For full-ownership resources in the controller's own namespace the
+applier injects a controller `OwnerReference` (controller=true,
+blockOwnerDeletion=true) pointing at the `HAProxyTemplateConfig` CR, so
+cascade-delete (e.g. `helm uninstall`) GCs them automatically.
 
 Mirrors `statusapplier` exactly except it operates on full resources
 rather than `.status` sub-paths.
@@ -55,15 +64,15 @@ this package or any caller.
 **What that means in practice:**
 
 When a webhook admission request arrives, the dryrunvalidator renders
-the proposed config in an overlay store. Templates that call
-`renderResource()` during that render populate a per-render
-`*RenderedResourceCollector` — same as templates calling `statusPatch()`
-populate a per-render `*StatusPatchCollector`. Both collectors are
-constructed by `pkg/controller/rendercontext.Builder.Build()` and live
-in the rendering context for that single call. After the render
-finishes, the testrunner / dryrunvalidator inspects the rendered
-HAProxy config and aux files, but **does not read the collectors back**
-— see `pkg/controller/testrunner/rendering.go` line 178:
+the proposed config in an overlay store. Each `spec.k8sResources`
+template runs and its YAML output is parsed into a per-render
+`*RenderedResourceCollector` (same lifecycle as `*StatusPatchCollector`
+for `statusPatch()` calls). Both collectors are constructed by
+`pkg/controller/rendercontext.Builder.Build()` and live in the
+rendering context for that single call. After the render finishes, the
+testrunner / dryrunvalidator inspects the rendered HAProxy config and
+aux files, but **does not read the collectors back** — see
+`pkg/controller/testrunner/rendering.go`:
 
 ```go
 renderCtx, _, _, _ := builder.Build()

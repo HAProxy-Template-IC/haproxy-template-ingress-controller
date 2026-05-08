@@ -154,130 +154,13 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  # gateway/features-090-gateway-listener-ports-service:
-  #
-  # Adds every unique non-default Gateway listener port (Gateway-owned +
-  # admitted ListenerSet listeners) to the chart's existing HAProxy
-  # Service via a Server-Side Apply *partial* patch. The chart owns the
-  # static `http`/`https`/`stats` port entries; this snippet contributes
-  # additional `gw-<port>-<proto>` entries, jointly owned by SSA's
-  # per-list-map-entry tracking.
-  #
-  # The patch carries `haproxy-haptic.org/ownership: partial` so the
-  # resourceapplier:
-  #   - skips injecting its `managed-by` label (the Service is jointly
-  #     owned with helm/argocd);
-  #   - never DELETEs the Service when this snippet emits no entries —
-  #     SSA releases dropped fields via field-manager bookkeeping;
-  #   - strips the annotation before applying so it stays a
-  #     controller-internal flag.
-  #
-  # SSA's list-map merge keeps haptic and helm/argocd from fighting
-  # because `Service.spec.ports` is keyed by (port, protocol) at the
-  # apiserver — chart-owned and haptic-owned entries coexist.
-  features-090-gateway-listener-ports-service:
-    template: |
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted %}
-      {%%
-        // Walk Gateway + admitted-ListenerSet listeners and collect
-        // unique (port, protocol) pairs. Skip the chart's own static
-        // haproxy-service ports (80/443/8404) because they already
-        // belong to the helm-owned port entries.
-        //
-        // Gateways that set spec.addresses are skipped here — they get
-        // their own dedicated LoadBalancer Service via the per-Gateway
-        // static-addresses path (features snippet emitting a
-        // full-ownership Service per Gateway). Folding their listener
-        // ports into the shared haptic-haproxy entry would publish the
-        // shared LB IP in their status.addresses instead of the
-        // requested address, violating the spec contract for
-        // GatewaySpec.Addresses ("MUST bind all Listeners to every
-        // GatewayAddress that it assigns to the Gateway"). See
-        // gateway-types.go GatewaySpec.Addresses.
-        var staticPorts = map[int]bool{80: true, 443: true, 8404: true}
-        var seen = map[string]bool{}
-        var portsList = []any{}
-        for _, gw := range resources.gateways.List() {
-          var gwAddrs = dig(gw, "spec", "addresses") | toSlice()
-          if len(gwAddrs) > 0 {
-            // Operator requested a dedicated address — handled by the
-            // per-Gateway Service path, not here.
-            continue
-          }
-          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            var port = toint(dig(listener, "port") | fallback(0))
-            var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
-            if port <= 0 || staticPorts[port] {
-              continue
-            }
-            // Single-letter protocol prefix to disambiguate Service port
-            // names (which must be DNS-1123 with at most 15 chars and
-            // unique per Service). For HTTP/HTTPS/TLS/TCP we just take
-            // the first letter; collisions between protocols on the
-            // same port are ProtocolConflict per Gateway API and don't
-            // produce a working Service anyway.
-            var key = tostring(port) + "-" + toLower(protocol[0:1])
-            if seen[key] {
-              continue
-            }
-            seen[key] = true
-            portsList = append(portsList, map[string]any{
-              "name":       "gw-" + key,
-              "port":       port,
-              "targetPort": port,
-              "protocol":   "TCP",
-            })
-          }
-          for _, ls := range resources.listenersets.List() {
-            if !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
-              continue
-            }
-            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-              var port = toint(dig(listener, "port") | fallback(0))
-              var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
-              if port <= 0 || staticPorts[port] {
-                continue
-              }
-              var key = tostring(port) + "-" + toLower(protocol[0:1])
-              if seen[key] {
-                continue
-              }
-              seen[key] = true
-              portsList = append(portsList, map[string]any{
-                "name":       "gw-" + key,
-                "port":       port,
-                "targetPort": port,
-                "protocol":   "TCP",
-              })
-            }
-          }
-        }
-        var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
-        var svcName = tostring(extraContext | dig("haproxyServiceName") | fallback(""))
-        // Partial-ownership SSA: emit the patch every render so SSA's
-        // field-manager bookkeeping releases dropped entries when
-        // portsList shrinks (including to empty when no Gateway has
-        // dynamic listeners). The snippet stays inert until the chart
-        // hands us a non-empty controllerNamespace and svcName via
-        // extraContext.
-        if ctrlNs != "" && svcName != "" {
-          renderResource("v1", "Service", ctrlNs, svcName, map[string]any{
-            "metadata": map[string]any{
-              "annotations": map[string]any{
-                // Tell the resourceapplier this is a joint-ownership
-                // patch — see pkg/controller/resourceapplier
-                // AnnotationOwnership / OwnershipPartial. The applier
-                // strips this annotation before SSA so it remains a
-                // controller-internal flag.
-                "haproxy-haptic.org/ownership": "partial",
-              },
-            },
-            "spec": map[string]any{
-              "ports": portsList,
-            },
-          })
-        }
-      %%}
+  # NOTE: The historical `features-090-gateway-listener-ports-service`
+  # snippet has been removed. Its responsibility (folding non-default
+  # Gateway listener ports into the chart's HAProxy Service) is now
+  # handled declaratively by the `k8sResources.haproxy-service` template
+  # in `libraries/base.yaml`, which renders the Service end-to-end from
+  # listener state — so there is no longer a partial-SSA patch to
+  # contribute entries to.
 
   # Register Gateway TLS Terminate mode certificates with SSL infrastructure
   features-100-gateway-tls:
@@ -4650,17 +4533,29 @@ templateSnippets:
                       mergedAnnotations[annK] = annV
                     }
                     mergedAnnotations["metallb.universe.tf/loadBalancerIPs"] = lbIPsAnnotation
-                    renderResource("v1", "Service", ctrlNs, svcName, map[string]any{
-                      "metadata": map[string]any{
-                        "labels":      ownedLabels,
-                        "annotations": mergedAnnotations,
-                      },
-                      "spec": map[string]any{
-                        "type":     "LoadBalancer",
-                        "selector": podSelector,
-                        "ports":    svcPorts,
-                      },
-                    })
+                    // Stash the per-Gateway LoadBalancer Service spec into
+                    // shared state, keyed by `<namespace>/<name>`. The
+                    // declarative `k8sResources.gateway-static-addresses`
+                    // template (in this same library) reads back this map
+                    // during the post-haproxy.cfg render pass and emits
+                    // one Service per entry. We can't emit the resource
+                    // inline here any more — the imperative
+                    // renderResource() filter is gone; resource emission
+                    // lives in spec.k8sResources, declared once and
+                    // rendered after the main config. We use a map (a
+                    // mutable reference type) because SharedContext is
+                    // append-only by design — ComputeIfAbsent gives us a
+                    // map to mutate, not a Set/Replace handle.
+                    var gwSvcsRaw, _ = shared.ComputeIfAbsent("gatewayStaticAddressServices", func() any { return map[string]any{} })
+                    var gwSvcs = gwSvcsRaw.(map[string]any)
+                    gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
+                      "namespace":   ctrlNs,
+                      "name":        svcName,
+                      "labels":      ownedLabels,
+                      "annotations": mergedAnnotations,
+                      "selector":    podSelector,
+                      "ports":       svcPorts,
+                    }
 
                     // Read the Service back to determine which spec.addresses
                     // are actually realized. resources.services watches all
@@ -4737,23 +4632,19 @@ templateSnippets:
                 // carry the metadata propagation. Selector intentionally
                 // empty: the Service has no endpoints, which matches the
                 // chart's architecture (no per-Gateway data plane).
-                renderResource("v1", "Service", ctrlNs, svcName, map[string]any{
-                  "metadata": map[string]any{
-                    "labels":      ownedLabels,
-                    "annotations": ownedAnnotations,
-                  },
-                  "spec": map[string]any{
-                    "type":      "ClusterIP",
-                    "clusterIP": "None",
-                    "ports": []any{
-                      map[string]any{
-                        "name":     "marker",
-                        "port":     1,
-                        "protocol": "TCP",
-                      },
-                    },
-                  },
-                })
+                //
+                // Stash spec into shared state keyed by `<ns>/<name>`. The
+                // `k8sResources.gateway-infrastructure-propagation`
+                // template reads it back and emits the Service after
+                // haproxy.cfg has rendered.
+                var gwInfraRaw, _ = shared.ComputeIfAbsent("gatewayInfrastructureServices", func() any { return map[string]any{} })
+                var gwInfra = gwInfraRaw.(map[string]any)
+                gwInfra[ctrlNs+"/"+svcName] = map[string]any{
+                  "namespace":   ctrlNs,
+                  "name":        svcName,
+                  "labels":      ownedLabels,
+                  "annotations": ownedAnnotations,
+                }
               }
             }
 
@@ -7019,6 +6910,116 @@ templateSnippets:
         {%- var controllerName = extraContext | dig("controllerName") | fallback("haproxy.org/haptic") | tostring() -%}
         {{- GenerateBackendTLSPolicyStatusPatches(allPolicies, controllerName) -}}
       {%- end -%}
+
+k8sResources:
+  # Per-Gateway LoadBalancer Service for SupportGatewayStaticAddresses.
+  #
+  # Reads back the per-Gateway Service specs that the
+  # `frontends-500-gateway-listener-status` snippet (haproxy.cfg pass)
+  # stashes into `shared["gatewayStaticAddressServices"]` while computing
+  # the Gateway's status. Each entry is emitted as a multi-doc YAML
+  # `---`-separated `Service`. Keys are sorted to keep output
+  # deterministic — Scriggo map iteration order is not stable.
+  #
+  # Replaces the inline renderResource() call that previously emitted
+  # these Services as a side effect of haproxy.cfg rendering. The
+  # imperative path is gone; resource emission is now declared once
+  # under `spec.k8sResources` and the renderer drives it after the
+  # main config + auxiliary files have been produced.
+  gateway-static-addresses:
+    template: |
+      {%- var rawSvcs = shared.Get("gatewayStaticAddressServices") %}
+      {%- if rawSvcs != nil %}
+      {%%
+        var svcs = rawSvcs.(map[string]any)
+        var keysList = []any{}
+        for k := range svcs {
+          keysList = append(keysList, k)
+        }
+        var sortedKeys = sort_strings(keysList)
+        var docs = []any{}
+        for _, key := range sortedKeys {
+          var entry = svcs[tostring(key)].(map[string]any)
+          var resource = map[string]any{
+            "apiVersion": "v1",
+            "kind":       "Service",
+            "metadata": map[string]any{
+              "name":        entry["name"],
+              "namespace":   entry["namespace"],
+              "labels":      entry["labels"],
+              "annotations": entry["annotations"],
+            },
+            "spec": map[string]any{
+              "type":     "LoadBalancer",
+              "selector": entry["selector"],
+              "ports":    entry["ports"],
+            },
+          }
+          var rendered, _ = marshalYAML(resource)
+          docs = append(docs, rendered)
+        }
+      %%}
+      {%- for i, doc := range docs -%}
+      {%- if i > 0 %}{{ "---" }}
+      {% end %}
+      {{ doc }}
+      {%- end %}
+      {%- end %}
+
+  # Per-Gateway headless marker Service for
+  # SupportGatewayInfrastructurePropagation.
+  #
+  # Reads back the per-Gateway marker-Service specs that the
+  # `frontends-500-gateway-listener-status` snippet stashes into
+  # `shared["gatewayInfrastructureServices"]` for Gateways that declare
+  # `spec.infrastructure` but no `spec.addresses`. Each entry becomes a
+  # headless ClusterIP Service whose only purpose is to carry the
+  # propagated labels and annotations.
+  gateway-infrastructure-propagation:
+    template: |
+      {%- var rawSvcs = shared.Get("gatewayInfrastructureServices") %}
+      {%- if rawSvcs != nil %}
+      {%%
+        var svcs = rawSvcs.(map[string]any)
+        var keysList = []any{}
+        for k := range svcs {
+          keysList = append(keysList, k)
+        }
+        var sortedKeys = sort_strings(keysList)
+        var docs = []any{}
+        for _, key := range sortedKeys {
+          var entry = svcs[tostring(key)].(map[string]any)
+          var resource = map[string]any{
+            "apiVersion": "v1",
+            "kind":       "Service",
+            "metadata": map[string]any{
+              "name":        entry["name"],
+              "namespace":   entry["namespace"],
+              "labels":      entry["labels"],
+              "annotations": entry["annotations"],
+            },
+            "spec": map[string]any{
+              "type":      "ClusterIP",
+              "clusterIP": "None",
+              "ports": []any{
+                map[string]any{
+                  "name":     "marker",
+                  "port":     1,
+                  "protocol": "TCP",
+                },
+              },
+            },
+          }
+          var rendered, _ = marshalYAML(resource)
+          docs = append(docs, rendered)
+        }
+      %%}
+      {%- for i, doc := range docs -%}
+      {%- if i > 0 %}{{ "---" }}
+      {% end %}
+      {{ doc }}
+      {%- end %}
+      {%- end %}
 
 validationTests:
   test-httproute-duplicate-backend-different-ports:

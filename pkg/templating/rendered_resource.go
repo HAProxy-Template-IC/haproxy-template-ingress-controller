@@ -66,10 +66,12 @@ func renderedResourceKey(namespace, name, apiVersion, kind string) string {
 	return namespace + "/" + name + "/" + apiVersion + "/" + kind
 }
 
-// RenderedResourceCollector collects desired Kubernetes resources registered
-// by templates during rendering. Thread-safe for concurrent writes from
-// parallel template goroutines (same lifecycle / same shape as
-// StatusPatchCollector).
+// RenderedResourceCollector collects desired Kubernetes resources for the
+// applier to reconcile. Filled by the renderer after rendering each entry
+// in `spec.k8sResources`: every YAML document in the rendered output
+// becomes one Register call. Thread-safe so the renderer can populate it
+// from parallel template goroutines if needed (same lifecycle / same shape
+// as StatusPatchCollector).
 //
 // Created per render cycle. Multiple Register calls for the same key are
 // last-write-wins on Object (the prior Object is replaced wholesale; the
@@ -100,10 +102,10 @@ func NewRenderedResourceCollector() *RenderedResourceCollector {
 // across renders, so this last-write-wins doesn't risk hammering the API.
 func (c *RenderedResourceCollector) Register(apiVersion, kind, namespace, name string, object map[string]any) error {
 	if name == "" || apiVersion == "" || kind == "" {
-		return errors.New("renderResource: name, apiVersion, and kind are required")
+		return errors.New("k8sResources: name, apiVersion, and kind are required")
 	}
 	if object == nil {
-		return errors.New("renderResource: object is required")
+		return errors.New("k8sResources: object is required")
 	}
 
 	// Always normalize identifying fields onto the object so the resulting
@@ -179,10 +181,10 @@ func (c *RenderedResourceCollector) Validate() error {
 
 	for key, r := range c.resources {
 		if r.APIVersion == "" || r.Kind == "" || r.Name == "" {
-			return fmt.Errorf("renderResource %s: apiVersion, kind, and name must be non-empty", key)
+			return fmt.Errorf("k8sResources %s: apiVersion, kind, and name must be non-empty", key)
 		}
 		if r.Object == nil {
-			return fmt.Errorf("renderResource %s: object is nil", key)
+			return fmt.Errorf("k8sResources %s: object is nil", key)
 		}
 	}
 	return nil

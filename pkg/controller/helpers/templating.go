@@ -182,6 +182,12 @@ func ExtractTemplatesFromConfig(cfg *config.Config) TemplateExtraction {
 		extraction.EntryPoints = append(extraction.EntryPoints, name)
 	}
 
+	// K8s resource templates (entry points)
+	for name, resDef := range cfg.K8sResources {
+		extraction.AllTemplates[name] = resDef.Template
+		extraction.EntryPoints = append(extraction.EntryPoints, name)
+	}
+
 	return extraction
 }
 
@@ -220,6 +226,13 @@ func ExtractPostProcessorConfigs(cfg *config.Config) map[string][]templating.Pos
 	for name, certDef := range cfg.SSLCertificates {
 		if len(certDef.PostProcessing) > 0 {
 			configs[name] = convertPostProcessorConfigs(certDef.PostProcessing)
+		}
+	}
+
+	// K8s resource templates
+	for name, resDef := range cfg.K8sResources {
+		if len(resDef.PostProcessing) > 0 {
+			configs[name] = convertPostProcessorConfigs(resDef.PostProcessing)
 		}
 	}
 

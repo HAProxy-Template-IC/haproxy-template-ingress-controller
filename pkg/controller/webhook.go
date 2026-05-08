@@ -318,7 +318,7 @@ func setupReconciliation(
 	errGroup *errgroup.Group,
 ) (*reconciliationComponents, error) {
 	// Create all components
-	components, err := createReconciliationComponents(cfg, k8sClient, resourceWatcher, currentConfigStore, storeManager, bus, registry, logger)
+	components, err := createReconciliationComponents(cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeManager, bus, registry, logger)
 	if err != nil {
 		return nil, err
 	}

@@ -16,14 +16,18 @@ package renderer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"gopkg.in/yaml.v3"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
@@ -205,6 +209,15 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// Render auxiliary files
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
 	if err != nil {
+		return nil, err
+	}
+
+	// Render Kubernetes resource templates (`spec.k8sResources`). Each
+	// template's output is one or more YAML documents; every doc gets
+	// parsed and registered with the same RenderedResourceCollector
+	// the runtime renderResource() filter populated previously, so
+	// downstream consumers (resourceapplier) see no shape change.
+	if err := s.renderK8sResources(ctx, renderContext, renderedResourceCollector); err != nil {
 		return nil, err
 	}
 
@@ -408,6 +421,80 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 func (s *RenderService) ClearVMPool() {
 	if s.engine != nil {
 		s.engine.ClearVMPool()
+	}
+}
+
+// renderK8sResources renders every entry in spec.k8sResources in parallel,
+// parses the rendered output as one or more YAML documents (multi-doc
+// supported via `---` separators), and registers each document with the
+// supplied RenderedResourceCollector. The collector is the same input
+// downstream consumers (resourceapplier) read off RenderResult.
+//
+// Each YAML document must declare apiVersion, kind, and metadata.name
+// (plus metadata.namespace for namespaced kinds). A bad document aborts
+// the render with an error scoped to the offending template name so
+// authors can locate it.
+func (s *RenderService) renderK8sResources(ctx context.Context, renderCtx map[string]any, collector *templating.RenderedResourceCollector) error {
+	if len(s.config.K8sResources) == 0 {
+		return nil
+	}
+	g, _ := errgroup.WithContext(ctx)
+	for name := range s.config.K8sResources {
+		g.Go(func() error {
+			rendered, err := s.engine.Render(ctx, name, renderCtx)
+			if err != nil {
+				return fmt.Errorf("rendering k8sResources %s: %w", name, err)
+			}
+			return registerK8sResourceDocs(name, rendered, collector)
+		})
+	}
+	return g.Wait()
+}
+
+// registerK8sResourceDocs parses rendered YAML (one or more documents
+// separated by `---`), validates each, and adds it to the collector.
+func registerK8sResourceDocs(templateName, rendered string, collector *templating.RenderedResourceCollector) error {
+	if strings.TrimSpace(rendered) == "" {
+		// Empty render is a valid "no resources to emit this cycle"
+		// signal — common when a template gates its output on a
+		// resource state that doesn't currently exist.
+		return nil
+	}
+	dec := yaml.NewDecoder(strings.NewReader(rendered))
+	docIdx := 0
+	for {
+		var doc map[string]any
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("parsing k8sResources %s document %d: %w", templateName, docIdx, err)
+		}
+		docIdx++
+		if len(doc) == 0 {
+			continue
+		}
+		apiVersion, _ := doc["apiVersion"].(string)
+		kind, _ := doc["kind"].(string)
+		metadata, _ := doc["metadata"].(map[string]any)
+		var name, namespace string
+		if metadata != nil {
+			name, _ = metadata["name"].(string)
+			namespace, _ = metadata["namespace"].(string)
+		}
+		if apiVersion == "" || kind == "" || name == "" {
+			return fmt.Errorf("k8sResources %s document %d: apiVersion, kind, and metadata.name are required", templateName, docIdx)
+		}
+		// Strip the identifying fields before handing the object to
+		// Register — Register re-injects them from the explicit
+		// arguments, and leaving them in would have Register copy
+		// them back over no-ops. metadata is intentionally kept
+		// since templates may add labels / annotations / ownerRefs
+		// the applier then merges with the resource it sends.
+		if err := collector.Register(apiVersion, kind, namespace, name, doc); err != nil {
+			return fmt.Errorf("k8sResources %s document %d: %w", templateName, docIdx, err)
+		}
 	}
 }
 

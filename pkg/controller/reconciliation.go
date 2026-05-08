@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
@@ -68,6 +69,7 @@ type reconciliationComponents struct {
 // createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
 func createReconciliationComponents(
 	cfg *coreconfig.Config,
+	crd *v1alpha1.HAProxyTemplateConfig,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
@@ -243,6 +245,16 @@ func createReconciliationComponents(
 	if ownNamespace == "" {
 		ownNamespace = k8sClient.Namespace()
 	}
+	// Build OwnerReference identity from the live HAProxyTemplateConfig
+	// CR. The applier injects this into every full-ownership SSA payload
+	// so Kubernetes garbage collection cascade-deletes the rendered
+	// resources when the CR is removed (e.g. `helm uninstall`).
+	ownerRef := resourceapplier.OwnerReference{
+		APIVersion: v1alpha1.SchemeGroupVersion.String(),
+		Kind:       "HAProxyTemplateConfig",
+		Name:       crd.GetName(),
+		UID:        string(crd.GetUID()),
+	}
 	resourceApplierComponent := resourceapplier.New(&resourceapplier.Config{
 		EventBus:               bus,
 		DynamicClient:          k8sClient.DynamicClient(),
@@ -251,6 +263,7 @@ func createReconciliationComponents(
 		Logger:                 logger,
 		OwnNamespace:           ownNamespace,
 		RestrictToOwnNamespace: true,
+		OwnerRef:               ownerRef,
 	})
 
 	// Register components with the lifecycle registry using builder pattern

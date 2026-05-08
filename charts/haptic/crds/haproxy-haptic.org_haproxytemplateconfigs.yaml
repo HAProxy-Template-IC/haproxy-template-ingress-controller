@@ -407,6 +407,81 @@ spec:
                 required:
                 - template
                 type: object
+              k8sResources:
+                additionalProperties:
+                  description: |-
+                    K8sResource defines a template that emits one or more Kubernetes
+                    resources via multi-doc YAML.
+
+                    IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                      - The internal config type: pkg/core/config/types.go (K8sResource)
+                      - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - k8sResources section)
+                  properties:
+                    postProcessing:
+                      description: |-
+                        PostProcessing defines optional post-processors to apply after rendering.
+
+                        Post-processors run in the order specified and can transform the rendered output.
+                      items:
+                        description: |-
+                          PostProcessorConfig defines a post-processor to apply to rendered template output.
+
+                          IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                            - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
+                            - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+                        properties:
+                          params:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Params contains post-processor-specific parameters.
+
+                              For "regex_replace":
+                                - pattern: Regular expression pattern to match
+                                - replace: Replacement string
+                            type: object
+                          type:
+                            description: Type specifies the post-processor type (e.g.,
+                              "regex_replace").
+                            type: string
+                        required:
+                        - params
+                        - type
+                        type: object
+                      type: array
+                    template:
+                      description: |-
+                        Template is the template for generating the resource YAML.
+
+                        The rendered output is parsed as one or more Kubernetes
+                        resources (separate documents with `---`). Each document must
+                        declare `apiVersion`, `kind`, and `metadata.name` (plus
+                        `metadata.namespace` for namespaced kinds).
+                      minLength: 1
+                      type: string
+                  required:
+                  - template
+                  type: object
+                description: |-
+                  K8sResources maps resource template names to their template
+                  definitions. Each entry's rendered output is parsed as one or
+                  more Kubernetes resources (multi-doc YAML, separated by `---`)
+                  and applied via Server-Side Apply with field manager `haptic`.
+
+                  The controller injects an OwnerReference to the
+                  HAProxyTemplateConfig CR (controller=true,
+                  blockOwnerDeletion=true) on every applied resource so cascade
+                  garbage collection removes them when the CR is deleted (e.g.
+                  `helm uninstall`). Resources that disappear from the rendered
+                  set across reconciliations are pruned via the
+                  `haproxy-haptic.org/managed-by` label the applier injects.
+
+                  Templates have full access to the same engine context as
+                  haproxyConfig — `resources`, filters, `templateSnippets`,
+                  `fileRegistry`, `extraContext`, etc. — so a k8sResources
+                  template can render extension points (`render_glob` patterns)
+                  and consume cached state (`shared.ComputeIfAbsent`).
+                type: object
               logging:
                 description: Logging configures logging behavior.
                 properties:

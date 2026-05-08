@@ -142,6 +142,11 @@ type TestResult struct {
 	// RenderedCerts contains rendered SSL certificates (for --dump-rendered).
 	RenderedCerts map[string]string `json:"renderedCerts,omitempty" yaml:"renderedCerts,omitempty"`
 
+	// RenderedK8sResources contains rendered output of every
+	// `spec.k8sResources` template (template name → rendered YAML).
+	// Asserted via `target: k8s:<template-name>`.
+	RenderedK8sResources map[string]string `json:"renderedK8sResources,omitempty" yaml:"renderedK8sResources,omitempty"`
+
 	// IncludeStats contains timing statistics for included templates (for --profile-includes).
 	IncludeStats []templating.IncludeStats `json:"includeStats,omitempty" yaml:"includeStats,omitempty"`
 }

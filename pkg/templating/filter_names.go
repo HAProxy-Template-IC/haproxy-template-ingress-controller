@@ -192,14 +192,6 @@ const (
 	// Syntax: statusPatch(namespace, name, apiVersion, kind, variants).
 	FuncStatusPatch = "statusPatch"
 
-	// FuncRenderResource registers a desired Kubernetes resource for the controller to
-	// apply via Server-Side Apply. Resource-agnostic: templates pass any apiVersion / kind
-	// (the controller never hardcodes resource types). Calling with the same tuple multiple
-	// times in one render is last-write-wins; the applier checksums the final payload and
-	// skips the API call when it matches the last-applied value.
-	// Syntax: renderResource(apiVersion, kind, namespace, name, object).
-	FuncRenderResource = "renderResource"
-
 	// FuncCondition builds a metav1.Condition-compatible map.
 	// Syntax: condition(type, status, reason, message, observedGeneration, lastTransitionTime).
 	FuncCondition = "condition"
