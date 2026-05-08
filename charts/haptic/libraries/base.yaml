@@ -128,20 +128,30 @@ templateSnippets:
       # so the common port-default case has zero overhead.
       http-request set-var(txn.host_full) req.hdr(Host),lower
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }}) if { var(txn.host_full) -m sub : }
-      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }}) if !{ var(txn.host_match) -m found }
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      # Seed host_match to '' so the cascade below can consistently use
+      # `len 0` to mean "no match yet" — works whether or not the
+      # `host_full -m sub :` gate fired on the first lookup.
+      http-request set-var(txn.host_match) str()
+      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-      # Per-listener-port fallback: when no hostname-based lookup matched
-      # and the inbound port is non-default, isolate routes by the
-      # listener's port. Resource libraries that emit listeners on
-      # non-default ports (e.g. Gateway API listener-port-matching)
-      # write a `:<port> :<port>` entry into host.map; this lookup uses
-      # `:<dst_port>` to find it. Default ports (80/443/8404) skip this
-      # step because their listeners never write a port-suffixed key.
+      # Per-listener-port fallback: when no hostname-based lookup
+      # matched, isolate routes by the inbound listener port.
+      # Resource libraries that emit listeners on non-default ports
+      # (e.g. Gateway API listener-port-matching) write a
+      # `:<port> :<port>` entry into host.map; this lookup uses
+      # `:<dst_port>` to find it.
+      #
+      # Gate: `len 0` rather than `!found`, because the host_full and
+      # host-regex lookups above may have already SET host_match (to
+      # an empty string when the lookup yielded no match). `-m found`
+      # would be true after that, blocking this fallback. `-m len 0`
+      # fires whenever the variable is set-but-empty, which is
+      # exactly the post-cascade state we want to recover from.
       # `concat()` requires a variable, so bind dst_port first.
-      http-request set-var(txn.dst_port) dst_port if !{ var(txn.host_match) -m found }
-      http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      http-request set-var(txn.dst_port) dst_port if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Regex > Prefix-exact > Prefix
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
@@ -208,14 +218,18 @@ templateSnippets:
       # so the common port-default case has zero overhead.
       http-request set-var(txn.host_full) req.hdr(Host),lower
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }}) if { var(txn.host_full) -m sub : }
-      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }}) if !{ var(txn.host_match) -m found }
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      # Seed host_match to '' so the cascade below can consistently use
+      # `len 0` to mean "no match yet" — works whether or not the
+      # `host_full -m sub :` gate fired on the first lookup.
+      http-request set-var(txn.host_match) str()
+      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
       # Per-listener-port fallback: see frontend-routing-logic for the
       # full rationale (must stay in lockstep with the default variant).
-      http-request set-var(txn.dst_port) dst_port if !{ var(txn.host_match) -m found }
-      http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      http-request set-var(txn.dst_port) dst_port if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Prefix-exact > Prefix > Regex
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})

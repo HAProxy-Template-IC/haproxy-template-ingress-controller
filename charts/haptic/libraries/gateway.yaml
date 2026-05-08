@@ -3960,7 +3960,49 @@ templateSnippets:
               {%- if portStr == "80" && (scheme == "" || scheme == "http") %}{%- omitPort = true %}{%- end %}
               {%- if portStr == "443" && (scheme == "" || scheme == "https") %}{%- omitPort = true %}{%- end %}
               {%- var loc = schemePart + "://" + hostPart %}
+              {%- var dynamicPort = portStr == "" && scheme == "" %}
               {%- if portStr != "" && !omitPort %}{%- loc = loc + ":" + portStr %}{%- end %}
+              {#- Per Gateway API spec for RequestRedirect: when both
+                  spec.scheme and spec.port are unspecified, the
+                  redirect port MUST be the Gateway listener port. We
+                  can't know the listener port at template-render time
+                  (a single route can attach to multiple listeners), so
+                  we use the inbound dst_port at runtime. The chart's
+                  HTTP/HTTPS listeners bind on the literal port numbers
+                  (80/443 by default), so dst_port is the actual
+                  Gateway listener port — no Service-NAT indirection.
+                  Omit when (request scheme, dst_port) is the
+                  well-known pair (http,80) / (https,443) per the spec
+                  static-omit rule. txn.gw_redir_port_part holds the
+                  port suffix to interpolate (empty when omitted,
+                  ":<port>" otherwise). Each request matches at most
+                  one redirect rule (dispatched by the route condition
+                  upstream), so a single shared variable name is safe;
+                  the route-condition gate keeps the set-var lines
+                  inert for non-matching requests. -#}
+              {%- if dynamicPort %}
+                {#- Chart-static's HTTP / HTTPS internal ports come
+                    from the chart's `haproxy.ports.http` / `https`
+                    values, threaded through extraContext at chart-
+                    render time. Defaults are 80 / 443, matching the
+                    Gateway-API-spec well-known port numbers; the
+                    chart's static binds on these literal ports so
+                    dst_port equals the Gateway listener port a
+                    connection actually entered through. The omit
+                    rule (Gateway API: omit port from Location when
+                    the resulting (scheme, port) is (http, 80) or
+                    (https, 443)) therefore tests dst_port against
+                    the chart's static ports — not against literal
+                    80/443 — so the rule stays correct even if an
+                    operator chose different chart-static ports. -#}
+                {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(80)) %}
+                {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(443)) %}
+      http-request set-var(txn.gw_redir_dst_port) dst_port if {{ cond }}
+      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { dst_port {{ httpPort }} } !{ ssl_fc }
+      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { dst_port {{ httpsPort }} } { ssl_fc }
+      http-request set-var(txn.gw_redir_port_part) str(:),concat(,txn.gw_redir_dst_port,) if {{ cond }} !{ var(txn.gw_redir_port_part) -m found }
+                {%- loc = loc + "%[var(txn.gw_redir_port_part)]" %}
+              {%- end %}
               {%- loc = loc + pathExpr %}
 
               {%- if debug | fallback(false) %}
@@ -11709,8 +11751,23 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request redirect location "%\[var\(txn\.gw_request_scheme\)\]://example\.org%\[path\]" code 302'
-        description: Redirect URL uses gw_request_scheme when spec.scheme is unset
+        pattern: 'http-request redirect location "%\[var\(txn\.gw_request_scheme\)\]://example\.org%\[var\(txn\.gw_redir_port_part\)\]%\[path\]" code 302'
+        description: |
+          Redirect URL uses gw_request_scheme when spec.scheme is unset, and
+          appends a runtime-resolved port-part (txn.gw_redir_port_part) so
+          the Gateway listener port survives — per Gateway API spec for
+          RequestRedirect, when both spec.scheme and spec.port are
+          unspecified the redirect MUST use the Gateway listener port.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(\) if .* \{ dst_port \d+ \} !\{ ssl_fc \}'
+        description: Empty port-part when (request scheme=http, dst_port=chart-static-http) — well-known omit case
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(:\),concat\(,txn\.gw_redir_dst_port,\) if .* !\{ var\(txn\.gw_redir_port_part\) -m found \}'
+        description: Otherwise port-part = ":<dst_port>" so a non-default Gateway listener port is preserved in the Location URL
 
       - type: contains
         target: haproxy.cfg

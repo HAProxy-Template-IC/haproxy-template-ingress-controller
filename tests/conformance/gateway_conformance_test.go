@@ -339,23 +339,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// previously skipped on the cross-namespace backendRef
 			// issue; util-generate-backends-gateway now resolves
 			// services in the backendRef.namespace — re-tested.)
-			// HTTPRouteRedirectPortAndScheme: 14 of 15 sub-tests pass
-			// with the partial-SSA + open-NetworkPolicy + per-port
-			// host_match fallback. The single failing sub-test is
-			// `http-listener-on-8080/0 /scheme-nil-and-port-nil`,
-			// which collides on HAProxy's chart-static internal port
-			// 8080: Gateway listener port 80 (via Service NAT to
-			// containerPort 8080) and Gateway listener port 8080
-			// (direct) both arrive on `bind *:8080`, so dst_port=8080
-			// for both — they're indistinguishable inside HAProxy and
-			// path-prefix.map's :8080-prefixed and unprefixed entries
-			// can't be selected correctly. Fix requires shifting the
-			// chart's internal http/https port from 8080/8443 to a
-			// non-conflict-prone range (e.g. 18080/18443) so each
-			// Gateway listener port can claim its real number on a
-			// dedicated bind. Separate chart change with backward
-			// compatibility implications; tracked at <follow-up issue>.
-			"HTTPRouteRedirectPortAndScheme",
+			// HTTPRouteRedirectPortAndScheme previously failed on the
+			// chart-static-port-8080 / Gateway-listener-port-8080
+			// collision. Fixed by binding chart-static http/https on
+			// the literal port numbers (80/443) so each Gateway
+			// listener port owns its own bind and dst_port is
+			// unambiguous, plus a runtime-resolved port-part in the
+			// redirect-filter URL so the inbound listener port is
+			// preserved when spec.scheme and spec.port are both
+			// unset.
 			// GatewayHTTPListenerIsolation: same empty-Host issue as
 			// above; the test sends requests targeting catch-all
 			// listeners with various Host headers including empty/
