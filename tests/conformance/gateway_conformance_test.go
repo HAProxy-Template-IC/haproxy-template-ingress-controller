@@ -223,20 +223,18 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"GRPCExactMethodMatching",
 			"GRPCRouteHeaderMatching",
 			"GRPCRouteListenerHostnameMatching",
-			// Frontend mTLS handshake-level enforcement: with
-			// https-bind-extra + literal port-443 chart-static, the
-			// request flow now reaches HAProxy's TLS frontend, but the
-			// per-port mTLS rules don't fire as expected. Status-side
-			// assertions pass (InsecureFrontendValidationMode
-			// condition); request-side assertions hit 30s timeouts
-			// across all four sub-tests, indicating the per-port
-			// `verify required`/`verify optional` directive isn't
-			// being applied to the additional TLS binds emitted by
-			// https-bind-extra (it only knows about the chart-static
-			// SSL options). Needs the gateway library to thread
-			// per-listener client-cert config into the bind-extra
-			// emission, not just reuse util-ssl-bind-options.
-			// Tracked at <follow-up issue>.
+			// Frontend mTLS handshake-level enforcement: the cert-
+			// registration TLS-mode-default fix lets the chart
+			// actually load the listener's cert (was silently
+			// skipped before); the chart-static port-443 listener
+			// now serves the right cert and "default TLS
+			// configuration" status checks pass. The per-port
+			// mTLS plumbing for non-default ports (e.g. 8443) is
+			// still incomplete — the chart's clientCertVerifyHosts
+			// map is keyed by listener hostname, not by listener
+			// (port + hostname), so two listeners with different
+			// per-port CA configs that share a hostname collide
+			// in the crt-list emission. Tracked at <follow-up issue>.
 			"GatewayFrontendClientCertificateValidation",
 			"GatewayFrontendClientCertificateValidationInsecureFallback",
 			"GatewayBackendClientCertificateFeature",
@@ -306,24 +304,23 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// non-deterministic across runs. Tracked at <follow-up
 			// issue>.
 			"ListenerSetAllowedNamespaceSelector",
-			// TLSRoute network-flow tests: with TLS NodePort plumbing in
-			// place, basic exact-hostname SNI dispatch now reaches the
-			// backend correctly (those sub-tests pass). The remaining
-			// failures cover three gaps:
-			//   1. Wildcard-hostname intersection dispatch — the chart
-			//      walks listener hostnames but the SNI matcher uses
-			//      exact-string `req_ssl_sni -m str`; needs `-m end`
-			//      for `*.example.com` listener hostnames.
-			//   2. "Should not reach backend" assertions — TLS
-			//      connections with non-matching SNI succeed because
-			//      there's no SNI-strict reject path; HAProxy needs
-			//      `tcp-request content reject if !{ req_ssl_sni
-			//      -m str ... }` per listener.
-			//   3. Mixed Terminate/Passthrough on the same listener
-			//      port — listener Accepted=False/ProtocolConflict
-			//      isn't being emitted for that combination.
-			// All three are TLSRoute chart work; status-side
-			// assertions pass, the network half doesn't yet.
+			// TLSRoute wildcard-SNI matcher now works (the ssl-tcp
+			// frontend uses `-m end .<domain>` for `*.<domain>`
+			// patterns, lifting 3 wildcard-intersection sub-tests).
+			// The remaining failures all share one root cause:
+			// "should-not-reach-backend" / "should-be-rejected"
+			// assertions expect the ssl-tcp frontend to REJECT TLS
+			// connections whose SNI doesn't match any TLSRoute-
+			// attached pattern. The chart's ssl-tcp frontend has
+			// `default_backend ssl-loopback` that forwards
+			// non-matching traffic to the HTTPS frontend for
+			// termination — adding a blanket reject would break
+			// HTTPS termination on shared listener ports. Fixing
+			// this needs per-listener-port ssl-tcp frontends
+			// (one frontend per Gateway TLS-passthrough listener,
+			// each with its own SNI allowlist) — a substantial
+			// frontend-separation refactor. Tracked at
+			// <follow-up issue>.
 			"TLSRouteHostnameIntersection",
 			"TLSRouteInvalidBackendRefNonexistent",
 			"TLSRouteInvalidBackendRefUnknownKind",
@@ -369,11 +366,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// absent, and the chart's frontend-routing returns 404.
 			"GatewayHTTPListenerIsolation",
 			// GatewayFrontendInvalidDefaultClientCertificateValidation:
-			// same root cause as the other Frontend mTLS tests above —
-			// status assertions pass, request-flow assertions need
-			// per-listener mTLS config threaded through
-			// https-bind-extra (currently only emits shared chart-
-			// static SSL options).
+			// HTTP-listener-not-impacted sub-test now passes (the
+			// chart's mTLS config doesn't bleed into HTTP frontends).
+			// HTTPS sub-test still fails because the chart needs to
+			// surface the listener-level RefNotPermitted /
+			// InvalidCertificateRef condition for the unresolvable
+			// caCertificateRefs and gate the bind accordingly. Same
+			// per-port plumbing root cause as the other Frontend
+			// mTLS tests above.
 			"GatewayFrontendInvalidDefaultClientCertificateValidation",
 			// BackendTLSPolicySANValidation: BackendTLSPolicy SAN
 			// validation requires HAProxy to validate the backend's
