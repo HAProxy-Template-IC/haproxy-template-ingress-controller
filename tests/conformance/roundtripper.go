@@ -53,14 +53,19 @@ const (
 	httpsNodePort = 31443
 )
 
-// gatewayPortsServiceLabel identifies the chart-managed Service that
-// exposes per-Gateway-listener-port NodePorts. The chart emits one such
-// Service named `haptic-gw-listener-ports` in the controller namespace
-// with a port entry per unique non-default Gateway/ListenerSet listener
-// port — see features-090-gateway-listener-ports-service in
-// libraries/gateway.yaml. The conformance RoundTripper queries by this
-// label at suite-init time to build the dynamic port→NodePort table.
-const gatewayPortsServiceLabel = "haproxy-haptic.org/role=gateway-listener-ports"
+// haproxyServiceNamespace + haproxyServiceName identify the chart-emitted
+// HAProxy Service. Both static (helm-owned: http/https/stats) and dynamic
+// (haptic-owned: gw-<port>-<proto>) port entries live on this same Service
+// — the chart's gateway-listener-ports snippet does a partial-ownership
+// SSA patch on it (see features-090-gateway-listener-ports-service in
+// libraries/gateway.yaml plus AnnotationOwnership in
+// pkg/controller/resourceapplier). The conformance RoundTripper looks
+// the Service up by namespace+name at suite-init time, then refreshes
+// on cache miss as conformance fixtures land additional Gateways.
+const (
+	haproxyServiceNamespace = "haptic"
+	haproxyServiceName      = "haptic-haproxy"
+)
 
 // portRoute carries the destination needed to reach a given Gateway
 // listener port from the test process. `nodeIP` + `nodePort` is dialed
@@ -220,29 +225,35 @@ func discoverNodeInternalIP(ctx context.Context, cs clientset.Interface) (string
 	return "", fmt.Errorf("no node InternalIP found")
 }
 
-// discoverDynamicNodePorts queries the chart-emitted
-// gateway-listener-ports Service and returns a map from listener port
-// to apiserver-allocated NodePort. Returns an empty map (not an error)
-// if the Service is absent — the chart only emits it when there are
-// non-default Gateway listener ports.
+// discoverDynamicNodePorts queries the chart-emitted HAProxy Service and
+// returns a map from listener port to apiserver-allocated NodePort,
+// skipping the entries already covered by the static seed (80, 443, 8404).
+// The chart's gateway-listener-ports snippet partial-patches this Service
+// to add `gw-<port>-<proto>` entries; the apiserver allocates a NodePort
+// per entry (since the Service type is NodePort or LoadBalancer in the
+// test environment) and we read them back here.
+//
+// Returns an empty map (not an error) if no dynamic entries exist; the
+// snippet only contributes entries when at least one Gateway/ListenerSet
+// declares a non-default listener port.
 func discoverDynamicNodePorts(ctx context.Context, cs clientset.Interface) (map[int]int, error) {
 	out := map[int]int{}
-	svcs, err := cs.CoreV1().Services("").List(ctx, metav1.ListOptions{
-		LabelSelector: gatewayPortsServiceLabel,
-	})
+	svc, err := cs.CoreV1().Services(haproxyServiceNamespace).Get(ctx, haproxyServiceName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("list listener-port Services: %w", err)
+		return nil, fmt.Errorf("get %s/%s Service: %w", haproxyServiceNamespace, haproxyServiceName, err)
 	}
-	for _, svc := range svcs.Items {
-		if svc.Spec.Type != corev1.ServiceTypeNodePort && svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+	if svc.Spec.Type != corev1.ServiceTypeNodePort && svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		return out, nil
+	}
+	// Static entries seeded separately by buildInitialPortTable; skip
+	// them here so the dynamic refresh path doesn't overwrite the
+	// loopback host with the kind node IP.
+	staticPorts := map[int32]bool{80: true, 443: true, 8404: true}
+	for _, p := range svc.Spec.Ports {
+		if p.NodePort == 0 || staticPorts[p.Port] {
 			continue
 		}
-		for _, p := range svc.Spec.Ports {
-			if p.NodePort == 0 {
-				continue
-			}
-			out[int(p.Port)] = int(p.NodePort)
-		}
+		out[int(p.Port)] = int(p.NodePort)
 	}
 	return out, nil
 }

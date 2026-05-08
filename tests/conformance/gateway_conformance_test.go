@@ -314,11 +314,19 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"TLSRouteInvalidBackendRefUnknownKind",
 			"TLSRouteListenerMixedTerminationNotSupported",
 			"TLSRouteTerminateSimpleSameNamespace",
-			// HTTPRouteHTTPSListenerDetectMisdirectedRequests,
-			// HTTPRouteListenerPortMatching: blocked on the same NodePort
-			// 8080/8443 plumbing as HTTPRouteRedirectPortAndScheme.
+			// HTTPRouteListenerPortMatching previously skipped on the
+			// 8080/8443 plumbing gap; lifted by the partial-SSA + open
+			// NetworkPolicy work, now passing.
+			//
+			// HTTPRouteHTTPSListenerDetectMisdirectedRequests partially
+			// passes (11 of 15 sub-tests). The 4 failures all expect
+			// HTTP 421 "Misdirected Request" when the Host header
+			// doesn't match the TLS SNI. HAProxy doesn't enforce that
+			// equivalence by default; the chart needs an http-request
+			// reject (or set var(txn.misdirected) + reject) on
+			// frontend https when ssl_fc_sni and req.hdr(host) differ.
+			// Separate chart feature; tracked at <follow-up issue>.
 			"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
-			"HTTPRouteListenerPortMatching",
 			// HTTPRouteCORS: 14 of 17 sub-tests PASS. The 3 failing
 			// sub-tests cover (a) POST preflight via allowMethods:["*"]
 			// wildcard, (b) auth+specific method+headers preflight, and
@@ -327,21 +335,18 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// doesn't yet handle the `*` method wildcard or the auth-
 			// header-hiding semantics. Tracked at <follow-up issue>.
 			"HTTPRouteCORS",
-			// HTTPRoutePartiallyInvalidViaInvalidReferenceGrant: status side
-			// passes via per-listener cert-RG handling, but the request
-			// flow has the same cross-namespace backendRef issue
-			// HTTPRouteReferenceGrant had — needs verification + likely
-			// passes once the cross-namespace endpoint lookup flows
-			// through every code path (already fixed in
-			// util-generate-backends-gateway). Re-test post-rebuild.
-			"HTTPRoutePartiallyInvalidViaInvalidReferenceGrant",
-			// HTTPRouteRedirectPortAndScheme: 14 of 15 sub-tests pass with
-			// the dynamic NodePort plumbing. The single failing sub-test
-			// requires per-listener-port routing isolation: the test
-			// fixture attaches different HTTPRoutes to different Gateway
-			// listeners on the SAME port-prefix path, and routes get
-			// confused because path-prefix.map lookup doesn't include
-			// the inbound listener port. Tracked at <follow-up issue>.
+			// (HTTPRoutePartiallyInvalidViaInvalidReferenceGrant
+			// previously skipped on the cross-namespace backendRef
+			// issue; util-generate-backends-gateway now resolves
+			// services in the backendRef.namespace — re-tested.)
+			// HTTPRouteRedirectPortAndScheme: 14 of 15 sub-tests now
+			// pass under the partial-SSA + open-NetworkPolicy plumbing.
+			// The single remaining failure is per-listener-port routing
+			// isolation: two HTTPRoutes attached to two different
+			// Gateway listeners on the same path prefix collide because
+			// path-prefix.map lookup doesn't include the inbound
+			// listener port. Separate chart routing work; tracked at
+			// <follow-up issue>.
 			"HTTPRouteRedirectPortAndScheme",
 			// GatewayHTTPListenerIsolation: same empty-Host issue as
 			// above; the test sends requests targeting catch-all

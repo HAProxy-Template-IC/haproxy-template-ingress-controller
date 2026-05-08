@@ -68,6 +68,13 @@ spec:
          rather than asking Scriggo to reach for them. */ -}}
   {{- $_ := set $extraContext "controllerNamespace" .Release.Namespace }}
   {{- $_ := set $extraContext "haproxyPodSelector" (include "haptic.haproxy.selectorLabels" . | fromYaml) }}
+  {{- /* Resolved name of the chart-emitted HAProxy Service. Templates
+         that partial-patch its spec.ports (e.g. the gateway-listener-
+         ports snippet) need this so the SSA payload targets the same
+         object the chart created. The controller never hardcodes the
+         name — the chart computes it via fullname conventions and
+         hands it through extraContext. */ -}}
+  {{- $_ := set $extraContext "haproxyServiceName" (include "haptic.haproxyFullname" .) }}
 
   {{- /* Pass spoaHub wiring through extraContext when the sidecar is
          enabled AND at least one plugin contributes an SPOE message.
