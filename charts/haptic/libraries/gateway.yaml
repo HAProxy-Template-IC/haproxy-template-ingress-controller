@@ -6370,12 +6370,21 @@ templateSnippets:
           ListenerSetAllowedNamespaceNone / ListenerSetAllowedNamespaceSame).
           Get() reads whatever util-effective-listeners published; the
           nil-fallback covers the (unreachable from this macro) case
-          where util-effective-listeners didn't run. -#}
-      {%- var statusesAny = shared.Get("listenersetStatuses") %}
-      {%- var statuses = map[string]any{} %}
-      {%- if statusesAny != nil %}
-        {%- statuses = statusesAny.(map[string]any) %}
-      {%- end %}
+          where util-effective-listeners didn't run.
+
+          The `statuses` declaration MUST be inside a `{%% %%}` Go-syntax
+          block so it's visible to the per-LS Go-syntax block below;
+          declaring it via the template-style `{%- var -%}` form puts it
+          in template scope and inner Go-syntax blocks see undefined
+          identifier (silently treated as nil), reproducing the same
+          empty-statuses → "Pending" bug we just thought we'd fixed. -#}
+      {%%
+        var statusesAny = shared.Get("listenersetStatuses")
+        var statuses = map[string]any{}
+        if statusesAny != nil {
+          statuses = statusesAny.(map[string]any)
+        }
+      %%}
       {%- for _, ls := range resources.listenersets.List() %}
         {%%
           var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
