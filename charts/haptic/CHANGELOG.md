@@ -9,8 +9,14 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Gateway TLS-cert registration now treats an unspecified `tls.mode` as the spec-implied default `Terminate` instead of silently skipping the listener. Previously a Gateway listener with `tls.certificateRefs` but no `tls.mode` (which is the common case — Gateway API spec defaults `mode: Terminate`) had its cert never registered, never written to disk, and never appearing in the crt-list, breaking SNI-based cert selection. The chart now skips only when `mode` is explicitly set to a non-Terminate value (e.g. `Passthrough`, handled by the SSL passthrough path). Conformance impact: lifts the Frontend mTLS test family's status-side assertions and unblocks listener-cert loading for any Gateway that doesn't set `mode` explicitly.
+- Two embedded validation-test fixtures (`test-listenerset-hostname-conflict`, `test-gateway-https-misdirected-listener-claim-maps`) had malformed self-signed certs/keys with mangled base64 bodies. With the TLS-mode-default fix above, the chart now actually loads those certs and HAProxy's stricter cert validation surfaces the corruption. Replaced with fresh self-signed certs.
+
 ### Added
 
+- SSL passthrough SNI matcher now supports wildcard listener hostnames (`*.example.com`). The `frontends-500-ssl-tcp` snippet emits `req_ssl_sni -m end .example.com` instead of `-m str *.example.com` when the listener hostname starts with `*.`, matching any single-label subdomain per Gateway API hostname semantics. Closes 3 sub-tests in the `TLSRouteHostnameIntersection` conformance test that exercise wildcard intersection.
 - New `https-bind-extra-*` extension point in the SSL library's HTTPS frontend (sibling to the existing `http-bind-extra-*` in the HTTP frontend). Resource libraries that need to expose Gateway HTTPS listeners on non-default ports (e.g. `port: 9443`) emit one TLS bind per listener via this hook; the gateway library now ships `https-bind-extra-050-gateway-multi-port-bind` which walks `Gateway.spec.listeners` and admitted `XListenerSet.spec.listeners`, filters to `protocol: HTTPS`, skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors, and emits `bind *:<port>{{ render "util-ssl-bind-options" }}` for each remaining unique port — so non-default HTTPS Gateway listeners get the same crt-list / ALPN handshake as the chart-static bind. Custom libraries follow the same pattern; reuse `util-ssl-bind-options` instead of literal SSL options to stay in lockstep with chart-static. Also extends the existing `http-bind-extra-*` snippet to skip `httpsPort` for symmetry — a Gateway HTTP listener on the chart-static https port no longer crashes HAProxy startup with a duplicate-bind error (the conflicting listener should surface as `Accepted=False/ProtocolConflict` per Gateway API spec).
 
 ### Changed

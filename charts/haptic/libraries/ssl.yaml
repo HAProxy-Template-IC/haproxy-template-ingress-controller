@@ -346,10 +346,22 @@ templateSnippets:
           tcp-request inspect-delay 5s
           tcp-request content accept if { req_ssl_hello_type 1 }
 
-          # Route to passthrough backends based on SNI
+          # Route to passthrough backends based on SNI. Wildcard
+          # patterns (`*.example.com`) match any single-label
+          # subdomain; SSL passthrough emits `-m end .example.com` for
+          # those, exact patterns use `-m str`. Per Gateway API
+          # hostname semantics, `*.example.com` matches `foo.example.com`
+          # but NOT the bare `example.com`, so the `.` prefix in the
+          # `-m end` literal preserves the single-label-required rule
+          # (anything ending in `.example.com`).
           {% for _, backend := range passthroughBackends -%}
           {%- var b map[string]any = backend %}
-          use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ b["sni"] }} }
+          {%- var sni = tostring(b["sni"]) %}
+          {%- if hasPrefix(sni, "*.") %}
+          use_backend {{ b["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }
+          {%- else %}
+          use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ sni }} }
+          {%- end %}
           {%- end %}
 
           # Default: route to loopback backend for SSL termination
