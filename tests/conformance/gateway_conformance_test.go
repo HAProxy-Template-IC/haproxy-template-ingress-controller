@@ -305,30 +305,16 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"TLSRouteInvalidBackendRefUnknownKind",
 			"TLSRouteListenerMixedTerminationNotSupported",
 			"TLSRouteTerminateSimpleSameNamespace",
-			// HTTPRoute redirect / CORS / reference-grant tests fail with
-			// 404 on requests with an empty Host header. The conformance
-			// fixtures bind these tests to the `same-namespace` Gateway
-			// whose listener has no hostname (catch-all), parented by
-			// HTTPRoutes that also have no hostnames — per spec a catch-
-			// all listener+route should match any Host including empty.
-			// The chart's host.map emits an entry keyed on "" but the
-			// frontend's Host-header dispatch path doesn't reach it on
-			// empty-Host requests; the lookup falls through to
-			// default_backend which returns 404. Tracked at <follow-up
-			// issue> — needs a frontend-routing fallback that matches
-			// requests with no Host header (or fhdr(host) defaulting to
-			// "" before the map lookup).
-			"HTTPRoute303Redirect",
-			"HTTPRoute307Redirect",
-			"HTTPRoute308Redirect",
+			// HTTPRouteCORS, HTTPRouteHTTPSListenerDetectMisdirectedRequests,
+			// HTTPRouteListenerPortMatching, HTTPRoutePartiallyInvalidViaInvalidReferenceGrant,
+			// HTTPRouteReferenceGrant: still failing on requests with the
+			// LoadBalancer IP as Host (catch-all listener + no-hostname
+			// HTTPRoute). Different root cause from the redirect block
+			// (which is now fixed) — needs investigation.
 			"HTTPRouteCORS",
 			"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
 			"HTTPRouteListenerPortMatching",
 			"HTTPRoutePartiallyInvalidViaInvalidReferenceGrant",
-			"HTTPRouteRedirectHostAndStatus",
-			"HTTPRouteRedirectPath",
-			"HTTPRouteRedirectPort",
-			"HTTPRouteRedirectPortAndScheme",
 			"HTTPRouteReferenceGrant",
 			// GatewayHTTPListenerIsolation: same empty-Host issue as
 			// above; the test sends requests targeting catch-all
