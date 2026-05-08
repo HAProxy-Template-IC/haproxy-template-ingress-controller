@@ -386,7 +386,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, k8sResources, includeStats, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.ExtraContext)
+	haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, includeStats, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.ExtraContext)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -406,6 +406,9 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		if len(k8sResources) > 0 {
 			result.RenderedK8sResources = k8sResources
 		}
+		if len(statusPatches) > 0 {
+			result.RenderedStatusPatches = statusPatches
+		}
 		// Store include stats for --profile-includes flag
 		result.IncludeStats = includeStats
 	}
@@ -424,7 +427,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 8. Run all assertions (whether rendering succeeded or failed)
-	r.executeAssertions(ctx, &result, test, haproxyConfig, auxiliaryFiles, k8sResources, templateContext, validationPaths, renderDeps)
+	r.executeAssertions(ctx, &result, test, haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, templateContext, validationPaths, renderDeps)
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed

@@ -365,22 +365,25 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// listeners with various Host headers including empty/
 			// absent, and the chart's frontend-routing returns 404.
 			"GatewayHTTPListenerIsolation",
-			// GatewayFrontendInvalidDefaultClientCertificateValidation:
-			// chart-side bind gating is in place (commit landing
-			// alongside this comment update) — listeners with
-			// unresolvable caCertificateRefs now get added to
-			// gf["mtlsBlockedListeners"] in
-			// features-110-gateway-frontend-mtls, and
-			// features-150-gateway-bind drops them from the
-			// bindHTTPSDefault / needHTTPSFrontend computation. The
-			// chart-static `bind *:443 ssl crt-list` no longer fires
-			// when the only listener at port 443 is mTLS-blocked, so
-			// HAProxy doesn't answer handshakes. The remaining work
-			// for this conformance test is status-side: the chart
-			// must surface RefNotPermitted / InvalidCertificateRef on
-			// the listener's ResolvedRefs condition (the test polls
-			// for that). Tracked at <follow-up issue>.
-			"GatewayFrontendInvalidDefaultClientCertificateValidation",
+			// (GatewayFrontendInvalidDefaultClientCertificateValidation
+			// previously skipped on bind + status gaps. Both are now
+			// addressed:
+			//   * bind side — listeners with unresolvable
+			//     caCertificateRefs go into gf["mtlsBlockedListeners"]
+			//     (features-110-gateway-frontend-mtls) and drop out
+			//     of the bindHTTPSDefault / needHTTPSFrontend
+			//     computation in features-150-gateway-bind, so the
+			//     chart-static `bind *:443 ssl crt-list` is omitted.
+			//     Pinned by test-gateway-https-listener-mtls-
+			//     unresolved-ca-no-bind in libraries/gateway.yaml.
+			//   * status side — the listener-status block in the
+			//     gateway library's frontends-500-gateway-listener-
+			//     status snippet emits ResolvedRefs=False/Invalid
+			//     CACertificateRef and Accepted=False/NoValidCA
+			//     Certificate for the offending listener. Pinned by
+			//     test-gateway-https-listener-mtls-unresolved-ca-
+			//     status-conditions.
+			// Conformance run is the next signal — re-test on push.)
 			// BackendTLSPolicySANValidation: BackendTLSPolicy SAN
 			// validation requires HAProxy to validate the backend's
 			// presented certificate against the policy's SAN list. The
