@@ -16,6 +16,7 @@ package testrunner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -89,8 +90,9 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 // The testExtraContext parameter allows test-specific extraContext values to override global ones.
 //
 // Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
-// and include-stats (when profiling).
-func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (string, *dataplane.AuxiliaryFiles, map[string]string, []templating.IncludeStats, error) {
+// status patches (key `<ns>/<name>:<phase>` → JSON-marshalled status content), and
+// include-stats (when profiling).
+func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (string, *dataplane.AuxiliaryFiles, map[string]string, map[string]string, []templating.IncludeStats, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig)
 
@@ -120,13 +122,13 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		haproxyConfig, err = engine.Render(context.Background(), names.MainTemplateName, renderCtx)
 	}
 	if err != nil {
-		return "", nil, nil, nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+		return "", nil, nil, nil, nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 	if err != nil {
-		return "", nil, nil, nil, fmt.Errorf("rendering auxiliary files: %w", err)
+		return "", nil, nil, nil, nil, fmt.Errorf("rendering auxiliary files: %w", err)
 	}
 
 	// Render k8sResources templates using the worker-specific engine. These
@@ -137,9 +139,34 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 	for name := range r.config.K8sResources {
 		rendered, err := engine.Render(context.Background(), name, renderCtx)
 		if err != nil {
-			return "", nil, nil, nil, fmt.Errorf("rendering k8sResources %s: %w", name, err)
+			return "", nil, nil, nil, nil, fmt.Errorf("rendering k8sResources %s: %w", name, err)
 		}
 		k8sResources[name] = rendered
+	}
+
+	// Extract status patches collected by the templates' statusPatch()
+	// calls during the haproxy.cfg render. The rendercontext builder
+	// stashed the collector in renderCtx so this lookup is the only
+	// way to get at it without re-plumbing the Builder API. Each
+	// patch's variants (rendered / deployed / renderFailed /
+	// deployFailed) flatten into one map entry per phase, keyed by
+	// `<ns>/<name>:<phase>` (or `:<phase>` for cluster-scoped
+	// resources without a namespace, e.g. GatewayClass). Values are
+	// JSON-marshalled status payloads — chart validation tests assert
+	// on substrings via the standard contains / not_contains
+	// machinery (see assertion_helpers.go's `target: status:` resolver).
+	statusPatches := make(map[string]string)
+	if collector, ok := renderCtx["statusPatchCollector"].(*templating.StatusPatchCollector); ok && collector != nil {
+		for _, patch := range collector.Patches() {
+			keyPrefix := patch.Namespace + "/" + patch.Name
+			for phase, payload := range patch.Variants {
+				bytes, marshalErr := json.Marshal(payload)
+				if marshalErr != nil {
+					return "", nil, nil, nil, nil, fmt.Errorf("marshalling status patch for %s/%s phase %s: %w", patch.Namespace, patch.Name, phase, marshalErr)
+				}
+				statusPatches[keyPrefix+":"+phase] = string(bytes)
+			}
+		}
 	}
 
 	// Extract dynamic files registered during template rendering
@@ -158,7 +185,7 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 			"dynamic_count", dynamicCount)
 	}
 
-	return haproxyConfig, auxiliaryFiles, k8sResources, includeStats, nil
+	return haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, includeStats, nil
 }
 
 // buildRenderingContext builds the template rendering context using fixture stores.
