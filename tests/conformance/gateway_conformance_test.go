@@ -318,13 +318,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// doesn't yet handle the `*` method wildcard or the auth-
 			// header-hiding semantics. Tracked at <follow-up issue>.
 			"HTTPRouteCORS",
-			// HTTPRoutePartiallyInvalidViaInvalidReferenceGrant /
-			// HTTPRouteReferenceGrant: tests with cross-namespace
-			// backendRefs. Status is correct but request-flow needs
-			// further investigation; commented separately because the
-			// gap may differ from CORS.
+			// HTTPRoutePartiallyInvalidViaInvalidReferenceGrant: status side
+			// passes via per-listener cert-RG handling, but the request
+			// flow has the same cross-namespace backendRef issue
+			// HTTPRouteReferenceGrant had — needs verification + likely
+			// passes once the cross-namespace endpoint lookup flows
+			// through every code path (already fixed in
+			// util-generate-backends-gateway). Re-test post-rebuild.
 			"HTTPRoutePartiallyInvalidViaInvalidReferenceGrant",
-			"HTTPRouteReferenceGrant",
 			// HTTPRouteRedirectPortAndScheme: redirect test fixture binds
 			// to a Gateway with HTTP listener on port 8080 AND tests
 			// HTTPS scenarios on port 8443. Both ports need NodePort
