@@ -900,42 +900,104 @@ k8sResources:
         var statsPort = toint(svcMap | dig("statsPort") | fallback(8404))
         var statsNodePort = toint(svcMap | dig("statsNodePort") | fallback(0))
 
-        // Static port set: stats is always present (chart's health
-        // endpoint, used by HAProxy liveness probe). http and https
-        // mirror chart-static behaviour for backwards compatibility
-        // with Ingress users; per-listener gating is a follow-up
-        // refactor (see plan: out-of-scope for this iteration).
-        var ports = []any{
-          map[string]any{
+        // Detect whether the http / https Service ports are actually
+        // needed. The plan calls for conditional emission "based on
+        // declared listeners":
+        //   * httpPort is needed when at least one Ingress (any rule —
+        //     Ingresses always serve plaintext on the chart's http port)
+        //     OR a Gateway / ListenerSet listener at httpPort exists.
+        //   * httpsPort is needed when at least one Ingress with
+        //     spec.tls (TLS-terminating ingress) OR a Gateway /
+        //     ListenerSet HTTPS / TLS listener at httpsPort exists.
+        //   * statsPort is always emitted — chart liveness probe uses
+        //     it regardless of routing state.
+        //
+        // The chart-static HAProxy frontend still binds *:80 / *:443
+        // unconditionally (out-of-scope follow-up); when both halves
+        // ship, listeners that don't terminate anything won't bind and
+        // the LB won't expose the port either, which is what the
+        // GatewayFrontendInvalidDefaultClientCertificateValidation
+        // conformance test wants.
+        var needHTTP = false
+        var needHTTPS = false
+        if resources != nil {
+          if resources.ingresses != nil {
+            for _, ing := range resources.ingresses.List() {
+              needHTTP = true
+              var tls = dig(ing, "spec", "tls") | toSlice()
+              if len(tls) > 0 {
+                needHTTPS = true
+              }
+              if needHTTP && needHTTPS {
+                break
+              }
+            }
+          }
+          if resources.gateways != nil {
+            for _, gw := range resources.gateways.List() {
+              for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                var port = toint(dig(listener, "port") | fallback(0))
+                var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+                if port == httpPort {
+                  needHTTP = true
+                }
+                if port == httpsPort && (protocol == "HTTPS" || protocol == "TLS") {
+                  needHTTPS = true
+                }
+              }
+            }
+          }
+          if resources.listenersets != nil {
+            for _, ls := range resources.listenersets.List() {
+              for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+                var port = toint(dig(listener, "port") | fallback(0))
+                var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+                if port == httpPort {
+                  needHTTP = true
+                }
+                if port == httpsPort && (protocol == "HTTPS" || protocol == "TLS") {
+                  needHTTPS = true
+                }
+              }
+            }
+          }
+        }
+
+        var ports = []any{}
+        if needHTTP {
+          var entry = map[string]any{
             "name":       "http",
             "port":       httpPort,
             "targetPort": "http",
             "protocol":   "TCP",
-          },
-          map[string]any{
+          }
+          if exposesNodePort && httpNodePort > 0 {
+            entry["nodePort"] = httpNodePort
+          }
+          ports = append(ports, entry)
+        }
+        if needHTTPS {
+          var entry = map[string]any{
             "name":       "https",
             "port":       httpsPort,
             "targetPort": "https",
             "protocol":   "TCP",
-          },
-          map[string]any{
-            "name":       "stats",
-            "port":       statsPort,
-            "targetPort": "stats",
-            "protocol":   "TCP",
-          },
+          }
+          if exposesNodePort && httpsNodePort > 0 {
+            entry["nodePort"] = httpsNodePort
+          }
+          ports = append(ports, entry)
         }
-        if exposesNodePort {
-          if httpNodePort > 0 {
-            ports[0].(map[string]any)["nodePort"] = httpNodePort
-          }
-          if httpsNodePort > 0 {
-            ports[1].(map[string]any)["nodePort"] = httpsNodePort
-          }
-          if statsNodePort > 0 {
-            ports[2].(map[string]any)["nodePort"] = statsNodePort
-          }
+        var statsEntry = map[string]any{
+          "name":       "stats",
+          "port":       statsPort,
+          "targetPort": "stats",
+          "protocol":   "TCP",
         }
+        if exposesNodePort && statsNodePort > 0 {
+          statsEntry["nodePort"] = statsNodePort
+        }
+        ports = append(ports, statsEntry)
 
         // Dynamic gw-<port>-<proto> entries: mirror the deleted
         // features-090-gateway-listener-ports-service snippet, but
@@ -1151,6 +1213,72 @@ validationTests:
         description: Base configuration must be valid
       - type: deterministic
         description: Template rendering must be deterministic (identical output on repeated renders)
+
+  test-k8s-haproxy-service-empty:
+    description: |
+      k8sResources.haproxy-service emits the stats port but no http/https
+      ports when no Ingress / Gateway / ListenerSet declares the chart's
+      http or https ports — the foundational shape of the conditional-
+      port-emission contract.
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "kind: Service"
+        description: Must emit a Service resource
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: stats"
+        description: Stats port is always emitted
+      - type: not_contains
+        target: "k8s:haproxy-service"
+        pattern: "name: http\n"
+        description: http port is omitted when nothing declares port 80
+      - type: not_contains
+        target: "k8s:haproxy-service"
+        pattern: "name: https\n"
+        description: https port is omitted when nothing declares port 443
+
+  test-k8s-haproxy-service-with-ingress:
+    description: |
+      A single Ingress is enough to require port 80 on the Service; an
+      Ingress with spec.tls additionally requires port 443.
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-ingress
+            namespace: default
+          spec:
+            ingressClassName: haptic
+            tls:
+              - hosts: [example.com]
+                secretName: example-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: web
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: http\n"
+        description: Ingress on plaintext requires port 80
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: https\n"
+        description: Ingress with spec.tls requires port 443
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: stats"
+        description: Stats port still emitted
 
   test-address-discovery:
     description: Address discovery reads LoadBalancer status from controller service

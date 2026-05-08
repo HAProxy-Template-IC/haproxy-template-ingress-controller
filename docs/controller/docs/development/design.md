@@ -56,6 +56,9 @@ Configuration changes that only modify server weight, address, port, or maintena
 **Structured Configuration Comparison**
 The controller parses both current and desired configurations into structured representations and performs fine-grained comparison at the attribute level. This minimizes unnecessary deployments and maximizes use of runtime API operations.
 
+**Declarative Kubernetes Resource Emission**
+Templates declared under `spec.k8sResources` produce one or more Kubernetes resources per render (multi-doc YAML, `---`-separated). The renderer parses the rendered YAML, validates required fields, and feeds the result into the controller's `resourceapplier`, which reconciles the set to the cluster via Server-Side Apply with field manager `haptic`, prunes orphans across renders, and injects an `OwnerReference` to the `HAProxyTemplateConfig` CR so cascade-delete (e.g. `helm uninstall`) GCs the rendered resources. Same engine context as the main `haproxyConfig` template (resources, filters, snippets, file registry, shared cache) — chart libraries can compose extension points and shared state across the two passes.
+
 ## Design Principles
 
 **Fail-Safe Operation**

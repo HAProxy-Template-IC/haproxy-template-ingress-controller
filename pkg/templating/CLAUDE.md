@@ -79,6 +79,14 @@ func lookupServicePortName(svc any, portNumber int) string {
 
 This separation ensures the template engine remains generic while users can build any resource-specific functionality they need in their template libraries.
 
+### Resource Emission
+
+The template engine does **not** ship a `renderResource()`-style filter that emits Kubernetes resources as a side effect of rendering. That used to exist; it has been removed.
+
+Resource emission is now a top-level CR concern, owned by the consumer of this engine. The controller's CRD declares a `spec.k8sResources` map (sibling of `templateSnippets`, `maps`, `files`, `sslCertificates`); the renderer renders each entry as a normal template, then parses the output as one or more YAML documents (multi-doc supported via `---`) and registers the parsed objects with the existing `RenderedResourceCollector` synchronously. Downstream consumers (resourceapplier) read the resulting slice off `RenderResult.RenderedResources` exactly as before.
+
+The collector type stays on the consumer-facing path; this package is unchanged in shape. What was removed is the imperative filter that fed it from inside template execution. New work should not reintroduce side-effecting filters — keep template execution pure and let the renderer take responsibility for any "register this resource" semantics.
+
 ## Package Structure
 
 ```
