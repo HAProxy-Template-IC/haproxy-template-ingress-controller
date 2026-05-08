@@ -305,15 +305,24 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"TLSRouteInvalidBackendRefUnknownKind",
 			"TLSRouteListenerMixedTerminationNotSupported",
 			"TLSRouteTerminateSimpleSameNamespace",
-			// HTTPRouteCORS, HTTPRouteHTTPSListenerDetectMisdirectedRequests,
-			// HTTPRouteListenerPortMatching, HTTPRoutePartiallyInvalidViaInvalidReferenceGrant,
-			// HTTPRouteReferenceGrant: still failing on requests with the
-			// LoadBalancer IP as Host (catch-all listener + no-hostname
-			// HTTPRoute). Different root cause from the redirect block
-			// (which is now fixed) — needs investigation.
-			"HTTPRouteCORS",
+			// HTTPRouteHTTPSListenerDetectMisdirectedRequests,
+			// HTTPRouteListenerPortMatching: blocked on the same NodePort
+			// 8080/8443 plumbing as HTTPRouteRedirectPortAndScheme.
 			"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
 			"HTTPRouteListenerPortMatching",
+			// HTTPRouteCORS: 14 of 17 sub-tests PASS. The 3 failing
+			// sub-tests cover (a) POST preflight via allowMethods:["*"]
+			// wildcard, (b) auth+specific method+headers preflight, and
+			// (c) hide-auth-headers on unauth path. The chart emits CORS
+			// directives via frontend-filters-500-gateway-cors but
+			// doesn't yet handle the `*` method wildcard or the auth-
+			// header-hiding semantics. Tracked at <follow-up issue>.
+			"HTTPRouteCORS",
+			// HTTPRoutePartiallyInvalidViaInvalidReferenceGrant /
+			// HTTPRouteReferenceGrant: tests with cross-namespace
+			// backendRefs. Status is correct but request-flow needs
+			// further investigation; commented separately because the
+			// gap may differ from CORS.
 			"HTTPRoutePartiallyInvalidViaInvalidReferenceGrant",
 			"HTTPRouteReferenceGrant",
 			// HTTPRouteRedirectPortAndScheme: redirect test fixture binds
