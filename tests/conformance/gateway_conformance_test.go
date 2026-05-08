@@ -316,6 +316,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"HTTPRouteListenerPortMatching",
 			"HTTPRoutePartiallyInvalidViaInvalidReferenceGrant",
 			"HTTPRouteReferenceGrant",
+			// HTTPRouteRedirectPortAndScheme: redirect test fixture binds
+			// to a Gateway with HTTP listener on port 8080 AND tests
+			// HTTPS scenarios on port 8443. Both ports need NodePort
+			// plumbing in the chart's haproxy-service + kind extraPort
+			// Mappings + RoundTripper port table — same gap as
+			// GatewayWithAttachedRoutesWithPort8080. The Location-scheme
+			// fix unblocked the other 6 redirect tests; this one is
+			// blocked on the broader NodePort plumbing.
+			"HTTPRouteRedirectPortAndScheme",
 			// GatewayHTTPListenerIsolation: same empty-Host issue as
 			// above; the test sends requests targeting catch-all
 			// listeners with various Host headers including empty/
