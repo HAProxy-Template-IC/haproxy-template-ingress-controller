@@ -125,6 +125,41 @@ func sampleResource(ns, name string, port int) templating.RenderedResource {
 	}
 }
 
+// partialResource produces a partial-ownership rendered resource:
+// carries AnnotationOwnership=OwnershipPartial and declares only the
+// fields its template legitimately owns (here, a subset of
+// spec.ports). Intended to exercise applyAndPrune's partial-mode
+// branches without baking domain-specific naming into the test.
+func partialResource(ns, name string, ports ...int) templating.RenderedResource {
+	portEntries := make([]any, 0, len(ports))
+	for _, p := range ports {
+		portEntries = append(portEntries, map[string]any{
+			"name":       fmt.Sprintf("p-%d", p),
+			"port":       p,
+			"protocol":   "TCP",
+			"targetPort": p,
+		})
+	}
+	return templating.RenderedResource{
+		APIVersion: "v1",
+		Kind:       "Service",
+		Namespace:  ns,
+		Name:       name,
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": ns,
+				"annotations": map[string]any{
+					AnnotationOwnership: OwnershipPartial,
+				},
+			},
+			"spec": map[string]any{"ports": portEntries},
+		},
+	}
+}
+
 func TestNew(t *testing.T) {
 	comp, _, _ := newTestComp(t, true)
 	require.NotNil(t, comp)
@@ -191,6 +226,85 @@ func TestApplyAndPrune_OrphanDeletion(t *testing.T) {
 	assert.Equal(t, int32(1), deleted.Load(), "orphan must be deleted")
 }
 
+func TestApplyAndPrune_PartialOwnership_NoOrphanDelete(t *testing.T) {
+	comp, _, counter := newTestComp(t, false)
+	setLeader(comp)
+	deleted := &atomic.Int32{}
+	if fc, ok := comp.dynamicClient.(*dynamicfake.FakeDynamicClient); ok {
+		fc.PrependReactor("delete", "*", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+			deleted.Add(1)
+			return true, nil, nil
+		})
+	}
+
+	// First render: partial Service patching gw-8080 in. Applies as SSA.
+	comp.cachedResources = []templating.RenderedResource{
+		partialResource("haptic", "haptic-haproxy", 8080),
+	}
+	comp.handleReconciliationCompleted(context.Background())
+	require.Equal(t, int32(1), counter.Load(), "leader must SSA the partial patch")
+	require.Equal(t, int32(0), deleted.Load(), "partial-mode apply must never DELETE")
+
+	// Second render: no resources at all. A full-ownership Service in
+	// the same shape would be DELETEd here; the partial one must not.
+	comp.cachedResources = nil
+	comp.handleReconciliationCompleted(context.Background())
+	assert.Equal(t, int32(0), deleted.Load(),
+		"partial-mode resource must never be deleted, even when missing from the rendered set")
+}
+
+func TestApplyAndPrune_PartialOwnership_NoManagedByLabel(t *testing.T) {
+	comp, _, _ := newTestComp(t, false)
+	setLeader(comp)
+
+	patched := &atomic.Int32{}
+	var capturedPayload []byte
+	if fc, ok := comp.dynamicClient.(*dynamicfake.FakeDynamicClient); ok {
+		fc.PrependReactor("patch", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			patched.Add(1)
+			if pa, ok := action.(k8stesting.PatchAction); ok {
+				capturedPayload = pa.GetPatch()
+			}
+			return true, nil, nil
+		})
+	}
+
+	comp.cachedResources = []templating.RenderedResource{
+		partialResource("haptic", "haptic-haproxy", 8080, 8443),
+	}
+	comp.handleReconciliationCompleted(context.Background())
+	require.Equal(t, int32(1), patched.Load())
+
+	// The SSA payload must NOT carry the managed-by label, and must NOT
+	// retain the ownership annotation.
+	require.NotEmpty(t, capturedPayload)
+	assert.NotContains(t, string(capturedPayload), LabelManagedBy,
+		"partial-ownership SSA must not stamp the managed-by label")
+	assert.NotContains(t, string(capturedPayload), AnnotationOwnership,
+		"ownership annotation must be stripped before SSA")
+}
+
+func TestApplyAndPrune_PartialOwnership_DropEntryReapplies(t *testing.T) {
+	comp, _, counter := newTestComp(t, false)
+	setLeader(comp)
+
+	// First render owns gw-8080 + gw-8443.
+	comp.cachedResources = []templating.RenderedResource{
+		partialResource("haptic", "haptic-haproxy", 8080, 8443),
+	}
+	comp.handleReconciliationCompleted(context.Background())
+	require.Equal(t, int32(1), counter.Load())
+
+	// Second render drops gw-8443 → checksum differs → must re-SSA so
+	// the apiserver releases haptic's claim on the dropped entry.
+	comp.cachedResources = []templating.RenderedResource{
+		partialResource("haptic", "haptic-haproxy", 8080),
+	}
+	comp.handleReconciliationCompleted(context.Background())
+	assert.Equal(t, int32(2), counter.Load(),
+		"changing the partial port set must re-apply so SSA releases the dropped entry")
+}
+
 func TestApplyAndPrune_RestrictToOwnNamespace_RefusesForeign(t *testing.T) {
 	comp, _, counter := newTestComp(t, true) // restrict=true
 	setLeader(comp)
@@ -229,14 +343,14 @@ func TestHandleLostLeadership_PausesApplies(t *testing.T) {
 	assert.Equal(t, int32(0), counter.Load(), "after losing leadership applies must stop")
 }
 
-func TestInjectManagedByLabel(t *testing.T) {
+func TestPrepareForApply_FullOwnership_InjectsManagedByLabel(t *testing.T) {
 	comp, _, _ := newTestComp(t, true)
 	caller := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Service",
 		"metadata":   map[string]any{"name": "x", "labels": map[string]any{"existing": "v"}},
 	}
-	out := comp.injectManagedByLabel(caller)
+	out := comp.prepareForApply(caller, false)
 	labels := out["metadata"].(map[string]any)["labels"].(map[string]any)
 	assert.Equal(t, "haptic-controller", labels[LabelManagedBy])
 	assert.Equal(t, "v", labels["existing"], "existing labels must be preserved")
@@ -244,7 +358,105 @@ func TestInjectManagedByLabel(t *testing.T) {
 	// Caller's metadata.labels must not have been mutated.
 	callerLabels := caller["metadata"].(map[string]any)["labels"].(map[string]any)
 	_, hasManaged := callerLabels[LabelManagedBy]
-	assert.False(t, hasManaged, "injectManagedByLabel must not mutate caller's labels map")
+	assert.False(t, hasManaged, "prepareForApply must not mutate caller's labels map")
+}
+
+func TestPrepareForApply_PartialOwnership_OmitsManagedByLabel(t *testing.T) {
+	comp, _, _ := newTestComp(t, true)
+	caller := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata": map[string]any{
+			"name":   "haptic-haproxy",
+			"labels": map[string]any{"existing": "v"},
+			"annotations": map[string]any{
+				AnnotationOwnership: OwnershipPartial,
+				"keep-me":           "yes",
+			},
+		},
+	}
+	out := comp.prepareForApply(caller, true)
+
+	// Existing labels preserved, no managed-by injected.
+	labels := out["metadata"].(map[string]any)["labels"].(map[string]any)
+	_, hasManaged := labels[LabelManagedBy]
+	assert.False(t, hasManaged, "partial-ownership applies must not claim managed-by")
+	assert.Equal(t, "v", labels["existing"])
+
+	// Ownership annotation stripped; other annotations preserved.
+	annotations := out["metadata"].(map[string]any)["annotations"].(map[string]any)
+	_, hasOwnership := annotations[AnnotationOwnership]
+	assert.False(t, hasOwnership, "ownership annotation must be stripped before SSA")
+	assert.Equal(t, "yes", annotations["keep-me"])
+
+	// Caller's annotations map must not have been mutated.
+	callerAnn := caller["metadata"].(map[string]any)["annotations"].(map[string]any)
+	assert.Equal(t, OwnershipPartial, callerAnn[AnnotationOwnership],
+		"prepareForApply must not mutate caller's annotations map")
+}
+
+func TestPrepareForApply_StripsOwnershipAnnotation_RemovesAnnotationsWhenEmpty(t *testing.T) {
+	comp, _, _ := newTestComp(t, true)
+	caller := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata": map[string]any{
+			"name": "haptic-haproxy",
+			"annotations": map[string]any{
+				AnnotationOwnership: OwnershipPartial,
+			},
+		},
+	}
+	out := comp.prepareForApply(caller, true)
+	metadata := out["metadata"].(map[string]any)
+	_, hasAnn := metadata["annotations"]
+	assert.False(t, hasAnn, "annotations key must be removed when only entry was the ownership flag")
+}
+
+func TestIsPartialOwnership(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  map[string]any
+		want bool
+	}{
+		{
+			name: "no metadata",
+			obj:  map[string]any{},
+			want: false,
+		},
+		{
+			name: "no annotations",
+			obj:  map[string]any{"metadata": map[string]any{"name": "x"}},
+			want: false,
+		},
+		{
+			name: "annotation absent",
+			obj: map[string]any{"metadata": map[string]any{
+				"annotations": map[string]any{"other": "v"},
+			}},
+			want: false,
+		},
+		{
+			name: "annotation present with partial value",
+			obj: map[string]any{"metadata": map[string]any{
+				"annotations": map[string]any{AnnotationOwnership: OwnershipPartial},
+			}},
+			want: true,
+		},
+		{
+			name: "annotation present with other value",
+			obj: map[string]any{"metadata": map[string]any{
+				"annotations": map[string]any{AnnotationOwnership: "full"},
+			}},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &templating.RenderedResource{Object: tc.obj}
+			assert.Equal(t, tc.want, isPartialOwnership(r))
+		})
+	}
 }
 
 func TestStart_ContextCancellation(t *testing.T) {

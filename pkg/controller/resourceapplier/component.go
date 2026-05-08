@@ -89,6 +89,27 @@ const (
 	// can locate everything the controller owns with a single
 	// `kubectl get … -l haproxy-haptic.org/managed-by=<name>` selector.
 	LabelManagedBy = "haproxy-haptic.org/managed-by"
+
+	// AnnotationOwnership lets templates flag a rendered resource as
+	// jointly owned with another field manager (helm / argocd / kubectl).
+	// When set to OwnershipPartial, the applier:
+	//   - does NOT inject the managed-by label (the resource isn't
+	//     ours to claim end-to-end);
+	//   - does NOT track the resource for orphan-delete (vanishing from
+	//     the rendered set must release SSA-owned fields, never delete
+	//     the whole object — that would clobber the chart's static
+	//     spec);
+	//   - always strips the annotation from the payload before SSA so
+	//     it remains a controller-internal flag.
+	// SSA's per-list-map-entry ownership (e.g. Service.spec.ports keyed
+	// by (port, protocol)) handles the actual field-level merge with
+	// the other field manager.
+	AnnotationOwnership = "haproxy-haptic.org/ownership"
+
+	// OwnershipPartial is the AnnotationOwnership value that activates
+	// partial-ownership mode. Any other value (including absence) means
+	// full ownership: existing behaviour, unchanged.
+	OwnershipPartial = "partial"
 )
 
 // GVRResolver resolves apiVersion + kind to a GroupVersionResource.
@@ -439,9 +460,17 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 			continue
 		}
 		key := fmt.Sprintf("%s/%s/%s", r.Namespace, r.Name, gvr.String())
-		desiredKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
+		partial := isPartialOwnership(r)
+		// Track for orphan-delete only when haptic owns the resource
+		// end-to-end. Partial-ownership entries are jointly owned with
+		// another field manager (helm/argocd) and must never be deleted
+		// — SSA's per-field ownership handles the actual cleanup when a
+		// field disappears from haptic's rendered spec.
+		if !partial {
+			desiredKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
+		}
 
-		object := c.injectManagedByLabel(r.Object)
+		object := c.prepareForApply(r.Object, partial)
 		payload, err := json.Marshal(object)
 		if err != nil {
 			c.logger.Error("failed to marshal rendered resource",
@@ -477,7 +506,9 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 
 		c.mu.Lock()
 		c.checksumCache[key] = checksum
-		c.lastAppliedKeys[key] = desiredKeys[key]
+		if !partial {
+			c.lastAppliedKeys[key] = desiredKeys[key]
+		}
 		c.mu.Unlock()
 		applied++
 	}
@@ -544,36 +575,71 @@ func (c *Component) refused(r *templating.RenderedResource) bool {
 	return false
 }
 
-// injectManagedByLabel ensures every applied resource carries the
-// managed-by label so operators can locate everything haptic owns.
-// Returns a NEW map so the caller's object isn't mutated.
-func (c *Component) injectManagedByLabel(object map[string]any) map[string]any {
-	out := make(map[string]any, len(object)+1)
+// isPartialOwnership returns true when the rendered resource carries
+// the AnnotationOwnership=OwnershipPartial annotation. Templates set this
+// to flag a resource as jointly owned with another field manager.
+func isPartialOwnership(r *templating.RenderedResource) bool {
+	metadata, _ := r.Object["metadata"].(map[string]any)
+	if metadata == nil {
+		return false
+	}
+	annotations, _ := metadata["annotations"].(map[string]any)
+	if annotations == nil {
+		return false
+	}
+	val, _ := annotations[AnnotationOwnership].(string)
+	return val == OwnershipPartial
+}
+
+// prepareForApply builds the SSA payload from a rendered resource's
+// object. It always strips AnnotationOwnership (controller-internal flag,
+// must not reach the apiserver) and, for full-ownership resources,
+// injects the managed-by label so operators can locate everything haptic
+// owns. Partial-ownership resources skip the label because the resource
+// isn't haptic's to claim end-to-end. Returns a NEW map so the caller's
+// object isn't mutated.
+func (c *Component) prepareForApply(object map[string]any, partial bool) map[string]any {
+	out := make(map[string]any, len(object))
 	for k, v := range object {
 		out[k] = v
 	}
+
 	metadata, _ := out["metadata"].(map[string]any)
 	if metadata == nil {
 		metadata = map[string]any{}
 	} else {
-		copied := make(map[string]any, len(metadata)+1)
+		copied := make(map[string]any, len(metadata))
 		for k, v := range metadata {
 			copied[k] = v
 		}
 		metadata = copied
 	}
-	labels, _ := metadata["labels"].(map[string]any)
-	if labels == nil {
-		labels = map[string]any{}
-	} else {
-		copied := make(map[string]any, len(labels)+1)
-		for k, v := range labels {
-			copied[k] = v
+
+	if annotations, _ := metadata["annotations"].(map[string]any); annotations != nil {
+		copiedAnn := make(map[string]any, len(annotations))
+		for k, v := range annotations {
+			if k == AnnotationOwnership {
+				continue
+			}
+			copiedAnn[k] = v
 		}
-		labels = copied
+		if len(copiedAnn) > 0 {
+			metadata["annotations"] = copiedAnn
+		} else {
+			delete(metadata, "annotations")
+		}
 	}
-	labels[LabelManagedBy] = c.managedByValue
-	metadata["labels"] = labels
+
+	if !partial {
+		labels, _ := metadata["labels"].(map[string]any)
+		copiedLabels := make(map[string]any, len(labels)+1)
+		for k, v := range labels {
+			copiedLabels[k] = v
+		}
+		copiedLabels[LabelManagedBy] = c.managedByValue
+		metadata["labels"] = copiedLabels
+	}
+
 	out["metadata"] = metadata
 	return out
 }
