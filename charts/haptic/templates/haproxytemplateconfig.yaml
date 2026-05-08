@@ -76,6 +76,19 @@ spec:
          hands it through extraContext. */ -}}
   {{- $_ := set $extraContext "haproxyServiceName" (include "haptic.haproxyFullname" .) }}
 
+  {{- /* Plumb the chart's HAProxy bind-port values through extraContext
+         so the base/ssl/gateway libraries' bind directives stay in
+         lockstep with `haproxy.ports`. The fallbacks in those libraries
+         (8080/8443) only apply when the chart hasn't provided values,
+         so chart-managed installs always emit binds that match the
+         Service targetPort / containerPort wiring. Defaulting these to
+         the literal Gateway listener-port numbers (80/443) keeps each
+         Gateway listener port unambiguous on its own bind — see
+         comment in values.yaml on `haproxy.ports.http` for the full
+         rationale. */ -}}
+  {{- $_ := set $extraContext "httpPort" (.Values.haproxy.ports.http | int) }}
+  {{- $_ := set $extraContext "httpsPort" (.Values.haproxy.ports.https | int) }}
+
   {{- /* Pass spoaHub wiring through extraContext when the sidecar is
          enabled AND at least one plugin contributes an SPOE message.
          The spoa-hub template library reads this to render spoe.conf

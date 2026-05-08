@@ -518,8 +518,8 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "bind .*:8443.*ssl crt"
-        description: HTTPS frontend must bind with SSL options
+        pattern: "bind .*:443.*ssl crt"
+        description: HTTPS frontend must bind with SSL options on the chart's https port
 
       - type: contains
         target: haproxy.cfg
