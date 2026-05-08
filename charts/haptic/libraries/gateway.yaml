@@ -3969,10 +3969,26 @@ templateSnippets:
           {%- var allowCreds = cors | dig("allowCredentials") | fallback(false) %}
           {%- var methods = cors | dig("allowMethods") | fallback([]any{}) | toSlice() %}
           {%- var methodsList = []any{} %}
+          {%- var hasWildcardMethod = false %}
           {%- for _, m := range methods %}
             {%- var ms = tostring(m) %}
             {%- if ms == "*" %}
-              {%- methodsList = []any{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} %}
+              {#- Wildcard methods: echo the request's
+                  Access-Control-Request-Method on the response. The
+                  CORS spec allows either `*` or the requested method
+                  with `allowCredentials: false`, but with credentials
+                  true browsers REJECT a literal `*` and demand the
+                  exact method — so echoing the requested one works in
+                  both cases. The chart used to expand `*` to a fixed
+                  list of standard methods, but the conformance suite
+                  (Gateway API HTTPRouteCORS test cases
+                  "CORS preflight request with POST method should be
+                  allowed by allowMethods with wildcard" and
+                  "CORS preflight request requesting auth and specific
+                  method and headers should be allowed and always echo
+                  the origin") only accepts the requested method or a
+                  literal `*` — not an expanded list. -#}
+              {%- hasWildcardMethod = true %}
               {%- break %}
             {%- end %}
             {%- methodsList = append(methodsList, ms) %}
@@ -4020,6 +4036,9 @@ templateSnippets:
           {%- if len(headersList) > 0 && headersList[0] == "*" %}
       http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
           {%- end %}
+          {%- if hasWildcardMethod %}
+      http-request set-var(txn.gw_cors_acrm) req.fhdr(Access-Control-Request-Method) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
+          {%- end %}
           {#- Build the http-request return directive's hdr arguments.
               All CORS preflight responses share the same set of mandatory
               headers; some are gated on policy options (allowCreds,
@@ -4033,7 +4052,9 @@ templateSnippets:
           {%- if allowCreds %}
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-credentials \"true\"") %}
           {%- end %}
-          {%- if len(methodsList) > 0 %}
+          {%- if hasWildcardMethod %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"%[var(txn.gw_cors_acrm)]\"") %}
+          {%- else if len(methodsList) > 0 %}
             {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"" + join(methodsList, ", ") + "\"") %}
           {%- end %}
           {%- if len(headersList) > 0 %}
@@ -11636,6 +11657,113 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-response set-header \"access-control-allow-origin\" \"%\\[var\\(txn\\.gw_cors_origin\\)\\]\""
         description: Simple cross-origin (backend-served) responses emit allow-origin via http-response set-header
+
+  test-httproute-cors-wildcard-methods-echo:
+    description: |
+      Closes the chart-side gap on the HTTPRouteCORS conformance test
+      sub-cases that send `allowMethods: ["*"]`. The Gateway API
+      conformance suite expects the server to respond with either the
+      requested method (echoed from `Access-Control-Request-Method`)
+      or a literal `*` — NOT a chart-expanded list of standard
+      methods. Echoing satisfies both branches: with
+      `allowCredentials: false` browsers accept the explicit method
+      AND the literal `*`; with credentials true, browsers REJECT
+      `*` and require the exact method.
+
+      The chart now emits a per-preflight set-var line capturing the
+      requested method into `txn.gw_cors_acrm`, then references it on
+      the inline `http-request return` so synthetic preflight
+      responses carry the dynamically-resolved value.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: backend
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: cors-wildcard-methods-route
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+            hostnames:
+              - cors-wildcard.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /cors-2
+                filters:
+                  - type: CORS
+                    cors:
+                      allowOrigins:
+                        - https://www.foo.com
+                      allowMethods: ["*"]
+                backendRefs:
+                  - name: backend
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_cors_acrm\\) req\\.fhdr\\(Access-Control-Request-Method\\)"
+        description: Preflight set-var captures the requested method into txn.gw_cors_acrm
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'hdr access-control-allow-methods "%\[var\(txn\.gw_cors_acrm\)\]"'
+        description: Preflight return echoes the requested method dynamically
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'hdr access-control-allow-methods "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"'
+        description: |
+          Old chart behaviour (expanding `*` to a fixed method list)
+          is gone — that response is incompatible with the Gateway
+          API conformance test's ValidHeaderValues check, which
+          accepts only the requested method or a literal `*`.
 
   test-httproute-backend-request-header-modifier:
     description: HTTPRoute with per-backendRef RequestHeaderModifier emits set-header in correct backend
