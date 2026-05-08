@@ -366,14 +366,20 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// absent, and the chart's frontend-routing returns 404.
 			"GatewayHTTPListenerIsolation",
 			// GatewayFrontendInvalidDefaultClientCertificateValidation:
-			// HTTP-listener-not-impacted sub-test now passes (the
-			// chart's mTLS config doesn't bleed into HTTP frontends).
-			// HTTPS sub-test still fails because the chart needs to
-			// surface the listener-level RefNotPermitted /
-			// InvalidCertificateRef condition for the unresolvable
-			// caCertificateRefs and gate the bind accordingly. Same
-			// per-port plumbing root cause as the other Frontend
-			// mTLS tests above.
+			// chart-side bind gating is in place (commit landing
+			// alongside this comment update) — listeners with
+			// unresolvable caCertificateRefs now get added to
+			// gf["mtlsBlockedListeners"] in
+			// features-110-gateway-frontend-mtls, and
+			// features-150-gateway-bind drops them from the
+			// bindHTTPSDefault / needHTTPSFrontend computation. The
+			// chart-static `bind *:443 ssl crt-list` no longer fires
+			// when the only listener at port 443 is mTLS-blocked, so
+			// HAProxy doesn't answer handshakes. The remaining work
+			// for this conformance test is status-side: the chart
+			// must surface RefNotPermitted / InvalidCertificateRef on
+			// the listener's ResolvedRefs condition (the test polls
+			// for that). Tracked at <follow-up issue>.
 			"GatewayFrontendInvalidDefaultClientCertificateValidation",
 			// BackendTLSPolicySANValidation: BackendTLSPolicy SAN
 			// validation requires HAProxy to validate the backend's
