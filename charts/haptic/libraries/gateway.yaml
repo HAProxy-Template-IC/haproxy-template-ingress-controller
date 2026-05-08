@@ -619,13 +619,13 @@ templateSnippets:
               {%- end -%}
             {%- end -%}
             {%- if permitted == "true" -%}
-              {%- if lsNs == gwNs -%}
-                {%- result = "true" -%}
-              {%- else -%}
-                {%- if ReferenceGrantPermitted("gateway.networking.k8s.io", "ListenerSet", lsNs, "gateway.networking.k8s.io", "Gateway", gwNs, gwName) == "true" -%}
-                  {%- result = "true" -%}
-                {%- end -%}
-              {%- end -%}
+              {#- Per Gateway API conformance (ListenerSetReferenceGrant
+                  + ListenerSetAllowedNamespaceSelector), cross-namespace
+                  ListenerSet parentRefs do NOT require a ReferenceGrant
+                  — the Gateway's `allowedListeners` IS the policy.
+                  ReferenceGrant only gates resource references
+                  (Secret, ConfigMap, …) attached to listeners. -#}
+              {%- result = "true" -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -823,18 +823,12 @@ templateSnippets:
                 permitted = false
               }
 
-              // Cross-namespace parentRef -> require a ReferenceGrant in
-              // the Gateway namespace permitting this ListenerSet.
-              if permitted && lsNs != gwNs {
-                var rg = ReferenceGrantPermitted(
-                  "gateway.networking.k8s.io", "ListenerSet", lsNs,
-                  "gateway.networking.k8s.io", "Gateway", gwNs, gwName)
-                if rg != "true" {
-                  permitted = false
-                  rejectionReason = "NotAllowed"
-                  rejectionMessage = "Cross-namespace parentRef from " + lsNs + " requires a ReferenceGrant in " + gwNs
-                }
-              }
+              // Per Gateway API conformance (ListenerSetReferenceGrant
+              // + ListenerSetAllowedNamespaceSelector), cross-namespace
+              // ListenerSet parentRefs do NOT require a ReferenceGrant
+              // — the Gateway's `allowedListeners` IS the policy.
+              // ReferenceGrant only gates resource references (Secret,
+              // ConfigMap, …) attached to listeners.
 
               // Pre-stash the per-LS status entry so F3 can read it
               // back. listenerConflicts gets filled in further below
@@ -9287,12 +9281,15 @@ validationTests:
         pattern: 'bind \*:8083'
         description: Denied ListenerSet's port must NOT be bound
 
-  test-listenerset-cross-namespace-parentref-without-grant:
+  test-listenerset-cross-namespace-parentref-allowed-by-from-all:
     description: |
       ListenerSet in a different namespace from its parent Gateway
-      (with allowedListeners.from=All) must still be rejected when no
-      ReferenceGrant in the Gateway's namespace permits the cross-ns
-      parentRef from {ListenerSet, lsNs} to {Gateway, gwName}.
+      (with allowedListeners.from=All) is admitted by allowedListeners
+      alone — cross-namespace parentRefs do NOT require a separate
+      ReferenceGrant per Gateway API conformance
+      (ListenerSetReferenceGrant + ListenerSetAllowedNamespaceSelector).
+      ReferenceGrant only gates resource references (Secret, ConfigMap)
+      attached to listeners, not parentRefs.
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -9314,7 +9311,7 @@ validationTests:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: ListenerSet
           metadata:
-            name: ls-cross-ns-no-grant
+            name: ls-cross-ns
             namespace: tenant-a
             generation: 1
           spec:
@@ -9329,17 +9326,18 @@ validationTests:
       - type: haproxy_valid
         description: HAProxy config must be valid
 
-      - type: not_contains
+      - type: contains
         target: haproxy.cfg
         pattern: 'bind \*:8090'
-        description: Cross-ns ListenerSet without RG must NOT be bound
+        description: Cross-ns ListenerSet permitted by allowedListeners.from=All must be bound
 
   test-listenerset-cross-namespace-parentref-with-grant:
     description: |
       ListenerSet in a different namespace from its parent Gateway
-      (with allowedListeners.from=All) must be admitted when a
-      ReferenceGrant in the Gateway's namespace permits the cross-ns
-      parentRef.
+      (with allowedListeners.from=All) is admitted regardless of
+      ReferenceGrant presence — the cross-ns parentRef is permitted
+      by allowedListeners alone. This test pins behaviour with an
+      RG present (RG should be a no-op for parentRef admission).
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
