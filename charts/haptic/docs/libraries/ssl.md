@@ -64,6 +64,22 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 |----------------|---------|------------|
 | `gf["tlsCertificates"]` | Array of TLS certificates to include in CRT-list | Append `{secret_namespace, secret_name, sni_patterns[]}` |
 | `gf["sslPassthroughBackends"]` | Array of SSL passthrough backends | Append `{name, sni}` |
+| `https-bind-extra-*` | Glob extension point inside the HTTPS frontend, *after* the chart-static `bind` line. Resource libraries emit one TLS bind per non-default Gateway HTTPS listener port via this hook. See "Adding HTTPS binds" below. | Provide a snippet matching the glob; render `{{ render "util-ssl-bind-options" }}` to reuse the chart-static SSL options (crt-list + ALPN). |
+
+#### Adding HTTPS binds via `https-bind-extra-*`
+
+The HTTPS frontend (`frontends-500-https`) emits its chart-static `bind *:<httpsPort> ssl crt-list ... alpn h2,http/1.1`, then runs `render_glob "https-bind-extra-*"` so resource libraries can contribute additional TLS binds without forking the frontend or duplicating SSL options.
+
+The Gateway library uses this hook to support Gateway listeners on non-default HTTPS ports (e.g. `port: 9443`). Its `https-bind-extra-050-gateway-multi-port-bind` snippet:
+
+1. Walks `Gateway.spec.listeners` and admitted `XListenerSet.spec.listeners`.
+2. Filters to `protocol: HTTPS`.
+3. Skips the chart-static https port (`extraContext.httpsPort`) and the chart-static http port (`extraContext.httpPort`) so duplicate binds don't break HAProxy startup.
+4. Emits one `bind *:<port>{{ render "util-ssl-bind-options" }}` per remaining unique port.
+
+Custom libraries that need additional TLS binds (e.g. for protocol-specific extensions) follow the same pattern. Always reuse `util-ssl-bind-options` so the SSL handshake behaves identically across all binds — direct use of literal SSL options would drift from chart-static if the operator overrides crt-list path or ALPN settings.
+
+The HTTP frontend has a sibling hook `http-bind-extra-*` for plain-HTTP Gateway listener ports. See `charts/CLAUDE.md` Extension Point Reference for the full list of extension points.
 
 **Example - Registering a TLS certificate (from ingress.yaml):**
 
@@ -84,7 +100,8 @@ The SSL library provides infrastructure for other libraries to register TLS feat
 
 The SSL library generates an HTTPS frontend that:
 
-- Binds to port 8443 (override via `controller.config.templatingSettings.extraContext.httpsPort`). The bind port and the HAProxy container port (`haproxy.ports.https`) both default to 8443, but they are **not** linked — the chart does not derive one from the other, so if you change one you must set the other explicitly to keep them aligned.
+- Binds to port 443 by default. The chart wires `haproxy.ports.https` through to `extraContext.httpsPort` automatically, so changing one updates the other in lockstep — both the HAProxy container bind and the Service `targetPort` resolve from the same value. Override with either `haproxy.ports.https` (preferred — keeps Service and HAProxy aligned) or `controller.config.templatingSettings.extraContext.httpsPort` (only the bind, leaves Service unchanged; mismatched values mean external traffic to the Service won't reach the HAProxy bind).
+- Additional TLS binds for non-default Gateway HTTPS listener ports get appended via the `https-bind-extra-*` extension point (see [Extension Points Provided](#extension-points-provided)).
 - Uses CRT-list for certificate selection
 - Enables HTTP/2 via ALPN negotiation
 - Reuses routing logic from base.yaml

@@ -415,6 +415,10 @@ templateSnippets:
       {% else %}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
       {% end -%}
+          {# Extension point for additional HTTPS bind directives (Gateway HTTPS listener ports, etc.). #}
+          {# Sibling to http-bind-extra-* in base.yaml; resource libraries emit one bind per #}
+          {# non-default Gateway HTTPS listener port using the same SSL options as the chart-static bind. #}
+          {{- render_glob "https-bind-extra-*" | indent(2, true) }}
 
           {# Extension point for early frontend directives (options, captures, ACLs) #}
           {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
