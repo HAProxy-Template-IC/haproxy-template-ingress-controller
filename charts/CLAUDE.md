@@ -239,6 +239,8 @@ direct field access.
 
 The base template uses `render_glob` to discover and render snippets from all libraries. Snippets are rendered in alphabetical order, so numeric prefixes control execution order.
 
+In addition to the snippet-based extension points below, libraries may declare full Kubernetes resources via the top-level `k8sResources:` map (sibling of `templateSnippets:`, `maps:`, `files:`, `sslCertificates:`). Each entry is a Scriggo template with full engine context (`resources`, filters, snippets, `fileRegistry`, `extraContext`, `shared`); the rendered output is parsed as one or more YAML documents (multi-doc supported via `---`) and applied via Server-Side Apply with field manager `haptic`. The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) so cascade-delete (e.g. `helm uninstall`) removes the resources. Use this for resources whose shape derives from listener / Ingress state — the `k8sResources.haproxy-service` entry in `base.yaml` is the canonical example. The `haproxy-haptic.org/ownership: partial` annotation on a rendered resource opts into partial-ownership SSA (no `managed-by` label, no orphan-cleanup tracking) for objects shared with another field manager.
+
 | Pattern | Purpose | Contributing Libraries |
 |---------|---------|----------------------|
 | `global-settings-*` | Global section directives (logging, process, paths, SSL) | base |

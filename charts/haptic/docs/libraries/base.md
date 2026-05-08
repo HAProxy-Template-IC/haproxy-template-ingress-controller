@@ -249,6 +249,24 @@ The `status-patches-*` extension point renders at priority 200 — after feature
 
 Status patch snippets produce no HAProxy configuration output. They call `statusPatch()` as a side effect to register patches for later application by the controller.
 
+### Declarative Kubernetes Resources (`k8sResources.haproxy-service`)
+
+The base library declares the user-facing HAProxy LoadBalancer Service under the controller CRD's top-level `spec.k8sResources` map (sibling of `templateSnippets`, `maps`, `files`, `sslCertificates`). The controller's renderer parses the rendered YAML and applies the resulting Service via Server-Side Apply with field manager `haptic`; an `OwnerReference` to the `HAProxyTemplateConfig` CR is injected automatically (controller=true, blockOwnerDeletion=true) so cascade-delete (e.g. `helm uninstall`) garbage-collects the Service.
+
+This replaces the chart-static `templates/haproxy-service.yaml` main-Service block, which was emitted by Helm at install time with a fixed port set. Two operational consequences operators should be aware of:
+
+- **First-render delay**: when the chart is installed for the first time, the Service does not exist until the controller renders once (typically a few seconds). External tools (cert-manager, external-dns) that look up the Service immediately after `helm install` should expect a brief absence. The internal `<release>-haproxy-dataplane` Service remains chart-static and is created at install time as before.
+- **`helm uninstall` cleans up via cascade-GC**: the `OwnerReference` ties the Service's lifecycle to the CR. When `helm uninstall` removes the CR, the Service goes with it; no extra cleanup hook is required.
+
+The Service shape is derived from listener state at render time:
+
+- The chart's `stats` port (default 8404) is always emitted — used by HAProxy's liveness probe.
+- The `http` port (default 80) is emitted when at least one Ingress exists, or a Gateway / ListenerSet listener targets the chart's http port. Otherwise omitted.
+- The `https` port (default 443) is emitted when at least one Ingress declares `spec.tls`, or a Gateway / ListenerSet HTTPS / TLS listener targets the chart's https port. Otherwise omitted.
+- For each non-default Gateway / admitted ListenerSet listener port, a `gw-<port>-<proto-letter>` entry is emitted (e.g. `gw-9090-h` for an HTTPS listener on port 9090).
+
+Chart values consumed: `haproxy.service.type`, `haproxy.service.annotations`, `haproxy.service.loadBalancerIP`, `haproxy.service.loadBalancerClass`, `haproxy.service.loadBalancerSourceRanges`, `haproxy.service.externalTrafficPolicy`, `haproxy.service.internalTrafficPolicy`, `haproxy.service.healthCheckNodePort`, `haproxy.service.publishNotReadyAddresses`, plus per-port `port` / `nodePort` overrides for `http` / `https` / `stats`. These are plumbed into `extraContext.haproxyService` by `templates/haproxytemplateconfig.yaml`.
+
 ## Map Files
 
 The base library generates these map files for routing:

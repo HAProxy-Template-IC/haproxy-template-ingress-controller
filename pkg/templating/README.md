@@ -138,6 +138,8 @@ The `template` post-processor compiles at engine init (so syntax errors fail fas
 
 This package intentionally does **not** understand Kubernetes resources. There is no `lookup_service_port`, no `is_ingress`, no Gateway API helpers — those would turn the template engine into a policy layer for specific resource shapes. Users write resource-specific logic as Scriggo macros inside their own template libraries, and the engine stays generic enough to template anything. If you find yourself wanting to add a function that navigates a specific resource's fields, write a macro instead.
 
+This is also why there is no `renderResource()` template function. Earlier versions of the codebase shipped one — an imperative collector populated as a side effect of rendering — but it has been removed. Resource emission is now a top-level CR concern: callers declare templates under `spec.k8sResources` (sibling of `templateSnippets`, `maps`, `files`, `sslCertificates`), the renderer renders each one, parses the rendered YAML (multi-doc supported via `---`), and registers the resulting `*RenderedResourceCollector` as a synchronous accumulator on the `RenderResult`. Downstream consumers (the controller's resourceapplier) read that slice off `RenderResult.RenderedResources`. The collector type still exists as the consumer-facing accumulator, but it is no longer fed by templates calling a side-effecting filter.
+
 ## Scriggo Fork
 
 The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) consumed as a normal `require` in `go.mod` — there is no `replace` directive. The pinned pseudo-version drifts as Renovate updates the dep; check `grep gitlab.com/haproxy-haptic/scriggo go.mod` for the live value rather than copying one out of this README. The fork adds:

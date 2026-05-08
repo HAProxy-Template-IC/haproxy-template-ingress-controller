@@ -251,6 +251,51 @@ sslCertificates:
 
 Reference in config: `bind :443 ssl crt {{ pathResolver.GetPath("example-com", "cert") }}`
 
+### k8sResources
+
+Templates that emit Kubernetes resources for the controller to apply via Server-Side Apply. Each entry's rendered output is parsed as one or more YAML documents (multi-doc supported via `---` separators); each document must declare `apiVersion`, `kind`, and `metadata.name` (plus `metadata.namespace` for namespaced kinds).
+
+The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) on every applied resource, so cascade-delete (e.g. `helm uninstall`) GCs the rendered objects. Resources that disappear from the rendered set across reconciliations are pruned. The applier respects the `haproxy-haptic.org/ownership: partial` annotation: when present on a rendered resource the SSA payload omits the `managed-by` label, the resource is excluded from the orphan-cleanup set, and the annotation itself is stripped before apply — useful for jointly-owned objects on which haptic only contributes a subset of fields (Server-Side Apply's per-list-map-entry merge keeps each owner's contribution intact).
+
+Templates have full access to the same engine context as `haproxyConfig` — `resources`, filters, `templateSnippets`, `fileRegistry`, `extraContext`, and the per-render `shared` cache — so a `k8sResources` template can render extension points (`render_glob` patterns) and read shared state populated by the main config template.
+
+```yaml
+k8sResources:
+  edge-service:
+    template: |
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: edge
+        namespace: {{ extraContext["controllerNamespace"] }}
+      spec:
+        type: LoadBalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+            protocol: TCP
+      ---
+      apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
+      metadata:
+        name: edge-default
+        namespace: {{ extraContext["controllerNamespace"] }}
+        labels:
+          kubernetes.io/service-name: edge
+      addressType: IPv4
+      endpoints:
+        - addresses: ["10.0.0.1"]
+      ports:
+        - name: http
+          port: 80
+          protocol: TCP
+```
+
+Use this when the resource shape derives from observed cluster state (Ingresses, Gateways, Endpoints, …); use the chart's own static `templates/*.yaml` for fixed install-time wiring (RBAC, the dataplane Service, etc.). The chart's `libraries/base.yaml` ships a canonical example: the `haproxy-service` entry that renders the user-facing HAProxy LoadBalancer Service from listener state.
+
 ### haproxyConfig (required)
 
 Main HAProxy configuration template.
