@@ -163,7 +163,18 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// every dial through the chart's NodePort on the resolved kind host
 	// instead; the Host header and TLS SNI stay untouched so HAProxy still
 	// sees the gateway hostname for routing and cert selection.
-	rt, err := newNodePortRoundTripper(timeoutCfg, debug)
+	//
+	// Build the dynamic NodePort port table the RoundTripper consumes.
+	// Static 80/443 entries (kind extraPortMappings → host loopback)
+	// are seeded immediately; dynamic listener-port NodePorts (chart's
+	// gateway-listener-ports Service, allocated lazily as conformance
+	// fixtures land) are discovered on cache miss via the kind node's
+	// docker-network InternalIP. See libraries/gateway.yaml's
+	// features-090-gateway-listener-ports-service snippet.
+	staticTable, nodeIP, err := buildInitialPortTable(t.Context(), cs)
+	require.NoError(t, err, "build initial NodePort port table")
+	router := newPortRouter(cs, nodeIP, staticTable)
+	rt, err := newNodePortRoundTripper(timeoutCfg, debug, router)
 	require.NoError(t, err, "build NodePort RoundTripper")
 
 	// SupportGatewayStaticAddresses substitutes PLACEHOLDER_USABLE_ADDRS /
@@ -224,14 +235,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"GatewayFrontendClientCertificateValidation",
 			"GatewayFrontendClientCertificateValidationInsecureFallback",
 			"GatewayBackendClientCertificateFeature",
-			// Gateway listeners on non-default ports (8080 in conformance
-			// fixtures) need a matching NodePort exposed by the chart's
-			// haproxy-service AND a matching extraPortMapping in the kind
-			// cluster config. The current chart and kind config only forward
-			// 30080/30443/30404. Until that plumbing lands, the test's
-			// NodePort RoundTripper rejects the dial. Tracked at <follow-up issue>.
-			"GatewayWithAttachedRoutesWithPort8080",
-			"GatewayModifyListeners",
+			// (Dynamic NodePort plumbing landed: chart emits a
+			// gateway-listener-ports NodePort Service via
+			// features-090-gateway-listener-ports-service; the
+			// RoundTripper builds its port table by querying that
+			// Service plus a node-InternalIP lookup. Previously skipped
+			// 8080-port tests are no longer in SkipTests.)
 			// GatewayStaticAddresses: chart-side IPv4-only MetalLB allocation.
 			// MetalLB rejects multi-IP `metallb.io/loadBalancerIPs` annotations
 			// where every entry is the same IP family — it's designed for
@@ -326,14 +335,13 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// through every code path (already fixed in
 			// util-generate-backends-gateway). Re-test post-rebuild.
 			"HTTPRoutePartiallyInvalidViaInvalidReferenceGrant",
-			// HTTPRouteRedirectPortAndScheme: redirect test fixture binds
-			// to a Gateway with HTTP listener on port 8080 AND tests
-			// HTTPS scenarios on port 8443. Both ports need NodePort
-			// plumbing in the chart's haproxy-service + kind extraPort
-			// Mappings + RoundTripper port table — same gap as
-			// GatewayWithAttachedRoutesWithPort8080. The Location-scheme
-			// fix unblocked the other 6 redirect tests; this one is
-			// blocked on the broader NodePort plumbing.
+			// HTTPRouteRedirectPortAndScheme: 14 of 15 sub-tests pass with
+			// the dynamic NodePort plumbing. The single failing sub-test
+			// requires per-listener-port routing isolation: the test
+			// fixture attaches different HTTPRoutes to different Gateway
+			// listeners on the SAME port-prefix path, and routes get
+			// confused because path-prefix.map lookup doesn't include
+			// the inbound listener port. Tracked at <follow-up issue>.
 			"HTTPRouteRedirectPortAndScheme",
 			// GatewayHTTPListenerIsolation: same empty-Host issue as
 			// above; the test sends requests targeting catch-all

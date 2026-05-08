@@ -154,6 +154,100 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
+  # gateway/features-090-gateway-listener-ports-service:
+  #
+  # Emits a single NodePort Service exposing every unique non-default
+  # Gateway listener port the chart observes (Gateway-owned + admitted
+  # ListenerSet listeners). The chart's static haproxy-service only
+  # exposes 80/443/8404; without this snippet, traffic to a Gateway
+  # listener on e.g. port 8080 has no kube-proxy entry. With this
+  # snippet, every dynamically-declared port gets a NodePort allocated
+  # by the apiserver — the conformance RoundTripper reads them back via
+  # label selector to dial the right NodePort per Gateway listener
+  # port. RBAC + RestrictToOwnNamespace already constrain Service
+  # creation to the controller's namespace, same boundary as the
+  # per-Gateway static-addresses Services.
+  features-090-gateway-listener-ports-service:
+    template: |
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted %}
+      {%%
+        // Walk Gateway + admitted-ListenerSet listeners and collect
+        // unique (port, protocol) pairs. Skip the chart's own static
+        // haproxy-service ports (80/443/8404) because they're already
+        // exposed.
+        var staticPorts = map[int]bool{80: true, 443: true, 8404: true}
+        var seen = map[string]bool{}
+        var portsList = []any{}
+        for _, gw := range resources.gateways.List() {
+          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+            var port = toint(dig(listener, "port") | fallback(0))
+            var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+            if port <= 0 || staticPorts[port] {
+              continue
+            }
+            // Single-letter protocol prefix to disambiguate Service port
+            // names (which must be DNS-1123 with at most 15 chars and
+            // unique per Service). For HTTP/HTTPS/TLS/TCP we just take
+            // the first letter; collisions between protocols on the
+            // same port are ProtocolConflict per Gateway API and don't
+            // produce a working Service anyway.
+            var key = tostring(port) + "-" + toLower(protocol[0:1])
+            if seen[key] {
+              continue
+            }
+            seen[key] = true
+            portsList = append(portsList, map[string]any{
+              "name":       "gw-" + key,
+              "port":       port,
+              "targetPort": port,
+              "protocol":   "TCP",
+            })
+          }
+          for _, ls := range resources.listenersets.List() {
+            if !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
+              continue
+            }
+            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+              var port = toint(dig(listener, "port") | fallback(0))
+              var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+              if port <= 0 || staticPorts[port] {
+                continue
+              }
+              var key = tostring(port) + "-" + toLower(protocol[0:1])
+              if seen[key] {
+                continue
+              }
+              seen[key] = true
+              portsList = append(portsList, map[string]any{
+                "name":       "gw-" + key,
+                "port":       port,
+                "targetPort": port,
+                "protocol":   "TCP",
+              })
+            }
+          }
+        }
+        var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+        var podSelector = extraContext | dig("haproxyPodSelector")
+        if len(portsList) > 0 && ctrlNs != "" && podSelector != nil {
+          renderResource("v1", "Service", ctrlNs, "haptic-gw-listener-ports", map[string]any{
+            "metadata": map[string]any{
+              "labels": map[string]any{
+                // Discovery label: the conformance RoundTripper looks
+                // up Services by this label to build its port→NodePort
+                // table dynamically.
+                "haproxy-haptic.org/role": "gateway-listener-ports",
+              },
+            },
+            "spec": map[string]any{
+              "type":     "NodePort",
+              "selector": podSelector,
+              "ports":    portsList,
+            },
+          })
+        }
+      %%}
+
   # Register Gateway TLS Terminate mode certificates with SSL infrastructure
   features-100-gateway-tls:
     template: |
