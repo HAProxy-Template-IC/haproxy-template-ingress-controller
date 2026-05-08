@@ -55,6 +55,10 @@ templateSnippets:
           "tlsCertificates": []any{},
           "sslRedirectHosts": []any{},
           "clientCertVerifyHosts": map[string]any{},
+          "bindHTTPDefault":  false,
+          "bindHTTPSDefault": false,
+          "needHTTPFrontend":  false,
+          "needHTTPSFrontend": false,
         }
       }) -%}
       {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
@@ -70,6 +74,38 @@ templateSnippets:
       {%- end -%}
       {%- if gf["clientCertVerifyHosts"] == nil -%}
         {%- gf["clientCertVerifyHosts"] = map[string]any{} -%}
+      {%- end -%}
+      {#- Bind-decision flags: each resource library's features-100-* phase
+          OR's its contribution into these. Reading happens later in
+          base.yaml's http_frontend block and ssl.yaml's https / ssl-tcp
+          frontends to decide whether to emit the chart-static
+          `bind *:httpPort` / `bind *:httpsPort` line and whether to
+          render the surrounding frontend block at all.
+
+          * bindHTTPDefault — emit `bind *:httpPort` in http_frontend
+          * bindHTTPSDefault — emit `bind *:httpsPort` in https/ssl-tcp
+          * needHTTPFrontend — render http_frontend block
+          * needHTTPSFrontend — render https / ssl-tcp frontend blocks
+
+          The bind-default flag is narrower than need-frontend: a Gateway
+          HTTP listener at port 9090 (non-default) sets needHTTPFrontend
+          (so http-bind-extra-* gets a frontend to attach to) but does
+          NOT set bindHTTPDefault (the chart's default port stays
+          unbound). For HTTPS, listeners with successfully-resolved
+          certs at httpsPort set bindHTTPSDefault — listeners that fail
+          cert validation (e.g. NoValidCACertificate) deliberately do
+          not, so HAProxy doesn't answer handshakes for them. -#}
+      {%- if gf["bindHTTPDefault"] == nil -%}
+        {%- gf["bindHTTPDefault"] = false -%}
+      {%- end -%}
+      {%- if gf["bindHTTPSDefault"] == nil -%}
+        {%- gf["bindHTTPSDefault"] = false -%}
+      {%- end -%}
+      {%- if gf["needHTTPFrontend"] == nil -%}
+        {%- gf["needHTTPFrontend"] = false -%}
+      {%- end -%}
+      {%- if gf["needHTTPSFrontend"] == nil -%}
+        {%- gf["needHTTPSFrontend"] = false -%}
       {%- end -%}
 
   features-150-ssl-crtlist:
@@ -332,8 +368,10 @@ templateSnippets:
           - features-100-*-ssl-passthrough snippets
       -#}
       {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
-      {%- if len(passthroughBackends) > 0 -%}
+      {%- var gfMap = gf.(map[string]any) -%}
+      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
+      {%- if len(passthroughBackends) > 0 && bindHTTPSDefault -%}
       {# TCP frontend extracts SNI and routes to passthrough backends or loopback #}
       # ssl/frontends-ssl-tcp
 
@@ -416,17 +454,38 @@ templateSnippets:
           - features-150-ssl-crtlist (certificate list)
       -#}
       {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
+      {%- var gfMap = gf.(map[string]any) -%}
+      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var needHTTPSFrontend = tostring(gfMap | dig("needHTTPSFrontend")) == "true" -%}
+      {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
+      {#- The https frontend renders only when at least one resource
+          actually wants TLS termination — Ingress with spec.tls,
+          Gateway/ListenerSet HTTPS or TLS listener (any port), or
+          SSL passthrough backends (which need a unix-socket
+          loopback target). Without it we'd emit an HAProxy frontend
+          with no binds (validation error) any time the chart is
+          installed without a TLS-terminating resource.
+
+          The chart-static `bind *:httpsPort` itself is gated by
+          bindHTTPSDefault, which is set ONLY when at least one
+          listener with a successfully-resolved cert (or any
+          passthrough backend) wants traffic on that port. A
+          listener with NoValidCACertificate at port 443 leaves
+          bindHTTPSDefault=false, so HAProxy doesn't answer
+          handshakes for it — closes the conformance bug
+          GatewayFrontendInvalidDefaultClientCertificateValidation
+          relies on. -#}
+      {%- if needHTTPSFrontend -%}
       # ssl/frontends-https
 
       frontend https
           guid fe:https
           mode http
-      {% if len(passthroughBackends) > 0 %}
+      {%- if len(passthroughBackends) > 0 && bindHTTPSDefault %}
           bind unix@/etc/haproxy/ssl-frontend.sock mode 660{{ render "util-ssl-bind-options" }} accept-proxy
-      {% else %}
+      {%- else if bindHTTPSDefault %}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
-      {% end -%}
+      {%- end %}
           {# Extension point for additional HTTPS bind directives (Gateway HTTPS listener ports, etc.). #}
           {# Sibling to http-bind-extra-* in base.yaml; resource libraries emit one bind per #}
           {# non-default Gateway HTTPS listener port using the same SSL options as the chart-static bind. #}
@@ -448,6 +507,7 @@ templateSnippets:
 
           # Default backend
           default_backend default_backend
+      {%- end -%}
 
 # SSL certificate files
 #
@@ -522,7 +582,34 @@ validationTests:
 
   test-ssl-https-frontend-basic:
     description: Verify HTTPS frontend is generated with correct bind options
-    fixtures: {}  # Uses _global fixtures
+    fixtures:
+      # Trigger the chart's HTTPS frontend by declaring an Ingress with
+      # spec.tls. After the bind-derivation refactor (chart-static
+      # frontends are gated on listener state), an empty fixture would
+      # leave the chart with nothing terminating SSL — and therefore no
+      # `frontend https` rendered.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -544,7 +631,32 @@ validationTests:
 
   test-ssl-crtlist-basic:
     description: Verify crt-list file is generated with OCSP configuration
-    fixtures: {}  # Uses _global fixtures
+    fixtures:
+      # Trigger the chart's HTTPS frontend (and its `ssl crt-list ...`
+      # bind option) — see comment on test-ssl-https-frontend-basic for
+      # why the bind-derivation refactor needs an explicit trigger here.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid

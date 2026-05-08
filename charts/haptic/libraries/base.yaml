@@ -1103,9 +1103,28 @@ haproxyConfig:
         {# Extension point for status frontend directives (e.g., Prometheus exporter) #}
         {{- render_glob "status-extra-*" | indent(2, true) }}
 
+    {#- The http_frontend renders only when at least one resource
+        actually wants traffic on an HTTP port — Ingress, Gateway/
+        ListenerSet HTTP listener at any port. Without it we'd emit
+        an HAProxy frontend with no binds (validation error) any
+        time the chart is installed for a use case that never opens
+        port 80, e.g. an HTTPS-only Gateway whose listeners have
+        unresolvable certs (the GatewayFrontendInvalidDefault
+        ClientCertificateValidation conformance scenario).
+
+        The chart-static `bind *:httpPort` itself is gated by a
+        narrower flag — bindHTTPDefault — so a Gateway with only a
+        non-default-port HTTP listener (say :9090) gets the
+        frontend rendered (so http-bind-extra-* can attach `bind
+        *:9090` to it) but NO `bind *:80`. -#}
+    {%- var gf = shared.Get("globalFeatures") -%}
+    {%- if gf != nil && tostring(gf.(map[string]any) | dig("needHTTPFrontend")) == "true" %}
+
     frontend http_frontend
         guid fe:http_frontend
+        {%- if tostring(gf.(map[string]any) | dig("bindHTTPDefault")) == "true" %}
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
+        {%- end %}
         {# Extension point for additional bind directives (Gateway listener ports, etc.). #}
         {# Only fires inside the HTTP frontend; ssl.yaml has its own https-bind-extra-* hook. #}
         {{- render_glob "http-bind-extra-*" | indent(2, true) }}
@@ -1125,6 +1144,7 @@ haproxyConfig:
 
         # Default backend
         default_backend default_backend
+    {%- end %}
 
     {# Extension point for additional frontends (e.g., custom TCP services) #}
     {# Resource libraries can inject frontends-* snippets #}
@@ -1328,7 +1348,30 @@ validationTests:
 
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend by declaring an Ingress. After the
+      # bind-derivation refactor (chart-static http_frontend is gated
+      # on actual listener state), an empty fixture wouldn't render
+      # the http_frontend at all.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config with GUIDs must be valid

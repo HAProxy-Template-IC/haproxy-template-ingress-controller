@@ -32,6 +32,39 @@ templateSnippets:
   # Feature Registration
   # ============================================================================
 
+  features-100-ingress-bind:
+    template: |
+      {#-
+        Ingress contribution to the chart-static bind decision.
+
+        * Any Ingress sets bindHTTPDefault — Ingress always serves
+          plaintext on the chart's http port, so the http_frontend
+          must bind there.
+        * An Ingress with spec.tls additionally sets
+          bindHTTPSDefault — the TLS-terminating listener lives on
+          the chart's https port.
+
+        Both flags also set the corresponding needHTTPFrontend /
+        needHTTPSFrontend so the surrounding frontend block renders.
+        Resource libraries other than ingress contribute to the same
+        flags from their own features-100-*-bind / -tls snippets;
+        first writer wins is fine because all flags are booleans.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- if resources != nil && resources.ingresses != nil %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%%
+        gf["bindHTTPDefault"] = true
+        gf["needHTTPFrontend"] = true
+        var tlsList = ingress | dig("spec", "tls") | toSlice()
+        if len(tlsList) > 0 {
+          gf["bindHTTPSDefault"] = true
+          gf["needHTTPSFrontend"] = true
+        }
+      %%}
+      {%- end %}
+      {%- end %}
+
   features-100-ingress-tls:
     template: |
       {#- Registers TLS certificates from Ingress spec.tls with SSL infrastructure -#}
