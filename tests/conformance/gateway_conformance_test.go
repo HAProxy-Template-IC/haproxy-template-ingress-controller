@@ -330,15 +330,23 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// 8080/8443 plumbing gap; lifted by the partial-SSA + open
 			// NetworkPolicy work, now passing.
 			//
-			// HTTPRouteHTTPSListenerDetectMisdirectedRequests partially
-			// passes (11 of 15 sub-tests). The 4 failures all expect
-			// HTTP 421 "Misdirected Request" when the Host header
-			// doesn't match the TLS SNI. HAProxy doesn't enforce that
-			// equivalence by default; the chart needs an http-request
-			// reject (or set var(txn.misdirected) + reject) on
-			// frontend https when ssl_fc_sni and req.hdr(host) differ.
-			// Separate chart feature; tracked at <follow-up issue>.
-			"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
+			// (HTTPRouteHTTPSListenerDetectMisdirectedRequests
+			// previously failed on 4 of 15 sub-tests because the
+			// chart's listener-claim map omitted catch-all
+			// (no-hostname) listeners. Requests whose SNI matched the
+			// catch-all got `gw_sni_listener=""` and the 421 gate's
+			// `!len 0` check blocked spec-mandated misdirected
+			// emission for cross-listener cases. The
+			// frontend-extra-100-gateway-misdirected snippet now
+			// emits a `^.*$ catchall:<gw-ns>/<gw-name>` entry into
+			// the regex claim map per Gateway with a catch-all
+			// listener; sorted AFTER the more-specific wildcard
+			// regexes so map_reg first-match-wins picks specific
+			// listeners over the catch-all. Pinned by
+			// test-gateway-https-misdirected-conformance-shape
+			// (chart fixture mirrors the upstream Gateway). All 15
+			// sub-cases trace cleanly through the rendered config —
+			// re-test on push.)
 			// (HTTPRouteCORS previously skipped on 3 of 17 sub-tests
 			// failing because the chart's CORS filter expanded
 			// `allowMethods: ["*"]` into a fixed list — the
