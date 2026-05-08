@@ -678,6 +678,20 @@ templateSnippets:
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%%
+        // Pre-allocate the listenersetStatuses cache at top-level so
+        // F3 (and any other reader) sees the same map even if their
+        // shared.Get races against the outer ComputeIfAbsent below.
+        // The map is mutated in place inside the outer fn — once the
+        // outer fn finishes, the map is fully populated; until then
+        // readers see a partial map (still better than a nil/empty
+        // map which they were getting before, because the
+        // listenersetStatuses ComputeIfAbsent was nested INSIDE the
+        // effectiveListeners one and could be skipped on races).
+        var statusesAny, _ = shared.ComputeIfAbsent("listenersetStatuses", func() any {
+          return map[string]any{}
+        })
+        var statuses = statusesAny.(map[string]any)
+
         var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
           // listenersetStatuses[<ns>/<name>] = map carrying the
           // pre-computed acceptance state F3 emits as conditions.
@@ -687,7 +701,6 @@ templateSnippets:
           //   rejectionMessage (string)
           //   listenerConflicts ([]any) - per-listener {name, index,
           //     conflicted (string or ""), accepted (bool)}.
-          var statuses = map[string]any{}
 
           var out = map[string][]any{}
 
@@ -944,11 +957,8 @@ templateSnippets:
             out[gwKey] = listeners
           }
 
-          // Cache the per-LS status map under a separate key so F3
-          // does not re-derive the gate / RG / conflict logic.
-          var _, _ = shared.ComputeIfAbsent("listenersetStatuses", func() any {
-            return statuses
-          })
+          // listenersetStatuses cache was pre-allocated at top level
+          // and mutated in place above — no separate write needed.
           return out
         })
       %%}
