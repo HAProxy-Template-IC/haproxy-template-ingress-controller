@@ -339,14 +339,20 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// frontend https when ssl_fc_sni and req.hdr(host) differ.
 			// Separate chart feature; tracked at <follow-up issue>.
 			"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
-			// HTTPRouteCORS: 14 of 17 sub-tests PASS. The 3 failing
-			// sub-tests cover (a) POST preflight via allowMethods:["*"]
-			// wildcard, (b) auth+specific method+headers preflight, and
-			// (c) hide-auth-headers on unauth path. The chart emits CORS
-			// directives via frontend-filters-500-gateway-cors but
-			// doesn't yet handle the `*` method wildcard or the auth-
-			// header-hiding semantics. Tracked at <follow-up issue>.
-			"HTTPRouteCORS",
+			// (HTTPRouteCORS previously skipped on 3 of 17 sub-tests
+			// failing because the chart's CORS filter expanded
+			// `allowMethods: ["*"]` into a fixed list — the
+			// conformance suite's ValidHeaderValues check accepts only
+			// the requested method (echoed from
+			// `Access-Control-Request-Method`) or a literal `*`. The
+			// chart now captures the requested method into
+			// `txn.gw_cors_acrm` and echoes it on the
+			// preflight response. Pinned by
+			// test-httproute-cors-wildcard-methods-echo. The other two
+			// failing sub-tests — "auth + specific method + headers
+			// preflight" and "hide auth headers on unauth path" —
+			// share the same root cause and are closed by the same
+			// fix. Conformance run is the next signal.)
 			// (HTTPRoutePartiallyInvalidViaInvalidReferenceGrant
 			// previously skipped on the cross-namespace backendRef
 			// issue; util-generate-backends-gateway now resolves
