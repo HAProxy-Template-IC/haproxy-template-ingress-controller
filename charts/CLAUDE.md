@@ -1682,6 +1682,25 @@ Control whitespace around template tags:
 {%- end -%}
 ```
 
+**Both flavours strip ALL adjacent whitespace including newlines** —
+Jinja2-compatible "trim across line boundaries" semantics
+(`internal/compiler/parser.go:trimAllTrailing` / `trimAllLeading` in
+the Scriggo fork). This applies equally to comment blocks:
+
+| Form | Effect on surrounding whitespace |
+|------|----------------------------------|
+| `{# ... #}` | Preserve both sides |
+| `{#- ... #}` | Strip ALL leading whitespace (incl. newline) |
+| `{# ... -#}` | Strip ALL trailing whitespace (incl. newline) |
+| `{#- ... -#}` | Strip ALL whitespace (incl. newlines) on both sides |
+
+When the directive following a comment block must remain on its own
+line (e.g. an HAProxy `# section-marker` followed by `http-request
+set-var ...`), use the non-stripping `{# ... #}` form. The stripping
+form will fuse the marker with the directive into a single comment
+line and silently drop the directive — visible in the rendered config
+as `# section-markerhttp-request set-var(...)` (no separator).
+
 ### Scriggo vs Jinja2 Syntax Comparison
 
 See also: <https://scriggo.com/templates/switch-from-jinja-to-scriggo>
