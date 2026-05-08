@@ -1092,6 +1092,36 @@ haproxy:
       port: 8404
       # targetPort: stats (set in template)
       nodePort: 30404
+    # Additional Service ports. Operators using haptic without
+    # Gateway API (e.g. an Ingress-only deployment that also exposes
+    # a raw TCP frontend via a custom haproxyConfig snippet, or
+    # anything else not modelled by an Ingress / Gateway /
+    # ListenerSet) declare them here. The chart concatenates these
+    # entries with the http/https/stats triple above into a single
+    # `extraContext.haproxyService.ports` list that the
+    # `k8sResources.haproxy-service` template iterates verbatim.
+    #
+    # Each entry mirrors a `corev1.ServicePort` shape: at minimum
+    # `name` + `port`. `targetPort` defaults to `port`, `protocol`
+    # defaults to TCP. `nodePort` only applies when
+    # `haproxy.service.type` is `NodePort` or `LoadBalancer`.
+    # Names must be RFC 1123 labels and unique across all Service
+    # ports (including the http/https/stats entries above and any
+    # Gateway-derived `gw-*` entries the controller adds at render
+    # time).
+    #
+    # To drop a default entry (e.g. expose only http on the
+    # Service), set the matching `haproxy.service.<name>.port` to
+    # 0 — entries with port 0 are filtered out at chart-render time.
+    #
+    # Example — exposing a raw TCP frontend on port 5432:
+    #   extraPorts:
+    #     - name: postgres
+    #       port: 5432
+    #       targetPort: 5432
+    #       protocol: TCP
+    #       nodePort: 30432
+    extraPorts: []
   # Dataplane API sidecar configuration
   dataplane:
     service:

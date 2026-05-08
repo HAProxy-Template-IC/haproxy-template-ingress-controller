@@ -258,14 +258,39 @@ This replaces the chart-static `templates/haproxy-service.yaml` main-Service blo
 - **First-render delay**: when the chart is installed for the first time, the Service does not exist until the controller renders once (typically a few seconds). External tools (cert-manager, external-dns) that look up the Service immediately after `helm install` should expect a brief absence. The internal `<release>-haproxy-dataplane` Service remains chart-static and is created at install time as before.
 - **`helm uninstall` cleans up via cascade-GC**: the `OwnerReference` ties the Service's lifecycle to the CR. When `helm uninstall` removes the CR, the Service goes with it; no extra cleanup hook is required.
 
-The Service shape is derived from listener state at render time:
+The Service port set is a single list assembled by the chart at install / upgrade time. There is no static / dynamic split inside the Scriggo template — `templates/haproxytemplateconfig.yaml` builds the list and hands it to the renderer via `extraContext.haproxyService.ports`. Two stages contribute:
 
-- The chart's `stats` port (default 8404) is always emitted — used by HAProxy's liveness probe.
-- The `http` port (default 80) is emitted when at least one Ingress exists, or a Gateway / ListenerSet listener targets the chart's http port. Otherwise omitted.
-- The `https` port (default 443) is emitted when at least one Ingress declares `spec.tls`, or a Gateway / ListenerSet HTTPS / TLS listener targets the chart's https port. Otherwise omitted.
-- For each non-default Gateway / admitted ListenerSet listener port, a `gw-<port>-<proto-letter>` entry is emitted (e.g. `gw-9090-h` for an HTTPS listener on port 9090).
+1. **Chart-time defaults + extras (Helm)**. The chart reads `haproxy.service.{http,https,stats}.{port,nodePort}` and assembles three default entries (`http`, `https`, `stats`), then appends every entry in `haproxy.service.extraPorts`. The result is a flat list of `corev1.ServicePort`-shaped objects.
 
-Chart values consumed: `haproxy.service.type`, `haproxy.service.annotations`, `haproxy.service.loadBalancerIP`, `haproxy.service.loadBalancerClass`, `haproxy.service.loadBalancerSourceRanges`, `haproxy.service.externalTrafficPolicy`, `haproxy.service.internalTrafficPolicy`, `haproxy.service.healthCheckNodePort`, `haproxy.service.publishNotReadyAddresses`, plus per-port `port` / `nodePort` overrides for `http` / `https` / `stats`. These are plumbed into `extraContext.haproxyService` by `templates/haproxytemplateconfig.yaml`.
+    ```yaml
+    haproxy:
+      service:
+        # Defaults — change the port number / nodePort here, or set
+        # port: 0 to drop the entry from the rendered Service:
+        http:
+          port: 80
+          nodePort: 30080
+        https:
+          port: 443
+          nodePort: 30443
+        stats:
+          port: 8404
+          nodePort: 30404
+
+        # Add your own ports — same shape as corev1.ServicePort:
+        extraPorts:
+          - name: postgres
+            port: 5432
+            targetPort: 5432
+            protocol: TCP
+            nodePort: 30432   # only honored when service.type is NodePort/LoadBalancer
+    ```
+
+    `name` and `port` are required; `targetPort` defaults to `port`; `protocol` defaults to `TCP`; `appProtocol` is plumbed through verbatim when set. Names must be RFC 1123 labels and unique across all Service ports (including the Gateway-derived `gw-*` entries below). To drop one of the defaults entirely, set the matching `haproxy.service.<name>.port` to `0` — the chart filters zero-port entries out at render time.
+
+2. **Render-time Gateway-derived ports (Scriggo)**. For each non-default Gateway / admitted ListenerSet listener port, the `k8sResources.haproxy-service` template appends a `gw-<port>-<proto-letter>` entry (e.g. `gw-9090-h` for an HTTPS listener on port 9090). Listener ports that already exist in the chart-time list (because their port number matches `http` / `https` / `stats` or one of the operator's `extraPorts` entries) are skipped — first writer wins. Skipped entirely for Gateways that set `spec.addresses` (those get a dedicated per-Gateway Service via `k8sResources.gateway-static-addresses`).
+
+Chart values consumed by the merged spec: `haproxy.service.type`, `haproxy.service.annotations`, `haproxy.service.loadBalancerIP`, `haproxy.service.loadBalancerClass`, `haproxy.service.loadBalancerSourceRanges`, `haproxy.service.externalTrafficPolicy`, `haproxy.service.internalTrafficPolicy`, `haproxy.service.healthCheckNodePort`, `haproxy.service.publishNotReadyAddresses`. All are plumbed into `extraContext.haproxyService` by `templates/haproxytemplateconfig.yaml`.
 
 ## Map Files
 

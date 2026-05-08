@@ -111,6 +111,33 @@ spec:
     {{- $_ := set $svcSelectorLabels $k $v }}
   {{- end }}
   {{- $_ := set $svcSelectorLabels "app.kubernetes.io/component" "loadbalancer" }}
+  {{- /* Build a single Service-port list with chart-static defaults
+         (http / https / stats) and any operator-declared extras
+         appended. The k8sResources.haproxy-service template just
+         iterates this list — there is no static / dynamic split on
+         the Scriggo side. Operators can:
+           * drop a default entry by overriding the matching
+             `haproxy.service.{http,https,stats}` block with
+             `port: 0` (the build below skips zero-port entries)
+           * change a default port number via the existing
+             `haproxy.service.{http,https,stats}.port` keys
+           * append additional ports via
+             `haproxy.service.extraPorts` (one entry per extra). */ -}}
+  {{- $defaultPorts := list }}
+  {{- range $name := list "http" "https" "stats" }}
+    {{- $entry := index $svc $name }}
+    {{- if $entry }}
+      {{- $portNum := int ($entry.port | default 0) }}
+      {{- if gt $portNum 0 }}
+        {{- $portDict := dict "name" $name "port" $portNum "targetPort" $name "protocol" "TCP" }}
+        {{- with ($entry.nodePort | default 0) }}
+          {{- $_ := set $portDict "nodePort" (int .) }}
+        {{- end }}
+        {{- $defaultPorts = append $defaultPorts $portDict }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- $allPorts := concat $defaultPorts ($svc.extraPorts | default list) }}
   {{- $haproxyService := dict
       "type" $svc.type
       "labels" $svcLabels
@@ -123,12 +150,7 @@ spec:
       "internalTrafficPolicy" ($svc.internalTrafficPolicy | default "")
       "healthCheckNodePort" (int ($svc.healthCheckNodePort | default 0))
       "publishNotReadyAddresses" ($svc.publishNotReadyAddresses | default false)
-      "httpPort" (int $svc.http.port)
-      "httpNodePort" (int ($svc.http.nodePort | default 0))
-      "httpsPort" (int $svc.https.port)
-      "httpsNodePort" (int ($svc.https.nodePort | default 0))
-      "statsPort" (int $svc.stats.port)
-      "statsNodePort" (int ($svc.stats.nodePort | default 0))
+      "ports" $allPorts
   }}
   {{- $_ := set $extraContext "haproxyService" $haproxyService }}
   {{- end }}
