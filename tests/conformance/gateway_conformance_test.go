@@ -212,14 +212,39 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// t.Skip() for the whole suite. Each entry must include an issue
 		// link in a comment so it can be revisited.
 		SkipTests: []string{
-			// gRPC over plaintext HTTP/2 (h2c) on a port shared with HTTP/1.1
-			// is not natively supported by HAProxy 3.x — `bind ... proto h2`
-			// forces the entire bind to H2-only. Conformance attaches
-			// GRPCRoutes to Gateways with HTTP-protocol (port 80) listeners,
-			// expecting the implementation to multiplex H1+H2c on the same
-			// port. Skipping until the chart grows per-Gateway frontend
-			// derivation that allocates an h2-only bind when the Gateway has
-			// only GRPCRoutes attached. Tracked at <follow-up issue>.
+			// The five GRPCRoute conformance tests
+			// (GRPCExactMethodMatching, GRPCRouteHeaderMatching,
+			// GRPCRouteListenerHostnameMatching, GRPCRouteNamedRule,
+			// GRPCRouteWeight — last two skipped further down for
+			// adjacency) attach to a plaintext HTTP/port-80 listener
+			// (the suite's stock `same-namespace` Gateway, see
+			// `vendor/sigs.k8s.io/gateway-api/conformance/base/manifests.yaml`)
+			// and dial it with an insecure gRPC client
+			// (`conformance/utils/grpc/grpc.go` hardcodes
+			// `insecure.NewCredentials()`; ConformanceOptions exposes
+			// no TLS knob; backends declare
+			// `appProtocol: kubernetes.io/h2c`). HAProxy 3.x has no
+			// path to multiplex HTTP/1.1 and h2c on a shared plaintext
+			// bind: `proto h2` locks the bind to H2-only, there's no
+			// `Upgrade: h2c` parser, and ALPN works only inside TLS.
+			// Other controllers (Envoy Gateway, Contour, Cilium) pass
+			// these tests via Envoy's connection-time HTTP/2-preface
+			// detection (`codec_type: AUTO`), which HAProxy doesn't
+			// expose.
+			//
+			// The chart DOES support gRPC over the production-relevant
+			// TLS+ALPN-h2 path: HTTPS binds carry `alpn h2,http/1.1`
+			// (`charts/haptic/libraries/ssl.yaml` `util-ssl-bind-options`
+			// at line ~25), GRPCRoute backends emit
+			// `default-server check proto h2`
+			// (`charts/haptic/libraries/gateway.yaml` ~lines 2538, 2821).
+			// Static-side coverage:
+			// `test-grpcroute-https-listener-alpn-h2` chart validation
+			// test. End-to-end coverage: `tests/e2e/grpc_tls_test.go`.
+			//
+			// Tracked at <follow-up issue> — re-evaluate if HAProxy
+			// upstream ever adds h2c-on-shared-port support (declined
+			// historically; no roadmap indication).
 			"GRPCExactMethodMatching",
 			"GRPCRouteHeaderMatching",
 			"GRPCRouteListenerHostnameMatching",
@@ -484,9 +509,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// non-conflict-resolution test case. Tracked at <follow-up
 			// issue>.
 			"BackendTLSPolicySANValidation",
-			// GRPCRouteNamedRule / GRPCRouteWeight: same h2c-on-shared-
-			// HTTP-port architectural gap as GRPCExactMethodMatching.
-			// HAProxy 3.x can't multiplex H1+H2c without TLS/ALPN.
+			// GRPCRouteNamedRule / GRPCRouteWeight: same h2c-on-
+			// plaintext-HTTP-port gap as the GRPCRoute* skips above.
+			// See the consolidated rationale at the top of SkipTests
+			// for the chart's TLS+ALPN-h2 coverage path
+			// (test-grpcroute-https-listener-alpn-h2 +
+			// tests/e2e/grpc_tls_test.go).
 			"GRPCRouteNamedRule",
 			"GRPCRouteWeight",
 		},
