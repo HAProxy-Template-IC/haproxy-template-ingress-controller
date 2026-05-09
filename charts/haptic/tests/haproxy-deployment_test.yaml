@@ -52,7 +52,7 @@ tests:
           path: spec.template.spec.containers[0].ports
           content:
             name: http
-            containerPort: 8080
+            containerPort: 80
             protocol: TCP
 
   - it: should expose https port
@@ -61,7 +61,7 @@ tests:
           path: spec.template.spec.containers[0].ports
           content:
             name: https
-            containerPort: 8443
+            containerPort: 443
             protocol: TCP
 
   - it: should expose stats port
