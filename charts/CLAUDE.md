@@ -87,6 +87,16 @@ Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
+### Split-library directories
+
+A library that has grown past comfortable one-file size may live as a directory of fragments instead of a single YAML file. The convention (see ADR-0008):
+
+- Add a directory entry like `"libraries/foo/"` (trailing slash) to `$libraryFiles` in place of `"libraries/foo.yaml"`.
+- Inside the directory, `_index.yaml` is required and acts as the load-rule authority — it carries the `_helm_load` block and any small structural pieces (typically `watchedResources`).
+- All other YAML files at the top level, plus any YAML files one level deep (e.g. `tests/foo.yaml`), are fragment files. Fragments contribute entries to `templateSnippets`, `validationTests`, `k8sResources`, etc., but must NOT carry their own `_helm_load` block.
+- Fragments merge into the per-library accumulator in lexicographic order (numeric prefixes like `10-features.yaml` are the idiomatic ordering hint) before inject/unset/strip/cross-library merge runs. Each `templateSnippets` / `validationTests` / `k8sResources` entry must be declared in exactly one fragment — duplicates would have the lexicographically-later file win, silently.
+- Glob depth is one level (Helm's `Files.Glob` doesn't recurse). One optional `tests/` subdirectory per split library is the supported convention; deeper nesting is not.
+
 ### Library Knowledge Hierarchy
 
 Libraries form a dependency hierarchy - each library may only reference snippets and variables from libraries it "knows about":
