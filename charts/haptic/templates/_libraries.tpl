@@ -197,23 +197,45 @@ Each entry in `$libraryFiles` is either:
 {{- end }}
 {{- $merged = mustMergeOverwrite $merged $userConfig }}
 
-{{- /* Strip leading Scriggo doc-comment blocks from templateSnippets in
-       the merged output. The {#- ... -#} blocks at the top of each
-       snippet document purpose, parameters, and usage for chart authors
-       but contribute nothing to the rendered HAProxy config — Scriggo
-       strips them at template-render time, but the unstripped source
-       still ships in the deployed HAProxyTemplateConfig CR. Removing
-       them here keeps library source files verbose while shrinking the
-       deployed CR enough to fit within the 1 MiB Kubernetes Secret limit
-       that Helm's release storage hits on large charts.
+{{- /* Strip Scriggo-template comments from templateSnippets in the merged
+       output. Comments document each snippet for chart authors but
+       contribute nothing to the rendered HAProxy config — Scriggo strips
+       them at template-render time. Their unstripped source still ships
+       in the deployed HAProxyTemplateConfig CR, where it's pure overhead.
+       The chart's growth has pushed the rendered CR past the 1 MiB
+       Kubernetes Secret hard-cap that Helm's release storage hits, so
+       the rendered CR has to shrink. Library source files are
+       unchanged — chart authors still see verbose inline documentation.
 
-       Only the LEADING comment block is stripped (`(?s)\A\s*{# ... #}`).
-       Mid-template inline comments often participate in whitespace
-       control via their `-` markers and are left untouched. */ -}}
+       Three patterns, in order:
+
+         1. Leading {#- ... -#} block at the very start of the template
+            (top-of-snippet doc header). Anchored on \A.
+
+         2. Stand-alone {# ... #} block on its own line (mid-template
+            documentation). Required to be on its own line so we don't
+            remove inline `{#- something -#}` whitespace-control markers
+            that share a line with rendered content.
+
+         3. Stand-alone Go-style `// ...` line comments inside Scriggo
+            template directives. These appear inside {%- ... -%} or
+            {%% ... %%} blocks where Scriggo accepts Go syntax. Same
+            stand-alone-line constraint to avoid touching // chars that
+            might appear in rendered text (URLs, config values).
+
+       All three patterns require their match to occupy a whole line
+       (preceded by \n + whitespace, followed by \n) so removing the
+       line collapses the source without changing the surrounding
+       formatting. */ -}}
 {{- $leadingDocComment := "(?s)\\A\\s*\\{#.*?#\\}\\s*\\n?" }}
+{{- $standaloneBlockComment := "(?ms)^[ \\t]*\\{#.*?#\\}[ \\t]*\\n" }}
+{{- $standaloneGoComment := "(?m)^[ \\t]*//[^\\n]*\\n" }}
 {{- range $name, $snippet := ($merged.templateSnippets | default dict) }}
   {{- $tpl := $snippet.template | default "" }}
-  {{- $_ := set $snippet "template" (regexReplaceAll $leadingDocComment $tpl "") }}
+  {{- $tpl = regexReplaceAll $leadingDocComment $tpl "" }}
+  {{- $tpl = regexReplaceAll $standaloneBlockComment $tpl "" }}
+  {{- $tpl = regexReplaceAll $standaloneGoComment $tpl "" }}
+  {{- $_ := set $snippet "template" $tpl }}
 {{- end }}
 
 {{- /* Return merged config as YAML */ -}}
