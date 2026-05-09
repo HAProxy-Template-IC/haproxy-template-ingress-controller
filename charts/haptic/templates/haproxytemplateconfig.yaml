@@ -272,17 +272,6 @@ spec:
   {{- with $mergedLibraries.watchedResources }}
     {{- $_ := set $config "watchedResources" (merge ($config.watchedResources | default dict) .) }}
   {{- end }}
-  {{- /* Strip validationTests when the operator hasn't opted in. The
-         embedded test corpus is ~570 KB of YAML fixtures used only by
-         chart-author tooling (`./scripts/test-templates.sh`, the
-         controller's `validate` CLI); production webhook admission runs
-         the renderer against the proposed admission's overlay, not
-         against this corpus. Stripping here keeps the deployed CR small
-         enough to fit Helm's release Secret under the 1 MiB
-         Kubernetes-hard-cap on `sh.helm.release.v1.*`. */ -}}
-  {{- if not $controller.embedValidationTests }}
-    {{- $_ := unset $config "validationTests" }}
-  {{- end }}
   {{- /* Strip Helm-only fields from watchedResources before CRD rendering */ -}}
   {{- range $name, $resource := $config.watchedResources }}
     {{- $_ := unset $resource "statusPatch" }}

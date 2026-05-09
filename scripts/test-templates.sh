@@ -134,7 +134,6 @@ echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-    --set controller.embedValidationTests=true \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
