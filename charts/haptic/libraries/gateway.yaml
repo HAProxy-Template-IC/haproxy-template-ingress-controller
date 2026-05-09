@@ -11690,6 +11690,128 @@ validationTests:
         pattern: "backend gtw_default_grpc-route"
         description: Must generate backend for GRPCRoute
 
+  test-tlsroute-terminate-nondefault-port-frontend:
+    description: |
+      TLSRoute attached to a TLS Terminate listener on a non-chart-
+      static port renders a per-port mode-tcp frontend with TLS
+      termination on the bind. After the handshake completes,
+      `ssl_fc_sni` carries the SNI consumed during the handshake and
+      drives use_backend routing to the TLSRoute's TCP backend.
+
+      Pins:
+        * `frontend gateway-tls-port-9444` exists, mode tcp.
+        * Bind carries `ssl crt-list ...` (HAProxy terminates TLS).
+        * Routing rules use `ssl_fc_sni` (post-handshake), NOT
+          `req_ssl_sni` (Passthrough's pre-handshake SNI).
+        * Reject-default closes the TLSRouteInvalidBackendRef* gap
+          for the Terminate-mode flavour as well.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-terminate
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tlsterm
+                protocol: TLS
+                port: 9444
+                hostname: tls.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-terminate
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.6"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with Terminate per-port frontend
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-9444$'
+        description: Per-port TLS frontend exists for Terminate listener on 9444.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:9444 ssl crt-list '
+        description: |
+          Bind carries `ssl crt-list ...` — Terminate mode terminates
+          the TLS handshake; the crt-list lookup picks the cert by SNI.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ ssl_fc_sni -m str tls\.example\.com \}'
+        description: |
+          Routing uses `ssl_fc_sni` (post-handshake SNI) — the
+          handshake completed on the bind, so we can read the SNI
+          HAProxy negotiated rather than re-parsing the bytes.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'use_backend gtw_tls_default_tls-app_0 if .*req_ssl_sni'
+        description: |
+          Terminate-mode frontend MUST NOT use `req_ssl_sni` (which
+          reads the buffered ClientHello before termination — wrong
+          for a frontend that already terminated TLS).
+
   test-tlsroute-passthrough-nondefault-port-frontend:
     description: |
       TLSRoute attached to a TLS Passthrough listener on a port OTHER
