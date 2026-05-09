@@ -110,12 +110,12 @@ watchedResources:
     # ListenerSet (GEP-1713) lets users add listeners to a Gateway from
     # a separate resource — designed for shared-frontend dataplanes
     # (which is haptic's exact architecture). Indexed by namespace +
-    # parent Gateway so the per-Gateway loop can fetch the attached
-    # ListenerSets via Fetch() without scanning the whole list. The
-    # parentRef shape is { name, kind?: Gateway, group?:
-    # gateway.networking.k8s.io }; we index on the name alone since
-    # group + kind are constrained to Gateway by the CRD's OneOf rules.
-    indexBy: ["metadata.namespace", "spec.parentRef.name"]
+    # name so route-resolution sites can `GetSingle(lsNs, lsName)` the
+    # exact ListenerSet a parentRef points at. Per-Gateway iteration
+    # uses `resources.listenersets.List()` and filters in template code
+    # (the typical Gateway has at most a handful of attached
+    # ListenerSets so the linear scan is cheap).
+    indexBy: ["metadata.namespace", "metadata.name"]
     statusPatch: true
 
   backendtlspolicies:
@@ -12454,6 +12454,418 @@ validationTests:
           requires it. A request like
           SNI=third-example.wildcard.org must land on the
           `*.wildcard.org` listener, not the catch-all.
+
+  test-listenerset-http-routing-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetHTTPRouting
+      conformance fixture: a Gateway with two listeners + two
+      ListenerSets each with two listeners (all HTTP port 80,
+      different hostnames). Six HTTPRoutes attach via various
+      parentRef shapes:
+
+        * attaches-to-all-listeners (no sectionName for Gateway and
+          both LSes) → attaches to all 6 listeners
+        * gateway-route (Gateway, no sectionName) → both Gateway
+          listeners
+        * gateway-section-route (Gateway, sectionName=
+          gateway-listener-1) → only that one listener
+        * listener-set-http-routing-1-route (LS1, no sectionName)
+          → both LS1 listeners
+        * listener-set-http-routing-1-section-route (LS1,
+          sectionName=listener-set-http-routing-1-listener-1) →
+          only that one listener
+        * listener-set-http-routing-2-route (LS2, no sectionName)
+          → both LS2 listeners
+
+      Pins the chart's path-prefix-exact.map having one entry per
+      (effective hostname, path) — so the routing layer correctly
+      isolates routes per listener via Host. The conformance test
+      sends 30+ requests covering every (Host, Path) combo and
+      asserts the right backend (or 404) for each; these
+      assertions trace the spec-mandated success cases through
+      the rendered map.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-http-routing
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener-1
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: gateway-listener-2
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener-2.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listener-set-http-routing-1
+            namespace: gateway-conformance-infra
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-http-routing
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-http-routing-1-listener-1
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-1-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: listener-set-http-routing-1-listener-2
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-1-listener-2.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listener-set-http-routing-2
+            namespace: gateway-conformance-infra
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-http-routing
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-http-routing-2-listener-1
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-2-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: listener-set-http-routing-2-listener-2
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-2-listener-2.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v2
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v3
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v1-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v1
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v2-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v2
+          endpoints:
+            - addresses: ["10.0.2.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v3-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v3
+          endpoints:
+            - addresses: ["10.0.3.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-all-listeners
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gateway-with-listener-sets-http-routing
+                namespace: gateway-conformance-infra
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-1
+                namespace: gateway-conformance-infra
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-2
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: gateway-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gateway-with-listener-sets-http-routing
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /gateway-route
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: gateway-section-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gateway-with-listener-sets-http-routing
+                namespace: gateway-conformance-infra
+                sectionName: gateway-listener-1
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /gateway-section-route
+                backendRefs:
+                  - name: infra-backend-v3
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: listener-set-http-routing-1-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-1
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /listener-set-http-routing-1-route
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: listener-set-http-routing-1-section-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-1
+                namespace: gateway-conformance-infra
+                sectionName: listener-set-http-routing-1-listener-1
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /listener-set-http-routing-1-section-route
+                backendRefs:
+                  - name: infra-backend-v3
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: listener-set-http-routing-2-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-2
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /listener-set-http-routing-2-route
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # attaches-to-all-listeners — should produce 6 path-prefix
+      # entries (one per listener hostname).
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-1\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to gateway-listener-1.com
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-2\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to gateway-listener-2.com
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-1\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS1-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-2\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS1-listener-2
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-1\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS2-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-2\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS2-listener-2
+
+      # gateway-route — only attaches to Gateway listeners.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-1\\.com/gateway-route GW_ROUTE_ID:http:gateway-conformance-infra_gateway-route_0$"
+        description: gateway-route attaches to gateway-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-2\\.com/gateway-route GW_ROUTE_ID:http:gateway-conformance-infra_gateway-route_0$"
+        description: gateway-route attaches to gateway-listener-2
+
+      # gateway-route MUST NOT attach to LS listeners (the
+      # conformance test's "Host=listener-set-... Path=/gateway-route
+      # → 404" sub-cases depend on this isolation).
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-.+\\.com/gateway-route GW_ROUTE_ID"
+        description: gateway-route does NOT attach to ListenerSet listeners
+
+      # gateway-section-route — only attaches to gateway-listener-1
+      # (sectionName-pinned).
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-1\\.com/gateway-section-route GW_ROUTE_ID:http:gateway-conformance-infra_gateway-section-route_0$"
+        description: gateway-section-route attaches to gateway-listener-1 only
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-2\\.com/gateway-section-route GW_ROUTE_ID"
+        description: gateway-section-route does NOT attach to gateway-listener-2
+
+      # listener-set-http-routing-1-route — both LS1 listeners.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-1\\.com/listener-set-http-routing-1-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-1-route_0$"
+        description: LS1 route attaches to LS1-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-2\\.com/listener-set-http-routing-1-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-1-route_0$"
+        description: LS1 route attaches to LS1-listener-2
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-.+\\.com/listener-set-http-routing-1-route GW_ROUTE_ID"
+        description: LS1 route does NOT attach to Gateway listeners
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-.+\\.com/listener-set-http-routing-1-route GW_ROUTE_ID"
+        description: LS1 route does NOT cross-attach to LS2
+
+      # listener-set-http-routing-1-section-route — only LS1-listener-1.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-1\\.com/listener-set-http-routing-1-section-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-1-section-route_0$"
+        description: LS1 section-route attaches to LS1-listener-1 only
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-2\\.com/listener-set-http-routing-1-section-route GW_ROUTE_ID"
+        description: LS1 section-route does NOT attach to LS1-listener-2
+
+      # listener-set-http-routing-2-route — both LS2 listeners.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-1\\.com/listener-set-http-routing-2-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-2-route_0$"
+        description: LS2 route attaches to LS2-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-2\\.com/listener-set-http-routing-2-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-2-route_0$"
+        description: LS2 route attaches to LS2-listener-2
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-.+\\.com/listener-set-http-routing-2-route GW_ROUTE_ID"
+        description: LS2 route does NOT cross-attach to LS1
 
   test-listenerset-reference-grant-conformance-shape:
     description: |
