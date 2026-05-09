@@ -5192,7 +5192,6 @@ templateSnippets:
                 var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
                 var podSelector = extraContext | dig("haproxyPodSelector")
                 if ctrlNs != "" && podSelector != nil {
-                  var svcName = "gw-" + nsStr + "-" + nameStr
                   var svcPorts = []any{}
                   var seenPorts = map[int]bool{}
                   for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
@@ -5209,13 +5208,27 @@ templateSnippets:
                     })
                   }
                   if len(svcPorts) > 0 {
-                    // Address selection strategy:
+                    // Address selection strategy: emit ONE Service per
+                    // requested IPAddress. Each Service is independently
+                    // annotated with `metallb.universe.tf/loadBalancerIPs:
+                    // <single-ip>`. MetalLB allocates each independently
+                    // — a usable IP succeeds, an unusable one fails, and
+                    // the status read-back below aggregates results into
+                    // status.addresses (realized IPs only).
+                    //
+                    // Why per-IP: MetalLB rejects multi-IPv4 annotations
+                    // (its IPFamilyForAddresses guard treats same-family
+                    // multi-IP lists as misconfiguration, not as
+                    // try-each-until-one-works). The Gateway-API
+                    // GatewayStaticAddresses conformance test deliberately
+                    // orders an unusable RFC 5737 IP before a usable pool
+                    // IP and asserts the chart routes around the
+                    // unusable entry — per-IP Service emission gives
+                    // exactly that behaviour.
                     //   - spec.loadBalancerIP   = first IPAddress (legacy
                     //     field; non-MetalLB cloud LBs honour this).
                     //   - metallb.universe.tf/loadBalancerIPs annotation =
-                    //     ALL IPAddresses, comma-separated. MetalLB walks
-                    //     this list in order and picks the first
-                    //     allocatable; this lets a Gateway listing
+                    //     SINGLE IPAddress per Service. MetalLB
                     //     {unusable, usable} succeed by skipping the
                     //     unusable entry. Conformance test
                     //     GatewayStaticAddresses pins this — it deliberately
@@ -5232,68 +5245,53 @@ templateSnippets:
                     // the per-Gateway block. The metallb annotation is
                     // merged onto ownedAnnotations so user-provided
                     // infrastructure annotations don't get clobbered.
-                    var ipParts = []any{}
-                    for _, ipv := range validIPs {
-                      ipParts = append(ipParts, tostring(ipv))
-                    }
-                    var lbIPsAnnotation = join(ipParts, ",")
-                    // MetalLB's allocation logic rejects Services that
-                    // carry BOTH spec.loadBalancerIP and a
-                    // `metallb.io/loadBalancerIPs` annotation
-                    // (AllocationFailed: "service can not have both"). To
-                    // get multi-IP fallback (Gateway lists usable+unusable,
-                    // MetalLB picks the first allocatable), we set only
-                    // the annotation — the legacy spec.loadBalancerIP
-                    // field is omitted. Non-MetalLB cloud LBs without
-                    // annotation support will assign their own IP, which
-                    // won't appear in the Gateway's spec.addresses set;
-                    // operators on those clouds should rely on the
-                    // existing static-IP cloud annotations instead.
-                    //
-                    // Loop vars are `annK`/`annV` to avoid clobbering
-                    // outer-scope `k`/`v` (Scriggo's loop scope leaks).
-                    var mergedAnnotations = map[string]any{}
-                    for annK, annV := range ownedAnnotations {
-                      mergedAnnotations[annK] = annV
-                    }
-                    mergedAnnotations["metallb.universe.tf/loadBalancerIPs"] = lbIPsAnnotation
-                    // Stash the per-Gateway LoadBalancer Service spec into
-                    // shared state, keyed by `<namespace>/<name>`. The
+                    // Stash one per-(Gateway, IP) LoadBalancer Service
+                    // spec into shared state, keyed by `<ns>/<name>`. The
                     // declarative `k8sResources.gateway-static-addresses`
-                    // template (in this same library) reads back this map
-                    // during the post-haproxy.cfg render pass and emits
-                    // one Service per entry. We can't emit the resource
-                    // inline here any more — the imperative
-                    // renderResource() filter is gone; resource emission
-                    // lives in spec.k8sResources, declared once and
-                    // rendered after the main config. We use a map (a
-                    // mutable reference type) because SharedContext is
-                    // append-only by design — ComputeIfAbsent gives us a
-                    // map to mutate, not a Set/Replace handle.
+                    // template reads back this map during the post-
+                    // haproxy.cfg render pass and emits one Service per
+                    // entry. We use a map (a mutable reference type)
+                    // because SharedContext is append-only by design —
+                    // ComputeIfAbsent gives us a map to mutate, not a
+                    // Set/Replace handle.
                     var gwSvcsRaw, _ = shared.ComputeIfAbsent("gatewayStaticAddressServices", func() any { return map[string]any{} })
                     var gwSvcs = gwSvcsRaw.(map[string]any)
-                    gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
-                      "namespace":   ctrlNs,
-                      "name":        svcName,
-                      "labels":      ownedLabels,
-                      "annotations": mergedAnnotations,
-                      "selector":    podSelector,
-                      "ports":       svcPorts,
-                    }
-
-                    // Read the Service back to determine which spec.addresses
-                    // are actually realized. resources.services watches all
-                    // Services across the cluster, so this works even though
-                    // the Service we just emitted was applied by the
-                    // resourceapplier (not by us inline) — by the next
-                    // reconciliation, the watcher will have it.
-                    var svc = resources.services.GetSingle(ctrlNs, svcName)
                     var realizedIPs = map[string]bool{}
-                    if svc != nil {
-                      for _, ing := range dig(svc, "status", "loadBalancer", "ingress") | toSlice() {
-                        var realIP = tostring(dig(ing, "ip") | fallback(""))
-                        if realIP != "" {
-                          realizedIPs[realIP] = true
+                    for _, validIP := range validIPs {
+                      var ipStr = tostring(validIP)
+                      // Per-IP service name suffix: replace dots with
+                      // dashes so the result is a valid RFC 1123 label.
+                      // E.g. 192.168.1.1 → "192-168-1-1".
+                      var ipSuffix = replace(ipStr, ".", "-")
+                      var svcName = "gw-" + nsStr + "-" + nameStr + "-" + ipSuffix
+                      // Loop vars are `annK`/`annV` to avoid clobbering
+                      // outer-scope `k`/`v` (Scriggo's loop scope leaks).
+                      var perIPAnnotations = map[string]any{}
+                      for annK, annV := range ownedAnnotations {
+                        perIPAnnotations[annK] = annV
+                      }
+                      perIPAnnotations["metallb.universe.tf/loadBalancerIPs"] = ipStr
+                      gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
+                        "namespace":   ctrlNs,
+                        "name":        svcName,
+                        "labels":      ownedLabels,
+                        "annotations": perIPAnnotations,
+                        "selector":    podSelector,
+                        "ports":       svcPorts,
+                      }
+                      // Read this Service back to determine whether MetalLB
+                      // allocated the IP. resources.services watches all
+                      // Services across the cluster, so this works even
+                      // though the Service we just emitted was applied by
+                      // the resourceapplier (not by us inline) — by the
+                      // next reconciliation, the watcher will have it.
+                      var svc = resources.services.GetSingle(ctrlNs, svcName)
+                      if svc != nil {
+                        for _, ing := range dig(svc, "status", "loadBalancer", "ingress") | toSlice() {
+                          var realIP = tostring(dig(ing, "ip") | fallback(""))
+                          if realIP == ipStr {
+                            realizedIPs[ipStr] = true
+                          }
                         }
                       }
                     }
@@ -15874,6 +15872,104 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with infrastructure-annotations Gateway
+
+  test-gateway-static-addresses-per-ip-services:
+    description: |
+      Mirrors the upstream Gateway-API GatewayStaticAddresses conformance
+      fixture's mid-flight state: a Gateway with TWO IPv4 addresses in
+      spec.addresses (one usable from the cluster's MetalLB pool, one
+      unusable RFC 5737 IP). The chart now emits ONE LoadBalancer
+      Service per address, each annotated with a single
+      `metallb.universe.tf/loadBalancerIPs: <ip>`. MetalLB allocates the
+      usable IP and ignores the unusable one — its IPFamilyForAddresses
+      guard rejected the previous comma-separated multi-IPv4 annotation.
+
+      Pins:
+        * Two Service entries in the rendered k8sResources output.
+        * Per-IP service names (`gw-<ns>-<gw>-<ip-with-dashes>`).
+        * Each annotation carries a single IP.
+        * Each Service has the correct labels propagated.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-ip-gw
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            addresses:
+              - type: IPAddress
+                value: "192.0.2.10"   # usable
+              - type: IPAddress
+                value: "1.0.0.1"      # RFC 5737 unusable
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with multi-IP Gateway
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-default-multi-ip-gw-192-0-2-10'
+        description: |
+          Per-IP Service for the usable IP exists, named with dot-to-
+          dash IP suffix to keep the resource name a valid RFC 1123
+          label.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-default-multi-ip-gw-1-0-0-1'
+        description: |
+          Per-IP Service for the unusable RFC 5737 IP also exists —
+          MetalLB will fail to allocate it (the chart's status-patch
+          read-back surfaces this as Programmed=False/AddressNotUsable
+          on the Gateway).
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'metallb\.universe\.tf/loadBalancerIPs: 192\.0\.2\.10'
+        description: |
+          Usable Service's annotation carries the single IP, NOT a
+          comma-separated list. MetalLB rejects multi-IPv4
+          annotations via its IPFamilyForAddresses guard.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'metallb\.universe\.tf/loadBalancerIPs: 1\.0\.0\.1'
+        description: Unusable Service's annotation carries its single IP too.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: multi-ip-gw'
+        description: |
+          Both Services carry the gateway-name label so per-Gateway
+          status read-back (and the conformance test's discovery) finds
+          them.
 
   test-gateway-infrastructure-propagation-with-static-addresses:
     description: Gateway with both spec.infrastructure and spec.addresses propagates labels/annotations onto the static-addresses Service
