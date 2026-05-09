@@ -269,21 +269,21 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// RoundTripper builds its port table by querying that
 			// Service plus a node-InternalIP lookup. Previously skipped
 			// 8080-port tests are no longer in SkipTests.)
-			// GatewayStaticAddresses: chart-side IPv4-only MetalLB allocation.
-			// MetalLB rejects multi-IP `metallb.io/loadBalancerIPs` annotations
-			// where every entry is the same IP family — it's designed for
-			// IPv4+IPv6 dual-stack, not "try-each-until-one-works." The chart
-			// emits a per-Gateway Service whose annotation lists every
-			// spec.addresses entry, so a Gateway listing two IPv4 addresses
-			// (like the conformance test's unusable+usable pair) hits the
-			// IPFamilyForAddresses guard until the test patches the Gateway
-			// down to a single IP — at which point the live cluster shows
-			// MetalLB allocating successfully but the chart's status
-			// patcher races against the Service status update and never
-			// catches Programmed=True before the test's poll deadline.
-			// Tracked at <follow-up issue>; needs either per-IP Service
-			// emission or a MetalLB IPAddressPool selector strategy.
-			"GatewayStaticAddresses",
+			// (GatewayStaticAddresses previously failed because the
+			// chart emitted ONE per-Gateway LoadBalancer Service whose
+			// `metallb.universe.tf/loadBalancerIPs` annotation listed
+			// every spec.addresses entry comma-separated. MetalLB
+			// rejects multi-IPv4 annotations (its IPFamilyForAddresses
+			// guard treats same-family multi-IP lists as
+			// misconfiguration). The chart now emits ONE Service per
+			// IP — each with its own single-IP annotation — so MetalLB
+			// allocates each independently. The conformance test's
+			// usable+unusable pair lands as: usable Service realized,
+			// unusable Service unrealized, status patcher reports
+			// Programmed=False/AddressNotUsable. After the test patches
+			// out the unusable IP, only the usable Service remains and
+			// Programmed flips to True.
+			// Pinned by test-gateway-static-addresses-per-ip-services.
 			// GatewayInfrastructure: the upstream test searches the
 			// Gateway's own namespace for a ServiceAccount, Pod, or
 			// Service labelled `gateway.networking.k8s.io/gateway-name`
