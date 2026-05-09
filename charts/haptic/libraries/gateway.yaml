@@ -11690,6 +11690,89 @@ validationTests:
         pattern: "backend gtw_default_grpc-route"
         description: Must generate backend for GRPCRoute
 
+  test-tlsroute-invalid-backend-rejects-on-frontend:
+    description: |
+      Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind
+      conformance fixture's chart-side contract: a TLS Passthrough
+      listener has a TLSRoute attached whose backendRef points at an
+      unknown kind. Pass 2 filters routes with unresolvable refs at
+      the ResolvedRefs gate, so the route's SNI never enters the
+      per-port frontend's allowlist. The frontend's reject-default
+      then fires on connection — `tcp-request content reject` produces
+      a TCP RST, which is what the upstream test asserts via
+      MakeTLSConnectionAndExpectEventuallyConnectionRejection.
+
+      Pins the static-side of that contract:
+        * No use_backend rule for the unknown-kind route's SNI
+          (route filtered at Pass 2 → not in frontend allowlist).
+        * The frontend exists with its reject-default.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-invalid
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 9445
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: invalid-backend
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-invalid
+            hostnames:
+              - example.com
+            rules:
+              - backendRefs:
+                  - group: unknownkind.example.com
+                    kind: NonExistent
+                    name: tls-backend
+                    port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with invalid-backend TLSRoute
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-9445$'
+        description: Per-port frontend exists even when no route survives.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'use_backend .* req_ssl_sni -m str example\.com'
+        description: |
+          No use_backend rule for example.com — the TLSRoute was
+          filtered at Pass 2's ResolvedRefs gate (backend group/kind
+          mismatch), so its SNI never enters the allowlist.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+tcp-request content reject$'
+        description: |
+          Frontend ends with `tcp-request content reject` — connections
+          whose SNI doesn't match a claimed route get a TCP RST. Upstream
+          conformance asserts this via
+          MakeTLSConnectionAndExpectEventuallyConnectionRejection.
+
   test-tlsroute-terminate-nondefault-port-frontend:
     description: |
       TLSRoute attached to a TLS Terminate listener on a non-chart-
