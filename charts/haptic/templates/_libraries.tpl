@@ -106,6 +106,17 @@ Returns: empty (mutates obj by side effect)
 
 {{/*
 Deep merge template libraries.
+
+Each entry in `$libraryFiles` is either:
+  - A flat-file path like "libraries/base.yaml" (the original convention).
+  - A directory path ending in "/" like "libraries/gateway/" — a "split
+    library" whose contents are spread across multiple fragment files.
+    `_index.yaml` carries the load rules (`_helm_load`); fragments at the
+    same level (and one level deep) merge into the library accumulator
+    in lexicographic order before any inject / unset / strip / merge
+    happens. Fragments must NOT carry their own `_helm_load` — the
+    convention is `_index.yaml`-owns-load-rules, fragments-own-content.
+    See ADR-0008.
 */}}
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
@@ -122,7 +133,38 @@ Deep merge template libraries.
     "libraries/spoa-hub.yaml"
 }}
 {{- range $file := $libraryFiles }}
-  {{- $library := $context.Files.Get $file | fromYaml }}
+  {{- $library := dict }}
+  {{- if hasSuffix "/" $file }}
+    {{- /* Split library: read _index.yaml as the load-rule authority, */ -}}
+    {{- /* then merge fragments in lexicographic order: top-level YAML */ -}}
+    {{- /* files plus any one-level-deep YAML files under subdirs.     */ -}}
+    {{- /* _index.yaml is excluded from the fragment set. We collect-  */ -}}
+    {{- /* then-sort because Helm's Files.Glob returns a map whose     */ -}}
+    {{- /* iteration order is unspecified.                             */ -}}
+    {{- $indexPath := printf "%s_index.yaml" $file }}
+    {{- $library = $context.Files.Get $indexPath | fromYaml }}
+    {{- if not $library }}
+      {{- fail (printf "split library %q is missing %s" $file $indexPath) }}
+    {{- end }}
+    {{- $fragmentPaths := list }}
+    {{- range $path, $_ := $context.Files.Glob (printf "%s*.yaml" $file) }}
+      {{- if ne $path $indexPath }}
+        {{- $fragmentPaths = append $fragmentPaths $path }}
+      {{- end }}
+    {{- end }}
+    {{- range $path, $_ := $context.Files.Glob (printf "%s*/*.yaml" $file) }}
+      {{- $fragmentPaths = append $fragmentPaths $path }}
+    {{- end }}
+    {{- range $fragmentPath := sortAlpha $fragmentPaths }}
+      {{- $fragment := $context.Files.Get $fragmentPath | fromYaml }}
+      {{- if $fragment._helm_load }}
+        {{- fail (printf "split-library fragment %q must not declare _helm_load (only _index.yaml does)" $fragmentPath) }}
+      {{- end }}
+      {{- $library = mustMergeOverwrite $library $fragment }}
+    {{- end }}
+  {{- else }}
+    {{- $library = $context.Files.Get $file | fromYaml }}
+  {{- end }}
   {{- $loadHints := $library._helm_load | default dict }}
   {{- if eq (tpl ($loadHints.enable | default "true") $context | trim) "true" }}
     {{- range $inject := $loadHints.inject | default list }}
