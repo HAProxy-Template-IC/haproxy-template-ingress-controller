@@ -236,12 +236,13 @@ func createReconciliationComponents(
 
 	// Create ResourceApplier (applies template-declared owned resources via SSA).
 	// All-replica subscriber, leader-only applier — same shape as StatusApplier.
-	// Resource-agnostic: the controller never names "Service" or "Gateway";
+	// Resource-agnostic: the controller never names a specific resource kind;
 	// templates declare resources under spec.k8sResources and the applier
 	// reconciles whatever the renderer parsed out of them, with checksum dedup
 	// so unchanged resources don't hammer kube-api.
-	// RestrictToOwnNamespace=true gates the apply at the controller boundary as
-	// defense-in-depth on top of the chart's namespace-scoped Role RBAC.
+	// Cross-namespace SSA is allowed at the controller boundary; the security
+	// gate is the chart's RBAC (a misbehaving template still gets Forbidden
+	// when the granted Role/ClusterRole doesn't cover the target namespace).
 	ownNamespace := os.Getenv("POD_NAMESPACE")
 	if ownNamespace == "" {
 		ownNamespace = k8sClient.Namespace()
@@ -263,7 +264,7 @@ func createReconciliationComponents(
 		GVRResolver:            statusapplier.NewRestMapperResolver(),
 		Logger:                 logger,
 		OwnNamespace:           ownNamespace,
-		RestrictToOwnNamespace: true,
+		RestrictToOwnNamespace: false,
 		OwnerRef:               ownerRef,
 	})
 

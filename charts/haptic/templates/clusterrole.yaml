@@ -51,4 +51,23 @@ rules:
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxycfgs/status", "haproxygeneralfiles/status", "haproxycrtlistfiles/status", "haproxymapfiles/status"]
     verbs: ["update", "patch"]
+  {{- if .Values.controller.templateLibraries.gateway.enabled }}
+  # Cluster-wide Service write verbs for Gateway-API templates that emit
+  # owned Services in namespaces other than the controller's. The chart's
+  # gateway library uses this for the per-Gateway marker Service that
+  # carries `spec.infrastructure.{labels,annotations}` (the
+  # SupportGatewayInfrastructurePropagation conformance feature) — that
+  # Service must land in the Gateway's namespace where the upstream test
+  # discovers it via the `gateway.networking.k8s.io/gateway-name` label.
+  #
+  # The narrower namespace-scoped grant in templates/role.yaml stays in
+  # place for same-namespace emission (e.g. per-Gateway LoadBalancer
+  # Services for SupportGatewayStaticAddresses, which land in the
+  # controller's namespace alongside MetalLB). RBAC alone is the security
+  # gate — the resourceapplier accepts cross-namespace SSA, and the API
+  # server returns Forbidden when this rule isn't granted.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
 {{- end }}

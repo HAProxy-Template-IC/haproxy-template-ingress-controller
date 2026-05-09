@@ -5047,34 +5047,30 @@ templateSnippets:
             // LoadBalancer config — single Service per Gateway, both
             // features composed.
             //
-            // Architectural caveat: the chart's Role grants Service verbs
-            // *only in the controller's own namespace* (defense-in-depth
-            // alongside resourceapplier's RestrictToOwnNamespace=true), so
-            // the marker Service lands there rather than in the Gateway's
-            // namespace. The conformance test searches the Gateway's
-            // namespace, so it only finds the marker when the controller
-            // is colocated with the Gateway. This is the same trade-off
-            // the static-addresses pattern makes; cross-namespace owned
-            // resources require chart values + Go-config changes
-            // (cluster-scoped RBAC + RestrictToOwnNamespace=false) that
-            // are deliberately not wired by default.
+            // The marker Service lands in the Gateway's own namespace
+            // (where the upstream conformance test searches via the
+            // `gateway-name` discovery label). The chart's ClusterRole
+            // grants cluster-wide Service write verbs whenever the gateway
+            // library is enabled (templates/clusterrole.yaml), and the
+            // resourceapplier accepts cross-namespace SSA without a local
+            // gate — RBAC is the sole security boundary.
             var infra = dig(gateway, "spec", "infrastructure")
             var infraLabels = map[string]any{}
             var infraAnnotations = map[string]any{}
             if infra != nil {
               var rawLabels = dig(infra, "labels")
               if rawLabels != nil {
-                if m, ok := rawLabels.(map[string]any); ok {
-                  for k, v := range m {
-                    infraLabels[k] = tostring(v)
+                if mLbl, ok := rawLabels.(map[string]any); ok {
+                  for ilK, ilV := range mLbl {
+                    infraLabels[ilK] = tostring(ilV)
                   }
                 }
               }
               var rawAnnotations = dig(infra, "annotations")
               if rawAnnotations != nil {
-                if m, ok := rawAnnotations.(map[string]any); ok {
-                  for k, v := range m {
-                    infraAnnotations[k] = tostring(v)
+                if mAnn, ok := rawAnnotations.(map[string]any); ok {
+                  for iaK, iaV := range mAnn {
+                    infraAnnotations[iaK] = tostring(iaV)
                   }
                 }
               }
@@ -5085,6 +5081,7 @@ templateSnippets:
             // gateway-namespace label too so that operators auditing the
             // controller's owned set can see which Gateway each marker
             // refers to without a second lookup.
+            //
             var ownedLabels = map[string]any{
               "gateway.networking.k8s.io/gateway-name":      nameStr,
               "gateway.networking.k8s.io/gateway-namespace": nsStr,
@@ -5260,11 +5257,9 @@ templateSnippets:
                       // E.g. 192.168.1.1 → "192-168-1-1".
                       var ipSuffix = replace(ipStr, ".", "-")
                       var svcName = "gw-" + nsStr + "-" + nameStr + "-" + ipSuffix
-                      // Loop vars are `annK`/`annV` to avoid clobbering
-                      // outer-scope `k`/`v` (Scriggo's loop scope leaks).
                       var perIPAnnotations = map[string]any{}
-                      for annK, annV := range ownedAnnotations {
-                        perIPAnnotations[annK] = annV
+                      for k, v := range ownedAnnotations {
+                        perIPAnnotations[k] = v
                       }
                       perIPAnnotations["metallb.universe.tf/loadBalancerIPs"] = ipStr
                       gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
@@ -5319,50 +5314,49 @@ templateSnippets:
               }
             }
 
-            // Infrastructure-only marker Service.
+            // Per-Gateway marker Service for SupportGatewayInfrastructurePropagation.
             //
-            // When the Gateway declares spec.infrastructure but *not*
-            // spec.addresses, the static-addresses block above emits no
-            // Service. The conformance gateway-infrastructure test still
-            // expects a discoverable resource (ServiceAccount / Pod /
-            // Service labelled with `gateway-name`) carrying the
-            // infrastructure metadata, so we emit a minimal headless
-            // ClusterIP Service here purely to carry the labels and
-            // annotations.
+            // The conformance test searches the *Gateway's* namespace for
+            // a Service / Pod / ServiceAccount labelled
+            // `gateway.networking.k8s.io/gateway-name=<gw>` and asserts
+            // every infrastructure label/annotation appears on its
+            // metadata. Haptic's shared-HAProxy architecture has no
+            // per-Gateway Pods, so we emit a minimal headless ClusterIP
+            // Service in the Gateway's namespace purely to carry the
+            // metadata.
             //
-            // We deliberately *don't* emit when neither spec.addresses
-            // nor spec.infrastructure is set: a marker Service with no
-            // metadata to propagate would just be cluster noise, and the
-            // chart's shared-HAProxy architecture means the Service has
-            // no functional role.
+            // We deliberately *don't* emit when spec.infrastructure is
+            // unset: a marker with no metadata to propagate would just
+            // be cluster noise, and the chart's shared-HAProxy
+            // architecture means the Service has no functional role.
             //
-            // The emission is gated on the same RBAC + namespace
-            // invariants as the static-addresses Service: lands in the
-            // controller namespace, refused outside it by
-            // resourceapplier's RestrictToOwnNamespace=true.
-            if len(gwSpecAddrs) == 0 && hasInfra {
-              var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
-              if ctrlNs != "" {
-                var svcName = "gw-" + nsStr + "-" + nameStr
-                // Headless ClusterIP Service with a placeholder port. The
-                // chart's HAProxy is shared, so per-Gateway port wiring
-                // isn't meaningful here — the Service exists only to
-                // carry the metadata propagation. Selector intentionally
-                // empty: the Service has no endpoints, which matches the
-                // chart's architecture (no per-Gateway data plane).
-                //
-                // Stash spec into shared state keyed by `<ns>/<name>`. The
-                // `k8sResources.gateway-infrastructure-propagation`
-                // template reads it back and emits the Service after
-                // haproxy.cfg has rendered.
-                var gwInfraRaw, _ = shared.ComputeIfAbsent("gatewayInfrastructureServices", func() any { return map[string]any{} })
-                var gwInfra = gwInfraRaw.(map[string]any)
-                gwInfra[ctrlNs+"/"+svcName] = map[string]any{
-                  "namespace":   ctrlNs,
-                  "name":        svcName,
-                  "labels":      ownedLabels,
-                  "annotations": ownedAnnotations,
-                }
+            // The marker emits in *addition* to any static-address
+            // Services the block above produced. Static-address Services
+            // live in the controller namespace (where MetalLB allocates
+            // and the chart's namespace-scoped Role grants Service
+            // verbs), so they aren't reachable by the conformance test's
+            // Gateway-namespace search even when they carry the same
+            // metadata. The marker bridges that gap.
+            if hasInfra {
+              var svcName = "gw-" + nsStr + "-" + nameStr
+              // Headless ClusterIP Service with a placeholder port. The
+              // chart's HAProxy is shared, so per-Gateway port wiring
+              // isn't meaningful here — the Service exists only to
+              // carry the metadata propagation. Selector intentionally
+              // empty: the Service has no endpoints, which matches the
+              // chart's architecture (no per-Gateway data plane).
+              //
+              // Stash spec into shared state keyed by `<ns>/<name>`. The
+              // `k8sResources.gateway-infrastructure-propagation`
+              // template reads it back and emits the Service after
+              // haproxy.cfg has rendered.
+              var gwInfraRaw, _ = shared.ComputeIfAbsent("gatewayInfrastructureServices", func() any { return map[string]any{} })
+              var gwInfra = gwInfraRaw.(map[string]any)
+              gwInfra[nsStr+"/"+svcName] = map[string]any{
+                "namespace":   nsStr,
+                "name":        svcName,
+                "labels":      ownedLabels,
+                "annotations": ownedAnnotations,
               }
             }
 
@@ -15817,6 +15811,44 @@ validationTests:
       - type: haproxy_valid
         description: HAProxy config must be valid with infrastructure-labels Gateway
 
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'name: gw-gateway-conformance-infra-gateway-with-labels'
+        description: Marker Service is named gw-<gw-ns>-<gw-name>.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: gateway-conformance-infra'
+        description: |
+          Marker Service lands in the Gateway's own namespace (where the
+          upstream conformance test searches), not the controller's.
+
+      - type: not_contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: haptic-system'
+        description: |
+          Marker Service must NOT also land in the controller namespace —
+          static-address Services already carry the propagation there
+          when applicable; duplicating into the controller namespace
+          would just be cluster noise for the infrastructure-only case.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-labels'
+        description: |
+          Marker carries the discovery label the upstream conformance
+          test lists by.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'team: platform'
+        description: User-provided infrastructure label propagated.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'key2: value2'
+        description: Second user-provided infrastructure label propagated.
+
   test-gateway-infrastructure-propagation-annotations-only:
     description: Gateway with spec.infrastructure.annotations triggers marker Service emission and renders cleanly
     extraContext:
@@ -15861,6 +15893,29 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with infrastructure-annotations Gateway
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: gateway-conformance-infra'
+        description: |
+          Annotation-only marker Service also lands in the Gateway's
+          namespace — placement isn't conditional on label vs annotation
+          contents.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-annotations'
+        description: Discovery label present on the annotation-only marker.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'key1: value1'
+        description: User-provided infrastructure annotation propagated.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'example\.com/managed-by: gateway-controller'
+        description: Second user-provided infrastructure annotation propagated.
 
   test-gateway-static-addresses-per-ip-services:
     description: |
@@ -16021,6 +16076,27 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with combined infrastructure + spec.addresses Gateway
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'name: gw-default-pinned-gw'
+        description: |
+          Marker Service emits even when spec.addresses is set —
+          static-address Services live in the controller namespace
+          (where MetalLB allocates), so they aren't visible to the
+          conformance test's Gateway-namespace search.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: default'
+        description: Marker lands in the Gateway's namespace (`default`).
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'namespace: haptic-system'
+        description: |
+          Static-address Service still lands in the controller's
+          namespace (MetalLB IPAddressPool target).
 
   test-gateway-infrastructure-propagation-empty:
     description: Gateway without spec.infrastructure or spec.addresses skips marker Service emission and renders cleanly
