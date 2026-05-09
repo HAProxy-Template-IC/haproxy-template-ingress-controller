@@ -3690,6 +3690,27 @@ templateSnippets:
           {%- var gwPassthrough = gwVal.(map[string]any) %}
           {%- allBackends = gwPassthrough["backends"].([]any) %}
         {%- end %}
+        {#- Determine whether the chart-static HTTPS frontend or ssl-tcp
+            will bind the chart-static httpsPort. The two flags
+            (bindHTTPSDefault + len(passthroughBackends)>0) cover both
+            cases: bindHTTPSDefault gates the chart-static `bind *:httpsPort`
+            in mode-http; the ssl-tcp frontend renders only when
+            bindHTTPSDefault AND there's at least one passthrough
+            backend. If both are absent, the port is free for the new
+            TLS frontend to claim — which is what the upstream
+            TLSRouteTerminateSimpleSameNamespace fixture needs (a
+            Gateway with a TLS-Terminate listener on httpsPort and
+            nothing else competing for that port). -#}
+        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+        {%- var bindHTTPSDefault = tostring(dig(gf, "bindHTTPSDefault")) == "true" %}
+        {%- var hasPassthroughBackends = false %}
+        {%- var sslPB = dig(gf, "sslPassthroughBackends") %}
+        {%- if sslPB != nil %}
+          {%- if len(sslPB.([]any)) > 0 %}
+            {%- hasPassthroughBackends = true %}
+          {%- end %}
+        {%- end %}
+        {%- var chartStaticBindsHTTPSPort = bindHTTPSDefault || hasPassthroughBackends %}
         {#- Sort port keys for deterministic output. -#}
         {%- var portKeys = []any{} %}
         {%- for k, _ := range byPort %}
@@ -3708,15 +3729,20 @@ templateSnippets:
         {%- end %}
         {%- for _, portAny := range portKeys %}
           {%- var port = toint(portAny) %}
-          {#- Skip the chart-static HTTPS port — the existing
-              ssl-tcp frontend (in ssl.yaml) handles SSL passthrough
-              there and falls through to ssl-loopback for HTTPS
-              termination. Adding a second frontend on the same port
-              would conflict, and the chart's pre-Gateway-API contract
-              for that port (Ingress passthrough + HTTPS termination)
-              must be preserved. Operators who want strict TLS on the
-              default port set httpsPort to a different value. -#}
-          {%- if port != httpsPort %}
+          {#- Skip httpsPort only when the chart-static frontends
+              actually bind it (chart-static HTTPS in mode-http or
+              ssl-tcp for Ingress passthrough). When neither does,
+              the port is free for the new TLS frontend to claim —
+              this is what closes the upstream
+              TLSRouteTerminateSimpleSameNamespace fixture, where
+              the Gateway has only a TLS-Terminate listener on 8443
+              and nothing else competing for it.
+              When chart-static IS binding the port, we drop the
+              Gateway TLS listener silently here; in that scenario
+              the operator should either move the Gateway listener
+              off the chart-static port or override httpsPort via
+              extraContext. -#}
+          {%- if port != httpsPort || !chartStaticBindsHTTPSPort %}
             {%- var portEntry = byPort[port].(map[string]any) %}
             {%- var portMode = tostring(portEntry["mode"]) %}
             {#- Filter the route entries (Pass 2 output) to those
@@ -11689,6 +11715,134 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend gtw_default_grpc-route"
         description: Must generate backend for GRPCRoute
+
+  test-tlsroute-terminate-on-chart-static-httpsport:
+    description: |
+      Mirrors the upstream TLSRouteTerminateSimpleSameNamespace
+      conformance fixture: a Gateway with one TLS-Terminate listener
+      on port 8443 (which is also the chart's default httpsPort) and
+      nothing else competing for that port (no Ingress TLS, no
+      Gateway HTTPS listener, no SSL passthrough). The new TLS
+      frontend claims the port because the chart-static HTTPS frontend
+      and ssl-tcp would both render their port-8443 binds only when
+      `bindHTTPSDefault` is true (HTTPS listener present) or when
+      there's at least one passthrough backend — neither holds here.
+
+      Pins:
+        * `frontend gateway-tls-port-8443` exists with TLS termination.
+        * Chart-static HTTPS frontend does NOT bind 8443 (no
+          `bind *:8443 ssl ...` in the `frontend https` block).
+        * Chart-static ssl-tcp does NOT render at all (its gate is
+          `passthroughBackends > 0`, false here).
+        * Routing uses ssl_fc_sni for the Terminate-mode listener.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-terminate-default
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tlsterm
+                protocol: TLS
+                port: 8443
+                hostname: tls.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-terminate-default
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.7"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: |
+          HAProxy config must be valid (the chart-static + new TLS
+          frontend must coexist without conflicting on port 8443).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-8443$'
+        description: |
+          New TLS frontend claims port 8443 because the chart-static
+          frontends decline (no HTTPS listener, no passthrough
+          backends).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:8443 ssl crt-list '
+        description: |
+          New TLS frontend's bind terminates TLS on 8443 (this is
+          what the upstream TLSRouteTerminateSimpleSameNamespace
+          fixture exercises).
+
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:8443'
+        expected: "1"
+        description: |
+          Exactly one frontend binds 8443 — the new TLS frontend. The
+          chart-static HTTPS frontend and ssl-tcp do not also bind
+          8443 (they bind their own httpsPort, which the chart-test
+          framework defaults to 443; even if they DID try, the
+          chart-static-bind gate in frontends-600-gateway-tls-listener
+          would skip the new TLS frontend on a colliding port).
 
   test-tlsroute-invalid-backend-rejects-on-frontend:
     description: |

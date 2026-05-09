@@ -440,15 +440,21 @@ func TestGatewayAPIConformance(t *testing.T) {
 			//   * test-tlsroute-terminate-nondefault-port-frontend
 			//   * test-tlsroute-invalid-backend-rejects-on-frontend
 			//
-			// TLSRouteTerminateSimpleSameNamespace remains skipped:
-			// its fixture's listener uses port 8443 = chart's default
-			// httpsPort. Coexistence on the same port (chart-static
-			// HTTPS frontend in mode-http + new TLS frontend in
-			// mode-tcp) needs a chart-static-bind gate that's not
-			// in this commit set. Operators wanting the test to run
-			// today set httpsPort to a non-8443 value via extraContext.
-			// Tracked at <follow-up issue>.
-			"TLSRouteTerminateSimpleSameNamespace",
+			// (TLSRouteTerminateSimpleSameNamespace previously failed
+			// because the fixture's listener uses port 8443 = the
+			// chart's default httpsPort, and the chart-static
+			// frontends would either bind that port too (collision)
+			// or leave it unbound. The new
+			// frontends-600-gateway-tls-listener now reads the
+			// chart-static-bind state (bindHTTPSDefault + presence of
+			// passthrough backends) and only skips httpsPort when
+			// those flags would actually emit a chart-static bind.
+			// When neither does — exactly the fixture's case
+			// (TLS-Terminate listener alone, no Ingress TLS, no
+			// HTTPS Gateway listener) — the new TLS frontend claims
+			// httpsPort and terminates TLS there.
+			// Pinned by
+			// test-tlsroute-terminate-on-chart-static-httpsport.)
 			// HTTPRouteListenerPortMatching previously skipped on the
 			// 8080/8443 plumbing gap; lifted by the partial-SSA + open
 			// NetworkPolicy work, now passing.
