@@ -15010,3 +15010,326 @@ validationTests:
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with perPort AllowInsecureFallback override
+
+  test-gateway-frontend-client-cert-default-line-verify:
+    description: |
+      Mirrors the upstream Gateway API
+      GatewayFrontendClientCertificateValidation conformance fixture:
+      a Gateway with two HTTPS listeners on different ports — one with
+      no hostname (port 443, default frontend validation), one with
+      hostname `second-example.org` (port 8443, perPort override).
+      Both use the same Secret.
+
+      Pins the chart's crt-list emission so the default-cert line
+      (covers TLS handshakes whose SNI doesn't match a specific SNI
+      line) carries the gateway-default's `ca-file` + `verify` clause.
+      Without this, port 443 traffic with arbitrary SNI falls through
+      to the default crt-list line and HAProxy answers handshakes
+      without verifying the client cert — the upstream test exercises
+      exactly this path (it sends mismatched client certs to each port
+      and expects HAProxy to reject them).
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: client-validation-default
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            tls:
+              frontend:
+                default:
+                  validation:
+                    caCertificateRefs:
+                      - kind: ConfigMap
+                        group: ""
+                        name: tls-validity-checks-ca-certificate
+                perPort:
+                  - port: 8443
+                    tls:
+                      validation:
+                        caCertificateRefs:
+                          - kind: ConfigMap
+                            group: ""
+                            name: tls-validity-checks-per-port-ca-certificate
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - group: ""
+                      kind: Secret
+                      name: tls-validity-checks-certificate
+                      namespace: gateway-conformance-infra
+              - name: https-with-hostname
+                port: 8443
+                hostname: second-example.org
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - group: ""
+                      kind: Secret
+                      name: tls-validity-checks-certificate
+                      namespace: gateway-conformance-infra
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-validity-checks-certificate
+            namespace: gateway-conformance-infra
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: tls-validity-checks-ca-certificate
+            namespace: gateway-conformance-infra
+          data:
+            ca.crt: |
+              -----BEGIN CERTIFICATE-----
+              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+              hJoZ+gyfZqGArrz3WVM9
+              -----END CERTIFICATE-----
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: tls-validity-checks-per-port-ca-certificate
+            namespace: gateway-conformance-infra
+          data:
+            ca.crt: |
+              -----BEGIN CERTIFICATE-----
+              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+              hJoZ+gyfZqGArrz3WVM9
+              -----END CERTIFICATE-----
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with two-listener mTLS-per-port shape
+
+      # Default crt-list line carries the default-validation CA + verify.
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: '\[ocsp-update on ca-file [^ ]+ verify required\]'
+        description: |
+          Default crt-list line includes ca-file + verify directives
+          drawn from the gateway-level frontend.default.validation
+          config — covers TLS handshakes whose SNI doesn't match a
+          specific SNI line.
+
+      # SNI line for second-example.org carries the per-port override CA.
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'verify required\] second-example\.org'
+        description: |
+          The SNI line for `second-example.org` (the only listener with
+          a hostname) carries the per-port override CA's verify clause.
+
+  test-gateway-frontend-client-cert-insecure-fallback-default-line:
+    description: |
+      Variant of the previous test with mode: AllowInsecureFallback.
+      Same Gateway shape (two listeners, one per port; default vs.
+      perPort validation), but with InsecureFallback set on both.
+      The chart should emit `verify optional` (instead of `required`)
+      on both the default crt-list line and the per-port SNI line, so
+      HAProxy accepts requests with missing or non-matching client
+      certs while still propagating cert metadata to the backend when
+      a valid cert is presented. Pins the same conformance contract as
+      GatewayFrontendClientCertificateValidationInsecureFallback.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: client-validation-insecure
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            tls:
+              frontend:
+                default:
+                  validation:
+                    mode: AllowInsecureFallback
+                    caCertificateRefs:
+                      - kind: ConfigMap
+                        group: ""
+                        name: tls-validity-checks-ca-certificate
+                perPort:
+                  - port: 8443
+                    tls:
+                      validation:
+                        mode: AllowInsecureFallback
+                        caCertificateRefs:
+                          - kind: ConfigMap
+                            group: ""
+                            name: tls-validity-checks-per-port-ca-certificate
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - group: ""
+                      kind: Secret
+                      name: tls-validity-checks-certificate
+                      namespace: gateway-conformance-infra
+              - name: https-with-hostname
+                port: 8443
+                hostname: second-example.org
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - group: ""
+                      kind: Secret
+                      name: tls-validity-checks-certificate
+                      namespace: gateway-conformance-infra
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-validity-checks-certificate
+            namespace: gateway-conformance-infra
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      configmaps:
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: tls-validity-checks-ca-certificate
+            namespace: gateway-conformance-infra
+          data:
+            ca.crt: |
+              -----BEGIN CERTIFICATE-----
+              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+              hJoZ+gyfZqGArrz3WVM9
+              -----END CERTIFICATE-----
+        - apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: tls-validity-checks-per-port-ca-certificate
+            namespace: gateway-conformance-infra
+          data:
+            ca.crt: |
+              -----BEGIN CERTIFICATE-----
+              MIIDCzCCAfOgAwIBAgIUOaFEhrZTWgRilJ+HRB9hIBysOlMwDQYJKoZIhvcNAQEL
+              BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI1MTExOTE4MjU1MVoYDzIxMjUx
+              MDI2MTgyNTUxWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEB
+              AQUAA4IBDwAwggEKAoIBAQCX2HBp4WM+lR/Iyc/4LGMjPy4mGEqKUbnqhWQmOg1x
+              4ygFI32G25fXGWcgFmVh8bFReQqu0tgY6IJ9POgZgyxsaiH3zWA2/0nGDz5o7gXy
+              ygEKi7Ycs7lsE6x4cyK+kYhWofCMh2CrNK5eBW9QRxwSzbx3VDFjU/GuUZBtAUlH
+              DKwfBoFG4HshFCPyvcpnNSKmGpKL0gE2s3ALsy5jjb4i2zrBx82x4cxPeIB8KzrC
+              06oAupo2CuLZA1L2C+ePyRT4AlQPcN/iwZgj3+wxo/ZAIiLP+cWmF5uGWy6TDJ2l
+              6+aKaaNj1BUPVJLSuovXXB2g6jF1ulH3UV5XO2ULCVsRAgMBAAGjUzBRMB0GA1Ud
+              DgQWBBTGv/UXnggkJk+iNCtZqp1+SI/IhjAfBgNVHSMEGDAWgBTGv/UXnggkJk+i
+              NCtZqp1+SI/IhjAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3DQEBCwUAA4IBAQAK
+              3ot2A4rGNCXJndpy9iAkGTRy6IlBpLJRSIgRNZiYBE8HKeZu2GrgPb7WFT/TrZB6
+              nc28sV7laCC5yreU1xei/fcNYOHylqgAGiEbkvRmskXSwn0JQZjzT5iukhNmPdWD
+              IltmhBSqlfTlXTXk+c1YsyBkVCyMSNuFLwzd89KjreSllg19rTURiKG6FSJ6k0OI
+              kTMemg3DfZnWYK+Mfpqv9UH2RnPa1Relrxi3KMfhWHvol1yIUHggOH72A8ZGzxVL
+              Xx/OkI/0yz3PXo3LmRDjs33YJWK4S2dphZrKtLKhjpAHg256O3RSumgvwcic6UEc
+              hJoZ+gyfZqGArrz3WVM9
+              -----END CERTIFICATE-----
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with InsecureFallback two-listener shape
+
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: '\[ocsp-update on ca-file [^ ]+ verify optional\]'
+        description: |
+          Default crt-list line uses `verify optional` for
+          AllowInsecureFallback (HAProxy still asks for a cert but
+          accepts handshakes without one).
+
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: 'verify optional\] second-example\.org'
+        description: |
+          Per-port SNI line also carries `verify optional` when the
+          per-port override mode is AllowInsecureFallback.

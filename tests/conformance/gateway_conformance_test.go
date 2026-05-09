@@ -225,18 +225,30 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"GRPCRouteListenerHostnameMatching",
 			// Frontend mTLS handshake-level enforcement: the cert-
 			// registration TLS-mode-default fix lets the chart
-			// actually load the listener's cert (was silently
-			// skipped before); the chart-static port-443 listener
-			// now serves the right cert and "default TLS
-			// configuration" status checks pass. The per-port
-			// mTLS plumbing for non-default ports (e.g. 8443) is
-			// still incomplete — the chart's clientCertVerifyHosts
-			// map is keyed by listener hostname, not by listener
-			// (port + hostname), so two listeners with different
-			// per-port CA configs that share a hostname collide
-			// in the crt-list emission. Tracked at <follow-up issue>.
-			"GatewayFrontendClientCertificateValidation",
-			"GatewayFrontendClientCertificateValidationInsecureFallback",
+			// (GatewayFrontendClientCertificateValidation +
+			// GatewayFrontendClientCertificateValidationInsecureFallback
+			// previously failed because the default crt-list line was
+			// emitted as `cert.pem [ocsp-update on]` with no verify
+			// clause — so port-443 traffic whose SNI didn't match a
+			// specific SNI line fell through to the default and HAProxy
+			// answered handshakes without verifying the client cert.
+			// Fix: ssl.yaml now consumes
+			// `clientCertVerifyHosts["*"]` — the wildcard-SNI key that
+			// gateway.yaml's mTLS pass writes for any HTTPS listener
+			// without a hostname — and folds the matching `ca-file` +
+			// `verify <mode>` clause into the default crt-list line.
+			// Per-port specific-SNI lines (e.g. `second-example.org`)
+			// still carry their own verify clauses from the per-port
+			// override path, so AllowValidOnly + AllowInsecureFallback
+			// land the right verify mode at the right SNI level.
+			// Pinned by test-gateway-frontend-client-cert-default-line-verify
+			// + test-gateway-frontend-client-cert-insecure-fallback-default-line.)
+			//
+			// GatewayBackendClientCertificateFeature still requires
+			// distinct backend-side ssl-verify wiring (Gateway with
+			// `spec.backendTLS.clientCertificateRef` presents the
+			// cert when connecting upstream); that's not addressed by
+			// the frontend-side fix above. Tracked at <follow-up issue>.
 			"GatewayBackendClientCertificateFeature",
 			// (Dynamic NodePort plumbing landed: chart emits a
 			// gateway-listener-ports NodePort Service via
