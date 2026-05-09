@@ -178,7 +178,24 @@ templateSnippets:
         {%- var winner = keyMap[tostring(sortedKeys[0])] -%}
         {%- defaultCertFilename = tostring(winner["sanitized_filename"] | fallback(tostring(winner["secret_namespace"]) + "_" + tostring(winner["secret_name"]) + ".pem")) -%}
       {%- end -%}
-      {%- var crtlistLines = []any{tostring(defaultCertFilename) + " [ocsp-update on]"} -%}
+      {#- The default cert line covers TLS handshakes whose SNI doesn't
+          match any specific SNI line below. If a Gateway listener with
+          no hostname registered client-cert validation, that intent
+          lands in clientCertVerifyHosts["*"] (gateway.yaml's mTLS pass
+          uses "*" as the wildcard-SNI key). Apply that config to the
+          default line so port-N TLS handshakes whose SNI doesn't match
+          any per-listener hostname still get the right CA + verify
+          mode — closes the conformance gap where port 443 (no
+          listener hostname, default frontend validation) was answering
+          handshakes without client-cert verification. -#}
+      {%- var defaultLineOpts = "[ocsp-update on" -%}
+      {%- var defaultCfg = clientCertVerifyHosts["*"] -%}
+      {%- if defaultCfg != nil -%}
+        {%- var dCfg = defaultCfg.(map[string]any) -%}
+        {%- defaultLineOpts = defaultLineOpts + " ca-file " + tostring(dCfg["ca_path"]) + " verify " + tostring(dCfg["verify_mode"]) -%}
+      {%- end -%}
+      {%- defaultLineOpts = defaultLineOpts + "]" -%}
+      {%- var crtlistLines = []any{tostring(defaultCertFilename) + " " + defaultLineOpts} -%}
 
       {# Generate entries for each registered TLS certificate.
          Per-host client-cert verification (driven by the ingress
