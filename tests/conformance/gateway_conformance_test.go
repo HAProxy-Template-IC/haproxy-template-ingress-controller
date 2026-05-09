@@ -265,20 +265,27 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// namespace to be ready). Not chart logic — environment race
 			// in the test framework's namespace setup. Tracked at <follow-up issue>.
 			"GatewayInfrastructure",
-			// ListenerSet conflict detection requires F3 status patches
-			// to read util-effective-listeners' shared cache, but the
-			// cache write inside util-effective-listeners' nested
-			// ComputeIfAbsent races against F3's read in Scriggo's
-			// parallel-render goroutines. The inline-fallback in F3
-			// (commit a93d2bad) handles basic Accepted/NotAllowed but
-			// can't synthesize per-listener conflict state without
-			// cross-LS context. Fixing this needs F3 to do its own
-			// conflict-detection pass over all ListenerSets before
-			// emitting per-LS status — substantial refactor, out of
-			// scope for the current chart-side fix run. Tracked at
-			// <follow-up issue>.
-			"ListenerSetHostnameConflict",
-			"ListenerSetProtocolConflict",
+			// (ListenerSetHostnameConflict / ListenerSetProtocolConflict
+			// previously failed for two reasons:
+			//   1. util-effective-listeners populated `listenersetStatuses`
+			//      via a nested ComputeIfAbsent, and F3's read raced
+			//      against the write under Scriggo's parallel-render
+			//      goroutines. Folded the per-LS statuses into the
+			//      single `effectiveListeners` cache value (sub-key
+			//      `statuses`) so "cache populated" implies "statuses
+			//      populated"; F3 reads the unified value.
+			//   2. Candidate listener entries stashed source provenance
+			//      in a nested `_source` map with literal keys
+			//      "kind"/"namespace"/"name" — Scriggo mis-evaluated
+			//      these later in the closure (the keys got rebound to
+			//      the listener's own field names like "protocol" or
+			//      "hostname"), so the surface loop's lsKey lookup
+			//      missed every entry and conflict info never landed in
+			//      statuses[lsKey]. Switched to flat keys
+			//      __sourceKind / __sourceNs / __sourceName.
+			// Pinned by test-listenerset-hostname-conflict-conformance-shape
+			// (7 assertions covering all four LSes' top-level + per-listener
+			// conditions on the upstream fixture).
 			// (ListenerSetHTTPRouting previously failed because the
 			// listenersets watchedResource was indexed on
 			// `[namespace, spec.parentRef.name]` instead of the

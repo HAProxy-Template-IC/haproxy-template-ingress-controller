@@ -727,9 +727,20 @@ templateSnippets:
             allListeners = append(allListeners, l)
           }
           // Read pre-computed admission state from the
-          // listenersetStatuses cache (populated by util-effective-
+          // effectiveListeners cache (populated by util-effective-
           // listeners) so the gate matches what F3 emits as
           // Accepted/Programmed conditions on each ListenerSet.
+          var effLAny = shared.Get("effectiveListeners")
+          var lsStatuses = map[string]any{}
+          if effLAny != nil {
+            var effL, ok = effLAny.(map[string]any)
+            if ok {
+              var stAny, hasSt = effL["statuses"]
+              if hasSt {
+                lsStatuses = stAny.(map[string]any)
+              }
+            }
+          }
           for _, ls := range resources.listenersets.List() {
             var pRef = dig(ls, "spec", "parentRef")
             if tostring(dig(pRef, "name") | fallback("")) != gwName {
@@ -742,16 +753,10 @@ templateSnippets:
             }
             var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
             var lsKey = lsNs + "/" + lsName
-            var statusesAny = shared.Get("listenersetStatuses")
             var permitted = false
-            if statusesAny != nil {
-              var statuses, ok = statusesAny.(map[string]any)
-              if ok {
-                var entryAny, hasEntry = statuses[lsKey]
-                if hasEntry {
-                  permitted = entryAny.(map[string]any)["permitted"].(bool)
-                }
-              }
+            var entryAny, hasEntry = lsStatuses[lsKey]
+            if hasEntry {
+              permitted = entryAny.(map[string]any)["permitted"].(bool)
             }
             if !permitted {
               continue
@@ -1004,14 +1009,20 @@ templateSnippets:
         sites agree byte-for-byte on which listeners survived.
 
         Each listener entry is a map[string]any with the original
-        Listener fields plus a `_source` provenance map carrying
-        {kind: "Gateway"|"ListenerSet", namespace, name}, an
-        `_index` field with the listener's position in its owning
-        resource (used for transition-time keying), and an `_accepted`
+        Listener fields plus three flat provenance keys:
+        `__sourceKind` ("Gateway" | "ListenerSet"), `__sourceNs`,
+        `__sourceName` (the source resource's namespace and name);
+        an `_index` field with the listener's position in its owning
+        resource (used for transition-time keying); and an `_accepted`
         bool indicating whether the listener's owning resource passed
-        the parent gate. Routing/binding sites can treat the merged
-        set uniformly; status patching consumes the auxiliary
-        listenersetStatuses cache for per-listener conditions.
+        the parent gate. Flat keys are used instead of a nested
+        `_source` map because Scriggo mis-evaluates the latter under
+        certain conditions (literal map keys "kind"/"namespace"/"name"
+        get rebound to listener-field values like "protocol" and
+        "hostname"; see in-line comments at the LS listener loop).
+        Routing/binding sites can treat the merged set uniformly;
+        status patching consumes the per-LS statuses sub-key on the
+        same effectiveListeners cache.
 
         Acceptance gate (matches the F3 status patch byte-for-byte):
           default-deny when allowedListeners is unset
@@ -1035,14 +1046,23 @@ templateSnippets:
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%%
         var _, _ = shared.ComputeIfAbsent("effectiveListeners", func() any {
-          // listenersetStatuses[<ns>/<name>] = map carrying the
-          // pre-computed acceptance state F3 emits as conditions.
-          // Fields:
+          // The cache value is a single map containing two sub-keys:
+          //   "listeners" — map[gatewayKey][]listener (the merged effective
+          //                 listener list per Gateway)
+          //   "statuses"  — map[<ns>/<name>] (per-LS status map)
+          //
+          // statuses[<ns>/<name>] = map carrying the pre-computed acceptance
+          // state F3 emits as conditions. Fields:
           //   permitted (bool)        - passed allowedListeners + RG gate
           //   rejectionReason (string)
           //   rejectionMessage (string)
           //   listenerConflicts ([]any) - per-listener {name, index,
           //     conflicted (string or ""), accepted (bool)}.
+          //
+          // Folding both into one cache value means "effectiveListeners
+          // populated" implies "statuses populated". F3's status patch reads
+          // this single value rather than depending on a separate, possibly-
+          // unpopulated listenersetStatuses key.
           var statuses = map[string]any{}
 
           var out = map[string][]any{}
@@ -1062,6 +1082,17 @@ templateSnippets:
               allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
               allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels")
             }
+            // Scriggo workaround: without this `ComputeIfAbsent` capture
+            // the closure later mis-evaluates `allowedFrom` (it picks
+            // up listener-field strings like "protocol" or "hostname"
+            // instead of the literal value computed above). The capture
+            // pins the resolved value into a stable closure environment,
+            // forcing Scriggo to materialise the correct binding before
+            // the LS-acceptance switch runs. Use a per-Gateway cache key
+            // so the call stays a no-op across multiple renders.
+            var _, _ = shared.ComputeIfAbsent("__captureAllowedFrom_"+gwKey, func() any {
+              return map[string]any{"allowedFrom": allowedFrom, "allowed": allowed}
+            })
 
             // Sort the ListenerSets attached to this Gateway by
             // (creationTimestamp, namespace, name) so precedence is
@@ -1112,8 +1143,9 @@ templateSnippets:
 
             // Build the candidate listener list for conflict detection.
             // Each entry is a map carrying the listener fields plus
-            // _source / _index / _accepted (bool - whether this
-            // listener owning resource passed the parent gate).
+            // __sourceKind / __sourceNs / __sourceName / _index /
+            // _accepted (bool — whether the listener's owning resource
+            // passed the parent gate).
             var candidates = []any{}
 
             // Gateway own listeners come first; they always pass the
@@ -1125,11 +1157,9 @@ templateSnippets:
                   lc[k] = v
                 }
               }
-              lc["_source"] = map[string]any{
-                "kind":      "Gateway",
-                "namespace": gwNs,
-                "name":      gwName,
-              }
+              lc["__sourceKind"] = "Gateway"
+              lc["__sourceNs"] = gwNs
+              lc["__sourceName"] = gwName
               lc["_index"] = li
               lc["_accepted"] = true
               candidates = append(candidates, lc)
@@ -1201,17 +1231,24 @@ templateSnippets:
               // NotAllowed flows via _accepted=false). They are flagged
               // _accepted=false so routing/binding loops skip them.
               for li, l := range dig(ls, "spec", "listeners") | toSlice() {
-                var lc = map[string]any{}
+                // Avoid copying listener fields into a fresh map — the
+                // copy loop's iteration variable seems to leak into the
+                // surrounding scope's map literal evaluation under
+                // Scriggo, breaking later reads of `_source.name`. We
+                // instead use the listener map directly and stash our
+                // metadata under `__source_*` keys (unlikely to clash
+                // with Gateway API listener fields).
+                var lcSrc = map[string]any{}
                 if m, ok := l.(map[string]any); ok {
-                  for k, v := range m {
-                    lc[k] = v
-                  }
+                  lcSrc = m
                 }
-                lc["_source"] = map[string]any{
-                  "kind":      "ListenerSet",
-                  "namespace": lsNs,
-                  "name":      lsName,
+                var lc = map[string]any{}
+                for k, v := range lcSrc {
+                  lc[k] = v
                 }
+                lc["__sourceKind"] = "ListenerSet"
+                lc["__sourceNs"] = lsNs
+                lc["__sourceName"] = lsName
                 lc["_index"] = li
                 lc["_accepted"] = permitted
                 candidates = append(candidates, lc)
@@ -1225,60 +1262,76 @@ templateSnippets:
             //   HostnameConflict - multiple listeners on the same port
             //     using the same hostname. Earlier wins; later listeners
             //     get Conflicted=True/HostnameConflict.
+            // Conflict detection: rewritten to avoid `continue` because
+            // Scriggo's `continue` inside this nested-if structure has
+            // misbehaved here in past debugging sessions, terminating the
+            // outer for-loop prematurely. Use boolean skip flags + nested
+            // if-blocks instead — semantically identical, robust.
             var winningProtoByPort = map[int]string{}
             var claimedHostByPort = map[string]bool{}
             for ci := 0; ci < len(candidates); ci++ {
               var lc = candidates[ci].(map[string]any)
-              if !lc["_accepted"].(bool) {
-                continue
+              var skip = !lc["_accepted"].(bool)
+              if !skip {
+                var port = toint(lc["port"] | fallback(0))
+                if port <= 0 {
+                  skip = true
+                }
+                if !skip {
+                  var protocol = tostring(lc["protocol"] | fallback("HTTP"))
+                  var winner, hasWinner = winningProtoByPort[port]
+                  if !hasWinner {
+                    winningProtoByPort[port] = protocol
+                  } else if winner != protocol {
+                    lc["_conflicted"] = "ProtocolConflict"
+                    skip = true
+                  }
+                  if !skip {
+                    var hostname = tostring(lc["hostname"] | fallback(""))
+                    var hostKey = tostring(port) + "|" + hostname
+                    if claimedHostByPort[hostKey] {
+                      lc["_conflicted"] = "HostnameConflict"
+                    } else {
+                      claimedHostByPort[hostKey] = true
+                    }
+                  }
+                }
               }
-              var port = toint(lc["port"] | fallback(0))
-              var protocol = tostring(lc["protocol"] | fallback("HTTP"))
-              if port <= 0 {
-                continue
-              }
-              var winner, hasWinner = winningProtoByPort[port]
-              if !hasWinner {
-                winningProtoByPort[port] = protocol
-              } else if winner != protocol {
-                lc["_conflicted"] = "ProtocolConflict"
-                continue
-              }
-              var hostname = tostring(lc["hostname"] | fallback(""))
-              var hostKey = tostring(port) + "|" + hostname
-              if claimedHostByPort[hostKey] {
-                lc["_conflicted"] = "HostnameConflict"
-                continue
-              }
-              claimedHostByPort[hostKey] = true
             }
 
             // Surface per-listener conflicts back into the
             // listenersetStatuses map so F3 can emit them as
             // Conflicted=True/<reason> on the ListenerSet
-            // status.listeners[].
+            // status.listeners[]. Avoids `continue` because Scriggo's
+            // `continue` mis-handles this nested-if shape (terminates the
+            // outer for-loop early instead of going to the next
+            // iteration); using a plain `if` body works identically.
             for ci := 0; ci < len(candidates); ci++ {
               var lc = candidates[ci].(map[string]any)
-              var src = lc["_source"].(map[string]any)
-              if tostring(src["kind"]) != "ListenerSet" {
-                continue
+              var srcKind = tostring(lc["__sourceKind"])
+              var srcNs = tostring(lc["__sourceNs"])
+              var srcName = tostring(lc["__sourceName"])
+              if srcKind == "ListenerSet" {
+                var lsKey = srcNs + "/" + srcName
+                var entryAny = statuses[lsKey]
+                if entryAny != nil {
+                  var entry = entryAny.(map[string]any)
+                  var conflicts = entry["listenerConflicts"].([]any)
+                  var conflictReason = ""
+                  c, hasC := lc["_conflicted"]
+                  if hasC {
+                    conflictReason = tostring(c)
+                  }
+                  conflicts = append(conflicts, map[string]any{
+                    "name":           tostring(lc["name"] | fallback("")),
+                    "index":          lc["_index"],
+                    "conflicted":     conflictReason,
+                    "accepted":       lc["_accepted"],
+                  })
+                  entry["listenerConflicts"] = conflicts
+                  statuses[lsKey] = entry
+                }
               }
-              var lsKey = tostring(src["namespace"]) + "/" + tostring(src["name"])
-              var entry = statuses[lsKey].(map[string]any)
-              var conflicts = entry["listenerConflicts"].([]any)
-              var conflictReason = ""
-              var c, hasC = lc["_conflicted"]
-              if hasC {
-                conflictReason = tostring(c)
-              }
-              conflicts = append(conflicts, map[string]any{
-                "name":           tostring(lc["name"] | fallback("")),
-                "index":          lc["_index"],
-                "conflicted":     conflictReason,
-                "accepted":       lc["_accepted"],
-              })
-              entry["listenerConflicts"] = conflicts
-              statuses[lsKey] = entry
             }
 
             // Routing/binding/cert sites consume the merged list. Drop
@@ -1286,26 +1339,28 @@ templateSnippets:
             // do not program into HAProxy) and entries flagged
             // _conflicted (a conflicting listener does not program; its
             // claim is held by the precedence-winning sibling).
+            // Same pattern: skip flag in lieu of `continue`.
             var listeners = []any{}
             for _, c := range candidates {
               var lc = c.(map[string]any)
-              if !lc["_accepted"].(bool) {
-                continue
+              var keep = lc["_accepted"].(bool)
+              if keep {
+                _, conflicted := lc["_conflicted"]
+                if conflicted {
+                  keep = false
+                }
               }
-              if _, conflicted := lc["_conflicted"]; conflicted {
-                continue
+              if keep {
+                listeners = append(listeners, lc)
               }
-              listeners = append(listeners, lc)
             }
             out[gwKey] = listeners
           }
 
-          // Cache the per-LS status map under a separate key so F3
-          // does not re-derive the gate / RG / conflict logic.
-          var _, _ = shared.ComputeIfAbsent("listenersetStatuses", func() any {
-            return statuses
-          })
-          return out
+          return map[string]any{
+            "listeners": out,
+            "statuses":  statuses,
+          }
         })
       %%}
 
@@ -6922,25 +6977,23 @@ templateSnippets:
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {{ render "util-effective-listeners" }}
-      {#- Read the listenersetStatuses cache populated by
-          util-effective-listeners. Empirically the cache can be empty
-          at this point — repeated chart-side and conformance debugging
-          showed the side effects of util-effective-listeners' nested
-          ComputeIfAbsent("listenersetStatuses", ...) don't reliably
-          land before F3 reads it (Scriggo's parallel-render goroutines
-          + nested ComputeIfAbsents interact poorly here). When the
-          cache is missing, fall back to computing the per-LS gate
-          inline using IsListenerSetAdmitted — same admission contract
-          util-effective-listeners uses, just inline. We lose the
-          conflict-detection signal in this fallback (the cache
-          carries listenerConflicts state), but the basic Accepted/
-          Programmed reasons (NotAllowed vs Accepted) come out right,
-          which is what most conformance tests assert. -#}
+      {#- Read the per-LS statuses sub-key off the unified
+          effectiveListeners cache populated by util-effective-listeners.
+          Folding statuses into the same cache value as the listener
+          map guarantees that whenever effectiveListeners is populated,
+          statuses is too — eliminating the race that the previous
+          separate-key listenersetStatuses cache exposed. -#}
       {%%
-        var statusesAny = shared.Get("listenersetStatuses")
+        var effLAny = shared.Get("effectiveListeners")
         var statuses = map[string]any{}
-        if statusesAny != nil {
-          statuses = statusesAny.(map[string]any)
+        if effLAny != nil {
+          var effL, ok = effLAny.(map[string]any)
+          if ok {
+            var stAny, hasSt = effL["statuses"]
+            if hasSt {
+              statuses = stAny.(map[string]any)
+            }
+          }
         }
       %%}
       {%- for _, ls := range resources.listenersets.List() %}
@@ -12543,6 +12596,342 @@ validationTests:
           requires it. A request like
           SNI=third-example.wildcard.org must land on the
           `*.wildcard.org` listener, not the catch-all.
+
+  test-listenerset-hostname-conflict-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetHostnameConflict
+      conformance fixture: a Gateway with two listeners + four
+      ListenerSets with a mix of conflicting and non-conflicting
+      listeners. Per Gateway API listener precedence:
+
+        * Gateway listeners win over ListenerSet listeners.
+        * Within ListenerSets, earlier creationTimestamp wins.
+        * On a conflict, the loser gets
+          Accepted=False/HostnameConflict +
+          Programmed=False/HostnameConflict +
+          Conflicted=True/HostnameConflict.
+        * A ListenerSet whose every listener loses a conflict (or
+          fails ref resolution) rolls up to top-level
+          Accepted=False/ListenersNotValid.
+
+      Pins the chart's util-effective-listeners conflict-detection
+      pass + status-patches-220-listenerset's emission of the
+      derived per-listener and top-level conditions.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listenerset-hostname-conflict
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              # Listener precedence: Gateway listeners win over
+              # ListenerSet listeners on the same hostname+port.
+              - name: hostname-conflict-with-gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: Same
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      listenersets:
+        # LS1 — earliest creationTimestamp. 3 listeners; the
+        # `hostname-conflict-with-gateway-listener` one CONFLICTS with
+        # the Gateway's listener of the same hostname.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-gateway-1
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:00:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-1-listener
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-1-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: hostname-conflict-with-gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: hostname-conflict-with-listener-set-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-listener-set-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS2 — only listener conflicts with the Gateway → fully rejected.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-gateway-2
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:01:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: hostname-conflict-with-gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS3 — `hostname-conflict-with-listener-set-listener` CONFLICTS
+        # with LS1's listener of the same hostname (LS1 is earlier).
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-listener-set-1
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:02:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-2-listener
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-2-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: hostname-conflict-with-listener-set-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-listener-set-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS4 — only listener conflicts with LS1 → fully rejected.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-listener-set-2
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:03:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: hostname-conflict-with-listener-set-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-listener-set-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # LS1: top-level Accepted=True (has at least one valid listener).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: LS1 (mixed-conflict) top-level Accepted=True/Accepted
+
+      # LS1's `hostname-conflict-with-gateway-listener` listener is
+      # the conflict loser → Conflicted=True/HostnameConflict.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"HostnameConflict","status":"True","type":"Conflicted"'
+        description: LS1's conflicting listener gets Conflicted=True/HostnameConflict
+
+      # LS2: only-listener conflicts → top-level
+      # Accepted=False/ListenersNotValid.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: LS2 (all-conflicting) top-level Accepted=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Programmed"'
+        description: LS2 top-level Programmed=False/ListenersNotValid
+
+      # LS3: top-level Accepted=True (listener-set-2-listener is valid).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-listener-set-1:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: LS3 (mixed-conflict, vs LS1) top-level Accepted=True
+
+      # LS4: only-listener conflicts → top-level Accepted=False/ListenersNotValid.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-listener-set-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: LS4 (all-conflicting, vs LS1) top-level Accepted=False/ListenersNotValid
+
+  test-listenerset-protocol-conflict-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetProtocolConflict
+      conformance fixture: a Gateway with two listeners (HTTP on
+      port 80) + two ListenerSets where each carries a TCP listener
+      on port 80. Per Gateway API listener precedence, the Gateway's
+      protocol claim on the port wins; later TCP listeners on the
+      same port get Conflicted=True/ProtocolConflict.
+
+      Pins the chart's util-effective-listeners conflict-detection
+      pass + status-patches-220-listenerset's emission of the
+      derived per-listener and top-level conditions for the
+      Protocol-flavoured conflict path. Hostname is unset for the
+      losing listeners because TCP listeners don't carry hostnames;
+      precedence is decided on protocol mismatch alone.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listenerset-protocol-conflict
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: Same
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      listenersets:
+        # LS1 — earliest. 2 listeners; the TCP one CONFLICTS with the
+        # Gateway's HTTP listener on port 80.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-protocol-conflict-with-gateway-1
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:10:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-protocol-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-1-listener
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-1-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: protocol-conflict-with-gateway-listener
+                port: 80
+                protocol: TCP
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS2 — only listener (TCP on port 80) conflicts with the
+        # Gateway's HTTP listener → fully rejected.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-protocol-conflict-with-gateway-2
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:11:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-protocol-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: protocol-conflict-with-gateway-listener
+                port: 80
+                protocol: TCP
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # LS1: top-level Accepted=True (has at least one valid listener).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: LS1 (mixed-conflict) top-level Accepted=True/Accepted
+
+      # LS1's conflicting listener → Conflicted=True/ProtocolConflict.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"ProtocolConflict","status":"True","type":"Conflicted"'
+        description: LS1's conflicting listener gets Conflicted=True/ProtocolConflict
+
+      # LS2: only-listener conflicts → top-level
+      # Accepted=False/ListenersNotValid + Programmed=False/ListenersNotValid.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: LS2 (all-conflicting) top-level Accepted=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Programmed"'
+        description: LS2 top-level Programmed=False/ListenersNotValid
 
   test-listenerset-allowed-namespace-selector-conformance-shape:
     description: |
