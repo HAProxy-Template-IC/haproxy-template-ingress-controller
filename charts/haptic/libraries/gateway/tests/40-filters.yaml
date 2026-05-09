@@ -11,18 +11,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -82,18 +70,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -153,18 +129,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -289,18 +253,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -377,18 +329,6 @@ validationTests:
               - name: http
                 port: 80
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: backend
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -480,18 +420,6 @@ validationTests:
               - name: http
                 port: 80
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: backend
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -583,29 +511,6 @@ validationTests:
               - name: http
                 port: 8080
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-v1-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: backend-v1
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-v2-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: backend-v2
-          endpoints:
-            - addresses: ["10.0.2.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -686,18 +591,6 @@ validationTests:
             ports:
               - port: 8080
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: infra-backend-v1-abc
-            namespace: gateway-conformance-infra
-            labels:
-              kubernetes.io/service-name: infra-backend-v1
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -773,18 +666,6 @@ validationTests:
             ports:
               - port: 8080
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: backend-svc
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute

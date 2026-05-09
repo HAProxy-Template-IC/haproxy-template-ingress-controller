@@ -994,19 +994,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: ff-svc-abc
-            labels:
-              kubernetes.io/service-name: ff-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1436,16 +1423,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: echo }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: echo-abc
-            labels: { kubernetes.io/service-name: echo }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
