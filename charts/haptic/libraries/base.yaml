@@ -1120,14 +1120,89 @@ haproxyConfig:
     {%- var gf = shared.Get("globalFeatures") -%}
     {%- if gf != nil && tostring(gf.(map[string]any) | dig("needHTTPFrontend")) == "true" %}
 
-    frontend http_frontend
-        guid fe:http_frontend
+    {# ─────────────────────────────────────────────────────────────────
+       HTTP listener architecture: tcp inspector + dual loopback frontends.
+
+       To multiplex HTTP/1.1 and HTTP/2 cleartext (h2c) on the same plain
+       port, we mirror the chart's existing ssl-tcp → ssl-loopback → https
+       chain (libraries/ssl.yaml ~lines 367-536). HAProxy 3.x can't
+       multiplex h2c with HTTP/1.1 on a single bind: `proto h2` locks the
+       bind H2-only, no `Upgrade: h2c` parser, ALPN works only inside TLS.
+       So we inspect the first 24 bytes at a `mode tcp` outer frontend
+       (the HTTP/2 prior-knowledge preface
+       `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` — what gRPC-Go's insecure dial
+       sends, and what the upstream Gateway-API GRPCRoute conformance
+       suite exercises) and route to one of two unix-socket-bound inner
+       frontends in `mode http`. PROXY-protocol v2 across the hop
+       preserves the original client IP. The two inner frontends share
+       the same routing logic via the same render_glob extension points,
+       so any chart snippet that emits HTTP-level directives lands in
+       both protocols' paths.
+
+       The cost is ~10µs/request for a unix-socket roundtrip, which is
+       invisible against typical backend latency. Plain HTTP carries
+       little real-world edge traffic post-HSTS, so this trade-off is
+       cheap; the upside is full Gateway-API conformance for GRPCRoutes
+       attached to plaintext HTTP listeners.
+    -#}
+
+    frontend http-tcp
+        guid fe:http-tcp
+        mode tcp
         {%- if tostring(gf.(map[string]any) | dig("bindHTTPDefault")) == "true" %}
         bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
         {%- end %}
-        {# Extension point for additional bind directives (Gateway listener ports, etc.). #}
-        {# Only fires inside the HTTP frontend; ssl.yaml has its own https-bind-extra-* hook. #}
+        {# Extension point for additional bind directives (Gateway HTTP listener ports). #}
+        {# Lands on the OUTER tcp frontend so every HTTP port — chart-static and #}
+        {# Gateway-derived — goes through the same h2c-detection inspector. #}
         {{- render_glob "http-bind-extra-*" | indent(2, true) }}
+
+        # Wait up to 1s for the first wire bytes so the byte-preface ACL
+        # can decide. Both protocols deliver first bytes immediately on
+        # well-behaved clients; the delay is the safety net for slow
+        # initial sends, not the common path.
+        tcp-request inspect-delay 1s
+
+        # h2c prior-knowledge preface: PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
+        # (24 bytes). The hex below is the byte-exact match.
+        # gRPC-Go's insecure dial uses prior-knowledge by default; HAProxy
+        # can't parse Upgrade: h2c, so the wire-byte preface is the only
+        # signal available in mode tcp. The conformance suite's
+        # vendor/sigs.k8s.io/gateway-api/conformance/utils/grpc/grpc.go
+        # uses insecure.NewCredentials() unconditionally — every
+        # GRPCRoute test exercises this path.
+        acl is_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+
+        # Accept as soon as we have 24 bytes (enough for the preface
+        # decision) — fast path for both protocols. Fall through to
+        # WAIT_END for slow initial sends (HTTP/1.1 minimal requests
+        # under 24 bytes — rare in practice but possible).
+        tcp-request content accept if { req.len ge 24 }
+        tcp-request content accept if WAIT_END
+
+        use_backend http-h2c-loopback if is_h2c
+        default_backend http-h1-loopback
+
+    backend http-h1-loopback
+        guid be:http-h1-loopback
+        mode tcp
+        # send-proxy-v2 mirrors the existing ssl-loopback pattern
+        # (libraries/ssl.yaml ~line 460); preserves original client IP
+        # and port across the unix-socket hop.
+        server loopback unix@/etc/haproxy/http-h1-frontend.sock send-proxy-v2
+
+    backend http-h2c-loopback
+        guid be:http-h2c-loopback
+        mode tcp
+        server loopback unix@/etc/haproxy/http-h2c-frontend.sock send-proxy-v2
+
+    frontend http_frontend
+        guid fe:http_frontend
+        mode http
+        # accept-proxy parses the PROXY v2 header from http-h1-loopback's
+        # send-proxy-v2, so `src` and request logging see the original
+        # client. Mode 660 matches ssl-frontend.sock for consistency.
+        bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
         {{- render_glob "frontend-extra-*" | indent(2, true) }}
@@ -1143,6 +1218,24 @@ haproxyConfig:
         use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
 
         # Default backend
+        default_backend default_backend
+
+    frontend http_frontend_h2c
+        guid fe:http_frontend_h2c
+        mode http
+        # `proto h2` locks this bind to HTTP/2 cleartext — required because
+        # HAProxy can't auto-detect h2c on plaintext binds. The outer tcp
+        # inspector has already classified the connection by preface, so
+        # only h2c traffic reaches this socket.
+        bind unix@/etc/haproxy/http-h2c-frontend.sock mode 660 accept-proxy proto h2
+        {# Same render_glob extension points as the h1 sibling — every #}
+        {# routing/filter snippet lands in both protocols' frontends so #}
+        {# behaviour stays in lockstep regardless of which protocol the #}
+        {# client uses. #}
+        {{- render_glob "frontend-extra-*" | indent(2, true) }}
+        {{ render "frontend-routing-logic" | indent(2, true) }}
+        {{- render_glob "frontend-filters-*" | indent(2, true) }}
+        use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
         default_backend default_backend
     {%- end %}
 
