@@ -409,13 +409,22 @@ templateSnippets:
           # but NOT the bare `example.com`, so the `.` prefix in the
           # `-m end` literal preserves the single-label-required rule
           # (anything ending in `.example.com`).
+          {# Filter to Passthrough-mode entries only — the
+             gateway-ssl-passthrough builder now also emits Terminate
+             entries (consumed by frontends-600-gateway-tls-listener for
+             the per-port mode-tcp frontends with TLS termination).
+             Ingress entries don't carry `mode`, so an empty/missing
+             value defaults to Passthrough behaviour for back-compat. #}
           {% for _, backend := range passthroughBackends -%}
           {%- var b map[string]any = backend %}
+          {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
+          {%- if bMode == "Passthrough" %}
           {%- var sni = tostring(b["sni"]) %}
           {%- if hasPrefix(sni, "*.") %}
           use_backend {{ b["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }
           {%- else %}
           use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ sni }} }
+          {%- end %}
           {%- end %}
           {%- end %}
 
