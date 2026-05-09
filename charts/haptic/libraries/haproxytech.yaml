@@ -17,34 +17,6 @@ templateSnippets:
   # ============================================================================
   # Annotation Helpers
   # ============================================================================
-
-  util-haproxytech-helpers:
-    template: |
-      {#- Annotation processing helpers -#}
-
-      {#- Gets haproxy.org/<name> annotation with default -#}
-      {% macro Ann(ingress any, name string, def string) string %}
-        {%% show ingress | dig("metadata", "annotations", "haproxy.org/" + name) | fallback(def) | tostring() %%}
-      {% end %}
-
-      {#- Gets Ingress key as ns/name -#}
-      {% macro IKey(ingress any) string %}
-        {%% show (ingress | dig("metadata", "namespace") | fallback("")) + "/" + (ingress | dig("metadata", "name") | fallback("")) %%}
-      {% end %}
-
-      {#- Extracts hosts from Ingress rules -#}
-      {% macro IHosts(ingress any) []any %}
-        {%%
-          var hosts = []any{}
-          for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
-            if h := rule | dig("host"); h != nil {
-              hosts = append(hosts, h)
-            }
-          }
-          show hosts
-        %%}
-      {% end %}
-
   util-haproxytech-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations.

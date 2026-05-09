@@ -354,16 +354,6 @@ templateSnippets:
       {%- end %}
 
   # Global OCSP configuration - enables automatic OCSP stapling for all SSL certificates
-  global-ssl-ocsp-config:
-    template: |
-      {# Global OCSP Update Configuration #}
-      {# Enables automatic fetching and caching of OCSP responses for certificate validation #}
-      {# See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#3.1-ocsp-update.mode #}
-      # ssl/global-ssl-ocsp-config
-      ocsp-update.mode on
-      ocsp-update.mindelay 300
-      ocsp-update.maxdelay 3600
-
   frontends-500-ssl-tcp:
     template: |
       {#-
