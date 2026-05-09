@@ -2559,15 +2559,7 @@ validationTests:
         description: Map entry must carry the `BACKEND:<backend_name>` qualifier prefix.
 
   test-haproxy-ingress-path-type-regex:
-    description: |
-      HAProxy-Ingress path-type=regex annotation produces a path-regex.map
-      row keyed by the literal regex pattern with a `BACKEND:<backend_name>`
-      qualifier value. base.yaml's frontend-routing-logic looks this up
-      via `map_reg(...)` so a request matching the regex resolves to the
-      named backend rather than falling through to default_backend.
-      Catches the historical three-way bug in
-      `map-path-regex-600-haproxy-ingress`: missing BACKEND: prefix,
-      `render` instead of macro call, and no MapKeyForHost normalisation.
+    description: "HAProxy-Ingress path-type=regex annotation produces a path-regex.map row keyed by the literal regex pattern with a `BACKEND:<backend_name>` qualifier value. base."
     fixtures:
       services:
         - apiVersion: v1
@@ -2628,15 +2620,7 @@ validationTests:
           calls it, so the row is well-formed.
 
   test-haproxy-ingress-path-type-regex-wildcard-host:
-    description: |
-      HAProxy-Ingress path-type=regex annotation on a wildcard-host
-      Ingress produces a valid regex (no leading literal `*`). The
-      historical renderer used the raw rule.host value, leaking `*`
-      into the regex pattern; HAProxy then rejected the path-regex.map
-      at parse time with "regex '*.example.com/...' is invalid
-      (quantifier does not follow a repeatable item)" and the entire
-      config failed to load. With MapKeyForHost normalisation, the key
-      becomes `.example.com<pathRegex>` which is a well-formed regex.
+    description: HAProxy-Ingress path-type=regex annotation on a wildcard-host Ingress produces a valid regex (no leading literal `*`). The historical renderer used the raw rule.
     fixtures:
       services:
         - apiVersion: v1
@@ -3102,14 +3086,7 @@ validationTests:
         description: User must be in config
 
   test-haproxy-ingress-auth-tls-secret:
-    description: |
-      haproxy-ingress.github.io/auth-tls-secret references a
-      Secret whose `ca.crt` is written to the general file dir
-      (not ssl/ — Dataplane validates ssl/ uploads as cert+key)
-      and used in the crt-list line for the matching SNI as
-      `ca-file <path> verify required`. Combined with auth-tls-error-page
-      (302 redirect on verification failure) and auth-tls-cert-header
-      (forward client cert as headers to the backend on success).
+    description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line...
     fixtures:
       services:
         - apiVersion: v1
@@ -3196,14 +3173,7 @@ validationTests:
         description: auth-tls-cert-header forwards the client cert (base64 DER) on requests that presented a cert
 
   test-haproxy-ingress-auth-tls-error-page-injection-rejected:
-    description: |
-      An auth-tls-error-page value containing whitespace (or
-      newlines, tabs, etc.) must fail loudly — without validation,
-      the value would be interpolated into a `http-request redirect
-      location <url>` directive where whitespace is significant and
-      could be used to inject arbitrary HAProxy directives. Defence
-      in depth against any future code path where Ingress-write RBAC
-      isn't strictly scoped.
+    description: An auth-tls-error-page value containing whitespace (or newlines, tabs, etc.) must fail loudly — without validation, the value would be interpolated into a `http-request redirect location <url>` direct...
     fixtures:
       services:
         - apiVersion: v1
@@ -3515,14 +3485,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-headers-request annotation
-      populates auth-forward-headers.map and threads through the
-      SPOE check-auth message's `forward_headers` arg, narrowing
-      (or extending — see snippet docstring) which captured request
-      headers the plugin forwards to the auth service. The
-      external-auth plugin v0.3.0+ falls back to its plugin-level
-      forward_headers list when this map lookup is empty.
+    description: "haproxy-ingress.github.io/auth-headers-request annotation populates auth-forward-headers.map and threads through the SPOE check-auth message's `forward_headers` arg, narrowing (or extending — see snip..."
     extraContext:
       spoaHub:
         enabled: true
@@ -3598,14 +3561,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request-extends-spoe-message:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-headers-request listing a custom
-      header (one not in the hardcoded six) must auto-extend the SPOE
-      check-auth message body with a `hdr_<name>=req.hdr(<Name>)`
-      capture, so the plugin actually sees the header. Headers that
-      ARE in the hardcoded six must NOT be re-emitted (would produce
-      a duplicate SPOE arg). Multiple ingresses listing the same
-      custom header must dedupe to a single capture.
+    description: haproxy-ingress.github.io/auth-headers-request listing a custom header (one not in the hardcoded six) must auto-extend the SPOE check-auth message body with a `hdr_<name>=req.
     extraContext:
       spoaHub:
         enabled: true
@@ -3712,15 +3668,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Two header spellings that differ only in dashes vs underscores
-      (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to
-      different strings but collapse to the same SPOE arg name
-      after dash→underscore replacement (`hdr_x_request_id`).
-      Without dedup on the post-replacement name, the chart would
-      emit two `hdr_x_request_id=...` tokens on the same args= line
-      — SPOE doesn't allow duplicate arg keys, so the parser's
-      handling becomes undefined. Regression test for that.
+    description: Two header spellings that differ only in dashes vs underscores (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to different strings but collapse to the same SPOE arg name after dash→underscore rep...
     extraContext:
       spoaHub:
         enabled: true
@@ -3809,14 +3757,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-succeed-fail:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail
-      annotations both populate auth-extract-headers.map (their union
-      per ingress) and produce per-unique-header HAProxy directives:
-      `http-request set-header` for pass (fires on success, allowed=true)
-      and `http-response set-header` for fail (fires on auth failure,
-      after the deny rule, gated on `auth_url -m found` and
-      `!allowed`).
+    description: haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail annotations both populate auth-extract-headers.
     extraContext:
       spoaHub:
         enabled: true
@@ -3905,13 +3846,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      A header name in auth-headers-succeed / auth-headers-fail that
-      doesn't match the RFC 7230 token grammar (e.g. contains
-      whitespace, fetch syntax, or other special characters) must
-      fail loudly at template-render time. Defence in depth against
-      malformed annotation values being embedded into HAProxy
-      directives.
+    description: "A header name in auth-headers-succeed / auth-headers-fail that doesn't match the RFC 7230 token grammar (e.g."
     extraContext:
       spoaHub:
         enabled: true
@@ -4442,13 +4377,7 @@ validationTests:
 
   test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and
-      haproxy-ingress.github.io/waf are present in the cluster, nginx's
-      "global rules + always dispatch" wins for dispatch (the
-      send-spoe-group line has no `if` clause). The waf-map is still
-      populated so per-path detect mode is respected — the deny rule
-      still has its `!{ var(txn.coraza_mode) -m str detect }` predicate.
+    description: "When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and haproxy-ingress.github.io/waf are present in the cluster, nginx's \"global rules + always dispatch\" wins for dispatch (the send-spoe-group..."
     extraContext:
       spoaHub:
         enabled: true
@@ -4542,13 +4471,7 @@ validationTests:
 
   test-haproxy-ingress-waf-without-coraza-fails:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Ingress with haproxy-ingress.github.io/waf set while the spoaHub
-      coraza plugin is NOT enabled fails the render with an explicit
-      diagnostic. Silent ignore would hide a misconfiguration: the
-      operator wrote a per-Ingress WAF directive and nothing enforces
-      it. Mirrors the equivalent fail-loud for nginx-ingress's
-      /modsecurity-snippet.
+    description: Ingress with haproxy-ingress.github.io/waf set while the spoaHub coraza plugin is NOT enabled fails the render with an explicit diagnostic.
     extraContext:
       spoaHub:
         enabled: true

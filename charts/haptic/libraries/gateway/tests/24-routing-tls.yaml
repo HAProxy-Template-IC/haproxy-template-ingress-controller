@@ -1,23 +1,6 @@
 validationTests:
   test-tlsroute-terminate-on-chart-static-httpsport:
-    description: |
-      Mirrors the upstream TLSRouteTerminateSimpleSameNamespace
-      conformance fixture: a Gateway with one TLS-Terminate listener
-      on port 8443 (which is also the chart's default httpsPort) and
-      nothing else competing for that port (no Ingress TLS, no
-      Gateway HTTPS listener, no SSL passthrough). The new TLS
-      frontend claims the port because the chart-static HTTPS frontend
-      and ssl-tcp would both render their port-8443 binds only when
-      `bindHTTPSDefault` is true (HTTPS listener present) or when
-      there's at least one passthrough backend — neither holds here.
-
-      Pins:
-        * `frontend gateway-tls-port-8443` exists with TLS termination.
-        * Chart-static HTTPS frontend does NOT bind 8443 (no
-          `bind *:8443 ssl ...` in the `frontend https` block).
-        * Chart-static ssl-tcp does NOT render at all (its gate is
-          `passthroughBackends > 0`, false here).
-        * Routing uses ssl_fc_sni for the Terminate-mode listener.
+    description: "Mirrors the upstream TLSRouteTerminateSimpleSameNamespace conformance fixture: a Gateway with one TLS-Terminate listener on port 8443 (which is also the chart's default httpsPort) and nothing else com."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
     fixtures:
@@ -128,21 +111,7 @@ validationTests:
           would skip the new TLS frontend on a colliding port).
 
   test-tlsroute-invalid-backend-rejects-on-frontend:
-    description: |
-      Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind
-      conformance fixture's chart-side contract: a TLS Passthrough
-      listener has a TLSRoute attached whose backendRef points at an
-      unknown kind. Pass 2 filters routes with unresolvable refs at
-      the ResolvedRefs gate, so the route's SNI never enters the
-      per-port frontend's allowlist. The frontend's reject-default
-      then fires on connection — `tcp-request content reject` produces
-      a TCP RST, which is what the upstream test asserts via
-      MakeTLSConnectionAndExpectEventuallyConnectionRejection.
-
-      Pins the static-side of that contract:
-        * No use_backend rule for the unknown-kind route's SNI
-          (route filtered at Pass 2 → not in frontend allowlist).
-        * The frontend exists with its reject-default.
+    description: "Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind conformance fixture's chart-side contract: a TLS Passthrough listener has a TLSRoute attached whose backendRef points at an unknown kind."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
     fixtures:
@@ -211,20 +180,7 @@ validationTests:
           MakeTLSConnectionAndExpectEventuallyConnectionRejection.
 
   test-tlsroute-terminate-nondefault-port-frontend:
-    description: |
-      TLSRoute attached to a TLS Terminate listener on a non-chart-
-      static port renders a per-port mode-tcp frontend with TLS
-      termination on the bind. After the handshake completes,
-      `ssl_fc_sni` carries the SNI consumed during the handshake and
-      drives use_backend routing to the TLSRoute's TCP backend.
-
-      Pins:
-        * `frontend gateway-tls-port-9444` exists, mode tcp.
-        * Bind carries `ssl crt-list ...` (HAProxy terminates TLS).
-        * Routing rules use `ssl_fc_sni` (post-handshake), NOT
-          `req_ssl_sni` (Passthrough's pre-handshake SNI).
-        * Reject-default closes the TLSRouteInvalidBackendRef* gap
-          for the Terminate-mode flavour as well.
+    description: TLSRoute attached to a TLS Terminate listener on a non-chart- static port renders a per-port mode-tcp frontend with TLS termination on the bind.
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
     fixtures:
@@ -333,23 +289,7 @@ validationTests:
           for a frontend that already terminated TLS).
 
   test-tlsroute-passthrough-nondefault-port-frontend:
-    description: |
-      TLSRoute attached to a TLS Passthrough listener on a port OTHER
-      than the chart-static httpsPort lands on the new
-      `frontends-600-gateway-tls-listener` per-port frontend, not on
-      the chart's static ssl-tcp (which only handles httpsPort).
-
-      Pins:
-        * Per-port frontend `gateway-tls-port-9443` exists, mode tcp.
-        * Plain `bind *:9443` (no `ssl ...` because Passthrough mode
-          doesn't terminate).
-        * tcp-request inspect-delay + accept-on-ClientHello (the
-          Passthrough preamble that lets req_ssl_sni read SNI from
-          the buffered TCP stream).
-        * SNI-based use_backend rule pointing at the TLSRoute's
-          backend.
-        * Reject-default at the end so SNIs that no route claims get
-          a TCP RST.
+    description: "TLSRoute attached to a TLS Passthrough listener on a port OTHER than the chart-static httpsPort lands on the new `frontends-600-gateway-tls-listener` per-port frontend, not on the chart's static ssl-t."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
     fixtures:
@@ -880,16 +820,7 @@ validationTests:
         description: TLSRoute with non-Service backendRef produces no backend
 
   test-tlsroute-mixed-termination-protocol-conflict:
-    description: |
-      Mirrors the upstream Gateway API
-      TLSRouteListenerMixedTerminationNotSupported conformance fixture:
-      a Gateway with two TLS listeners on the same port, one in
-      `tls.mode: Terminate` and the other in `tls.mode: Passthrough`.
-      The chart treats this as `Accepted=False/ProtocolConflict` on
-      both listeners with `attachedRoutes=0` (HAProxy can't both
-      terminate and passthrough on the same bind, so neither listener
-      can win) — pinned by the listener-level conditions on the
-      Gateway status.
+    description: "Mirrors the upstream Gateway API TLSRouteListenerMixedTerminationNotSupported conformance fixture: a Gateway with two TLS listeners on the same port, one in `tls."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1

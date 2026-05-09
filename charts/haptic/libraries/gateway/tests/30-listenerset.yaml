@@ -45,12 +45,7 @@ validationTests:
       # haproxy_valid).
 
   test-listenerset-allowed-same-namespace:
-    description: |
-      ListenerSet in the same namespace as a Gateway that sets
-      `allowedListeners.namespaces.from=Same` must be Accepted=True/Accepted.
-      Programmed remains False/Pending until F2 (listener-merge) lands —
-      the chart honestly surfaces partial implementation rather than
-      claiming Programmed=True without actual data-plane wiring.
+    description: ListenerSet in the same namespace as a Gateway that sets `allowedListeners.namespaces.from=Same` must be Accepted=True/Accepted.
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -128,14 +123,7 @@ validationTests:
         description: HAProxy config must be valid
 
   test-listenerset-allowed-namespace-selector:
-    description: |
-      `allowedListeners.namespaces.from=Selector` admits ListenerSets
-      whose namespace's labels match the selector's matchLabels, denies
-      others. Pins the ListenerSetAllowedNamespaceSelector conformance
-      test status assertion. Includes a ReferenceGrant in the Gateway's
-      namespace covering both candidate ListenerSet namespaces — RG
-      matching is independent of the Selector gate, so a permitted
-      ListenerSet still needs an RG to attach cross-namespace.
+    description: "`allowedListeners.namespaces.from=Selector` admits ListenerSets whose namespace's labels match the selector's matchLabels, denies others."
     fixtures:
       referencegrants:
         - apiVersion: gateway.networking.k8s.io/v1beta1
@@ -230,14 +218,7 @@ validationTests:
         description: Denied ListenerSet's port must NOT be bound
 
   test-listenerset-cross-namespace-parentref-allowed-by-from-all:
-    description: |
-      ListenerSet in a different namespace from its parent Gateway
-      (with allowedListeners.from=All) is admitted by allowedListeners
-      alone — cross-namespace parentRefs do NOT require a separate
-      ReferenceGrant per Gateway API conformance
-      (ListenerSetReferenceGrant + ListenerSetAllowedNamespaceSelector).
-      ReferenceGrant only gates resource references (Secret, ConfigMap)
-      attached to listeners, not parentRefs.
+    description: ListenerSet in a different namespace from its parent Gateway (with allowedListeners.from=All) is admitted by allowedListeners alone — cross-namespace parentRefs do NOT require a separate ReferenceGran...
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -280,12 +261,7 @@ validationTests:
         description: Cross-ns ListenerSet permitted by allowedListeners.from=All must be bound
 
   test-listenerset-cross-namespace-parentref-with-grant:
-    description: |
-      ListenerSet in a different namespace from its parent Gateway
-      (with allowedListeners.from=All) is admitted regardless of
-      ReferenceGrant presence — the cross-ns parentRef is permitted
-      by allowedListeners alone. This test pins behaviour with an
-      RG present (RG should be a no-op for parentRef admission).
+    description: ListenerSet in a different namespace from its parent Gateway (with allowedListeners.from=All) is admitted regardless of ReferenceGrant presence — the cross-ns parentRef is permitted by allowedListener...
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -401,14 +377,7 @@ validationTests:
         description: Accepted ListenerSet listener must be bound on port 8086
 
   test-listenerset-hostname-conflict:
-    description: |
-      Two listeners on the same (port, hostname) where one is on the
-      Gateway and one is on a ListenerSet. Gateway wins the conflict
-      (precedence: Gateway > earlier LS > later LS, then index), so the
-      LS's conflicting listener is dropped from the routing set. Uses
-      HTTPS so the listener-hostname-claim map (only emitted for HTTPS/
-      TLS listeners) shows the surviving claims. Pins
-      ListenerSetHostnameConflict status assertion.
+    description: "Two listeners on the same (port, hostname) where one is on the Gateway and one is on a ListenerSet. Gateway wins the conflict (precedence: Gateway > earlier LS > later LS, then index), so the LS's con..."
     fixtures:
       secrets:
         - apiVersion: v1

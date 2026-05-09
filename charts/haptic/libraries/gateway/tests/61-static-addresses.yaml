@@ -1,20 +1,6 @@
 validationTests:
   test-gateway-static-addresses-per-ip-services:
-    description: |
-      Mirrors the upstream Gateway-API GatewayStaticAddresses conformance
-      fixture's mid-flight state: a Gateway with TWO IPv4 addresses in
-      spec.addresses (one usable from the cluster's MetalLB pool, one
-      unusable RFC 5737 IP). The chart now emits ONE LoadBalancer
-      Service per address, each annotated with a single
-      `metallb.universe.tf/loadBalancerIPs: <ip>`. MetalLB allocates the
-      usable IP and ignores the unusable one — its IPFamilyForAddresses
-      guard rejected the previous comma-separated multi-IPv4 annotation.
-
-      Pins:
-        * Two Service entries in the rendered k8sResources output.
-        * Per-IP service names (`gw-<ns>-<gw>-<ip-with-dashes>`).
-        * Each annotation carries a single IP.
-        * Each Service has the correct labels propagated.
+    description: "Mirrors the upstream Gateway-API GatewayStaticAddresses conformance fixture's mid-flight state: a Gateway with TWO IPv4 addresses in spec."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       controllerNamespace: "haptic-system"

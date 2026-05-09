@@ -206,14 +206,7 @@ validationTests:
         description: Must emit redirect with full Location URL referencing the rewritten path
 
   test-httproute-request-redirect-default-port-omission:
-    description: |
-      RequestRedirect MUST NOT include the port in Location when the
-      resulting (scheme, port) pair is the scheme's default
-      ((http, 80) or (https, 443)) per Gateway API spec. Conformance
-      test HTTPRouteRequestRedirect's `/scheme-nil-and-port-80` and
-      `/scheme-https-and-port-443` sub-tests assert this directly;
-      previously the chart appended the port unconditionally and both
-      sub-tests silently failed.
+    description: "RequestRedirect MUST NOT include the port in Location when the resulting (scheme, port) pair is the scheme's default ((http, 80) or (https, 443)) per Gateway API spec."
     fixtures:
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -455,21 +448,7 @@ validationTests:
         description: Simple cross-origin (backend-served) responses emit allow-origin via http-response set-header
 
   test-httproute-cors-wildcard-methods-echo:
-    description: |
-      Closes the chart-side gap on the HTTPRouteCORS conformance test
-      sub-cases that send `allowMethods: ["*"]`. The Gateway API
-      conformance suite expects the server to respond with either the
-      requested method (echoed from `Access-Control-Request-Method`)
-      or a literal `*` — NOT a chart-expanded list of standard
-      methods. Echoing satisfies both branches: with
-      `allowCredentials: false` browsers accept the explicit method
-      AND the literal `*`; with credentials true, browsers REJECT
-      `*` and require the exact method.
-
-      The chart now emits a per-preflight set-var line capturing the
-      requested method into `txn.gw_cors_acrm`, then references it on
-      the inline `http-request return` so synthetic preflight
-      responses carry the dynamically-resolved value.
+    description: "Closes the chart-side gap on the HTTPRouteCORS conformance test sub-cases that send `allowMethods: [\"*\"]`."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1

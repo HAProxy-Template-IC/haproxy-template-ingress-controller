@@ -1037,12 +1037,7 @@ validationTests:
         description: option forwardfor and filter spoe must not concatenate
 
   test-spoa-hub-mode-tcp-on-haproxy-3-0:
-    description: |
-      On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced
-      in 3.1). The chart must auto-fall-back the spoa-hub backend to
-      `mode tcp` — both transports work with the SPOE filter; mode
-      spop is just the more efficient one on newer versions. This
-      test pins haproxyVersion=3.0 and asserts the fallback.
+    description: "On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced in 3.1). The chart must auto-fall-back the spoa-hub backend to `mode tcp` — both transports work with the SPOE filter; mode spop is just..."
     extraContext:
       haproxyVersion: "3.0"
       spoaHub:
@@ -1326,14 +1321,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      Multi-tenant isolation: Two Ingresses with distinct
-      modsecurity-snippet annotations each get their own
-      [plugins.params.applications."<ns>/<name>"] block in the
-      rendered spoa-hub-config.toml. Ingress A's SecRule must NOT
-      appear inside Ingress B's app block (and vice versa). The
-      chart-default base directives ARE shared — they appear inside
-      every per-app block — but the per-Ingress rules stay scoped.
+    description: "Multi-tenant isolation: Two Ingresses with distinct modsecurity-snippet annotations each get their own [plugins.params.applications.\"<ns>/<name>\"] block in the rendered spoa-hub-config.toml."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1414,13 +1402,7 @@ validationTests:
 
   test-spoa-hub-coraza-app-map-routes-by-resource-id:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      coraza-app.map carries one identity row per Ingress with a
-      modsecurity-snippet, keyed by `<namespace>/<name>` (resource id).
-      The frontend filter sets `txn.coraza_app` from
-      `var(txn.resource_id),map(...)` and the SPOE check-request message
-      passes it as `app=` so the plugin routes to the right per-app
-      WAF, regardless of which path matched at the routing layer.
+    description: coraza-app.map carries one identity row per Ingress with a modsecurity-snippet, keyed by `<namespace>/<name>` (resource id). The frontend filter sets `txn.coraza_app` from `var(txn.resource_id),map(..
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1561,14 +1543,7 @@ validationTests:
           row keyed by <ns>/<name>.
 
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
-    description: |
-      An Ingress whose modsecurity-snippet contains a TOML triple-quote
-      delimiter (""") is rejected at render time. The annotation value
-      lands inside `directives = """..."""`; allowing the delimiter
-      verbatim would let an Ingress-write RBAC holder break out of the
-      string and inject arbitrary TOML keys into the rendered hub
-      config. Fail-loud at admission keeps that escalation vector
-      closed.
+    description: "An Ingress whose modsecurity-snippet contains a TOML triple-quote delimiter (\"\"\") is rejected at render time. The annotation value lands inside `directives = \"\"\"..."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
