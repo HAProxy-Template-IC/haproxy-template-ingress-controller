@@ -519,15 +519,42 @@ func TestGatewayAPIConformance(t *testing.T) {
 			//     test-gateway-https-listener-mtls-unresolved-ca-
 			//     status-conditions.
 			// Conformance run is the next signal — re-test on push.)
-			// BackendTLSPolicySANValidation: BackendTLSPolicy SAN
-			// validation requires HAProxy to validate the backend's
-			// presented certificate against the policy's SAN list. The
-			// chart emits `ssl ca-file ... verify required sni str(<host>)
-			// verifyhost <host>` (commit d58b9086 + earlier), but
-			// SAN-list validation needs additional `verifyhost` entries
-			// per SAN. Also blocked on the same empty-Host issue for the
-			// non-conflict-resolution test case. Tracked at <follow-up
-			// issue>.
+			// BackendTLSPolicySANValidation: HAProxy 3.x has no
+			// built-in mechanism for multi-SAN OR matching or URI SAN
+			// matching. The `verifyhost <name>` keyword accepts a
+			// single hostname and follows RFC 6125 (DNS-only SAN
+			// matching); URI SANs (SPIFFE-style identities) are
+			// invisible to it. There is no `ssl_bc_*` fetcher that
+			// returns the backend cert's SAN list, so post-handshake
+			// ACL matching can't extract them either. Repeating
+			// `verifyhost` (once per allowed SAN) is rejected by the
+			// HAProxy parser. Multiple servers per backend with
+			// different `verifyhost` values fail uniformly because
+			// the same upstream cert can't satisfy disjoint SAN
+			// expectations. CA-chain restriction doesn't apply — CAs
+			// validate signatures, not SAN content.
+			//
+			// Closing this test would require either:
+			//   * A SPOA-hub plugin that opens its own TLS probe to
+			//     the backend, parses the cert SAN extension, and
+			//     returns allow/deny via SPOE (multi-repo work in
+			//     gitlab.com/haproxy-haptic/haproxy-spoa-hub plus
+			//     chart-side wiring + per-request runtime cost), or
+			//   * A native HAProxy fetcher exposing backend cert
+			//     SANs (out of scope).
+			//
+			// The chart's existing `verifyhost <host>` from
+			// BackendTLSPolicy.spec.validation.hostname covers the
+			// single-hostname case correctly. The
+			// `subjectAltNames[]` array is unused on the rendering
+			// path — improving partial coverage by reading the
+			// first DNS-type entry doesn't close the test (the URI
+			// SAN sub-cases stay broken regardless).
+			//
+			// Tracked at <follow-up issue> — re-evaluate when (a)
+			// HAProxy upstream adds a backend-cert-SAN fetcher, or
+			// (b) we decide the SPOA-plugin runtime cost is worth
+			// closing the conformance gap.
 			"BackendTLSPolicySANValidation",
 		},
 		UsableNetworkAddresses:   usable,
