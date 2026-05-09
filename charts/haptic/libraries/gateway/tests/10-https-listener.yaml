@@ -362,18 +362,6 @@ validationTests:
             ports:
               - port: 443
                 targetPort: 8443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-svc-abc
-            namespace: gateway-conformance-infra
-            labels:
-              kubernetes.io/service-name: backend-svc
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8443
       configmaps:
         - apiVersion: v1
           kind: ConfigMap
@@ -472,18 +460,6 @@ validationTests:
             ports:
               - port: 443
                 targetPort: 8443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: backend-svc-abc
-            namespace: gateway-conformance-infra
-            labels:
-              kubernetes.io/service-name: backend-svc
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8443
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -965,23 +941,6 @@ validationTests:
                 targetPort: 8443
             selector:
               app: tls-backend-with-client-cert-validation
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: tls-backend-with-client-cert-validation-abc
-            namespace: gateway-conformance-infra
-            labels:
-              kubernetes.io/service-name: tls-backend-with-client-cert-validation
-          endpoints:
-            - addresses:
-                - 10.0.0.1
-              conditions:
-                ready: true
-          ports:
-            - port: 8443
-              protocol: TCP
-              name: https
       backendtlspolicies:
         - apiVersion: gateway.networking.k8s.io/v1alpha3
           kind: BackendTLSPolicy

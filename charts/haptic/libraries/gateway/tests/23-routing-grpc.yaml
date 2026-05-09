@@ -37,21 +37,6 @@ validationTests:
               - name: grpc
                 port: 9090
                 targetPort: 9090
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: grpc-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: grpc-svc
-          endpoints:
-            - addresses: ["10.0.0.2"]
-              conditions:
-                ready: true
-          ports:
-            - port: 9090
-              name: grpc
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
@@ -217,21 +202,6 @@ validationTests:
               - name: grpc
                 port: 9090
                 targetPort: 9090
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: grpc-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: grpc-svc
-          endpoints:
-            - addresses: ["10.0.0.2"]
-              conditions:
-                ready: true
-          ports:
-            - port: 9090
-              name: grpc
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute

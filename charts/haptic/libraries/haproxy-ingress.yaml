@@ -1749,19 +1749,6 @@ validationTests:
             ports:
               - port: 80
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: timeout-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: timeout-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1813,19 +1800,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: lb-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: lb-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1867,19 +1841,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: health-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: health-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1921,19 +1882,6 @@ validationTests:
           spec:
             ports:
               - port: 443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: secure-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: secure-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8443
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1975,19 +1923,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: h2-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: h2-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2029,19 +1964,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: snippet-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: snippet-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2093,19 +2015,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: redirect-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: redirect-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2148,19 +2057,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: hsts-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: hsts-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2279,19 +2175,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: cors-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: cors-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2343,19 +2226,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: approot-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: approot-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2401,19 +2271,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: exact-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: exact-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2462,19 +2319,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: prefix-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: prefix-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2516,19 +2360,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: begin-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: begin-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2570,19 +2401,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: regex-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: regex-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2631,19 +2449,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: wild-regex-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: wild-regex-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2703,19 +2508,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: affinity-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: affinity-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2757,19 +2549,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: affinity-custom-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: affinity-custom-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2826,19 +2605,6 @@ validationTests:
           spec:
             ports:
               - port: 443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: passthrough-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: passthrough-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8443
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2901,19 +2667,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: auth-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: auth-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2997,19 +2750,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: contains
         target: rendering_error
@@ -3064,19 +2804,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -3097,19 +2824,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: mtls-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: mtls-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -3184,19 +2898,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: mtls-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: mtls-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3263,19 +2964,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-protected-svc-abc
-            labels:
-              kubernetes.io/service-name: hi-protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3348,19 +3036,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-protected-svc-abc
-            labels:
-              kubernetes.io/service-name: hi-protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3432,19 +3107,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3508,19 +3170,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3584,19 +3233,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3691,19 +3327,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3780,19 +3403,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3869,19 +3479,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3944,19 +3541,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-protected-svc-abc
-            labels:
-              kubernetes.io/service-name: hi-protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4025,16 +3609,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: hi-waf-svc }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-waf-svc-abc
-            labels: { kubernetes.io/service-name: hi-waf-svc }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4109,16 +3683,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: hi-shadow-svc }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-shadow-svc-abc
-            labels: { kubernetes.io/service-name: hi-shadow-svc }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4404,16 +3968,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: coexist-svc }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: coexist-svc-abc
-            labels: { kubernetes.io/service-name: coexist-svc }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress

@@ -11,18 +11,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: v1-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: v1-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -65,18 +53,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -119,18 +95,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: search-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: search-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -176,18 +140,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -230,18 +182,6 @@ validationTests:
           spec:
             ports:
               - port: 9090
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: grpc-api-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: grpc-api
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 9090
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
@@ -288,18 +228,6 @@ validationTests:
           spec:
             ports:
               - port: 9090
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: grpc-multi-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: grpc-multi
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 9090
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
@@ -339,18 +267,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: combined-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: combined-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 80
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -398,18 +314,6 @@ validationTests:
           spec:
             ports:
               - port: 9090
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: grpc-multi-header-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: grpc-multi-header
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 9090
       grpcroutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: GRPCRoute
@@ -459,18 +363,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute
@@ -507,18 +399,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: edge-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: edge-service
-          endpoints:
-            - addresses: ["10.0.1.1"]
-          ports:
-            - port: 8080
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: HTTPRoute

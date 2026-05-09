@@ -527,28 +527,6 @@ validationTests:
               - name: admin
                 port: 81
                 targetPort: 8081
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-svc-abc123
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-svc
-          addressType: IPv4
-          endpoints:
-            - addresses:
-                - "10.0.0.1"
-              targetRef:
-                kind: Pod
-                name: api-pod-1
-          ports:
-            - name: http
-              port: 8080
-              protocol: TCP
-            - name: admin
-              port: 8081
-              protocol: TCP
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -687,20 +665,6 @@ validationTests:
             ports:
               - port: 80
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: web-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: web-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
-              protocol: TCP
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -952,18 +916,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: web-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: web-svc
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
