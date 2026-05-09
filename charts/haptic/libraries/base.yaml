@@ -1418,16 +1418,7 @@ validationTests:
         description: Template rendering must be deterministic (identical output on repeated renders)
 
   test-k8s-haproxy-service-default-ports:
-    description: |
-      k8sResources.haproxy-service emits whatever ports the chart
-      hands it under `extraContext.haproxyService.ports`. The
-      chart's default builds an http / https / stats triple from
-      `haproxy.service.{http,https,stats}` in values.yaml so
-      non-Gateway-API users (Ingress-only, or operators with a
-      custom haproxyConfig that opens raw TCP listeners) keep
-      working without surprises after the chart-static ->
-      k8sResources migration. Empty fixtures means the Service
-      still has all three default ports.
+    description: "k8sResources.haproxy-service emits whatever ports the chart hands it under `extraContext.haproxyService.ports`. The chart's default builds an http / https / stats triple from `haproxy.service."
     fixtures: {}
     assertions:
       - type: contains
@@ -1448,16 +1439,7 @@ validationTests:
         description: Default stats port is emitted
 
   test-k8s-haproxy-service-extra-ports:
-    description: |
-      Operators using haptic without Gateway API (e.g. exposing a
-      raw TCP frontend via a custom haproxyConfig snippet) declare
-      additional Service ports through `haproxy.service.extraPorts`
-      in values.yaml. The chart's `templates/haproxytemplateconfig.yaml`
-      concatenates the chart-default http/https/stats triple with
-      `extraPorts` into a single list under
-      `extraContext.haproxyService.ports`; the Scriggo-side
-      haproxy-service template just iterates that list — there's
-      no static / dynamic split on the template side.
+    description: Operators using haptic without Gateway API (e.g. exposing a raw TCP frontend via a custom haproxyConfig snippet) declare additional Service ports through `haproxy.service.extraPorts` in values.yaml.
     fixtures: {}
     extraContext:
       haproxyService:

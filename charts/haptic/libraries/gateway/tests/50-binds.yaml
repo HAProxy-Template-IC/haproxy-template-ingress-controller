@@ -42,15 +42,7 @@ validationTests:
         description: Must emit bind on port 8090
 
   test-gateway-https-multi-port-listener-bind:
-    description: |
-      Gateway with HTTPS listeners on non-default ports emits additional
-      `bind *:<port> ssl crt-list ...` directives in the https frontend.
-      Verifies the https-bind-extra-* extension point: gateway.yaml's
-      https-bind-extra-050-gateway-multi-port-bind hooks into ssl.yaml's
-      https frontend and emits one TLS bind per unique non-default
-      Gateway HTTPS listener port. Skips the chart-static https port
-      (443) and the chart-static http port (default 80) so duplicate
-      binds across frontends don't break HAProxy startup.
+    description: "Gateway with HTTPS listeners on non-default ports emits additional `bind *:<port> ssl crt-list ...` directives in the https frontend. Verifies the https-bind-extra-* extension point: gateway."
     fixtures:
       secrets:
         # Listener cert. Same namespace as the Gateway (default) so we

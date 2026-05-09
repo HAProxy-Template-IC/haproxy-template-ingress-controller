@@ -1,14 +1,6 @@
 validationTests:
   test-gateway-https-listener-with-invalid-cert-no-bind:
-    description: |
-      A Gateway HTTPS listener at the chart's default httpsPort with
-      a malformed cert (Secret exists but tls.crt isn't valid PEM) is
-      skipped by features-100-gateway-tls — the cert never enters
-      gf["tlsCertificates"]. With no other resource asking for TLS
-      termination, the chart-static `bind *:443 ssl ...` MUST NOT
-      render: the operator's intent (this listener is not Accepted)
-      should propagate to the bind-port surface so HAProxy doesn't
-      answer handshakes with the chart's default cert.
+    description: "A Gateway HTTPS listener at the chart's default httpsPort with a malformed cert (Secret exists but tls."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -59,31 +51,7 @@ validationTests:
         description: Chart-static `bind *:443 ssl crt-list` MUST be omitted
 
   test-gateway-https-listener-mtls-unresolved-ca-no-bind:
-    description: |
-      Closes the GatewayFrontendInvalidDefaultClientCertificateValidation
-      conformance gap on the chart side: a Gateway HTTPS listener with
-      a valid server cert AND `spec.tls.frontend.default.validation`
-      set, but caCertificateRefs that don't resolve to any
-      ConfigMap/Secret, MUST NOT bind. Per spec a misconfigured mTLS
-      validation makes the listener unusable; HAProxy answering
-      handshakes with the chart's default cert (or even with the
-      listener's server cert but no client-cert demand) would let
-      "anyone" through, defeating the GEP-91 contract.
-
-      The flow:
-        1. features-100-gateway-tls — listener's server cert is
-           valid PEM, registers fine → tlsCertificates non-empty.
-        2. features-110-gateway-frontend-mtls — defaultValidation
-           set; caCertificateRefs point at a non-existent
-           ConfigMap. resolveValidation returns ("", "") because
-           no parts collected. The listener key
-           `default/mtls-bad-ca-gw/https` is added to
-           gf["mtlsBlockedListeners"].
-        3. features-150-gateway-bind — sees the listener in
-           mtlsBlocked, skips it. With no other listener at port
-           443 contributing, bindHTTPSDefault stays false and
-           needHTTPSFrontend stays false. `frontend https` doesn't
-           render and `bind *:443 ssl` is omitted.
+    description: "Closes the GatewayFrontendInvalidDefaultClientCertificateValidation conformance gap on the chart side: a Gateway HTTPS listener with a valid server cert AND `spec.tls.frontend.default."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -155,23 +123,7 @@ validationTests:
           accepts traffic on this port (the conformance contract).
 
   test-gateway-https-listener-mtls-unresolved-ca-status-conditions:
-    description: |
-      Status-side companion of test-gateway-https-listener-mtls-
-      unresolved-ca-no-bind. The chart-side fix for
-      GatewayFrontendInvalidDefaultClientCertificateValidation
-      requires BOTH:
-
-        a) The listener's `bind *:443` must be omitted from the
-           rendered HAProxy config (the bind-derivation refactor).
-        b) The Gateway's `status.listeners[].conditions` must surface
-           `ResolvedRefs=False/InvalidCACertificateRef` and
-           `Accepted=False/NoValidCACertificate` so the upstream
-           conformance test's status poll passes.
-
-      This test pins (b): the JSON-marshalled status patch the chart
-      registers via statusPatch() during haproxy.cfg render must
-      contain the right reason strings for the listener whose
-      caCertificateRefs don't resolve.
+    description: "Status-side companion of test-gateway-https-listener-mtls- unresolved-ca-no-bind. The chart-side fix for GatewayFrontendInvalidDefaultClientCertificateValidation requires BOTH:"
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -489,14 +441,7 @@ validationTests:
         description: Targeted backend default-server gets ssl/ca-file/verify/sni from the policy
 
   test-backendtlspolicy-invalid-ca-cert-ref-rejects:
-    description: |
-      BackendTLSPolicy with caCertificateRefs that don't resolve (no
-      matching ConfigMap or Secret in the cluster) and no
-      wellKnownCACertificates: System fallback marks the targeted
-      backend as broken. Per Gateway API spec the data plane must
-      refuse those requests rather than silently downgrading to
-      plaintext — pins conformance test
-      BackendTLSPolicyInvalidCACertificateRef.
+    description: "BackendTLSPolicy with caCertificateRefs that don't resolve (no matching ConfigMap or Secret in the cluster) and no wellKnownCACertificates: System fallback marks the targeted backend as broken."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -584,13 +529,7 @@ validationTests:
         description: No ssl ca-file is emitted when caCertificateRefs failed to resolve
 
   test-gateway-insecure-frontend-validation-mode-default:
-    description: |
-      Gateway with spec.tls.frontend.default.mode=AllowInsecureFallback
-      compiles cleanly. The status patch (verified end-to-end by the
-      GatewayInsecureFrontendValidationMode conformance test) appends
-      InsecureFrontendValidationMode=True/ConfigurationChanged to the
-      gateway's conditions; chart-side we verify the templates don't
-      blow up on the GEP-91 spec shape.
+    description: Gateway with spec.tls.frontend.default.mode=AllowInsecureFallback compiles cleanly. The status patch (verified end-to-end by the GatewayInsecureFrontendValidationMode conformance test) appends Insecur...
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       controllerNamespace: "haptic-system"
@@ -655,22 +594,7 @@ validationTests:
         description: HAProxy config must be valid with perPort AllowInsecureFallback override
 
   test-gateway-frontend-client-cert-default-line-verify:
-    description: |
-      Mirrors the upstream Gateway API
-      GatewayFrontendClientCertificateValidation conformance fixture:
-      a Gateway with two HTTPS listeners on different ports — one with
-      no hostname (port 443, default frontend validation), one with
-      hostname `second-example.org` (port 8443, perPort override).
-      Both use the same Secret.
-
-      Pins the chart's crt-list emission so the default-cert line
-      (covers TLS handshakes whose SNI doesn't match a specific SNI
-      line) carries the gateway-default's `ca-file` + `verify` clause.
-      Without this, port 443 traffic with arbitrary SNI falls through
-      to the default crt-list line and HAProxy answers handshakes
-      without verifying the client cert — the upstream test exercises
-      exactly this path (it sends mismatched client certs to each port
-      and expects HAProxy to reject them).
+    description: "Mirrors the upstream Gateway API GatewayFrontendClientCertificateValidation conformance fixture: a Gateway with two HTTPS listeners on different ports — one with no hostname (port 443, default fronten."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -820,16 +744,7 @@ validationTests:
           a hostname) carries the per-port override CA's verify clause.
 
   test-gateway-frontend-client-cert-insecure-fallback-default-line:
-    description: |
-      Variant of the previous test with mode: AllowInsecureFallback.
-      Same Gateway shape (two listeners, one per port; default vs.
-      perPort validation), but with InsecureFallback set on both.
-      The chart should emit `verify optional` (instead of `required`)
-      on both the default crt-list line and the per-port SNI line, so
-      HAProxy accepts requests with missing or non-matching client
-      certs while still propagating cert metadata to the backend when
-      a valid cert is presented. Pins the same conformance contract as
-      GatewayFrontendClientCertificateValidationInsecureFallback.
+    description: "Variant of the previous test with mode: AllowInsecureFallback. Same Gateway shape (two listeners, one per port; default vs. perPort validation), but with InsecureFallback set on both."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -978,23 +893,7 @@ validationTests:
           per-port override mode is AllowInsecureFallback.
 
   test-gateway-backend-client-cert-shape:
-    description: |
-      Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature
-      conformance fixture: a Gateway with HTTP listener (port 80), an
-      HTTPRoute pointing at a Service, a BackendTLSPolicy validating
-      that Service against a CA, and the Gateway carrying
-      `spec.tls.backend.clientCertificateRef` so HAProxy presents a
-      client cert when connecting upstream.
-
-      Pins the chart's backend emission so:
-        * `ssl ca-file <path> verify required sni str(<host>)
-          verifyhost <host>` lands on the backend's `default-server`
-          line (BackendTLSPolicy → upstream verify),
-        * `crt <client-cert-pem-path>` is appended (Gateway-level
-          backend client cert),
-        * The Gateway's status carries
-          `ResolvedRefs=True/ResolvedRefs` (the conformance test's
-          status assertion).
+    description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1

@@ -1,32 +1,6 @@
 validationTests:
   test-grpcroute-h2c-on-port-80:
-    description: |
-      Pins the chart's plaintext h2c multiplexing on port 80: the new
-      tcp inspector + dual-loopback architecture (libraries/base.yaml
-      `frontend http-tcp` + `frontend http_frontend` + `frontend
-      http_frontend_h2c`). gRPC clients dialing http://gw:80/ over
-      plaintext send the HTTP/2 prior-knowledge preface as the first
-      24 bytes; the outer tcp frontend's byte-match ACL routes them
-      to the h2c-only inner frontend (proto h2), while HTTP/1.1
-      traffic falls through to the h1 inner frontend.
-
-      Closes the upstream Gateway-API GRPCRoute conformance tests
-      (GRPCExactMethodMatching, GRPCRouteHeaderMatching,
-      GRPCRouteListenerHostnameMatching, GRPCRouteNamedRule,
-      GRPCRouteWeight) by handling the spec-mandated h2c-on-shared-
-      HTTP-port multiplexing the upstream suite assumes.
-
-      Asserts:
-        * Outer `frontend http-tcp` exists in mode tcp.
-        * h2c preface byte-match ACL renders correctly (24-byte
-          hex pattern).
-        * use_backend / default_backend dispatch is wired.
-        * Both loopback backends emit `send-proxy-v2`.
-        * Inner h1 frontend binds the unix socket with `accept-proxy`
-          and stays mode http.
-        * Inner h2c frontend binds with `accept-proxy proto h2`.
-        * GRPCRoute backend retains `default-server check proto h2`
-          (existing contract; chart already does this).
+    description: "Pins the chart's plaintext h2c multiplexing on port 80: the new tcp inspector + dual-loopback architecture (libraries/base."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -188,26 +162,7 @@ validationTests:
           contract, asserted here for completeness.
 
   test-grpcroute-https-listener-alpn-h2:
-    description: |
-      Pins the chart's gRPC-over-TLS+ALPN-h2 emission contract for the
-      production-relevant scenario where a Gateway has an HTTPS
-      listener + GRPCRoute (the upstream conformance suite tests the
-      plaintext h2c scenario, which HAProxy 3.x cannot multiplex with
-      HTTP/1.1 on a shared bind — see the consolidated rationale on
-      the GRPCRoute SkipTests entries in
-      tests/conformance/gateway_conformance_test.go).
-
-      Asserts:
-        - HTTPS listener bind carries `alpn h2,http/1.1` (negotiates
-          h2 inside TLS for gRPC clients).
-        - GRPCRoute backend's `default-server` line carries
-          `proto h2` so the upstream connection speaks h2.
-        - Host map entry routes the route's hostname to the right
-          backend.
-
-      End-to-end coverage of the same contract lives in
-      tests/e2e/grpc_tls_test.go (real kind cluster, real gRPC
-      client over TLS).
+    description: "Pins the chart's gRPC-over-TLS+ALPN-h2 emission contract for the production-relevant scenario where a Gateway has an HTTPS listener + GRPCRoute (the upstream conformance suite tests the plaintext h2c ."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
