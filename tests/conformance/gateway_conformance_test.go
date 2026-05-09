@@ -279,14 +279,22 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// <follow-up issue>.
 			"ListenerSetHostnameConflict",
 			"ListenerSetProtocolConflict",
-			// ListenerSet routing for actual HTTP request flow:
-			// HTTPRoutes attached via parentRef.kind=ListenerSet route
-			// correctly per ba174372, but the conformance request layer
-			// expects bind-port-level routing semantics (the LS's
-			// listener port) that the chart's shared HTTP/1.1 frontend
-			// doesn't expose as separate NodePorts. Same NodePort gap
-			// as GatewayWithAttachedRoutesWithPort8080.
-			"ListenerSetHTTPRouting",
+			// (ListenerSetHTTPRouting previously failed because the
+			// listenersets watchedResource was indexed on
+			// `[namespace, spec.parentRef.name]` instead of the
+			// conventional `[namespace, name]`. The route-resolution
+			// loops in util-analyze-routes call
+			// `resources.listenersets.GetSingle(lsNs, lsName)` to
+			// fetch the LS a parentRef points at — but the wrong
+			// index made every such lookup return nil, causing
+			// LS-attached routes to fall through to the
+			// "resolvedGwCount == 0" fallback (which produces a
+			// single empty-host map entry instead of one per LS
+			// listener). Fixed by switching the index to
+			// `[namespace, name]`. Pinned by
+			// test-listenerset-http-routing-conformance-shape (22
+			// assertions tracing each route's path-prefix-exact.map
+			// emission against the upstream conformance fixture).)
 			"ListenerSetAllowedRoutesNamespaces",
 			// (ListenerSetReferenceGrant previously failed because the
 			// chart's top-level ListenerSet status didn't fold in
