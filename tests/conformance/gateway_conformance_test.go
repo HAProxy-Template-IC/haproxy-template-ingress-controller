@@ -295,7 +295,20 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// test-listenerset-http-routing-conformance-shape (22
 			// assertions tracing each route's path-prefix-exact.map
 			// emission against the upstream conformance fixture).)
-			"ListenerSetAllowedRoutesNamespaces",
+			// (ListenerSetAllowedRoutesNamespaces previously failed
+			// because the chart's route-resolution loop didn't
+			// enforce listener.allowedRoutes.namespaces. Routes
+			// from any namespace attached to every LS listener
+			// regardless of `from: All`/`Same`/`Selector`. Added
+			// IsRouteAllowedOnListener macro
+			// (libraries/gateway.yaml line ~924) — same
+			// allowed-from semantics as IsListenerSetAdmitted's
+			// Selector branch but applied per-listener. Merged
+			// into the prPort gate in util-analyze-routes so the
+			// surrounding end-block structure is unchanged. Pinned
+			// by test-listenerset-allowed-routes-namespaces-
+			// conformance-shape (9 assertions covering all
+			// listener × route-ns combinations).
 			// (ListenerSetReferenceGrant previously failed because the
 			// chart's top-level ListenerSet status didn't fold in
 			// per-listener cert-ref resolution — only the cache's
@@ -315,14 +328,16 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// ns as the Gateway, one in a different ns where the
 			// RG's `from` clause doesn't match). Conformance run on
 			// next push is the verification.)
-			// ListenerSetAllowedNamespaceSelector flakes between
-			// passing (final7) and failing (final10) depending on
-			// reconciliation timing — the inline-fallback path
-			// (a93d2bad) covers it, but Scriggo's parallel-render
-			// race against the cache makes the verdict
-			// non-deterministic across runs. Tracked at <follow-up
-			// issue>.
-			"ListenerSetAllowedNamespaceSelector",
+			// (ListenerSetAllowedNamespaceSelector — the chart's
+			// IsListenerSetAdmitted macro already implemented the
+			// matchLabels gate; the listenersets-index fix
+			// (commit 0bb0894f) made GetSingle by (ns, name) work
+			// reliably, so route-resolution and status-side both
+			// see consistent admission decisions. Pinned by
+			// test-listenerset-allowed-namespace-selector-
+			// conformance-shape (5 assertions covering Selector-
+			// allowed and Selector-rejected LSes' top-level
+			// Accepted/Programmed conditions).
 			// TLSRoute wildcard-SNI matcher now works (the ssl-tcp
 			// frontend uses `-m end .<domain>` for `*.<domain>`
 			// patterns, lifting 3 wildcard-intersection sub-tests).
