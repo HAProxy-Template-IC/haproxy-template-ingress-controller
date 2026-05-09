@@ -212,42 +212,24 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// t.Skip() for the whole suite. Each entry must include an issue
 		// link in a comment so it can be revisited.
 		SkipTests: []string{
-			// The five GRPCRoute conformance tests
+			// (The five upstream GRPCRoute conformance tests
 			// (GRPCExactMethodMatching, GRPCRouteHeaderMatching,
 			// GRPCRouteListenerHostnameMatching, GRPCRouteNamedRule,
-			// GRPCRouteWeight — last two skipped further down for
-			// adjacency) attach to a plaintext HTTP/port-80 listener
-			// (the suite's stock `same-namespace` Gateway, see
-			// `vendor/sigs.k8s.io/gateway-api/conformance/base/manifests.yaml`)
-			// and dial it with an insecure gRPC client
-			// (`conformance/utils/grpc/grpc.go` hardcodes
-			// `insecure.NewCredentials()`; ConformanceOptions exposes
-			// no TLS knob; backends declare
-			// `appProtocol: kubernetes.io/h2c`). HAProxy 3.x has no
-			// path to multiplex HTTP/1.1 and h2c on a shared plaintext
-			// bind: `proto h2` locks the bind to H2-only, there's no
-			// `Upgrade: h2c` parser, and ALPN works only inside TLS.
-			// Other controllers (Envoy Gateway, Contour, Cilium) pass
-			// these tests via Envoy's connection-time HTTP/2-preface
-			// detection (`codec_type: AUTO`), which HAProxy doesn't
-			// expose.
-			//
-			// The chart DOES support gRPC over the production-relevant
-			// TLS+ALPN-h2 path: HTTPS binds carry `alpn h2,http/1.1`
-			// (`charts/haptic/libraries/ssl.yaml` `util-ssl-bind-options`
-			// at line ~25), GRPCRoute backends emit
-			// `default-server check proto h2`
-			// (`charts/haptic/libraries/gateway.yaml` ~lines 2538, 2821).
-			// Static-side coverage:
-			// `test-grpcroute-https-listener-alpn-h2` chart validation
-			// test. End-to-end coverage: `tests/e2e/grpc_tls_test.go`.
-			//
-			// Tracked at <follow-up issue> — re-evaluate if HAProxy
-			// upstream ever adds h2c-on-shared-port support (declined
-			// historically; no roadmap indication).
-			"GRPCExactMethodMatching",
-			"GRPCRouteHeaderMatching",
-			"GRPCRouteListenerHostnameMatching",
+			// GRPCRouteWeight) previously failed because HAProxy 3.x
+			// can't multiplex HTTP/1.1 and h2c on a shared plaintext
+			// bind. The chart now does the multiplexing itself: a
+			// `mode tcp` outer frontend (`frontend http-tcp`) inspects
+			// the first 24 bytes of every connection on every HTTP
+			// listener port; connections matching the HTTP/2
+			// prior-knowledge preface
+			// (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`) route to a
+			// unix-socket-bound `mode http` frontend with `proto h2`,
+			// while HTTP/1.1 connections route to a sibling unix-socket
+			// frontend in plain mode http. PROXY-protocol v2 across
+			// the hop preserves the original client IP. Mirrors the
+			// chart's existing ssl-tcp → ssl-loopback → https chain.
+			// Pinned by test-grpcroute-h2c-on-port-80; full chart
+			// suite green.)
 			// Frontend mTLS handshake-level enforcement: the cert-
 			// registration TLS-mode-default fix lets the chart
 			// (GatewayFrontendClientCertificateValidation +
@@ -547,14 +529,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// non-conflict-resolution test case. Tracked at <follow-up
 			// issue>.
 			"BackendTLSPolicySANValidation",
-			// GRPCRouteNamedRule / GRPCRouteWeight: same h2c-on-
-			// plaintext-HTTP-port gap as the GRPCRoute* skips above.
-			// See the consolidated rationale at the top of SkipTests
-			// for the chart's TLS+ALPN-h2 coverage path
-			// (test-grpcroute-https-listener-alpn-h2 +
-			// tests/e2e/grpc_tls_test.go).
-			"GRPCRouteNamedRule",
-			"GRPCRouteWeight",
 		},
 		UsableNetworkAddresses:   usable,
 		UnusableNetworkAddresses: unusable,
