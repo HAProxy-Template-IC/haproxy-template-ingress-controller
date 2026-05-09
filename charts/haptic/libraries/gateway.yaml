@@ -923,6 +923,71 @@ templateSnippets:
         {{ result -}}
       {%- end macro -%}
 
+      {#-
+        IsRouteAllowedOnListener — listener-level
+        `allowedRoutes.namespaces` gate, applied when a route's
+        parentRef has resolved to a specific listener.
+
+        Per Gateway API spec a listener accepts a route only when its
+        `allowedRoutes.namespaces.from` permits the route's namespace:
+
+          * `from: All`      — any namespace.
+          * `from: Same`     — only listenerOwnerNs (the Gateway's or
+                               ListenerSet's namespace).
+          * `from: Selector` — namespaces whose labels match
+                               `selector.matchLabels`.
+          * (unset)          — defaults to `Same`.
+
+        Returns "true" / "false" (Scriggo macro return-type
+        constraint). Callers use `hasPrefix(... , "true")`.
+
+        Exists separately from IsListenerSetAdmitted because the gates
+        are distinct: IsListenerSetAdmitted checks the parent
+        Gateway's `allowedListeners` (LS-level admission), while this
+        macro checks the listener's `allowedRoutes` (route-level
+        admission). A LS can be admitted on a Gateway but its
+        listener can still reject a specific route's namespace.
+      -#}
+      {%- macro IsRouteAllowedOnListener(routeNs string, listener any, listenerOwnerNs string) -%}
+        {%- var allowedFrom = "Same" -%}
+        {%- var allowedSelector any = nil -%}
+        {%- var allowed = listener | dig("allowedRoutes", "namespaces") -%}
+        {%- if allowed != nil -%}
+          {%- allowedFrom = tostring(dig(allowed, "from") | fallback("Same")) -%}
+          {%- allowedSelector = dig(allowed, "selector", "matchLabels") -%}
+        {%- end -%}
+        {%- var result = "false" -%}
+        {%- if allowedFrom == "All" -%}
+          {%- result = "true" -%}
+        {%- else if allowedFrom == "Same" -%}
+          {%- if routeNs == listenerOwnerNs -%}
+            {%- result = "true" -%}
+          {%- end -%}
+        {%- else if allowedFrom == "Selector" -%}
+          {%- if allowedSelector != nil -%}
+            {%- var nsObj = resources.namespaces.GetSingle(routeNs) -%}
+            {%- if nsObj != nil -%}
+              {%- var nsLabels = dig(nsObj, "metadata", "labels") -%}
+              {%- if nsLabels != nil -%}
+                {%- var nsMap = nsLabels.(map[string]any) -%}
+                {%- var selMap = allowedSelector.(map[string]any) -%}
+                {%- var allMatch = "true" -%}
+                {%- for k, v := range selMap -%}
+                  {%- var actual, ok = nsMap[k] -%}
+                  {%- if !ok -%}
+                    {%- allMatch = "false" -%}
+                  {%- else if tostring(actual) != tostring(v) -%}
+                    {%- allMatch = "false" -%}
+                  {%- end -%}
+                {%- end -%}
+                {%- result = allMatch -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {{ result -}}
+      {%- end macro -%}
+
   util-effective-listeners:
     template: |
       {#-
@@ -1521,7 +1586,7 @@ templateSnippets:
         the regsub wildcard fallback).
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted %}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
       {%- macro AnalyzeRoutes(result map[string]any) %}
         {%- var allRoutes = []any{} %}
 
@@ -1563,7 +1628,12 @@ templateSnippets:
                     {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                     {#- parentRef.port pin: per Gateway API spec, attach
                         only to listeners on the named port. -#}
-                    {%- if prPort == 0 || prPort == listenerPort %}
+                    {#- Listener-level admission gate: prPort pin AND
+                        allowedRoutes.namespaces (the listener's owner
+                        is the Gateway, so listenerOwnerNs == gwNs).
+                        Combined into one condition so the surrounding
+                        end-block structure stays unchanged. -#}
+                    {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gwNs), "true") %}
                       {#- Compose a port suffix for non-default HTTP/HTTPS
                           ports so the host_match key includes it. The
                           inbound Host header carries the port verbatim for
@@ -1651,7 +1721,14 @@ templateSnippets:
                     {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
                     {%- if section == "" || section == listenerName %}
                       {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
-                      {%- if prPort == 0 || prPort == listenerPort %}
+                      {#- Listener-level admission gate (LS branch):
+                          prPort pin AND allowedRoutes.namespaces.
+                          Listener owner is the LS itself, so
+                          listenerOwnerNs == lsNs (NOT the parent
+                          Gateway's namespace). Merged into one
+                          condition so the surrounding end-block
+                          structure stays unchanged. -#}
+                      {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
                         {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
                         {%- var portSuffix = "" %}
                         {%- if listenerPort > 0 %}
@@ -1766,7 +1843,12 @@ templateSnippets:
                     {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                     {#- parentRef.port pin: per Gateway API spec, attach
                         only to listeners on the named port. -#}
-                    {%- if prPort == 0 || prPort == listenerPort %}
+                    {#- Listener-level admission gate: prPort pin AND
+                        allowedRoutes.namespaces (the listener's owner
+                        is the Gateway, so listenerOwnerNs == gwNs).
+                        Combined into one condition so the surrounding
+                        end-block structure stays unchanged. -#}
+                    {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, gwNs), "true") %}
                       {#- Compose a port suffix for non-default HTTP/HTTPS
                           ports so the host_match key includes it. The
                           inbound Host header carries the port verbatim for
@@ -1847,7 +1929,14 @@ templateSnippets:
                     {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
                     {%- if section == "" || section == listenerName %}
                       {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
-                      {%- if prPort == 0 || prPort == listenerPort %}
+                      {#- Listener-level admission gate (LS branch):
+                          prPort pin AND allowedRoutes.namespaces.
+                          Listener owner is the LS itself, so
+                          listenerOwnerNs == lsNs (NOT the parent
+                          Gateway's namespace). Merged into one
+                          condition so the surrounding end-block
+                          structure stays unchanged. -#}
+                      {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
                         {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
                         {%- var portSuffix = "" %}
                         {%- if listenerPort > 0 %}
@@ -12454,6 +12543,428 @@ validationTests:
           requires it. A request like
           SNI=third-example.wildcard.org must land on the
           `*.wildcard.org` listener, not the catch-all.
+
+  test-listenerset-allowed-namespace-selector-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API
+      ListenerSetAllowedNamespaceSelector conformance fixture: a
+      Gateway with `allowedListeners.namespaces.from: Selector` +
+      matchLabels `allowed: ns`. Two ListenerSets in different
+      namespaces:
+
+        * In a ns labelled `allowed: ns` → admitted
+          (Accepted=True, Programmed=True, listener Accepted=True)
+        * In a ns without that label → rejected
+          (Accepted=False/NotAllowed, Programmed=False/NotAllowed)
+
+      Pins the chart's IsListenerSetAdmitted macro
+      (libraries/gateway.yaml line ~867) — the Selector branch
+      compares the LS namespace's labels against the Gateway's
+      `allowedListeners.namespaces.selector.matchLabels`.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-allows-listenerset-in-selected-namespace
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: Selector
+                selector:
+                  matchLabels:
+                    allowed: ns
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-listenerset-selector-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-listenerset-selector-not-allowed-ns
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-in-selected-namespace
+            namespace: gateway-api-listenerset-selector-allowed-ns
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-allows-listenerset-in-selected-namespace
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-in-selected-namespace-listener
+                port: 80
+                protocol: HTTP
+                hostname: listenerset-in-selected-namespace-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-not-in-selected-namespace
+            namespace: gateway-api-listenerset-selector-not-allowed-ns
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-allows-listenerset-in-selected-namespace
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-not-in-selected-namespace-listener
+                port: 80
+                protocol: HTTP
+                hostname: listenerset-not-in-selected-namespace-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # Status JSON keys render in alphabetical order (reason,
+      # status, type).
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-allowed-ns/listenerset-in-selected-namespace:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: Selector-allowed LS top-level Accepted=True/Accepted
+
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-allowed-ns/listenerset-in-selected-namespace:rendered"
+        pattern: '"reason":"Programmed","status":"True","type":"Programmed"'
+        description: Selector-allowed LS top-level Programmed=True/Programmed
+
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-not-allowed-ns/listenerset-not-in-selected-namespace:rendered"
+        pattern: '"reason":"NotAllowed","status":"False","type":"Accepted"'
+        description: Selector-rejected LS top-level Accepted=False/NotAllowed
+
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-not-allowed-ns/listenerset-not-in-selected-namespace:rendered"
+        pattern: '"reason":"NotAllowed","status":"False","type":"Programmed"'
+        description: Selector-rejected LS top-level Programmed=False/NotAllowed
+
+  test-listenerset-allowed-routes-namespaces-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API
+      ListenerSetAllowedRoutesNamespaces conformance fixture: a
+      Gateway with `allowedListeners.namespaces.from: All`, one
+      ListenerSet in the same namespace with three listeners — one
+      `from: All`, one `from: Same`, one `from: Selector` keyed on
+      `allowed: ns`. Three HTTPRoutes from three different
+      namespaces attach via parentRef.kind=ListenerSet (no
+      sectionName, fans out to all listeners on the LS).
+
+      Pins the chart-side fix: the route-resolution loop now
+      enforces listener.allowedRoutes.namespaces.from for every
+      (route, listener) pair via the new
+      IsRouteAllowedOnListener macro. A route's namespace must
+      satisfy the listener's gate to produce a path-prefix entry.
+
+      Per upstream test, attached counts:
+        * listener-allowed-routes-all      — 3 routes (any ns)
+        * listener-allowed-routes-same     — 1 route (same ns only)
+        * listener-allowed-routes-selector — 1 route (the
+          gateway-api-routes-allowed-ns labelled `allowed: ns`)
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-test-allowed-routes
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-test-allowed-routes-namespaces
+            namespace: gateway-conformance-infra
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-test-allowed-routes
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-listener-allowed-routes-all
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-listener-allowed-routes-all.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: listener-set-listener-allowed-routes-same
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-listener-allowed-routes-same.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+              - name: listener-set-listener-allowed-routes-selector
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-listener-allowed-routes-selector.com
+                allowedRoutes:
+                  namespaces:
+                    from: Selector
+                    selector:
+                      matchLabels:
+                        allowed: ns
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-routes-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-routes-not-allowed-ns
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v2
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v3
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v1-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v1
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v2-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v2
+          endpoints:
+            - addresses: ["10.0.2.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v3-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v3
+          endpoints:
+            - addresses: ["10.0.3.1"]
+          ports:
+            - port: 8080
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: listenerset-test-allowed-routes-namespaces-reference-grant
+            namespace: gateway-conformance-infra
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: HTTPRoute
+                namespace: gateway-api-routes-allowed-ns
+              - group: gateway.networking.k8s.io
+                kind: HTTPRoute
+                namespace: gateway-api-routes-not-allowed-ns
+            to:
+              - group: ""
+                kind: Service
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-in-same-namespace
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listenerset-test-allowed-routes-namespaces
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route-in-same-namespace
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-in-selected-namespace
+            namespace: gateway-api-routes-allowed-ns
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listenerset-test-allowed-routes-namespaces
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route-in-selected-namespace
+                backendRefs:
+                  - name: infra-backend-v2
+                    namespace: gateway-conformance-infra
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-not-in-selected-namespace
+            namespace: gateway-api-routes-not-allowed-ns
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listenerset-test-allowed-routes-namespaces
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route-not-in-selected-namespace
+                backendRefs:
+                  - name: infra-backend-v3
+                    namespace: gateway-conformance-infra
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # listener-allowed-routes-all (from: All) — accepts all 3 routes.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-all\\.com/route-in-same-namespace GW_ROUTE_ID:http:gateway-conformance-infra_route-in-same-namespace_0$"
+        description: from=All accepts route-in-same-namespace
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-all\\.com/route-in-selected-namespace GW_ROUTE_ID:http:gateway-api-routes-allowed-ns_route-in-selected-namespace_0$"
+        description: from=All accepts route-in-selected-namespace
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-all\\.com/route-not-in-selected-namespace GW_ROUTE_ID:http:gateway-api-routes-not-allowed-ns_route-not-in-selected-namespace_0$"
+        description: from=All accepts route-not-in-selected-namespace
+
+      # listener-allowed-routes-same (from: Same) — accepts only the
+      # same-ns route.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-same\\.com/route-in-same-namespace GW_ROUTE_ID:http:gateway-conformance-infra_route-in-same-namespace_0$"
+        description: from=Same accepts route-in-same-namespace
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-same\\.com/route-in-selected-namespace"
+        description: from=Same REJECTS route-in-selected-namespace (different ns)
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-same\\.com/route-not-in-selected-namespace"
+        description: from=Same REJECTS route-not-in-selected-namespace (different ns)
+
+      # listener-allowed-routes-selector (from: Selector,
+      # matchLabels: allowed=ns) — accepts only the ns labelled
+      # `allowed: ns` (gateway-api-routes-allowed-ns).
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-selector\\.com/route-in-same-namespace"
+        description: "from=Selector REJECTS route-in-same-namespace (no `allowed: ns` label on gateway-conformance-infra)"
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-selector\\.com/route-in-selected-namespace GW_ROUTE_ID:http:gateway-api-routes-allowed-ns_route-in-selected-namespace_0$"
+        description: from=Selector ACCEPTS route in matching-label namespace
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-selector\\.com/route-not-in-selected-namespace"
+        description: from=Selector REJECTS route in non-matching-label namespace
 
   test-listenerset-http-routing-conformance-shape:
     description: |
