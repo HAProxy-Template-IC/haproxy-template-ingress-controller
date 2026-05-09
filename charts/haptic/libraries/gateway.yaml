@@ -6958,31 +6958,158 @@ templateSnippets:
             lsProgrammedMsg = rejectMsg
           } else {
             // Permitted by parent Gateway. Drill into per-listener
-            // conflict state to pick the top-level reason: if every
-            // declared listener is conflicted, the LS itself is rejected
-            // with ListenersNotValid (per ListenerSetHostnameConflict /
-            // ListenerSetProtocolConflict conformance tests).
+            // conflict state AND per-listener cert-ref / kind-ref
+            // resolution to pick the top-level reason: if every
+            // declared listener is conflicted OR has unresolvable
+            // refs, the LS itself is rejected with ListenersNotValid
+            // (per ListenerSetHostnameConflict /
+            // ListenerSetProtocolConflict / ListenerSetReferenceGrant
+            // conformance tests).
             //
             // The conflict state lives on the cache entry; the inline-
             // fallback path (cache miss) doesn't have it, so we
-            // optimistically assume no conflicts. ListenerSetHostnameConflict
-            // / ListenerSetProtocolConflict need the cache to be present;
-            // if the cache miss path triggers there, those conformance
-            // tests will see Accepted=True instead of ListenersNotValid.
+            // optimistically assume no conflicts. The per-listener
+            // ref-resolution check is computed inline here (mirrors
+            // the per-listener loop below) so even a cache miss
+            // surfaces the right top-level reason for tests like
+            // ListenerSetReferenceGrant where every cert ref fails.
             var anyValid = false
             var allConflicts = []any{}
             if hasEntry {
               allConflicts = statusEntryAny.(map[string]any)["listenerConflicts"].([]any)
             }
+            // Pre-scan listeners for cert-ref / kind-ref resolution
+            // failures, so the top-level decision can fold both
+            // signals (conflict + ref-resolution). The check mirrors
+            // the per-listener loop below; we keep the two in sync
+            // via shape rather than refactoring the per-listener loop
+            // upward, because the per-listener loop also computes
+            // supportedKinds / attachedRoutes / Programmed details
+            // that don't matter at the top level.
+            var listenerHasValidRefs = map[string]bool{}
+            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+              var lname = tostring(dig(l, "name") | fallback(""))
+              var lprotocol = tostring(dig(l, "protocol") | fallback("HTTP"))
+              var refsOk = true
+              // Kind validity (allowedRoutes.kinds intersection).
+              var defKinds = []any{}
+              switch lprotocol {
+              case "HTTP", "HTTPS":
+                defKinds = []any{
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
+                }
+              case "TLS":
+                defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"}}
+              case "TCP":
+                defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"}}
+              case "UDP":
+                defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"}}
+              }
+              var requestedKinds = dig(l, "allowedRoutes", "kinds")
+              if requestedKinds != nil {
+                for _, reqEntry := range toSlice(requestedKinds) {
+                  var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
+                  var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
+                  var matched = false
+                  for _, def := range defKinds {
+                    if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                      matched = true
+                      break
+                    }
+                  }
+                  if !matched {
+                    refsOk = false
+                    break
+                  }
+                }
+              }
+              // Cert ref validity (cross-ns RG check + Secret
+              // resolution + PEM check, source kind="ListenerSet").
+              if refsOk && (lprotocol == "HTTPS" || lprotocol == "TLS") {
+                var listenerTls = dig(l, "tls")
+                if listenerTls != nil {
+                  for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
+                    var refGroup = tostring(dig(ref, "group") | fallback(""))
+                    var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
+                    if (refGroup != "" && refGroup != "core") || refKind != "Secret" {
+                      refsOk = false
+                      continue
+                    }
+                    var refName = tostring(dig(ref, "name") | fallback(""))
+                    var refNs = tostring(dig(ref, "namespace") | fallback(lsNs))
+                    if refName == "" {
+                      refsOk = false
+                      continue
+                    }
+                    if refNs != lsNs {
+                      var rgOk = ReferenceGrantPermitted(
+                        "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                        "", "Secret", refNs, refName)
+                      if rgOk != "true" {
+                        refsOk = false
+                        continue
+                      }
+                    }
+                    var sec = resources.secrets.GetSingle(refNs, refName)
+                    if sec == nil {
+                      refsOk = false
+                      continue
+                    }
+                    var sd = dig(sec, "data")
+                    var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
+                    var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
+                    if crtB64 == "" || keyB64 == "" {
+                      refsOk = false
+                      continue
+                    }
+                    var crt, crtErr = b64decode(crtB64)
+                    var key, keyErr = b64decode(keyB64)
+                    if crtErr != nil || keyErr != nil {
+                      refsOk = false
+                      continue
+                    }
+                    if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                      refsOk = false
+                      continue
+                    }
+                  }
+                }
+              }
+              listenerHasValidRefs[lname] = refsOk
+            }
+            // A listener is "valid" at the top level when:
+            //   - its refs resolved (cert + kind), AND
+            //   - it isn't conflicted with a sibling on the same port
+            // The cache's `accepted` flag covers the conflict half;
+            // when cache misses, we optimistically pretend conflict
+            // info isn't telling us anything (all conflicts are []),
+            // and rely solely on listenerHasValidRefs.
+            var anyConflictData = false
             for _, lc := range allConflicts {
+              anyConflictData = true
               var lcm = lc.(map[string]any)
-              if tostring(lcm["conflicted"]) == "" && lcm["accepted"].(bool) {
+              var lcName = tostring(lcm["name"])
+              var notConflicted = tostring(lcm["conflicted"]) == ""
+              var conflictAccepted = lcm["accepted"].(bool)
+              var refsOk = listenerHasValidRefs[lcName]
+              if notConflicted && conflictAccepted && refsOk {
                 anyValid = true
                 break
               }
             }
-            if len(allConflicts) == 0 {
-              anyValid = true
+            if !anyConflictData {
+              // No cache, no conflict signal — every listener with
+              // resolved refs counts as valid.
+              for _, ok := range listenerHasValidRefs {
+                if ok {
+                  anyValid = true
+                  break
+                }
+              }
+              if len(listenerHasValidRefs) == 0 {
+                anyValid = true
+              }
             }
             if anyValid {
               lsAccepted = "True"
@@ -6994,7 +7121,7 @@ templateSnippets:
             } else {
               lsAccepted = "False"
               lsAcceptedReason = "ListenersNotValid"
-              lsAcceptedMsg = "All listeners on this ListenerSet lost a hostname or protocol conflict"
+              lsAcceptedMsg = "All listeners on this ListenerSet lost a conflict, have unsupported route kinds, or have unresolvable cert refs"
               lsProgrammed = "False"
               lsProgrammedReason = "ListenersNotValid"
               lsProgrammedMsg = lsAcceptedMsg
@@ -12316,6 +12443,202 @@ validationTests:
           requires it. A request like
           SNI=third-example.wildcard.org must land on the
           `*.wildcard.org` listener, not the catch-all.
+
+  test-listenerset-reference-grant-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetReferenceGrant
+      conformance fixture. A Gateway in `gateway-conformance-infra`
+      has `allowedListeners.namespaces.from: All`. Two ListenerSets
+      attach via parentRef:
+
+        * `listenerset-with-reference-grant` (same ns as Gateway,
+          gateway-conformance-infra). Cross-ns cert ref to
+          `gateway-conformance-web-backend` IS covered by the RG
+          `reference-grant-for-listener-set` whose `from` clause
+          allows `{ListenerSet, gateway-conformance-infra}`.
+          Expected: top-level Accepted=True/Accepted, listener-
+          level ResolvedRefs=True.
+
+        * `listenerset-without-reference-grant` (different ns,
+          gateway-api-listener-sets-test-reference-grant-ns).
+          Cross-ns cert ref to `gateway-conformance-web-backend`
+          but the RG only allows `{ListenerSet,
+          gateway-conformance-infra}` (not the LS's namespace).
+          Expected: top-level Accepted=False/ListenersNotValid,
+          Programmed=False/ListenersNotValid, listener-level
+          ResolvedRefs=False/RefNotPermitted.
+
+      Pins the chart-side fix that folds per-listener cert-ref
+      resolution into the top-level decision: a ListenerSet whose
+      every listener has unresolvable refs MUST be rejected with
+      `ListenersNotValid`, not `Accepted`.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-test-reference-grant
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 443
+                protocol: HTTPS
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: certificate
+                      namespace: gateway-conformance-web-backend
+            allowedListeners:
+              namespaces:
+                from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-reference-grant
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-test-reference-grant
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-with-reference-grant-listener
+                port: 443
+                protocol: HTTPS
+                hostname: listenerset-with-reference-grant-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: certificate
+                      namespace: gateway-conformance-web-backend
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-without-reference-grant
+            namespace: gateway-api-listener-sets-test-reference-grant-ns
+            generation: 1
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-test-reference-grant
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-without-reference-grant-listener
+                port: 443
+                protocol: HTTPS
+                hostname: listenerset-without-reference-grant-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: certificate
+                      namespace: gateway-conformance-web-backend
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: reference-grant-for-listener-set
+            namespace: gateway-conformance-web-backend
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: gateway-conformance-infra
+            to:
+              - group: ""
+                kind: Secret
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: reference-grant-for-gateway
+            namespace: gateway-conformance-web-backend
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                namespace: gateway-conformance-infra
+            to:
+              - group: ""
+                kind: Secret
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: certificate
+            namespace: gateway-conformance-web-backend
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # listenerset-with-reference-grant: same-ns as Gateway, RG
+      # exists for {ListenerSet, gateway-conformance-infra} →
+      # cert resolves → all conditions True. Status JSON keys
+      # render in alphabetical order (reason, status, type).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-reference-grant:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: With-RG listenerset top-level Accepted=True/Accepted
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-reference-grant:rendered"
+        pattern: '"reason":"Programmed","status":"True","type":"Programmed"'
+        description: With-RG listenerset top-level Programmed=True/Programmed
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-reference-grant:rendered"
+        pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'
+        description: With-RG listenerset's listener ResolvedRefs=True
+
+      # listenerset-without-reference-grant: in DIFFERENT ns
+      # (gateway-api-listener-sets-test-reference-grant-ns), the
+      # only RG on the cert's ns is for {ListenerSet,
+      # gateway-conformance-infra} — doesn't permit this ns →
+      # cert ref is RefNotPermitted, top-level rolls up to
+      # ListenersNotValid.
+      - type: contains
+        target: "status:gateway-api-listener-sets-test-reference-grant-ns/listenerset-without-reference-grant:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: Without-RG listenerset top-level Accepted=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-api-listener-sets-test-reference-grant-ns/listenerset-without-reference-grant:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Programmed"'
+        description: Without-RG listenerset top-level Programmed=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-api-listener-sets-test-reference-grant-ns/listenerset-without-reference-grant:rendered"
+        pattern: '"reason":"RefNotPermitted","status":"False","type":"ResolvedRefs"'
+        description: Without-RG listenerset's listener ResolvedRefs=False/RefNotPermitted
 
   test-backendtlspolicy-compiles:
     description: BackendTLSPolicy is watched and the chart compiles when one is present
