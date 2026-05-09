@@ -73,22 +73,6 @@ templateSnippets:
   # enough that disallowing whitespace and newlines covers every
   # realistic injection vector while passing every legitimate
   # https://... value operators care about.
-  util-auth-validate-url:
-    template: |-
-      {%- macro ValidateAuthURL(url string, annotation string, ns string, ingressName string) %}
-        {%- if strings_contains(url, "\n") || strings_contains(url, "\r") || strings_contains(url, " ") || strings_contains(url, "\t") -%}
-          {{- fail("Invalid URL in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ": value contains whitespace or newlines. URLs must not contain whitespace — they are interpolated into HAProxy directives where whitespace is significant and could be used to inject arbitrary config.") -}}
-        {%- end -%}
-      {%- end %}
-
-  # features-* runs early in haproxyConfig.template (side-effect render).
-  # We use it to register spoe.conf as a general file so the HAProxy
-  # `filter spoe ... config <path>` directive resolves at validation
-  # and runtime.
-  # util-spoa-hub-enabled returns "true"/"false" so callers can test
-  # truthiness with a cheap string compare. Scriggo's `if` requires a
-  # bool, and `extraContext | dig(...)` returns `any`; tostring() routes
-  # the value through Go's fmt and gives us a stable boolean string.
   util-spoa-hub-enabled:
     template: |-
       {{- extraContext | dig("spoaHub", "enabled") | fallback(false) | tostring() -}}

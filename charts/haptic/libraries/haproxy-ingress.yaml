@@ -270,38 +270,6 @@ templateSnippets:
   # ============================================================================
   # Annotation Helpers
   # ============================================================================
-
-  util-haproxy-ingress-helpers:
-    template: |
-      {#- HAProxy-Ingress annotation processing helpers -#}
-
-      {#- Gets haproxy-ingress.github.io/<name> annotation with default -#}
-      {% macro HIAnn(ingress any, name string, def string) string %}
-        {%% show ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/" + name) | fallback(def) | tostring() %%}
-      {% end %}
-
-      {#- Gets Ingress key as ns/name -#}
-      {% macro HIKey(ingress any) string %}
-        {%% show (ingress | dig("metadata", "namespace") | fallback("")) + "/" + (ingress | dig("metadata", "name") | fallback("")) %%}
-      {% end %}
-
-      {#- Extracts hosts from Ingress rules -#}
-      {% macro HIHosts(ingress any) []any %}
-        {%%
-          var hosts = []any{}
-          for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
-            if h := rule | dig("host"); h != nil {
-              hosts = append(hosts, h)
-            }
-          }
-          show hosts
-        %%}
-      {% end %}
-
-  # ============================================================================
-  # Backend Directives - Phase 1: Timeouts, Load Balancing, Health Checks
-  # ============================================================================
-
   backend-directives-600-haproxy-ingress-timeouts:
     template: |
       {#-
