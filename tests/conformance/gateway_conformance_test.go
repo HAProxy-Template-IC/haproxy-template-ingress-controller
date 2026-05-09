@@ -302,11 +302,34 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// Tracked at <follow-up issue>; needs either per-IP Service
 			// emission or a MetalLB IPAddressPool selector strategy.
 			"GatewayStaticAddresses",
-			// GatewayInfrastructure: fixture-application timeout when the
-			// kind cluster is busy churning conformance namespaces (the
-			// test fails to wait for the gateway-conformance-infra
-			// namespace to be ready). Not chart logic — environment race
-			// in the test framework's namespace setup. Tracked at <follow-up issue>.
+			// GatewayInfrastructure: the upstream test searches the
+			// Gateway's own namespace for a ServiceAccount, Pod, or
+			// Service labelled `gateway.networking.k8s.io/gateway-name`
+			// and asserts the user's
+			// `spec.infrastructure.{labels,annotations}` are a subset of
+			// that resource's metadata. Haptic's shared-HAProxy
+			// architecture means there are no per-Gateway Pods; the
+			// chart emits a per-Gateway marker Service to carry the
+			// propagated metadata (charts/haptic/libraries/gateway.yaml
+			// `gatewayInfrastructureServices` and `k8sResources.gateway-
+			// infrastructure-propagation`). The marker lands in the
+			// controller's own namespace, gated by the chart's
+			// defense-in-depth RBAC: the controller's Role grants
+			// Service verbs only there, and the resourceapplier sets
+			// `RestrictToOwnNamespace=true`. Conformance fixtures put
+			// the Gateway in `gateway-conformance-infra`, so the
+			// upstream namespace search returns empty even though the
+			// marker exists. Cross-namespace emission would require
+			// cluster-scoped RBAC + `RestrictToOwnNamespace=false` —
+			// security trade-offs operators may not want by default.
+			//
+			// The chart-side propagation contract is pinned by
+			// `test-gateway-infrastructure-propagation-annotations-only`,
+			// `test-gateway-infrastructure-propagation-with-static-addresses`,
+			// and `test-gateway-infrastructure-propagation-empty` chart
+			// validation tests (charts/haptic/libraries/gateway.yaml).
+			// Tracked at <follow-up issue> — re-evaluate if the chart
+			// grows opt-in cross-namespace Service emission.
 			"GatewayInfrastructure",
 			// (ListenerSetHostnameConflict / ListenerSetProtocolConflict
 			// previously failed for two reasons:
