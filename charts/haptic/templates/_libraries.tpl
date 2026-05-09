@@ -197,6 +197,25 @@ Each entry in `$libraryFiles` is either:
 {{- end }}
 {{- $merged = mustMergeOverwrite $merged $userConfig }}
 
+{{- /* Strip leading Scriggo doc-comment blocks from templateSnippets in
+       the merged output. The {#- ... -#} blocks at the top of each
+       snippet document purpose, parameters, and usage for chart authors
+       but contribute nothing to the rendered HAProxy config — Scriggo
+       strips them at template-render time, but the unstripped source
+       still ships in the deployed HAProxyTemplateConfig CR. Removing
+       them here keeps library source files verbose while shrinking the
+       deployed CR enough to fit within the 1 MiB Kubernetes Secret limit
+       that Helm's release storage hits on large charts.
+
+       Only the LEADING comment block is stripped (`(?s)\A\s*{# ... #}`).
+       Mid-template inline comments often participate in whitespace
+       control via their `-` markers and are left untouched. */ -}}
+{{- $leadingDocComment := "(?s)\\A\\s*\\{#.*?#\\}\\s*\\n?" }}
+{{- range $name, $snippet := ($merged.templateSnippets | default dict) }}
+  {{- $tpl := $snippet.template | default "" }}
+  {{- $_ := set $snippet "template" (regexReplaceAll $leadingDocComment $tpl "") }}
+{{- end }}
+
 {{- /* Return merged config as YAML */ -}}
 {{- $merged | toYaml }}
 {{- end }}
