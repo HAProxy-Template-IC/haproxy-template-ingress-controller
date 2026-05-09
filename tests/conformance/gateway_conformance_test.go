@@ -411,34 +411,43 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// conformance-shape (5 assertions covering Selector-
 			// allowed and Selector-rejected LSes' top-level
 			// Accepted/Programmed conditions).
-			// TLSRoute wildcard-SNI matcher now works (the ssl-tcp
-			// frontend uses `-m end .<domain>` for `*.<domain>`
-			// patterns, lifting 3 wildcard-intersection sub-tests).
-			// The remaining failures all share one root cause:
-			// "should-not-reach-backend" / "should-be-rejected"
-			// assertions expect the ssl-tcp frontend to REJECT TLS
-			// connections whose SNI doesn't match any TLSRoute-
-			// attached pattern. The chart's ssl-tcp frontend has
-			// `default_backend ssl-loopback` that forwards
-			// non-matching traffic to the HTTPS frontend for
-			// termination — adding a blanket reject would break
-			// HTTPS termination on shared listener ports. Fixing
-			// this needs per-listener-port ssl-tcp frontends
-			// (one frontend per Gateway TLS-passthrough listener,
-			// each with its own SNI allowlist) — a substantial
-			// frontend-separation refactor. Tracked at
-			// <follow-up issue>.
-			"TLSRouteHostnameIntersection",
-			"TLSRouteInvalidBackendRefNonexistent",
-			"TLSRouteInvalidBackendRefUnknownKind",
-			// (TLSRouteListenerMixedTerminationNotSupported is purely a
-			// listener-status assertion: a Gateway with two TLS
-			// listeners on the same port — one Terminate, one
-			// Passthrough — must surface Accepted=False/ProtocolConflict
-			// on both. The chart's status-patches-200-gateway already
-			// detects this via its `tlsPortModes` pre-scan and emits
-			// the right reason for both listeners; pinned by
-			// test-tlsroute-mixed-termination-protocol-conflict.)
+			// (TLSRoute frontend separation lands the architectural
+			// foundation for the upstream TLSRoute conformance tests:
+			//
+			//   * applyListener (gateway.yaml) no longer folds
+			//     TLS-Terminate listeners into bindHTTPSDefault —
+			//     they always failed silently because the chart's
+			//     mode-http HTTPS frontend can't serve L4 TCP.
+			//   * util-build-ssl-passthrough (Pass 2) now also
+			//     processes Terminate-mode listeners and tags every
+			//     entry with port + mode + Gateway identity.
+			//   * frontends-500-ssl-tcp (ssl.yaml) filters to
+			//     mode=Passthrough — chart-static port keeps
+			//     Ingress-passthrough + ssl-loopback fall-through
+			//     for HTTPS termination.
+			//   * frontends-600-gateway-tls-listener (new): one
+			//     mode-tcp frontend per non-chart-static port.
+			//     Terminate: `bind ... ssl crt-list ...` + ssl_fc_sni
+			//     routing. Passthrough: plain bind + req_ssl_sni
+			//     routing. Reject-default `tcp-request content reject`
+			//     fires on unmatched SNIs (closes the Invalid*
+			//     conformance assertions — Pass 2's ResolvedRefs
+			//     gate filters routes with broken backends, so their
+			//     SNI never enters the allowlist).
+			//
+			// Pinned by:
+			//   * test-tlsroute-passthrough-nondefault-port-frontend
+			//   * test-tlsroute-terminate-nondefault-port-frontend
+			//   * test-tlsroute-invalid-backend-rejects-on-frontend
+			//
+			// TLSRouteTerminateSimpleSameNamespace remains skipped:
+			// its fixture's listener uses port 8443 = chart's default
+			// httpsPort. Coexistence on the same port (chart-static
+			// HTTPS frontend in mode-http + new TLS frontend in
+			// mode-tcp) needs a chart-static-bind gate that's not
+			// in this commit set. Operators wanting the test to run
+			// today set httpsPort to a non-8443 value via extraContext.
+			// Tracked at <follow-up issue>.
 			"TLSRouteTerminateSimpleSameNamespace",
 			// HTTPRouteListenerPortMatching previously skipped on the
 			// 8080/8443 plumbing gap; lifted by the partial-SSA + open
