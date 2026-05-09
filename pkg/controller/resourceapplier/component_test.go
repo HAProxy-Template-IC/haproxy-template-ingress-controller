@@ -131,11 +131,12 @@ func sampleResource(ns, name string, port int) templating.RenderedResource {
 // spec.ports). Intended to exercise applyAndPrune's partial-mode
 // branches without baking domain-specific naming into the test.
 //
-// The namespace is fixed to the test's controller-owned namespace
-// ("haptic") rather than parameterised — every existing caller uses
-// it, and the resourceapplier's namespace-scoping behaviour is
-// exercised separately by the cross-namespace test suite.
-func partialResource(name string, ports ...int) templating.RenderedResource {
+// Namespace and name are fixed to the test's standard
+// controller-owned target ("haptic" / "haptic-haproxy") rather than
+// parameterised — every existing caller uses these values, and the
+// resourceapplier's namespace-scoping behaviour is exercised
+// separately by the cross-namespace test suite.
+func partialResource(ports ...int) templating.RenderedResource {
 	portEntries := make([]any, 0, len(ports))
 	for _, p := range ports {
 		portEntries = append(portEntries, map[string]any{
@@ -149,12 +150,12 @@ func partialResource(name string, ports ...int) templating.RenderedResource {
 		APIVersion: "v1",
 		Kind:       "Service",
 		Namespace:  "haptic",
-		Name:       name,
+		Name:       "haptic-haproxy",
 		Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Service",
 			"metadata": map[string]any{
-				"name":      name,
+				"name":      "haptic-haproxy",
 				"namespace": "haptic",
 				"annotations": map[string]any{
 					AnnotationOwnership: OwnershipPartial,
@@ -244,7 +245,7 @@ func TestApplyAndPrune_PartialOwnership_NoOrphanDelete(t *testing.T) {
 
 	// First render: partial Service patching gw-8080 in. Applies as SSA.
 	comp.cachedResources = []templating.RenderedResource{
-		partialResource("haptic-haproxy", 8080),
+		partialResource(8080),
 	}
 	comp.handleReconciliationCompleted(context.Background())
 	require.Equal(t, int32(1), counter.Load(), "leader must SSA the partial patch")
@@ -275,7 +276,7 @@ func TestApplyAndPrune_PartialOwnership_NoManagedByLabel(t *testing.T) {
 	}
 
 	comp.cachedResources = []templating.RenderedResource{
-		partialResource("haptic-haproxy", 8080, 8443),
+		partialResource(8080, 8443),
 	}
 	comp.handleReconciliationCompleted(context.Background())
 	require.Equal(t, int32(1), patched.Load())
@@ -295,7 +296,7 @@ func TestApplyAndPrune_PartialOwnership_DropEntryReapplies(t *testing.T) {
 
 	// First render owns gw-8080 + gw-8443.
 	comp.cachedResources = []templating.RenderedResource{
-		partialResource("haptic-haproxy", 8080, 8443),
+		partialResource(8080, 8443),
 	}
 	comp.handleReconciliationCompleted(context.Background())
 	require.Equal(t, int32(1), counter.Load())
@@ -303,7 +304,7 @@ func TestApplyAndPrune_PartialOwnership_DropEntryReapplies(t *testing.T) {
 	// Second render drops gw-8443 → checksum differs → must re-SSA so
 	// the apiserver releases haptic's claim on the dropped entry.
 	comp.cachedResources = []templating.RenderedResource{
-		partialResource("haptic-haproxy", 8080),
+		partialResource(8080),
 	}
 	comp.handleReconciliationCompleted(context.Background())
 	assert.Equal(t, int32(2), counter.Load(),
