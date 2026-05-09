@@ -1,0 +1,133 @@
+# Gateway API Template Library
+#
+# Provides Kubernetes Gateway API v1.2.0 support (HTTPRoute, GRPCRoute).
+# Documentation: ../docs/libraries/gateway.md
+#
+# Features:
+#   - Path matching: Exact, PathPrefix, RegularExpression
+#   - Advanced matching: Method, headers, query params (HTTPRoute), gRPC method (GRPCRoute)
+#   - Filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite
+#   - Traffic splitting: Weighted backends via MULTIBACKEND qualifier
+#
+# Architecture:
+#   - util-gateway-analysis: Central cached analysis of all routes
+#   - Sharded generation: Automatic parallel processing for large route sets
+#   - Extension points: frontend-matchers-advanced-*, frontend-filters-*
+
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+# Loaded only when Gateway API CRDs are detected on the cluster (via Capabilities).
+_helm_load:
+  enable: '{{ and .Values.controller.templateLibraries.gateway.enabled (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass") }}'
+  inject:
+    - path: watchedResources.gateways.fieldSelector
+      value: 'spec.gatewayClassName={{ .Values.gatewayClass.name }}'
+    - path: watchedResources.gatewayclasses.fieldSelector
+      value: 'spec.controllerName={{ .Values.gatewayClass.controllerName }}'
+
+watchedResources:
+  gatewayclasses:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: gatewayclasses
+    # GatewayClass is cluster-scoped, so no namespace key. metadata.name is
+    # globally unique already; indexing by name lets the templates look up
+    # the matching class without scanning the whole list.
+    indexBy: ["metadata.name"]
+    enableValidationWebhook: false
+    statusPatch: true
+    # fieldSelector: injected by Helm to scope to GatewayClasses we own
+    # (spec.controllerName == .Values.gatewayClass.controllerName).
+
+  gateways:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: gateways
+    indexBy: ["metadata.namespace", "metadata.name"]
+    enableValidationWebhook: false
+    statusPatch: true
+    # fieldSelector: injected by Helm from gatewayClass.name
+
+  httproutes:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: httproutes
+    indexBy: ["metadata.namespace", "metadata.name"]
+    enableValidationWebhook: true
+    statusPatch: true
+    # Filter by Gateway reference using label selector
+    # Users can label HTTPRoutes to target specific Gateways
+    # Example: kubectl label httproute my-route gateway=haproxy
+
+  grpcroutes:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: grpcroutes
+    indexBy: ["metadata.namespace", "metadata.name"]
+    enableValidationWebhook: true
+    statusPatch: true
+
+  tlsroutes:
+    # Gateway API v1.5 ships TLSRoute on the Standard channel with v1
+    # served+storage (v1alpha2 / v1alpha3 are still served for backwards
+    # compatibility). The conformance fixtures use the v1 apiVersion.
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: tlsroutes
+    indexBy: ["metadata.namespace", "metadata.name"]
+    statusPatch: true
+
+  services:
+    apiVersion: v1
+    resources: services
+    indexBy: ["metadata.namespace", "metadata.name"]
+
+  endpoints:
+    apiVersion: discovery.k8s.io/v1
+    resources: endpointslices
+    indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
+
+  namespaces:
+    apiVersion: v1
+    resources: namespaces
+    # Cluster-scoped; metadata.name is globally unique. Watched so the
+    # listener-attachment evaluator can resolve `allowedRoutes.namespaces.from:
+    # Selector` against namespace labels (per Gateway API spec). Without this
+    # the chart can't tell whether a route's namespace matches the listener's
+    # namespace selector and the listener's `attachedRoutes` count drifts
+    # from what conformance expects.
+    indexBy: ["metadata.name"]
+
+  referencegrants:
+    apiVersion: gateway.networking.k8s.io/v1beta1
+    resources: referencegrants
+    # ReferenceGrant lives in the namespace that GRANTS access. Index by
+    # namespace+name so the cert/backend-ref validators can list grants
+    # in a target namespace efficiently. Per Gateway API spec, a
+    # cross-namespace cert ref or backendRef is permitted iff a
+    # ReferenceGrant in the TARGET namespace lists the source's
+    # group/kind/namespace under spec.from and the target's group/kind
+    # (and optional name) under spec.to.
+    indexBy: ["metadata.namespace", "metadata.name"]
+
+  listenersets:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: listenersets
+    # ListenerSet (GEP-1713) lets users add listeners to a Gateway from
+    # a separate resource — designed for shared-frontend dataplanes
+    # (which is haptic's exact architecture). Indexed by namespace +
+    # name so route-resolution sites can `GetSingle(lsNs, lsName)` the
+    # exact ListenerSet a parentRef points at. Per-Gateway iteration
+    # uses `resources.listenersets.List()` and filters in template code
+    # (the typical Gateway has at most a handful of attached
+    # ListenerSets so the linear scan is cheap).
+    indexBy: ["metadata.namespace", "metadata.name"]
+    statusPatch: true
+
+  backendtlspolicies:
+    apiVersion: gateway.networking.k8s.io/v1
+    resources: backendtlspolicies
+    indexBy: ["metadata.namespace", "metadata.name"]
+    enableValidationWebhook: false
+    statusPatch: true
+
+  configmaps:
+    apiVersion: v1
+    resources: configmaps
+    # Watched only so BackendTLSPolicy CACertificateRefs that point at
+    # ConfigMaps can be resolved (Core support per Gateway API spec).
+    indexBy: ["metadata.namespace", "metadata.name"]

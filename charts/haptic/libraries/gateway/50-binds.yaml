@@ -1,0 +1,294 @@
+templateSnippets:
+  http-bind-extra-050-gateway-multi-port-bind:
+    template: |
+      {#- Walk Gateway-owned listeners + accepted ListenerSet listeners
+          so non-default HTTP ports declared on either get a bind line.
+          Inlines the F3 allowedListeners gate (default-deny when unset;
+          from=Same admits ListenerSets in the parent's namespace,
+          from=All admits everywhere; from=Selector matches the
+          ListenerSet's namespace labels against
+          allowedListeners.namespaces.selector.matchLabels) plus the
+          cross-namespace ReferenceGrant gate, so binds match what
+          status-patches-220-listenerset accepts. -#}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- var defaultPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+      {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+      {%- var seen = map[int]bool{} %}
+      {%- seen[defaultPort] = true %}
+      {#- Also skip the chart-static HTTPS port: a Gateway HTTP listener
+          on that port would emit `bind *:<httpsPort>` here, colliding
+          with the chart-static HTTPS bind on the sibling frontend.
+          Per Gateway API spec the conflict surfaces as Accepted=False
+          on the Gateway side; we just guarantee the data plane
+          doesn't fail to start. -#}
+      {%- seen[httpsPort] = true %}
+      {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
+        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+          {%- if protocol == "HTTP" %}
+            {%- var port = toint(listener | dig("port") | fallback(0)) %}
+            {%- if port > 0 && !seen[port] %}
+              {%- seen[port] = true %}
+      bind *:{{ port }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+              {%- if protocol == "HTTP" %}
+                {%- var port = toint(listener | dig("port") | fallback(0)) %}
+                {%- if port > 0 && !seen[port] %}
+                  {%- seen[port] = true %}
+      bind *:{{ port }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+  # gateway/https-bind-extra-050-gateway-multi-port-bind:
+  # Sibling to http-bind-extra-050-gateway-multi-port-bind. Walks
+  # Gateway-owned listeners + admitted ListenerSet listeners and emits
+  # one `bind *:<port> <ssl-options>` line per unique non-default
+  # Gateway HTTPS listener port. Hooks into the HTTPS-frontend-only
+  # https-bind-extra-* extension point (added to ssl.yaml's
+  # frontends-500-https) so the binds don't double-render into the HTTP
+  # frontend (where they would conflict with the existing http port
+  # bind anyway). The shared `util-ssl-bind-options` snippet emits the
+  # same crt-list / ALPN options chart-static HTTPS uses, so a non-
+  # default Gateway HTTPS listener gets the same TLS handshake
+  # behaviour without re-deriving the option set.
+  https-bind-extra-050-gateway-multi-port-bind:
+    template: |
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {#- Skip the chart-static HTTPS port (default 443). Also skip the
+          chart-static HTTP port (default 80) because emitting a TLS
+          bind there would collide with the http-frontend's plain
+          bind on the same port — HAProxy rejects duplicate binds
+          across frontends, and the conflict is a Gateway-API
+          ProtocolConflict that should surface via status, not via
+          a parser error. -#}
+      {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+      {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+      {%- var seen = map[int]bool{} %}
+      {%- seen[httpsPort] = true %}
+      {%- seen[httpPort] = true %}
+      {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+          {%- if protocol == "HTTPS" %}
+            {%- var port = toint(listener | dig("port") | fallback(0)) %}
+            {%- if port > 0 && !seen[port] %}
+              {%- seen[port] = true %}
+      bind *:{{ port }}{{ render "util-ssl-bind-options" }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+              {%- if protocol == "HTTPS" %}
+                {%- var port = toint(listener | dig("port") | fallback(0)) %}
+                {%- if port > 0 && !seen[port] %}
+                  {%- seen[port] = true %}
+      bind *:{{ port }}{{ render "util-ssl-bind-options" }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+  # gateway/frontend-extra-100-gateway-misdirected:
+  # Implements HTTPS listener-isolation 421 detection per the
+  # HTTPRouteHTTPSListenerDetectMisdirectedRequests conformance test.
+  #
+  # The naive "SNI != Host → 421" check is wrong: it returns 421 when
+  # SNI=example.org and Host=unknown-example.org (no listener claims
+  # `unknown-example.org`, so the request just routes through the
+  # catch-all listener and 404s on the path lookup).
+  #
+  # The spec-correct rule is: a request is misdirected only when its
+  # Host belongs to a *different* HTTPS listener than the one selected
+  # by SNI. To express that we materialise two maps from the chart's
+  # known HTTPS listeners (one per Gateway, the chart loops them
+  # below):
+  #   - listener-hostname-claim.map: exact hostname → itself
+  #   - listener-hostname-claim-regex.map: regex (matching the wildcard
+  #       expansion of `*.example.com` etc.) → the wildcard pattern
+  #
+  # gateway/frontends-600-gateway-tls-listener:
+  # Per-port mode-tcp frontends for Gateway TLS listeners on non-chart-
+  # static ports. Closes the upstream TLSRoute conformance gap (the
+  # chart-static ssl-tcp on httpsPort can't be repurposed as a strict-
+  # allowlist frontend because Ingress passthrough relies on its
+  # default_backend ssl-loopback fall-through).
+  #
+  # Layout: one `frontend gateway-tls-port-<N>` per (port, mode) pair,
+  # where mode is taken from the FIRST listener on that port (mixed
+  # Terminate+Passthrough is already flagged ProtocolConflict by the
+  # status patches and produces zero accepted listeners on that port,
+  # so per-port mode is single-valued by the time we get here).
+  #
+  #   * Terminate listeners: `bind *:<N> ssl crt-list <crt-list>`
+  #     (terminates the TLS handshake, then forwards plaintext TCP),
+  #     routing rules use `ssl_fc_sni` (the SNI from the just-completed
+  #     handshake).
+  #   * Passthrough listeners: plain `bind *:<N>` (the TLS bytes flow
+  #     through unmodified), routing rules use `req_ssl_sni`.
+  #
+  # Reject-default: any TLS connection whose SNI doesn't match a
+  # claimed route causes a TCP RST. This is what closes the
+  # TLSRouteInvalidBackendRef* conformance assertions — a route with
+  # an unresolvable backend never enters the SNI allowlist (Pass 2
+  # filters those at the ResolvedRefs gate, line ~1474), so the SNI
+  # arrives at the frontend, fails the allowlist check, and gets
+  # rejected.
+  frontends-600-gateway-tls-listener:
+    template: |
+      {%- var byPortRaw = shared.Get("gatewayTLSListenersByPort") %}
+      {%- if byPortRaw == nil %}
+        {#- No TLS Gateway listeners declared — emit nothing. -#}
+      {%- else %}
+        {%- var byPort = byPortRaw.(map[int]any) %}
+        {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+        {{ render "util-gateway-ssl-passthrough" }}
+        {%- var gwVal, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any { return nil }) %}
+        {%- var allBackends = []any{} %}
+        {%- if gwVal != nil %}
+          {%- var gwPassthrough = gwVal.(map[string]any) %}
+          {%- allBackends = gwPassthrough["backends"].([]any) %}
+        {%- end %}
+        {#- Determine whether the chart-static HTTPS frontend or ssl-tcp
+            will bind the chart-static httpsPort. The two flags
+            (bindHTTPSDefault + len(passthroughBackends)>0) cover both
+            cases: bindHTTPSDefault gates the chart-static `bind *:httpsPort`
+            in mode-http; the ssl-tcp frontend renders only when
+            bindHTTPSDefault AND there's at least one passthrough
+            backend. If both are absent, the port is free for the new
+            TLS frontend to claim — which is what the upstream
+            TLSRouteTerminateSimpleSameNamespace fixture needs (a
+            Gateway with a TLS-Terminate listener on httpsPort and
+            nothing else competing for that port). -#}
+        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+        {%- var bindHTTPSDefault = tostring(dig(gf, "bindHTTPSDefault")) == "true" %}
+        {%- var hasPassthroughBackends = false %}
+        {%- var sslPB = dig(gf, "sslPassthroughBackends") %}
+        {%- if sslPB != nil %}
+          {%- if len(sslPB.([]any)) > 0 %}
+            {%- hasPassthroughBackends = true %}
+          {%- end %}
+        {%- end %}
+        {%- var chartStaticBindsHTTPSPort = bindHTTPSDefault || hasPassthroughBackends %}
+        {#- Sort port keys for deterministic output. -#}
+        {%- var portKeys = []any{} %}
+        {%- for k, _ := range byPort %}
+          {%- portKeys = append(portKeys, k) %}
+        {%- end %}
+        {%- for i := 0; i < len(portKeys); i++ %}
+          {%- for j := i + 1; j < len(portKeys); j++ %}
+            {%- if toint(portKeys[i]) > toint(portKeys[j]) %}
+              {%%
+                var swap = portKeys[i]
+                portKeys[i] = portKeys[j]
+                portKeys[j] = swap
+              %%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- for _, portAny := range portKeys %}
+          {%- var port = toint(portAny) %}
+          {#- Skip httpsPort only when the chart-static frontends
+              actually bind it (chart-static HTTPS in mode-http or
+              ssl-tcp for Ingress passthrough). When neither does,
+              the port is free for the new TLS frontend to claim —
+              this is what closes the upstream
+              TLSRouteTerminateSimpleSameNamespace fixture, where
+              the Gateway has only a TLS-Terminate listener on 8443
+              and nothing else competing for it.
+              When chart-static IS binding the port, we drop the
+              Gateway TLS listener silently here; in that scenario
+              the operator should either move the Gateway listener
+              off the chart-static port or override httpsPort via
+              extraContext. -#}
+          {%- if port != httpsPort || !chartStaticBindsHTTPSPort %}
+            {%- var portEntry = byPort[port].(map[string]any) %}
+            {%- var portMode = tostring(portEntry["mode"]) %}
+            {#- Filter the route entries (Pass 2 output) to those
+                claiming this port. Each entry was tagged with `port`
+                + `mode` when emitted; we copy a freshly-typed slice
+                so the use_backend loop below has stable keys. -#}
+            {%- var portRoutes = []any{} %}
+            {%- for _, beAny := range allBackends %}
+              {%- var be = beAny.(map[string]any) %}
+              {%- if toint(be["port"] | fallback(0)) == port %}
+                {%- portRoutes = append(portRoutes, be) %}
+              {%- end %}
+            {%- end %}
+
+      # gateway/frontends-600-gateway-tls-listener: port {{ port }} ({{ portMode }})
+
+      frontend gateway-tls-port-{{ port }}
+          guid fe:gateway-tls-port-{{ port }}
+          mode tcp
+            {%- if portMode == "Terminate" %}
+          bind *:{{ port }}{{ render "util-ssl-bind-options" }}
+            {%- else %}
+          bind *:{{ port }}
+          # Read SNI from the unbuffered TCP stream without terminating.
+          tcp-request inspect-delay 5s
+          tcp-request content accept if { req_ssl_hello_type 1 }
+            {%- end %}
+
+            {%- if len(portRoutes) == 0 %}
+          # No TLSRoute claims any SNI on this port; reject every
+          # connection so probing clients don't get a hung handshake.
+          tcp-request content reject
+            {%- else %}
+          # SNI-based dispatch to the route's TCP backend. Wildcard
+          # SNI patterns (`*.example.com`) match any single subdomain
+          # via `-m end .example.com` (preserving the spec's
+          # single-label-required rule). Reject-default fires when
+          # no rule matches — TLSRoute spec requires implementations
+          # to refuse traffic on listener ports for SNIs no route
+          # claims, and this is what closes
+          # TLSRouteInvalidBackendRefNonexistent /
+          # TLSRouteInvalidBackendRefUnknownKind (a route with
+          # unresolvable refs is filtered out at Pass 2's
+          # ResolvedRefs gate, so its SNI never enters the
+          # allowlist and lands here).
+              {%- if portMode == "Terminate" %}
+                {#- Post-termination: ssl_fc_sni is the SNI HAProxy
+                    just consumed during the TLS handshake. -#}
+                {%- for _, beAny := range portRoutes %}
+                  {%- var be = beAny.(map[string]any) %}
+                  {%- var sni = tostring(be["sni"]) %}
+                  {%- if hasPrefix(sni, "*.") %}
+          use_backend {{ be["name"] }} if { ssl_fc_sni -m end {{ sni[1:] }} }
+                  {%- else %}
+          use_backend {{ be["name"] }} if { ssl_fc_sni -m str {{ sni }} }
+                  {%- end %}
+                {%- end %}
+              {%- else %}
+                {#- Pre-termination: req_ssl_sni reads from the
+                    buffered ClientHello without terminating. -#}
+                {%- for _, beAny := range portRoutes %}
+                  {%- var be = beAny.(map[string]any) %}
+                  {%- var sni = tostring(be["sni"]) %}
+                  {%- if hasPrefix(sni, "*.") %}
+          use_backend {{ be["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }
+                  {%- else %}
+          use_backend {{ be["name"] }} if { req_ssl_sni -m str {{ sni }} }
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+          # Reject-default: no use_backend rule matched the SNI.
+          tcp-request content reject
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}

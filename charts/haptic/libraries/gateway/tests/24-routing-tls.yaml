@@ -1,0 +1,972 @@
+validationTests:
+  test-tlsroute-terminate-on-chart-static-httpsport:
+    description: |
+      Mirrors the upstream TLSRouteTerminateSimpleSameNamespace
+      conformance fixture: a Gateway with one TLS-Terminate listener
+      on port 8443 (which is also the chart's default httpsPort) and
+      nothing else competing for that port (no Ingress TLS, no
+      Gateway HTTPS listener, no SSL passthrough). The new TLS
+      frontend claims the port because the chart-static HTTPS frontend
+      and ssl-tcp would both render their port-8443 binds only when
+      `bindHTTPSDefault` is true (HTTPS listener present) or when
+      there's at least one passthrough backend — neither holds here.
+
+      Pins:
+        * `frontend gateway-tls-port-8443` exists with TLS termination.
+        * Chart-static HTTPS frontend does NOT bind 8443 (no
+          `bind *:8443 ssl ...` in the `frontend https` block).
+        * Chart-static ssl-tcp does NOT render at all (its gate is
+          `passthroughBackends > 0`, false here).
+        * Routing uses ssl_fc_sni for the Terminate-mode listener.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-terminate-default
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tlsterm
+                protocol: TLS
+                port: 8443
+                hostname: tls.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-terminate-default
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.7"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: |
+          HAProxy config must be valid (the chart-static + new TLS
+          frontend must coexist without conflicting on port 8443).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-8443$'
+        description: |
+          New TLS frontend claims port 8443 because the chart-static
+          frontends decline (no HTTPS listener, no passthrough
+          backends).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:8443 ssl crt-list '
+        description: |
+          New TLS frontend's bind terminates TLS on 8443 (this is
+          what the upstream TLSRouteTerminateSimpleSameNamespace
+          fixture exercises).
+
+      - type: match_count
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:8443'
+        expected: "1"
+        description: |
+          Exactly one frontend binds 8443 — the new TLS frontend. The
+          chart-static HTTPS frontend and ssl-tcp do not also bind
+          8443 (they bind their own httpsPort, which the chart-test
+          framework defaults to 443; even if they DID try, the
+          chart-static-bind gate in frontends-600-gateway-tls-listener
+          would skip the new TLS frontend on a colliding port).
+
+  test-tlsroute-invalid-backend-rejects-on-frontend:
+    description: |
+      Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind
+      conformance fixture's chart-side contract: a TLS Passthrough
+      listener has a TLSRoute attached whose backendRef points at an
+      unknown kind. Pass 2 filters routes with unresolvable refs at
+      the ResolvedRefs gate, so the route's SNI never enters the
+      per-port frontend's allowlist. The frontend's reject-default
+      then fires on connection — `tcp-request content reject` produces
+      a TCP RST, which is what the upstream test asserts via
+      MakeTLSConnectionAndExpectEventuallyConnectionRejection.
+
+      Pins the static-side of that contract:
+        * No use_backend rule for the unknown-kind route's SNI
+          (route filtered at Pass 2 → not in frontend allowlist).
+        * The frontend exists with its reject-default.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-invalid
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 9445
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: invalid-backend
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-invalid
+            hostnames:
+              - example.com
+            rules:
+              - backendRefs:
+                  - group: unknownkind.example.com
+                    kind: NonExistent
+                    name: tls-backend
+                    port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with invalid-backend TLSRoute
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-9445$'
+        description: Per-port frontend exists even when no route survives.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'use_backend .* req_ssl_sni -m str example\.com'
+        description: |
+          No use_backend rule for example.com — the TLSRoute was
+          filtered at Pass 2's ResolvedRefs gate (backend group/kind
+          mismatch), so its SNI never enters the allowlist.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+tcp-request content reject$'
+        description: |
+          Frontend ends with `tcp-request content reject` — connections
+          whose SNI doesn't match a claimed route get a TCP RST. Upstream
+          conformance asserts this via
+          MakeTLSConnectionAndExpectEventuallyConnectionRejection.
+
+  test-tlsroute-terminate-nondefault-port-frontend:
+    description: |
+      TLSRoute attached to a TLS Terminate listener on a non-chart-
+      static port renders a per-port mode-tcp frontend with TLS
+      termination on the bind. After the handshake completes,
+      `ssl_fc_sni` carries the SNI consumed during the handshake and
+      drives use_backend routing to the TLSRoute's TCP backend.
+
+      Pins:
+        * `frontend gateway-tls-port-9444` exists, mode tcp.
+        * Bind carries `ssl crt-list ...` (HAProxy terminates TLS).
+        * Routing rules use `ssl_fc_sni` (post-handshake), NOT
+          `req_ssl_sni` (Passthrough's pre-handshake SNI).
+        * Reject-default closes the TLSRouteInvalidBackendRef* gap
+          for the Terminate-mode flavour as well.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-terminate
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tlsterm
+                protocol: TLS
+                port: 9444
+                hostname: tls.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-terminate
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.6"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with Terminate per-port frontend
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-9444$'
+        description: Per-port TLS frontend exists for Terminate listener on 9444.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:9444 ssl crt-list '
+        description: |
+          Bind carries `ssl crt-list ...` — Terminate mode terminates
+          the TLS handshake; the crt-list lookup picks the cert by SNI.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ ssl_fc_sni -m str tls\.example\.com \}'
+        description: |
+          Routing uses `ssl_fc_sni` (post-handshake SNI) — the
+          handshake completed on the bind, so we can read the SNI
+          HAProxy negotiated rather than re-parsing the bytes.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'use_backend gtw_tls_default_tls-app_0 if .*req_ssl_sni'
+        description: |
+          Terminate-mode frontend MUST NOT use `req_ssl_sni` (which
+          reads the buffered ClientHello before termination — wrong
+          for a frontend that already terminated TLS).
+
+  test-tlsroute-passthrough-nondefault-port-frontend:
+    description: |
+      TLSRoute attached to a TLS Passthrough listener on a port OTHER
+      than the chart-static httpsPort lands on the new
+      `frontends-600-gateway-tls-listener` per-port frontend, not on
+      the chart's static ssl-tcp (which only handles httpsPort).
+
+      Pins:
+        * Per-port frontend `gateway-tls-port-9443` exists, mode tcp.
+        * Plain `bind *:9443` (no `ssl ...` because Passthrough mode
+          doesn't terminate).
+        * tcp-request inspect-delay + accept-on-ClientHello (the
+          Passthrough preamble that lets req_ssl_sni read SNI from
+          the buffered TCP stream).
+        * SNI-based use_backend rule pointing at the TLSRoute's
+          backend.
+        * Reject-default at the end so SNIs that no route claims get
+          a TCP RST.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute-9443
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 9443
+                hostname: "*.example.com"
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute-9443
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with per-port TLS frontend
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tls-port-9443$'
+        description: Per-port TLS frontend exists for non-default port 9443.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+mode tcp$'
+        description: Frontend uses mode tcp (TLSRoute is L4).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:9443$'
+        description: |
+          Plain bind (no `ssl ...`) for Passthrough mode — TLS bytes
+          flow through HAProxy unmodified.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'tcp-request inspect-delay 5s'
+        description: |
+          Passthrough preamble: inspect-delay lets req_ssl_sni read
+          SNI from the buffered ClientHello without terminating.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ req_ssl_sni -m str abc\.example\.com \}'
+        description: |
+          SNI-based use_backend rule routes the TLSRoute's claimed
+          hostname to its TCP backend.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+tcp-request content reject$'
+        description: |
+          Reject-default at end of frontend: SNIs that no route
+          claims get a TCP RST (closes
+          TLSRouteInvalidBackendRefNonexistent /
+          TLSRouteInvalidBackendRefUnknownKind, where the unresolvable
+          backend filters the route out at Pass 2's ResolvedRefs gate
+          so the SNI never enters the allowlist).
+
+  test-tlsroute-passthrough-basic:
+    description: |
+      TLSRoute attached to a TLS Passthrough listener emits a TCP-mode
+      backend named gtw_tls_<ns>_<route>_<rule> and a SNI-keyed
+      use_backend rule on the ssl-tcp frontend.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tlsroute
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: "*.example.com"
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tlsroute
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 8443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with TLSRoute passthrough
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-app_0"
+        description: TLSRoute backend uses gtw_tls_<ns>_<name>_<ruleIdx> naming
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend gtw_tls_default_tls-app_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
+        description: ssl-tcp frontend dispatches by SNI to the TLSRoute backend
+      - type: contains
+        target: haproxy.cfg
+        pattern: "frontend ssl-tcp"
+        description: ssl-tcp frontend exists when TLSRoute passthrough is configured
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "use_backend gtw_tls_default_tls-app_0 if .*ssl_fc_sni"
+        description: SSL passthrough must use req_ssl_sni (TCP mode) NOT ssl_fc_sni (HTTPS mode)
+
+  test-tlsroute-no-tls-listener:
+    description: |
+      TLSRoute parented to an HTTP-only Gateway (no TLS listener) must NOT
+      produce a TLSRoute backend. Mirrors conformance
+      tlsroute-invalid-no-matching-listener for the HTTP / HTTPS case.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-http-only
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-app
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-http-only
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid even when TLSRoute has no matching listener
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-app"
+        description: TLSRoute attached to HTTP-only Gateway must not produce a backend
+
+  test-tlsroute-hostname-mismatch:
+    description: |
+      TLSRoute hostname not intersecting the listener hostname does NOT
+      produce a passthrough backend. Mirrors conformance
+      tlsroute-invalid-no-matching-listener-hostname.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-mismatch
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tls
+            hostnames:
+              - other.test
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when TLSRoute hostname doesn't intersect
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-mismatch"
+        description: TLSRoute with non-intersecting hostname produces no backend
+
+  test-tlsroute-wildcard-listener-exact-route:
+    description: |
+      Wildcard listener "*.example.com" + exact route "abc.example.com"
+      produces a backend keyed on the exact route hostname (per Gateway
+      API HostnameSinglePairIntersection).
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-wildcard
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                hostname: "*.example.com"
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-exact
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-wildcard
+            hostnames:
+              - abc.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when listener wildcard intersects route exact
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend gtw_tls_default_tls-exact_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
+        description: SNI uses the exact route hostname (intersection result)
+
+  test-tlsroute-section-name-no-match:
+    description: |
+      TLSRoute parentRef.sectionName referencing a nonexistent listener
+      must not attach (NoMatchingParent on status side; backend not
+      emitted on data plane). Mirrors conformance test case
+      tlsroute-no-matching-section-name.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls-passthrough
+                protocol: TLS
+                port: 443
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-bad-section
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tls
+                sectionName: nonexistent-listener
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          endpoints:
+            - addresses: ["10.0.0.5"]
+          ports:
+            - port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when sectionName doesn't match
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-bad-section"
+        description: TLSRoute with mismatched sectionName produces no backend
+
+  test-tlsroute-invalid-backend-kind-no-attach:
+    description: |
+      TLSRoute backendRef with non-Service kind must not produce a
+      backend (status side reports ResolvedRefs=False/InvalidKind).
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls
+                protocol: TLS
+                port: 443
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  mode: Passthrough
+      tlsroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: TLSRoute
+          metadata:
+            name: tls-bad-kind
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw-tls
+            hostnames:
+              - tls.example.com
+            rules:
+              - backendRefs:
+                  - group: example.com
+                    kind: NotAService
+                    name: not-a-service
+                    port: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config valid when TLSRoute has non-Service backend
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "backend gtw_tls_default_tls-bad-kind"
+        description: TLSRoute with non-Service backendRef produces no backend
+
+  test-tlsroute-mixed-termination-protocol-conflict:
+    description: |
+      Mirrors the upstream Gateway API
+      TLSRouteListenerMixedTerminationNotSupported conformance fixture:
+      a Gateway with two TLS listeners on the same port, one in
+      `tls.mode: Terminate` and the other in `tls.mode: Passthrough`.
+      The chart treats this as `Accepted=False/ProtocolConflict` on
+      both listeners with `attachedRoutes=0` (HAProxy can't both
+      terminate and passthrough on the same bind, so neither listener
+      can win) — pinned by the listener-level conditions on the
+      Gateway status.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-tlsroute-mixed-termination-not-supported
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tls-terminate
+                port: 8443
+                protocol: TLS
+                hostname: terminate.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - name: tls-terminate-checks-certificate
+                      namespace: gateway-conformance-infra
+              - name: tls-passthrough
+                port: 8443
+                protocol: TLS
+                hostname: passthrough.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TLSRoute
+                tls:
+                  mode: Passthrough
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-terminate-checks-certificate
+            namespace: gateway-conformance-infra
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid for mixed-termination Gateway shape
+
+      # Both listeners' status: Accepted=False/ProtocolConflict.
+      - type: match_count
+        target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
+        pattern: '"reason":"ProtocolConflict","status":"False","type":"Accepted"'
+        expected: "2"
+        description: |
+          Both listeners must show Accepted=False/ProtocolConflict —
+          conformance test asserts: "Listener with unsupported mixed
+          Terminate/Passthrough must have Accepted=False with
+          Reason=ProtocolConflict".
+
+      - type: match_count
+        target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
+        pattern: '"attachedRoutes":0'
+        expected: "2"
+        description: |
+          Both listeners must show attachedRoutes=0 (the conformance
+          test asserts this directly via GatewayStatusMustHaveListeners).
