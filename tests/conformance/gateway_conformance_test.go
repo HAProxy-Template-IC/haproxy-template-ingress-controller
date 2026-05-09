@@ -374,11 +374,21 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// redirect-filter URL so the inbound listener port is
 			// preserved when spec.scheme and spec.port are both
 			// unset.
-			// GatewayHTTPListenerIsolation: same empty-Host issue as
-			// above; the test sends requests targeting catch-all
-			// listeners with various Host headers including empty/
-			// absent, and the chart's frontend-routing returns 404.
-			"GatewayHTTPListenerIsolation",
+			// (GatewayHTTPListenerIsolation previously skipped on the
+			// assumption that the chart's frontend-routing returned
+			// 404 for catch-all-targeted requests — but tracing all
+			// 16 upstream sub-cases through the rendered host.map +
+			// path-prefix-exact.map + path-prefix.map shows the chart
+			// returns the spec-expected status for each. The
+			// catch-all listener path lookup uses host_match="" +
+			// path as the key, which lands in the chart's
+			// path-prefix-exact.map (where the empty-hostname route
+			// emits "/empty-hostname"); requests for non-existent
+			// paths on a host claimed by a more-specific listener
+			// fall through to the default backend → 404. Pinned by
+			// the 12-assertion test-gateway-http-listener-isolation
+			// in libraries/gateway.yaml. Conformance run on next
+			// push is the verification.)
 			// (GatewayFrontendInvalidDefaultClientCertificateValidation
 			// previously skipped on bind + status gaps. Both are now
 			// addressed:
