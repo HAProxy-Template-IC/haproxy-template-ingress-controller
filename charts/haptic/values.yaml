@@ -292,6 +292,23 @@ controller:
   # cutover when tools like external-dns watch status fields.
   statusPatches:
     enabled: true
+  # Embed library-shipped validationTests in the deployed HAProxyTemplateConfig CR.
+  #
+  # Default: false. validationTests are a chart-author concern — they pin
+  # rendered-chart shape against fixtures and are consumed by
+  # `./scripts/test-templates.sh` and the controller's `validate` CLI. The
+  # webhook's admission validation uses the renderer with the proposed
+  # admission's overlay, NOT the embedded validationTests. Production
+  # operators get nothing from carrying ~570 KB of test fixtures in the
+  # deployed CR, and that bulk pushes the Helm release Secret past
+  # Kubernetes' 1 MiB hard-cap on `sh.helm.release.v1.*` (helm install
+  # then fails with `data: Too long`).
+  #
+  # Set to true in development clusters / test harnesses that want
+  # `kubectl exec haptic-controller -- haptic-controller validate` to find
+  # the test corpus already on disk. The chart-author tooling
+  # (`./scripts/test-templates.sh`) overrides this to true automatically.
+  embedValidationTests: false
   # Pod-spec scheduling, runtime, and metadata for the controller Deployment.
   # The chart's _pod-spec.tpl helper renders the universally-shared fields
   # (priorityClassName / runtimeClassName / terminationGracePeriodSeconds /
