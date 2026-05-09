@@ -284,35 +284,23 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// out the unusable IP, only the usable Service remains and
 			// Programmed flips to True.
 			// Pinned by test-gateway-static-addresses-per-ip-services.
-			// GatewayInfrastructure: the upstream test searches the
-			// Gateway's own namespace for a ServiceAccount, Pod, or
-			// Service labelled `gateway.networking.k8s.io/gateway-name`
-			// and asserts the user's
-			// `spec.infrastructure.{labels,annotations}` are a subset of
-			// that resource's metadata. Haptic's shared-HAProxy
-			// architecture means there are no per-Gateway Pods; the
-			// chart emits a per-Gateway marker Service to carry the
-			// propagated metadata (charts/haptic/libraries/gateway.yaml
-			// `gatewayInfrastructureServices` and `k8sResources.gateway-
-			// infrastructure-propagation`). The marker lands in the
-			// controller's own namespace, gated by the chart's
-			// defense-in-depth RBAC: the controller's Role grants
-			// Service verbs only there, and the resourceapplier sets
-			// `RestrictToOwnNamespace=true`. Conformance fixtures put
-			// the Gateway in `gateway-conformance-infra`, so the
-			// upstream namespace search returns empty even though the
-			// marker exists. Cross-namespace emission would require
-			// cluster-scoped RBAC + `RestrictToOwnNamespace=false` —
-			// security trade-offs operators may not want by default.
-			//
-			// The chart-side propagation contract is pinned by
-			// `test-gateway-infrastructure-propagation-annotations-only`,
-			// `test-gateway-infrastructure-propagation-with-static-addresses`,
-			// and `test-gateway-infrastructure-propagation-empty` chart
-			// validation tests (charts/haptic/libraries/gateway.yaml).
-			// Tracked at <follow-up issue> — re-evaluate if the chart
-			// grows opt-in cross-namespace Service emission.
-			"GatewayInfrastructure",
+			// (GatewayInfrastructure previously failed because the
+			// per-Gateway marker Service that carries
+			// `spec.infrastructure.{labels,annotations}` landed in the
+			// controller's namespace, but the conformance test searches
+			// the Gateway's own namespace for a Service / Pod /
+			// ServiceAccount labelled `gateway.networking.k8s.io/gateway-name`.
+			// Closed by emitting the marker in the Gateway's namespace
+			// directly: the chart's ClusterRole now includes cluster-wide
+			// `services` write verbs whenever the gateway library is
+			// enabled (templates/clusterrole.yaml), the resourceapplier
+			// no longer enforces the same-namespace defense-in-depth
+			// (RBAC alone gates), and the gateway library writes the
+			// marker to `nsStr` rather than `ctrlNs`
+			// (charts/haptic/libraries/gateway.yaml). Pinned chart-side
+			// by `test-gateway-infrastructure-propagation-labels-only`,
+			// `…-annotations-only`, `…-with-static-addresses`, and
+			// `…-empty`.)
 			// (ListenerSetHostnameConflict / ListenerSetProtocolConflict
 			// previously failed for two reasons:
 			//   1. util-effective-listeners populated `listenersetStatuses`
