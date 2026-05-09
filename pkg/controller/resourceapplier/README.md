@@ -99,10 +99,12 @@ payload and compares against the cache; if they match, no SSA call
 goes out — the resource counts as `skipped` in the per-pass log line.
 
 A render where the chart re-emits 100 unchanged Services costs:
+
 - 100 `json.Marshal` + `sha256.Sum256` calls (in-memory)
 - 0 API calls
 
 A render where 1 Service changed costs:
+
 - 100 hashes
 - 1 SSA call
 
