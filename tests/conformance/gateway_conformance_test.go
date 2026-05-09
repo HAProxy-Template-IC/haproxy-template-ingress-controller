@@ -288,14 +288,25 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// as GatewayWithAttachedRoutesWithPort8080.
 			"ListenerSetHTTPRouting",
 			"ListenerSetAllowedRoutesNamespaces",
-			// ListenerSetReferenceGrant: status side covers the parent
-			// LS being Accepted=True with cert RG, but the test asserts
-			// per-listener resolvedRefs detail the chart's listener-
-			// status emit doesn't yet differentiate between LS-listener
-			// cert RG vs Gateway-listener cert RG. Same root as the
-			// other ListenerSet status quirks — F3's reliance on the
-			// racy cache. Tracked at <follow-up issue>.
-			"ListenerSetReferenceGrant",
+			// (ListenerSetReferenceGrant previously failed because the
+			// chart's top-level ListenerSet status didn't fold in
+			// per-listener cert-ref resolution — only the cache's
+			// `accepted` (port/protocol/hostname conflict) flag.
+			// status-patches-220-listenerset now pre-scans listeners
+			// inline for cert-ref / kind-ref resolvability (mirrors the
+			// per-listener loop's logic, with source kind="ListenerSet"
+			// for ReferenceGrant lookups). A LS whose every listener
+			// has unresolvable refs → top-level Accepted=False/
+			// ListenersNotValid + Programmed=False/ListenersNotValid;
+			// per-listener ResolvedRefs=False/RefNotPermitted is
+			// already correct.
+			//
+			// Pinned by test-listenerset-reference-grant-
+			// conformance-shape — fixture mirrors the upstream
+			// Gateway + two LSes (one with matching RG in the same
+			// ns as the Gateway, one in a different ns where the
+			// RG's `from` clause doesn't match). Conformance run on
+			// next push is the verification.)
 			// ListenerSetAllowedNamespaceSelector flakes between
 			// passing (final7) and failing (final10) depending on
 			// reconciliation timing — the inline-fallback path
