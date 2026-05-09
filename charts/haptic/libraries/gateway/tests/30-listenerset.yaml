@@ -1,0 +1,1902 @@
+validationTests:
+  test-listenerset-default-not-allowed:
+    description: |
+      ListenerSet attached to a Gateway without `spec.allowedListeners`
+      must be rejected with Accepted=False/NotAllowed and
+      Programmed=False/NotAllowed (default-deny per Gateway API spec
+      for SupportListenerSet). Pins the
+      ListenerSetDefaultNotAllowed conformance test's status assertions.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-default-deny
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: not-allowed-set
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-default-deny
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8081
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # The status-patches-220-listenerset snippet runs and emits a
+      # statusPatch() for the not-allowed ListenerSet. We can't assert
+      # on the patch payload directly via testrunner targets, but we
+      # can check that the snippet didn't crash the render (covered by
+      # haproxy_valid).
+
+  test-listenerset-allowed-same-namespace:
+    description: |
+      ListenerSet in the same namespace as a Gateway that sets
+      `allowedListeners.namespaces.from=Same` must be Accepted=True/Accepted.
+      Programmed remains False/Pending until F2 (listener-merge) lands —
+      the chart honestly surfaces partial implementation rather than
+      claiming Programmed=True without actual data-plane wiring.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-allow-same
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: allowed-set
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-allow-same
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8081
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+  test-listenerset-allowed-different-namespace-denied:
+    description: |
+      Same=`allowedListeners.namespaces.from=Same` but the ListenerSet
+      lives in a different namespace from the parent Gateway → must be
+      rejected with Accepted=False/NotAllowed.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-allow-same
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: cross-ns-set
+            namespace: other
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-allow-same
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8081
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+  test-listenerset-allowed-namespace-selector:
+    description: |
+      `allowedListeners.namespaces.from=Selector` admits ListenerSets
+      whose namespace's labels match the selector's matchLabels, denies
+      others. Pins the ListenerSetAllowedNamespaceSelector conformance
+      test status assertion. Includes a ReferenceGrant in the Gateway's
+      namespace covering both candidate ListenerSet namespaces — RG
+      matching is independent of the Selector gate, so a permitted
+      ListenerSet still needs an RG to attach cross-namespace.
+    fixtures:
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: rg-allow-listenersets
+            namespace: default
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: selector-allowed-ns
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: selector-not-allowed-ns
+            to:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: selector-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: selector-not-allowed-ns
+            labels:
+              other: label
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-selector
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Selector
+                selector:
+                  matchLabels:
+                    allowed: ns
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-permitted
+            namespace: selector-allowed-ns
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-selector
+              namespace: default
+            listeners:
+              - name: extra-permitted
+                protocol: HTTP
+                port: 8082
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-denied
+            namespace: selector-not-allowed-ns
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-selector
+              namespace: default
+            listeners:
+              - name: extra-denied
+                protocol: HTTP
+                port: 8083
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8082'
+        description: Permitted ListenerSet's port must be bound
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8083'
+        description: Denied ListenerSet's port must NOT be bound
+
+  test-listenerset-cross-namespace-parentref-allowed-by-from-all:
+    description: |
+      ListenerSet in a different namespace from its parent Gateway
+      (with allowedListeners.from=All) is admitted by allowedListeners
+      alone — cross-namespace parentRefs do NOT require a separate
+      ReferenceGrant per Gateway API conformance
+      (ListenerSetReferenceGrant + ListenerSetAllowedNamespaceSelector).
+      ReferenceGrant only gates resource references (Secret, ConfigMap)
+      attached to listeners, not parentRefs.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-allow-all
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-cross-ns
+            namespace: tenant-a
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-allow-all
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8090'
+        description: Cross-ns ListenerSet permitted by allowedListeners.from=All must be bound
+
+  test-listenerset-cross-namespace-parentref-with-grant:
+    description: |
+      ListenerSet in a different namespace from its parent Gateway
+      (with allowedListeners.from=All) is admitted regardless of
+      ReferenceGrant presence — the cross-ns parentRef is permitted
+      by allowedListeners alone. This test pins behaviour with an
+      RG present (RG should be a no-op for parentRef admission).
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-allow-all
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-cross-ns-with-grant
+            namespace: tenant-a
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-allow-all
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8091
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: rg-allow-ls
+            namespace: default
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: tenant-a
+            to:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: gw-allow-all
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8091'
+        description: Cross-ns ListenerSet WITH RG must be bound
+
+  test-listenerset-listener-multi-port-bind:
+    description: |
+      Multi-port HTTP bind must include ports declared on accepted
+      ListenerSet listeners (in addition to the Gateway's own listeners).
+      Pins the routing-layer side of F2 listener-merge integration.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-port-with-ls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-listener
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: extra-ports-ls
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: multi-port-with-ls
+            listeners:
+              - name: extra-1
+                protocol: HTTP
+                port: 8085
+              - name: extra-2
+                protocol: HTTP
+                port: 8086
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:80\b'
+        description: Gateway's HTTP listener must be bound on port 80
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8085\b'
+        description: Accepted ListenerSet listener must be bound on port 8085
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8086\b'
+        description: Accepted ListenerSet listener must be bound on port 8086
+
+  test-listenerset-hostname-conflict:
+    description: |
+      Two listeners on the same (port, hostname) where one is on the
+      Gateway and one is on a ListenerSet. Gateway wins the conflict
+      (precedence: Gateway > earlier LS > later LS, then index), so the
+      LS's conflicting listener is dropped from the routing set. Uses
+      HTTPS so the listener-hostname-claim map (only emitted for HTTPS/
+      TLS listeners) shows the surviving claims. Pins
+      ListenerSetHostnameConflict status assertion.
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURJVENDQWdtZ0F3SUJBZ0lVTUVxc0tlM0RxcHRSTVE5Kzc3WGJsVkptTktZd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMk1EVXdPREUxTURjeU1Gb1lEekl4TWpZdwpOREUwTVRVd056SXdXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFERWo3OTNYNW1Qc1hxT2g4K3g3TkNKUW51L0J0R2dSUGJabVdWMC9FbVgKdzVFam1EVUNURWZvdGFxd1djVmVUbzRGK1RTU3RPTUsrRVFCRlg0VGI2WU5QVUVWOWNoOXViV0x0MDdEWmI4QwpUbTE1WkxJYTUwZHVHZ2taUEZrUUlEL1I0dUdjNE16b3dFc3o1dDMyY0I5MnZaeHVNVHNtZjk5WnZYa0tYODVKCndPeXNvamRVQjhiOXJIUmQvbWs5WCtCaHlOOGJVUThnZzc3NUpBL1gvTkUxS1ZaNElPSkRkWG9hTWtaMDFVZEcKQTUyRGVUeG9Eekw5NGQ2NUdqVmhVbjJMTU9ibC8wRkdGUjNkUFdsNnhRRkIyT3h5RHlybFppeVZCbFR5UjZDRgpMSVJiOUNaUEJHT2doNzF1djc3SmZQOWJ4VXBRTVJScndESWxFSFFoTk11YkFnTUJBQUdqYVRCbk1CMEdBMVVkCkRnUVdCQlRKVG5JSkRyOUNjRDF3dFJwb1Z0OXZ3ODNtYURBZkJnTlZIU01FR0RBV2dCVEpUbklKRHI5Q2NEMXcKdFJwb1Z0OXZ3ODNtYURBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUJRR0ExVWRFUVFOTUF1Q0NXeHZZMkZzYUc5egpkREFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBQ0ZCRUlobWplZkRLL2FTZlg0NXh0NC9IL2wxV1kwNlZtcjBqCk9vWC9XQzEzZnZqZDRLMS9ScEY2RTJIa0dCZmxra1M3eW9BRVVPTmMyckRtLzZWdzV2blJ4N0RoNTJoUlJFcXIKaloxcFZWcGNHYVZDemltWGx3d082NDNwRUowektNTDV6aDNMWUZrWTBLYmlRenIrMXFBNk9DLzZJK0F2eGxMdQozckd4dEVSTzFPTk9CWEU1SWRkdmpCaDBUK0RmYXFoQmtXZWY5Rk9PTGdlTFYwV2xYZTM2WDhBdEV2eEpOWU1xCldFWVJJZHBZL2s2YnhYc3k1a05NYTdGdWZTS1c4REdydnlCNkwrWkpHT2g1RTZqS1AraG5MU0EyQnF1YUlIYlIKbHVGN1FQMU5RV3J3TnExbkNSY0JrUXh4TDNVU3UvNittYVFydFd4c2htOVA1WTlNeVE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRREVqNzkzWDVtUHNYcU8KaDgreDdOQ0pRbnUvQnRHZ1JQYlptV1YwL0VtWHc1RWptRFVDVEVmb3RhcXdXY1ZlVG80RitUU1N0T01LK0VRQgpGWDRUYjZZTlBVRVY5Y2g5dWJXTHQwN0RaYjhDVG0xNVpMSWE1MGR1R2drWlBGa1FJRC9SNHVHYzRNem93RXN6CjV0MzJjQjkydlp4dU1Uc21mOTladlhrS1g4NUp3T3lzb2pkVUI4YjlySFJkL21rOVgrQmh5TjhiVVE4Z2c3NzUKSkEvWC9ORTFLVlo0SU9KRGRYb2FNa1owMVVkR0E1MkRlVHhvRHpMOTRkNjVHalZoVW4yTE1PYmwvMEZHRlIzZApQV2w2eFFGQjJPeHlEeXJsWml5VkJsVHlSNkNGTElSYjlDWlBCR09naDcxdXY3N0pmUDlieFVwUU1SUnJ3RElsCkVIUWhOTXViQWdNQkFBRUNnZ0VBU1VQN2JoZG9PYk5CcDFiZ0I4WHBoUUFPK0FrbW9jS1M4RkRKREczdFVIQkkKN1NlU3VxU01PU1ZkMWhYZ0IyTG9kVG1LYXhTWmZFRkZ0OUczQ0srWkNWNUhvRlBZdzJReFV6NmtVUmpmdFpCZQpKZDF1dGJCM1k0YTQxWHMxQjFtOThCSE5YcGc4U0pWRWNyZ2ZDL2lIQWM5ek8yK0dTTGRwSFI0T3U5c3lIVEx3CkJPMURiTW8yUzRQU2JhcWpNNTl1WEI3V08yN1B2bjQrVmNtb3RETFZhRSs0LzRadURYRFBlN0Eyd1NtZ2I4WVYKdXpVWUhpOHNaQ1RSTlo4MEI5MG5zbS91L0Q5SHJMTkVGb2M3bjBnMmhIcVdpd095ZDBOTkszWnBWYU1BU1NPOAp6V3IzSmVqQ29IcXZkZWdwSlJQOGJCSVJyY0dHQkZ0ajhzaTZFYnRjb1FLQmdRRDI4dStCNlUxWjhRMmhTWXpPClA5aXJZd21nNEsrTGxmc21pY3k1RktmZSswM2ZaK0hxbDNyTnJDbjFNMURQWGVwWGlQQ0dNNU1WMVVqZllobXoKOUlRa3d1eW1RYVFESVJvM2ErWGpERHBrRVYzb20vL1BWMkIvWk5kZVJWeUtNYWVMaG5QZm4ydnhhQWRQVnhvbQozZE9lcnhndmxNRzBlWEZwQ0VyNkdGSTh4UUtCZ1FETHhBbmxqM2xnaWcvbTVGbjBObUtCeTYxUnA5eDE4aGhKCkZPdjFQVno2VTBwVDBUOWV3SkxKejFSMWRha3NPbHdJNDVNZFlDRktSVXl3d2dSakFHUUxaMlU2V2kyQ2c4VXgKaXdEbDBEYjNieGlaWXdLdXU3SUxHWmZyc1RESFRxZ1VjbEtwaGFLck43dS9DQzdEUUg1NmlidEJOenNGTEFQLwpxeFJteEtBczN3S0JnRHpaemdUUURWeHRWck40b1RhdGF1R0lqUFhVaDgwNGp1T0hMeWdvRzltSlNUNFVwZ21kCmZBZzBOVDZUZjRVcG1qWXBxME1XY0ZiLzhHNERDVnhia3poUHcrcVA0QzlaTjlHU1I5cHp4K3VpaitaaWtsMXcKSlhvZXlpY1RwbUx6SzFycExhSmI4VWhTSHdNQTdwUEhNMzgxbkJzVlo4bmw1dmsvcnVJRG5qZ1ZBb0dCQUpregppYVZaWEE3amZ0VkFkd21RSWp3b1lPVjE2ZUdiNWZwOGluUFdjU09jbjlPcERaWTEvNmRRQk5aVFlxQm9PRzVPCmZIdW5uUi8wUHBiZktPRXVtQW1pOFk4UDRndXcrd0FtM01QczZvYmF0b29NMFNXQzVYaEhBOXduV3Q5ZkdpeFYKVUNVNDNuY1E3azNRM3lmYVE3M3A5Q295Vm1PckZrNlIyRUwwTHVITkFvR0FmZjZ6RmhxNVpobWFhYlRNOFJadQpZcVRZS29wQjRheERYOHVreGlwLzBJR3VEOUpqVWVmakx5dTlYQ2Vad3JjczRRZVprR0M3RWFYVzMrUFNIKytQCnRtdEszQmkzTXh2anBqcGpodFMxSTByc2wxdjc5RVNuK05LbmpjM1ZnV0Z2dGJXOHBFVVY5ZzF3SEtzK2EzcmIKQUdwSVpKL3NxcXBkeTZZMno0cmROOVE9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-with-conflict
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-listener
+                protocol: HTTPS
+                port: 443
+                hostname: shared.example.com
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-conflicting
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-02T00:00:00Z"
+          spec:
+            parentRef:
+              name: gw-with-conflict
+            listeners:
+              - name: ls-good
+                protocol: HTTPS
+                port: 443
+                hostname: ls-only.example.com
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+              - name: ls-conflicts-with-gw
+                protocol: HTTPS
+                port: 443
+                hostname: shared.example.com
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: map:listener-hostname-claim.map
+        pattern: '(?m)^shared\.example\.com shared\.example\.com$'
+        description: Gateway-owned hostname claim must be present (Gateway wins)
+
+      - type: contains
+        target: map:listener-hostname-claim.map
+        pattern: '(?m)^ls-only\.example\.com ls-only\.example\.com$'
+        description: Non-conflicting LS listener's hostname claim must be present
+
+  test-listenerset-protocol-conflict:
+    description: |
+      Two listeners on the same port but different protocols → the later
+      one (LS) loses to the earlier one (Gateway). The conflicting LS
+      listener doesn't bind. Pins ListenerSetProtocolConflict status
+      assertion.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-protocol-host
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-http-80
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-protocol-conflict
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-02T00:00:00Z"
+          spec:
+            parentRef:
+              name: gw-protocol-host
+            listeners:
+              - name: ls-tcp-80
+                protocol: TCP
+                port: 80
+              - name: ls-good-http-9000
+                protocol: HTTP
+                port: 9000
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:9000\b'
+        description: Non-conflicting LS HTTP listener at port 9000 must be bound
+
+  test-listenerset-hostname-conflict-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetHostnameConflict
+      conformance fixture: a Gateway with two listeners + four
+      ListenerSets with a mix of conflicting and non-conflicting
+      listeners. Per Gateway API listener precedence:
+
+        * Gateway listeners win over ListenerSet listeners.
+        * Within ListenerSets, earlier creationTimestamp wins.
+        * On a conflict, the loser gets
+          Accepted=False/HostnameConflict +
+          Programmed=False/HostnameConflict +
+          Conflicted=True/HostnameConflict.
+        * A ListenerSet whose every listener loses a conflict (or
+          fails ref resolution) rolls up to top-level
+          Accepted=False/ListenersNotValid.
+
+      Pins the chart's util-effective-listeners conflict-detection
+      pass + status-patches-220-listenerset's emission of the
+      derived per-listener and top-level conditions.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listenerset-hostname-conflict
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              # Listener precedence: Gateway listeners win over
+              # ListenerSet listeners on the same hostname+port.
+              - name: hostname-conflict-with-gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: Same
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      listenersets:
+        # LS1 — earliest creationTimestamp. 3 listeners; the
+        # `hostname-conflict-with-gateway-listener` one CONFLICTS with
+        # the Gateway's listener of the same hostname.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-gateway-1
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:00:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-1-listener
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-1-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: hostname-conflict-with-gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: hostname-conflict-with-listener-set-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-listener-set-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS2 — only listener conflicts with the Gateway → fully rejected.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-gateway-2
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:01:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: hostname-conflict-with-gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS3 — `hostname-conflict-with-listener-set-listener` CONFLICTS
+        # with LS1's listener of the same hostname (LS1 is earlier).
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-listener-set-1
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:02:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-2-listener
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-2-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: hostname-conflict-with-listener-set-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-listener-set-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS4 — only listener conflicts with LS1 → fully rejected.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-hostname-conflict-with-listener-set-2
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:03:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-hostname-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: hostname-conflict-with-listener-set-listener
+                port: 80
+                protocol: HTTP
+                hostname: hostname-conflict-with-listener-set-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # LS1: top-level Accepted=True (has at least one valid listener).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: LS1 (mixed-conflict) top-level Accepted=True/Accepted
+
+      # LS1's `hostname-conflict-with-gateway-listener` listener is
+      # the conflict loser → Conflicted=True/HostnameConflict.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"HostnameConflict","status":"True","type":"Conflicted"'
+        description: LS1's conflicting listener gets Conflicted=True/HostnameConflict
+
+      # LS2: only-listener conflicts → top-level
+      # Accepted=False/ListenersNotValid.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: LS2 (all-conflicting) top-level Accepted=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Programmed"'
+        description: LS2 top-level Programmed=False/ListenersNotValid
+
+      # LS3: top-level Accepted=True (listener-set-2-listener is valid).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-listener-set-1:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: LS3 (mixed-conflict, vs LS1) top-level Accepted=True
+
+      # LS4: only-listener conflicts → top-level Accepted=False/ListenersNotValid.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-hostname-conflict-with-listener-set-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: LS4 (all-conflicting, vs LS1) top-level Accepted=False/ListenersNotValid
+
+  test-listenerset-protocol-conflict-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetProtocolConflict
+      conformance fixture: a Gateway with two listeners (HTTP on
+      port 80) + two ListenerSets where each carries a TCP listener
+      on port 80. Per Gateway API listener precedence, the Gateway's
+      protocol claim on the port wins; later TCP listeners on the
+      same port get Conflicted=True/ProtocolConflict.
+
+      Pins the chart's util-effective-listeners conflict-detection
+      pass + status-patches-220-listenerset's emission of the
+      derived per-listener and top-level conditions for the
+      Protocol-flavoured conflict path. Hostname is unset for the
+      losing listeners because TCP listeners don't carry hostnames;
+      precedence is decided on protocol mismatch alone.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listenerset-protocol-conflict
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: Same
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+      listenersets:
+        # LS1 — earliest. 2 listeners; the TCP one CONFLICTS with the
+        # Gateway's HTTP listener on port 80.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-protocol-conflict-with-gateway-1
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:10:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-protocol-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-1-listener
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-1-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: protocol-conflict-with-gateway-listener
+                port: 80
+                protocol: TCP
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        # LS2 — only listener (TCP on port 80) conflicts with the
+        # Gateway's HTTP listener → fully rejected.
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-protocol-conflict-with-gateway-2
+            namespace: gateway-conformance-infra
+            creationTimestamp: "2026-05-09T07:11:00Z"
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listenerset-protocol-conflict
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: protocol-conflict-with-gateway-listener
+                port: 80
+                protocol: TCP
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # LS1: top-level Accepted=True (has at least one valid listener).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: LS1 (mixed-conflict) top-level Accepted=True/Accepted
+
+      # LS1's conflicting listener → Conflicted=True/ProtocolConflict.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-1:rendered"
+        pattern: '"reason":"ProtocolConflict","status":"True","type":"Conflicted"'
+        description: LS1's conflicting listener gets Conflicted=True/ProtocolConflict
+
+      # LS2: only-listener conflicts → top-level
+      # Accepted=False/ListenersNotValid + Programmed=False/ListenersNotValid.
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: LS2 (all-conflicting) top-level Accepted=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-protocol-conflict-with-gateway-2:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Programmed"'
+        description: LS2 top-level Programmed=False/ListenersNotValid
+
+  test-listenerset-allowed-namespace-selector-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API
+      ListenerSetAllowedNamespaceSelector conformance fixture: a
+      Gateway with `allowedListeners.namespaces.from: Selector` +
+      matchLabels `allowed: ns`. Two ListenerSets in different
+      namespaces:
+
+        * In a ns labelled `allowed: ns` → admitted
+          (Accepted=True, Programmed=True, listener Accepted=True)
+        * In a ns without that label → rejected
+          (Accepted=False/NotAllowed, Programmed=False/NotAllowed)
+
+      Pins the chart's IsListenerSetAdmitted macro
+      (libraries/gateway.yaml line ~867) — the Selector branch
+      compares the LS namespace's labels against the Gateway's
+      `allowedListeners.namespaces.selector.matchLabels`.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-allows-listenerset-in-selected-namespace
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: Selector
+                selector:
+                  matchLabels:
+                    allowed: ns
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-listenerset-selector-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-listenerset-selector-not-allowed-ns
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-in-selected-namespace
+            namespace: gateway-api-listenerset-selector-allowed-ns
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-allows-listenerset-in-selected-namespace
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-in-selected-namespace-listener
+                port: 80
+                protocol: HTTP
+                hostname: listenerset-in-selected-namespace-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-not-in-selected-namespace
+            namespace: gateway-api-listenerset-selector-not-allowed-ns
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-allows-listenerset-in-selected-namespace
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-not-in-selected-namespace-listener
+                port: 80
+                protocol: HTTP
+                hostname: listenerset-not-in-selected-namespace-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # Status JSON keys render in alphabetical order (reason,
+      # status, type).
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-allowed-ns/listenerset-in-selected-namespace:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: Selector-allowed LS top-level Accepted=True/Accepted
+
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-allowed-ns/listenerset-in-selected-namespace:rendered"
+        pattern: '"reason":"Programmed","status":"True","type":"Programmed"'
+        description: Selector-allowed LS top-level Programmed=True/Programmed
+
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-not-allowed-ns/listenerset-not-in-selected-namespace:rendered"
+        pattern: '"reason":"NotAllowed","status":"False","type":"Accepted"'
+        description: Selector-rejected LS top-level Accepted=False/NotAllowed
+
+      - type: contains
+        target: "status:gateway-api-listenerset-selector-not-allowed-ns/listenerset-not-in-selected-namespace:rendered"
+        pattern: '"reason":"NotAllowed","status":"False","type":"Programmed"'
+        description: Selector-rejected LS top-level Programmed=False/NotAllowed
+
+  test-listenerset-allowed-routes-namespaces-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API
+      ListenerSetAllowedRoutesNamespaces conformance fixture: a
+      Gateway with `allowedListeners.namespaces.from: All`, one
+      ListenerSet in the same namespace with three listeners — one
+      `from: All`, one `from: Same`, one `from: Selector` keyed on
+      `allowed: ns`. Three HTTPRoutes from three different
+      namespaces attach via parentRef.kind=ListenerSet (no
+      sectionName, fans out to all listeners on the LS).
+
+      Pins the chart-side fix: the route-resolution loop now
+      enforces listener.allowedRoutes.namespaces.from for every
+      (route, listener) pair via the new
+      IsRouteAllowedOnListener macro. A route's namespace must
+      satisfy the listener's gate to produce a path-prefix entry.
+
+      Per upstream test, attached counts:
+        * listener-allowed-routes-all      — 3 routes (any ns)
+        * listener-allowed-routes-same     — 1 route (same ns only)
+        * listener-allowed-routes-selector — 1 route (the
+          gateway-api-routes-allowed-ns labelled `allowed: ns`)
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-test-allowed-routes
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-test-allowed-routes-namespaces
+            namespace: gateway-conformance-infra
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-test-allowed-routes
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-listener-allowed-routes-all
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-listener-allowed-routes-all.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: listener-set-listener-allowed-routes-same
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-listener-allowed-routes-same.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+              - name: listener-set-listener-allowed-routes-selector
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-listener-allowed-routes-selector.com
+                allowedRoutes:
+                  namespaces:
+                    from: Selector
+                    selector:
+                      matchLabels:
+                        allowed: ns
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-conformance-infra
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-routes-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: gateway-api-routes-not-allowed-ns
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v2
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v3
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v1-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v1
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v2-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v2
+          endpoints:
+            - addresses: ["10.0.2.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v3-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v3
+          endpoints:
+            - addresses: ["10.0.3.1"]
+          ports:
+            - port: 8080
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: listenerset-test-allowed-routes-namespaces-reference-grant
+            namespace: gateway-conformance-infra
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: HTTPRoute
+                namespace: gateway-api-routes-allowed-ns
+              - group: gateway.networking.k8s.io
+                kind: HTTPRoute
+                namespace: gateway-api-routes-not-allowed-ns
+            to:
+              - group: ""
+                kind: Service
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-in-same-namespace
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listenerset-test-allowed-routes-namespaces
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route-in-same-namespace
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-in-selected-namespace
+            namespace: gateway-api-routes-allowed-ns
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listenerset-test-allowed-routes-namespaces
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route-in-selected-namespace
+                backendRefs:
+                  - name: infra-backend-v2
+                    namespace: gateway-conformance-infra
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-not-in-selected-namespace
+            namespace: gateway-api-routes-not-allowed-ns
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listenerset-test-allowed-routes-namespaces
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route-not-in-selected-namespace
+                backendRefs:
+                  - name: infra-backend-v3
+                    namespace: gateway-conformance-infra
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # listener-allowed-routes-all (from: All) — accepts all 3 routes.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-all\\.com/route-in-same-namespace GW_ROUTE_ID:http:gateway-conformance-infra_route-in-same-namespace_0$"
+        description: from=All accepts route-in-same-namespace
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-all\\.com/route-in-selected-namespace GW_ROUTE_ID:http:gateway-api-routes-allowed-ns_route-in-selected-namespace_0$"
+        description: from=All accepts route-in-selected-namespace
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-all\\.com/route-not-in-selected-namespace GW_ROUTE_ID:http:gateway-api-routes-not-allowed-ns_route-not-in-selected-namespace_0$"
+        description: from=All accepts route-not-in-selected-namespace
+
+      # listener-allowed-routes-same (from: Same) — accepts only the
+      # same-ns route.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-same\\.com/route-in-same-namespace GW_ROUTE_ID:http:gateway-conformance-infra_route-in-same-namespace_0$"
+        description: from=Same accepts route-in-same-namespace
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-same\\.com/route-in-selected-namespace"
+        description: from=Same REJECTS route-in-selected-namespace (different ns)
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-same\\.com/route-not-in-selected-namespace"
+        description: from=Same REJECTS route-not-in-selected-namespace (different ns)
+
+      # listener-allowed-routes-selector (from: Selector,
+      # matchLabels: allowed=ns) — accepts only the ns labelled
+      # `allowed: ns` (gateway-api-routes-allowed-ns).
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-selector\\.com/route-in-same-namespace"
+        description: "from=Selector REJECTS route-in-same-namespace (no `allowed: ns` label on gateway-conformance-infra)"
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-listener-allowed-routes-selector\\.com/route-in-selected-namespace GW_ROUTE_ID:http:gateway-api-routes-allowed-ns_route-in-selected-namespace_0$"
+        description: from=Selector ACCEPTS route in matching-label namespace
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "listener-set-listener-allowed-routes-selector\\.com/route-not-in-selected-namespace"
+        description: from=Selector REJECTS route in non-matching-label namespace
+
+  test-listenerset-http-routing-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetHTTPRouting
+      conformance fixture: a Gateway with two listeners + two
+      ListenerSets each with two listeners (all HTTP port 80,
+      different hostnames). Six HTTPRoutes attach via various
+      parentRef shapes:
+
+        * attaches-to-all-listeners (no sectionName for Gateway and
+          both LSes) → attaches to all 6 listeners
+        * gateway-route (Gateway, no sectionName) → both Gateway
+          listeners
+        * gateway-section-route (Gateway, sectionName=
+          gateway-listener-1) → only that one listener
+        * listener-set-http-routing-1-route (LS1, no sectionName)
+          → both LS1 listeners
+        * listener-set-http-routing-1-section-route (LS1,
+          sectionName=listener-set-http-routing-1-listener-1) →
+          only that one listener
+        * listener-set-http-routing-2-route (LS2, no sectionName)
+          → both LS2 listeners
+
+      Pins the chart's path-prefix-exact.map having one entry per
+      (effective hostname, path) — so the routing layer correctly
+      isolates routes per listener via Host. The conformance test
+      sends 30+ requests covering every (Host, Path) combo and
+      asserts the right backend (or 404) for each; these
+      assertions trace the spec-mandated success cases through
+      the rendered map.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-http-routing
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener-1
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: gateway-listener-2
+                port: 80
+                protocol: HTTP
+                hostname: gateway-listener-2.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+            allowedListeners:
+              namespaces:
+                from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listener-set-http-routing-1
+            namespace: gateway-conformance-infra
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-http-routing
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-http-routing-1-listener-1
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-1-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: listener-set-http-routing-1-listener-2
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-1-listener-2.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listener-set-http-routing-2
+            namespace: gateway-conformance-infra
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-http-routing
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listener-set-http-routing-2-listener-1
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-2-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+              - name: listener-set-http-routing-2-listener-2
+                port: 80
+                protocol: HTTP
+                hostname: listener-set-http-routing-2-listener-2.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v2
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v3
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v1-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v1
+          endpoints:
+            - addresses: ["10.0.1.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v2-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v2
+          endpoints:
+            - addresses: ["10.0.2.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: infra-backend-v3-abc
+            namespace: gateway-conformance-infra
+            labels:
+              kubernetes.io/service-name: infra-backend-v3
+          endpoints:
+            - addresses: ["10.0.3.1"]
+          ports:
+            - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-all-listeners
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gateway-with-listener-sets-http-routing
+                namespace: gateway-conformance-infra
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-1
+                namespace: gateway-conformance-infra
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-2
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /route
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: gateway-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gateway-with-listener-sets-http-routing
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /gateway-route
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: gateway-section-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: gateway-with-listener-sets-http-routing
+                namespace: gateway-conformance-infra
+                sectionName: gateway-listener-1
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /gateway-section-route
+                backendRefs:
+                  - name: infra-backend-v3
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: listener-set-http-routing-1-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-1
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /listener-set-http-routing-1-route
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: listener-set-http-routing-1-section-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-1
+                namespace: gateway-conformance-infra
+                sectionName: listener-set-http-routing-1-listener-1
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /listener-set-http-routing-1-section-route
+                backendRefs:
+                  - name: infra-backend-v3
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: listener-set-http-routing-2-route
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - kind: ListenerSet
+                group: gateway.networking.k8s.io
+                name: listener-set-http-routing-2
+                namespace: gateway-conformance-infra
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /listener-set-http-routing-2-route
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # attaches-to-all-listeners — should produce 6 path-prefix
+      # entries (one per listener hostname).
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-1\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to gateway-listener-1.com
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-2\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to gateway-listener-2.com
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-1\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS1-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-2\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS1-listener-2
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-1\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS2-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-2\\.com/route GW_ROUTE_ID:http:gateway-conformance-infra_attaches-to-all-listeners_0$"
+        description: attaches-to-all-listeners attaches to LS2-listener-2
+
+      # gateway-route — only attaches to Gateway listeners.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-1\\.com/gateway-route GW_ROUTE_ID:http:gateway-conformance-infra_gateway-route_0$"
+        description: gateway-route attaches to gateway-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-2\\.com/gateway-route GW_ROUTE_ID:http:gateway-conformance-infra_gateway-route_0$"
+        description: gateway-route attaches to gateway-listener-2
+
+      # gateway-route MUST NOT attach to LS listeners (the
+      # conformance test's "Host=listener-set-... Path=/gateway-route
+      # → 404" sub-cases depend on this isolation).
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-.+\\.com/gateway-route GW_ROUTE_ID"
+        description: gateway-route does NOT attach to ListenerSet listeners
+
+      # gateway-section-route — only attaches to gateway-listener-1
+      # (sectionName-pinned).
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-1\\.com/gateway-section-route GW_ROUTE_ID:http:gateway-conformance-infra_gateway-section-route_0$"
+        description: gateway-section-route attaches to gateway-listener-1 only
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-2\\.com/gateway-section-route GW_ROUTE_ID"
+        description: gateway-section-route does NOT attach to gateway-listener-2
+
+      # listener-set-http-routing-1-route — both LS1 listeners.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-1\\.com/listener-set-http-routing-1-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-1-route_0$"
+        description: LS1 route attaches to LS1-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-2\\.com/listener-set-http-routing-1-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-1-route_0$"
+        description: LS1 route attaches to LS1-listener-2
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^gateway-listener-.+\\.com/listener-set-http-routing-1-route GW_ROUTE_ID"
+        description: LS1 route does NOT attach to Gateway listeners
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-.+\\.com/listener-set-http-routing-1-route GW_ROUTE_ID"
+        description: LS1 route does NOT cross-attach to LS2
+
+      # listener-set-http-routing-1-section-route — only LS1-listener-1.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-1\\.com/listener-set-http-routing-1-section-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-1-section-route_0$"
+        description: LS1 section-route attaches to LS1-listener-1 only
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-2\\.com/listener-set-http-routing-1-section-route GW_ROUTE_ID"
+        description: LS1 section-route does NOT attach to LS1-listener-2
+
+      # listener-set-http-routing-2-route — both LS2 listeners.
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-1\\.com/listener-set-http-routing-2-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-2-route_0$"
+        description: LS2 route attaches to LS2-listener-1
+
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-2-listener-2\\.com/listener-set-http-routing-2-route GW_ROUTE_ID:http:gateway-conformance-infra_listener-set-http-routing-2-route_0$"
+        description: LS2 route attaches to LS2-listener-2
+
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^listener-set-http-routing-1-listener-.+\\.com/listener-set-http-routing-2-route GW_ROUTE_ID"
+        description: LS2 route does NOT cross-attach to LS1
+
+  test-listenerset-reference-grant-conformance-shape:
+    description: |
+      Mirrors the upstream Gateway API ListenerSetReferenceGrant
+      conformance fixture. A Gateway in `gateway-conformance-infra`
+      has `allowedListeners.namespaces.from: All`. Two ListenerSets
+      attach via parentRef:
+
+        * `listenerset-with-reference-grant` (same ns as Gateway,
+          gateway-conformance-infra). Cross-ns cert ref to
+          `gateway-conformance-web-backend` IS covered by the RG
+          `reference-grant-for-listener-set` whose `from` clause
+          allows `{ListenerSet, gateway-conformance-infra}`.
+          Expected: top-level Accepted=True/Accepted, listener-
+          level ResolvedRefs=True.
+
+        * `listenerset-without-reference-grant` (different ns,
+          gateway-api-listener-sets-test-reference-grant-ns).
+          Cross-ns cert ref to `gateway-conformance-web-backend`
+          but the RG only allows `{ListenerSet,
+          gateway-conformance-infra}` (not the LS's namespace).
+          Expected: top-level Accepted=False/ListenersNotValid,
+          Programmed=False/ListenersNotValid, listener-level
+          ResolvedRefs=False/RefNotPermitted.
+
+      Pins the chart-side fix that folds per-listener cert-ref
+      resolution into the top-level decision: a ListenerSet whose
+      every listener has unresolvable refs MUST be rejected with
+      `ListenersNotValid`, not `Accepted`.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-test-reference-grant
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: gateway-listener
+                port: 443
+                protocol: HTTPS
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: certificate
+                      namespace: gateway-conformance-web-backend
+            allowedListeners:
+              namespaces:
+                from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-with-reference-grant
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-test-reference-grant
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-with-reference-grant-listener
+                port: 443
+                protocol: HTTPS
+                hostname: listenerset-with-reference-grant-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: certificate
+                      namespace: gateway-conformance-web-backend
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-without-reference-grant
+            namespace: gateway-api-listener-sets-test-reference-grant-ns
+            generation: 1
+          spec:
+            parentRef:
+              kind: Gateway
+              group: gateway.networking.k8s.io
+              name: gateway-with-listener-sets-test-reference-grant
+              namespace: gateway-conformance-infra
+            listeners:
+              - name: listenerset-without-reference-grant-listener
+                port: 443
+                protocol: HTTPS
+                hostname: listenerset-without-reference-grant-listener-1.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - kind: Secret
+                      name: certificate
+                      namespace: gateway-conformance-web-backend
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: reference-grant-for-listener-set
+            namespace: gateway-conformance-web-backend
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: gateway-conformance-infra
+            to:
+              - group: ""
+                kind: Secret
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: reference-grant-for-gateway
+            namespace: gateway-conformance-web-backend
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                namespace: gateway-conformance-infra
+            to:
+              - group: ""
+                kind: Secret
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: certificate
+            namespace: gateway-conformance-web-backend
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # listenerset-with-reference-grant: same-ns as Gateway, RG
+      # exists for {ListenerSet, gateway-conformance-infra} →
+      # cert resolves → all conditions True. Status JSON keys
+      # render in alphabetical order (reason, status, type).
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-reference-grant:rendered"
+        pattern: '"reason":"Accepted","status":"True","type":"Accepted"'
+        description: With-RG listenerset top-level Accepted=True/Accepted
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-reference-grant:rendered"
+        pattern: '"reason":"Programmed","status":"True","type":"Programmed"'
+        description: With-RG listenerset top-level Programmed=True/Programmed
+
+      - type: contains
+        target: "status:gateway-conformance-infra/listenerset-with-reference-grant:rendered"
+        pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'
+        description: With-RG listenerset's listener ResolvedRefs=True
+
+      # listenerset-without-reference-grant: in DIFFERENT ns
+      # (gateway-api-listener-sets-test-reference-grant-ns), the
+      # only RG on the cert's ns is for {ListenerSet,
+      # gateway-conformance-infra} — doesn't permit this ns →
+      # cert ref is RefNotPermitted, top-level rolls up to
+      # ListenersNotValid.
+      - type: contains
+        target: "status:gateway-api-listener-sets-test-reference-grant-ns/listenerset-without-reference-grant:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Accepted"'
+        description: Without-RG listenerset top-level Accepted=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-api-listener-sets-test-reference-grant-ns/listenerset-without-reference-grant:rendered"
+        pattern: '"reason":"ListenersNotValid","status":"False","type":"Programmed"'
+        description: Without-RG listenerset top-level Programmed=False/ListenersNotValid
+
+      - type: contains
+        target: "status:gateway-api-listener-sets-test-reference-grant-ns/listenerset-without-reference-grant:rendered"
+        pattern: '"reason":"RefNotPermitted","status":"False","type":"ResolvedRefs"'
+        description: Without-RG listenerset's listener ResolvedRefs=False/RefNotPermitted

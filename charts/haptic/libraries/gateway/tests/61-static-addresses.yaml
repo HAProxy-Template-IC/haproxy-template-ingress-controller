@@ -1,0 +1,98 @@
+validationTests:
+  test-gateway-static-addresses-per-ip-services:
+    description: |
+      Mirrors the upstream Gateway-API GatewayStaticAddresses conformance
+      fixture's mid-flight state: a Gateway with TWO IPv4 addresses in
+      spec.addresses (one usable from the cluster's MetalLB pool, one
+      unusable RFC 5737 IP). The chart now emits ONE LoadBalancer
+      Service per address, each annotated with a single
+      `metallb.universe.tf/loadBalancerIPs: <ip>`. MetalLB allocates the
+      usable IP and ignores the unusable one — its IPFamilyForAddresses
+      guard rejected the previous comma-separated multi-IPv4 annotation.
+
+      Pins:
+        * Two Service entries in the rendered k8sResources output.
+        * Per-IP service names (`gw-<ns>-<gw>-<ip-with-dashes>`).
+        * Each annotation carries a single IP.
+        * Each Service has the correct labels propagated.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-ip-gw
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            addresses:
+              - type: IPAddress
+                value: "192.0.2.10"   # usable
+              - type: IPAddress
+                value: "1.0.0.1"      # RFC 5737 unusable
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with multi-IP Gateway
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-default-multi-ip-gw-192-0-2-10'
+        description: |
+          Per-IP Service for the usable IP exists, named with dot-to-
+          dash IP suffix to keep the resource name a valid RFC 1123
+          label.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-default-multi-ip-gw-1-0-0-1'
+        description: |
+          Per-IP Service for the unusable RFC 5737 IP also exists —
+          MetalLB will fail to allocate it (the chart's status-patch
+          read-back surfaces this as Programmed=False/AddressNotUsable
+          on the Gateway).
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'metallb\.universe\.tf/loadBalancerIPs: 192\.0\.2\.10'
+        description: |
+          Usable Service's annotation carries the single IP, NOT a
+          comma-separated list. MetalLB rejects multi-IPv4
+          annotations via its IPFamilyForAddresses guard.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'metallb\.universe\.tf/loadBalancerIPs: 1\.0\.0\.1'
+        description: Unusable Service's annotation carries its single IP too.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: multi-ip-gw'
+        description: |
+          Both Services carry the gateway-name label so per-Gateway
+          status read-back (and the conformance test's discovery) finds
+          them.

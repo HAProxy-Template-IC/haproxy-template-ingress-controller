@@ -1,0 +1,274 @@
+templateSnippets:
+  util-generate-host-map-gateway:
+    template: |
+      {#-
+        Generate host map entries for Gateway API routes.
+
+        Per Gateway API spec the effective hostname set for a route is
+        the *intersection* of the route's `spec.hostnames` with each
+        attached listener's hostname:
+
+          - route empty + listener empty           → "" (catch-all)
+          - route empty + listener H               → H  (route inherits)
+          - route H... + listener "" (catch-all)   → each H (route narrows)
+          - route H... + listener L                → per-pair intersection
+            (drops pairs with no intersection — e.g. `wildcard.io` against
+             `*.wildcard.io` does NOT intersect, since `*.wildcard.io`
+             matches at least one prefix label, not the bare base)
+
+        AnalyzeRoutes does the same computation for the per-route
+        routeInfo entries that drive advanced matchers; this snippet
+        mirrors the logic so host.map and the route-analysis view stay
+        consistent.
+      -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- macro GenerateHostMap(routes []any, route_type string) -%}
+      {%- for _, route := range routes %}
+      {%%
+        var routeHostnames = route | dig("spec", "hostnames") | toSlice()
+        var parentRefs = dig(route, "spec", "parentRefs") | toSlice()
+        var effectiveHosts = map[string]bool{}
+        var resolvedGwCount = 0
+        var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+        for _, parentRef := range parentRefs {
+          var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+          var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+          if prGroup != "gateway.networking.k8s.io" {
+            continue
+          }
+          // ListenerSet parentRef branch: treat the ListenerSet's
+          // own spec.listeners as additional attach candidates,
+          // gated through IsListenerSetAdmitted (same admission
+          // contract as the F2 status side).
+          if prKind == "ListenerSet" {
+            var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+            var lsName = tostring(dig(parentRef, "name") | fallback(""))
+            var section = tostring(dig(parentRef, "sectionName") | fallback(""))
+            var prPort = toint(dig(parentRef, "port") | fallback(0))
+            var ls = resources.listenersets.GetSingle(lsNs, lsName)
+            if ls == nil {
+              continue
+            }
+            var lsParentRef = dig(ls, "spec", "parentRef")
+            var gwName = tostring(dig(lsParentRef, "name") | fallback(""))
+            var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs))
+            var gw = resources.gateways.GetSingle(gwNs, gwName)
+            if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
+              continue
+            }
+            resolvedGwCount = resolvedGwCount + 1
+            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+              var listenerName = tostring(dig(listener, "name") | fallback(""))
+              if section != "" && section != listenerName {
+                continue
+              }
+              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              if prPort != 0 && prPort != listenerPort {
+                continue
+              }
+              var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+              var portSuffix = ""
+              if listenerPort > 0 {
+                if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
+                  portSuffix = ":" + tostring(listenerPort)
+                }
+              }
+              var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+              if len(routeHostnames) == 0 {
+                effectiveHosts[listenerHostname + portSuffix] = true
+              } else if listenerHostname == "" {
+                for _, rh := range routeHostnames {
+                  effectiveHosts[tostring(rh) + portSuffix] = true
+                }
+              } else {
+                for _, rh := range routeHostnames {
+                  var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
+                  if inter != "" {
+                    effectiveHosts[inter + portSuffix] = true
+                  }
+                }
+              }
+            }
+            continue
+          }
+          if prKind != "Gateway" {
+            continue
+          }
+          var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+          var gwName = tostring(dig(parentRef, "name") | fallback(""))
+          var section = tostring(dig(parentRef, "sectionName") | fallback(""))
+          var prPort = toint(dig(parentRef, "port") | fallback(0))
+          var gw = resources.gateways.GetSingle(gwNs, gwName)
+          if gw == nil {
+            continue
+          }
+          resolvedGwCount = resolvedGwCount + 1
+          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+            var listenerName = tostring(dig(listener, "name") | fallback(""))
+            if section != "" && section != listenerName {
+              continue
+            }
+            var listenerPort = toint(dig(listener, "port") | fallback(0))
+            if prPort != 0 && prPort != listenerPort {
+              continue
+            }
+            // Per-port suffix for non-default HTTP/HTTPS ports, see
+            // analyze_routes for the same logic.
+            var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+            var portSuffix = ""
+            if listenerPort > 0 {
+              if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
+                portSuffix = ":" + tostring(listenerPort)
+              }
+            }
+            var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+            // Listener isolation (catch-all only — see analyze_routes for
+            // the rationale): drop a route hostname when a sibling listener
+            // on the same Gateway claims it more specifically.
+            var currentRank = toint(HostnameRank(listenerHostname))
+            if len(routeHostnames) == 0 {
+              effectiveHosts[listenerHostname + portSuffix] = true
+            } else if listenerHostname == "" {
+              for _, rh := range routeHostnames {
+                var rhStr = tostring(rh)
+                var ownedBySibling = false
+                for _, sibling := range dig(gw, "spec", "listeners") | toSlice() {
+                  var sibName = tostring(dig(sibling, "name") | fallback(""))
+                  if sibName == listenerName {
+                    continue
+                  }
+                  var sibHost = tostring(dig(sibling, "hostname") | fallback(""))
+                  if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank {
+                    ownedBySibling = true
+                    break
+                  }
+                }
+                if !ownedBySibling {
+                  effectiveHosts[rhStr + portSuffix] = true
+                }
+              }
+            } else {
+              for _, rh := range routeHostnames {
+                var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
+                if inter != "" {
+                  effectiveHosts[inter + portSuffix] = true
+                }
+              }
+            }
+          }
+        }
+        // Fallback when no parentRef resolves to a known Gateway:
+        //   - true orphan (no parentRefs at all), or
+        //   - chart-test fixture with parentRefs but no Gateway resource.
+        // Routes that DID resolve at least one Gateway but found no
+        // intersecting listener produce no entries (spec-correct).
+        if resolvedGwCount == 0 {
+          if len(routeHostnames) == 0 {
+            effectiveHosts[""] = true
+          } else {
+            for _, rh := range routeHostnames {
+              effectiveHosts[tostring(rh)] = true
+            }
+          }
+        }
+        var hostnames = []any{}
+        for h, _ := range effectiveHosts {
+          hostnames = append(hostnames, h)
+        }
+      %%}
+      {%- if len(hostnames) > 0 %}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
+      # {{ route_type }}: {{ routeNs }}/{{ routeName }} ({{ len(hostnames) }} hosts)
+      {% for _, hostname := range hostnames %}
+      {%- if tostring(hostname) != "" %}
+      {%- var hostKey = MapKeyForHost(tostring(hostname)) %}
+      {{ hostKey }} {{ hostKey }}
+      {%- end %}
+      {% end %}
+      {%- end %}
+      {%- end %}
+      {%- end macro -%}
+
+  util-sharded-host-map-gateway:
+    template: |
+      {#- Sharded host map generator for Gateway API routes -#}
+      {%- import "util-generate-host-map-gateway" for GenerateHostMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedHostMap(routes []any, route_type string) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateHostMap(routes, route_type) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateHostMap(shard_slice(routes, i, n), route_type) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
+  map-host-500-gateway:
+    template: |
+      {#- Generate host map entries for Gateway API routes #}
+      {%- import "util-sharded-host-map-gateway" for ShardedHostMap %}
+      # gateway/map-host-gateway
+      {{- ShardedHostMap(resources.httproutes.List(), "HTTPRoute") -}}
+      {{- ShardedHostMap(resources.grpcroutes.List(), "GRPCRoute") -}}
+
+  map-host-regex-500-gateway:
+    template: |
+      {#-
+        Wildcard listener hostnames as regex entries.
+
+        For each Gateway listener whose hostname starts with `*.`,
+        emit a regex map entry that matches the suffix at any depth
+        (per Gateway API spec — `*.example.com` matches both
+        `foo.example.com` and `a.b.foo.example.com`, but NOT
+        `example.com` itself). The mapped value reuses the existing
+        leading-dot host_match key (`.example.com`) so downstream
+        path map lookups don't need to change.
+
+        Why a regex map: HAProxy's `regsub(^[^.]*,,)` fallback in
+        base.yaml only strips one label, so a request to
+        `multiple.prefixes.bar.com` against an `*.bar.com` listener
+        misses both the exact host.map and the single-strip
+        fallback. `map_reg` lets a single entry match any depth.
+
+        Why the leading anchor `^[^.]+(?:\.[^.]+)*\.bar\.com$`:
+          - `[^.]+` requires at least one label,
+          - `(?:\.[^.]+)*` allows arbitrarily-many extra labels,
+          - the trailing `\.bar\.com$` pins the wildcard suffix.
+        This excludes `bar.com` itself (which would have been matched
+        already by the exact host.map entry for any sibling exact
+        listener — and per spec must not match `*.bar.com`).
+      -#}
+      # gateway/map-host-regex-gateway
+      {%%
+        var seen = map[string]bool{}
+        var suffixEntries = []any{}
+        for _, gw := range resources.gateways.List() {
+          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+            var h = tostring(dig(listener, "hostname") | fallback(""))
+            if !hasPrefix(h, "*.") {
+              continue
+            }
+            var suffix = h[2:]
+            if seen[suffix] {
+              continue
+            }
+            seen[suffix] = true
+            suffixEntries = append(suffixEntries, map[string]any{"suffix": suffix})
+          }
+        }
+        // Most-specific (longest) suffix wins HAProxy `map_reg` ties — that's
+        // first-match-wins on file order, so emit longer suffixes first. Per
+        // Gateway API spec: when a request Host matches multiple listeners'
+        // wildcard hostnames, the most-specific one owns the request (e.g.
+        // `bar.foo.example.com` belongs to `*.foo.example.com`, not `*.example.com`).
+      %%}
+      {%- var sortedSuffixEntries = suffixEntries | sort_by([]string{"$.suffix | length:desc"}) %}
+      {%- for _, entry := range sortedSuffixEntries %}
+      {%- var suffix = tostring(entry | dig("suffix")) %}
+      ^[^.]+(?:\.[^.]+)*\.{{ replace(suffix, ".", "\\.") }}$ .{{ suffix }}
+      {%- end %}
