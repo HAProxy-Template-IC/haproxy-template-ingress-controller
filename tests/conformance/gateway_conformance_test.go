@@ -383,7 +383,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 			"TLSRouteHostnameIntersection",
 			"TLSRouteInvalidBackendRefNonexistent",
 			"TLSRouteInvalidBackendRefUnknownKind",
-			"TLSRouteListenerMixedTerminationNotSupported",
+			// (TLSRouteListenerMixedTerminationNotSupported is purely a
+			// listener-status assertion: a Gateway with two TLS
+			// listeners on the same port — one Terminate, one
+			// Passthrough — must surface Accepted=False/ProtocolConflict
+			// on both. The chart's status-patches-200-gateway already
+			// detects this via its `tlsPortModes` pre-scan and emits
+			// the right reason for both listeners; pinned by
+			// test-tlsroute-mixed-termination-protocol-conflict.)
 			"TLSRouteTerminateSimpleSameNamespace",
 			// HTTPRouteListenerPortMatching previously skipped on the
 			// 8080/8443 plumbing gap; lifted by the partial-SSA + open
