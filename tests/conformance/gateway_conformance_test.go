@@ -244,12 +244,18 @@ func TestGatewayAPIConformance(t *testing.T) {
 			// Pinned by test-gateway-frontend-client-cert-default-line-verify
 			// + test-gateway-frontend-client-cert-insecure-fallback-default-line.)
 			//
-			// GatewayBackendClientCertificateFeature still requires
-			// distinct backend-side ssl-verify wiring (Gateway with
-			// `spec.backendTLS.clientCertificateRef` presents the
-			// cert when connecting upstream); that's not addressed by
-			// the frontend-side fix above. Tracked at <follow-up issue>.
-			"GatewayBackendClientCertificateFeature",
+			// (GatewayBackendClientCertificateFeature: chart already
+			// supports `spec.tls.backend.clientCertificateRef` — the
+			// route's parent Gateway is walked at backend-emit time
+			// (libraries/gateway.yaml ~line 2660), the cert is resolved
+			// + bundled into the file registry, and the resulting `crt
+			// <path>` directive is appended to the backend's
+			// `default-server` line alongside the BackendTLSPolicy
+			// `ssl ca-file ... verify required` clause. Status side
+			// emits `ResolvedRefs=True/ResolvedRefs` on the Gateway
+			// when the cert ref resolves (or False with the right
+			// reason on InvalidClientCertificateRef / RefNotPermitted).
+			// Pinned by test-gateway-backend-client-cert-shape.)
 			// (Dynamic NodePort plumbing landed: chart emits a
 			// gateway-listener-ports NodePort Service via
 			// features-090-gateway-listener-ports-service; the
