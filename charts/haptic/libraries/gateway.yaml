@@ -454,7 +454,9 @@ templateSnippets:
         if lProto == "HTTPS" || (lProto == "TLS" && lTlsMode != "Passthrough") {
           // Cert resolvability — at least one certificateRef must
           // map to an entry in tlsCertificates (cert resolved + PEM
-          // valid).
+          // valid). For TLS Terminate listeners we keep the same
+          // gate; without a resolvable cert HAProxy can't terminate
+          // and the listener must not bind.
           var hasResolvedCert = false
           for _, certRef := range listener | dig("tls", "certificateRefs") | toSlice() {
             var refKind = tostring(dig(certRef, "kind") | fallback("Secret"))
@@ -474,11 +476,41 @@ templateSnippets:
           if !hasResolvedCert {
             return
           }
-        } else if lProto == "TLS" && lTlsMode == "Passthrough" {
-          // Passthrough listeners are accounted for via
-          // sslPassthroughBackends below — no per-listener contribution.
+        }
+        // TLS-protocol listeners (Terminate or Passthrough) feed the
+        // per-port mode-tcp frontends emitted by frontends-600-gateway-
+        // tls-listener — NOT the chart's mode-http HTTPS frontend.
+        // Each frontend's allowlist of `use_backend if { ssl_fc_sni
+        // ... }` rules is the spec contract; reject-default makes
+        // unmatched SNIs produce a connection rejection (TCP RST),
+        // which closes the upstream TLSRoute conformance gap on
+        // invalid-backend rejection. Keyed by port to support the
+        // common case of one Gateway claiming several listeners on a
+        // single port (different hostnames, same TLS mode — mixed
+        // mode is already flagged ProtocolConflict by status patches).
+        if lProto == "TLS" {
+          var byPortRaw, _ = shared.ComputeIfAbsent("gatewayTLSListenersByPort", func() any { return map[int]any{} })
+          var byPort = byPortRaw.(map[int]any)
+          var portEntry, exists = byPort[lPort]
+          if !exists {
+            portEntry = map[string]any{
+              "mode":      lTlsMode,
+              "listeners": []any{},
+            }
+          }
+          var pe = portEntry.(map[string]any)
+          var listenerEntry = map[string]any{
+            "gwNs":     gwNs,
+            "gwName":   gwName,
+            "name":     lName,
+            "hostname": tostring(dig(listener, "hostname") | fallback("")),
+            "mode":     lTlsMode,
+          }
+          pe["listeners"] = append(pe["listeners"].([]any), listenerEntry)
+          byPort[lPort] = pe
           return
         }
+        // HTTPS-only path below — TLS handled above.
         gf["needHTTPSFrontend"] = true
         if lPort == httpsPort {
           gf["bindHTTPSDefault"] = true
