@@ -318,7 +318,7 @@ validationTests:
 
       - type: contains
         target: map:listener-hostname-claim-regex.map
-        pattern: "(?m)^\\^\\[\\^\\.\\]\\+\\\\\\.wildcard\\\\\\.org\\\\\\$ \\*\\.wildcard\\.org$"
+        pattern: "(?m)^\\^\\[\\^\\.\\]\\+\\\\\\.wildcard\\\\\\.org\\$ \\*\\.wildcard\\.org$"
         description: Wildcard-hostname HTTPS listener appears as regex entry
 
       - type: contains

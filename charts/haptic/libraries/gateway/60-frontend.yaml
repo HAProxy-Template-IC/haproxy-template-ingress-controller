@@ -29,7 +29,12 @@ templateSnippets:
                   in front of the suffix, per Gateway API spec. -#}
               {%- var suffix = lh[2:] %}
               {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
-              {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
+              {#- $ is the regex end-of-string anchor; we DON'T escape it
+                  here. Earlier versions emitted `\$` which HAProxy reads
+                  as a literal `$` character — making the regex never
+                  match real hostnames. The catch-all marker below has
+                  the same fix. -#}
+              {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh) %}
             {%- else %}
               {%- exactEntries = append(exactEntries, lh + " " + lh) %}
             {%- end %}
@@ -49,7 +54,12 @@ templateSnippets:
                 {%- else if regex_search(lh, "^\\*\\.") %}
                   {%- var suffix = lh[2:] %}
                   {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
-                  {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "\\$ " + lh) %}
+                  {#- $ is the regex end-of-string anchor; we DON'T escape it
+                  here. Earlier versions emitted `\$` which HAProxy reads
+                  as a literal `$` character — making the regex never
+                  match real hostnames. The catch-all marker below has
+                  the same fix. -#}
+              {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh) %}
                 {%- else %}
                   {%- exactEntries = append(exactEntries, lh + " " + lh) %}
                 {%- end %}
@@ -58,7 +68,7 @@ templateSnippets:
           {%- end %}
         {%- end %}
         {%- if gwHasCatchall %}
-          {%- catchallEntries = append(catchallEntries, "^.*\\$ catchall:" + gwNs + "/" + gwName) %}
+          {%- catchallEntries = append(catchallEntries, "^.*$ catchall:" + gwNs + "/" + gwName) %}
         {%- end %}
       {%- end %}
       {#- Append catch-all entries last so wildcard regexes win. The
