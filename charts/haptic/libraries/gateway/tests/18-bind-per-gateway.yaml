@@ -1,23 +1,31 @@
 validationTests:
-  test-gateway-crtlist-per-listener-shapes:
+  test-gateway-bind-per-gateway-shape:
     description: |
-      Phase 2 of the per-Gateway-IP refactor. Verifies that every
-      HTTPS Gateway listener gets its OWN crt-list file via
-      fileRegistry, and that the file's single line carries the
-      listener-specific SSL options:
+      Phase 4 of the per-Gateway-IP refactor. Verifies that
+      `https-bind-extra-100-per-gateway` emits one
+      `bind *:<allocated-pod-port> ssl crt-list <per-listener-crt-list>
+      alpn h2,http/1.1` line per HTTPS Gateway listener in the
+      chart's `frontend https`, and SKIPS the bind when the
+      listener's mTLS CA refs are unresolvable.
 
-        * Catchall + AllowValidOnly default validation → cert line
-          with `ca-file <path> verify required` and NO SNI filter.
-        * Hostnamed + AllowInsecureFallback per-port validation →
-          cert line with `ca-file <path> verify optional
-          ca-ignore-err all crt-ignore-err all` and the listener's
-          hostname as the SNI filter.
-        * Catchall + no mTLS → cert line with just `ocsp-update on`
-          (no verify clause, no SNI filter).
-        * mTLS-blocked listener (CA refs unresolvable) → NO crt-list
-          file emitted (phase 4's bind drops on missing file).
+      Three listener shapes in one render:
+        * `gw-mixed/https-default` — catchall, AllowValidOnly default
+          validation → bind on allocated pod port, crt-list with
+          `verify required`.
+        * `gw-mixed/https-perport` — hostnamed, AllowInsecureFallback
+          per-port → bind on a different allocated pod port, crt-list
+          with `verify optional + ca-ignore-err all crt-ignore-err
+          all`.
+        * `gw-blocked/https` — catchall, mTLS CA ref points at a
+          non-existent ConfigMap → mTLS-blocked → NO bind emitted
+          (phase 2 didn't emit a crt-list for it either, so the
+          reference would fail HAProxy parse if we did).
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -25,7 +33,6 @@ validationTests:
           metadata:
             name: gw-mixed
             namespace: default
-            generation: 1
           spec:
             gatewayClassName: haptic
             tls:
@@ -46,7 +53,6 @@ validationTests:
                             group: ""
                             name: ca-cm
             listeners:
-              # Catchall + AllowValidOnly default validation.
               - name: https-default
                 port: 443
                 protocol: HTTPS
@@ -58,7 +64,6 @@ validationTests:
                     - kind: Secret
                       name: tls-cert
                       namespace: default
-              # Hostnamed + AllowInsecureFallback per-port override.
               - name: https-perport
                 port: 8443
                 hostname: second-example.org
@@ -74,30 +79,8 @@ validationTests:
         - apiVersion: gateway.networking.k8s.io/v1
           kind: Gateway
           metadata:
-            name: gw-bare
+            name: gw-blocked
             namespace: default
-            generation: 1
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              # Catchall, no mTLS at all.
-              - name: https
-                port: 9443
-                protocol: HTTPS
-                allowedRoutes:
-                  namespaces:
-                    from: Same
-                tls:
-                  certificateRefs:
-                    - kind: Secret
-                      name: tls-cert
-                      namespace: default
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: gw-broken-ca
-            namespace: default
-            generation: 1
           spec:
             gatewayClassName: haptic
             tls:
@@ -109,10 +92,8 @@ validationTests:
                         group: ""
                         name: nonexistent-ca
             listeners:
-              # mTLS-blocked: CA ref points at a non-existent ConfigMap.
-              # Phase 2 must skip emission (no crt-list file).
               - name: https
-                port: 7443
+                port: 443
                 protocol: HTTPS
                 allowedRoutes:
                   namespaces:
@@ -161,54 +142,55 @@ validationTests:
               -----END CERTIFICATE-----
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid alongside the new per-listener crt-lists.
-
-      # Catchall + AllowValidOnly: verify required, no SNI filter.
-      - type: contains
-        target: 'crt-list:gw-default-gw-mixed-https-default-crtlist.txt'
-        pattern: '^default_tls-cert\.pem \[ocsp-update on ca-file [^ ]+ verify required\]\n$'
         description: |
-          Per-listener crt-list file is registered for the catchall +
-          AllowValidOnly listener (gw-mixed/https-default), and its
-          single line carries cert filename + ocsp-update + ca-file +
-          verify required (no SNI filter, no ignore-err flags).
+          HAProxy config must validate. Per-listener crt-list files
+          referenced by the new binds must exist (phase 2 emission).
 
-      # Hostnamed + AllowInsecureFallback per-port.
+      # Allocations sort alphabetically:
+      #   default/gw-blocked:https:443 → 18000 (allocated, but bind skipped — mTLS-blocked)
+      #   default/gw-mixed:https-default:443 → 18001
+      #   default/gw-mixed:https-perport:8443 → 18002
       - type: contains
-        target: 'crt-list:gw-default-gw-mixed-https-perport-crtlist.txt'
-        pattern: '^default_tls-cert\.pem \[ocsp-update on ca-file [^ ]+ verify optional\] second-example\.org\n$'
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:18001 ssl crt-list \S+/gw-default-gw-mixed-https-default-crtlist\.txt alpn h2,http/1\.1$'
         description: |
-          Per-listener crt-list file for hostnamed
-          + AllowInsecureFallback per-port listener carries
-          `verify optional` and the listener's hostname as the SNI
-          filter. The `ca-ignore-err all crt-ignore-err all` flags
-          that complete the AllowInsecureFallback contract are
-          BIND-scope (HAProxy rejects them as a keyword inside a
-          crt-list line), so phase 4's per-listener bind line picks
-          them up via `gatewayListenerMTLSConfig.verify_mode ==
-          "optional"`.
+          gw-mixed's catchall AllowValidOnly listener gets its own
+          bind on allocated pod port 18001, referencing its
+          per-listener crt-list (which contains `verify required`).
 
-      # Catchall + no mTLS → just ocsp-update on, no verify, no SNI.
       - type: contains
-        target: 'crt-list:gw-default-gw-bare-https-crtlist.txt'
-        pattern: '^default_tls-cert\.pem \[ocsp-update on\]\n$'
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:18002 ssl crt-list \S+/gw-default-gw-mixed-https-perport-crtlist\.txt alpn h2,http/1\.1 ca-ignore-err all crt-ignore-err all$'
         description: |
-          No-mTLS catchall listener's crt-list line: just the
-          cert file with `ocsp-update on`. No verify clause, no
-          SNI filter, no ignore-err flags.
+          gw-mixed's hostnamed AllowInsecureFallback listener gets
+          its own bind on allocated pod port 18002, referencing its
+          per-listener crt-list (which carries `verify optional`)
+          AND `ca-ignore-err all crt-ignore-err all` on the bind
+          line itself (those flags are bind-scope, not crt-list
+          per-line). Per-listener binds keep the flags scoped to
+          this one listener, so a sibling `verify required` listener
+          on the same Gateway keeps its strictness.
 
-      # mTLS-blocked listener: file MUST NOT be emitted. The
-      # `contains` against an absent file resolves the target to the
-      # empty string, so any non-empty pattern's `not_contains`
-      # succeeds — we use the cert filename (which every emitted
-      # crt-list line would carry) as the probe.
+      # gw-blocked: mTLS-blocked → NO bind emitted at port 18000.
       - type: not_contains
-        target: 'crt-list:gw-default-gw-broken-ca-https-crtlist.txt'
-        pattern: 'default_tls-cert\.pem'
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:18000 ssl crt-list \S+/gw-default-gw-blocked-https-crtlist\.txt'
         description: |
-          mTLS-blocked listener (CA refs unresolvable) skips
-          per-listener crt-list emission. Phase 4's bind path
-          checks for the file and drops the bind when missing,
-          which is what the
+          gw-blocked's mTLS-broken listener has NO bind in the
+          rendered config. Connections destined for it RST at the
+          pod boundary because nothing's listening on the allocated
+          pod port — that's the contract the
           GatewayFrontendInvalidDefaultClientCertificateValidation
-          conformance contract requires.
+          conformance test expects.
+
+      # Sanity: the existing chart-static `bind *:443` is still present.
+      # Phase 4 ADDS per-Gateway binds; it doesn't remove the chart-static
+      # path used by Ingress TLS and pinned-IP Gateways.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:443 ssl crt-list .*/certificate-list\.txt alpn h2,http/1\.1$'
+        description: |
+          Chart-static `bind *:443` with the shared `certificate-list.txt`
+          stays in place — Ingress TLS and pinned-IP Gateway traffic
+          still flows through it. Phase 4 ADDS per-Gateway binds; it
+          doesn't remove the chart-static path.
