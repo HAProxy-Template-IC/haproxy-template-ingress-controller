@@ -566,54 +566,6 @@ templateSnippets:
               }
             }
 
-            // Per-Gateway LB IP read-back (phase 5 of the per-Gateway-IP
-            // refactor). When the Gateway has NO spec.addresses but DOES
-            // have at least one HTTPS listener, phase 3 emitted a
-            // per-Gateway LoadBalancer Service named
-            // `gw-<gwNs>-<gwName>` in the controller namespace. Read its
-            // realized LB IP back into status.addresses so clients
-            // (including the conformance suite's RoundTripper) connect
-            // to the per-Gateway IP — that's what makes the per-Gateway
-            // bind on the allocated pod port reachable.
-            //
-            // Falls through silently when:
-            //   - No HTTPS listener (phase 3 didn't emit a Service)
-            //   - Service hasn't been allocated an IP yet (MetalLB
-            //     reconciliation lag — gwEffectiveAddresses stays at
-            //     the chart's main LB IP from gatewayAddresses, which
-            //     is fine for the transitional state)
-            //   - ctrlNs / podSelector unset (chart-static deployment)
-            var phase5CtrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
-            if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
-              var hasHTTPSListener = false
-              for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-                var lProto = tostring(dig(listener, "protocol") | fallback(""))
-                if lProto == "HTTPS" {
-                  hasHTTPSListener = true
-                  break
-                }
-              }
-              if hasHTTPSListener {
-                var perGwSvcName = BoundedK8sName("gw", nsStr, nameStr, "")
-                var perGwSvc = resources.services.GetSingle(phase5CtrlNs, perGwSvcName)
-                if perGwSvc != nil {
-                  var perGwAddrs = []any{}
-                  for _, ing := range dig(perGwSvc, "status", "loadBalancer", "ingress") | toSlice() {
-                    var ipStr = tostring(dig(ing, "ip") | fallback(""))
-                    if ipStr != "" {
-                      perGwAddrs = append(perGwAddrs, map[string]any{
-                        "type":  "IPAddress",
-                        "value": ipStr,
-                      })
-                    }
-                  }
-                  if len(perGwAddrs) > 0 {
-                    gwEffectiveAddresses = perGwAddrs
-                  }
-                }
-              }
-            }
-
             // Per-Gateway marker Service for SupportGatewayInfrastructurePropagation.
             //
             // The conformance test searches the *Gateway's* namespace for
