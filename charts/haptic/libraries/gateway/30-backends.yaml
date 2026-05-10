@@ -254,9 +254,20 @@ templateSnippets:
           }
           var combined = crtPem + "\n" + keyPem
           var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
-          var p, fErr = fileRegistry.Register("file", fname, combined)
+          {#- Register the bundle as type "cert" so the file lands under
+              the chart's SSL dir (`ssl/`). HAProxy's `crt-base ssl`
+              will prepend `ssl/` to the emitted relative path on the
+              `crt` directive — so we emit JUST the filename (without
+              the `ssl/` prefix that fileRegistry returns) and let
+              crt-base re-add it. Closes the GatewayBackendClient
+              CertificateFeature webhook admission failure ("unable to
+              stat SSL certificate from file 'ssl/general/gw-clientcert-
+              ...'"): the previous "file" registration produced
+              `general/<fname>` which crt-base turned into the
+              non-existent `ssl/general/<fname>`. -#}
+          var _, fErr = fileRegistry.Register("cert", fname, combined)
           if fErr == nil {
-            gwClientCertPath = p
+            gwClientCertPath = fname
           }
         }
       %%}
