@@ -426,100 +426,198 @@ templateSnippets:
               so the route's effective SNI never enters route_sni; the
               listener_hostname stays in listener_sni so its claimed
               SNIs hit the reject path). -#}
-          {%- var listenerHosts = map[string]bool{} %}
-          {%- var invalidSNIs = map[string]bool{} %}
-          {%- var validPassthroughCount = 0 %}
-          {%- for _, backend := range passthroughBackends %}
-            {%- var b map[string]any = backend %}
-            {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
-            {%- if bMode == "Passthrough" %}
-              {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
-              {%- if bInvalid %}
-                {#- TLSRouteInvalidBackendRef* (Pass 2 marked the rule
-                    as having an unresolvable backendRef): record the
-                    route's claimed SNI so it joins listener_sni and
-                    the existing reject `if listener_sni !route_sni`
-                    fires. We never emit this SNI as route_sni — that
-                    would whitelist a route with no real backend. -#}
-                {%- invalidSNIs[tostring(b["sni"])] = true %}
+          {#- Per-Gateway routing isolation. The chart shares one bind
+              across every TLSRoute attached to port httpsPort, but the
+              Gateway-API spec requires per-Gateway listener-claim
+              semantics: a Gateway whose listener pattern matches the
+              inbound SNI must reject the connection if no route under
+              THAT Gateway claims it, even if a sibling Gateway on the
+              same port has routes that would accept the SNI under a
+              wider pattern. Without this isolation, the upstream
+              `TLSRouteHostnameIntersection` "should not reach backend"
+              sub-tests fail when 4 Gateways with different listener-
+              hostname patterns share port 443 (route SNI patterns
+              from one Gateway would pass through another Gateway's
+              listener filter).
+
+              Bucket entries by (gw_namespace, gw_name) and emit per-
+              Gateway listener_sni / route_sni / invalid_sni ACL +
+              reject rules. Each Gateway X gets a sanitized ACL prefix
+              `gw_<ns>_<name>` (dashes/dots/colons → underscores) and a
+              reject rule of the form
+                tcp-request content reject if <gwX>_listener_sni !<gwX>_route_sni
+              for non-empty listeners, OR
+                tcp-request content reject if !<gwX>_route_sni
+              for empty (catch-all) listeners. Entries flagged invalid
+              get their own per-Gateway invalid_sni ACL + unconditional
+              reject (so the route's claimed SNI gets a TCP RST instead
+              of a use_backend pointing at a non-existent Service).
+
+              Ingress-level passthroughBackends (Pass 1, no Gateway
+              identity) are NOT subject to the reject — they keep
+              their existing fall-through behaviour. -#}
+          {%%
+            var byGateway = map[string]any{}
+            var gwOrder = []any{}
+            var hasIngressEntry = false
+            var validPassthroughCount = 0
+            for _, backend := range passthroughBackends {
+              var b = backend.(map[string]any)
+              var bMode = tostring(b["mode"] | fallback("Passthrough"))
+              if bMode != "Passthrough" {
+                continue
+              }
+              var gwNs = tostring(b | dig("gw_namespace") | fallback(""))
+              var gwName = tostring(b | dig("gw_name") | fallback(""))
+              if gwName == "" {
+                hasIngressEntry = true
+                continue
+              }
+              var gwKey = gwNs + ":" + gwName
+              var gi map[string]any
+              if existing, ok := byGateway[gwKey]; ok {
+                gi = existing.(map[string]any)
+              } else {
+                gi = map[string]any{
+                  "ns":               gwNs,
+                  "name":             gwName,
+                  "listenerPatterns": map[string]bool{},
+                  "hasEmptyListener": false,
+                  "routeSNIs":        map[string]bool{},
+                  "invalidSNIs":      map[string]bool{},
+                }
+                byGateway[gwKey] = gi
+                gwOrder = append(gwOrder, gwKey)
+              }
+              var lh = tostring(b | dig("listener_hostname") | fallback(""))
+              if lh == "" {
+                gi["hasEmptyListener"] = true
+              } else {
+                gi["listenerPatterns"].(map[string]bool)[lh] = true
+              }
+              var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true"
+              var sni = tostring(b["sni"])
+              if bInvalid {
+                gi["invalidSNIs"].(map[string]bool)[sni] = true
+              } else {
+                gi["routeSNIs"].(map[string]bool)[sni] = true
+                validPassthroughCount = validPassthroughCount + 1
+              }
+            }
+            // Stable per-Gateway emission order: sort by gwKey.
+            for i := 0; i < len(gwOrder); i++ {
+              for j := i + 1; j < len(gwOrder); j++ {
+                if tostring(gwOrder[i]) > tostring(gwOrder[j]) {
+                  var swap = gwOrder[i]
+                  gwOrder[i] = gwOrder[j]
+                  gwOrder[j] = swap
+                }
+              }
+            }
+          %%}
+          {%- for _, gwKey := range gwOrder %}
+            {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
+            {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}
+            {%- var listenerPatterns = gi["listenerPatterns"].(map[string]bool) %}
+            {%- var hasEmptyListener = gi["hasEmptyListener"].(bool) %}
+            {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
+            {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
+            {#- Collect sorted lists for deterministic output. -#}
+            {%%
+              var lpKeys = []any{}
+              for k := range listenerPatterns {
+                lpKeys = append(lpKeys, k)
+              }
+              for i := 0; i < len(lpKeys); i++ {
+                for j := i + 1; j < len(lpKeys); j++ {
+                  if tostring(lpKeys[i]) > tostring(lpKeys[j]) {
+                    var swap = lpKeys[i]
+                    lpKeys[i] = lpKeys[j]
+                    lpKeys[j] = swap
+                  }
+                }
+              }
+              var rsKeys = []any{}
+              for k := range routeSNIs {
+                rsKeys = append(rsKeys, k)
+              }
+              for i := 0; i < len(rsKeys); i++ {
+                for j := i + 1; j < len(rsKeys); j++ {
+                  if tostring(rsKeys[i]) > tostring(rsKeys[j]) {
+                    var swap = rsKeys[i]
+                    rsKeys[i] = rsKeys[j]
+                    rsKeys[j] = swap
+                  }
+                }
+              }
+              var invKeys = []any{}
+              for k := range invalidSNIs {
+                invKeys = append(invKeys, k)
+              }
+              for i := 0; i < len(invKeys); i++ {
+                for j := i + 1; j < len(invKeys); j++ {
+                  if tostring(invKeys[i]) > tostring(invKeys[j]) {
+                    var swap = invKeys[i]
+                    invKeys[i] = invKeys[j]
+                    invKeys[j] = swap
+                  }
+                }
+              }
+            %%}
+            {%- for _, lpAny := range lpKeys %}
+              {%- var lp = tostring(lpAny) %}
+              {%- if hasPrefix(lp, "*.") %}
+          acl {{ aclSan }}_listener_sni req_ssl_sni -m end {{ lp[1:] }}
               {%- else %}
-                {%- validPassthroughCount = validPassthroughCount + 1 %}
-                {%- var lh = tostring(b | dig("listener_hostname") | fallback("")) %}
-                {#- Empty listener hostname (catch-all) is intentionally
-                    excluded — a catch-all TLS listener claims every
-                    SNI, and the chart can't enforce a meaningful reject
-                    in that case (every fall-through to ssl-loopback
-                    would be incorrect). The conformance fixture that
-                    exercises this path
-                    (`TLSRoutes_intersect_with_empty_listener_hostname`)
-                    still works because the route_sni route hostname is
-                    itself the only claimed entry; non-matching SNIs
-                    fall through unconditionally. -#}
-                {%- if lh != "" %}
-                  {%- listenerHosts[lh] = true %}
-                {%- end %}
+          acl {{ aclSan }}_listener_sni req_ssl_sni -m str {{ lp }}
               {%- end %}
             {%- end %}
-          {%- end %}
-          {%- for _, backend := range passthroughBackends %}
-            {%- var b map[string]any = backend %}
-            {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
-            {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
-            {%- if bMode == "Passthrough" && !bInvalid %}
-              {%- var sni = tostring(b["sni"]) %}
+            {%- for _, sniAny := range rsKeys %}
+              {%- var sni = tostring(sniAny) %}
               {%- if hasPrefix(sni, "*.") %}
-          acl route_sni req_ssl_sni -m end {{ sni[1:] }}
+          acl {{ aclSan }}_route_sni req_ssl_sni -m end {{ sni[1:] }}
               {%- else %}
-          acl route_sni req_ssl_sni -m str {{ sni }}
+          acl {{ aclSan }}_route_sni req_ssl_sni -m str {{ sni }}
               {%- end %}
             {%- end %}
-          {%- end %}
-          {#- listener_sni covers BOTH listener-pattern claims and the
-              SNIs of routes whose backends were unresolvable — both
-              should reject when route_sni doesn't match. -#}
-          {%- for lh, _ := range listenerHosts %}
-            {%- if hasPrefix(lh, "*.") %}
-          acl listener_sni req_ssl_sni -m end {{ lh[1:] }}
-            {%- else %}
-          acl listener_sni req_ssl_sni -m str {{ lh }}
-            {%- end %}
-          {%- end %}
-          {%- for sni, _ := range invalidSNIs %}
-            {%- if hasPrefix(sni, "*.") %}
-          acl listener_sni req_ssl_sni -m end {{ sni[1:] }}
-            {%- else %}
-          acl listener_sni req_ssl_sni -m str {{ sni }}
+            {%- for _, sniAny := range invKeys %}
+              {%- var sni = tostring(sniAny) %}
+              {%- if hasPrefix(sni, "*.") %}
+          acl {{ aclSan }}_invalid_sni req_ssl_sni -m end {{ sni[1:] }}
+              {%- else %}
+          acl {{ aclSan }}_invalid_sni req_ssl_sni -m str {{ sni }}
+              {%- end %}
             {%- end %}
           {%- end %}
           {%- var needHTTPSTermination_pre = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
-          {%- var listenerSNIDefined = (len(listenerHosts) + len(invalidSNIs)) > 0 %}
-          {%- if listenerSNIDefined %}
-            {%- if validPassthroughCount > 0 %}
-          tcp-request content reject if listener_sni !route_sni
+          {%- for _, gwKey := range gwOrder %}
+            {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
+            {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}
+            {%- var listenerPatterns = gi["listenerPatterns"].(map[string]bool) %}
+            {%- var hasEmptyListener = gi["hasEmptyListener"].(bool) %}
+            {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
+            {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
+            {%- if hasEmptyListener %}
+              {#- Empty listener: claims every SNI. Reject any SNI not
+                  claimed by a valid route under THIS Gateway. When all
+                  routes are invalid, route_sni ACL is undefined, so we
+                  reject the per-route invalid_sni patterns explicitly
+                  (still scoped to this Gateway's claimed SNIs — other
+                  SNIs aren't this Gateway's concern). -#}
+              {%- if len(routeSNIs) > 0 %}
+          tcp-request content reject if !{{ aclSan }}_route_sni
+              {%- else if len(invalidSNIs) > 0 %}
+          tcp-request content reject if {{ aclSan }}_invalid_sni
+              {%- end %}
             {%- else %}
-          {#- No valid Passthrough routes on this port; route_sni ACL
-              is undefined, so the unconditional `reject if listener_sni`
-              form is what we need. Connection still terminates on TLS
-              hello (no fall-through) — exactly the
-              TLSRouteInvalidBackendRef* contract when the only
-              attached route has an unresolvable backend. -#}
-          tcp-request content reject if listener_sni
+              {#- Non-empty listener: reject if listener pattern matches
+                  but no route under this Gateway claims the SNI. -#}
+              {%- if len(routeSNIs) > 0 %}
+          tcp-request content reject if {{ aclSan }}_listener_sni !{{ aclSan }}_route_sni
+              {%- else if len(listenerPatterns) > 0 %}
+          tcp-request content reject if {{ aclSan }}_listener_sni
+              {%- end %}
             {%- end %}
-          {%- end %}
-          {%- if !needHTTPSTermination_pre && validPassthroughCount > 0 %}
-          {#- TLSRouteHostnameIntersection: when no HTTPS-Terminate
-              listener exists on this port, any SNI that doesn't claim a
-              route must be rejected (not silently dropped or fall
-              through to a non-existent ssl-loopback). The previous
-              reject above only fires when the SNI matches a listener
-              pattern (or a flagged-invalid route's claimed SNI); this
-              catches SNIs that don't match ANY listener at all (e.g.
-              `non.matching.com` against a Gateway with `*.example.com`
-              listeners). Gated on validPassthroughCount > 0 because
-              route_sni ACL is emitted only by valid Passthrough-mode
-              entries — without it, the condition below would
-              reference an undefined ACL. -#}
-          tcp-request content reject if !route_sni
           {%- end %}
           tcp-request content accept if { req_ssl_hello_type 1 }
 
