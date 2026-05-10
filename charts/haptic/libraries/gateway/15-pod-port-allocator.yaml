@@ -130,3 +130,45 @@ templateSnippets:
           # gw-pod-port: {{ tostring(key) }} = {{ allocations[tostring(key)] }}
         {%- end %}
       {%- end %}
+
+  # Pod-port → listener-port map. base.yaml's `frontend-routing-logic`
+  # uses this to translate dst_port (the pod port HAProxy is bound on)
+  # back to the listener port that the chart's host.map and
+  # path-prefix.map keys are scoped by. Without it, a request landing
+  # on phase 4's per-Gateway bind (e.g. pod port 18002 for a Gateway
+  # listener port 8443) would look up `<host>:18002` and miss the
+  # `<host>:8443` map entry the chart emitted.
+  #
+  # Schema: `<podPort> <listenerPort>` per line. The frontend's
+  # routing logic reads it via `map(...)`; entries absent from the
+  # map cause the lookup to fall through to `dst_port` itself, which
+  # is the right behaviour for chart-static binds.
+  features-170-pod-listener-port-map:
+    template: |
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
+      {%- var keys = []any{} %}
+      {%- for k := range allocations %}
+        {%- keys = append(keys, k) %}
+      {%- end %}
+      {%- var sortedKeys = sort_strings(keys) %}
+      {%- var lines = []any{} %}
+      {%- for _, key := range sortedKeys %}
+        {#- Allocator key shape: `<gwNs>/<gwName>:<lName>:<port>`.
+            The listener port is the last colon-delimited field. -#}
+        {%- var keyStr = tostring(key) %}
+        {%- var parts = split(keyStr, ":") %}
+        {%- if len(parts) >= 2 %}
+          {%- var listenerPort = parts[len(parts) - 1] %}
+          {%- var podPort = tostring(allocations[keyStr]) %}
+          {%- lines = append(lines, podPort + " " + listenerPort) %}
+        {%- end %}
+      {%- end %}
+      {%- var content = (lines | toStringSlice() | join("\n")) %}
+      {%- if content != "" %}
+        {%- content = content + "\n" %}
+      {%- end %}
+      {%- var _, regErr = fileRegistry.Register("map", "pod-listener-port.map", content) %}
+      {%- if regErr != nil %}
+        {{ fail("failed to register pod-listener-port.map: " + tostring(regErr)) }}
+      {%- end %}

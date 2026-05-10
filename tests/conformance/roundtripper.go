@@ -115,45 +115,60 @@ func newPortRouter(cs clientset.Interface, hostIP string, initial map[int]portRo
 // lookup resolves an inbound dial target to a portRoute.
 //
 // Resolution order:
-//  1. Per-Gateway: if `host` matches a per-Gateway Service's LB IP,
-//     return that Service's NodePort for `port`. This is what gives
-//     each Gateway its own bind-line SSL config (verify required vs
-//     optional, ca-ignore-err) — the conformance suite dials the
-//     Gateway's status.addresses IP and lands on the per-Gateway
-//     bind in HAProxy.
-//  2. Chart-static fallback: lookup by port alone, returning the
-//     chart's main Service NodePort. Used by Ingress TLS, pinned-IP
-//     Gateways (`spec.addresses` set), and all HTTP traffic.
+//  1. Per-LB-IP exact match: if the host matches a known LB IP
+//     (chart's main Service OR a per-Gateway Service), return its
+//     specific NodePort for `port`. Crucially, when the host IS a
+//     known LB IP but the port isn't bound on that Service, return
+//     "no route" instead of falling through to the chart-static
+//     port table — that's what makes mTLS-blocked / phase-4-skipped
+//     listeners actually unreachable (the
+//     GatewayFrontendInvalidDefaultClientCertificateValidation
+//     test depends on the dial returning err != nil).
+//  2. Port-only fallback: when the host is unknown (no LB IP match,
+//     e.g. test infrastructure dials the kind node IP directly),
+//     use the chart-static `table` to find a NodePort by listener
+//     port alone. Refreshes once on cache miss.
 //
-// Refreshes from the cluster on cache miss in either layer.
+// Refreshes the byLBIP / table caches lazily on the first cache
+// miss for a given burst of dials.
 func (r *portRouter) lookup(ctx context.Context, host string, port int) (portRoute, bool) {
 	r.mu.RLock()
-	if perPort, ok := r.byLBIP[host]; ok {
+	perPort, hostKnown := r.byLBIP[host]
+	r.mu.RUnlock()
+
+	// Host with non-empty IP but not yet in byLBIP: refresh the
+	// cache and re-check. Newly-realized per-Gateway LB IPs land
+	// here on first dial — without the refresh the cache would
+	// return "host unknown" and we'd fall through to the chart-
+	// static port table, which would dial the wrong HAProxy bind.
+	if !hostKnown && host != "" {
+		r.refresh(ctx)
+		r.mu.RLock()
+		perPort, hostKnown = r.byLBIP[host]
+		r.mu.RUnlock()
+	}
+
+	if hostKnown {
 		if np, ok := perPort[port]; ok {
-			r.mu.RUnlock()
 			return portRoute{nodeIP: r.hostIP, nodePort: np}, true
 		}
+		// Host is a known LB IP but doesn't expose this port —
+		// signal no route. Falling through to `table` would dial
+		// the chart-static NodePort, which serves a DIFFERENT
+		// HAProxy bind than the per-Gateway one and would mask
+		// the connection-refused signal phase 4 produces (the
+		// GatewayFrontendInvalidDefaultClientCertificateValidation
+		// test depends on it).
+		return portRoute{}, false
 	}
-	route, ok := r.table[port]
-	r.mu.RUnlock()
-	if ok {
-		return route, true
-	}
-	// Cache miss: refresh both tables from the cluster. Fixtures
-	// applied by the conformance test framework after suite-init
-	// populate the chart's main Service (dynamic listener ports)
-	// AND emit per-Gateway Services (phase 3) asynchronously; this
-	// lazy refresh picks both up without requiring the test to call
-	// into us first.
-	r.refresh(ctx)
+
+	// Host unknown even after refresh — fall back to the chart-
+	// static `table` lookup by port alone. Hits when the test
+	// process dials the kind node IP directly (e.g. dynamic
+	// listener ports without a per-Gateway Service).
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if perPort, ok := r.byLBIP[host]; ok {
-		if np, ok := perPort[port]; ok {
-			return portRoute{nodeIP: r.hostIP, nodePort: np}, true
-		}
-	}
-	route, ok = r.table[port]
+	route, ok := r.table[port]
 	return route, ok
 }
 
@@ -313,37 +328,41 @@ func discoverDynamicNodePorts(ctx context.Context, cs clientset.Interface) (map[
 	return out, nil
 }
 
-// discoverPerGatewayNodePorts queries the controller-namespace Services
-// labelled `gateway.networking.k8s.io/gateway-name` (per-Gateway LB
-// Services emitted by phase 3 of the per-Gateway-IP refactor) and
-// returns a map from realized LB IP to (listener-port → NodePort).
+// discoverPerGatewayNodePorts queries the controller-namespace
+// LoadBalancer Services and returns a map from realized LB IP to
+// (listener-port → NodePort). Populates two layers:
 //
-// The chart's `features-090-gateway-per-gateway-services` snippet emits
-// one Service per HTTPS Gateway. MetalLB allocates an LB IP per
-// Service (visible in `status.loadBalancer.ingress[].ip`); the
-// apiserver allocates a NodePort per port entry. The roundtripper
-// uses this map so a dial to the Gateway's status.addresses IP lands
-// on the Gateway's specific bind-line SSL config rather than the
-// shared chart-static one.
+//   - The chart's main `haptic-haproxy` Service. Its LB IP is the
+//     destination for HTTP-only Gateways (which don't get their
+//     own per-Gateway Service) and for pinned-IP Gateways before
+//     phase 3 took over. Without including it, the byLBIP path
+//     would fall through to the port-only `table` for those dials,
+//     which is what the chart-static-fallback was designed for —
+//     but the InvalidDefault conformance test specifically expects
+//     a connection refusal when its per-Gateway bind doesn't exist,
+//     so leaving the chart-static fallback in for ALL unknown LB
+//     IPs masks that signal. Better to make every realized LB IP
+//     resolvable directly.
 //
-// Returns an empty map (not an error) when no per-Gateway Services
-// exist — the chart only emits them for HTTPS Gateways without
-// `spec.addresses`.
+//   - Per-Gateway Services emitted by phase 3, labelled
+//     `gateway.networking.k8s.io/gateway-name`. MetalLB allocates
+//     a unique LB IP per Service; the apiserver allocates a
+//     NodePort per port entry. A dial to the Gateway's
+//     status.addresses IP lands on the Gateway's specific bind-
+//     line SSL config (or RSTs at the pod boundary if phase 4
+//     declined to emit a bind for an mTLS-blocked listener).
+//
+// Returns an empty map (not an error) when no LoadBalancer Services
+// have realized IPs — phase 3 only emits per-Gateway Services for
+// HTTPS Gateways without `spec.addresses`, so a chart with only
+// HTTP Gateways still surfaces the main Service.
 func discoverPerGatewayNodePorts(ctx context.Context, cs clientset.Interface) (map[string]map[int]int, error) {
 	out := map[string]map[int]int{}
-	svcs, err := cs.CoreV1().Services(haproxyServiceNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "gateway.networking.k8s.io/gateway-name",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list per-Gateway Services in %s: %w", haproxyServiceNamespace, err)
-	}
-	for _, svc := range svcs.Items {
+
+	collect := func(svc *corev1.Service) {
 		if svc.Spec.Type != corev1.ServiceTypeNodePort && svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
-			continue
+			return
 		}
-		// Skip Services whose IP isn't realized yet — without an LB
-		// IP we have nothing to key by, and the chart-static
-		// fallback handles the transitional state.
 		var lbIPs []string
 		for _, ing := range svc.Status.LoadBalancer.Ingress {
 			if ing.IP != "" {
@@ -351,7 +370,7 @@ func discoverPerGatewayNodePorts(ctx context.Context, cs clientset.Interface) (m
 			}
 		}
 		if len(lbIPs) == 0 {
-			continue
+			return
 		}
 		ports := map[int]int{}
 		for _, p := range svc.Spec.Ports {
@@ -361,11 +380,26 @@ func discoverPerGatewayNodePorts(ctx context.Context, cs clientset.Interface) (m
 			ports[int(p.Port)] = int(p.NodePort)
 		}
 		if len(ports) == 0 {
-			continue
+			return
 		}
 		for _, ip := range lbIPs {
 			out[ip] = ports
 		}
+	}
+
+	mainSvc, err := cs.CoreV1().Services(haproxyServiceNamespace).Get(ctx, haproxyServiceName, metav1.GetOptions{})
+	if err == nil {
+		collect(mainSvc)
+	}
+
+	gwSvcs, err := cs.CoreV1().Services(haproxyServiceNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "gateway.networking.k8s.io/gateway-name",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list per-Gateway Services in %s: %w", haproxyServiceNamespace, err)
+	}
+	for i := range gwSvcs.Items {
+		collect(&gwSvcs.Items[i])
 	}
 	return out, nil
 }
