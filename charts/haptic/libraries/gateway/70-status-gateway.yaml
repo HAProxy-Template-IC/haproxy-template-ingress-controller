@@ -1212,12 +1212,34 @@ templateSnippets:
                   generation, TopLevelTransitionTime(gateway, "InsecureFrontendValidationMode", "True")))
             }
             // attachedListenerSets count: how many ListenerSets attach
-            // to this Gateway and are admitted by spec.allowedListeners.
-            // Conformance test ListenerSetDefaultNotAllowed asserts =0
-            // when allowedListeners is unset (default-deny). Mirrors
-            // the gate logic in F3 and util-effective-listeners exactly
-            // so all three sites agree. Counted once per render —
-            // cheap because resources.listenersets is already in memory.
+            // to this Gateway, are admitted by spec.allowedListeners,
+            // AND have at least one listener that survives conflict
+            // detection (port/hostname/protocol). Conformance test
+            // ListenerSetDefaultNotAllowed asserts =0 when
+            // allowedListeners is unset (default-deny);
+            // ListenerSetHostnameConflict / ListenerSetProtocolConflict
+            // assert that LSes whose every listener loses a conflict
+            // don't count as attached. Mirrors the gate logic in F3
+            // and util-effective-listeners exactly so all three sites
+            // agree. Counted once per render — cheap because
+            // resources.listenersets is already in memory.
+            //
+            // The conflict state lives on the effectiveListeners cache
+            // (sub-key "statuses"), so read it once and use the
+            // listenerConflicts list per-LS to gate the count.
+            var lsStatusCache = map[string]any{}
+            {
+              var effLAny = shared.Get("effectiveListeners")
+              if effLAny != nil {
+                var effL, ok = effLAny.(map[string]any)
+                if ok {
+                  var stAny, hasSt = effL["statuses"]
+                  if hasSt {
+                    lsStatusCache = stAny.(map[string]any)
+                  }
+                }
+              }
+            }
             var attachedLSCount = 0
             for _, ls := range resources.listenersets.List() {
               var pRef = dig(ls, "spec", "parentRef")
@@ -1241,9 +1263,29 @@ templateSnippets:
               case "Same":
                 permitted = (lsNs == nsStr)
               }
-              if permitted {
-                attachedLSCount++
+              if !permitted {
+                continue
               }
+              // At least one listener must survive conflict detection.
+              // The cache's listenerConflicts list captures per-listener
+              // (name, reason) pairs for losers; LSes with no entries
+              // are fully accepted, LSes with one entry per listener
+              // are fully rejected.
+              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+              var lsKey = lsNs + "/" + lsName
+              var listenersTotal = len(toSlice(dig(ls, "spec", "listeners") | fallback([]any{})))
+              var conflictedCount = 0
+              var statusEntryAny, hasEntry = lsStatusCache[lsKey]
+              if hasEntry {
+                for _, c := range statusEntryAny.(map[string]any)["listenerConflicts"].([]any) {
+                  _ = c
+                  conflictedCount++
+                }
+              }
+              if listenersTotal == 0 || conflictedCount >= listenersTotal {
+                continue
+              }
+              attachedLSCount++
             }
 
             statusPatch(nsStr, nameStr,
