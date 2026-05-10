@@ -225,7 +225,17 @@ templateSnippets:
             {%- var portRoutes = []any{} %}
             {%- for _, beAny := range allBackends %}
               {%- var be = beAny.(map[string]any) %}
-              {%- if toint(be["port"] | fallback(0)) == port %}
+              {#- Filter out invalid entries (backends that failed
+                  the ResolvedRefs gate in Pass 2). Their backend
+                  block is not emitted, so use_backend would point at
+                  a non-existent target. The route's claimed SNI
+                  doesn't enter `allowed_sni`, so the unconditional
+                  `tcp-request content reject if !allowed_sni` below
+                  rejects connections — which is exactly what the
+                  TLSRouteInvalidBackendRef* conformance tests
+                  expect. -#}
+              {%- var invalidFlag = tostring(be | dig("invalid") | fallback("false")) == "true" %}
+              {%- if toint(be["port"] | fallback(0)) == port && !invalidFlag %}
                 {%- portRoutes = append(portRoutes, be) %}
               {%- end %}
             {%- end %}
