@@ -503,3 +503,88 @@ validationTests:
         target: haproxy.cfg
         pattern: 'bind \*:9000\b'
         description: Non-conflicting LS HTTP listener at port 9000 must be bound
+
+  test-listenerset-allowed-routes-supported-kinds:
+    description: |
+      ListenerSet listener with `allowedRoutes.kinds: [HTTPRoute]` on a
+      TLS-protocol listener must report `supportedKinds: []` and
+      `ResolvedRefs=False/InvalidRouteKinds` — HTTPRoute is not in the
+      chart's TLS-protocol default route-kinds set ([TLSRoute]), so the
+      requested kind doesn't intersect. Mirrors the upstream
+      ListenerSetAllowedRoutesSupportedKinds conformance fixture
+      (gateway-with-listener-sets-test-supported-route-kinds Gateway +
+      listenerset-test-allowed-routes-supported-kinds ListenerSet).
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-test-supported-route-kinds
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: gateway-listener
+                protocol: HTTP
+                port: 80
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-test-allowed-routes-supported-kinds
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            parentRef:
+              name: gateway-with-listener-sets-test-supported-route-kinds
+            listeners:
+              - name: listener-set-listener-allowed-routes-tls-only
+                protocol: TLS
+                port: 443
+                hostname: listener-set-listener-allowed-routes-tls-only.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                  kinds:
+                    - kind: HTTPRoute
+                tls:
+                  mode: Passthrough
+    assertions:
+      - type: contains
+        target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
+        pattern: '"name":"listener-set-listener-allowed-routes-tls-only","supportedKinds":\[\]'
+        description: |
+          TLS-protocol listener with allowedRoutes.kinds=[HTTPRoute]
+          must report empty supportedKinds (HTTPRoute is not in the
+          TLS protocol's default-kinds set [TLSRoute] — the
+          intersection is empty).
+
+      - type: contains
+        target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
+        pattern: '"reason":"InvalidRouteKinds"'
+        description: |
+          ResolvedRefs goes False with reason InvalidRouteKinds because
+          at least one requested kind (HTTPRoute) couldn't be matched
+          against the listener's protocol-defaults.
+
+      - type: not_contains
+        target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
+        pattern: '"name":"listener-set-listener-allowed-routes-tls-only"[^}]*"TLSRoute"'
+        description: |
+          Specifically must NOT report TLSRoute as supported on this
+          listener. The listener requested only HTTPRoute via
+          allowedRoutes.kinds; even though TLS protocol's defaults
+          include TLSRoute, the user-specified filter narrows the set
+          (per Gateway-API spec: "When unspecified, defaults to the
+          values supported by Gateway. When specified, the listener
+          will support only the kinds in allowedRoutes.kinds that are
+          also supported by the Gateway").
