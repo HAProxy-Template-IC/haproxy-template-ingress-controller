@@ -150,8 +150,22 @@ templateSnippets:
       # exactly the post-cascade state we want to recover from.
       # `concat()` requires a variable, so bind dst_port first.
       http-request set-var(txn.dst_port) dst_port if { var(txn.host_match) -m len 0 }
-      # Try `<host>:<dst_port>` first — covers requests where the
-      # client didn't include the port in the Host header but the
+      # Per-Gateway pod-port translation: phase 4's per-Gateway HTTPS
+      # binds listen on allocated pod ports (e.g. 18002) but the chart
+      # emits host/path map entries keyed by the original listener
+      # port (e.g. 8443). The pod-listener-port.map (populated by
+      # `util-pod-listener-port-map` from phase 1's allocator) maps
+      # pod port → listener port for each per-Gateway allocation.
+      # Translate dst_port through this map before constructing the
+      # `<host>:<port>` lookup key, so the per-Gateway path lands on
+      # the right host.map / path-prefix.map entry. dst_port itself
+      # passes through unchanged for chart-static / non-allocated
+      # binds (the map lookup falls back to dst_port when the entry
+      # is absent).
+      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.host_match) -m len 0 } { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      http-request set-var(txn.listener_port) var(txn.dst_port) if { var(txn.host_match) -m len 0 } !{ var(txn.listener_port) -m found }
+      # Try `<host>:<listener_port>` first — covers requests where
+      # the client didn't include the port in the Host header but the
       # listener routes by host+port (Gateway API listener-port
       # matching for non-default ports). Without this, an HTTPS
       # request to `https://second-example.org:8443/` arrives with
@@ -161,8 +175,8 @@ templateSnippets:
       # The chart's host.map carries entries like
       # `second-example.org:8443 second-example.org:8443`; this lookup
       # constructs the same key from the inbound dst_port.
-      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Regex > Prefix-exact > Prefix
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})

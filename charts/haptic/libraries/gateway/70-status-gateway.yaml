@@ -594,21 +594,25 @@ templateSnippets:
                 }
               }
               if hasHTTPSListener {
+                // Per-Gateway IP path takes ownership of status.addresses
+                // here, REPLACING the chart-static fallback. Reset
+                // upfront so a not-yet-realized Service leaves
+                // status.addresses empty (which trips Programmed=False
+                // until MetalLB allocates) instead of leaking the
+                // chart's main LB IP — that's what the conformance
+                // test relies on to wait for the right address.
+                gwEffectiveAddresses = []any{}
                 var perGwSvcName = BoundedK8sName("gw", nsStr, nameStr, "")
                 var perGwSvc = resources.services.GetSingle(phase5CtrlNs, perGwSvcName)
                 if perGwSvc != nil {
-                  var perGwAddrs = []any{}
                   for _, ing := range dig(perGwSvc, "status", "loadBalancer", "ingress") | toSlice() {
                     var ipStr = tostring(dig(ing, "ip") | fallback(""))
                     if ipStr != "" {
-                      perGwAddrs = append(perGwAddrs, map[string]any{
+                      gwEffectiveAddresses = append(gwEffectiveAddresses, map[string]any{
                         "type":  "IPAddress",
                         "value": ipStr,
                       })
                     }
-                  }
-                  if len(perGwAddrs) > 0 {
-                    gwEffectiveAddresses = perGwAddrs
                   }
                 }
               }
