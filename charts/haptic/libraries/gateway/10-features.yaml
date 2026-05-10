@@ -610,8 +610,13 @@ templateSnippets:
           byPort[lPort] = pe
           return
         }
-        // HTTPS-only path below — TLS handled above.
+        // HTTPS-only path below — TLS handled above. HTTPS Gateway
+        // listeners terminate TLS in the chart's HTTPS frontend, so
+        // light up needHTTPSTermination to keep ssl-tcp's default
+        // fall-through to ssl-loopback (rejecting unmatched SNIs would
+        // break HTTPS for hosts without an explicit listener match).
         gf["needHTTPSFrontend"] = true
+        gf["needHTTPSTermination"] = true
         if lPort == httpsPort {
           gf["bindHTTPSDefault"] = true
         }
@@ -686,6 +691,11 @@ templateSnippets:
           if len(ports) == 0 {
             gf["needHTTPSFrontend"] = true
             gf["bindHTTPSDefault"] = true
+            // HTTPS termination is configured: chart-static
+            // ssl-tcp's default_backend should fall through to
+            // ssl-loopback for SNIs not claimed by a passthrough
+            // route (the chart's pre-existing behaviour).
+            gf["needHTTPSTermination"] = true
           }
         }
       %%}
@@ -697,7 +707,17 @@ templateSnippets:
           loopback-fed https frontend on the unix socket). The
           frontends-500-ssl-tcp snippet itself gates further on
           len(passthroughBackends) > 0, so this lights up both
-          flags consistently with that gate. -#}
+          flags consistently with that gate.
+
+          Note: TLS-Passthrough alone does NOT set
+          `needHTTPSTermination` — a port that hosts only TLS
+          listeners and no HTTPS terminating listeners must reject
+          SNIs that no route claims (closes the upstream
+          `TLSRouteHostnameIntersection` "should not reach backend",
+          `TLSRouteInvalidBackendRefNonexistent`, and
+          `TLSRouteInvalidBackendRefUnknownKind` conformance subtests
+          where the test expects a TCP RST, not the 404 the chart
+          would otherwise serve via the ssl-loopback fall-through). -#}
       {%%
         if len(gf["sslPassthroughBackends"].([]any)) > 0 {
           gf["bindHTTPSDefault"] = true

@@ -254,6 +254,20 @@ validationTests:
         pattern: "backend gtw_default_web-route"
         description: Must generate backend for HTTPRoute
 
+      - type: contains
+        target: "status:default/my-gateway:rendered"
+        pattern: '"observedGeneration":3'
+        description: |
+          The Gateway's status conditions must carry observedGeneration
+          from metadata.generation (3 in this fixture). The upstream
+          Gateway-API conformance helper GatewayStatusMustHaveListeners
+          (helpers.go:272) waits for observedGeneration on every
+          condition to match the spec's generation; reporting 0 (or
+          omitting the field) keeps every conformance test that polls
+          status stuck on `expected observedGeneration to be updated to
+          N, only 0/2 were updated. stale conditions are: Accepted
+          (generation 0), Programmed (generation 0)`.
+
   test-httproute-status-patches:
     description: HTTPRoute status patches register parent conditions with ResolvedRefs
     extraContext:
