@@ -964,7 +964,25 @@ templateSnippets:
 
               {%- for _, match := range matchesList %}
                 {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
-                {%- var grpcPath = map[string]any{"type": "Exact", "value": "/"} %}
+                {#- GRPCRoute spec has no path matcher: an attached
+                    GRPCRoute claims every path under the listener
+                    hostname, with the gRPC method matchers (this
+                    rule's match.method block) narrowing within. Use
+                    PathPrefix "/" so the synthetic path emits into
+                    the prefix map (matching every request URL)
+                    instead of the exact map (which would only match
+                    requests with exactly path="/" — never the case
+                    for gRPC, whose requests carry the method as the
+                    URL path: `/<service>/<method>`). Without this,
+                    gw_routeId stays unset for gRPC traffic, the
+                    GRPCRoute rule's gw_routeId scope check fails,
+                    and the request falls through to default_backend
+                    (404). Closes the upstream
+                    GRPCExactMethodMatching / GRPCRouteHeaderMatching
+                    / GRPCRouteListenerHostnameMatching /
+                    GRPCRouteNamedRule / GRPCRouteWeight conformance
+                    tests, plus the e2e TestGRPCOverTLS regression. -#}
+                {%- var grpcPath = map[string]any{"type": "PathPrefix", "value": "/"} %}
                 {%- var pathKey = hostname + "|" + (grpcPath["type"]) + "|" + (grpcPath["value"]) %}
                 {%- var routeInfo = map[string]any{
                   "route": route,
