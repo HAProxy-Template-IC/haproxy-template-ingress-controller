@@ -17,6 +17,7 @@ templateSnippets:
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -1251,19 +1252,14 @@ templateSnippets:
               if pNs != nsStr {
                 continue
               }
-              var allowed = dig(gateway, "spec", "allowedListeners")
-              var allowedFrom = "None"
-              if allowed != nil {
-                allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None"))
-              }
-              var permitted = false
-              switch allowedFrom {
-              case "All":
-                permitted = true
-              case "Same":
-                permitted = (lsNs == nsStr)
-              }
-              if !permitted {
+              {#- Defer the admission decision to IsListenerSetAdmitted —
+                  the same helper the routing chain uses — so the
+                  Selector branch (and any future allowed-from rule) is
+                  handled identically. Closes
+                  ListenerSetAllowedNamespaceSelector where the previous
+                  inline switch only covered "All" and "Same" and fell
+                  through to permitted=false for Selector-admitted LSes. -#}
+              if !hasPrefix(IsListenerSetAdmitted(gateway, ls), "true") {
                 continue
               }
               // At least one listener must survive conflict detection.
@@ -1445,7 +1441,7 @@ templateSnippets:
       -#}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener -%}
       {{ render "util-effective-listeners" }}
       {#- Read the per-LS statuses sub-key off the unified
           effectiveListeners cache populated by util-effective-listeners.
@@ -1489,12 +1485,20 @@ templateSnippets:
           // attachedRoutes per listener name. Routes whose parentRef.kind
           // is "ListenerSet" matching this LS's ns/name. Sectionless
           // parentRefs attach to every listener (matching the
-          // Gateway-listener counter's sectionless-fallback logic).
-          var lsAttachedRoutes = map[string]int{}
+          // Gateway-listener counter's sectionless-fallback logic) AND
+          // pass each listener's allowedRoutes.namespaces gate; per
+          // ListenerSetAllowedRoutesNamespaces a route in a namespace
+          // not allowed by a listener must NOT count toward that
+          // listener's attachedRoutes (the same route may attach to
+          // some listeners on the LS but not others).
+          var lsListenersByName = map[string]any{}
           var listenerNamesInLS = []any{}
           for _, l := range dig(ls, "spec", "listeners") | toSlice() {
-            listenerNamesInLS = append(listenerNamesInLS, tostring(dig(l, "name") | fallback("")))
+            var ln = tostring(dig(l, "name") | fallback(""))
+            listenerNamesInLS = append(listenerNamesInLS, ln)
+            lsListenersByName[ln] = l
           }
+          var lsAttachedRoutes = map[string]int{}
           var routeKindsForCount = []any{}
           for _, r := range resources.httproutes.List() {
             routeKindsForCount = append(routeKindsForCount, map[string]any{"kind": "HTTPRoute", "route": r})
@@ -1522,11 +1526,17 @@ templateSnippets:
               }
               var prSection = tostring(dig(pr, "sectionName") | fallback(""))
               if prSection != "" {
-                lsAttachedRoutes[prSection] = lsAttachedRoutes[prSection] + 1
+                var lObj, has = lsListenersByName[prSection]
+                if has && hasPrefix(IsRouteAllowedOnListener(routeNs, lObj, lsNs), "true") {
+                  lsAttachedRoutes[prSection] = lsAttachedRoutes[prSection] + 1
+                }
               } else {
                 for _, lnAny := range listenerNamesInLS {
                   var ln = tostring(lnAny)
-                  lsAttachedRoutes[ln] = lsAttachedRoutes[ln] + 1
+                  var lObj, has = lsListenersByName[ln]
+                  if has && hasPrefix(IsRouteAllowedOnListener(routeNs, lObj, lsNs), "true") {
+                    lsAttachedRoutes[ln] = lsAttachedRoutes[ln] + 1
+                  }
                 }
               }
             }
