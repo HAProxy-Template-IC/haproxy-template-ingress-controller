@@ -81,34 +81,79 @@ type portRoute struct {
 // Gateways declaring fresh listener ports), so the table must refresh
 // on cache misses — not just at suite-init time. We do that lazily: a
 // dial for an unknown port triggers a re-query against the cluster.
+//
+// Two lookup keys are maintained:
+//
+//   - `table` (port → portRoute): chart-static path. Used when no
+//     per-Gateway Service matches the dial address. 80/443 seeded at
+//     suite init plus dynamic entries from the chart's main Service
+//     (`haptic-haproxy`).
+//   - `byLBIP` (LB-IP → port → NodePort): per-Gateway path (phase 6 of
+//     the per-Gateway-IP refactor). Each Gateway with HTTPS listeners
+//     has its own LoadBalancer Service in the controller namespace
+//     whose `status.loadBalancer.ingress[].ip` is the Gateway's
+//     status.addresses entry. The Service exposes the listener ports
+//     mapped to apiserver-allocated NodePorts; we discover them by
+//     listing controller-namespace Services labelled
+//     `gateway.networking.k8s.io/gateway-name` and key by the LB IP
+//     so dials targeting the per-Gateway address find their own
+//     NodePort instead of falling through to the chart-static
+//     bind-line config.
 type portRouter struct {
 	cs       clientset.Interface
 	hostIP   string
 	mu       sync.RWMutex
 	table    map[int]portRoute
+	byLBIP   map[string]map[int]int
 	lastSync time.Time
 }
 
 func newPortRouter(cs clientset.Interface, hostIP string, initial map[int]portRoute) *portRouter {
-	return &portRouter{cs: cs, hostIP: hostIP, table: initial}
+	return &portRouter{cs: cs, hostIP: hostIP, table: initial, byLBIP: map[string]map[int]int{}}
 }
 
-func (r *portRouter) lookup(ctx context.Context, port int) (portRoute, bool) {
+// lookup resolves an inbound dial target to a portRoute.
+//
+// Resolution order:
+//  1. Per-Gateway: if `host` matches a per-Gateway Service's LB IP,
+//     return that Service's NodePort for `port`. This is what gives
+//     each Gateway its own bind-line SSL config (verify required vs
+//     optional, ca-ignore-err) — the conformance suite dials the
+//     Gateway's status.addresses IP and lands on the per-Gateway
+//     bind in HAProxy.
+//  2. Chart-static fallback: lookup by port alone, returning the
+//     chart's main Service NodePort. Used by Ingress TLS, pinned-IP
+//     Gateways (`spec.addresses` set), and all HTTP traffic.
+//
+// Refreshes from the cluster on cache miss in either layer.
+func (r *portRouter) lookup(ctx context.Context, host string, port int) (portRoute, bool) {
 	r.mu.RLock()
+	if perPort, ok := r.byLBIP[host]; ok {
+		if np, ok := perPort[port]; ok {
+			r.mu.RUnlock()
+			return portRoute{nodeIP: r.hostIP, nodePort: np}, true
+		}
+	}
 	route, ok := r.table[port]
 	r.mu.RUnlock()
 	if ok {
 		return route, true
 	}
-	// Cache miss: refresh the dynamic NodePort table from the cluster.
-	// Fixtures applied by the conformance test framework after
-	// suite-init populate the chart's gateway-listener-ports Service
-	// asynchronously; this lazy refresh picks them up without
-	// requiring the test to call into us first.
+	// Cache miss: refresh both tables from the cluster. Fixtures
+	// applied by the conformance test framework after suite-init
+	// populate the chart's main Service (dynamic listener ports)
+	// AND emit per-Gateway Services (phase 3) asynchronously; this
+	// lazy refresh picks both up without requiring the test to call
+	// into us first.
 	r.refresh(ctx)
 	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if perPort, ok := r.byLBIP[host]; ok {
+		if np, ok := perPort[port]; ok {
+			return portRoute{nodeIP: r.hostIP, nodePort: np}, true
+		}
+	}
 	route, ok = r.table[port]
-	r.mu.RUnlock()
 	return route, ok
 }
 
@@ -122,14 +167,19 @@ func (r *portRouter) refresh(ctx context.Context) {
 		return
 	}
 	dyn, err := discoverDynamicNodePorts(ctx, r.cs)
-	if err != nil {
-		// Best-effort refresh; keep the existing table on error.
-		return
+	if err == nil {
+		for port, np := range dyn {
+			r.table[port] = portRoute{nodeIP: r.hostIP, nodePort: np}
+		}
+	}
+	perGw, err := discoverPerGatewayNodePorts(ctx, r.cs)
+	if err == nil {
+		// Replace the per-LB-IP cache wholesale so we don't keep
+		// stale entries from torn-down test fixtures (each test
+		// applies + cleans up its own Gateway).
+		r.byLBIP = perGw
 	}
 	r.lastSync = time.Now()
-	for port, np := range dyn {
-		r.table[port] = portRoute{nodeIP: r.hostIP, nodePort: np}
-	}
 }
 
 // newNodePortRoundTripper wraps roundtripper.DefaultRoundTripper with a
@@ -159,11 +209,16 @@ func newNodePortRoundTripper(timeoutCfg config.TimeoutConfig, debug bool, router
 	}, nil
 }
 
-// dialPortForAddress maps the conformance suite's intended dial port to
-// the matching node IP + NodePort. Unrecognised ports return an error
-// rather than silently routing to the wrong listener.
+// dialPortForAddress maps the conformance suite's intended dial target
+// to the matching node IP + NodePort. The host part of `address` is
+// the Gateway's status address (a metallb LoadBalancer IP); when a
+// per-Gateway Service emits its own LB IP for that Gateway, the
+// router's per-LB-IP table returns the Gateway's specific NodePort,
+// which lets the conformance test exercise per-Gateway bind-line SSL
+// config. Unrecognised (host, port) tuples return an error rather
+// than silently routing to the wrong listener.
 func dialPortForAddress(ctx context.Context, address string, router *portRouter) (portRoute, error) {
-	_, p, err := net.SplitHostPort(address)
+	host, p, err := net.SplitHostPort(address)
 	if err != nil {
 		return portRoute{}, fmt.Errorf("parse address %q: %w", address, err)
 	}
@@ -174,10 +229,10 @@ func dialPortForAddress(ctx context.Context, address string, router *portRouter)
 			return portRoute{}, fmt.Errorf("parse port %q: %w", p, err)
 		}
 	}
-	if route, ok := router.lookup(ctx, pi); ok {
+	if route, ok := router.lookup(ctx, host, pi); ok {
 		return route, nil
 	}
-	return portRoute{}, fmt.Errorf("unexpected port %q in conformance dial target %q (no NodePort mapping configured)", p, address)
+	return portRoute{}, fmt.Errorf("unexpected dial target %q (no NodePort mapping configured for host=%q port=%d)", address, host, pi)
 }
 
 // buildInitialPortTable seeds the router with the chart's static
@@ -254,6 +309,63 @@ func discoverDynamicNodePorts(ctx context.Context, cs clientset.Interface) (map[
 			continue
 		}
 		out[int(p.Port)] = int(p.NodePort)
+	}
+	return out, nil
+}
+
+// discoverPerGatewayNodePorts queries the controller-namespace Services
+// labelled `gateway.networking.k8s.io/gateway-name` (per-Gateway LB
+// Services emitted by phase 3 of the per-Gateway-IP refactor) and
+// returns a map from realized LB IP to (listener-port → NodePort).
+//
+// The chart's `features-090-gateway-per-gateway-services` snippet emits
+// one Service per HTTPS Gateway. MetalLB allocates an LB IP per
+// Service (visible in `status.loadBalancer.ingress[].ip`); the
+// apiserver allocates a NodePort per port entry. The roundtripper
+// uses this map so a dial to the Gateway's status.addresses IP lands
+// on the Gateway's specific bind-line SSL config rather than the
+// shared chart-static one.
+//
+// Returns an empty map (not an error) when no per-Gateway Services
+// exist — the chart only emits them for HTTPS Gateways without
+// `spec.addresses`.
+func discoverPerGatewayNodePorts(ctx context.Context, cs clientset.Interface) (map[string]map[int]int, error) {
+	out := map[string]map[int]int{}
+	svcs, err := cs.CoreV1().Services(haproxyServiceNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "gateway.networking.k8s.io/gateway-name",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list per-Gateway Services in %s: %w", haproxyServiceNamespace, err)
+	}
+	for _, svc := range svcs.Items {
+		if svc.Spec.Type != corev1.ServiceTypeNodePort && svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+			continue
+		}
+		// Skip Services whose IP isn't realized yet — without an LB
+		// IP we have nothing to key by, and the chart-static
+		// fallback handles the transitional state.
+		var lbIPs []string
+		for _, ing := range svc.Status.LoadBalancer.Ingress {
+			if ing.IP != "" {
+				lbIPs = append(lbIPs, ing.IP)
+			}
+		}
+		if len(lbIPs) == 0 {
+			continue
+		}
+		ports := map[int]int{}
+		for _, p := range svc.Spec.Ports {
+			if p.NodePort == 0 {
+				continue
+			}
+			ports[int(p.Port)] = int(p.NodePort)
+		}
+		if len(ports) == 0 {
+			continue
+		}
+		for _, ip := range lbIPs {
+			out[ip] = ports
+		}
 	}
 	return out, nil
 }
