@@ -74,6 +74,21 @@ templateSnippets:
               // ResolvedRefs gate: every backendRef must point at an
               // existing core/Service. Cross-namespace refs need a
               // matching ReferenceGrant (parity with status side).
+              //
+              // We do NOT skip unresolved rules — instead we mark
+              // their emitted entries with `invalid: true`. The
+              // chart-static ssl-tcp and per-port mode-tcp frontends
+              // both use this flag to:
+              //   * skip use_backend emission (no real backend exists)
+              //   * still register the route's claimed SNI as
+              //     "claimed by the chart" so connections to it get
+              //     rejected (not silently passed through to a
+              //     non-existent backend or chart-static fallback).
+              // Closes the upstream
+              // TLSRouteInvalidBackendRefNonexistent /
+              // TLSRouteInvalidBackendRefUnknownKind conformance tests
+              // (the spec mandates the connection be refused, not
+              // routed elsewhere).
               var ruleResolved = true
               for _, br := range rule | dig("backendRefs") | toSlice() {
                 var brName = tostring(dig(br, "name") | fallback(""))
@@ -90,9 +105,6 @@ templateSnippets:
                 }
               }
             %%}
-            {%- if !ruleResolved %}
-              {%- continue %}
-            {%- end %}
 
             {%%
               // Aggregate effective SNIs across every accepted (parentRef,
@@ -296,6 +308,7 @@ templateSnippets:
                 entry["gw_namespace"] = meta["gw_namespace"]
                 entry["gw_name"] = meta["gw_name"]
                 entry["listener_hostname"] = meta["listener_hostname"]
+                entry["invalid"] = !ruleResolved
                 sslData["backends"] = append(sslData["backends"].([]any), entry)
               %%}
             {%- end %}

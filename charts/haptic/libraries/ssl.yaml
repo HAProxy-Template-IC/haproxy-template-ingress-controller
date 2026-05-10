@@ -427,30 +427,45 @@ templateSnippets:
               listener_hostname stays in listener_sni so its claimed
               SNIs hit the reject path). -#}
           {%- var listenerHosts = map[string]bool{} %}
+          {%- var invalidSNIs = map[string]bool{} %}
+          {%- var validPassthroughCount = 0 %}
           {%- for _, backend := range passthroughBackends %}
             {%- var b map[string]any = backend %}
             {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
             {%- if bMode == "Passthrough" %}
-              {%- var lh = tostring(b | dig("listener_hostname") | fallback("")) %}
-              {#- Empty listener hostname (catch-all) is intentionally
-                  excluded — a catch-all TLS listener claims every
-                  SNI, and the chart can't enforce a meaningful reject
-                  in that case (every fall-through to ssl-loopback
-                  would be incorrect). The conformance fixture that
-                  exercises this path
-                  (`TLSRoutes_intersect_with_empty_listener_hostname`)
-                  still works because the route_sni route hostname is
-                  itself the only claimed entry; non-matching SNIs
-                  fall through unconditionally. -#}
-              {%- if lh != "" %}
-                {%- listenerHosts[lh] = true %}
+              {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
+              {%- if bInvalid %}
+                {#- TLSRouteInvalidBackendRef* (Pass 2 marked the rule
+                    as having an unresolvable backendRef): record the
+                    route's claimed SNI so it joins listener_sni and
+                    the existing reject `if listener_sni !route_sni`
+                    fires. We never emit this SNI as route_sni — that
+                    would whitelist a route with no real backend. -#}
+                {%- invalidSNIs[tostring(b["sni"])] = true %}
+              {%- else %}
+                {%- validPassthroughCount = validPassthroughCount + 1 %}
+                {%- var lh = tostring(b | dig("listener_hostname") | fallback("")) %}
+                {#- Empty listener hostname (catch-all) is intentionally
+                    excluded — a catch-all TLS listener claims every
+                    SNI, and the chart can't enforce a meaningful reject
+                    in that case (every fall-through to ssl-loopback
+                    would be incorrect). The conformance fixture that
+                    exercises this path
+                    (`TLSRoutes_intersect_with_empty_listener_hostname`)
+                    still works because the route_sni route hostname is
+                    itself the only claimed entry; non-matching SNIs
+                    fall through unconditionally. -#}
+                {%- if lh != "" %}
+                  {%- listenerHosts[lh] = true %}
+                {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
           {%- for _, backend := range passthroughBackends %}
             {%- var b map[string]any = backend %}
             {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
-            {%- if bMode == "Passthrough" %}
+            {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
+            {%- if bMode == "Passthrough" && !bInvalid %}
               {%- var sni = tostring(b["sni"]) %}
               {%- if hasPrefix(sni, "*.") %}
           acl route_sni req_ssl_sni -m end {{ sni[1:] }}
@@ -459,6 +474,9 @@ templateSnippets:
               {%- end %}
             {%- end %}
           {%- end %}
+          {#- listener_sni covers BOTH listener-pattern claims and the
+              SNIs of routes whose backends were unresolvable — both
+              should reject when route_sni doesn't match. -#}
           {%- for lh, _ := range listenerHosts %}
             {%- if hasPrefix(lh, "*.") %}
           acl listener_sni req_ssl_sni -m end {{ lh[1:] }}
@@ -466,32 +484,41 @@ templateSnippets:
           acl listener_sni req_ssl_sni -m str {{ lh }}
             {%- end %}
           {%- end %}
-          {%- var needHTTPSTermination_pre = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
-          {#- Count Passthrough-mode entries — only those emit a route_sni
-              ACL above. Without them, the route_sni reject below would
-              reference an undefined ACL and HAProxy validation aborts. -#}
-          {%- var passthroughCount = 0 %}
-          {%- for _, backend := range passthroughBackends %}
-            {%- var b map[string]any = backend %}
-            {%- if tostring(b["mode"] | fallback("Passthrough")) == "Passthrough" %}
-              {%- passthroughCount = passthroughCount + 1 %}
+          {%- for sni, _ := range invalidSNIs %}
+            {%- if hasPrefix(sni, "*.") %}
+          acl listener_sni req_ssl_sni -m end {{ sni[1:] }}
+            {%- else %}
+          acl listener_sni req_ssl_sni -m str {{ sni }}
             {%- end %}
           {%- end %}
-          {%- if len(listenerHosts) > 0 %}
+          {%- var needHTTPSTermination_pre = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
+          {%- var listenerSNIDefined = (len(listenerHosts) + len(invalidSNIs)) > 0 %}
+          {%- if listenerSNIDefined %}
+            {%- if validPassthroughCount > 0 %}
           tcp-request content reject if listener_sni !route_sni
+            {%- else %}
+          {#- No valid Passthrough routes on this port; route_sni ACL
+              is undefined, so the unconditional `reject if listener_sni`
+              form is what we need. Connection still terminates on TLS
+              hello (no fall-through) — exactly the
+              TLSRouteInvalidBackendRef* contract when the only
+              attached route has an unresolvable backend. -#}
+          tcp-request content reject if listener_sni
+            {%- end %}
           {%- end %}
-          {%- if !needHTTPSTermination_pre && passthroughCount > 0 %}
-          {#- TLSRouteHostnameIntersection / TLSRouteInvalidBackendRefNonexistent /
-              TLSRouteInvalidBackendRefUnknownKind: when no HTTPS-Terminate
-              listener exists on this port, any SNI that doesn't claim a route
-              must be rejected (not silently dropped or fall through to a
-              non-existent ssl-loopback). The previous reject above only fires
-              when the SNI matches a listener pattern but no route; this catches
-              SNIs that don't match ANY listener at all (e.g. `non.matching.com`
-              against a Gateway with `*.example.com` listeners). Gated on
-              passthroughCount > 0 because the route_sni ACL is emitted only
-              by Passthrough-mode entries — without it, the condition below
-              would reference an undefined ACL. -#}
+          {%- if !needHTTPSTermination_pre && validPassthroughCount > 0 %}
+          {#- TLSRouteHostnameIntersection: when no HTTPS-Terminate
+              listener exists on this port, any SNI that doesn't claim a
+              route must be rejected (not silently dropped or fall
+              through to a non-existent ssl-loopback). The previous
+              reject above only fires when the SNI matches a listener
+              pattern (or a flagged-invalid route's claimed SNI); this
+              catches SNIs that don't match ANY listener at all (e.g.
+              `non.matching.com` against a Gateway with `*.example.com`
+              listeners). Gated on validPassthroughCount > 0 because
+              route_sni ACL is emitted only by valid Passthrough-mode
+              entries — without it, the condition below would
+              reference an undefined ACL. -#}
           tcp-request content reject if !route_sni
           {%- end %}
           tcp-request content accept if { req_ssl_hello_type 1 }
@@ -509,11 +536,16 @@ templateSnippets:
              entries (consumed by frontends-600-gateway-tls-listener for
              the per-port mode-tcp frontends with TLS termination).
              Ingress entries don't carry `mode`, so an empty/missing
-             value defaults to Passthrough behaviour for back-compat. #}
+             value defaults to Passthrough behaviour for back-compat.
+             Also skip entries flagged `invalid` — their backend block
+             was suppressed (Pass 2 ResolvedRefs gate failure), so
+             routing the SNI here would point at a non-existent
+             backend. The reject ACLs above already cover them. #}
           {% for _, backend := range passthroughBackends -%}
           {%- var b map[string]any = backend %}
           {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
-          {%- if bMode == "Passthrough" %}
+          {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
+          {%- if bMode == "Passthrough" && !bInvalid %}
           {%- var sni = tostring(b["sni"]) %}
           {%- if hasPrefix(sni, "*.") %}
           use_backend {{ b["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }

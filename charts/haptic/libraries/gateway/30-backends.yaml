@@ -443,6 +443,16 @@ templateSnippets:
       {%- var sslPassthroughData = shared.Get("gateway_ssl_passthrough").(map[string]any) %}
       {%- var sslBackends []any = sslPassthroughData["backends"] %}
       {%- for _, backendInfo := range sslBackends %}
+        {#- Skip entries flagged invalid by Pass 2 (failed
+            ResolvedRefs gate). They keep their slot in the
+            passthrough list so the SNI consumers (ssl-tcp,
+            frontends-600-gateway-tls-listener) can register the
+            claimed SNI as "claimed but unrouteable" and reject
+            inbound connections. Emitting a backend block here
+            would point at a non-existent Service. -#}
+        {%- if tostring(backendInfo | dig("invalid") | fallback("false")) == "true" %}
+          {%- continue %}
+        {%- end %}
         {%- var biNamespace = backendInfo["namespace"] %}
         {%- var biRoute = backendInfo["route"] %}
         {%- var biName = backendInfo["name"] %}
