@@ -29,7 +29,16 @@ templateSnippets:
           {%- var routeIds_str = join(routeIds, "__") -%}
           {%- var frHostname = firstRoute["hostname"] %}
           {%- var frPath_val string = tostring(frPath["value"]) %}
-          {%- if suffix == "" && frPath_val == "/" %}
+          {#- Skip the catch-all `/` entry only for PathPrefix routes —
+              an Exact `/` route must still emit, otherwise requests
+              to the bare root are unroutable. PathPrefix `/` matches
+              everything so its entry would otherwise pin every
+              non-matched request to that route's backend; the chart
+              relies on the path-prefix-exact / path-prefix maps for
+              specific paths, with a default fall-through to 404. The
+              GatewayBackendClientCertificateFeature fixture pins this
+              with `path: {type: Exact, value: /}`. -#}
+          {%- if suffix == "" && frPath_val == "/" && pathType == "PathPrefix" %}
             {%- continue %}
           {%- end %}
           {%- var frResourceType = firstRoute["resource_type"] %}
