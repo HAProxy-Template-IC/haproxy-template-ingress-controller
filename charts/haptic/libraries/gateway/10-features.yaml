@@ -223,6 +223,18 @@ templateSnippets:
           bindHTTPSDefault / needHTTPSFrontend so the listener's bind
           line drops out of the rendered HAProxy config. -#}
       {%- var mtlsBlockedListeners map[string]any = coalesce(gf | dig("mtlsBlockedListeners"), map[string]any{}).(map[string]any) %}
+      {#- gatewayListenerMTLSConfig: per-(Gateway, listener) resolved
+          mTLS state, keyed by `<gwNs>/<gwName>/<listenerName>`. Each
+          entry is `{ca_path, verify_mode}` (the same shape stored
+          under `clientCertVerifyHosts[hostname]`, but unambiguously
+          scoped to ONE listener so two Gateways with different
+          mTLS configs but overlapping hostnames don't collide).
+          Phase 2 of the per-Gateway-IP refactor
+          (features-160-gateway-crtlist-per-listener) reads this
+          map to emit one crt-list line per listener with the
+          listener-specific verify clause. Phase 4's per-Gateway
+          bind references the resulting crt-list. -#}
+      {%- var gatewayListenerMTLSConfig map[string]any = coalesce(gf | dig("gatewayListenerMTLSConfig"), map[string]any{}).(map[string]any) %}
       {%- for _, gateway := range resources.gateways.List() %}
         {%%
           var gwSpec = gateway | dig("spec")
@@ -434,11 +446,22 @@ templateSnippets:
               "ca_path":     caPath,
               "verify_mode": verifyMode,
             }
+            // Per-(Gateway, listener) mTLS state: scoped uniquely
+            // by `<gwNs>/<gwName>/<listenerName>`, so two Gateways
+            // with different mTLS configs on overlapping hostnames
+            // don't clobber each other's resolved state.
+            if listenerName != "" {
+              gatewayListenerMTLSConfig[gwNs+"/"+gwName+"/"+listenerName] = map[string]any{
+                "ca_path":     caPath,
+                "verify_mode": verifyMode,
+              }
+            }
           }
         %%}
       {%- end %}
       {%- gf["clientCertVerifyHosts"] = clientCertVerifyHosts %}
       {%- gf["mtlsBlockedListeners"] = mtlsBlockedListeners %}
+      {%- gf["gatewayListenerMTLSConfig"] = gatewayListenerMTLSConfig %}
 
   # ============================================================================
   # Route Analysis (Cached)
