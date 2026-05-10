@@ -52,40 +52,30 @@ templateSnippets:
           {%- var addrs = dig(gw, "spec", "addresses") | toSlice() %}
           {%- if len(addrs) == 0 && gwNs != "" && gwName != "" %}
             {%%
-              // Walk the Gateway's listeners. The Service must expose
-              // EVERY listener port (HTTPS + HTTP + TLS) — the
-              // Gateway's status.addresses points at this one IP and
-              // clients connect to <ip>:<listener.port> regardless of
-              // protocol, so kube-proxy needs a port mapping for each.
-              //
-              // HTTPS listeners get a per-listener targetPort drawn
-              // from phase 1's allocator (so phase 4's per-Gateway
-              // bind on its unique pod port handles them). Other
-              // protocols target their own port number directly,
-              // routing to the chart-static HAProxy bind for that
-              // port (HTTP → bind *:80, TLS-Passthrough → ssl-tcp,
-              // TLS-Terminate non-default → frontends-600). Skip
-              // duplicates by listenerPort (multiple listeners on
-              // the same port disambiguate downstream via crt-list /
-              // SNI / Host, not via duplicate Service ports).
+              // Walk the Gateway's listeners. Collect HTTPS ones into a
+              // ports list mapping listenerPort → allocatedPodPort. Skip
+              // duplicates by listenerPort (a Gateway can have two HTTPS
+              // listeners on the same port; their bind disambiguation
+              // happens via crt-list, not via a second Service port).
               var ports = []any{}
               var seenPort = map[int]bool{}
               var hasHTTPS = false
               for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                var lProto = tostring(dig(listener, "protocol") | fallback(""))
+                if lProto != "HTTPS" {
+                  continue
+                }
+                hasHTTPS = true
                 var lName = tostring(dig(listener, "name") | fallback(""))
                 var lPort = toint(dig(listener, "port") | fallback(0))
-                var lProto = tostring(dig(listener, "protocol") | fallback(""))
                 if lName == "" || lPort <= 0 || seenPort[lPort] {
                   continue
                 }
                 seenPort[lPort] = true
+                var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
                 var targetPort = lPort
-                if lProto == "HTTPS" {
-                  hasHTTPS = true
-                  var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
-                  if val, ok := allocations[allocKey]; ok {
-                    targetPort = toint(val)
-                  }
+                if val, ok := allocations[allocKey]; ok {
+                  targetPort = toint(val)
                 }
                 ports = append(ports, map[string]any{
                   "name":       "p" + tostring(lPort),
