@@ -139,16 +139,15 @@ templateSnippets:
                       {%- var verifyMode = tostring(cfg["verify_mode"]) %}
                       {%- if caPath != "" && verifyMode != "" %}
                         {%- sslOpts = sslOpts + " ca-file " + caPath + " verify " + verifyMode %}
-                        {#- `verify optional` aborts on cert validation
-                            failure by default; AllowInsecureFallback
-                            requires the handshake to complete even on
-                            failure. The lift comes from `ca-ignore-err
-                            all crt-ignore-err all`, but that's BIND-
-                            scope (HAProxy rejects it as a keyword
-                            inside a crt-list line). Phase 4's per-
-                            listener bind sees the same `verify_mode`
-                            via gatewayListenerMTLSConfig and adds the
-                            ignore-err flags to the bind itself. -#}
+                        {%- if verifyMode == "optional" %}
+                          {#- AllowInsecureFallback: complete the
+                              handshake even on cert validation
+                              failure. Bind-scope flag is fine here
+                              because the bind is per-listener — it
+                              can't leak onto a sibling listener
+                              that wants strict verification. -#}
+                          {%- sslOpts = sslOpts + " ca-ignore-err all crt-ignore-err all" %}
+                        {%- end %}
                       {%- end %}
                     {%- end %}
 

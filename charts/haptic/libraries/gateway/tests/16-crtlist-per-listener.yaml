@@ -176,17 +176,13 @@ validationTests:
       # Hostnamed + AllowInsecureFallback per-port.
       - type: contains
         target: 'crt-list:gw-default-gw-mixed-https-perport-crtlist.txt'
-        pattern: '^default_tls-cert\.pem \[ocsp-update on ca-file [^ ]+ verify optional\] second-example\.org\n$'
+        pattern: '^default_tls-cert\.pem \[ocsp-update on ca-file [^ ]+ verify optional ca-ignore-err all crt-ignore-err all\] second-example\.org\n$'
         description: |
           Per-listener crt-list file for hostnamed
           + AllowInsecureFallback per-port listener carries
-          `verify optional` and the listener's hostname as the SNI
-          filter. The `ca-ignore-err all crt-ignore-err all` flags
-          that complete the AllowInsecureFallback contract are
-          BIND-scope (HAProxy rejects them as a keyword inside a
-          crt-list line), so phase 4's per-listener bind line picks
-          them up via `gatewayListenerMTLSConfig.verify_mode ==
-          "optional"`.
+          `verify optional` + `ca-ignore-err all crt-ignore-err all`
+          (so invalid client certs don't abort the handshake), with
+          the listener's hostname as the SNI filter.
 
       # Catchall + no mTLS → just ocsp-update on, no verify, no SNI.
       - type: contains
