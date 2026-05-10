@@ -1,0 +1,132 @@
+templateSnippets:
+  # ============================================================================
+  # Per-Gateway-listener pod-port allocator
+  #
+  # Each Gateway with an HTTPS listener gets its OWN HAProxy bind. Different
+  # Gateways' binds need different SSL configs (cert, verify mode,
+  # ca-ignore-err flags, ALPN, ...) because HAProxy applies bind-line SSL
+  # options uniformly across the bind. To support that, each (Gateway,
+  # listener) tuple needs a UNIQUE container port — `bind *:<port>` on the
+  # same `0.0.0.0` collides at the OS level if two binds claim the same
+  # port. Per-Gateway IPs solve this at the Service layer (each Gateway
+  # gets a unique LB IP via MetalLB) but kube-proxy DNATs the LB IP to
+  # the pod IP; HAProxy sees its own pod IP regardless of which LB IP the
+  # client used. The chart bridges that by giving each (Gateway, listener)
+  # a per-Gateway target port, so the per-Gateway Service maps
+  # `<lb-ip>:<listener-port>` → `<pod-ip>:<unique-pod-port>` and HAProxy
+  # binds on `<unique-pod-port>` with isolated SSL config.
+  #
+  # Allocation strategy: sort all (Gateway, listener) tuples
+  # alphabetically by stable key (`<gwNs>/<gwName>:<listenerName>:<port>`)
+  # and assign sequential ports starting at `perGatewayPodPortBase`
+  # (default 18000). Sort-based allocation guarantees:
+  #   * Same input → same output across renders (idempotent reloads).
+  #   * Adding a new Gateway alphabetically AFTER existing ones doesn't
+  #     shift existing ports.
+  #   * Adding a Gateway alphabetically BEFORE existing ones DOES shift
+  #     later ports — but that change requires an HAProxy reload anyway,
+  #     so the cost is paid in the reload that's already happening.
+  #
+  # The cache is initialised once per render via `shared.ComputeIfAbsent`
+  # so concurrent map renderers see a consistent view.
+  # ============================================================================
+
+  util-gateway-pod-port-allocator:
+    template: |
+      {#- Initialise the per-Gateway-listener pod-port allocation map.
+          Idempotent — multiple snippets render this; only the first
+          actually computes. Downstream consumers should `{{ render
+          "util-gateway-pod-port-allocator" }}` then read
+          `shared.Get("gatewayPodPortAllocations")` directly.
+
+          Schema (returned map):
+            keys:    "<gwNs>/<gwName>:<listenerName>:<port>"
+            values:  int (the allocated container port)
+
+          Allocation rules:
+            * Only HTTPS Gateway listeners get an allocation. TLS-Terminate
+              listeners on non-default ports already render via
+              `frontends-600-gateway-tls-listener` (per-port mode-tcp
+              frontend) and don't need per-Gateway pod ports.
+              TLS-Passthrough listeners flow through chart-static
+              `frontend ssl-tcp` and don't need pod-port allocation either.
+            * Listeners with empty name or non-positive port are skipped
+              (defensively — invalid Gateway state shouldn't crash the
+              allocator, just leave them out).
+      -#}
+      {%- var _, _ = shared.ComputeIfAbsent("gatewayPodPortAllocations", func() any {
+        var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
+        var keys = []any{}
+        for _, gw := range resources.gateways.List() {
+          var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
+          var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+            var lProto = tostring(dig(listener, "protocol") | fallback(""))
+            if lProto != "HTTPS" {
+              continue
+            }
+            var lName = tostring(dig(listener, "name") | fallback(""))
+            var lPort = toint(dig(listener, "port") | fallback(0))
+            if lName == "" || lPort <= 0 {
+              continue
+            }
+            var key = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
+            keys = append(keys, key)
+          }
+        }
+        var stringKeys = []any{}
+        for _, k := range keys {
+          stringKeys = append(stringKeys, tostring(k))
+        }
+        var sortedKeys = sort_strings(stringKeys)
+        var result = map[string]any{}
+        for i, keyAny := range sortedKeys {
+          result[tostring(keyAny)] = basePort + i
+        }
+        return result
+      }) %}
+
+  util-gateway-pod-port-for:
+    template: |
+      {#- Emit the allocated container port for a given (Gateway, listener).
+          Renders the allocator first so callers don't need to. Falls back
+          to the listener's own port when no allocation exists (the
+          fallback is intentional — chart paths that bypass the allocator
+          for TLS-Passthrough / chart-static binds keep working).
+
+          Usage:
+            {%- import "util-gateway-pod-port-for" for PodPortFor %}
+            bind *:{{ PodPortFor(gwNs, gwName, listenerName, listenerPort) }}
+      -#}
+      {%- macro PodPortFor(gwNs string, gwName string, listenerName string, listenerPort int) %}
+        {{ render "util-gateway-pod-port-allocator" -}}
+        {%%
+          var key = gwNs + "/" + gwName + ":" + listenerName + ":" + tostring(listenerPort)
+          var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any)
+          var port = listenerPort
+          if val, ok := allocations[key]; ok {
+            port = toint(val)
+          }
+        %%}
+        {{- port -}}
+      {%- end macro -%}
+
+  # Debug emission gated on extraContext.dumpPodPortAllocations. Renders
+  # one comment line per (Gateway, listener) → pod-port mapping into the
+  # `frontend-extra-*` extension point so chart tests can assert on them
+  # without coupling to phase-4-and-later consumers. Production deploys
+  # never set the flag, so the comments don't ship.
+  frontend-extra-099-gateway-pod-port-debug:
+    template: |
+      {%- if tostring(extraContext | dig("dumpPodPortAllocations") | fallback("")) == "true" %}
+        {{ render "util-gateway-pod-port-allocator" -}}
+        {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
+        {%- var keys = []any{} %}
+        {%- for k := range allocations %}
+          {%- keys = append(keys, k) %}
+        {%- end %}
+        {%- var sortedKeys = sort_strings(keys) %}
+        {%- for _, key := range sortedKeys %}
+          # gw-pod-port: {{ tostring(key) }} = {{ allocations[tostring(key)] }}
+        {%- end %}
+      {%- end %}

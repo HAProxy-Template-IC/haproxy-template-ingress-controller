@@ -1,0 +1,197 @@
+validationTests:
+  test-gateway-pod-port-allocator-multi-gateway:
+    description: |
+      Phase 1 of the per-Gateway-IP refactor. Verifies that the
+      pod-port allocator (`util-gateway-pod-port-allocator`) assigns
+      a unique container port to each (Gateway, HTTPS listener) tuple
+      via deterministic alphabetical sort. Activated via
+      `extraContext.dumpPodPortAllocations=true` so the allocator
+      emits debug comments into `frontend-extra-*` for assertion
+      without requiring the (not-yet-built) consumer snippets in
+      phases 2-5.
+
+      Allocation contract:
+        * Sort all `<gwNs>/<gwName>:<listenerName>:<port>` keys
+          alphabetically.
+        * Assign sequential container ports starting at base 18000
+          (or `extraContext.perGatewayPodPortBase` if set).
+        * Only HTTPS Gateway listeners receive an allocation —
+          HTTP / TLS-Passthrough / TLS-Terminate listeners use
+          existing chart-static or per-port routing paths.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      dumpPodPortAllocations: "true"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-zulu
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+              - name: https-alt
+                port: 8443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-alpha
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+              # Mixed-protocol Gateway: HTTPS listener gets allocation,
+              # HTTP listener does NOT (allocator filters by protocol).
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+              # TLS-Passthrough listener: NO allocation (uses
+              # ssl-tcp / per-port mode-tcp frontends instead).
+              - name: tls-pass
+                port: 9443
+                protocol: TLS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  mode: Passthrough
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with two HTTPS Gateways present.
+
+      # gw-alpha sorts BEFORE gw-zulu alphabetically. Among gw-zulu's
+      # two HTTPS listeners, the listener-name part of the key drives
+      # the sort: `https-alt` < `https` because `-` (0x2D) < `:` (0x3A)
+      # in ASCII (`https:443` ends a 5-char prefix at `:`, while
+      # `https-alt:8443` continues with `-`). Sorted keys:
+      #   1. default/gw-alpha:https:443
+      #   2. default/gw-zulu:https-alt:8443
+      #   3. default/gw-zulu:https:443
+      # → ports 18000, 18001, 18002.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-alpha:https:443 = 18000$'
+        description: First sorted (Gateway, listener) tuple lands at base port 18000.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https-alt:8443 = 18001$'
+        description: |
+          Second sorted tuple is gw-zulu's `https-alt` (the `-` in
+          `https-alt` sorts before `:` in `https:443`).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https:443 = 18002$'
+        description: Third sorted tuple lands at 18002.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'gw-pod-port: default/gw-alpha:http:80'
+        description: |
+          HTTP listeners are NOT allocated (only HTTPS). The chart's
+          allocator filters by protocol so per-Gateway pod ports apply
+          only where they're needed (HTTPS termination).
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'gw-pod-port: default/gw-alpha:tls-pass:9443'
+        description: |
+          TLS-Passthrough listeners use chart-static `frontend ssl-tcp`
+          (or `frontends-600-gateway-tls-listener` for non-default
+          ports), not per-Gateway HTTPS binds.
+
+  test-gateway-pod-port-allocator-custom-base:
+    description: |
+      `extraContext.perGatewayPodPortBase` overrides the default
+      18000 base. Useful for operators whose port budget is
+      constrained or who run HAProxy alongside other pod processes
+      that already claim 18xxx.
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      dumpPodPortAllocations: "true"
+      perGatewayPodPortBase: 25000
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-only
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: Custom base port renders valid HAProxy config.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+# gw-pod-port: default/gw-only:https:443 = 25000$'
+        description: Custom base 25000 used as starting allocation.
