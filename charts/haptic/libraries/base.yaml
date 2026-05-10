@@ -139,9 +139,8 @@ templateSnippets:
       # Per-listener-port fallback: when no hostname-based lookup
       # matched, isolate routes by the inbound listener port.
       # Resource libraries that emit listeners on non-default ports
-      # (e.g. Gateway API listener-port-matching) write a
-      # `:<port> :<port>` entry into host.map; this lookup uses
-      # `:<dst_port>` to find it.
+      # (e.g. Gateway API listener-port-matching) write
+      # `<host>:<port>` and / or `:<port>` entries into host.map.
       #
       # Gate: `len 0` rather than `!found`, because the host_full and
       # host-regex lookups above may have already SET host_match (to
@@ -151,6 +150,18 @@ templateSnippets:
       # exactly the post-cascade state we want to recover from.
       # `concat()` requires a variable, so bind dst_port first.
       http-request set-var(txn.dst_port) dst_port if { var(txn.host_match) -m len 0 }
+      # Try `<host>:<dst_port>` first — covers requests where the
+      # client didn't include the port in the Host header but the
+      # listener routes by host+port (Gateway API listener-port
+      # matching for non-default ports). Without this, an HTTPS
+      # request to `https://second-example.org:8443/` arrives with
+      # Host=`second-example.org` (HTTP/1.1 elides the explicit
+      # port for HTTPS-default ports, and Go's http library sends
+      # the literal req.Host string the test framework configured).
+      # The chart's host.map carries entries like
+      # `second-example.org:8443 second-example.org:8443`; this lookup
+      # constructs the same key from the inbound dst_port.
+      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Regex > Prefix-exact > Prefix
