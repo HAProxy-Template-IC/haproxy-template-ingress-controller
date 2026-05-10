@@ -1008,7 +1008,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: 'crt [^ ]+gw-clientcert-gateway-conformance-infra-gateway-tls-backend-client-certificate\.pem'
+        pattern: 'crt gw-clientcert-gateway-conformance-infra-gateway-tls-backend-client-certificate\.pem'
         description: |
           Backend default-server line also carries the Gateway-level
           client cert (`crt /path/to/gw-clientcert-<gw>.pem`) so HAProxy
