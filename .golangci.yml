@@ -254,6 +254,12 @@ linters:
       - path: pkg/controller/testrunner/
         linters:
           - goconst
+      # resourceapplier reads/writes unstructured K8s objects via map keys
+      # (apiVersion, kind, name, metadata) — extracting these into constants
+      # adds indirection without clarifying the K8s API contract they encode.
+      - path: pkg/controller/resourceapplier/
+        linters:
+          - goconst
       - path: pkg/templating/filters(_status|_string)?\.go
         linters:
           - goconst

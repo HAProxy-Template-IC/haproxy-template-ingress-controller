@@ -26,7 +26,8 @@
 //	    rendercontext.WithStores(stores),
 //	    rendercontext.WithCapabilities(capabilities),
 //	)
-//	ctx, fileRegistry, statusPatchCollector, renderedResourceCollector := builder.Build()
+//	res := builder.Build()
+//	ctx := res.Context
 package rendercontext
 
 import (
@@ -125,6 +126,17 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 	return b
 }
 
+// BuildResult is the bundle returned from Build(). Callers that only need a
+// subset (e.g. just the context map for a benchmark or test fixture) read the
+// relevant field; the unused collectors are then garbage-collected with the
+// result struct.
+type BuildResult struct {
+	Context                   map[string]any
+	FileRegistry              *FileRegistry
+	StatusPatchCollector      *templating.StatusPatchCollector
+	RenderedResourceCollector *templating.RenderedResourceCollector
+}
+
 // Build creates the template rendering context, file registry, status patch
 // collector, and rendered resource collector.
 //
@@ -146,7 +158,7 @@ func NewBuilder(cfg *config.Config, pathResolver *templating.PathResolver, logge
 //	  "http": HTTPFetcher (if set),
 //	  "extraContext": map from config,
 //	}
-func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatchCollector, *templating.RenderedResourceCollector) {
+func (b *Builder) Build() *BuildResult {
 	// Create resources map with typed ResourceStore values. Each wrapper
 	// gets the IndexBy that the watcher used to build the underlying
 	// store; the wrapper uses it to build its per-render snapshot index
@@ -249,7 +261,12 @@ func (b *Builder) Build() (map[string]any, *FileRegistry, *templating.StatusPatc
 			"variable_count", len(b.config.TemplatingSettings.ExtraContext))
 	}
 
-	return templateContext, fileRegistry, statusPatchCollector, renderedResourceCollector
+	return &BuildResult{
+		Context:                   templateContext,
+		FileRegistry:              fileRegistry,
+		StatusPatchCollector:      statusPatchCollector,
+		RenderedResourceCollector: renderedResourceCollector,
+	}
 }
 
 // SortSnippetNames sorts template snippet names alphabetically.

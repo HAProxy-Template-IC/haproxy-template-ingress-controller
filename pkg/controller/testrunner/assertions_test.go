@@ -644,8 +644,8 @@ func TestRunner_ResolveTarget(t *testing.T) {
 		},
 	}
 	k8sResources := map[string]string{
-		"haproxy-service":  "kind: Service\nmetadata:\n  name: haptic-haproxy\n",
-		"gateway-extras":   "---\nkind: ConfigMap\n",
+		"haproxy-service": "kind: Service\nmetadata:\n  name: haptic-haproxy\n",
+		"gateway-extras":  "---\nkind: ConfigMap\n",
 	}
 
 	tests := []struct {
