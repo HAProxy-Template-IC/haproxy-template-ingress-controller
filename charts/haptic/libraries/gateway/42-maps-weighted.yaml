@@ -60,10 +60,22 @@ templateSnippets:
 
   map-weighted-backend-500-gateway:
     template: |
-      {#- Generate weighted backend map entries for HTTPRoute -#}
+      {#- Generate weighted backend map entries for HTTPRoute and
+          GRPCRoute. Both kinds support multi-backendRef rules with
+          weights — the chart's weighted-multi-backend.map is
+          backend-kind-agnostic (lookups key off `<random_weight>:
+          <route_key>` produced by the routing chain). The
+          GRPCRouteWeight conformance test pins this contract:
+          a GRPCRoute with `[v1: weight=70, v2: weight=30, v3:
+          weight=0]` must distribute requests 70/30 across v1 and v2
+          (and never to v3). Without GRPCRoute coverage here, the
+          MULTIBACKEND lookup at runtime returned an empty
+          backend_name and the request fell through to
+          default_backend (404). -#}
       {%- import "util-sharded-weighted-backend-map-gateway" for ShardedWeightedBackendMap %}
       # gateway/map-weighted-backend-gateway
       {{ ShardedWeightedBackendMap(resources.httproutes.List()) }}
+      {{ ShardedWeightedBackendMap(resources.grpcroutes.List()) }}
 
   # Frontend-extra: HTTPS misdirected-request detection (Gateway API
   # SupportGatewayHTTPSListenerDetectMisdirectedRequests).
