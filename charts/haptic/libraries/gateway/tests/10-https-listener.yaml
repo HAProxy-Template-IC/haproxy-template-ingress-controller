@@ -868,6 +868,23 @@ validationTests:
           Per-port SNI line also carries `verify optional` when the
           per-port override mode is AllowInsecureFallback.
 
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:\d+ ssl crt-list .*ca-ignore-err all crt-ignore-err all'
+        description: |
+          The HTTPS bind line carries `ca-ignore-err all
+          crt-ignore-err all` whenever any `verify optional` cert
+          line lands in the crt-list. Without these flags, HAProxy
+          aborts the TLS handshake when an invalid client cert is
+          presented — but the upstream
+          GatewayFrontendClientCertificateValidationInsecureFallback
+          spec requires the handshake to complete so the application
+          can decide what to do with an unvalidated cert. The flags
+          are bind-line scoped (HAProxy doesn't accept them in the
+          crt-list per-line options), so they apply uniformly across
+          the bind; per-SNI `verify required` lines retain their
+          strict semantics independently.
+
   test-gateway-backend-client-cert-shape:
     description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
