@@ -142,28 +142,30 @@ templateSnippets:
       # (e.g. Gateway API listener-port-matching) write
       # `<host>:<port>` and / or `:<port>` entries into host.map.
       #
+      # Per-Gateway pod-port translation: phase 4's per-Gateway HTTPS
+      # binds listen on allocated pod ports (e.g. 18002) but the chart
+      # emits host/path map entries and redirect-filter port logic
+      # keyed by the original listener port (e.g. 8443). The
+      # pod-listener-port.map (populated by `features-170-pod-listener-
+      # port-map` from phase 1's allocator) maps pod port → listener
+      # port for each per-Gateway allocation. We translate
+      # unconditionally and stash the result in `txn.listener_port`
+      # so every downstream consumer (host.map fallback below,
+      # frontend-filters-500-gateway-redirect, any future port-aware
+      # logic) sees the correct user-facing listener port regardless
+      # of which bind the connection physically landed on. dst_port
+      # passes through unchanged for chart-static / non-allocated
+      # binds (the map lookup falls back to dst_port when the entry
+      # is absent).
+      http-request set-var(txn.dst_port) dst_port
+      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      http-request set-var(txn.listener_port) var(txn.dst_port) if !{ var(txn.listener_port) -m found }
       # Gate: `len 0` rather than `!found`, because the host_full and
       # host-regex lookups above may have already SET host_match (to
       # an empty string when the lookup yielded no match). `-m found`
       # would be true after that, blocking this fallback. `-m len 0`
       # fires whenever the variable is set-but-empty, which is
       # exactly the post-cascade state we want to recover from.
-      # `concat()` requires a variable, so bind dst_port first.
-      http-request set-var(txn.dst_port) dst_port if { var(txn.host_match) -m len 0 }
-      # Per-Gateway pod-port translation: phase 4's per-Gateway HTTPS
-      # binds listen on allocated pod ports (e.g. 18002) but the chart
-      # emits host/path map entries keyed by the original listener
-      # port (e.g. 8443). The pod-listener-port.map (populated by
-      # `util-pod-listener-port-map` from phase 1's allocator) maps
-      # pod port → listener port for each per-Gateway allocation.
-      # Translate dst_port through this map before constructing the
-      # `<host>:<port>` lookup key, so the per-Gateway path lands on
-      # the right host.map / path-prefix.map entry. dst_port itself
-      # passes through unchanged for chart-static / non-allocated
-      # binds (the map lookup falls back to dst_port when the entry
-      # is absent).
-      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.host_match) -m len 0 } { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
-      http-request set-var(txn.listener_port) var(txn.dst_port) if { var(txn.host_match) -m len 0 } !{ var(txn.listener_port) -m found }
       # Try `<host>:<listener_port>` first — covers requests where
       # the client didn't include the port in the Host header but the
       # listener routes by host+port (Gateway API listener-port
@@ -174,7 +176,7 @@ templateSnippets:
       # the literal req.Host string the test framework configured).
       # The chart's host.map carries entries like
       # `second-example.org:8443 second-example.org:8443`; this lookup
-      # constructs the same key from the inbound dst_port.
+      # constructs the same key from the inbound listener_port.
       http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 

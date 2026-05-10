@@ -152,13 +152,26 @@ func (r *portRouter) lookup(ctx context.Context, host string, port int) (portRou
 		if np, ok := perPort[port]; ok {
 			return portRoute{nodeIP: r.hostIP, nodePort: np}, true
 		}
-		// Host is a known LB IP but doesn't expose this port —
-		// signal no route. Falling through to `table` would dial
-		// the chart-static NodePort, which serves a DIFFERENT
-		// HAProxy bind than the per-Gateway one and would mask
-		// the connection-refused signal phase 4 produces (the
+		// Host is a known LB IP but doesn't expose this port — the
+		// cached byLBIP snapshot may predate the chart adding a
+		// non-default Gateway listener port to the main Service
+		// (HTTPRouteListenerPortMatching: Gateway listener-2 on
+		// port 8080 is observed by the chart, port 8080 gets
+		// appended to haptic-haproxy.spec.ports with its own
+		// NodePort, but our cache is from before the apply).
+		// Refresh and re-check before giving up. We still return
+		// false on the second miss instead of falling through to
+		// `table`, because the chart-static port table would dial
+		// the wrong HAProxy bind for per-Gateway flows (the
 		// GatewayFrontendInvalidDefaultClientCertificateValidation
-		// test depends on it).
+		// test relies on the connection-refused signal from phase 4).
+		r.refresh(ctx)
+		r.mu.RLock()
+		perPort = r.byLBIP[host]
+		r.mu.RUnlock()
+		if np, ok := perPort[port]; ok {
+			return portRoute{nodeIP: r.hostIP, nodePort: np}, true
+		}
 		return portRoute{}, false
 	}
 

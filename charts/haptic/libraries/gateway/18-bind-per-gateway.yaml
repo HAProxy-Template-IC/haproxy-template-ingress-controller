@@ -24,6 +24,20 @@ templateSnippets:
   #     listener RST at the pod boundary — which is what
   #     GatewayFrontendInvalidDefaultClientCertificateValidation
   #     requires.
+  #   * Listeners whose `tls.certificateRefs[0]` failed to resolve
+  #     (Secret missing, malformed, or wrong group/kind). The chart's
+  #     existing `features-100-gateway-tls` skips registering such
+  #     certs (they don't appear in `gf.tlsCertificates`), and phase 2
+  #     follows suit by skipping the per-listener crt-list emission.
+  #     Phase 4 mirrors the same gate so the bind never references a
+  #     non-existent crt-list file (which would fail HAProxy parse and
+  #     abort the entire reconcile, leaving every Gateway in the
+  #     cluster stuck at observedGeneration=0). Same observable
+  #     behaviour as the mTLS-blocked branch: the listener has no
+  #     bind, so connections to it land on no socket — the
+  #     `GatewayInvalidTLSConfiguration` conformance contract is that
+  #     `Programmed=False / Invalid` with no traffic acceptance,
+  #     which is exactly what dropping the bind achieves.
   #   * Non-HTTPS listeners. HTTP listeners flow through the chart-
   #     static `bind *:<httpPort>` path. TLS-Passthrough flows
   #     through `frontend ssl-tcp`. TLS-Terminate non-default ports
@@ -51,6 +65,22 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var mtlsBlocked map[string]any = coalesce(gf | dig("mtlsBlockedListeners"), map[string]any{}).(map[string]any) %}
       {%- var perListenerMTLS map[string]any = coalesce(gf["gatewayListenerMTLSConfig"], map[string]any{}).(map[string]any) %}
+      {#- Build the same (secretNs/secretName) → cert lookup that phase 2
+          uses, so we drop the bind for listeners whose cert ref didn't
+          resolve. Without this gate, the bind references a crt-list
+          file phase 2 never emitted (because
+          `features-100-gateway-tls` skipped the missing/malformed
+          Secret), HAProxy's parser errors on the missing file, and
+          the entire reconcile aborts in semantic validation — taking
+          the status patches for every Gateway in the cluster down
+          with it. -#}
+      {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) %}
+      {%- var certBySecret = map[string]any{} %}
+      {%- for _, tc := range tlsCerts %}
+        {%- var tcm = tc.(map[string]any) %}
+        {%- var key = tostring(tcm["secret_namespace"]) + "/" + tostring(tcm["secret_name"]) %}
+        {%- certBySecret[key] = tcm %}
+      {%- end %}
       {%- if resources != nil && resources.gateways != nil %}
         {%- for _, gw := range resources.gateways.List() %}
           {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
@@ -63,7 +93,22 @@ templateSnippets:
                 {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
                 {%- var blockedKey = gwNs + "/" + gwName + "/" + lName %}
                 {%- var isBlocked = mtlsBlocked[blockedKey] != nil %}
-                {%- if lName != "" && lPort > 0 && !isBlocked %}
+                {#- Does the listener's cert ref resolve? Same path
+                    phase 2 walks: take the FIRST entry of
+                    `tls.certificateRefs`, look it up by
+                    `<crNs>/<crName>` in the shared cert registry.
+                    Missing → phase 2 skipped emission → we must too. -#}
+                {%- var certResolved = false %}
+                {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() %}
+                {%- if len(certRefs) > 0 %}
+                  {%- var cr = certRefs[0] %}
+                  {%- var crNs = tostring(dig(cr, "namespace") | fallback(gwNs)) %}
+                  {%- var crName = tostring(dig(cr, "name") | fallback("")) %}
+                  {%- if certBySecret[crNs + "/" + crName] != nil %}
+                    {%- certResolved = true %}
+                  {%- end %}
+                {%- end %}
+                {%- if lName != "" && lPort > 0 && !isBlocked && certResolved %}
                   {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
                   {%- var podPort = lPort %}
                   {%- if val, ok := allocations[allocKey]; ok %}
