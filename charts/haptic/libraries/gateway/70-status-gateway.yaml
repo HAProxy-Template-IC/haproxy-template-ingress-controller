@@ -16,6 +16,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
+      {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -506,7 +507,7 @@ templateSnippets:
                       // dashes so the result is a valid RFC 1123 label.
                       // E.g. 192.168.1.1 → "192-168-1-1".
                       var ipSuffix = replace(ipStr, ".", "-")
-                      var svcName = "gw-" + nsStr + "-" + nameStr + "-" + ipSuffix
+                      var svcName = BoundedK8sName("gw", nsStr, nameStr, ipSuffix)
                       var perIPAnnotations = map[string]any{}
                       for k, v := range ownedAnnotations {
                         perIPAnnotations[k] = v
@@ -588,7 +589,7 @@ templateSnippets:
             // Gateway-namespace search even when they carry the same
             // metadata. The marker bridges that gap.
             if hasInfra {
-              var svcName = "gw-" + nsStr + "-" + nameStr
+              var svcName = BoundedK8sName("gw", nsStr, nameStr, "")
               // Headless ClusterIP Service with a placeholder port. The
               // chart's HAProxy is shared, so per-Gateway port wiring
               // isn't meaningful here — the Service exists only to

@@ -22,6 +22,49 @@ templateSnippets:
       { var(txn.gw_rule_id) -m str "{{ routeId }}" }
       {%- end macro -%}
 
+  util-bounded-k8s-name:
+    template: |
+      {#-
+        BoundedK8sName - Build a Kubernetes object name that fits inside the
+        RFC 1123 label limit (63 chars).
+
+        Format: <prefix>-<ns>-<name>[-<suffix>]
+
+        If the joined string is <=63 chars, it is returned verbatim.
+        Otherwise the <ns>-<name> middle is truncated to make room for an
+        8-char SHA-256 fingerprint of <ns>/<name>[/<suffix>] so distinct
+        inputs that collide after truncation still produce distinct names.
+
+        Used by the Gateway library to emit per-Gateway Services (marker for
+        spec.infrastructure metadata propagation; static-address LoadBalancer
+        Services for spec.addresses) whose natural names would exceed the
+        63-char Service-name limit when fed long Gateway / namespace strings
+        (the conformance suite's `gateway-with-infrastructure-metadata` in
+        `gateway-conformance-infra` is 65 chars before any IP suffix).
+
+        Usage:
+          {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
+          var svcName = BoundedK8sName("gw", nsStr, nameStr, "")
+      -#}
+      {%- macro BoundedK8sName(prefix string, ns string, name string, suffix string) string -%}
+      {%- var middle = ns + "-" + name -%}
+      {%- var joined = prefix + "-" + middle -%}
+      {%- if suffix != "" -%}{%- joined = joined + "-" + suffix -%}{%- end -%}
+      {%- if len(joined) <= 63 -%}
+      {{- joined -}}
+      {%- else -%}
+      {%- var hashKey = ns + "/" + name -%}
+      {%- if suffix != "" -%}{%- hashKey = hashKey + "/" + suffix -%}{%- end -%}
+      {%- var hashTag = sha256(hashKey)[0:8] -%}
+      {%- var tail = "-" + hashTag -%}
+      {%- if suffix != "" -%}{%- tail = tail + "-" + suffix -%}{%- end -%}
+      {%- var room = 63 - len(prefix) - 1 - len(tail) -%}
+      {%- if room < 1 -%}{%- room = 1 -%}{%- end -%}
+      {%- if len(middle) > room -%}{%- middle = middle[0:room] -%}{%- end -%}
+      {{- prefix + "-" + middle + tail -}}
+      {%- end -%}
+      {%- end macro -%}
+
   util-condition-transition-time:
     template: |
       {#-
