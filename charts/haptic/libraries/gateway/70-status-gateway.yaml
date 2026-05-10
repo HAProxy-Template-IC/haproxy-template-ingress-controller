@@ -1267,23 +1267,40 @@ templateSnippets:
                 continue
               }
               // At least one listener must survive conflict detection.
-              // The cache's listenerConflicts list captures per-listener
-              // (name, reason) pairs for losers; LSes with no entries
-              // are fully accepted, LSes with one entry per listener
-              // are fully rejected.
+              // The cache's listenerConflicts list has ONE entry per
+              // declared listener with both an `accepted` bool and a
+              // `conflicted` reason string; we count an LS as attached
+              // only when at least one entry is `accepted=true` (i.e.
+              // not in conflict and not invalid). LSes with no cache
+              // entry fall through to attached (cache miss = optimistic).
               var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
               var lsKey = lsNs + "/" + lsName
               var listenersTotal = len(toSlice(dig(ls, "spec", "listeners") | fallback([]any{})))
-              var conflictedCount = 0
+              if listenersTotal == 0 {
+                continue
+              }
               var statusEntryAny, hasEntry = lsStatusCache[lsKey]
               if hasEntry {
+                // A listener is "valid" when it both (a) passed the
+                // parent admission gate (`accepted=true`, set by the
+                // route-analysis pass when the parent Gateway permits
+                // the LS) AND (b) didn't lose a port/hostname/protocol
+                // conflict (`conflicted=""`). LSes whose every listener
+                // fails one of those checks must NOT count as attached
+                // (per ListenerSetHostnameConflict / -ProtocolConflict).
+                var anyValid = false
                 for _, c := range statusEntryAny.(map[string]any)["listenerConflicts"].([]any) {
-                  _ = c
-                  conflictedCount++
+                  var ce = c.(map[string]any)
+                  var acc, ok = ce["accepted"].(bool)
+                  var conf = tostring(ce["conflicted"])
+                  if ok && acc && conf == "" {
+                    anyValid = true
+                    break
+                  }
                 }
-              }
-              if listenersTotal == 0 || conflictedCount >= listenersTotal {
-                continue
+                if !anyValid {
+                  continue
+                }
               }
               attachedLSCount++
             }
