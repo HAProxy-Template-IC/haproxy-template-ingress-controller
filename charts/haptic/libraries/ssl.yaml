@@ -22,35 +22,7 @@ templateSnippets:
   # Uses crt-list for certificate management with per-certificate OCSP configuration
   util-ssl-bind-options:
     template: >-
-      {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var hasInsecureFallback = false -%}
-      {%- if gf != nil -%}
-        {%- var gfMap = gf.(map[string]any) -%}
-        {%- var hosts = gfMap | dig("clientCertVerifyHosts") -%}
-        {%- if hosts != nil -%}
-          {%- for _, cfgRaw := range hosts.(map[string]any) -%}
-            {%- var cfg = cfgRaw.(map[string]any) -%}
-            {%- if tostring(cfg["verify_mode"]) == "optional" -%}
-              {%- hasInsecureFallback = true -%}
-            {%- end -%}
-          {%- end -%}
-        {%- end -%}
-      {%- end -%}
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1
-      {#- AllowInsecureFallback: HAProxy's `verify optional` aborts the
-          TLS handshake when a presented client cert fails CA validation.
-          The Gateway API spec requires the request to *still pass* in
-          that case (only the validation result is reported). The bind-
-          line `ca-ignore-err all` + `crt-ignore-err all` flags lift
-          HAProxy's abort, so handshakes with invalid client certs
-          complete (the cert is still requested + validated; only the
-          abort behaviour is suppressed). Closes the upstream
-          GatewayFrontendClientCertificateValidationInsecureFallback
-          "non-matching client cert is passing" sub-tests. The flags
-          are bind-line scoped, so we set them whenever ANY `verify
-          optional` line lands in the crt-list — `verify required`
-          lines on the same bind keep their abort-on-fail semantics. -#}
-      {%- if hasInsecureFallback %} ca-ignore-err all crt-ignore-err all{% end %}
 
   features-050-ssl-initialization:
     template: |
