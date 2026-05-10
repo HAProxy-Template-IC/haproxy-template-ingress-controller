@@ -24,20 +24,6 @@ templateSnippets:
     template: >-
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1
 
-  # Parameterised counterpart of `util-ssl-bind-options` — emits the
-  # same `ssl crt-list <path> alpn h2,http/1.1` suffix but reads the
-  # crt-list filename from the caller. Used by phase 4 of the
-  # per-Gateway-IP refactor (`https-bind-extra-*` snippet) to give
-  # each (Gateway, listener) bind its own crt-list (different SSL
-  # configs without bind-line collision). The macro form keeps the
-  # chart-static path on the simpler bare snippet above so that
-  # call site stays a one-liner.
-  util-ssl-bind-options-for-crtlist:
-    template: |
-      {%- macro SSLBindOptionsForCrtlist(crtlistFilename string) string -%}
-        {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1
-      {%- end -%}
-
   features-050-ssl-initialization:
     template: |
       {#-
