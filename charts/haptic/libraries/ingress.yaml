@@ -60,6 +60,12 @@ templateSnippets:
         if len(tlsList) > 0 {
           gf["bindHTTPSDefault"] = true
           gf["needHTTPSFrontend"] = true
+          // Ingress with spec.tls has HTTPS termination (the chart's
+          // HTTPS frontend hosts the cert). Light up
+          // needHTTPSTermination so chart-static ssl-tcp falls
+          // through to ssl-loopback for unmatched SNIs (current
+          // behaviour) rather than rejecting them.
+          gf["needHTTPSTermination"] = true
         }
       %%}
       {%- end %}

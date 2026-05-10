@@ -241,29 +241,52 @@ templateSnippets:
           bind *:{{ port }}
           # Read SNI from the unbuffered TCP stream without terminating.
           tcp-request inspect-delay 5s
-          tcp-request content accept if { req_ssl_hello_type 1 }
             {%- end %}
 
             {%- if len(portRoutes) == 0 %}
           # No TLSRoute claims any SNI on this port; reject every
           # connection so probing clients don't get a hung handshake.
+              {%- if portMode != "Terminate" %}
           tcp-request content reject
+              {%- else %}
+          tcp-request content reject
+              {%- end %}
             {%- else %}
           # SNI-based dispatch to the route's TCP backend. Wildcard
           # SNI patterns (`*.example.com`) match any single subdomain
           # via `-m end .example.com` (preserving the spec's
-          # single-label-required rule). Reject-default fires when
-          # no rule matches — TLSRoute spec requires implementations
-          # to refuse traffic on listener ports for SNIs no route
-          # claims, and this is what closes
-          # TLSRouteInvalidBackendRefNonexistent /
-          # TLSRouteInvalidBackendRefUnknownKind (a route with
+          # single-label-required rule). The reject must come BEFORE
+          # the accept rule (which terminates the tcp-request content
+          # phase): `tcp-request content` rules are evaluated in order
+          # and the first matching `accept` ends the phase, so a
+          # `reject` placed *after* an unconditional accept can never
+          # fire. We build an `allowed_sni` ACL alternation from the
+          # route entries' SNIs and reject when the inbound SNI isn't
+          # in the allowlist — that's what closes the upstream
+          # `TLSRouteHostnameIntersection`'s "should not reach backend"
+          # subtests (where the conformance suite expects a TLS
+          # connection with a non-claimed SNI to be refused), plus
+          # `TLSRouteInvalidBackendRefNonexistent` /
+          # `TLSRouteInvalidBackendRefUnknownKind` (a route with
           # unresolvable refs is filtered out at Pass 2's
-          # ResolvedRefs gate, so its SNI never enters the
-          # allowlist and lands here).
+          # ResolvedRefs gate, so its SNI never enters the allowlist
+          # and lands here).
               {%- if portMode == "Terminate" %}
                 {#- Post-termination: ssl_fc_sni is the SNI HAProxy
-                    just consumed during the TLS handshake. -#}
+                    just consumed during the TLS handshake. The
+                    handshake completes before tcp-request content
+                    rules fire (mode tcp + bind ssl), so we can use
+                    ssl_fc_sni in the allowlist ACL too. -#}
+                {%- for _, beAny := range portRoutes %}
+                  {%- var be = beAny.(map[string]any) %}
+                  {%- var sni = tostring(be["sni"]) %}
+                  {%- if hasPrefix(sni, "*.") %}
+          acl allowed_sni ssl_fc_sni -m end {{ sni[1:] }}
+                  {%- else %}
+          acl allowed_sni ssl_fc_sni -m str {{ sni }}
+                  {%- end %}
+                {%- end %}
+          tcp-request content reject if !allowed_sni
                 {%- for _, beAny := range portRoutes %}
                   {%- var be = beAny.(map[string]any) %}
                   {%- var sni = tostring(be["sni"]) %}
@@ -275,7 +298,20 @@ templateSnippets:
                 {%- end %}
               {%- else %}
                 {#- Pre-termination: req_ssl_sni reads from the
-                    buffered ClientHello without terminating. -#}
+                    buffered ClientHello without terminating. The
+                    inspect-delay above gives the SNI fetch enough
+                    time to materialize. -#}
+                {%- for _, beAny := range portRoutes %}
+                  {%- var be = beAny.(map[string]any) %}
+                  {%- var sni = tostring(be["sni"]) %}
+                  {%- if hasPrefix(sni, "*.") %}
+          acl allowed_sni req_ssl_sni -m end {{ sni[1:] }}
+                  {%- else %}
+          acl allowed_sni req_ssl_sni -m str {{ sni }}
+                  {%- end %}
+                {%- end %}
+          tcp-request content reject if !allowed_sni
+          tcp-request content accept if { req_ssl_hello_type 1 }
                 {%- for _, beAny := range portRoutes %}
                   {%- var be = beAny.(map[string]any) %}
                   {%- var sni = tostring(be["sni"]) %}
@@ -286,8 +322,6 @@ templateSnippets:
                   {%- end %}
                 {%- end %}
               {%- end %}
-          # Reject-default: no use_backend rule matched the SNI.
-          tcp-request content reject
             {%- end %}
           {%- end %}
         {%- end %}

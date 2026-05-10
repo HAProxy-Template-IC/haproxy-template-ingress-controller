@@ -163,9 +163,11 @@ validationTests:
         pattern: '(?m)^\s+tcp-request content reject$'
         description: |
           Frontend ends with `tcp-request content reject` — connections
-          whose SNI doesn't match a claimed route get a TCP RST. Upstream
-          conformance asserts this via
-          MakeTLSConnectionAndExpectEventuallyConnectionRejection.
+          whose SNI doesn't match a claimed route get a TCP RST.
+          When ALL routes are filtered (every TLSRoute has invalid /
+          unresolvable refs), the chart emits an unconditional reject
+          (no allowed_sni ACL to gate on). Upstream conformance asserts
+          this via MakeTLSConnectionAndExpectEventuallyConnectionRejection.
 
   test-tlsroute-terminate-nondefault-port-frontend:
     description: TLSRoute attached to a TLS Terminate listener on a non-chart- static port renders a per-port mode-tcp frontend with TLS termination on the bind.
@@ -352,7 +354,7 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: '(?m)^\s+tcp-request content reject$'
+        pattern: '(?m)^\s+tcp-request content reject if !allowed_sni$'
         description: |
           Reject-default at end of frontend: SNIs that no route
           claims get a TCP RST (closes
