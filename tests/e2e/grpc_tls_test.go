@@ -26,6 +26,7 @@ import (
 	pb "sigs.k8s.io/gateway-api/conformance/echo-basic/grpcechoserver"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/grpcclient"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // TestGRPCOverTLS pins the production-relevant gRPC routing path:
@@ -89,31 +90,52 @@ func TestGRPCOverTLS(t *testing.T) {
 			return ctx
 		}).
 		Assess("Echo over TLS+ALPN-h2 reaches the GRPCRoute backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			conn, err := grpcclient.New(t).Dial(dialCtx, host)
-			if err != nil {
-				t.Fatalf("dial gRPC over TLS: %v", err)
-			}
-			defer func() { _ = conn.Close() }()
-
-			cli := pb.NewGrpcEchoClient(conn)
-			callCtx, callCancel := context.WithTimeout(ctx, 10*time.Second)
-			defer callCancel()
-			resp, err := cli.Echo(callCtx, &pb.EchoRequest{})
-			if err != nil {
-				t.Fatalf("Echo() RPC: %v", err)
-			}
-			// echo-basic populates Assertions.FullyQualifiedMethod
-			// with the gRPC method the request reached the backend
-			// as. Asserts the chart routed the request to the right
-			// backend without rewriting the method (TLS-terminated
-			// h2 forwards the original :path header).
-			gotMethod := resp.GetAssertions().GetFullyQualifiedMethod()
+			// The chart needs a reconciliation pass to render the
+			// new GRPCRoute into haproxy.cfg and reload every
+			// HAProxy pod after the route is applied. Poll the dial
+			// + Echo() under exponential backoff so the test waits
+			// for the route to be programmed instead of racing the
+			// reload — the underlying behaviour is identical across
+			// HAProxy 3.x versions, but on slower runners (3.1+
+			// images take longer to start) the request used to land
+			// before the second reload finished and got 404 from
+			// default_backend.
 			wantSuffix := "/" + grpcSvc + "/" + grpcMethodEcho
-			if gotMethod != wantSuffix {
-				t.Fatalf("Echo() reached backend with method %q, want %q",
-					gotMethod, wantSuffix)
+			waitCfg := testutil.WaitConfig{
+				InitialInterval: 200 * time.Millisecond,
+				MaxInterval:     2 * time.Second,
+				Timeout:         60 * time.Second,
+				Multiplier:      1.5,
+			}
+			err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
+				"GRPCRoute Echo() reaches the right backend",
+				func(ctx context.Context) (bool, error) {
+					dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					defer cancel()
+					conn, dialErr := grpcclient.New(t).Dial(dialCtx, host)
+					if dialErr != nil {
+						return false, nil
+					}
+					defer func() { _ = conn.Close() }()
+
+					cli := pb.NewGrpcEchoClient(conn)
+					callCtx, callCancel := context.WithTimeout(ctx, 5*time.Second)
+					defer callCancel()
+					resp, callErr := cli.Echo(callCtx, &pb.EchoRequest{})
+					if callErr != nil {
+						return false, nil
+					}
+					// echo-basic populates
+					// Assertions.FullyQualifiedMethod with the gRPC
+					// method the request reached the backend as.
+					// Asserts the chart routed the request to the
+					// right backend without rewriting the method
+					// (TLS-terminated h2 forwards the original
+					// :path header).
+					return resp.GetAssertions().GetFullyQualifiedMethod() == wantSuffix, nil
+				})
+			if err != nil {
+				t.Fatalf("Echo() RPC never reached the GRPCRoute backend with method %q: %v", wantSuffix, err)
 			}
 			return ctx
 		}).

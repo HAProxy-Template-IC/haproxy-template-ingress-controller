@@ -90,6 +90,11 @@ const (
 	// `kubectl get … -l haproxy-haptic.org/managed-by=<name>` selector.
 	LabelManagedBy = "haproxy-haptic.org/managed-by"
 
+	// DefaultManagedByValue is the value injected into LabelManagedBy when
+	// the chart doesn't override Config.ManagedByValue. Distinct deployments
+	// in the same namespace should set their own values.
+	DefaultManagedByValue = "haptic-controller"
+
 	// AnnotationOwnership lets templates flag a rendered resource as
 	// jointly owned with another field manager (helm / argocd / kubectl).
 	// When set to OwnershipPartial, the applier:
@@ -228,7 +233,7 @@ func New(cfg *Config) *Component {
 	}
 	managedBy := cfg.ManagedByValue
 	if managedBy == "" {
-		managedBy = "haptic-controller"
+		managedBy = DefaultManagedByValue
 	}
 
 	bus := cfg.EventBus
@@ -378,37 +383,12 @@ func (c *Component) recoverManagedResources(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		for _, r := range list.APIResources {
-			// Subresources (e.g. /status, /scale) appear in discovery with
-			// "/" in their name; skip them — they aren't independently
-			// listable as parents.
-			if strings.Contains(r.Name, "/") {
-				continue
-			}
-			if !verbsContain(r.Verbs, "list") || !verbsContain(r.Verbs, "delete") {
-				continue
-			}
-			gvr := gv.WithResource(r.Name)
-			items, err := c.listSafely(ctx, gvr, labelSelector)
-			if err != nil {
-				// 403 (no RBAC), 404 (CRD removed since discovery), and
-				// MethodNotSupported (virtual resources) are expected and
-				// silently skipped — the applier discovers what it can,
-				// not what it must.
+		for j := range list.APIResources {
+			r := &list.APIResources[j]
+			rec, didSkip := c.recoverFromAPIResource(ctx, gv, r, labelSelector)
+			recovered += rec
+			if didSkip {
 				skipped++
-				continue
-			}
-			for i := range items.Items {
-				obj := &items.Items[i]
-				key := fmt.Sprintf("%s/%s/%s", obj.GetNamespace(), obj.GetName(), gvr.String())
-				c.mu.Lock()
-				c.lastAppliedKeys[key] = appliedKeyMeta{
-					GVR:       gvr,
-					Namespace: obj.GetNamespace(),
-					Name:      obj.GetName(),
-				}
-				c.mu.Unlock()
-				recovered++
 			}
 		}
 	}
@@ -416,6 +396,44 @@ func (c *Component) recoverManagedResources(ctx context.Context) {
 		c.logger.Info("managed-resource recovery complete",
 			"recovered", recovered, "skipped_types", skipped)
 	}
+}
+
+// recoverFromAPIResource lists managed objects of one resource type and
+// stages each into lastAppliedKeys. Returns the number of objects recovered
+// and whether the type itself was skipped (subresource, missing list/delete
+// verb, or list call failed).
+//
+// 403 (no RBAC), 404 (CRD removed since discovery), and MethodNotSupported
+// (virtual resources) are expected and silently rolled into the skip count
+// — the applier discovers what it can, not what it must.
+func (c *Component) recoverFromAPIResource(ctx context.Context, gv schema.GroupVersion, r *metav1.APIResource, labelSelector string) (recovered int, skipped bool) {
+	// Subresources (e.g. /status, /scale) appear in discovery with "/" in
+	// their name; skip them — they aren't independently listable as
+	// parents.
+	if strings.Contains(r.Name, "/") {
+		return 0, false
+	}
+	if !verbsContain(r.Verbs, "list") || !verbsContain(r.Verbs, "delete") {
+		return 0, false
+	}
+	gvr := gv.WithResource(r.Name)
+	items, err := c.listSafely(ctx, gvr, labelSelector)
+	if err != nil {
+		return 0, true
+	}
+	for i := range items.Items {
+		obj := &items.Items[i]
+		key := fmt.Sprintf("%s/%s/%s", obj.GetNamespace(), obj.GetName(), gvr.String())
+		c.mu.Lock()
+		c.lastAppliedKeys[key] = appliedKeyMeta{
+			GVR:       gvr,
+			Namespace: obj.GetNamespace(),
+			Name:      obj.GetName(),
+		}
+		c.mu.Unlock()
+		recovered++
+	}
+	return recovered, false
 }
 
 // listSafely wraps the dynamic client's List with panic recovery. The
@@ -474,71 +492,107 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 
 	for i := range resources {
 		r := &resources[i]
-		gvr, err := c.gvrResolver.Resolve(r.APIVersion, r.Kind)
-		if err != nil {
-			c.logger.Error("failed to resolve GVR for rendered resource",
-				"api_version", r.APIVersion, "kind", r.Kind, "error", err)
-			continue
-		}
-		if c.refused(r) {
-			refused++
-			continue
-		}
-		key := fmt.Sprintf("%s/%s/%s", r.Namespace, r.Name, gvr.String())
-		partial := isPartialOwnership(r)
-		// Track for orphan-delete only when haptic owns the resource
-		// end-to-end. Partial-ownership entries are jointly owned with
-		// another field manager (helm/argocd) and must never be deleted
-		// — SSA's per-field ownership handles the actual cleanup when a
-		// field disappears from haptic's rendered spec.
-		if !partial {
-			desiredKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
-		}
-
-		object := c.prepareForApply(r.Object, partial)
-		payload, err := json.Marshal(object)
-		if err != nil {
-			c.logger.Error("failed to marshal rendered resource",
-				"namespace", r.Namespace, "name", r.Name, "kind", r.Kind, "error", err)
-			continue
-		}
-		checksum := fmt.Sprintf("%x", sha256.Sum256(payload))
-
-		c.mu.RLock()
-		last := c.checksumCache[key]
-		c.mu.RUnlock()
-		if last == checksum {
+		switch outcome := c.applyOne(ctx, r, desiredKeys); outcome {
+		case applyOutcomeApplied:
+			applied++
+		case applyOutcomeSkipped:
 			skipped++
-			continue
+		case applyOutcomeRefused:
+			refused++
 		}
-
-		_, err = c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Patch(
-			ctx,
-			r.Name,
-			types.ApplyPatchType,
-			payload,
-			metav1.PatchOptions{
-				FieldManager: fieldManager,
-				Force:        new(true),
-			},
-		)
-		if err != nil {
-			c.logger.Error("failed to apply rendered resource",
-				"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
-				"retriable", isRetriable(err), "error", err)
-			continue
-		}
-
-		c.mu.Lock()
-		c.checksumCache[key] = checksum
-		if !partial {
-			c.lastAppliedKeys[key] = desiredKeys[key]
-		}
-		c.mu.Unlock()
-		applied++
 	}
 
-	// Prune orphans: anything in lastAppliedKeys NOT in desiredKeys.
+	deleted := c.pruneOrphans(ctx, desiredKeys)
+
+	if applied+skipped+deleted+refused > 0 {
+		c.logger.Debug("resource applier pass complete",
+			"applied", applied, "skipped", skipped,
+			"deleted", deleted, "refused", refused,
+			"duration_ms", time.Since(startTime).Milliseconds())
+	}
+}
+
+// applyOutcome enumerates per-resource results so applyAndPrune can keep
+// counters without an inline type-switch.
+type applyOutcome int
+
+const (
+	applyOutcomeError   applyOutcome = iota // resolve / marshal / apply failed; logged inside applyOne
+	applyOutcomeApplied                     // SSA succeeded (or checksum-match-skip in the same code path is applyOutcomeSkipped)
+	applyOutcomeSkipped                     // checksum matched the last apply; round-trip skipped
+	applyOutcomeRefused                     // policy refused (cross-namespace under RestrictToOwnNamespace)
+)
+
+// applyOne resolves, marshals, and SSA-applies a single rendered resource,
+// updates the checksum cache + lastAppliedKeys on success, and returns the
+// outcome. It also stages the desiredKeys entry so pruneOrphans can compute
+// the keep-set after every resource has been processed.
+func (c *Component) applyOne(ctx context.Context, r *templating.RenderedResource, desiredKeys map[string]appliedKeyMeta) applyOutcome {
+	gvr, err := c.gvrResolver.Resolve(r.APIVersion, r.Kind)
+	if err != nil {
+		c.logger.Error("failed to resolve GVR for rendered resource",
+			"api_version", r.APIVersion, "kind", r.Kind, "error", err)
+		return applyOutcomeError
+	}
+	if c.refused(r) {
+		return applyOutcomeRefused
+	}
+	key := fmt.Sprintf("%s/%s/%s", r.Namespace, r.Name, gvr.String())
+	partial := isPartialOwnership(r)
+	// Track for orphan-delete only when haptic owns the resource end-to-
+	// end. Partial-ownership entries are jointly owned with another field
+	// manager (helm/argocd) and must never be deleted — SSA's per-field
+	// ownership handles the actual cleanup when a field disappears from
+	// haptic's rendered spec.
+	if !partial {
+		desiredKeys[key] = appliedKeyMeta{GVR: gvr, Namespace: r.Namespace, Name: r.Name}
+	}
+
+	object := c.prepareForApply(r.Object, partial)
+	payload, err := json.Marshal(object)
+	if err != nil {
+		c.logger.Error("failed to marshal rendered resource",
+			"namespace", r.Namespace, "name", r.Name, "kind", r.Kind, "error", err)
+		return applyOutcomeError
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(payload))
+
+	c.mu.RLock()
+	last := c.checksumCache[key]
+	c.mu.RUnlock()
+	if last == checksum {
+		return applyOutcomeSkipped
+	}
+
+	_, err = c.dynamicClient.Resource(gvr).Namespace(r.Namespace).Patch(
+		ctx,
+		r.Name,
+		types.ApplyPatchType,
+		payload,
+		metav1.PatchOptions{
+			FieldManager: fieldManager,
+			Force:        new(true),
+		},
+	)
+	if err != nil {
+		c.logger.Error("failed to apply rendered resource",
+			"namespace", r.Namespace, "name", r.Name, "gvr", gvr.String(),
+			"retriable", isRetriable(err), "error", err)
+		return applyOutcomeError
+	}
+
+	c.mu.Lock()
+	c.checksumCache[key] = checksum
+	if !partial {
+		c.lastAppliedKeys[key] = desiredKeys[key]
+	}
+	c.mu.Unlock()
+	return applyOutcomeApplied
+}
+
+// pruneOrphans deletes resources that were applied last pass but aren't in
+// the new desired set. Returns the number of objects actually deleted.
+func (c *Component) pruneOrphans(ctx context.Context, desiredKeys map[string]appliedKeyMeta) int {
 	c.mu.Lock()
 	prior := c.lastAppliedKeys
 	stillApplied := make(map[string]appliedKeyMeta, len(desiredKeys))
@@ -572,13 +626,7 @@ func (c *Component) applyAndPrune(ctx context.Context, resources []templating.Re
 	c.mu.Lock()
 	c.lastAppliedKeys = stillApplied
 	c.mu.Unlock()
-
-	if applied+skipped+deleted+refused > 0 {
-		c.logger.Debug("resource applier pass complete",
-			"applied", applied, "skipped", skipped,
-			"deleted", deleted, "refused", refused,
-			"duration_ms", time.Since(startTime).Milliseconds())
-	}
+	return deleted
 }
 
 // refused returns true when the policy says to skip this resource
@@ -720,4 +768,3 @@ func isRetriable(err error) bool {
 	}
 	return true
 }
-

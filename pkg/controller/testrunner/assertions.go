@@ -66,7 +66,7 @@ func (r *Runner) assertDeterministic(
 	}
 
 	// Render a second time
-	secondConfig, secondAuxFiles, _, _, _, err := r.renderWithStores(
+	second, err := r.renderWithStores(
 		deps.Engine,
 		deps.Stores,
 		deps.ValidationPaths,
@@ -81,16 +81,16 @@ func (r *Runner) assertDeterministic(
 	}
 
 	// Compare main HAProxy config
-	if firstConfig != secondConfig {
+	if firstConfig != second.HAProxyConfig {
 		result.Passed = false
-		diff := generateUnifiedDiff(names.MainTemplateName+" (render 1)", names.MainTemplateName+" (render 2)", firstConfig, secondConfig)
+		diff := generateUnifiedDiff(names.MainTemplateName+" (render 1)", names.MainTemplateName+" (render 2)", firstConfig, second.HAProxyConfig)
 		result.Error = fmt.Sprintf("%s differs between renders:\n%s", names.MainTemplateName, diff)
 		r.populateTargetMetadata(&result, firstConfig, names.MainTemplateName, true)
 		return result
 	}
 
 	// Compare auxiliary files
-	if diffResult := compareAuxiliaryFiles(firstAuxFiles, secondAuxFiles); diffResult != "" {
+	if diffResult := compareAuxiliaryFiles(firstAuxFiles, second.AuxiliaryFiles); diffResult != "" {
 		result.Passed = false
 		result.Error = diffResult
 		return result

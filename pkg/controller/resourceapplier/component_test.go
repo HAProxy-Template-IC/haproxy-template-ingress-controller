@@ -172,7 +172,7 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, ComponentName, comp.Name())
 	assert.NotNil(t, comp.eventChan)
 	assert.False(t, comp.isLeader)
-	assert.Equal(t, "haptic-controller", comp.managedByValue)
+	assert.Equal(t, DefaultManagedByValue, comp.managedByValue)
 }
 
 func TestApplyAndPrune_NotLeader_NoApply(t *testing.T) {
@@ -315,9 +315,9 @@ func TestApplyAndPrune_RestrictToOwnNamespace_RefusesForeign(t *testing.T) {
 	comp, _, counter := newTestComp(t, true) // restrict=true
 	setLeader(comp)
 	comp.cachedResources = []templating.RenderedResource{
-		sampleResource("haptic", "svc-a", 80),    // own namespace → allowed
-		sampleResource("user-ns", "svc-b", 80),   // foreign namespace → refused
-		sampleResource("", "cluster-thing", 0),   // cluster-scoped → refused
+		sampleResource("haptic", "svc-a", 80),  // own namespace → allowed
+		sampleResource("user-ns", "svc-b", 80), // foreign namespace → refused
+		sampleResource("", "cluster-thing", 0), // cluster-scoped → refused
 	}
 	comp.handleReconciliationCompleted(context.Background())
 	assert.Equal(t, int32(1), counter.Load(), "only the own-namespace resource must apply")
@@ -357,9 +357,9 @@ func TestPrepareForApply_FullOwnership_InjectsManagedByLabel(t *testing.T) {
 		"metadata":   map[string]any{"name": "x", "labels": map[string]any{"existing": "v"}},
 	}
 	out := comp.prepareForApply(caller, false)
-	labels := out["metadata"].(map[string]any)["labels"].(map[string]any)
-	assert.Equal(t, "haptic-controller", labels[LabelManagedBy])
-	assert.Equal(t, "v", labels["existing"], "existing labels must be preserved")
+	outLabels := out["metadata"].(map[string]any)["labels"].(map[string]any)
+	assert.Equal(t, DefaultManagedByValue, outLabels[LabelManagedBy])
+	assert.Equal(t, "v", outLabels["existing"], "existing labels must be preserved")
 
 	// Caller's metadata.labels must not have been mutated.
 	callerLabels := caller["metadata"].(map[string]any)["labels"].(map[string]any)
@@ -384,10 +384,10 @@ func TestPrepareForApply_PartialOwnership_OmitsManagedByLabel(t *testing.T) {
 	out := comp.prepareForApply(caller, true)
 
 	// Existing labels preserved, no managed-by injected.
-	labels := out["metadata"].(map[string]any)["labels"].(map[string]any)
-	_, hasManaged := labels[LabelManagedBy]
+	outLabels := out["metadata"].(map[string]any)["labels"].(map[string]any)
+	_, hasManaged := outLabels[LabelManagedBy]
 	assert.False(t, hasManaged, "partial-ownership applies must not claim managed-by")
-	assert.Equal(t, "v", labels["existing"])
+	assert.Equal(t, "v", outLabels["existing"])
 
 	// Ownership annotation stripped; other annotations preserved.
 	annotations := out["metadata"].(map[string]any)["annotations"].(map[string]any)
@@ -531,7 +531,7 @@ func TestRecoverManagedResources_PrunesStartupOrphan(t *testing.T) {
 			return true, &unstructured.UnstructuredList{}, nil
 		}
 		selector := listAction.GetListRestrictions().Labels
-		match := selector != nil && selector.Matches(labels.Set{LabelManagedBy: "haptic-controller"})
+		match := selector != nil && selector.Matches(labels.Set{LabelManagedBy: DefaultManagedByValue})
 		if !match {
 			return true, &unstructured.UnstructuredList{}, nil
 		}
@@ -542,7 +542,7 @@ func TestRecoverManagedResources_PrunesStartupOrphan(t *testing.T) {
 			"metadata": map[string]any{
 				"name":      "gw-orphan",
 				"namespace": "haptic",
-				"labels":    map[string]any{LabelManagedBy: "haptic-controller"},
+				"labels":    map[string]any{LabelManagedBy: DefaultManagedByValue},
 			},
 		})
 		return true, &unstructured.UnstructuredList{Items: []unstructured.Unstructured{orphan}}, nil
@@ -587,7 +587,6 @@ func TestRecoverManagedResources_PrunesStartupOrphan(t *testing.T) {
 	comp.handleReconciliationCompleted(context.Background())
 	assert.Equal(t, int32(1), deleted.Load(), "orphan discovered via label must be deleted")
 }
-
 
 // TestRecoverManagedResources_SkipsTypesWithout403 verifies the discovery
 // loop silently skips types we don't have RBAC for (Forbidden) — the

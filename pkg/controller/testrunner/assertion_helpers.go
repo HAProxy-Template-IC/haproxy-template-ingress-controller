@@ -27,7 +27,7 @@ import (
 // Target format: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>",
 // "crt-list:<name>", "k8s:<template-name>", "status:<ns>/<name>:<phase>",
 // or "rendering_error".
-func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dataplane.AuxiliaryFiles, k8sResources map[string]string, statusPatches map[string]string, renderError string) string {
+func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dataplane.AuxiliaryFiles, k8sResources, statusPatches map[string]string, renderError string) string {
 	if target == "rendering_error" {
 		return renderError
 	}
