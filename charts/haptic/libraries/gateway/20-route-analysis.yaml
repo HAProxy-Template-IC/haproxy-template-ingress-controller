@@ -659,7 +659,45 @@ templateSnippets:
                         {%- for _, rh := range routeHostnames %}
                           {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                           {%- if inter != "" %}
-                            {%- effectiveHosts[inter + portSuffix] = true %}
+                            {#- Listener isolation per Gateway API spec: even
+                                when route hostnames intersect THIS listener,
+                                drop the intersection if it's more-specifically
+                                claimed by a sibling listener on the same
+                                Gateway. The sibling owns the host and only
+                                routes attached to that sibling may serve it.
+                                Closes the GatewayHTTPListenerIsolation
+                                "intersecting hostnames" subtests where a
+                                route on `*.example.com` listener also lists
+                                `*.foo.example.com` in spec.hostnames; that
+                                hostname belongs to the more-specific
+                                `*.foo.example.com` listener. -#}
+                            {#- A sibling "covers" inter when intersect(sibling, inter)
+                                equals inter exactly — i.e. every host matching
+                                inter also matches sibling. Combined with rank >
+                                current, the sibling is a strict superset claim
+                                that owns inter end-to-end (e.g. inter=
+                                `*.foo.example.com`, sibling=`*.foo.example.com`
+                                or sibling=`abc.foo.example.com` for inter=
+                                `abc.foo.example.com`). The previous check used
+                                HostnameSinglePairMatch — true on ANY overlap —
+                                which incorrectly filtered the listener's own
+                                pattern when a more-specific subdomain sibling
+                                merely intersected it. -#}
+                            {%- var ownedBySibling = false %}
+                            {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                              {%- if !ownedBySibling %}
+                                {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                {%- if sibName != listenerName %}
+                                  {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                  {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > currentRank %}
+                                    {%- ownedBySibling = true %}
+                                  {%- end %}
+                                {%- end %}
+                              {%- end %}
+                            {%- end %}
+                            {%- if !ownedBySibling %}
+                              {%- effectiveHosts[inter + portSuffix] = true %}
+                            {%- end %}
                           {%- end %}
                         {%- end %}
                       {%- end %}
@@ -718,7 +756,28 @@ templateSnippets:
                           {%- for _, rh := range routeHostnames %}
                             {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                             {%- if inter != "" %}
-                              {%- effectiveHosts[inter + portSuffix] = true %}
+                              {#- Listener isolation per Gateway API spec
+                                  (LS branch): drop intersections more-
+                                  specifically claimed by a sibling listener
+                                  on the SAME LS. Mirrors the Gateway branch
+                                  fix; siblings come from the LS's own
+                                  spec.listeners, not the parent Gateway. -#}
+                              {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
+                              {%- var lsOwnedBySibling = false %}
+                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
+                                {%- if !lsOwnedBySibling %}
+                                  {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                  {%- if sibName != listenerName %}
+                                    {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                    {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
+                                      {%- lsOwnedBySibling = true %}
+                                    {%- end %}
+                                  {%- end %}
+                                {%- end %}
+                              {%- end %}
+                              {%- if !lsOwnedBySibling %}
+                                {%- effectiveHosts[inter + portSuffix] = true %}
+                              {%- end %}
                             {%- end %}
                           {%- end %}
                         {%- end %}
@@ -874,7 +933,45 @@ templateSnippets:
                         {%- for _, rh := range routeHostnames %}
                           {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                           {%- if inter != "" %}
-                            {%- effectiveHosts[inter + portSuffix] = true %}
+                            {#- Listener isolation per Gateway API spec: even
+                                when route hostnames intersect THIS listener,
+                                drop the intersection if it's more-specifically
+                                claimed by a sibling listener on the same
+                                Gateway. The sibling owns the host and only
+                                routes attached to that sibling may serve it.
+                                Closes the GatewayHTTPListenerIsolation
+                                "intersecting hostnames" subtests where a
+                                route on `*.example.com` listener also lists
+                                `*.foo.example.com` in spec.hostnames; that
+                                hostname belongs to the more-specific
+                                `*.foo.example.com` listener. -#}
+                            {#- A sibling "covers" inter when intersect(sibling, inter)
+                                equals inter exactly — i.e. every host matching
+                                inter also matches sibling. Combined with rank >
+                                current, the sibling is a strict superset claim
+                                that owns inter end-to-end (e.g. inter=
+                                `*.foo.example.com`, sibling=`*.foo.example.com`
+                                or sibling=`abc.foo.example.com` for inter=
+                                `abc.foo.example.com`). The previous check used
+                                HostnameSinglePairMatch — true on ANY overlap —
+                                which incorrectly filtered the listener's own
+                                pattern when a more-specific subdomain sibling
+                                merely intersected it. -#}
+                            {%- var ownedBySibling = false %}
+                            {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                              {%- if !ownedBySibling %}
+                                {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                {%- if sibName != listenerName %}
+                                  {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                  {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > currentRank %}
+                                    {%- ownedBySibling = true %}
+                                  {%- end %}
+                                {%- end %}
+                              {%- end %}
+                            {%- end %}
+                            {%- if !ownedBySibling %}
+                              {%- effectiveHosts[inter + portSuffix] = true %}
+                            {%- end %}
                           {%- end %}
                         {%- end %}
                       {%- end %}
@@ -926,7 +1023,28 @@ templateSnippets:
                           {%- for _, rh := range routeHostnames %}
                             {%- var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh)) %}
                             {%- if inter != "" %}
-                              {%- effectiveHosts[inter + portSuffix] = true %}
+                              {#- Listener isolation per Gateway API spec
+                                  (LS branch): drop intersections more-
+                                  specifically claimed by a sibling listener
+                                  on the SAME LS. Mirrors the Gateway branch
+                                  fix; siblings come from the LS's own
+                                  spec.listeners, not the parent Gateway. -#}
+                              {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
+                              {%- var lsOwnedBySibling = false %}
+                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
+                                {%- if !lsOwnedBySibling %}
+                                  {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                  {%- if sibName != listenerName %}
+                                    {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                    {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
+                                      {%- lsOwnedBySibling = true %}
+                                    {%- end %}
+                                  {%- end %}
+                                {%- end %}
+                              {%- end %}
+                              {%- if !lsOwnedBySibling %}
+                                {%- effectiveHosts[inter + portSuffix] = true %}
+                              {%- end %}
                             {%- end %}
                           {%- end %}
                         {%- end %}
