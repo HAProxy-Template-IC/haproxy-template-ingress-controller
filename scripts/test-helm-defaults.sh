@@ -460,6 +460,27 @@ PORT_FORWARD_PID=""
 start_port_forward() {
     info "Starting port-forward to HAProxy service..."
 
+    # The HAProxy LoadBalancer Service (svc/${RELEASE_NAME}-haproxy) is
+    # emitted at controller runtime (k8sResources.haproxy-service in
+    # libraries/base.yaml) — NOT at helm install time. So even after pods
+    # are Ready, the Service can take a few seconds to materialize while
+    # the controller boots, watches resources, renders, and SSA-applies.
+    # kubectl port-forward against a non-existent Service exits non-zero
+    # immediately, so we have to wait for the Service to exist.
+    local svc_attempts=30
+    local svc_attempt=1
+    while ! kubectl get svc -n "$NAMESPACE" "${RELEASE_NAME}-haproxy" >/dev/null 2>&1; do
+        if [[ $svc_attempt -ge $svc_attempts ]]; then
+            die "HAProxy Service '${RELEASE_NAME}-haproxy' did not appear within ${svc_attempts}s — controller may not have started or k8sResources.haproxy-service apply failed" 6
+        fi
+        if [[ $svc_attempt -eq 1 ]]; then
+            info "Waiting for controller-rendered HAProxy Service to appear..."
+        fi
+        sleep 1
+        ((svc_attempt++)) || true
+    done
+    ok "HAProxy Service exists (after ${svc_attempt}s)"
+
     # Start port-forward in background
     kubectl port-forward -n "$NAMESPACE" "svc/${RELEASE_NAME}-haproxy" 8080:80 8443:443 >/dev/null 2>&1 &
     PORT_FORWARD_PID=$!

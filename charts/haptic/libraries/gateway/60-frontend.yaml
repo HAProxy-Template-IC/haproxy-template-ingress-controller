@@ -255,14 +255,28 @@ templateSnippets:
             {%- if grpcMethod_name != nil %}
               {%- grpcPath = grpcPath + "/" + (grpcMethod_name) %}
             {%- end %}
-            {#- Match against :path header which contains gRPC method #}
+            {#- Match against the request URL path. For HTTP/2 (which is
+                what GRPCRoute requires per the Gateway API spec, plus
+                what HAProxy emits via ALPN h2 on chart-static HTTPS
+                frontends and via the http_frontend_h2c plumbing on
+                plaintext h2c), HAProxy parses the `:path` pseudo-header
+                and exposes it through the `path` sample fetch — NOT
+                through `req.hdr(:path)`, which targets regular HTTP/1.1
+                headers and yields an empty string for the pseudo-header.
+                Using `req.hdr(:path)` here meant every gRPC method
+                matcher silently never fired and the request fell
+                through to default_backend (404), which broke
+                test-grpcroute-https-listener-alpn-h2 and the upstream
+                GRPCExactMethodMatching / GRPCRouteHeaderMatching /
+                GRPCRouteListenerHostnameMatching / GRPCRouteNamedRule /
+                GRPCRouteWeight conformance suites. #}
             {%- var grpcType = grpcMethod_map["type"] %}
             {%- if grpcType == "Exact" %}
-              {%- conditions = append(conditions, "{ req.hdr(:path) \"" + grpcPath + "\" }") %}
+              {%- conditions = append(conditions, "{ path \"" + grpcPath + "\" }") %}
             {%- else if grpcType == "RegularExpression" %}
               {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
               {%- var escapedGrpcPath = replace(grpcPath, "$", "\\$") %}
-              {%- conditions = append(conditions, "{ req.hdr(:path) -m reg \"" + escapedGrpcPath + "\" }") %}
+              {%- conditions = append(conditions, "{ path -m reg \"" + escapedGrpcPath + "\" }") %}
             {%- end %}
           {%- end %}
         {%- end %}
