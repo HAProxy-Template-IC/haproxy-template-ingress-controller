@@ -1353,13 +1353,66 @@ templateSnippets:
               attachedLSCount++
             }
 
+            // Rendered-phase conditions: the chart has rendered a
+            // valid haproxy.cfg, but HAProxy itself hasn't received
+            // and reloaded the new config yet (the deployer pushes
+            // it after the render-success event). Promising
+            // Programmed=True here would tell the conformance test's
+            // WaitForGatewayProgrammed that traffic is accepted —
+            // and the test would dial the listener before HAProxy
+            // has the matching bind, getting connection refused.
+            // Hold Programmed at False/Pending until the deployed
+            // phase fires (after HAProxy reload completes), so the
+            // test waits the right amount of time. Listeners that
+            // failed at the chart-render layer (cert ref unresolvable
+            // etc.) keep their already-False status from
+            // gwProgrammedStatus — only the would-be-True case is
+            // gated by deploy. Same idea for the per-listener
+            // Programmed status inside `renderedListeners`.
+            var renderedConditions = []any{}
+            for _, condAny := range gwTopConditions {
+              var condMap = condAny.(map[string]any)
+              if tostring(condMap["type"]) == "Programmed" && tostring(condMap["status"]) == "True" {
+                renderedConditions = append(renderedConditions, condition(
+                  "Programmed", "False", "Pending",
+                  "Waiting for HAProxy to reload with the new configuration",
+                  generation,
+                  TopLevelTransitionTime(gateway, "Programmed", "False")))
+              } else {
+                renderedConditions = append(renderedConditions, condAny)
+              }
+            }
+            var renderedListeners = []any{}
+            for _, lAny := range deployedListeners {
+              var lMap = lAny.(map[string]any)
+              var lConds = lMap["conditions"].([]any)
+              var newConds = []any{}
+              for _, lcAny := range lConds {
+                var lcMap = lcAny.(map[string]any)
+                if tostring(lcMap["type"]) == "Programmed" && tostring(lcMap["status"]) == "True" {
+                  newConds = append(newConds, condition(
+                    "Programmed", "False", "Pending",
+                    "Waiting for HAProxy to reload with the new configuration",
+                    generation,
+                    TopLevelTransitionTime(gateway, "Programmed", "False")))
+                } else {
+                  newConds = append(newConds, lcAny)
+                }
+              }
+              renderedListeners = append(renderedListeners, map[string]any{
+                "name":           lMap["name"],
+                "supportedKinds": lMap["supportedKinds"],
+                "attachedRoutes": lMap["attachedRoutes"],
+                "conditions":     newConds,
+              })
+            }
             statusPatch(nsStr, nameStr,
               "gateway.networking.k8s.io/v1", "Gateway",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
                   "addresses":            gwEffectiveAddresses,
-                  "conditions":           gwTopConditions,
-                  "listeners":            deployedListeners,
+                  "conditions":           renderedConditions,
+                  "listeners":            renderedListeners,
                   "attachedListenerSets": attachedLSCount,
                 },
                 "deployed": map[string]interface{}{
