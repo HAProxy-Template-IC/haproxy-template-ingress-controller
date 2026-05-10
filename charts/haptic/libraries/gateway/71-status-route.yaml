@@ -113,13 +113,39 @@ templateSnippets:
               var gwNamespace = dig(parentRef, "namespace") | fallback(namespace) | tostring()
               var gwName = dig(parentRef, "name") | fallback("") | tostring()
 
+              // ListenerSet parentRef → resolve to its parent Gateway
+              // for the listener-attach evaluation, but emit the
+              // status entry with kind=ListenerSet so conformance
+              // readers see the route as attached to the LS (the
+              // upstream `ListenerSetHTTPRouting` test asserts
+              // `expected ParentReference.Kind to be ListenerSet`).
+              var lsResolvedGw any = nil
+              if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
+                var lsObj = resources.listenersets.GetSingle(gwNamespace, gwName)
+                if lsObj != nil {
+                  var lsParentRef = dig(lsObj, "spec", "parentRef")
+                  var pName = tostring(dig(lsParentRef, "name") | fallback(""))
+                  var pNs = tostring(dig(lsParentRef, "namespace") | fallback(gwNamespace))
+                  lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
+                }
+              }
               // Only process parentRefs targeting our gateways
-              if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
+              // (Gateway-kind directly, or ListenerSet whose parent
+              // resolves to one of ours).
+              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGw != nil)) {
                 var gwKey = gwNamespace + "/" + gwName
+                if gwKind == "ListenerSet" {
+                  // Use resolved Gateway's identity for ourGateways
+                  // membership check — ourGateways is keyed by the
+                  // backing Gateway, not by ListenerSet.
+                  var pName = tostring(dig(lsResolvedGw, "metadata", "name") | fallback(""))
+                  var pNs = tostring(dig(lsResolvedGw, "metadata", "namespace") | fallback(""))
+                  gwKey = pNs + "/" + pName
+                }
                 if ourGateways[gwKey] {
                   var parentRefStatus = map[string]any{
                     "group": "gateway.networking.k8s.io",
-                    "kind":  "Gateway",
+                    "kind":  gwKind,
                     "name":  gwName,
                   }
                   // Mirror spec.parentRefs[].namespace exactly:
@@ -146,7 +172,17 @@ templateSnippets:
                   // specific failure-reason wins. The spec ranks the
                   // reasons:
                   //   NoMatchingParent (sectionName missing) > NotAllowedByListeners (kinds/namespaces) > NoMatchingListenerHostname
+                  //
+                  // For ListenerSet parentRefs the listeners come from
+                  // the ListenerSet's own spec.listeners (not the parent
+                  // Gateway's) — the LS exposes its OWN listeners, the
+                  // Gateway's are evaluated only for direct Gateway
+                  // parentRefs.
                   var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+                  var listenerOwner any = gw
+                  if gwKind == "ListenerSet" {
+                    listenerOwner = resources.listenersets.GetSingle(gwNamespace, gwName)
+                  }
                   var acceptedStatus = "False"
                   var acceptedReason = "NotAllowedByListeners"
                   var acceptedMsg = "No listener accepts this route"
@@ -154,8 +190,8 @@ templateSnippets:
                   var sawPortMatch = false
                   var sawKindNs = false
                   var sawHostnameMismatch = false
-                  if gw != nil {
-                    for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                  if listenerOwner != nil {
+                    for _, listener := range dig(listenerOwner, "spec", "listeners") | toSlice() {
                       var listenerName = dig(listener, "name") | fallback("") | tostring()
 
                       if sectionNameStr != "" && listenerName != sectionNameStr {
