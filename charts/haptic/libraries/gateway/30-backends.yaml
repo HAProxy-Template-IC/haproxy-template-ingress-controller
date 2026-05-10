@@ -300,32 +300,50 @@ templateSnippets:
           {%- ruleIdxLocal = ruleIdxLocal + 1 %}
         {%- end %}
         {#- Per-backendRef RequestHeaderModifier
-            (SupportHTTPRouteBackendRequestHeaderModification): emit
-            set/add/remove header directives that apply unconditionally
-            within this per-backendRef backend (the entire backend serves
-            exactly one (route, service, port) tuple, so the directives
-            run for every request landing here). -#}
-        {%- for _, bRef := range backendRefs | toSlice() %}
-          {%- if (bRef | dig("name") | fallback("") | tostring()) == backendName -%}
-          {%- if (toint(bRef | dig("port") | fallback(0))) == toint(backendPort) %}
-            {%- for _, bf := range bRef | dig("filters") | fallback([]any{}) %}
-              {%- if (bf | dig("type")) == "RequestHeaderModifier" %}
-                {%- var mod = bf | dig("requestHeaderModifier") %}
-                {%- if mod != nil %}
-                  {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
-        http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}'
-                  {%- end %}
-                  {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
-        http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}'
-                  {%- end %}
-                  {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
-        http-request del-header {{ name }}
+            (SupportHTTPRouteBackendRequestHeaderModification).
+
+            Multiple rules of the same HTTPRoute can reference the
+            same (service, port) backend with DIFFERENT filter sets —
+            the upstream `HTTPRouteBackendRequestHeaderModifier`
+            conformance fixture has five rules (`/set`, `/add`,
+            `/remove`, `/multiple`, `/case-insensitivity`) all
+            pointing at `infra-backend-v1:8080` with distinct header
+            modifications. The chart deduplicates the backend block
+            (one HAProxy `backend` per `(route, service, port)`), so
+            the filter directives MUST be gated by `gw_rule_id` to
+            keep them rule-scoped — emitting them unconditionally
+            would cross-bleed.
+
+            Walk every rule of the route, find each rule's matching
+            backendRef, and emit its filters with an `if { var(txn.
+            gw_rule_id) -m str <ruleRouteId> }` guard that the
+            frontend matcher already populated. -#}
+        {%- var ruleIdxBe = 0 %}
+        {%- for _, rl := range route | dig("spec", "rules") | toSlice() %}
+          {%- for _, bRef := range rl | dig("backendRefs") | toSlice() %}
+            {%- if (bRef | dig("name") | fallback("") | tostring()) == backendName -%}
+            {%- if (toint(bRef | dig("port") | fallback(0))) == toint(backendPort) %}
+              {%- var ruleRouteIdBe = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) %}
+              {%- for _, bf := range bRef | dig("filters") | fallback([]any{}) %}
+                {%- if (bf | dig("type")) == "RequestHeaderModifier" %}
+                  {%- var mod = bf | dig("requestHeaderModifier") %}
+                  {%- if mod != nil %}
+                    {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+        http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
+                    {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+        http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
+                    {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+        http-request del-header {{ name }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
                   {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}
+            {%- end %}
           {%- end %}
-          {%- end %}
+          {%- ruleIdxBe = ruleIdxBe + 1 %}
         {%- end %}
       {%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
