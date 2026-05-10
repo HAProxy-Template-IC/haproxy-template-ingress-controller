@@ -805,3 +805,19 @@ validationTests:
         description: |
           Both listeners must show attachedRoutes=0 (the conformance
           test asserts this directly via GatewayStatusMustHaveListeners).
+
+      - type: match_count
+        target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
+        pattern: '"supportedKinds":\[\]'
+        expected: "2"
+        description: |
+          Both ProtocolConflict listeners must report empty
+          supportedKinds. The conformance helper
+          GatewayStatusMustHaveListeners (helpers.go:917) compares
+          actual SupportedKinds against the expected slice — when
+          the test passes empty SupportedKinds (because the listener
+          can't accept any routes), the chart must match by also
+          reporting an empty list. Reporting [TLSRoute] (the protocol's
+          default-kinds set) is misleading once the listener has been
+          rejected via Accepted=False/ProtocolConflict and breaks the
+          upstream assertion.

@@ -954,6 +954,9 @@ templateSnippets:
               // port carrying the other tls.mode. The conformance test
               // tlsroute-listener-mixed-termination-not-supported pins
               // both Accepted=False/ProtocolConflict AND attachedRoutes=0.
+              // Per the spec the rejected listener also has empty
+              // supportedKinds — it can't accept routes of any kind, so
+              // reporting [TLSRoute] would be misleading.
               if protocol == "TLS" {
                 var listenerPort = toint(dig(listener, "port") | fallback(0))
                 var pm = tlsPortModes[listenerPort]
@@ -965,6 +968,7 @@ templateSnippets:
                   programmedListenerReason = "Invalid"
                   programmedListenerMessage = listenerAcceptedMessage
                   attached = 0
+                  supportedKinds = []any{}
                 }
               }
 
