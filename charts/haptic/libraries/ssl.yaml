@@ -466,8 +466,33 @@ templateSnippets:
           acl listener_sni req_ssl_sni -m str {{ lh }}
             {%- end %}
           {%- end %}
+          {%- var needHTTPSTermination_pre = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
+          {#- Count Passthrough-mode entries — only those emit a route_sni
+              ACL above. Without them, the route_sni reject below would
+              reference an undefined ACL and HAProxy validation aborts. -#}
+          {%- var passthroughCount = 0 %}
+          {%- for _, backend := range passthroughBackends %}
+            {%- var b map[string]any = backend %}
+            {%- if tostring(b["mode"] | fallback("Passthrough")) == "Passthrough" %}
+              {%- passthroughCount = passthroughCount + 1 %}
+            {%- end %}
+          {%- end %}
           {%- if len(listenerHosts) > 0 %}
           tcp-request content reject if listener_sni !route_sni
+          {%- end %}
+          {%- if !needHTTPSTermination_pre && passthroughCount > 0 %}
+          {#- TLSRouteHostnameIntersection / TLSRouteInvalidBackendRefNonexistent /
+              TLSRouteInvalidBackendRefUnknownKind: when no HTTPS-Terminate
+              listener exists on this port, any SNI that doesn't claim a route
+              must be rejected (not silently dropped or fall through to a
+              non-existent ssl-loopback). The previous reject above only fires
+              when the SNI matches a listener pattern but no route; this catches
+              SNIs that don't match ANY listener at all (e.g. `non.matching.com`
+              against a Gateway with `*.example.com` listeners). Gated on
+              passthroughCount > 0 because the route_sni ACL is emitted only
+              by Passthrough-mode entries — without it, the condition below
+              would reference an undefined ACL. -#}
+          tcp-request content reject if !route_sni
           {%- end %}
           tcp-request content accept if { req_ssl_hello_type 1 }
 
