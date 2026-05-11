@@ -1369,32 +1369,19 @@ templateSnippets:
             // gwProgrammedStatus — only the would-be-True case is
             // gated by deploy. Same idea for the per-listener
             // Programmed status inside `renderedListeners`.
-            // Rendered variant DROPS Programmed entirely when the deployed
-            // variant would have set it True. Reason: SSA with field manager
-            // "haptic" means each apply replaces every field it specifies.
-            // If rendered writes Programmed=False/Pending and deployed writes
-            // Programmed=True, they overwrite each other on every reconcile —
-            // and the reconciler fires many times per second under conformance
-            // load. The conformance test polls for Programmed=True and times
-            // out because each rendered-phase apply resets it back to False.
-            // By omitting Programmed from the rendered payload, SSA leaves
-            // the field alone: whichever deployed-phase apply landed last
-            // owns it. Initial Programmed is absent until the first deploy
-            // completes — same observable behaviour, no race.
-            // Programmed=False cases (cert refs broken, listener conflicts)
-            // still propagate via the rendered variant because we only skip
-            // when gwTopConditions reports Programmed=True.
             var renderedConditions = []any{}
             for _, condAny := range gwTopConditions {
               var condMap = condAny.(map[string]any)
               if tostring(condMap["type"]) == "Programmed" && tostring(condMap["status"]) == "True" {
-                continue
+                renderedConditions = append(renderedConditions, condition(
+                  "Programmed", "False", "Pending",
+                  "Waiting for HAProxy to reload with the new configuration",
+                  generation,
+                  TopLevelTransitionTime(gateway, "Programmed", "False")))
+              } else {
+                renderedConditions = append(renderedConditions, condAny)
               }
-              renderedConditions = append(renderedConditions, condAny)
             }
-            // Same logic as the top-level renderedConditions above: drop the
-            // listener-level Programmed=True so SSA doesn't keep flipping
-            // it back to False on every render-pass.
             var renderedListeners = []any{}
             for _, lAny := range deployedListeners {
               var lMap = lAny.(map[string]any)
@@ -1403,9 +1390,14 @@ templateSnippets:
               for _, lcAny := range lConds {
                 var lcMap = lcAny.(map[string]any)
                 if tostring(lcMap["type"]) == "Programmed" && tostring(lcMap["status"]) == "True" {
-                  continue
+                  newConds = append(newConds, condition(
+                    "Programmed", "False", "Pending",
+                    "Waiting for HAProxy to reload with the new configuration",
+                    generation,
+                    TopLevelTransitionTime(gateway, "Programmed", "False")))
+                } else {
+                  newConds = append(newConds, lcAny)
                 }
-                newConds = append(newConds, lcAny)
               }
               renderedListeners = append(renderedListeners, map[string]any{
                 "name":           lMap["name"],

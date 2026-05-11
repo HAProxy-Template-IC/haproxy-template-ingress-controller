@@ -376,7 +376,17 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		checksum := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
 
 		// Check checksum cache — skip if already applied.
-		cacheKey := fmt.Sprintf("%s/%s/%s", patch.Namespace, patch.Name, gvrStr)
+		// Cache key includes the phase so rendered and deployed track
+		// separate "last applied checksum"s. Without that, rendered's
+		// apply (content A) updates the cache, deployed's apply (content
+		// B) updates the cache again, and the next rendered apply
+		// (content A) sees mismatch and re-writes — overwriting the
+		// deployed state in K8s. With phase-scoped keys: rendered cache
+		// hits on the second pass, K8s keeps deployed's content. SSA
+		// behaviour with field manager "haptic" still owns every field
+		// each phase touches, so the LAST write wins and we let that
+		// last write be deployed.
+		cacheKey := fmt.Sprintf("%s/%s/%s/%s", phaseKey, patch.Namespace, patch.Name, gvrStr)
 		c.mu.RLock()
 		lastChecksum := c.checksumCache[cacheKey]
 		c.mu.RUnlock()
