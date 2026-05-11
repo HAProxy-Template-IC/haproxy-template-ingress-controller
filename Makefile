@@ -215,27 +215,28 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sib
 	@echo "Building conformance test binary (gateway_conformance tag)..."
 	@# Static binary: distroless-static has no libc / dynamic loader.
 	CGO_ENABLED=0 $(GO) test -mod=mod -tags=gateway_conformance -c -o /tmp/haptic-conformance.test ./tests/conformance/
+	@echo "Resolving kind apiserver kubeconfig (--internal, for container-network DNS)..."
+	@# The kubeconfig is BAKED INTO the image rather than bind-mounted because
+	@# bind mounts don't cross the DinD boundary — `docker run -v src:dst`
+	@# resolves `src` on the DinD daemon's filesystem, not the GitLab job
+	@# container's, and the daemon doesn't have it. Baking works in both
+	@# environments and per-cluster image churn is acceptable (we rebuild
+	@# per `make test-e2e` anyway).
 	@echo "Packaging into $(CONFORMANCE_IMAGE)..."
 	@# Build with a minimal context so the daemon isn't asked to upload the
 	@# whole repo (which is a few hundred MB and pointless — Dockerfile.
-	@# conformance-test only COPYs the test binary).
+	@# conformance-test only COPYs the test binary + kubeconfig).
 	@rm -rf /tmp/haptic-conformance-build
 	@mkdir -p /tmp/haptic-conformance-build
 	cp /tmp/haptic-conformance.test /tmp/haptic-conformance-build/
 	cp Dockerfile.conformance-test /tmp/haptic-conformance-build/Dockerfile
+	kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-conformance-build/kubeconfig
 	docker build -t $(CONFORMANCE_IMAGE) /tmp/haptic-conformance-build
 	@rm -rf /tmp/haptic-conformance-build
-	@echo "Resolving kind apiserver kubeconfig (--internal, for container-network DNS)..."
-	@mkdir -p /tmp/haptic-conformance
-	kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-conformance/kubeconfig
 	@echo "Running conformance suite..."
-	@mkdir -p debug-logs/_conformance
 	docker run \
 		--rm \
 		--network $(CONFORMANCE_KIND_NETWORK) \
-		-v /tmp/haptic-conformance/kubeconfig:/etc/kubeconfig:ro \
-		-v $$(pwd)/debug-logs/_conformance:/output \
-		-e KUBECONFIG=/etc/kubeconfig \
 		$(if $(CONFORMANCE_DEBUG),-e CONFORMANCE_DEBUG=$(CONFORMANCE_DEBUG)) \
 		$(CONFORMANCE_IMAGE) \
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
