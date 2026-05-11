@@ -355,29 +355,16 @@ templateSnippets:
               // lastTransitionTime — only the last parent gets a stable value,
               // every other parent gets the wrong stamp on each render. (Gitar
               // caught this; tracking the loop index is the fix.)
-              var renderedParents = []any{}
-              for rpIdx, pAny := range parents {
-                var pMap = pAny.(map[string]any)
-                var oldConds = pMap["conditions"].([]any)
-                var newConds = []any{}
-                for _, cAny := range oldConds {
-                  var cMap = cAny.(map[string]any)
-                  if tostring(cMap["type"]) == "Accepted" && tostring(cMap["status"]) == "True" {
-                    newConds = append(newConds, condition(
-                      "Accepted", "False", "Pending",
-                      "Waiting for HAProxy to reload with the new configuration",
-                      generation,
-                      RouteParentTransitionTime(route, rpIdx, "Accepted", "False")))
-                  } else {
-                    newConds = append(newConds, cAny)
-                  }
-                }
-                renderedParents = append(renderedParents, map[string]any{
-                  "parentRef":      pMap["parentRef"],
-                  "controllerName": pMap["controllerName"],
-                  "conditions":     newConds,
-                })
-              }
+              // Rendered parents = deployed parents (byte-identical). See
+              // the analogous comment in 70-status-gateway.yaml — the
+              // previous transform (Accepted True→False/Pending in rendered)
+              // raced the deployed variant via SSA and timed out the
+              // conformance suite's Test Setup at 90s. Letting both phases
+              // write the same value eliminates the tug-of-war; the brief
+              // window where Accepted=True is visible before HAProxy has
+              // actually reloaded is absorbed by the test framework's
+              // 5s RequestTimeout retry loop.
+              var renderedParents = parents
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
@@ -731,29 +718,16 @@ templateSnippets:
               // lastTransitionTime — only the last parent gets a stable value,
               // every other parent gets the wrong stamp on each render. (Gitar
               // caught this; tracking the loop index is the fix.)
-              var renderedParents = []any{}
-              for rpIdx, pAny := range parents {
-                var pMap = pAny.(map[string]any)
-                var oldConds = pMap["conditions"].([]any)
-                var newConds = []any{}
-                for _, cAny := range oldConds {
-                  var cMap = cAny.(map[string]any)
-                  if tostring(cMap["type"]) == "Accepted" && tostring(cMap["status"]) == "True" {
-                    newConds = append(newConds, condition(
-                      "Accepted", "False", "Pending",
-                      "Waiting for HAProxy to reload with the new configuration",
-                      generation,
-                      RouteParentTransitionTime(route, rpIdx, "Accepted", "False")))
-                  } else {
-                    newConds = append(newConds, cAny)
-                  }
-                }
-                renderedParents = append(renderedParents, map[string]any{
-                  "parentRef":      pMap["parentRef"],
-                  "controllerName": pMap["controllerName"],
-                  "conditions":     newConds,
-                })
-              }
+              // Rendered parents = deployed parents (byte-identical). See
+              // the analogous comment in 70-status-gateway.yaml — the
+              // previous transform (Accepted True→False/Pending in rendered)
+              // raced the deployed variant via SSA and timed out the
+              // conformance suite's Test Setup at 90s. Letting both phases
+              // write the same value eliminates the tug-of-war; the brief
+              // window where Accepted=True is visible before HAProxy has
+              // actually reloaded is absorbed by the test framework's
+              // 5s RequestTimeout retry loop.
+              var renderedParents = parents
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
