@@ -71,7 +71,24 @@ func newGRPCClient() (gatewaygrpc.Client, error) {
 
 func (c *dindRewritingGRPCClient) SendRPC(t *testing.T, address string, expected gatewaygrpc.ExpectedResponse, timeout time.Duration) (*gatewaygrpc.Response, error) {
 	t.Helper()
-	return c.inner.SendRPC(t, c.rewrite(address), expected, timeout)
+	rewritten := c.rewrite(address)
+	// If we rewrote the dial target, also preserve the original
+	// authority. Without this, gRPC defaults `:authority` to the
+	// dial-target (`<dindIP>:31080`) — HAProxy then sees that as the
+	// Host header equivalent, fails to match any chart route, and
+	// returns 404. Upstream tests that EXPLICITLY set
+	// `expected.RequestMetadata.Authority` keep their value (those
+	// tests are validating per-listener hostname matching and need
+	// to control the authority themselves).
+	if rewritten != address {
+		if expected.RequestMetadata == nil {
+			expected.RequestMetadata = &gatewaygrpc.RequestMetadata{}
+		}
+		if expected.RequestMetadata.Authority == "" {
+			expected.RequestMetadata.Authority = address
+		}
+	}
+	return c.inner.SendRPC(t, rewritten, expected, timeout)
 }
 
 func (c *dindRewritingGRPCClient) Close() { c.inner.Close() }
