@@ -346,8 +346,17 @@ templateSnippets:
               // bump on the rendered phase — the bit it cares about
               // is observedGeneration matching spec.metadata.
               // generation, NOT the Status value.
+              // Use the per-parent loop index for RouteParentTransitionTime —
+              // parentIdx (the outer accumulator) sits at len(parents) by the
+              // time we get here, so passing parentIdx-1 to the lookup hands
+              // every rendered parent the LAST parent's transition time. With
+              // multiple parentRefs that means every "Accepted=False/Pending"
+              // condition we emit during the rendered phase carries the wrong
+              // lastTransitionTime — only the last parent gets a stable value,
+              // every other parent gets the wrong stamp on each render. (Gitar
+              // caught this; tracking the loop index is the fix.)
               var renderedParents = []any{}
-              for _, pAny := range parents {
+              for rpIdx, pAny := range parents {
                 var pMap = pAny.(map[string]any)
                 var oldConds = pMap["conditions"].([]any)
                 var newConds = []any{}
@@ -358,7 +367,7 @@ templateSnippets:
                       "Accepted", "False", "Pending",
                       "Waiting for HAProxy to reload with the new configuration",
                       generation,
-                      RouteParentTransitionTime(route, parentIdx-1, "Accepted", "False")))
+                      RouteParentTransitionTime(route, rpIdx, "Accepted", "False")))
                   } else {
                     newConds = append(newConds, cAny)
                   }
@@ -713,8 +722,17 @@ templateSnippets:
               // reloads with the new TLSRoute, so the test's dial sees
               // a routable backend instead of falling through to
               // default_backend.
+              // Use the per-parent loop index for RouteParentTransitionTime —
+              // parentIdx (the outer accumulator) sits at len(parents) by the
+              // time we get here, so passing parentIdx-1 to the lookup hands
+              // every rendered parent the LAST parent's transition time. With
+              // multiple parentRefs that means every "Accepted=False/Pending"
+              // condition we emit during the rendered phase carries the wrong
+              // lastTransitionTime — only the last parent gets a stable value,
+              // every other parent gets the wrong stamp on each render. (Gitar
+              // caught this; tracking the loop index is the fix.)
               var renderedParents = []any{}
-              for _, pAny := range parents {
+              for rpIdx, pAny := range parents {
                 var pMap = pAny.(map[string]any)
                 var oldConds = pMap["conditions"].([]any)
                 var newConds = []any{}
@@ -725,7 +743,7 @@ templateSnippets:
                       "Accepted", "False", "Pending",
                       "Waiting for HAProxy to reload with the new configuration",
                       generation,
-                      RouteParentTransitionTime(route, parentIdx-1, "Accepted", "False")))
+                      RouteParentTransitionTime(route, rpIdx, "Accepted", "False")))
                   } else {
                     newConds = append(newConds, cAny)
                   }
