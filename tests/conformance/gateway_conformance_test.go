@@ -177,6 +177,16 @@ func TestGatewayAPIConformance(t *testing.T) {
 	rt, err := newNodePortRoundTripper(timeoutCfg, debug, router)
 	require.NoError(t, err, "build NodePort RoundTripper")
 
+	// gRPC dial-target rewriter: the upstream `grpc.DefaultClient`
+	// dials Gateway.status.addresses verbatim (no CustomDialContext
+	// hook like the HTTP RoundTripper has). In DinD that LB IP isn't
+	// reachable from the outer job container; wrap the default client
+	// so address rewriting lands the dial on the DinD host's
+	// kind-extraPortMapping equivalent (31080 for port 80, etc).
+	// Outside DinD this returns the upstream DefaultClient unchanged.
+	grpcClient, err := newGRPCClient()
+	require.NoError(t, err, "build DinD-aware gRPC client")
+
 	// SupportGatewayStaticAddresses substitutes PLACEHOLDER_USABLE_ADDRS /
 	// PLACEHOLDER_UNUSABLE_ADDRS in its Gateway fixture with the entries
 	// of UsableNetworkAddresses / UnusableNetworkAddresses we pass below.
@@ -199,6 +209,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		CleanupBaseResources: true,
 		SupportedFeatures:    supported,
 		RoundTripper:         rt,
+		GRPCClient:           grpcClient,
 		TimeoutConfig:        timeoutCfg,
 		Implementation: suite.ParseImplementation(
 			"haproxy-haptic",
