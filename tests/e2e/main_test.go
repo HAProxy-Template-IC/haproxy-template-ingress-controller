@@ -563,6 +563,17 @@ func chartCRDDir() (string, error) {
 // (which already binds 30080/30443/30404). The container-side NodePorts
 // remain 30080/30443/30404 — that's what the chart configures.
 //
+// NodePort range: the K8s apiserver's `--service-node-port-range` is
+// narrowed to e2eNodePortRangeStart..e2eNodePortRangeEnd (default
+// 30000-30299, 300 ports) and the kind container pre-declares a host
+// extraPortMapping for every port in that range, shifted by +1000. This
+// makes every NodePort the apiserver might allocate — for the chart's
+// own NodePort Service (pinned at 30080/30443/30404) and for the
+// per-Gateway LoadBalancer Services that conformance fixtures create —
+// reachable from outside DinD without any chart-side awareness of the
+// test rig. The chart stays environment-agnostic; the test config
+// arranges for whatever kube hands out to be reachable.
+//
 // DinD compatibility: networking.apiServerAddress, the "docker" certSAN, and
 // listenAddress on extraPortMappings are all required when this suite runs
 // inside GitLab's docker:dind service container. They are harmless on a
@@ -582,25 +593,14 @@ nodes:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
     extraPortMappings:
-      - containerPort: 30080
-        hostPort: 31080
-        protocol: TCP
-        listenAddress: "0.0.0.0"
-      - containerPort: 30443
-        hostPort: 31443
-        protocol: TCP
-        listenAddress: "0.0.0.0"
-      - containerPort: 30404
-        hostPort: 31404
-        protocol: TCP
-        listenAddress: "0.0.0.0"
-` + e2eKindPerGatewayPortMappings() + `
+` + e2eKindNodePortMappings() + `
 kubeadmConfigPatches:
   - |
     kind: ClusterConfiguration
     apiServer:
       extraArgs:
         enable-admission-plugins: NodeRestriction,MutatingAdmissionWebhook,ValidatingAdmissionWebhook
+        service-node-port-range: "` + fmt.Sprintf("%d-%d", e2eNodePortRangeStart, e2eNodePortRangeEnd) + `"
 kubeadmConfigPatchesJSON6902:
   - group: kubeadm.k8s.io
     version: v1beta3
@@ -630,41 +630,36 @@ func repoRoot() (string, error) {
 	}
 }
 
-// e2eKindPerGatewayPortMappings returns the per-Gateway-Service
-// NodePort extraPortMappings to splice into `e2eKindConfig`. The chart's
-// 17-per-gateway-services.yaml pins per-Gateway HTTPS NodePorts in a
-// known range (default base 31100, sequential per
-// `gatewayPodPortAllocations` index). Conformance fixtures stay well
-// under 100 concurrent allocations on this branch, so 100 mappings
-// cover every test today; expand if a future fixture set needs more.
+// e2eNodePortRange is the kube-apiserver `--service-node-port-range`
+// the e2e suite narrows to. Both the chart's own NodePort Service
+// (pinned at 30080/30443/30404 in dev-values) and every per-Gateway
+// LoadBalancer Service the conformance fixtures create end up with
+// NodePorts inside this range, so kind only has to pre-declare
+// extraPortMappings for these 300 ports rather than the entire default
+// 30000-32767. Expand if a future fixture set creates more than ~290
+// concurrent listener-port allocations (chart-static eats 3).
 //
-// Without these mappings the chart's per-Gateway HTTPS Services
-// resolve to NodePorts only kind's docker network can reach. In a
-// flat local docker setup that's enough — the test process and
-// kind share a network. In GitLab CI Docker-in-Docker, the test
-// process sits on the OUTER docker network; only ports kind
-// explicitly exports via extraPortMappings are reachable. So
-// without this range, per-Gateway HTTPS conformance (HTTPRoute
-// HTTPSListener, TLSRoute*, GatewayFrontend*ClientCertificateValidation
-// ...) fails with TCP timeouts. The chart's controller-side base
-// `perGatewayNodePortBase` matches `e2eKindPerGatewayNodePortBase`
-// here — keep these in lockstep or both ends drift apart and the
-// extraPortMappings stop matching the chart's allocations.
+// The host-side shift to 31xxx mirrors the existing 30080→31080 et al.
+// scheme so the e2e cluster can coexist with the developer's
+// kind-haptic-dev cluster on the same docker daemon. The chart itself
+// is unaware of either the range or the shift — `remapNodePortForDinD`
+// (in tests/conformance/roundtripper.go) does the +1000 translation
+// when the test runs under DinD.
 const (
-	e2eKindPerGatewayNodePortBase  = 31100
-	e2eKindPerGatewayNodePortCount = 100
+	e2eNodePortRangeStart    = 30000
+	e2eNodePortRangeEnd      = 30299
+	e2eNodePortRangeHostShift = 1000
 )
 
-func e2eKindPerGatewayPortMappings() string {
+func e2eKindNodePortMappings() string {
 	var b strings.Builder
-	for i := 0; i < e2eKindPerGatewayNodePortCount; i++ {
-		port := e2eKindPerGatewayNodePortBase + i
+	for port := e2eNodePortRangeStart; port <= e2eNodePortRangeEnd; port++ {
 		fmt.Fprintf(&b,
 			"      - containerPort: %d\n"+
 				"        hostPort: %d\n"+
 				"        protocol: TCP\n"+
 				"        listenAddress: \"0.0.0.0\"\n",
-			port, port)
+			port, port+e2eNodePortRangeHostShift)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

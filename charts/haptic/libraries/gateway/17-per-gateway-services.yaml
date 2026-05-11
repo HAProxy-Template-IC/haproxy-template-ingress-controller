@@ -80,54 +80,19 @@ templateSnippets:
                 }
                 seenPort[lPort] = true
                 var targetPort = lPort
-                var pinnedNodePort = 0
                 if lProto == "HTTPS" {
                   hasHTTPS = true
                   var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
                   if val, ok := allocations[allocKey]; ok {
                     targetPort = toint(val)
-                    // Pin the NodePort deterministically. Without
-                    // pinning, K8s assigns a random NodePort in
-                    // 30000-32767, which kind's host-side
-                    // extraPortMappings can't pre-declare. In a flat
-                    // local docker setup the random NodePort is
-                    // reachable on the kind node's docker-network IP
-                    // directly; in GitLab CI Docker-in-Docker, the
-                    // outer job container can ONLY reach host ports
-                    // that kind explicitly exports via
-                    // extraPortMappings — so random NodePorts are
-                    // unreachable from outside DinD and every
-                    // per-Gateway HTTPS conformance test fails with
-                    // a TCP timeout (the same root cause that closed
-                    // GatewayFrontendClientCertificateValidation* in
-                    // local mode but still kept those tests failing
-                    // under CI's DinD).
-                    //
-                    // Derive the NodePort from the allocated pod
-                    // port: `nodePortBase + (targetPort - podPortBase)`.
-                    // The pod-port allocator hands out targetPort
-                    // sequentially from podPortBase (default 18000),
-                    // so the same allocation_idx gives the same
-                    // NodePort across renders, and the chart can
-                    // declare the matching extraPortMappings range
-                    // ahead of time. The kind e2e config (tests/e2e/
-                    // main_test.go:e2eKindConfig) exposes the
-                    // first 100 ports of this range.
-                    var podBase = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
-                    var npBase = toint(extraContext | dig("perGatewayNodePortBase") | fallback(31100))
-                    pinnedNodePort = npBase + (targetPort - podBase)
                   }
                 }
-                var portEntry = map[string]any{
+                ports = append(ports, map[string]any{
                   "name":       "p" + tostring(lPort),
                   "port":       lPort,
                   "targetPort": targetPort,
                   "protocol":   "TCP",
-                }
-                if pinnedNodePort > 0 {
-                  portEntry["nodePort"] = pinnedNodePort
-                }
-                ports = append(ports, portEntry)
+                })
               }
               if hasHTTPS && len(ports) > 0 {
                 var svcName = BoundedK8sName("gw", gwNs, gwName, "")

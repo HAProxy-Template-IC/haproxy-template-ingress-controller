@@ -504,37 +504,39 @@ func nodePortHost() string {
 	return "127.0.0.1"
 }
 
+// e2eKindNodePortRange* / e2eKindNodePortHostShift mirror the kind
+// extraPortMapping range declared in tests/e2e/main_test.go. The
+// kube-apiserver's `--service-node-port-range` is narrowed to
+// [Start, End], and the kind cluster pre-declares one extraPortMapping
+// per port in that range, shifting containerPort N to hostPort
+// N + HostShift. So every NodePort the apiserver might allocate —
+// chart-static OR per-Gateway dynamic — is reachable from outside
+// DinD at the shifted host port. Keep these constants in lockstep
+// with `e2eNodePortRange*` in tests/e2e/main_test.go.
+const (
+	e2eKindNodePortRangeStart = 30000
+	e2eKindNodePortRangeEnd   = 30299
+	e2eKindNodePortHostShift  = 1000
+)
+
 // remapNodePortForDinD translates a K8s-assigned NodePort to its kind
 // extraPortMapping equivalent when running in DinD.
 //
-// The chart's user-facing Service nominally has NodePorts 30080 / 30443
-// / 30404 (HTTP / HTTPS / stats). In a flat local docker setup the kind
-// node container is on the host's docker network, so those NodePorts
-// are reachable as kindNodeIP:30080 directly. In GitLab CI's DinD,
-// the kind node lives inside the DinD container's docker daemon — its
-// docker network isn't routable from the outer job container. The
-// e2e kind config (tests/e2e/main_test.go:e2eKindConfig) compensates
-// with `extraPortMappings`:
+// In a flat local docker setup the kind node container is on the host's
+// docker network, so the apiserver-assigned NodePort is reachable as
+// `kindNodeIP:<nodePort>` directly. In GitLab CI's DinD, the kind node
+// lives inside the DinD container's docker daemon — its docker network
+// isn't routable from the outer job container. The e2e kind config
+// (tests/e2e/main_test.go:e2eKindConfig) compensates with one
+// extraPortMapping per port in [e2eKindNodePortRangeStart, …End],
+// shifting containerPort N to hostPort N + e2eKindNodePortHostShift.
 //
-//   containerPort 30080 → hostPort 31080
-//   containerPort 30443 → hostPort 31443
-//   containerPort 30404 → hostPort 31404
-//
-// That means in DinD the chart's HTTP NodePort is reachable on the
-// DinD hostname at port 31080, not 30080. `buildInitialPortTable`'s
-// static entries already use 31080 / 31443. But `discoverPerGateway
-// NodePorts` reads K8s `Service.spec.ports[].nodePort` straight from
-// the apiserver — which returns 30080 / 30443 / 30404 — and stuffs
-// them into byLBIP. In DinD, dials against those bare NodePorts
-// hit the DinD container which has no service listening there,
-// producing `connection refused`.
-//
-// Translate the well-known triple here. Any NodePort that isn't one
-// of {30080, 30443, 30404} falls through unchanged — it'll be
-// unreachable from outside DinD regardless (kind has no extra-
-// PortMapping for it), so the dial will fail loudly with a clear
-// timeout / refused error in tests' retry logs rather than us
-// silently mismapping it onto a port that does work.
+// Translation rule: in DinD, any NodePort inside the configured range
+// is reachable at port (nodePort + HostShift) on the DinD hostname.
+// NodePorts outside the range — should never happen, since the
+// apiserver is constrained to the same range via service-node-port-range —
+// fall through unchanged so dial errors surface loudly instead of being
+// silently mismapped onto a port that does work.
 //
 // Outside DinD: no translation. The K8s NodePort is what kind nodes
 // bind on the local docker daemon's network; that IS reachable.
@@ -542,13 +544,8 @@ func remapNodePortForDinD(nodePort int) int {
 	if !kindutil.IsDockerInDocker() {
 		return nodePort
 	}
-	switch nodePort {
-	case 30080:
-		return 31080
-	case 30443:
-		return 31443
-	case 30404:
-		return 31404
+	if nodePort >= e2eKindNodePortRangeStart && nodePort <= e2eKindNodePortRangeEnd {
+		return nodePort + e2eKindNodePortHostShift
 	}
 	return nodePort
 }
