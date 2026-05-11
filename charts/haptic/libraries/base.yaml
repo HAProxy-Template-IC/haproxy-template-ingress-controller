@@ -97,27 +97,24 @@ templateSnippets:
   # Frontend Routing Logic
   # ============================================================================
 
-  frontend-routing-logic:
+  # ----------------------------------------------------------------------------
+  # util-routing-prefix / util-routing-suffix
+  #
+  # The two `frontend-routing-logic{,-regex-last}` variants share ~100 lines
+  # of host extraction + host_match cascade + listener_port translation
+  # (the prefix) and ~30 lines of qualifier parsing + MULTIBACKEND routing
+  # + owner-resource identity (the suffix). The only difference is the
+  # four path-matching set-var lines in the middle (regex's place in the
+  # cascade). Hoisting the prefix and suffix into shared snippets means
+  # there's exactly one source for the cascade — Gitar already caught a
+  # lockstep drift on this MR (the regex-last variant was missing the
+  # listener_port setup), and the shared snippet is what prevents the
+  # next one. The variants below are 1-line shells that render the
+  # prefix, emit their unique path-match cascade, and render the suffix.
+  # ----------------------------------------------------------------------------
+  util-routing-prefix:
     template: |-
-      {#-
-        Path-based routing with qualifier system for backend selection.
-
-        Qualifiers (set by map files, resolved here):
-          - BACKEND:<name> → Direct routing to named backend
-          - MULTIBACKEND:<weight>:<key> → Weighted routing via weighted-multi-backend.map
-
-        Path Matching Order: Exact > Regex > Prefix-exact > Prefix
-        (To select the alternative performance-first order — Exact > Prefix-exact >
-         Prefix > Regex — set controller.config.routing.regexMatchOrder=last in
-         values.yaml. The chart swaps in the frontend-routing-logic-regex-last
-         variant below at load time.)
-
-        Extension Points:
-          - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
-      -#}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      # base/frontend-routing-logic
-
       # Host and path extraction
       http-request set-var(txn.base) base
       http-request set-var(txn.path) path
@@ -136,12 +133,6 @@ templateSnippets:
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-      # Per-listener-port fallback: when no hostname-based lookup
-      # matched, isolate routes by the inbound listener port.
-      # Resource libraries that emit listeners on non-default ports
-      # (e.g. Gateway API listener-port-matching) write
-      # `<host>:<port>` and / or `:<port>` entries into host.map.
-      #
       # Per-Gateway pod-port translation: phase 4's per-Gateway HTTPS
       # binds listen on allocated pod ports (e.g. 18002) but the chart
       # emits host/path map entries and redirect-filter port logic
@@ -160,32 +151,24 @@ templateSnippets:
       http-request set-var(txn.dst_port) dst_port
       http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
       http-request set-var(txn.listener_port) var(txn.dst_port) if !{ var(txn.listener_port) -m found }
+      # Per-listener-port fallback: when no hostname-based lookup
+      # matched, isolate routes by the inbound listener port.
+      # Resource libraries that emit listeners on non-default ports
+      # (e.g. Gateway API listener-port-matching) write
+      # `<host>:<port>` and / or `:<port>` entries into host.map.
+      #
       # Gate: `len 0` rather than `!found`, because the host_full and
       # host-regex lookups above may have already SET host_match (to
       # an empty string when the lookup yielded no match). `-m found`
       # would be true after that, blocking this fallback. `-m len 0`
       # fires whenever the variable is set-but-empty, which is
       # exactly the post-cascade state we want to recover from.
-      # Try `<host>:<listener_port>` first — covers requests where
-      # the client didn't include the port in the Host header but the
-      # listener routes by host+port (Gateway API listener-port
-      # matching for non-default ports). Without this, an HTTPS
-      # request to `https://second-example.org:8443/` arrives with
-      # Host=`second-example.org` (HTTP/1.1 elides the explicit
-      # port for HTTPS-default ports, and Go's http library sends
-      # the literal req.Host string the test framework configured).
-      # The chart's host.map carries entries like
-      # `second-example.org:8443 second-example.org:8443`; this lookup
-      # constructs the same key from the inbound listener_port.
       http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
-      # Path matching: Exact > Regex > Prefix-exact > Prefix
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
-
+  util-routing-suffix:
+    template: |-
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # Parse qualifier type
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
 
@@ -218,6 +201,34 @@ templateSnippets:
       http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
       http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
 
+  frontend-routing-logic:
+    template: |-
+      {#-
+        Path-based routing with qualifier system for backend selection.
+
+        Qualifiers (set by map files, resolved here):
+          - BACKEND:<name> → Direct routing to named backend
+          - MULTIBACKEND:<weight>:<key> → Weighted routing via weighted-multi-backend.map
+
+        Path Matching Order: Exact > Regex > Prefix-exact > Prefix
+        (To select the alternative performance-first order — Exact > Prefix-exact >
+         Prefix > Regex — set controller.config.routing.regexMatchOrder=last in
+         values.yaml. The chart swaps in the frontend-routing-logic-regex-last
+         variant below at load time.)
+
+        Extension Points:
+          - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
+      -#}
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      # base/frontend-routing-logic
+      {{ render "util-routing-prefix" }}
+      # Path matching: Exact > Regex > Prefix-exact > Prefix
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
+      {{ render "util-routing-suffix" }}
+
   frontend-routing-logic-regex-last:
     template: |-
       {#-
@@ -229,75 +240,19 @@ templateSnippets:
         the operator-visible HAProxyTemplateConfig output.
 
         Differs from the default variant only in the four path-matching set-var
-        lines below (regex moved to last). All other logic is identical and must
-        stay in lockstep with frontend-routing-logic.
+        lines below (regex moved to last); the shared prefix and suffix are
+        emitted via util-routing-prefix / util-routing-suffix to eliminate
+        lockstep drift.
       -#}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # base/frontend-routing-logic (regex-last variant)
-
-      # Host and path extraction
-      http-request set-var(txn.base) base
-      http-request set-var(txn.path) path
-      # txn.host_full keeps the Host header verbatim (with any :port suffix)
-      # so port-pinned routes — Gateway listeners on non-default ports —
-      # match before the port-stripped fallback lookups. The full-host
-      # lookup only fires when a request actually carried a port,
-      # so the common port-default case has zero overhead.
-      http-request set-var(txn.host_full) req.hdr(Host),lower
-      http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      # Seed host_match to '' so the cascade below can consistently use
-      # `len 0` to mean "no match yet" — works whether or not the
-      # `host_full -m sub :` gate fired on the first lookup.
-      http-request set-var(txn.host_match) str()
-      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-      # Per-Gateway pod-port translation: see frontend-routing-logic for
-      # the full rationale (must stay in lockstep with the default
-      # variant). Sets txn.listener_port unconditionally so downstream
-      # consumers — the host.map fallbacks below and the redirect
-      # filter in gateway/60-frontend.yaml — read the user-facing
-      # listener port instead of the allocated pod port, even when an
-      # operator opts into regexMatchOrder=last.
-      http-request set-var(txn.dst_port) dst_port
-      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
-      http-request set-var(txn.listener_port) var(txn.dst_port) if !{ var(txn.listener_port) -m found }
-      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
-
+      {{ render "util-routing-prefix" }}
       # Path matching: Exact > Prefix-exact > Prefix > Regex
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
-
-      # Parse qualifier type
-      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-
-      # Extension point: advanced matchers (method/header/query)
-      {{- render_glob "frontend-matchers-advanced-*" }}
-      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-
-      # MULTIBACKEND: weighted routing via random selection
-      http-request set-var(txn.total_weight) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.random_weight) rand(),mod(txn.total_weight) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.route_key) var(txn.path_match),field(3,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.lookup_key) var(txn.random_weight),concat(:,txn.route_key,) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-
-      # BACKEND: direct routing
-      http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
-
-      # Owner-resource identity (mirrors frontend-routing-logic; must stay
-      # in lockstep — see charts/CLAUDE.md "All other logic is identical").
-      http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
-      http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
-      http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.resource_namespace) var(req.gw_rule_id),field(1,_)   if { var(req.gw_rule_id) -m found }
-      http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
-      http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
+      {{ render "util-routing-suffix" }}
 
   # ============================================================================
   # Backend Server Generation
