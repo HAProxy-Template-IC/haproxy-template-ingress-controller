@@ -154,7 +154,37 @@ func TestGatewayAPIConformance(t *testing.T) {
 		supported.Insert(f.Name)
 	}
 
+	// Upstream defaults are sized for "any compliant implementation,
+	// even a slow one" — RequestTimeout=10s with 3 consecutive successes
+	// and MaxTimeToConsistency=30s adds up to 30+s per failing sub-test,
+	// and GatewayMustHaveAddress=180s lets a doomed test linger for 3
+	// minutes before giving up. On our chart Gateways are Programmed in
+	// ~1-2s and HTTP requests complete in <1s; the only paths that
+	// approach the upstream limits are the failure paths. Tighten so
+	// fail-mode shards complete in single-digit minutes instead of
+	// 12+ minutes (each TLS / HTTPS sub-test that can't reach a backend
+	// burns RequestTimeout × RequiredConsecutiveSuccesses worth of
+	// budget before the test framework concludes failure).
+	//
+	// We're aggressive on retry / consistency budgets (5s where upstream
+	// says 30s) and modest on Kubernetes-object timeouts (GetTimeout etc.
+	// stay at upstream defaults — those are reads against the apiserver,
+	// not the chart's data plane, and we don't gain by tightening them).
 	timeoutCfg := conformanceconfig.DefaultTimeoutConfig()
+	timeoutCfg.MaxTimeToConsistency = 5 * time.Second
+	timeoutCfg.RequestTimeout = 5 * time.Second
+	timeoutCfg.GatewayMustHaveAddress = 30 * time.Second
+	timeoutCfg.GatewayMustHaveCondition = 30 * time.Second
+	timeoutCfg.GatewayStatusMustHaveListeners = 30 * time.Second
+	timeoutCfg.GatewayListenersMustHaveConditions = 30 * time.Second
+	timeoutCfg.ListenerSetMustHaveCondition = 30 * time.Second
+	timeoutCfg.ListenerSetListenersMustHaveConditions = 30 * time.Second
+	timeoutCfg.HTTPRouteMustHaveCondition = 30 * time.Second
+	timeoutCfg.TLSRouteMustHaveCondition = 30 * time.Second
+	timeoutCfg.RouteMustHaveParents = 30 * time.Second
+	timeoutCfg.NamespacesMustBeReady = 90 * time.Second
+	timeoutCfg.LatestObservedGenerationSet = 20 * time.Second
+	timeoutCfg.DefaultTestTimeout = 30 * time.Second
 	debug := os.Getenv("CONFORMANCE_DEBUG") != ""
 
 	// Conformance traffic targets Gateway.Status addresses (metallb LB IPs
