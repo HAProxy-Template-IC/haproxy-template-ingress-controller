@@ -38,6 +38,52 @@ templateSnippets:
         {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1
       {%- end -%}
 
+  util-crtlist-line:
+    template: |
+      {#- Build a single crt-list line.
+
+            <certFilename> [ocsp-update on[ ca-file <ca> verify <mode>]]\
+                          [ <sniSuffix>]
+
+          Inputs:
+            certFilename   The cert file as stored on disk (sanitized
+                           filename from features-100-{ingress,gateway}-tls).
+            mtlsCfg        Optional `map[string]any{"ca_path": …,
+                           "verify_mode": …}` — either nil (no client-
+                           cert validation) or a resolved validation
+                           block. The bracketed clause is emitted only
+                           when both fields are non-empty.
+            sniSuffix      Space-joined SNI patterns (shared chart-static
+                           crt-list groups multiple SNIs per line) OR a
+                           single listener hostname (per-listener
+                           crt-list scopes one cert to one hostname).
+                           Empty string for catchall — no trailing SNI
+                           filter is appended.
+
+          NOTE: `ca-ignore-err all crt-ignore-err all` (the
+          AllowInsecureFallback lift) is BIND-scope, not crt-list-
+          scope — HAProxy rejects the keywords inside a crt-list line.
+          Phase 4's per-Gateway bind reads `gatewayListenerMTLSConfig`
+          directly and adds the flags to its `bind *:<podPort>`
+          directive; this macro does NOT emit them.
+      -#}
+      {%- macro CrtListLine(certFilename string, mtlsCfg any, sniSuffix string) string %}
+        {%- var opts = "ocsp-update on" %}
+        {%- if mtlsCfg != nil %}
+          {%- var cfg = mtlsCfg.(map[string]any) %}
+          {%- var caPath = tostring(cfg["ca_path"]) %}
+          {%- var verifyMode = tostring(cfg["verify_mode"]) %}
+          {%- if caPath != "" && verifyMode != "" %}
+            {%- opts = opts + " ca-file " + caPath + " verify " + verifyMode %}
+          {%- end %}
+        {%- end %}
+        {%- var line = certFilename + " [" + opts + "]" %}
+        {%- if sniSuffix != "" %}
+          {%- line = line + " " + sniSuffix %}
+        {%- end %}
+        {{- line -}}
+      {%- end %}
+
   features-050-ssl-initialization:
     template: |
       {#-
@@ -138,6 +184,7 @@ templateSnippets:
 
   features-150-ssl-crtlist:
     template: |
+      {%- import "util-crtlist-line" for CrtListLine -%}
       {#-
         SSL CRT-List Generation
 
@@ -216,14 +263,8 @@ templateSnippets:
           mode — closes the conformance gap where port 443 (no
           listener hostname, default frontend validation) was answering
           handshakes without client-cert verification. -#}
-      {%- var defaultLineOpts = "[ocsp-update on" -%}
       {%- var defaultCfg = clientCertVerifyHosts["*"] -%}
-      {%- if defaultCfg != nil -%}
-        {%- var dCfg = defaultCfg.(map[string]any) -%}
-        {%- defaultLineOpts = defaultLineOpts + " ca-file " + tostring(dCfg["ca_path"]) + " verify " + tostring(dCfg["verify_mode"]) -%}
-      {%- end -%}
-      {%- defaultLineOpts = defaultLineOpts + "]" -%}
-      {%- var crtlistLines = []any{tostring(defaultCertFilename) + " " + defaultLineOpts} -%}
+      {%- var crtlistLines = []any{tostring(CrtListLine(tostring(defaultCertFilename), defaultCfg, ""))} -%}
 
       {# Generate entries for each registered TLS certificate.
          Per-host client-cert verification (driven by the ingress
@@ -269,14 +310,12 @@ templateSnippets:
         {%- var sortedKeys = sort_strings(keyList) -%}
         {%- for _, key := range sortedKeys -%}
           {%- var groupSnis = snisByConfig[key] -%}
-          {%- var sslOptions = "[ocsp-update on" -%}
+          {%- var cfg any = nil -%}
           {%- if key != "" -%}
-            {%- var cfg = configForKey[key].(map[string]any) -%}
-            {%- sslOptions = sslOptions + " ca-file " + tostring(cfg["ca_path"]) + " verify " + tostring(cfg["verify_mode"]) -%}
+            {%- cfg = configForKey[key] -%}
           {%- end -%}
-          {%- sslOptions = sslOptions + "]" -%}
           {%- var sniList = groupSnis | toStringSlice() | join(" ") -%}
-          {%- var line = tostring(certFilename) + " " + sslOptions + " " + sniList -%}
+          {%- var line = tostring(CrtListLine(tostring(certFilename), cfg, sniList)) -%}
           {%- crtlistLines = append(crtlistLines, line) -%}
         {%- end -%}
       {%- end -%}

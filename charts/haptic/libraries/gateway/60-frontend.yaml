@@ -13,6 +13,30 @@ templateSnippets:
           Gateway as a whole; multiple catch-all listeners on the same
           Gateway collapse to the same identity (which is correct per
           spec since they all accept the same un-claimed hostnames). -#}
+      {%%
+        // classifyHostname appends entries to the right output slice
+        // for a single (HTTPS / TLS) listener hostname `lh`. Returns
+        // true when the listener is a catch-all (empty / `*`), so the
+        // outer loop knows to emit the per-Gateway catch-all marker
+        // once. Shared between the Gateway-owned and ListenerSet-owned
+        // listener loops below — keeping the classification in one
+        // place is what blocks drift between the two halves
+        // (previously the wildcard regex's `$` anchor was escaped
+        // inconsistently across the duplicated bodies).
+        var classifyHostname = func(lh string) bool {
+          if lh == "" || lh == "*" {
+            return true
+          }
+          if regex_search(lh, "^\\*\\.") {
+            var suffix = lh[2:]
+            var regexBase = tostring(replace(suffix, ".", "\\."))
+            regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh)
+            return false
+          }
+          exactEntries = append(exactEntries, lh + " " + lh)
+          return false
+        }
+      %%}
       {%- var catchallEntries = []any{} %}
       {%- for _, gw := range resources.gateways.List() | toSlice() %}
         {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
@@ -22,21 +46,8 @@ templateSnippets:
           {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
           {%- if protocol == "HTTPS" || protocol == "TLS" %}
             {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
-            {%- if lh == "" || lh == "*" %}
+            {%- if classifyHostname(lh) %}
               {%- gwHasCatchall = true %}
-            {%- else if regex_search(lh, "^\\*\\.") %}
-              {#- Wildcard hostname — match exactly one DNS label
-                  in front of the suffix, per Gateway API spec. -#}
-              {%- var suffix = lh[2:] %}
-              {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
-              {#- $ is the regex end-of-string anchor; we DON'T escape it
-                  here. Earlier versions emitted `\$` which HAProxy reads
-                  as a literal `$` character — making the regex never
-                  match real hostnames. The catch-all marker below has
-                  the same fix. -#}
-              {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh) %}
-            {%- else %}
-              {%- exactEntries = append(exactEntries, lh + " " + lh) %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -49,19 +60,8 @@ templateSnippets:
               {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
               {%- if protocol == "HTTPS" || protocol == "TLS" %}
                 {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
-                {%- if lh == "" || lh == "*" %}
+                {%- if classifyHostname(lh) %}
                   {%- gwHasCatchall = true %}
-                {%- else if regex_search(lh, "^\\*\\.") %}
-                  {%- var suffix = lh[2:] %}
-                  {%- var regexBase = tostring(replace(suffix, ".", "\\.")) %}
-                  {#- $ is the regex end-of-string anchor; we DON'T escape it
-                  here. Earlier versions emitted `\$` which HAProxy reads
-                  as a literal `$` character — making the regex never
-                  match real hostnames. The catch-all marker below has
-                  the same fix. -#}
-              {%- regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh) %}
-                {%- else %}
-                  {%- exactEntries = append(exactEntries, lh + " " + lh) %}
                 {%- end %}
               {%- end %}
             {%- end %}

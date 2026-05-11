@@ -79,6 +79,7 @@ templateSnippets:
               failed in `features-100-gateway-tls`).
       -#}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
+      {%- import "util-crtlist-line" for CrtListLine %}
       {{ render "util-tls-cert-by-secret" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {#- Per-listener mTLS state populated by
@@ -127,32 +128,7 @@ templateSnippets:
                         regardless of overlapping hostnames with
                         sibling Gateways. -#}
                     {%- var mtlsCfg = perListenerMTLS[gwNs + "/" + gwName + "/" + lName] %}
-
-                    {%- var sslOpts = "ocsp-update on" %}
-                    {%- if mtlsCfg != nil %}
-                      {%- var cfg = mtlsCfg.(map[string]any) %}
-                      {%- var caPath = tostring(cfg["ca_path"]) %}
-                      {%- var verifyMode = tostring(cfg["verify_mode"]) %}
-                      {%- if caPath != "" && verifyMode != "" %}
-                        {%- sslOpts = sslOpts + " ca-file " + caPath + " verify " + verifyMode %}
-                        {#- `verify optional` aborts on cert validation
-                            failure by default; AllowInsecureFallback
-                            requires the handshake to complete even on
-                            failure. The lift comes from `ca-ignore-err
-                            all crt-ignore-err all`, but that's BIND-
-                            scope (HAProxy rejects it as a keyword
-                            inside a crt-list line). Phase 4's per-
-                            listener bind sees the same `verify_mode`
-                            via gatewayListenerMTLSConfig and adds the
-                            ignore-err flags to the bind itself. -#}
-                      {%- end %}
-                    {%- end %}
-
-                    {%- var line = certFilename + " [" + sslOpts + "]" %}
-                    {%- if lHostname != "" %}
-                      {%- line = line + " " + lHostname %}
-                    {%- end %}
-                    {%- var content = line + "\n" %}
+                    {%- var content = CrtListLine(certFilename, mtlsCfg, lHostname) + "\n" %}
                     {%- var fname = CrtlistName(gwNs, gwName, lName) %}
                     {%- var _, regErr = fileRegistry.Register("crt-list", fname, content) %}
                     {%- if regErr != nil %}

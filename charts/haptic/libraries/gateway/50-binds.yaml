@@ -1,108 +1,89 @@
 templateSnippets:
-  http-bind-extra-050-gateway-multi-port-bind:
+  # ----------------------------------------------------------------------------
+  # util-gateway-extra-port-binds
+  #
+  # Walks Gateway-owned + admitted-ListenerSet listeners and emits one
+  # `bind *:<port><sslOptionsSuffix>` line per unique listener port
+  # matching the protocol filter. Drives both http-bind-extra-050 and
+  # https-bind-extra-050: each calls in with its own protocol +
+  # ssl-options suffix and a `seen[]` set seeded with the chart-static
+  # ports it should NOT redirect (so non-default HTTP listeners on
+  # port 80 fall through to the chart-static bind, and non-default
+  # HTTPS listeners on port 443 / port 80 don't double-render).
+  #
+  # Inlines the F3 allowedListeners gate (default-deny when unset;
+  # from=Same admits ListenerSets in the parent's namespace;
+  # from=All admits everywhere; from=Selector matches namespace
+  # labels) plus the cross-namespace ReferenceGrant gate, so the
+  # binds match what status-patches-220-listenerset accepts.
+  # ----------------------------------------------------------------------------
+  util-gateway-extra-port-binds:
     template: |
-      {#- Walk Gateway-owned listeners + accepted ListenerSet listeners
-          so non-default HTTP ports declared on either get a bind line.
-          Inlines the F3 allowedListeners gate (default-deny when unset;
-          from=Same admits ListenerSets in the parent's namespace,
-          from=All admits everywhere; from=Selector matches the
-          ListenerSet's namespace labels against
-          allowedListeners.namespaces.selector.matchLabels) plus the
-          cross-namespace ReferenceGrant gate, so binds match what
-          status-patches-220-listenerset accepts. -#}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {%- var defaultPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
-      {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-      {%- var seen = map[int]bool{} %}
-      {%- seen[defaultPort] = true %}
-      {#- Also skip the chart-static HTTPS port: a Gateway HTTP listener
-          on that port would emit `bind *:<httpsPort>` here, colliding
-          with the chart-static HTTPS bind on the sibling frontend.
-          Per Gateway API spec the conflict surfaces as Accepted=False
-          on the Gateway side; we just guarantee the data plane
-          doesn't fail to start. -#}
-      {%- seen[httpsPort] = true %}
-      {%- for _, gw := range resources.gateways.List() | toSlice() %}
-        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
-        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
-        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
-          {%- if protocol == "HTTP" %}
-            {%- var port = toint(listener | dig("port") | fallback(0)) %}
-            {%- if port > 0 && !seen[port] %}
-              {%- seen[port] = true %}
-      bind *:{{ port }}
+      {%- macro ExtraPortBinds(protocol string, sslOptionsSuffix string, seenInitial []int) %}
+        {%- var seen = map[int]bool{} %}
+        {%- for _, p := range seenInitial %}
+          {%- seen[p] = true %}
+        {%- end %}
+        {%- for _, gw := range resources.gateways.List() | toSlice() %}
+          {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+            {%- var lProto = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+            {%- if lProto == protocol %}
+              {%- var port = toint(listener | dig("port") | fallback(0)) %}
+              {%- if port > 0 && !seen[port] %}
+                {%- seen[port] = true %}
+      bind *:{{ port }}{{ sslOptionsSuffix }}
+              {%- end %}
             {%- end %}
           {%- end %}
-        {%- end %}
-        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
-          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
-              {%- if protocol == "HTTP" %}
-                {%- var port = toint(listener | dig("port") | fallback(0)) %}
-                {%- if port > 0 && !seen[port] %}
-                  {%- seen[port] = true %}
-      bind *:{{ port }}
+          {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+            {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+              {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+                {%- var lProto = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+                {%- if lProto == protocol %}
+                  {%- var port = toint(listener | dig("port") | fallback(0)) %}
+                  {%- if port > 0 && !seen[port] %}
+                    {%- seen[port] = true %}
+      bind *:{{ port }}{{ sslOptionsSuffix }}
+                  {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}
           {%- end %}
         {%- end %}
       {%- end %}
+
+  http-bind-extra-050-gateway-multi-port-bind:
+    template: |
+      {#- Non-default HTTP ports declared by Gateway listeners or admitted
+          ListenerSets land on the http_frontend via this snippet. We seed
+          `seen` with httpPort (the chart-static HTTP bind, default 80) and
+          httpsPort (a Gateway HTTP listener on the chart-static HTTPS port
+          would collide with the sibling frontend's bind, so skip — the
+          spec surfaces the conflict as Accepted=False, we just keep the
+          data plane parseable). See util-gateway-extra-port-binds for the
+          walk. -#}
+      {%- import "util-gateway-extra-port-binds" for ExtraPortBinds %}
+      {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+      {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+      {{ ExtraPortBinds("HTTP", "", []int{httpPort, httpsPort}) }}
+
   # gateway/https-bind-extra-050-gateway-multi-port-bind:
-  # Sibling to http-bind-extra-050-gateway-multi-port-bind. Walks
-  # Gateway-owned listeners + admitted ListenerSet listeners and emits
-  # one `bind *:<port> <ssl-options>` line per unique non-default
-  # Gateway HTTPS listener port. Hooks into the HTTPS-frontend-only
-  # https-bind-extra-* extension point (added to ssl.yaml's
-  # frontends-500-https) so the binds don't double-render into the HTTP
-  # frontend (where they would conflict with the existing http port
-  # bind anyway). The shared `util-ssl-bind-options` snippet emits the
-  # same crt-list / ALPN options chart-static HTTPS uses, so a non-
-  # default Gateway HTTPS listener gets the same TLS handshake
+  # Sibling to http-bind-extra-050-gateway-multi-port-bind. Hooks into the
+  # HTTPS-frontend-only `https-bind-extra-*` extension point (added to
+  # ssl.yaml's `frontends-500-https`) so the binds don't double-render
+  # into the http_frontend (where they'd conflict with the chart-static
+  # HTTP bind on the same port). The `util-ssl-bind-options` suffix emits
+  # the same crt-list / ALPN options chart-static HTTPS uses, so a
+  # non-default Gateway HTTPS listener gets the same TLS handshake
   # behaviour without re-deriving the option set.
   https-bind-extra-050-gateway-multi-port-bind:
     template: |
-      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {#- Skip the chart-static HTTPS port (default 443). Also skip the
-          chart-static HTTP port (default 80) because emitting a TLS
-          bind there would collide with the http-frontend's plain
-          bind on the same port — HAProxy rejects duplicate binds
-          across frontends, and the conflict is a Gateway-API
-          ProtocolConflict that should surface via status, not via
-          a parser error. -#}
+      {%- import "util-gateway-extra-port-binds" for ExtraPortBinds %}
       {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
       {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
-      {%- var seen = map[int]bool{} %}
-      {%- seen[httpsPort] = true %}
-      {%- seen[httpPort] = true %}
-      {%- for _, gw := range resources.gateways.List() | toSlice() %}
-        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
-          {%- if protocol == "HTTPS" %}
-            {%- var port = toint(listener | dig("port") | fallback(0)) %}
-            {%- if port > 0 && !seen[port] %}
-              {%- seen[port] = true %}
-      bind *:{{ port }}{{ render "util-ssl-bind-options" }}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
-          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
-              {%- if protocol == "HTTPS" %}
-                {%- var port = toint(listener | dig("port") | fallback(0)) %}
-                {%- if port > 0 && !seen[port] %}
-                  {%- seen[port] = true %}
-      bind *:{{ port }}{{ render "util-ssl-bind-options" }}
-                {%- end %}
-              {%- end %}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-      {%- end %}
+      {%- var sslSuffix = render "util-ssl-bind-options" %}
+      {{ ExtraPortBinds("HTTPS", tostring(sslSuffix), []int{httpsPort, httpPort}) }}
   # gateway/frontend-extra-100-gateway-misdirected:
   # Implements HTTPS listener-isolation 421 detection per the
   # HTTPRouteHTTPSListenerDetectMisdirectedRequests conformance test.
