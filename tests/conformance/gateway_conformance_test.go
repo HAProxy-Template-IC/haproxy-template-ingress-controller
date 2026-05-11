@@ -221,13 +221,22 @@ func TestGatewayAPIConformance(t *testing.T) {
 	require.NoError(t, err, "derive static-addresses pools from MetalLB IPAddressPool")
 
 	opts := suite.ConformanceOptions{
-		Client:               c,
-		ClientOptions:        clientOpts,
-		Clientset:            cs,
-		RestConfig:           cfg,
-		GatewayClassName:     gatewayClassName,
-		Debug:                debug,
-		CleanupBaseResources: true,
+		Client:        c,
+		ClientOptions: clientOpts,
+		Clientset:     cs,
+		RestConfig:    cfg,
+		GatewayClassName: gatewayClassName,
+		Debug:            debug,
+		// CleanupBaseResources=false leaves the conformance suite's
+		// fixtures (HTTPRoutes, GRPCRoutes, backend Deployments,
+		// reference Gateways…) in place after the suite exits, so
+		// the after_script captures haproxy.cfg / kubectl get pods /
+		// kubectl get httproutes.yaml with the *failing* route still
+		// applied. With cleanup=true those artifacts are empty by the
+		// time after_script runs, making any failure undiagnosable
+		// from CI alone. The kind cluster is per-shard ephemeral so
+		// leftover fixtures cost nothing.
+		CleanupBaseResources: false,
 		SupportedFeatures:    supported,
 		RoundTripper:         rt,
 		GRPCClient:           grpcClient,
