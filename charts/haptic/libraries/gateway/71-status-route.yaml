@@ -355,22 +355,33 @@ templateSnippets:
               // lastTransitionTime — only the last parent gets a stable value,
               // every other parent gets the wrong stamp on each render. (Gitar
               // caught this; tracking the loop index is the fix.)
+              // Drop Accepted=True from the rendered payload so SSA doesn't
+              // overwrite the deployed-variant Accepted=True every reconcile.
+              // Reason: each apply with field manager "haptic" replaces every
+              // field it specifies. Rendered + deployed using the same field
+              // manager on the same condition produces a tug-of-war:
+              //   rendered  → Accepted=False/Pending (this used to be here)
+              //   deployed  → Accepted=True
+              //   rendered  → Accepted=False/Pending
+              //   …
+              // Under conformance churn renders fire many times per second,
+              // so the test framework polling for Accepted=True keeps reading
+              // False/Pending after every render-pass. Omit Accepted from
+              // rendered → SSA leaves it alone → whichever deployed-pass
+              // landed last owns the field. Accepted=False cases (route
+              // attachment failures, parentRef rejections) still flow through
+              // because we only skip when it's True.
               var renderedParents = []any{}
-              for rpIdx, pAny := range parents {
+              for _, pAny := range parents {
                 var pMap = pAny.(map[string]any)
                 var oldConds = pMap["conditions"].([]any)
                 var newConds = []any{}
                 for _, cAny := range oldConds {
                   var cMap = cAny.(map[string]any)
                   if tostring(cMap["type"]) == "Accepted" && tostring(cMap["status"]) == "True" {
-                    newConds = append(newConds, condition(
-                      "Accepted", "False", "Pending",
-                      "Waiting for HAProxy to reload with the new configuration",
-                      generation,
-                      RouteParentTransitionTime(route, rpIdx, "Accepted", "False")))
-                  } else {
-                    newConds = append(newConds, cAny)
+                    continue
                   }
+                  newConds = append(newConds, cAny)
                 }
                 renderedParents = append(renderedParents, map[string]any{
                   "parentRef":      pMap["parentRef"],
@@ -731,22 +742,33 @@ templateSnippets:
               // lastTransitionTime — only the last parent gets a stable value,
               // every other parent gets the wrong stamp on each render. (Gitar
               // caught this; tracking the loop index is the fix.)
+              // Drop Accepted=True from the rendered payload so SSA doesn't
+              // overwrite the deployed-variant Accepted=True every reconcile.
+              // Reason: each apply with field manager "haptic" replaces every
+              // field it specifies. Rendered + deployed using the same field
+              // manager on the same condition produces a tug-of-war:
+              //   rendered  → Accepted=False/Pending (this used to be here)
+              //   deployed  → Accepted=True
+              //   rendered  → Accepted=False/Pending
+              //   …
+              // Under conformance churn renders fire many times per second,
+              // so the test framework polling for Accepted=True keeps reading
+              // False/Pending after every render-pass. Omit Accepted from
+              // rendered → SSA leaves it alone → whichever deployed-pass
+              // landed last owns the field. Accepted=False cases (route
+              // attachment failures, parentRef rejections) still flow through
+              // because we only skip when it's True.
               var renderedParents = []any{}
-              for rpIdx, pAny := range parents {
+              for _, pAny := range parents {
                 var pMap = pAny.(map[string]any)
                 var oldConds = pMap["conditions"].([]any)
                 var newConds = []any{}
                 for _, cAny := range oldConds {
                   var cMap = cAny.(map[string]any)
                   if tostring(cMap["type"]) == "Accepted" && tostring(cMap["status"]) == "True" {
-                    newConds = append(newConds, condition(
-                      "Accepted", "False", "Pending",
-                      "Waiting for HAProxy to reload with the new configuration",
-                      generation,
-                      RouteParentTransitionTime(route, rpIdx, "Accepted", "False")))
-                  } else {
-                    newConds = append(newConds, cAny)
+                    continue
                   }
+                  newConds = append(newConds, cAny)
                 }
                 renderedParents = append(renderedParents, map[string]any{
                   "parentRef":      pMap["parentRef"],
