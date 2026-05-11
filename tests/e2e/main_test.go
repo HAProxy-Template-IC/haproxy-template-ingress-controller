@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -568,7 +569,7 @@ func chartCRDDir() (string, error) {
 // local developer's docker daemon (the API server still binds locally and
 // the extra cert SAN is unused), so the same config works in both
 // environments without a runtime branch.
-const e2eKindConfig = `kind: Cluster
+var e2eKindConfig = `kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
   apiServerAddress: "0.0.0.0"
@@ -593,6 +594,7 @@ nodes:
         hostPort: 31404
         protocol: TCP
         listenAddress: "0.0.0.0"
+` + e2eKindPerGatewayPortMappings() + `
 kubeadmConfigPatches:
   - |
     kind: ClusterConfiguration
@@ -626,4 +628,43 @@ func repoRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// e2eKindPerGatewayPortMappings returns the per-Gateway-Service
+// NodePort extraPortMappings to splice into `e2eKindConfig`. The chart's
+// 17-per-gateway-services.yaml pins per-Gateway HTTPS NodePorts in a
+// known range (default base 31100, sequential per
+// `gatewayPodPortAllocations` index). Conformance fixtures stay well
+// under 100 concurrent allocations on this branch, so 100 mappings
+// cover every test today; expand if a future fixture set needs more.
+//
+// Without these mappings the chart's per-Gateway HTTPS Services
+// resolve to NodePorts only kind's docker network can reach. In a
+// flat local docker setup that's enough — the test process and
+// kind share a network. In GitLab CI Docker-in-Docker, the test
+// process sits on the OUTER docker network; only ports kind
+// explicitly exports via extraPortMappings are reachable. So
+// without this range, per-Gateway HTTPS conformance (HTTPRoute
+// HTTPSListener, TLSRoute*, GatewayFrontend*ClientCertificateValidation
+// ...) fails with TCP timeouts. The chart's controller-side base
+// `perGatewayNodePortBase` matches `e2eKindPerGatewayNodePortBase`
+// here — keep these in lockstep or both ends drift apart and the
+// extraPortMappings stop matching the chart's allocations.
+const (
+	e2eKindPerGatewayNodePortBase  = 31100
+	e2eKindPerGatewayNodePortCount = 100
+)
+
+func e2eKindPerGatewayPortMappings() string {
+	var b strings.Builder
+	for i := 0; i < e2eKindPerGatewayNodePortCount; i++ {
+		port := e2eKindPerGatewayNodePortBase + i
+		fmt.Fprintf(&b,
+			"      - containerPort: %d\n"+
+				"        hostPort: %d\n"+
+				"        protocol: TCP\n"+
+				"        listenAddress: \"0.0.0.0\"\n",
+			port, port)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
