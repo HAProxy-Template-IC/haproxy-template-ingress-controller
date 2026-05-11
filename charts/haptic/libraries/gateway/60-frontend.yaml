@@ -224,10 +224,16 @@ templateSnippets:
           {%- conditions = append(conditions, "{ method " + (riMethod) + " }") %}
         {%- end %}
 
-        {#- Header matchers #}
+        {#- Header matchers. Gateway-API spec: HTTPHeaderMatch.type
+            defaults to "Exact" when omitted. The chart sees the
+            HTTPRoute as authored — a server-side CRD apply DOES default
+            the field, but our chart-validation harness doesn't, and the
+            conformance suite's fixtures omit `type:` to exercise the
+            spec default. Treat empty / missing type as "Exact" so both
+            forms produce the same HAProxy predicate. #}
         {%- var riHeaders = riMatch["headers"] %}
         {%- for _, header := range riHeaders | toSlice() %}
-          {%- var headerType = header["type"] %}
+          {%- var headerType = tostring(header["type"] | fallback("Exact")) %}
           {%- var headerName = header["name"] %}
           {%- var headerValue = header["value"] %}
           {%- if headerType == "Exact" %}
@@ -239,10 +245,11 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
-        {#- Query parameter matchers (HTTPRoute only) #}
+        {#- Query parameter matchers (HTTPRoute only). Same spec default
+            as headers: QueryParamMatch.type → "Exact" when omitted. #}
         {%- var riParams = riMatch["queryParams"] %}
         {%- for _, param := range riParams | toSlice() %}
-          {%- var paramType = param["type"] %}
+          {%- var paramType = tostring(param["type"] | fallback("Exact")) %}
           {%- var paramName = param["name"] %}
           {%- var paramValue = param["value"] %}
           {%- if paramType == "Exact" %}
@@ -280,7 +287,10 @@ templateSnippets:
                 GRPCExactMethodMatching / GRPCRouteHeaderMatching /
                 GRPCRouteListenerHostnameMatching / GRPCRouteNamedRule /
                 GRPCRouteWeight conformance suites. #}
-            {%- var grpcType = grpcMethod_map["type"] %}
+            {#- GRPCMethodMatch.type defaults to "Exact" when omitted
+                (Gateway-API spec). Same defaulting fix as headers/
+                queryParams above. #}
+            {%- var grpcType = tostring(grpcMethod_map["type"] | fallback("Exact")) %}
             {%- if grpcType == "Exact" %}
               {%- conditions = append(conditions, "{ path \"" + grpcPath + "\" }") %}
             {%- else if grpcType == "RegularExpression" %}

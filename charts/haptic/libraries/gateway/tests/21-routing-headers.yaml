@@ -393,6 +393,109 @@ validationTests:
         pattern: "invalid\\.example\\.com"
         description: Invalid regex should not generate routing config
 
+  test-httproute-header-matching-conformance-fixture:
+    description: |
+      Mirrors the upstream Gateway-API conformance suite's
+      HTTPRouteHeaderMatching fixture: a Gateway with a wildcard-hostname
+      HTTP listener on port 80, and an HTTPRoute whose rules use ONLY
+      header matchers (no path, no method, no host). This is the
+      scenario that fails in CI shards (404 instead of 200). The chart
+      must emit set-var statements that pick the right backend based on
+      header values, even though the request has no path-or-host
+      specificity that would normally drive map lookups.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: same-namespace
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v2
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: header-matching
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: same-namespace
+            rules:
+              - matches:
+                  - headers:
+                      - name: version
+                        value: one
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+              - matches:
+                  - headers:
+                      - name: version
+                        value: two
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+              - matches:
+                  - headers:
+                      - name: color
+                        value: blue
+                  - headers:
+                      - name: color
+                        value: green
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "\\{ req\\.hdr\\(version\\) \"one\" \\}"
+        description: |
+          The rule matching `version: one` must emit a header-value
+          predicate. Failing this means the chart silently dropped the
+          header matcher.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "\\{ req\\.hdr\\(color\\) \"blue\" \\}"
+        description: |
+          The rule matching `color: blue` (one of an OR-list of two
+          color values) must emit its predicate too.
+
   test-httproute-header-edge-cases:
     description: HTTPRoute with edge case header matching (special characters)
     fixtures:
