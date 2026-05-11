@@ -322,18 +322,57 @@ templateSnippets:
             }
 
             if len(parents) > 0 {
-              // Emit both rendered + deployed phases (same content) so
-              // the patch fires after render even when deployment is
-              // skipped because the rendered HAProxy config is byte-
-              // identical to the previous render. Without this,
-              // observedGeneration in the route's parent.conditions
-              // lags behind spec.metadata.generation whenever a route
-              // mutation doesn't shift any HAProxy maps. Conformance
-              // GatewayObservedGenerationBump pins this for routes too.
+              // Rendered phase holds Accepted=False/Pending. Deployed
+              // phase flips to Accepted=True/Accepted. The conformance
+              // suite's `RoutesAndParentMustBeAccepted` polls the
+              // route's parents[].conditions[Accepted] looking for
+              // True+matching-controllerName, then dialled traffic
+              // is sent immediately after. With Accepted=True only
+              // in the rendered phase, the dial fires before HAProxy
+              // has the route's path-map / host-map entries — the
+              // chart's `frontend http_frontend{,_h2c}` lookup misses
+              // and the request falls through to default_backend,
+              // returning a 404 that gRPC reports as
+              // `unexpected HTTP status code received from server`.
+              // Closes the GRPCRoute* / HTTPRouteBackendProtocol*
+              // conformance gaps that surfaced in CI under parallel
+              // shard load (locally the reload was fast enough that
+              // the rendered-phase race didn't trip; CI's per-shard
+              // reload churn widens the window).
+              //
+              // Both patches still carry observedGeneration (it's
+              // part of every condition we emit), so the conformance
+              // GatewayObservedGenerationBump test still sees the
+              // bump on the rendered phase — the bit it cares about
+              // is observedGeneration matching spec.metadata.
+              // generation, NOT the Status value.
+              var renderedParents = []any{}
+              for _, pAny := range parents {
+                var pMap = pAny.(map[string]any)
+                var oldConds = pMap["conditions"].([]any)
+                var newConds = []any{}
+                for _, cAny := range oldConds {
+                  var cMap = cAny.(map[string]any)
+                  if tostring(cMap["type"]) == "Accepted" && tostring(cMap["status"]) == "True" {
+                    newConds = append(newConds, condition(
+                      "Accepted", "False", "Pending",
+                      "Waiting for HAProxy to reload with the new configuration",
+                      generation,
+                      RouteParentTransitionTime(route, parentIdx-1, "Accepted", "False")))
+                  } else {
+                    newConds = append(newConds, cAny)
+                  }
+                }
+                renderedParents = append(renderedParents, map[string]any{
+                  "parentRef":      pMap["parentRef"],
+                  "controllerName": pMap["controllerName"],
+                  "conditions":     newConds,
+                })
+              }
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
-                    "parents": parents,
+                    "parents": renderedParents,
                   },
                   "deployed": map[string]interface{}{
                     "parents": parents,
@@ -669,10 +708,38 @@ templateSnippets:
             }
 
             if len(parents) > 0 {
+              // Same rendered/deployed gate as the HTTPRoute / GRPCRoute
+              // path above — hold Accepted=True until HAProxy actually
+              // reloads with the new TLSRoute, so the test's dial sees
+              // a routable backend instead of falling through to
+              // default_backend.
+              var renderedParents = []any{}
+              for _, pAny := range parents {
+                var pMap = pAny.(map[string]any)
+                var oldConds = pMap["conditions"].([]any)
+                var newConds = []any{}
+                for _, cAny := range oldConds {
+                  var cMap = cAny.(map[string]any)
+                  if tostring(cMap["type"]) == "Accepted" && tostring(cMap["status"]) == "True" {
+                    newConds = append(newConds, condition(
+                      "Accepted", "False", "Pending",
+                      "Waiting for HAProxy to reload with the new configuration",
+                      generation,
+                      RouteParentTransitionTime(route, parentIdx-1, "Accepted", "False")))
+                  } else {
+                    newConds = append(newConds, cAny)
+                  }
+                }
+                renderedParents = append(renderedParents, map[string]any{
+                  "parentRef":      pMap["parentRef"],
+                  "controllerName": pMap["controllerName"],
+                  "conditions":     newConds,
+                })
+              }
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
-                    "parents": parents,
+                    "parents": renderedParents,
                   },
                   "deployed": map[string]interface{}{
                     "parents": parents,
