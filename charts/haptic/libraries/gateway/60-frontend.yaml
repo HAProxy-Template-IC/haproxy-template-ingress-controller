@@ -872,8 +872,17 @@ templateSnippets:
                     the map lookup misses and `listener_port` ==
                     `dst_port`, so the rule still works on operator-
                     chosen httpPort / httpsPort overrides. -#}
-                {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(80)) %}
-                {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(443)) %}
+                {#- Fallbacks match every other site in the chart
+                    (10-features.yaml, 50-binds.yaml, ssl.yaml,
+                    base.yaml): defaults are the dataplane-API-internal
+                    ports 8080/8443, not the user-facing 80/443. The
+                    real defaults come from extraContext.httpPort /
+                    httpsPort, which `templates/haproxytemplateconfig.yaml`
+                    always plumbs from `haproxy.ports.http` /
+                    `haproxy.ports.https` in values.yaml — so this
+                    fallback effectively never fires in production. -#}
+                {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+                {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
       http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.listener_port) -m int {{ httpPort }} } !{ ssl_fc }
       http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.listener_port) -m int {{ httpsPort }} } { ssl_fc }
       http-request set-var(txn.gw_redir_port_part) str(:),concat(,txn.listener_port,) if {{ cond }} !{ var(txn.gw_redir_port_part) -m found }

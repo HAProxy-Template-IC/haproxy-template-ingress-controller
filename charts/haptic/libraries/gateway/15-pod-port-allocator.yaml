@@ -16,16 +16,24 @@ templateSnippets:
   # `<lb-ip>:<listener-port>` → `<pod-ip>:<unique-pod-port>` and HAProxy
   # binds on `<unique-pod-port>` with isolated SSL config.
   #
-  # Allocation strategy: sort all (Gateway, listener) tuples
-  # alphabetically by stable key (`<gwNs>/<gwName>:<listenerName>:<port>`)
-  # and assign sequential ports starting at `perGatewayPodPortBase`
-  # (default 18000). Sort-based allocation guarantees:
-  #   * Same input → same output across renders (idempotent reloads).
-  #   * Adding a new Gateway alphabetically AFTER existing ones doesn't
-  #     shift existing ports.
-  #   * Adding a Gateway alphabetically BEFORE existing ones DOES shift
-  #     later ports — but that change requires an HAProxy reload anyway,
-  #     so the cost is paid in the reload that's already happening.
+  # Allocation strategy: two-pass, stable across renders.
+  #
+  # Pass 1 — preserve existing allocations. Walk every (Gateway, HTTPS
+  # listener) tuple. For each one, look up the per-Gateway Service in
+  # the cluster cache by its `gw-<bounded-hash>` name and, if a
+  # `spec.ports[].targetPort >= basePort` is already set for the
+  # listener's port, lock that port in. This is what makes the
+  # allocation stable across renders: an existing Gateway's
+  # allocation is whatever kube-proxy currently DNATs to, so we
+  # MUST NOT shuffle it when a new alphabetically-earlier Gateway
+  # joins the set.
+  #
+  # Pass 2 — assign free ports for new tuples. Tuples whose Service
+  # didn't yield a reusable allocation get the next-available pod
+  # port from `basePort` upward, skipping any port that pass 1 locked
+  # in. Sort by stable key (`<gwNs>/<gwName>:<listenerName>:<port>`)
+  # before assignment so two renders with the same NEW tuples produce
+  # the same NEW allocations.
   #
   # The cache is initialised once per render via `shared.ComputeIfAbsent`
   # so concurrent map renderers see a consistent view.
@@ -180,11 +188,22 @@ templateSnippets:
         {{- port -}}
       {%- end macro -%}
 
-  # Debug emission gated on extraContext.dumpPodPortAllocations. Renders
-  # one comment line per (Gateway, listener) → pod-port mapping into the
-  # `frontend-extra-*` extension point so chart tests can assert on them
-  # without coupling to phase-4-and-later consumers. Production deploys
-  # never set the flag, so the comments don't ship.
+  # Debug emission gated on extraContext.dumpPodPortAllocations.
+  # Production deploys NEVER set the flag, so the body emits zero
+  # bytes: only the snippet's `{%- if … %}` predicate runs, which is
+  # one map dig + string compare per render — effectively free.
+  #
+  # The flag exists for ONE thing: chart-validation tests at
+  # `tests/15-pod-port-allocator.yaml`. Those tests need to assert
+  # the allocator's output without depending on phase-4-and-later
+  # consumers (which transform the allocation into binds). The
+  # debug snippet runs inside `render_glob "frontend-extra-*"`
+  # specifically so the comments appear in haproxy.cfg, where the
+  # test's `contains` assertions can pattern-match them.
+  #
+  # If you ever delete this debug emitter, also delete the
+  # `dumpPodPortAllocations` flag and replace the chart tests with
+  # ones that assert phase-4 bind lines directly.
   frontend-extra-099-gateway-pod-port-debug:
     template: |
       {%- if tostring(extraContext | dig("dumpPodPortAllocations") | fallback("")) == "true" %}

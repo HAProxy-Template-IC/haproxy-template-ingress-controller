@@ -61,12 +61,13 @@ templateSnippets:
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
       {{ render "util-gateway-pod-port-allocator" -}}
-      {%- var allocations map[string]any = coalesce(shared.Get("gatewayPodPortAllocations"), map[string]any{}).(map[string]any) %}
+      {{ render "util-tls-cert-by-secret" -}}
+      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var mtlsBlocked map[string]any = coalesce(gf | dig("mtlsBlockedListeners"), map[string]any{}).(map[string]any) %}
-      {%- var perListenerMTLS map[string]any = coalesce(gf["gatewayListenerMTLSConfig"], map[string]any{}).(map[string]any) %}
-      {#- Build the same (secretNs/secretName) → cert lookup that phase 2
-          uses, so we drop the bind for listeners whose cert ref didn't
+      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {%- var perListenerMTLS = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {#- Same cert-resolvability gate phase 2 (16-crtlist-per-listener)
+          uses: drop the bind when the listener's cert ref didn't
           resolve. Without this gate, the bind references a crt-list
           file phase 2 never emitted (because
           `features-100-gateway-tls` skipped the missing/malformed
@@ -74,18 +75,22 @@ templateSnippets:
           the entire reconcile aborts in semantic validation — taking
           the status patches for every Gateway in the cluster down
           with it. -#}
-      {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) %}
-      {%- var certBySecret = map[string]any{} %}
-      {%- for _, tc := range tlsCerts %}
-        {%- var tcm = tc.(map[string]any) %}
-        {%- var key = tostring(tcm["secret_namespace"]) + "/" + tostring(tcm["secret_name"]) %}
-        {%- certBySecret[key] = tcm %}
-      {%- end %}
+      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
       {%- if resources != nil && resources.gateways != nil %}
         {%- for _, gw := range resources.gateways.List() %}
           {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
           {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
-          {%- if gwNs != "" && gwName != "" %}
+          {#- Pinned-IP Gateways (spec.addresses set) take the
+              gateway-static-addresses path, NOT phase-3's
+              per-Gateway Service. Phase 1's allocator skips them
+              too, so allocations[allocKey] would miss and the
+              bind below would fall back to lPort — colliding with
+              the chart-static `https-bind-extra-050-gateway-multi-
+              port-bind` emission that already serves non-default
+              ports for pinned Gateways. Skip the whole Gateway
+              here, mirroring phase 3's gate at
+              17-per-gateway-services.yaml. -#}
+          {%- if gwNs != "" && gwName != "" && len(dig(gw, "spec", "addresses") | toSlice()) == 0 %}
             {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
               {%- var lProto = tostring(dig(listener, "protocol") | fallback("")) %}
               {%- if lProto == "HTTPS" %}

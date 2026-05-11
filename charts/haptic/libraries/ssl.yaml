@@ -65,14 +65,22 @@ templateSnippets:
       {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once #}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
         return map[string]any{
-          "sslPassthroughBackends": []any{},
-          "tlsCertificates": []any{},
-          "sslRedirectHosts": []any{},
-          "clientCertVerifyHosts": map[string]any{},
-          "bindHTTPDefault":  false,
-          "bindHTTPSDefault": false,
-          "needHTTPFrontend":  false,
-          "needHTTPSFrontend": false,
+          "sslPassthroughBackends":      []any{},
+          "tlsCertificates":             []any{},
+          "sslRedirectHosts":            []any{},
+          "clientCertVerifyHosts":       map[string]any{},
+          "bindHTTPDefault":             false,
+          "bindHTTPSDefault":            false,
+          "needHTTPFrontend":            false,
+          "needHTTPSFrontend":           false,
+          // mtlsBlockedListeners + gatewayListenerMTLSConfig are
+          // populated by features-110-gateway-frontend-mtls (in the
+          // gateway library) and consumed by phases 2+4. Seeding
+          // them here means downstream readers can do bare
+          // gf["mtlsBlockedListeners"] / gf["gatewayListenerMTLSConfig"]
+          // without a coalesce-with-empty-map dance.
+          "mtlsBlockedListeners":        map[string]any{},
+          "gatewayListenerMTLSConfig":   map[string]any{},
         }
       }) -%}
       {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
@@ -88,6 +96,12 @@ templateSnippets:
       {%- end -%}
       {%- if gf["clientCertVerifyHosts"] == nil -%}
         {%- gf["clientCertVerifyHosts"] = map[string]any{} -%}
+      {%- end -%}
+      {%- if gf["mtlsBlockedListeners"] == nil -%}
+        {%- gf["mtlsBlockedListeners"] = map[string]any{} -%}
+      {%- end -%}
+      {%- if gf["gatewayListenerMTLSConfig"] == nil -%}
+        {%- gf["gatewayListenerMTLSConfig"] = map[string]any{} -%}
       {%- end -%}
       {#- Bind-decision flags: each resource library's features-100-* phase
           OR's its contribution into these. Reading happens later in
@@ -519,17 +533,9 @@ templateSnippets:
               }
             }
             // Stable per-Gateway emission order: sort by gwKey.
-            for i := 0; i < len(gwOrder); i++ {
-              for j := i + 1; j < len(gwOrder); j++ {
-                if tostring(gwOrder[i]) > tostring(gwOrder[j]) {
-                  var swap = gwOrder[i]
-                  gwOrder[i] = gwOrder[j]
-                  gwOrder[j] = swap
-                }
-              }
-            }
+            var gwOrderSorted = sort_strings(gwOrder)
           %%}
-          {%- for _, gwKey := range gwOrder %}
+          {%- for _, gwKey := range gwOrderSorted %}
             {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
             {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}
             {%- var listenerPatterns = gi["listenerPatterns"].(map[string]bool) %}
@@ -538,45 +544,21 @@ templateSnippets:
             {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
             {#- Collect sorted lists for deterministic output. -#}
             {%%
-              var lpKeys = []any{}
+              var lpRaw = []any{}
               for k := range listenerPatterns {
-                lpKeys = append(lpKeys, k)
+                lpRaw = append(lpRaw, k)
               }
-              for i := 0; i < len(lpKeys); i++ {
-                for j := i + 1; j < len(lpKeys); j++ {
-                  if tostring(lpKeys[i]) > tostring(lpKeys[j]) {
-                    var swap = lpKeys[i]
-                    lpKeys[i] = lpKeys[j]
-                    lpKeys[j] = swap
-                  }
-                }
-              }
-              var rsKeys = []any{}
+              var lpKeys = sort_strings(lpRaw)
+              var rsRaw = []any{}
               for k := range routeSNIs {
-                rsKeys = append(rsKeys, k)
+                rsRaw = append(rsRaw, k)
               }
-              for i := 0; i < len(rsKeys); i++ {
-                for j := i + 1; j < len(rsKeys); j++ {
-                  if tostring(rsKeys[i]) > tostring(rsKeys[j]) {
-                    var swap = rsKeys[i]
-                    rsKeys[i] = rsKeys[j]
-                    rsKeys[j] = swap
-                  }
-                }
-              }
-              var invKeys = []any{}
+              var rsKeys = sort_strings(rsRaw)
+              var invRaw = []any{}
               for k := range invalidSNIs {
-                invKeys = append(invKeys, k)
+                invRaw = append(invRaw, k)
               }
-              for i := 0; i < len(invKeys); i++ {
-                for j := i + 1; j < len(invKeys); j++ {
-                  if tostring(invKeys[i]) > tostring(invKeys[j]) {
-                    var swap = invKeys[i]
-                    invKeys[i] = invKeys[j]
-                    invKeys[j] = swap
-                  }
-                }
-              }
+              var invKeys = sort_strings(invRaw)
             %%}
             {%- for _, lpAny := range lpKeys %}
               {%- var lp = tostring(lpAny) %}

@@ -184,24 +184,15 @@ templateSnippets:
           {%- end %}
         {%- end %}
         {%- var chartStaticBindsHTTPSPort = bindHTTPSDefault || hasPassthroughBackends %}
-        {#- Sort port keys for deterministic output. -#}
-        {%- var portKeys = []any{} %}
+        {#- Sort port keys numerically for deterministic output. Bare
+            sort_strings would give "10" before "2"; sort_ints is the
+            right tool because byPort is keyed by port number. -#}
+        {%- var portKeysRaw = []any{} %}
         {%- for k, _ := range byPort %}
-          {%- portKeys = append(portKeys, k) %}
+          {%- portKeysRaw = append(portKeysRaw, k) %}
         {%- end %}
-        {%- for i := 0; i < len(portKeys); i++ %}
-          {%- for j := i + 1; j < len(portKeys); j++ %}
-            {%- if toint(portKeys[i]) > toint(portKeys[j]) %}
-              {%%
-                var swap = portKeys[i]
-                portKeys[i] = portKeys[j]
-                portKeys[j] = swap
-              %%}
-            {%- end %}
-          {%- end %}
-        {%- end %}
-        {%- for _, portAny := range portKeys %}
-          {%- var port = toint(portAny) %}
+        {%- var portKeys = sort_ints(portKeysRaw) %}
+        {%- for _, port := range portKeys %}
           {#- Skip httpsPort only when the chart-static frontends
               actually bind it (chart-static HTTPS in mode-http or
               ssl-tcp for Ingress passthrough). When neither does,

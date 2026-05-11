@@ -1,4 +1,35 @@
 templateSnippets:
+  # ----------------------------------------------------------------------------
+  # util-tls-cert-by-secret
+  #
+  # Indexes gf.tlsCertificates by `<secret_namespace>/<secret_name>` so the
+  # cert-resolvability check in phases 1/2/4 plus features-150-gateway-bind
+  # is a single map lookup instead of an O(N) scan. Cached via
+  # shared.ComputeIfAbsent so the index is built at most once per render
+  # (any caller can render this util — order is irrelevant since the cache
+  # ignores duplicate calls).
+  #
+  # Usage:
+  #   {{ render "util-tls-cert-by-secret" -}}
+  #   {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
+  #
+  # Map value: the full tlsCertificate entry (so callers needing
+  # `.sanitized_filename` get it for free). For presence-only callers,
+  # `certBySecret[key] != nil` is the membership test.
+  # ----------------------------------------------------------------------------
+  util-tls-cert-by-secret:
+    template: |
+      {%- var _, _ = shared.ComputeIfAbsent("tlsCertBySecret", func() any {
+        var gf = shared.Get("globalFeatures").(map[string]any)
+        var index = map[string]any{}
+        for _, tc := range gf["tlsCertificates"].([]any) {
+          var tcm = tc.(map[string]any)
+          var key = tostring(tcm["secret_namespace"]) + "/" + tostring(tcm["secret_name"])
+          index[key] = tcm
+        }
+        return index
+      }) %}
+
   features-100-gateway-ssl-passthrough:
     template: |
       {#- Register SSL passthrough backends with global feature registry. -#}
@@ -210,7 +241,7 @@ templateSnippets:
     template: |
       {{ render "util-effective-listeners" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var clientCertVerifyHosts map[string]any = coalesce(gf["clientCertVerifyHosts"], map[string]any{}).(map[string]any) %}
+      {%- var clientCertVerifyHosts = gf["clientCertVerifyHosts"].(map[string]any) %}
       {#- mtlsBlockedListeners: set of listener keys
           (`<gw-ns>/<gw-name>/<listener-name>`) where the configured
           frontend mTLS validation either failed to resolve any CA
@@ -222,7 +253,7 @@ templateSnippets:
           conformance gap. Read by features-150-gateway-bind to gate
           bindHTTPSDefault / needHTTPSFrontend so the listener's bind
           line drops out of the rendered HAProxy config. -#}
-      {%- var mtlsBlockedListeners map[string]any = coalesce(gf | dig("mtlsBlockedListeners"), map[string]any{}).(map[string]any) %}
+      {%- var mtlsBlockedListeners = gf["mtlsBlockedListeners"].(map[string]any) %}
       {#- gatewayListenerMTLSConfig: per-(Gateway, listener) resolved
           mTLS state, keyed by `<gwNs>/<gwName>/<listenerName>`. Each
           entry is `{ca_path, verify_mode}` (the same shape stored
@@ -234,7 +265,7 @@ templateSnippets:
           map to emit one crt-list line per listener with the
           listener-specific verify clause. Phase 4's per-Gateway
           bind references the resulting crt-list. -#}
-      {%- var gatewayListenerMTLSConfig map[string]any = coalesce(gf | dig("gatewayListenerMTLSConfig"), map[string]any{}).(map[string]any) %}
+      {%- var gatewayListenerMTLSConfig = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
       {%- for _, gateway := range resources.gateways.List() %}
         {%%
           var gwSpec = gateway | dig("spec")
@@ -518,18 +549,9 @@ templateSnippets:
                           listeners MUST NOT bind, per
                           GatewayFrontendInvalidDefaultClient
                           CertificateValidation. -#}
-      {%- var certBySecret = map[string]bool{} %}
-      {%%
-        for _, certEntry := range gf["tlsCertificates"].([]any) {
-          var entry = certEntry.(map[string]any)
-          var ns = tostring(entry | dig("secret_namespace") | fallback(""))
-          var name = tostring(entry | dig("secret_name") | fallback(""))
-          if ns != "" && name != "" {
-            certBySecret[ns+"/"+name] = true
-          }
-        }
-      %%}
-      {%- var mtlsBlocked map[string]any = coalesce(gf | dig("mtlsBlockedListeners"), map[string]any{}).(map[string]any) %}
+      {{ render "util-tls-cert-by-secret" -}}
+      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
+      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
       {#- Walk every Gateway listener and decide its contribution to the
           four bind-decision flags.
 

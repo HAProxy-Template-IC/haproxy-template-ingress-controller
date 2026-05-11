@@ -157,6 +157,21 @@ func scriggoSortStrings(items []any) []string {
 	return result
 }
 
+// scriggoSortInts sorts a slice of any values as integers. Mirror
+// of scriggoSortStrings but for numeric keys (port numbers, allocation
+// indices, ...) where lexicographic ordering ("10" before "2") would
+// be wrong. Non-integer entries coerce through scriggoToInt (so a
+// non-numeric value sorts as 0 — same fallback semantics templates
+// already rely on for arithmetic).
+func scriggoSortInts(items []any) []int {
+	result := make([]int, 0, len(items))
+	for _, item := range items {
+		result = append(result, scriggoToInt(item))
+	}
+	slices.Sort(result)
+	return result
+}
+
 // scriggoFirstSeen checks if a composite key is being seen for the first time.
 // Returns true on first occurrence, false on subsequent calls with the same key.
 // Uses SharedContext.ComputeIfAbsent with the wasComputed return value for thread-safe

@@ -45,20 +45,25 @@ templateSnippets:
           re-resolving Secrets, then composes a single crt-list line
           per listener:
 
-            <cert-file> [ocsp-update on[ ca-file <ca> verify <mode>]\
-                       [ ca-ignore-err all crt-ignore-err all]]\
+            <cert-file> [ocsp-update on[ ca-file <ca> verify <mode>]]\
                        [ <sni-filter>]
 
           ssl-option components:
             * `ca-file <ca> verify <mode>`: emitted when the listener
               has a resolved frontend mTLS validation config.
-            * `ca-ignore-err all crt-ignore-err all`: emitted when
-              `verify_mode == "optional"` (AllowInsecureFallback per
-              Gateway-API spec — invalid client certs must NOT abort
-              the handshake; bind-line ignore-err is bind-scope, but
-              now that the bind is per-listener we can apply it
-              cleanly without leaking into sibling listeners that
-              want strict verification).
+
+          NOTE: `ca-ignore-err all crt-ignore-err all` (the
+          AllowInsecureFallback lift — HAProxy's default `verify
+          optional` aborts on cert-validation failure, the
+          Gateway-API spec requires the handshake to complete
+          anyway) is BIND-scope, NOT crt-list-scope. HAProxy
+          rejects the keywords inside a crt-list line. Phase 4's
+          per-Gateway bind picks them up via
+          `gatewayListenerMTLSConfig.verify_mode == "optional"` and
+          appends them to its `bind *:<podPort>` directive; the
+          per-listener bind keeps the ignore-err scope to one
+          listener, so a sibling listener that wants strict
+          `verify required` is unaffected.
 
           SNI filter:
             * Listener with hostname → SNI filter that hostname.
@@ -74,8 +79,8 @@ templateSnippets:
               failed in `features-100-gateway-tls`).
       -#}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
+      {{ render "util-tls-cert-by-secret" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var tlsCerts []any = coalesce(gf["tlsCertificates"], []any{}) %}
       {#- Per-listener mTLS state populated by
           features-110-gateway-frontend-mtls. Key:
           `<gwNs>/<gwName>/<listenerName>`. We use this — not the
@@ -85,18 +90,9 @@ templateSnippets:
           the second Gateway's mTLS config would silently apply to
           the first. Per-listener keying scopes resolution
           unambiguously. -#}
-      {%- var perListenerMTLS map[string]any = coalesce(gf["gatewayListenerMTLSConfig"], map[string]any{}).(map[string]any) %}
-      {%- var mtlsBlocked map[string]any = coalesce(gf["mtlsBlockedListeners"], map[string]any{}).(map[string]any) %}
-
-      {#- Build a (secretNs/secretName) → sanitized_filename lookup
-          from the cert registry once, so the per-listener loop
-          below doesn't repeat the scan per listener. -#}
-      {%- var certBySecret = map[string]any{} %}
-      {%- for _, tc := range tlsCerts %}
-        {%- var tcm = tc.(map[string]any) %}
-        {%- var key = tostring(tcm["secret_namespace"]) + "/" + tostring(tcm["secret_name"]) %}
-        {%- certBySecret[key] = tcm %}
-      {%- end %}
+      {%- var perListenerMTLS = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
 
       {%- if resources != nil && resources.gateways != nil %}
         {%- for _, gw := range resources.gateways.List() %}
