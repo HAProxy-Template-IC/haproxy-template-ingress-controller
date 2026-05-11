@@ -213,24 +213,40 @@ func (r *portRouter) refresh(ctx context.Context) {
 	r.lastSync = time.Now()
 }
 
-// newNodePortRoundTripper wraps roundtripper.DefaultRoundTripper with a
-// CustomDialContext that ignores the conformance suite's URL host (the
-// Gateway.Status address — a metallb LoadBalancer IP unreachable from the
-// test process) and dials the right NodePort instead. The HTTP Host
-// header and the TLS SNI are preserved untouched, so HAProxy still
-// performs hostname-based routing and certificate selection correctly.
+// newDialingRoundTripper wraps roundtripper.DefaultRoundTripper with a
+// CustomDialContext sized to the test environment:
 //
-// router holds the dynamic port table. 80/443 always route to the
-// chart's static haproxy-service NodePorts via the host loopback
-// (127.0.0.1 or DinD docker-service); dynamic listener ports route via
-// the kind node's docker-network IP directly because they aren't in
-// kind's extraPortMappings. Cache misses trigger a live re-query.
-func newNodePortRoundTripper(timeoutCfg config.TimeoutConfig, debug bool, router *portRouter) (roundtripper.RoundTripper, error) {
+//   - **Local kind** (the default): dial the URL host:port directly.
+//     The conformance suite uses Gateway.Status.Addresses verbatim, which
+//     is a MetalLB-allocated LoadBalancer IP. On a flat docker daemon
+//     the test process and the kind container share the same bridge
+//     network, so 172.19.x.x is reachable straight from the test process.
+//     This is the production-equivalent path — real clients dial the
+//     gateway address — and means the NodePort plumbing is only loaded
+//     when actually needed.
+//
+//   - **Docker-in-Docker** (GitLab CI): the kind container's docker
+//     network sits *inside* the DinD daemon and isn't routable from the
+//     outer job container. Fall back to a NodePort tunnel: rewrite the
+//     dial target to the kind node IP + the apiserver-assigned NodePort,
+//     reached via kind extraPortMappings on the DinD hostname. The HTTP
+//     Host header and the TLS SNI are preserved untouched, so HAProxy
+//     still performs hostname-based routing and certificate selection
+//     correctly.
+//
+// router is consulted only in the DinD path; it holds the dynamic port
+// table that resolves (gateway-LB-IP, listener-port) → NodePort. Cache
+// misses trigger a live re-query against the kube apiserver.
+func newDialingRoundTripper(timeoutCfg config.TimeoutConfig, debug bool, router *portRouter) (roundtripper.RoundTripper, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	dindMode := kindutil.IsDockerInDocker()
 	return &roundtripper.DefaultRoundTripper{
 		Debug:         debug,
 		TimeoutConfig: timeoutCfg,
 		CustomDialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if !dindMode {
+				return dialer.DialContext(ctx, network, address)
+			}
 			route, err := dialPortForAddress(ctx, address, router)
 			if err != nil {
 				return nil, err

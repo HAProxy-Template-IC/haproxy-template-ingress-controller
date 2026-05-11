@@ -70,6 +70,8 @@ import (
 	conformanceconfig "sigs.k8s.io/gateway-api/conformance/utils/config"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // metalLBPoolGVR identifies the IPAddressPool CRD MetalLB ships. The e2e
@@ -194,18 +196,25 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// instead; the Host header and TLS SNI stay untouched so HAProxy still
 	// sees the gateway hostname for routing and cert selection.
 	//
-	// Build the dynamic NodePort port table the RoundTripper consumes.
-	// Static 80/443 entries (kind extraPortMappings → host loopback)
-	// are seeded immediately; dynamic listener-port NodePorts (chart's
-	// gateway-listener-ports Service, allocated lazily as conformance
-	// fixtures land) are discovered on cache miss via the kind node's
-	// docker-network InternalIP. See libraries/gateway.yaml's
-	// features-090-gateway-listener-ports-service snippet.
-	staticTable, nodeIP, err := buildInitialPortTable(t.Context(), cs)
-	require.NoError(t, err, "build initial NodePort port table")
-	router := newPortRouter(cs, nodeIP, staticTable)
-	rt, err := newNodePortRoundTripper(timeoutCfg, debug, router)
-	require.NoError(t, err, "build NodePort RoundTripper")
+	// In DinD the test process can't reach MetalLB IPs directly, so we
+	// need a NodePort-tunnel fallback in the dialer. Build the dynamic
+	// NodePort port table the RoundTripper consumes when that path
+	// activates: static 80/443 entries (kind extraPortMappings → host
+	// loopback) are seeded immediately; dynamic listener-port
+	// NodePorts (chart's gateway-listener-ports Service, allocated
+	// lazily as conformance fixtures land) are discovered on cache
+	// miss via the kind node's docker-network InternalIP. See
+	// libraries/gateway.yaml's features-090-gateway-listener-ports-
+	// service snippet. Outside DinD the router is unused — the dialer
+	// hits the LB IP directly — so we can skip the seeding round-trip.
+	var router *portRouter
+	if kindutil.IsDockerInDocker() {
+		staticTable, nodeIP, err := buildInitialPortTable(t.Context(), cs)
+		require.NoError(t, err, "build initial NodePort port table")
+		router = newPortRouter(cs, nodeIP, staticTable)
+	}
+	rt, err := newDialingRoundTripper(timeoutCfg, debug, router)
+	require.NoError(t, err, "build dialing RoundTripper")
 
 	// gRPC dial-target rewriter: the upstream `grpc.DefaultClient`
 	// dials Gateway.status.addresses verbatim (no CustomDialContext
