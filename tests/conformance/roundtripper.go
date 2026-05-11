@@ -18,10 +18,13 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -232,9 +235,53 @@ func newNodePortRoundTripper(timeoutCfg config.TimeoutConfig, debug bool, router
 			if err != nil {
 				return nil, err
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(route.nodeIP, strconv.Itoa(route.nodePort)))
+			conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(route.nodeIP, strconv.Itoa(route.nodePort)))
+			if dialErr == nil {
+				return conn, nil
+			}
+			// connection-refused on a previously-cached NodePort means
+			// the apiserver re-allocated it: when a Gateway-listener
+			// port disappears from the chart's Service (because its
+			// Gateway was deleted) and later reappears (because a new
+			// Gateway claims the same listener port), Kubernetes
+			// releases the old NodePort and picks a fresh random one
+			// from the NodePort range. The byLBIP cache holds the
+			// stale NodePort number; the host is still known so
+			// portRouter.lookup happily returns it. Refresh the cache
+			// and retry once before bubbling the dial error up to
+			// the framework's retry loop. We only do this on
+			// connection-refused (and similar "socket gone") errors,
+			// not on context deadlines or TLS handshake failures,
+			// so a genuinely-broken backend still surfaces fast.
+			if !isStaleNodePortError(dialErr) {
+				return nil, dialErr
+			}
+			router.refresh(ctx)
+			route2, err := dialPortForAddress(ctx, address, router)
+			if err != nil {
+				return nil, dialErr
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(route2.nodeIP, strconv.Itoa(route2.nodePort)))
 		},
 	}, nil
+}
+
+// isStaleNodePortError reports whether the dial error looks like
+// "the NodePort I cached doesn't exist anymore" — typically a TCP
+// RST or ECONNREFUSED. Net errors that wrap syscall errno are the
+// signal; context deadlines and TLS errors are not.
+func isStaleNodePortError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		var sysErr *os.SyscallError
+		if errors.As(opErr.Err, &sysErr) {
+			return errors.Is(sysErr.Err, syscall.ECONNREFUSED) || errors.Is(sysErr.Err, syscall.ECONNRESET)
+		}
+	}
+	return false
 }
 
 // dialPortForAddress maps the conformance suite's intended dial target
