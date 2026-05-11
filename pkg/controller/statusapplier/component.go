@@ -144,7 +144,21 @@ func New(cfg *Config) *Component {
 	}
 
 	bus := cfg.EventBus
-	eventChan := bus.Subscribe(ComponentName, EventBufferSize)
+	// SubscribeTypes (not Subscribe) — the bus prefilters by event type at
+	// publish, so the 50-event buffer holds ONLY events we actually dispatch
+	// on. With a plain Subscribe the buffer would fill within seconds during
+	// conformance setup (resource.index.updated and reconciliation.* fire at
+	// kHz) and overflow — silently dropping deployment.completed events along
+	// with the rest. We saw exactly that in CI: the "deployed" status patches
+	// never fired, Gateways never got Programmed=True, and conformance Test
+	// Setup timed out on every shard.
+	eventChan := bus.SubscribeTypes(ComponentName, EventBufferSize,
+		events.EventTypeTemplateRendered,
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeReconciliationFailed,
+		events.EventTypeBecameLeader,
+		events.EventTypeLostLeadership,
+	)
 
 	return &Component{
 		eventBus:      bus,
