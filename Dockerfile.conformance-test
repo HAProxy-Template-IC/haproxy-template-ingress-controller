@@ -1,0 +1,23 @@
+# Sibling-container conformance test image. The test binary is built
+# OUTSIDE this image (see `make test-conformance`) and copied in — that
+# keeps the build context to a single ~30MB binary, avoids tripping over
+# `.dockerignore`'s `*_test.go` exclusion, and lets the host's Go toolchain
+# cache do its job across runs.
+#
+# Runtime: distroless-static — Go binary compiled with CGO_ENABLED=0 is
+# statically linked; only thing needed at runtime is the CA bundle for
+# the kube-apiserver TLS handshake, which distroless-static ships.
+#
+# Invocation: `docker run --network <kind-network> -v <kubeconfig>:/.kube/config:ro
+#   -e KUBECONFIG=/.kube/config haptic-conformance-test:<tag> -test.v -test.run='...'`
+#
+# Inside the kind docker network, the container resolves the apiserver by
+# its docker-DNS hostname (e.g. https://haptic-e2e-control-plane:6443) and
+# reaches MetalLB-allocated LoadBalancer IPs directly — same path real
+# clients use. No NodePort tunneling, no DinD remap.
+
+FROM gcr.io/distroless/static-debian12:latest
+
+COPY haptic-conformance.test /haptic-conformance.test
+
+ENTRYPOINT ["/haptic-conformance.test"]

@@ -1288,8 +1288,12 @@ test-e2e:
 #
 # Runs the same kind+helm setup as test-e2e (including MetalLB so Gateways
 # get reachable LoadBalancer IPs), then invokes `make test-gateway-conformance`
-# which calls the upstream conformance.RunConformanceWithOptions with our
-# pinned SupportedFeatures set.
+# which builds the test binary into a tiny distroless image and runs it as a
+# sibling container on the kind docker network. From that vantage point the
+# test process reaches MetalLB-allocated LoadBalancer IPs directly — same
+# code path locally and under DinD, no NodePort tunneling. The DinD daemon
+# owns the kind network in CI; locally it's the host daemon. The shard
+# regex from scripts/shard-conformance-tests.sh is passed as TEST_RUN_PATTERN.
 #
 # Pinned to a single HAProxy version: the conformance suite tests the
 # chart's Gateway API surface (GatewayClass / Gateway / HTTPRoute behavior

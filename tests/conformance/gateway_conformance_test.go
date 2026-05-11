@@ -20,16 +20,25 @@
 // suite has its own slow setup and pulls in the upstream conformance
 // fixtures).
 //
+// Execution model: the test binary runs as a sibling container on the
+// kind docker network (see `make test-conformance` / Dockerfile.
+// conformance-test). Inside that container, MetalLB-allocated LoadBalancer
+// IPs from Gateway.Status.Addresses are directly routable — the test
+// dials them with the stock upstream RoundTripper + gRPC client, no
+// NodePort tunneling and no DinD-aware dialer required. Same code path
+// in CI (sibling container under the DinD daemon) and on a developer
+// laptop (sibling container under the host docker daemon).
+//
 // To run locally:
 //
 //	make test-e2e            # brings up the haptic-e2e kind cluster
-//	make test-gateway-conformance
+//	make test-conformance    # builds the test image, runs it as a sibling container
 //
-// The suite expects an existing `haptic-e2e` kind cluster with the
-// chart deployed and the `haptic` GatewayClass accepted. `make test-e2e`
+// The suite expects an existing `haptic-e2e` kind cluster with the chart
+// deployed and the `haptic` GatewayClass accepted. `make test-e2e`
 // (default `KEEP_CLUSTER=true`) leaves that cluster in place so the
-// conformance suite can attach to it via the e2e suite's pinned
-// kubeconfig.
+// conformance container can attach to its kube apiserver via the kind
+// docker-DNS hostname (e.g. `https://haptic-e2e-control-plane:6443`).
 //
 // SupportedFeatures pin the chart's actual coverage. Features
 // intentionally excluded map to HTTPRoute filter shapes the chart
@@ -68,10 +77,10 @@ import (
 	xv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 	gwconformance "sigs.k8s.io/gateway-api/conformance"
 	conformanceconfig "sigs.k8s.io/gateway-api/conformance/utils/config"
+	gatewaygrpc "sigs.k8s.io/gateway-api/conformance/utils/grpc"
+	"sigs.k8s.io/gateway-api/conformance/utils/roundtripper"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
-
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // metalLBPoolGVR identifies the IPAddressPool CRD MetalLB ships. The e2e
@@ -86,21 +95,17 @@ var metalLBPoolGVR = schema.GroupVersionResource{
 	Resource: "ipaddresspools",
 }
 
-// kubeconfigPath matches the path the e2e suite (tests/e2e/main_test.go)
-// writes when it provisions the kind cluster, so the conformance suite
-// reuses the e2e cluster without separate setup.
-const kubeconfigPath = "/tmp/haproxy-e2e-kubeconfig"
-
 // gatewayClassName is the GatewayClass the chart provisions. The chart's
 // values default `gatewayClass.name` to "haptic" — keep this in sync if
 // that ever changes.
 const gatewayClassName = "haptic"
 
 func TestGatewayAPIConformance(t *testing.T) {
-	if os.Getenv("KUBECONFIG") == "" {
-		require.NoError(t, os.Setenv("KUBECONFIG", kubeconfigPath),
-			"set KUBECONFIG for conformance suite")
-	}
+	// KUBECONFIG must be provided by the caller. When run as a sibling
+	// container via `make test-conformance`, the kubeconfig is mounted
+	// at /etc/kubeconfig and the env var is set on the docker run command.
+	require.NotEmpty(t, os.Getenv("KUBECONFIG"),
+		"KUBECONFIG must point at the haptic-e2e cluster's kubeconfig")
 
 	cfg, err := config.GetConfig()
 	require.NoError(t, err, "load Kubernetes config")
@@ -189,42 +194,19 @@ func TestGatewayAPIConformance(t *testing.T) {
 	timeoutCfg.DefaultTestTimeout = 30 * time.Second
 	debug := os.Getenv("CONFORMANCE_DEBUG") != ""
 
-	// Conformance traffic targets Gateway.Status addresses (metallb LB IPs
-	// on kind's docker network), which are unreachable from the test
-	// process when running in DinD or on a separate docker network. Route
-	// every dial through the chart's NodePort on the resolved kind host
-	// instead; the Host header and TLS SNI stay untouched so HAProxy still
-	// sees the gateway hostname for routing and cert selection.
-	//
-	// In DinD the test process can't reach MetalLB IPs directly, so we
-	// need a NodePort-tunnel fallback in the dialer. Build the dynamic
-	// NodePort port table the RoundTripper consumes when that path
-	// activates: static 80/443 entries (kind extraPortMappings → host
-	// loopback) are seeded immediately; dynamic listener-port
-	// NodePorts (chart's gateway-listener-ports Service, allocated
-	// lazily as conformance fixtures land) are discovered on cache
-	// miss via the kind node's docker-network InternalIP. See
-	// libraries/gateway.yaml's features-090-gateway-listener-ports-
-	// service snippet. Outside DinD the router is unused — the dialer
-	// hits the LB IP directly — so we can skip the seeding round-trip.
-	var router *portRouter
-	if kindutil.IsDockerInDocker() {
-		staticTable, nodeIP, err := buildInitialPortTable(t.Context(), cs)
-		require.NoError(t, err, "build initial NodePort port table")
-		router = newPortRouter(cs, nodeIP, staticTable)
+	// Sibling-container execution model: this binary runs on the kind
+	// docker network, so Gateway.Status addresses (MetalLB LB IPs in
+	// kind's network) are directly routable. The stock upstream
+	// RoundTripper + gRPC client dial them verbatim — same code path as
+	// any real client. No CustomDialContext, no NodePort tunneling, no
+	// DinD remap. The `make test-conformance` Makefile target attaches
+	// this container to the kind network (`docker run --network kind`),
+	// which gives us identical behaviour locally and under GitLab DinD.
+	rt := &roundtripper.DefaultRoundTripper{
+		Debug:         debug,
+		TimeoutConfig: timeoutCfg,
 	}
-	rt, err := newDialingRoundTripper(timeoutCfg, debug, router)
-	require.NoError(t, err, "build dialing RoundTripper")
-
-	// gRPC dial-target rewriter: the upstream `grpc.DefaultClient`
-	// dials Gateway.status.addresses verbatim (no CustomDialContext
-	// hook like the HTTP RoundTripper has). In DinD that LB IP isn't
-	// reachable from the outer job container; wrap the default client
-	// so address rewriting lands the dial on the DinD host's
-	// kind-extraPortMapping equivalent (31080 for port 80, etc).
-	// Outside DinD this returns the upstream DefaultClient unchanged.
-	grpcClient, err := newGRPCClient()
-	require.NoError(t, err, "build DinD-aware gRPC client")
+	grpcClient := &gatewaygrpc.DefaultClient{}
 
 	// SupportGatewayStaticAddresses substitutes PLACEHOLDER_USABLE_ADDRS /
 	// PLACEHOLDER_UNUSABLE_ADDRS in its Gateway fixture with the entries
