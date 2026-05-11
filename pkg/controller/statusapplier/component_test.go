@@ -246,64 +246,17 @@ func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
 
 	setLeader(comp)
 
-	// Pre-cache patches keyed by correlation ID — handleDeploymentCompleted
-	// looks up by the event's correlation_id to apply only patches whose
-	// render's config actually got deployed (see component.go comment on
-	// patchesByCorrelation for why).
-	patches := newTestPatches(map[string]map[string]any{
+	comp.mu.Lock()
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
 		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
 	})
-	comp.mu.Lock()
-	comp.cachedPatches = patches
-	comp.patchesByCorrelation["corr-1"] = patches
-	comp.correlationOrder = []string{"corr-1"}
 	comp.mu.Unlock()
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(
-		events.DeploymentResult{Total: 1, Succeeded: 1},
-		events.WithCorrelation("corr-1", "corr-1"),
-	))
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
 	assert.Equal(t, 1, completedEvent.AppliedCount)
-}
-
-// TestHandleDeploymentCompleted_SkipsUnmatchedCorrelation exercises the race
-// at the heart of the conformance failures: a DeploymentCompletedEvent for
-// a render whose patches were never cached (or have already been applied)
-// must not fall back to the latest patches. Otherwise routes from a render
-// that hasn't been deployed yet get Accepted=True flipped against a deploy
-// that didn't include them.
-func TestHandleDeploymentCompleted_SkipsUnmatchedCorrelation(t *testing.T) {
-	bus := testutil.NewTestBus()
-	fakeClient := newFakeDynamicClientWithPatchSuccess()
-	comp := newTestComponent(bus, fakeClient, newTestResolver())
-
-	eventChan := bus.Subscribe("test", 50)
-	bus.Start()
-
-	setLeader(comp)
-
-	patches := newTestPatches(map[string]map[string]any{
-		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
-	})
-	comp.mu.Lock()
-	comp.cachedPatches = patches
-	// Patches are cached for render N, but the DeploymentCompletedEvent
-	// below arrives for an EARLIER render whose patches have already been
-	// consumed by a previous DeploymentCompletedEvent (or never made it
-	// into the cache). Either way, no match -> no apply.
-	comp.patchesByCorrelation["corr-newer"] = patches
-	comp.correlationOrder = []string{"corr-newer"}
-	comp.mu.Unlock()
-
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(
-		events.DeploymentResult{Total: 1, Succeeded: 1},
-		events.WithCorrelation("corr-older", "corr-older"),
-	))
-
-	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
 func TestHandleDeploymentCompleted_SkipsWithoutCachedPatches(t *testing.T) {

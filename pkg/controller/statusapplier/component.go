@@ -66,14 +66,6 @@ import (
 )
 
 const (
-	// patchCorrelationCacheCap bounds patchesByCorrelation under sustained
-	// render churn. Renders that get superseded in the deployment queue
-	// never see their own DeploymentCompletedEvent, so their patches sit
-	// in the map until evicted. 64 is well above what the conformance
-	// suite produces during a shard (peak ~10 inflight renders observed)
-	// and small enough that the map stays trivially-sized in memory.
-	patchCorrelationCacheCap = 64
-
 	// ComponentName is the unique identifier for this component.
 	ComponentName = "status-applier"
 
@@ -121,27 +113,6 @@ type Component struct {
 	isLeader      bool
 	cachedPatches []templating.StatusPatch
 
-	// patchesByCorrelation maps a render's correlation_id to its status
-	// patches. Used by handleDeploymentCompleted to apply the "deployed"
-	// variant ONLY for the render whose config actually got deployed.
-	//
-	// Without this, under conformance-test load (many fixtures appearing
-	// in parallel, the deployer running 1-3s per deploy while renders 2-3
-	// behind queue up), the cached "latest" patches reflect a render
-	// that's NOT YET deployed — every deploy's completion would flip
-	// Accepted=True for routes the deploy didn't ship, racing the test's
-	// poll-then-dial loop. Key by correlation_id, evict on apply, and the
-	// race goes away.
-	//
-	// correlationOrder records insertion order so we can evict the oldest
-	// entry when the cap (patchCorrelationCacheCap) is exceeded. The
-	// deployment scheduler only queues the LATEST config — so renders
-	// between two completed deploys never get an individual deploy and
-	// their patches stay in the map until evicted. The cap keeps memory
-	// bounded under sustained churn.
-	patchesByCorrelation map[string][]templating.StatusPatch
-	correlationOrder     []string
-
 	// checksumCache maps "namespace/name/gvr" to the SHA-256 of the last
 	// successfully applied patch payload. Used to skip redundant SSA calls.
 	checksumCache map[string]string
@@ -182,8 +153,7 @@ func New(cfg *Config) *Component {
 		gvrResolver:   cfg.GVRResolver,
 		logger:        logger.With("component", ComponentName),
 		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
-		checksumCache:        make(map[string]string),
-		patchesByCorrelation: make(map[string][]templating.StatusPatch),
+		checksumCache: make(map[string]string),
 	}
 }
 
@@ -239,35 +209,9 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 
 // handleTemplateRendered caches the status patches from a successful render
 // and applies the "rendered" variant if this replica is the leader.
-//
-// Patches are stored under two keys:
-//
-//   - cachedPatches: the LATEST patches, used by handleReconciliationFailed
-//     and handleBecameLeader where we want to act on the most recent render.
-//   - patchesByCorrelation[correlationID]: per-render patches, used by
-//     handleDeploymentCompleted to match patches to the specific render
-//     whose config got deployed. Without this, under conformance-test load
-//     the latest patches outrun the deployer and "deployed" status fires
-//     for routes the deploy didn't ship.
 func (c *Component) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
 	c.mu.Lock()
 	c.cachedPatches = event.StatusPatches
-	if cid := event.CorrelationID(); cid != "" && len(event.StatusPatches) > 0 {
-		if _, existed := c.patchesByCorrelation[cid]; !existed {
-			c.correlationOrder = append(c.correlationOrder, cid)
-		}
-		c.patchesByCorrelation[cid] = event.StatusPatches
-		// Evict oldest entries when over cap. Insertion-order eviction
-		// works because the deployment scheduler queues the latest
-		// validated render — orphaned (older, superseded) renders are
-		// the ones that will never be matched, so dropping them first
-		// is safe.
-		for len(c.correlationOrder) > patchCorrelationCacheCap {
-			oldest := c.correlationOrder[0]
-			c.correlationOrder = c.correlationOrder[1:]
-			delete(c.patchesByCorrelation, oldest)
-		}
-	}
 	isLeader := c.isLeader
 	c.mu.Unlock()
 
@@ -295,43 +239,35 @@ func (c *Component) handleTemplateRendered(ctx context.Context, event *events.Te
 // via the deployer's InstanceDeploymentFailedEvent stream and feed the
 // "deployFailed" variant through ReconciliationFailedEvent independently.
 func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
+	c.mu.RLock()
+	patches := c.cachedPatches
+	isLeader := c.isLeader
+	c.mu.RUnlock()
+
+	if !isLeader || len(patches) == 0 {
+		return
+	}
+
 	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't
 	// actually put any HAProxy on the new config — don't claim "deployed".
 	if event.Total == 0 || event.Succeeded == 0 {
 		return
 	}
 
-	cid := event.CorrelationID()
-	c.mu.Lock()
-	isLeader := c.isLeader
-	// Match patches to this specific render's correlation_id and evict
-	// the matched entry. Older entries that haven't been matched by now
-	// are orphans (their renders were superseded in the scheduler's
-	// queue); they'll be evicted in insertion-order by handleTemplate
-	// Rendered's cap enforcement.
-	patches, hasMatch := c.patchesByCorrelation[cid]
-	if hasMatch {
-		delete(c.patchesByCorrelation, cid)
-		for i, oc := range c.correlationOrder {
-			if oc == cid {
-				c.correlationOrder = append(c.correlationOrder[:i], c.correlationOrder[i+1:]...)
-				break
-			}
-		}
-	}
-	c.mu.Unlock()
-
-	if !isLeader {
-		return
-	}
-
-	if !hasMatch || len(patches) == 0 {
-		// Either no correlation_id on the event (older deployer / shouldn't
-		// happen) or the matching patches were already consumed by a prior
-		// DeploymentCompletedEvent. Either way, nothing to apply.
-		return
-	}
-
+	// We apply the LATEST cached patches rather than matching by
+	// correlation_id. We can't reliably match: pod-discovery triggers
+	// produce DeploymentCompletedEvents with fresh correlation_ids
+	// unrelated to any render's correlation_id, so a strict match would
+	// silently drop those (and never flip Programmed=True on the base
+	// Gateway, which is what 742ebfa5 broke).
+	//
+	// The trade-off: under sustained render churn there IS a brief
+	// window where the latest patches reflect a render whose config
+	// the just-completed deploy didn't include. The next deploy
+	// (typically within 1-3 seconds) ships that config and the test
+	// framework's poll loop converges. The race is real but bounded;
+	// strict matching is worse — it never converges at all when the
+	// trigger source differs (pod discovery vs validation).
 	c.applyVariant(ctx, patches, events.StatusPatchPhaseDeployed)
 }
 
