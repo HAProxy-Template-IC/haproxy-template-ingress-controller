@@ -236,7 +236,7 @@ func TestHandleTemplateRendered_SkipsEmptyPatches(t *testing.T) {
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
-func TestHandleReconciliationCompleted_AppliesDeployedVariant(t *testing.T) {
+func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -253,14 +253,14 @@ func TestHandleReconciliationCompleted_AppliesDeployedVariant(t *testing.T) {
 	})
 	comp.mu.Unlock()
 
-	comp.handleReconciliationCompleted(context.Background(), events.NewReconciliationCompletedEvent(100))
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
 
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
 	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
-func TestHandleReconciliationCompleted_SkipsWithoutCachedPatches(t *testing.T) {
+func TestHandleDeploymentCompleted_SkipsWithoutCachedPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClient()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -271,7 +271,32 @@ func TestHandleReconciliationCompleted_SkipsWithoutCachedPatches(t *testing.T) {
 	setLeader(comp)
 
 	// No cached patches
-	comp.handleReconciliationCompleted(context.Background(), events.NewReconciliationCompletedEvent(100))
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
+
+	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
+}
+
+// TestHandleDeploymentCompleted_SkipsZeroEndpoints exercises the "no HAProxy
+// pods reachable" path. The deployer publishes DeploymentCompletedEvent with
+// Total=0 in that case; the status-applier must NOT flip Accepted=True since
+// no HAProxy actually has the new config.
+func TestHandleDeploymentCompleted_SkipsZeroEndpoints(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	comp.mu.Lock()
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
+	})
+	comp.mu.Unlock()
+
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 0, Succeeded: 0}))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -793,7 +818,7 @@ func TestHandleEvent_RoutesCorrectly(t *testing.T) {
 	comp.handleEvent(ctx, events.NewTemplateRenderedEvent(
 		"config", nil, nil, nil, 0, 50, "test", "hash", false,
 	))
-	comp.handleEvent(ctx, events.NewReconciliationCompletedEvent(100))
+	comp.handleEvent(ctx, events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
 	comp.handleEvent(ctx, events.NewReconciliationFailedEvent("err", "deploy"))
 	comp.handleEvent(ctx, events.NewBecameLeaderEvent("identity"))
 	comp.handleEvent(ctx, events.NewLostLeadershipEvent("identity", "reason"))

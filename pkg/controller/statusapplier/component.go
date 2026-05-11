@@ -15,13 +15,30 @@
 // Package statusapplier applies template-driven status patches to Kubernetes resources.
 //
 // The StatusApplier subscribes to pipeline events (TemplateRenderedEvent,
-// ReconciliationCompletedEvent, ReconciliationFailedEvent) and applies the
+// DeploymentCompletedEvent, ReconciliationFailedEvent) and applies the
 // appropriate status patch variant for each lifecycle phase using Server-Side Apply (SSA).
 //
 // Status patches are fully defined by templates — the controller never hardcodes
 // knowledge of specific resource types or condition names. Templates register patches
 // via the statusPatch() template function during rendering, including outcome-keyed
 // variants for each pipeline phase (rendered, deployed, renderFailed, deployFailed).
+//
+// Event mapping:
+//
+//   - TemplateRenderedEvent: cache patches + apply the "rendered" variant. This
+//     marks the route as in-progress (Accepted=Unknown / "rendering") so the
+//     world sees activity well before HAProxy is ready.
+//   - DeploymentCompletedEvent: apply the "deployed" variant. This fires only
+//     after the deployer pushes config to HAProxy endpoints and reload completes,
+//     so Accepted=True genuinely means "HAProxy is serving this route." Listening
+//     to ReconciliationCompletedEvent instead would flip Accepted=True after the
+//     coordinator's in-memory pipeline (render + validate) finishes — which
+//     happens BEFORE the deployer queues a deployment and BEFORE HAProxy reload.
+//     That early-flip used to leak into the Gateway-API conformance suite as
+//     intermittent route-not-found 404s: tests poll until Accepted=True, then
+//     dial within milliseconds, racing the HAProxy reload.
+//   - ReconciliationFailedEvent: apply the failure variant ("renderFailed" /
+//     "validateFailed" / "deployFailed") based on the phase that failed.
 package statusapplier
 
 import (
@@ -79,7 +96,7 @@ type GVRResolver interface {
 // Event flow:
 //
 //	TemplateRenderedEvent → cache patches, apply "rendered" variant (if leader)
-//	ReconciliationCompletedEvent → apply "deployed" variant (if leader)
+//	DeploymentCompletedEvent → apply "deployed" variant (if leader)
 //	ReconciliationFailedEvent → apply "renderFailed" or "deployFailed" variant (if leader)
 //	BecameLeaderEvent → clear checksum cache, apply cached "rendered" variant
 //	LostLeadershipEvent → clear pending state
@@ -176,8 +193,8 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	case *events.TemplateRenderedEvent:
 		c.handleTemplateRendered(ctx, e)
 
-	case *events.ReconciliationCompletedEvent:
-		c.handleReconciliationCompleted(ctx, e)
+	case *events.DeploymentCompletedEvent:
+		c.handleDeploymentCompleted(ctx, e)
 
 	case *events.ReconciliationFailedEvent:
 		c.handleReconciliationFailed(ctx, e)
@@ -205,14 +222,35 @@ func (c *Component) handleTemplateRendered(ctx context.Context, event *events.Te
 	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseRendered)
 }
 
-// handleReconciliationCompleted applies the "deployed" variant after successful deployment.
-func (c *Component) handleReconciliationCompleted(ctx context.Context, _ *events.ReconciliationCompletedEvent) {
+// handleDeploymentCompleted applies the "deployed" variant after the deployer
+// has pushed config to HAProxy endpoints and reload has completed.
+//
+// This is the correct trigger for Accepted=True / Programmed=True style status
+// conditions: it fires AFTER HAProxy actually serves the new routes, not
+// after the in-memory pipeline (render + validate) finishes. Listening to
+// ReconciliationCompletedEvent here used to flip Accepted=True too early
+// and race the conformance test framework's poll-then-dial loop.
+//
+// Partial-failure handling: the deployer publishes DeploymentCompletedEvent
+// once per scheduled deployment, with Total / Succeeded / Failed counts. We
+// fire the "deployed" variant whenever ANY endpoint succeeded — every
+// successful endpoint observed the new config, so "Accepted on the chart's
+// data plane" is true for those instances. Per-endpoint failures surface
+// via the deployer's InstanceDeploymentFailedEvent stream and feed the
+// "deployFailed" variant through ReconciliationFailedEvent independently.
+func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
 	c.mu.RLock()
 	patches := c.cachedPatches
 	isLeader := c.isLeader
 	c.mu.RUnlock()
 
 	if !isLeader || len(patches) == 0 {
+		return
+	}
+
+	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't
+	// actually put any HAProxy on the new config — don't claim "deployed".
+	if event.Total == 0 || event.Succeeded == 0 {
 		return
 	}
 
