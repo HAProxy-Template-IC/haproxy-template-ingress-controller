@@ -33,6 +33,7 @@ templateSnippets:
 
   util-gateway-pod-port-allocator:
     template: |
+      {%- import "util-bounded-k8s-name" for BoundedK8sName %}
       {#- Initialise the per-Gateway-listener pod-port allocation map.
           Idempotent — multiple snippets render this; only the first
           actually computes. Downstream consumers should `{{ render
@@ -55,8 +56,31 @@ templateSnippets:
               allocator, just leave them out).
       -#}
       {%- var _, _ = shared.ComputeIfAbsent("gatewayPodPortAllocations", func() any {
+        {#- Two-pass allocator with stability across renders.
+
+            Pass 1: walk every (Gateway, HTTPS listener) tuple AND read
+            back the per-Gateway Service from the cluster cache. If the
+            Service already exists with a non-default targetPort for
+            this listener's port, REUSE that targetPort as the pod-port
+            allocation. This is what gives allocations
+            within-conformance-suite stability: when a new Gateway is
+            applied alongside an existing one, the existing one's
+            allocations stay put (its Service was emitted by a prior
+            render and is what kube-proxy currently DNATs to), and
+            only the new Gateway gets fresh allocations from the free
+            pool.
+
+            Pass 2: for tuples without an existing Service allocation,
+            assign the lowest free pod port (basePort + i, skipping
+            ports already locked in by pass 1). Sort the new tuples
+            alphabetically so within a single render the assignment
+            order is deterministic — but only NEW tuples ever pick
+            from the free pool, so an existing Gateway's allocations
+            don't shift when a new alphabetically-earlier Gateway
+            arrives. -#}
         var basePort = toint(extraContext | dig("perGatewayPodPortBase") | fallback(18000))
-        var keys = []any{}
+        var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+        var allTuples = []any{}
         for _, gw := range resources.gateways.List() {
           var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
           var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
@@ -70,18 +94,63 @@ templateSnippets:
             if lName == "" || lPort <= 0 {
               continue
             }
-            var key = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort)
-            keys = append(keys, key)
+            allTuples = append(allTuples, map[string]any{
+              "key":    gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort),
+              "gwNs":   gwNs,
+              "gwName": gwName,
+              "lPort":  lPort,
+            })
           }
         }
-        var stringKeys = []any{}
-        for _, k := range keys {
-          stringKeys = append(stringKeys, tostring(k))
-        }
-        var sortedKeys = sort_strings(stringKeys)
+
         var result = map[string]any{}
-        for i, keyAny := range sortedKeys {
-          result[tostring(keyAny)] = basePort + i
+        var usedPorts = map[int]bool{}
+        var newTuples = []any{}
+        for _, tAny := range allTuples {
+          var t = tAny.(map[string]any)
+          var found = false
+          if ctrlNs != "" && resources != nil && resources.services != nil {
+            var svcName = BoundedK8sName("gw", tostring(t["gwNs"]), tostring(t["gwName"]), "")
+            var svc = resources.services.GetSingle(ctrlNs, svcName)
+            if svc != nil {
+              var lPort = toint(t["lPort"])
+              for _, pAny := range dig(svc, "spec", "ports") | toSlice() {
+                var pMap = pAny.(map[string]any)
+                if toint(pMap["port"]) == lPort {
+                  var tp = toint(pMap["targetPort"])
+                  if tp >= basePort {
+                    result[tostring(t["key"])] = tp
+                    usedPorts[tp] = true
+                    found = true
+                    break
+                  }
+                }
+              }
+            }
+          }
+          if !found {
+            newTuples = append(newTuples, t)
+          }
+        }
+
+        var newKeys = []any{}
+        for _, tAny := range newTuples {
+          newKeys = append(newKeys, tostring(tAny.(map[string]any)["key"]))
+        }
+        var sortedNewKeys = sort_strings(newKeys)
+        var newKeyToTuple = map[string]any{}
+        for _, tAny := range newTuples {
+          newKeyToTuple[tostring(tAny.(map[string]any)["key"])] = tAny
+        }
+
+        var nextPort = basePort
+        for _, keyAny := range sortedNewKeys {
+          for usedPorts[nextPort] {
+            nextPort++
+          }
+          result[tostring(keyAny)] = nextPort
+          usedPorts[nextPort] = true
+          nextPort++
         }
         return result
       }) %}
@@ -164,9 +233,20 @@ templateSnippets:
           {%- lines = append(lines, podPort + " " + listenerPort) %}
         {%- end %}
       {%- end %}
-      {%- var content = (lines | toStringSlice() | join("\n")) %}
-      {%- if content != "" %}
-        {%- content = content + "\n" %}
+      {#- The DataPlane API rejects empty file uploads with 422
+          "data in body is required" (cannot register a 0-byte body),
+          but base.yaml's frontend-routing-logic references this map
+          unconditionally — so we always need a registered file. Emit
+          a single comment line when there are no allocations: HAProxy
+          treats `# ...` as a comment, the map stays effectively empty,
+          and the `map(...) -m found` predicate falls through to the
+          dst_port-passes-through-unchanged branch on every lookup
+          (the right behaviour for chart-static binds). -#}
+      {%- var content = "" %}
+      {%- if len(lines) > 0 %}
+        {%- content = (lines | toStringSlice() | join("\n")) + "\n" %}
+      {%- else %}
+        {%- content = "# no per-Gateway pod-port allocations\n" %}
       {%- end %}
       {%- var _, regErr = fileRegistry.Register("map", "pod-listener-port.map", content) %}
       {%- if regErr != nil %}
