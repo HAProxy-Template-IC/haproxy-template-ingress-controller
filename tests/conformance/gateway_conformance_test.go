@@ -70,8 +70,6 @@ import (
 	conformanceconfig "sigs.k8s.io/gateway-api/conformance/utils/config"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
-
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
 )
 
 // metalLBPoolGVR identifies the IPAddressPool CRD MetalLB ships. The e2e
@@ -590,79 +588,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		},
 		UsableNetworkAddresses:   usable,
 		UnusableNetworkAddresses: unusable,
-	}
-
-	// Additional skips that ONLY apply when the test suite runs inside
-	// GitLab CI's Docker-in-Docker. These are not chart bugs — local
-	// runs of the same suite produce 101 PASS / 0 FAIL — they are
-	// CI-environment limitations the chart can't paper over without
-	// pinning per-Gateway NodePorts (would constrain operator chart
-	// values) or adding a sidecar port-forwarder (CI infra change).
-	//
-	// Tracked separately so the local-pass baseline stays a clean
-	// regression detector. Each entry MUST cite the specific DinD
-	// limitation it hits.
-	if kindutil.IsDockerInDocker() {
-		opts.SkipTests = append(opts.SkipTests,
-			// CI-DinD-only: per-Gateway HTTPS / TLSRoute / mTLS tests
-			// dial Gateway.status.addresses on a port that K8s assigned
-			// dynamically (a NodePort in the 30000-32767 range). The
-			// chart's HAProxy listens on that NodePort inside the kind
-			// node container, but the kind node container sits inside
-			// the DinD container's docker daemon — the test process
-			// runs on the OUTER docker network and can only reach the
-			// host ports kind exports via `extraPortMappings`. Today
-			// that's only {31080, 31443, 31404} (HTTP / HTTPS / stats
-			// for the chart's main Service). Per-Gateway random
-			// NodePorts can't be pre-declared. Same code path passes
-			// locally because there's no DinD hop.
-			"HTTPRouteHTTPSListener",
-			"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
-			"TLSRouteHostnameIntersection",
-			"TLSRouteSimpleSameNamespace",
-			"TLSRouteTerminateSimpleSameNamespace",
-			"GatewayFrontendClientCertificateValidation",
-			"GatewayFrontendClientCertificateValidationInsecureFallback",
-			"GatewayFrontendInvalidDefaultClientCertificateValidation",
-			"GatewayInvalidFrontendClientCertificateValidation",
-			"GatewayBackendClientCertificateFeature",
-
-			// CI-DinD-only: gRPC `default_backend/<NOSRV>` 404 from the
-			// h2c inner frontend. HAProxy log confirms the request
-			// arrives on `frontend http_frontend_h2c` and the chart's
-			// route lookup misses (`txn.backend_name` unset, falls to
-			// default_backend). Same route emission passes the local
-			// conformance run; under CI's reload churn + parallel-
-			// subtest load, the chart's h2c path emission lands AFTER
-			// the test's first dial. Needs a chart-side investigation
-			// (separate change) to either pre-warm the h2c inner
-			// frontend's maps before Programmed=True or stop dialling
-			// before deploy-phase status fires.
-			"GRPCExactMethodMatching",
-			"GRPCRouteHeaderMatching",
-			"GRPCRouteListenerHostnameMatching",
-			"GRPCRouteNamedRule",
-			"GRPCRouteWeight",
-
-			// CI-DinD-only: backend-protocol tests rely on the chart
-			// reaching a real gRPC / WebSocket backend through the
-			// chart-static port-80 path. The h2c hop + reload-churn
-			// timing pattern matches the GRPCRoute category above.
-			"HTTPRouteBackendProtocolH2C",
-			"HTTPRouteBackendProtocolWebSocket",
-
-			// CI-DinD-only: BackendTLSPolicy tests check that the
-			// chart's HAProxy enforces TLS to the backend. The
-			// connection that reaches HAProxy goes through the
-			// DinD hop fine; the failure is the same h2c-or-routing
-			// timing window as the gRPC category. Re-test once the
-			// underlying issue is resolved chart-side.
-			"BackendTLSPolicy",
-			"BackendTLSPolicyConflictResolution",
-			"BackendTLSPolicyInvalidCACertificateRef",
-			"BackendTLSPolicyInvalidKind",
-			"BackendTLSPolicyObservedGenerationBump",
-		)
 	}
 
 	gwconformance.RunConformanceWithOptions(t, opts)
