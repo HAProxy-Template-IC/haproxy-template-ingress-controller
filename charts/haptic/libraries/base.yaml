@@ -253,10 +253,18 @@ templateSnippets:
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-      # Per-listener-port fallback: see frontend-routing-logic for the
-      # full rationale (must stay in lockstep with the default variant).
-      http-request set-var(txn.dst_port) dst_port if { var(txn.host_match) -m len 0 }
-      http-request set-var(txn.host_match) str(:),concat(,txn.dst_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      # Per-Gateway pod-port translation: see frontend-routing-logic for
+      # the full rationale (must stay in lockstep with the default
+      # variant). Sets txn.listener_port unconditionally so downstream
+      # consumers — the host.map fallbacks below and the redirect
+      # filter in gateway/60-frontend.yaml — read the user-facing
+      # listener port instead of the allocated pod port, even when an
+      # operator opts into regexMatchOrder=last.
+      http-request set-var(txn.dst_port) dst_port
+      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      http-request set-var(txn.listener_port) var(txn.dst_port) if !{ var(txn.listener_port) -m found }
+      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
       # Path matching: Exact > Prefix-exact > Prefix > Regex
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
