@@ -327,9 +327,24 @@ func buildInitialPortTable(ctx context.Context, cs clientset.Interface) (map[int
 
 	// The dynamic NodePorts allocated by the apiserver for the chart's
 	// gateway-listener-ports Service are reachable via the kind node's
-	// docker-network InternalIP (e.g. 172.19.0.2:30808), not via the
-	// host loopback because they aren't in kind extraPortMappings.
-	// Discover the node IP once at suite-init; refresh() reuses it.
+	// docker-network InternalIP (e.g. 172.19.0.2:30808) — but only
+	// from contexts that share that docker network. In a flat local
+	// setup the kind container's IP is routable from the test
+	// process. In Docker-in-Docker (GitLab CI), the kind node lives
+	// inside the DinD container's docker daemon; the kind node IP
+	// isn't reachable from the outer job container, which is where
+	// the test process actually runs. The DinD hostname is — every
+	// NodePort opened on a kind node is also reachable on the DinD
+	// container's IP at the same port number (kind binds NodePorts
+	// to 0.0.0.0 inside the DinD container's host namespace). So in
+	// DinD, route ALL dynamic NodePorts through the DinD hostname
+	// IP, matching the static 80/443 entries above. Failing to do
+	// this is what causes the conformance shards in CI to hit
+	// `dial tcp <kind-internal-ip>:<NodePort>: i/o timeout` on
+	// every per-Gateway lookup.
+	if kindutil.IsDockerInDocker() {
+		return out, hostIP, nil
+	}
 	nodeIP, err := discoverNodeInternalIP(ctx, cs)
 	if err != nil {
 		return out, "", err
