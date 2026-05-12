@@ -16,17 +16,10 @@ templateSnippets:
             optional parametersRef is malformed (wrong group / kind)
 
         Variants written:
-          - rendered:    Accepted condition (data-plane-independent —
-                          the class is admitted or rejected purely from
-                          spec.parametersRef validation, no HAProxy state
-                          needed). Applied immediately on every render.
-
-        deployed/deployFailed are intentionally NOT emitted. With
-        phase-scoped SSA field managers, haptic-rendered owns the
-        Accepted condition exclusively; haptic-deployed and
-        haptic-deployFailed never touch the GatewayClass. Deployment
-        failures surface on the dependent Gateway (its Programmed
-        condition flips False), not on the class itself.
+          - rendered:    deploy succeeded → Accepted=True
+          - deployFailed: deploy failed   → Accepted=True (the GatewayClass
+                          itself is still accepted; deployment failures
+                          surface on the dependent Gateway, not here)
 
         We don't validate that the parametersRef target resource *exists* —
         that would require a watch on cluster-scoped HAProxyTemplateConfig
@@ -73,6 +66,9 @@ templateSnippets:
               "gateway.networking.k8s.io/v1", "GatewayClass",
               map[string]interface{}{
                 "rendered": map[string]interface{}{
+                  "conditions": []any{acceptedCondition},
+                },
+                "deployFailed": map[string]interface{}{
                   "conditions": []any{acceptedCondition},
                 },
               })
