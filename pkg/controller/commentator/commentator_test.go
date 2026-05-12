@@ -124,7 +124,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with changes is info",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   1,
@@ -134,7 +134,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with reloads but no ops is info",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   1,
@@ -144,7 +144,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with ops but no reloads is info",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   0,
@@ -154,7 +154,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with no changes is debug",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   0,
@@ -382,7 +382,7 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentCompletedEvent", func(t *testing.T) {
-		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 			Total:              3,
 			Succeeded:          2,
 			Failed:             1,

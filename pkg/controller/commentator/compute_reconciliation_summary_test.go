@@ -73,7 +73,7 @@ func fakeRB(events ...busevents.Event) *EventCommentator {
 // correlation through.
 func depCompleted(t *testing.T, corr ctlevents.CorrelationOption, deployMs int64, succeeded, total, reloads, ops int) *ctlevents.DeploymentCompletedEvent {
 	t.Helper()
-	return ctlevents.NewDeploymentCompletedEvent(ctlevents.DeploymentResult{
+	return ctlevents.NewDeploymentCompletedEvent(&ctlevents.DeploymentResult{
 		Total:              total,
 		Succeeded:          succeeded,
 		Failed:             total - succeeded,

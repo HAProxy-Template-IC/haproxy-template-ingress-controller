@@ -387,7 +387,7 @@ func TestStateCache_HandleDeploymentCompleted_AllSucceeded(t *testing.T) {
 	bus.Start()
 
 	// Publish deployment completed event - all succeeded
-	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		Failed:     0,
@@ -418,7 +418,7 @@ func TestStateCache_HandleDeploymentCompleted_Partial(t *testing.T) {
 	bus.Start()
 
 	// Publish deployment completed event - partial success
-	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      3,
 		Succeeded:  2,
 		Failed:     1,
@@ -446,7 +446,7 @@ func TestStateCache_HandleDeploymentCompleted_AllFailed(t *testing.T) {
 	bus.Start()
 
 	// Publish deployment completed event - all failed
-	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  0,
 		Failed:     2,
@@ -677,7 +677,7 @@ func TestStateCache_ReconciliationResetsPipelineState(t *testing.T) {
 	// Set up some pipeline state
 	bus.Publish(events.NewTemplateRenderedEvent("config", nil, nil, nil, 0, 100, "", "", true))
 	bus.Publish(events.NewValidationCompletedEvent(nil, 50, "", nil, true))
-	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	bus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		Failed:     0,

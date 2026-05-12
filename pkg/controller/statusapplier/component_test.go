@@ -258,7 +258,7 @@ func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total: 1, Succeeded: 1, StatusPatches: deployedPatches(),
 	}))
 
@@ -280,7 +280,7 @@ func TestHandleDeploymentCompleted_SkipsWithoutPatches(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
@@ -299,7 +299,7 @@ func TestHandleDeploymentCompleted_SkipsZeroEndpoints(t *testing.T) {
 
 	setLeader(comp)
 
-	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	comp.handleDeploymentCompleted(context.Background(), events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total: 0, Succeeded: 0, StatusPatches: deployedPatches(),
 	}))
 
@@ -885,7 +885,7 @@ func TestHandleEvent_RoutesCorrectly(t *testing.T) {
 	comp.handleEvent(ctx, events.NewTemplateRenderedEvent(
 		"config", nil, nil, nil, 0, 50, "test", "hash", false,
 	))
-	comp.handleEvent(ctx, events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
+	comp.handleEvent(ctx, events.NewDeploymentCompletedEvent(&events.DeploymentResult{Total: 1, Succeeded: 1}))
 	comp.handleEvent(ctx, events.NewReconciliationFailedEvent("err", "deploy", nil))
 	comp.handleEvent(ctx, events.NewBecameLeaderEvent("identity"))
 	comp.handleEvent(ctx, events.NewLostLeadershipEvent("identity", "reason"))

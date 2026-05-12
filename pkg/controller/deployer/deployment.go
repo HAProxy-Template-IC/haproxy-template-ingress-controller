@@ -154,7 +154,7 @@ func (c *Component) deployToEndpoints(
 		// "deployed" variant if appropriate (the zero-endpoint guard in StatusApplier
 		// will skip the apply, but the data is on the event for consistency).
 		c.eventBus.Publish(events.NewDeploymentCompletedEvent(
-			events.DeploymentResult{StatusPatches: statusPatches},
+			&events.DeploymentResult{StatusPatches: statusPatches},
 			events.WithCorrelation(correlationID, correlationID),
 		))
 		return
@@ -213,7 +213,7 @@ func (c *Component) deployToEndpoints(
 	// applies the patches that match THIS deployment's config (no side-channel,
 	// no stale-LATEST race).
 	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
-		events.DeploymentResult{
+		&events.DeploymentResult{
 			Total:              len(endpoints),
 			Succeeded:          int(state.successCount),
 			Failed:             int(state.failureCount),

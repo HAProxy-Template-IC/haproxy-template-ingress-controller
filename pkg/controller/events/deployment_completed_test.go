@@ -50,7 +50,7 @@ func TestNewDeploymentCompletedEvent_DefensiveCopyOfBreakdown(t *testing.T) {
 		"server_update":  5,
 	}
 
-	event := NewDeploymentCompletedEvent(DeploymentResult{
+	event := NewDeploymentCompletedEvent(&DeploymentResult{
 		OperationBreakdown: original,
 	})
 
@@ -76,7 +76,7 @@ func TestNewDeploymentCompletedEvent_NilBreakdownStaysNil(t *testing.T) {
 	// branches on `breakdown == nil` to decide whether to log the
 	// breakdown line at all. Coercing nil -> empty map would
 	// silently log "operations:" for every no-op reconciliation.
-	event := NewDeploymentCompletedEvent(DeploymentResult{
+	event := NewDeploymentCompletedEvent(&DeploymentResult{
 		OperationBreakdown: nil,
 	})
 
@@ -92,7 +92,7 @@ func TestNewDeploymentCompletedEvent_EmptyBreakdownIsCopiedToEmptyMap(t *testing
 	// distinguish from the nil "we never computed it" signal.
 	original := map[string]int{}
 
-	event := NewDeploymentCompletedEvent(DeploymentResult{
+	event := NewDeploymentCompletedEvent(&DeploymentResult{
 		OperationBreakdown: original,
 	})
 
@@ -125,7 +125,7 @@ func TestNewDeploymentCompletedEvent_BackendDiffFieldsRoundTripsVerbatim(t *test
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			event := NewDeploymentCompletedEvent(DeploymentResult{
+			event := NewDeploymentCompletedEvent(&DeploymentResult{
 				BackendDiffFields: tt.in,
 			})
 			assert.Equal(t, tt.in, event.BackendDiffFields,

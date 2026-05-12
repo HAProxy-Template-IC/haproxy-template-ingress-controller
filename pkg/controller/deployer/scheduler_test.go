@@ -324,7 +324,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler.state.phase = phaseDeploying
 	scheduler.schedulerMutex.Unlock()
 
-	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		DurationMs: 100,
@@ -516,7 +516,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.state.phase = phaseDeploying
 		scheduler.schedulerMutex.Unlock()
 
-		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 			Total:      1,
 			Succeeded:  1,
 			DurationMs: 50,
@@ -637,7 +637,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	}
 	scheduler.schedulerMutex.Unlock()
 
-	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      1,
 		Succeeded:  1,
 		DurationMs: 100,

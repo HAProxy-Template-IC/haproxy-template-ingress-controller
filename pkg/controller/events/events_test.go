@@ -601,7 +601,7 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentCompletedEvent", func(t *testing.T) {
-		event := NewDeploymentCompletedEvent(DeploymentResult{
+		event := NewDeploymentCompletedEvent(&DeploymentResult{
 			Total:              10,
 			Succeeded:          8,
 			Failed:             2,
@@ -621,7 +621,7 @@ func TestDeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentCompletedEvent_WithCorrelation", func(t *testing.T) {
-		event := NewDeploymentCompletedEvent(DeploymentResult{
+		event := NewDeploymentCompletedEvent(&DeploymentResult{
 			Total:              5,
 			Succeeded:          5,
 			DurationMs:         100,
@@ -940,7 +940,7 @@ func TestTimestampNotZero(t *testing.T) {
 		{"DeploymentStarted", NewDeploymentStartedEvent(nil)},
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},
 		{"InstanceDeploymentFailed", NewInstanceDeploymentFailedEvent(nil, "error", false)},
-		{"DeploymentCompleted", NewDeploymentCompletedEvent(DeploymentResult{})},
+		{"DeploymentCompleted", NewDeploymentCompletedEvent(&DeploymentResult{})},
 		{"DeploymentScheduled", NewDeploymentScheduledEvent("cfg", nil, nil, nil, "n", "ns", "r", "", nil, true)},
 		{"DriftPreventionTriggered", NewDriftPreventionTriggeredEvent(0)},
 		// Discovery events

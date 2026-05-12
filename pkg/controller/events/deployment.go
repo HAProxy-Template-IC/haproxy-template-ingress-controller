@@ -179,9 +179,12 @@ type DeploymentResult struct {
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
 //
+// `result` is taken by pointer because DeploymentResult is large enough
+// (≥96 bytes) that gocritic flags pass-by-value as `hugeParam`.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+//	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 //	    Total:              len(endpoints),
 //	    Succeeded:          successCount,
 //	    Failed:             failureCount,
@@ -190,7 +193,7 @@ type DeploymentResult struct {
 //	    TotalAPIOperations: ops,
 //	    OperationBreakdown: breakdown,
 //	}, events.PropagateCorrelation(startedEvent))
-func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
+func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
 	// Defensive copy of the map
 	var breakdownCopy map[string]int
 	if result.OperationBreakdown != nil {
