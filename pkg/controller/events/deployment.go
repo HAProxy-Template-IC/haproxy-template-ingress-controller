@@ -182,6 +182,11 @@ type DeploymentResult struct {
 // `result` is taken by pointer because DeploymentResult is large enough
 // (≥96 bytes) that gocritic flags pass-by-value as `hugeParam`.
 //
+// `result.StatusPatches` should be forwarded unchanged from the
+// DeploymentScheduledEvent that triggered the deployment so the
+// StatusApplier reads the patches that correspond exactly to the
+// configuration that just shipped (the chart's "deployed" variant).
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
 //	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
@@ -192,6 +197,7 @@ type DeploymentResult struct {
 //	    ReloadsTriggered:   reloads,
 //	    TotalAPIOperations: ops,
 //	    OperationBreakdown: breakdown,
+//	    StatusPatches:      scheduledEvent.StatusPatches, // forward unchanged
 //	}, events.PropagateCorrelation(startedEvent))
 func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
 	// Defensive copy of the map
