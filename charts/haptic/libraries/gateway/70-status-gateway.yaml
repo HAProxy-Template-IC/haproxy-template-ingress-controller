@@ -2147,11 +2147,31 @@ templateSnippets:
             })
           }
 
+          // The ListenerSet CRD ships a status default that pre-populates
+          // .status.conditions with Accepted=Unknown AND Programmed=Unknown,
+          // both with observedGeneration unset (so they serialise as 0).
+          // If the rendered variant only emits Accepted, the API-server-
+          // defaulted Programmed entry sticks around with
+          // observedGeneration=0 until the deployed variant lands after
+          // the data-plane reload. The Gateway-API conformance helper
+          // `ListenerSetListenersMustHaveConditions` fast-fails the first
+          // time it observes any top-level condition whose
+          // observedGeneration trails the LS's metadata.generation — so a
+          // poll between rendered and deployed applies sees Programmed
+          // (observedGen=0) and bails the whole suite. Emitting
+          // lsProgrammedCond in the rendered variant too bumps Programmed's
+          // observedGeneration immediately, closing the race. The chart's
+          // lsProgrammed is computed from the LS spec + parent Gateway
+          // state alone (no data-plane state), so rendered and deployed
+          // emit byte-identical Programmed conditions on the success path —
+          // the deployed apply still owns Programmed via SSA Force=true,
+          // and the checksum cache skips redundant re-applies, so no flicker.
+          var lsRenderedCond = []any{lsAcceptedCond, lsProgrammedCond}
           statusPatch(lsNs, lsName,
             "gateway.networking.k8s.io/v1", "ListenerSet",
             map[string]interface{}{
               "rendered": map[string]interface{}{
-                "conditions": []any{lsAcceptedCond},
+                "conditions": lsRenderedCond,
                 "listeners":  renderedListeners,
               },
               "deployed": map[string]interface{}{
