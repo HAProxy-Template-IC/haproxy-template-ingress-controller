@@ -77,7 +77,6 @@ import (
 	xv1alpha1 "sigs.k8s.io/gateway-api/apisx/v1alpha1"
 	gwconformance "sigs.k8s.io/gateway-api/conformance"
 	conformanceconfig "sigs.k8s.io/gateway-api/conformance/utils/config"
-	gatewaygrpc "sigs.k8s.io/gateway-api/conformance/utils/grpc"
 	"sigs.k8s.io/gateway-api/conformance/utils/roundtripper"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
@@ -212,7 +211,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		Debug:         debug,
 		TimeoutConfig: timeoutCfg,
 	}
-	grpcClient := &gatewaygrpc.DefaultClient{}
+	// Intentionally do NOT set GRPCClient on ConformanceOptions below.
+	// Upstream PR #3130 (kubernetes-sigs/gateway-api#3130) makes
+	// MakeRequestAndExpectEventuallyConsistentResponse create a fresh
+	// *grpc.DefaultClient per call when the suite-level client is nil,
+	// avoiding the race where one parallel subtest's `defer c.Close()`
+	// tears down a *grpc.ClientConn while siblings are still mid-RPC
+	// (upstream issue #3122). Envoy Gateway, Contour, Cilium, Traefik
+	// all leave it nil for this reason.
 
 	// SupportGatewayStaticAddresses substitutes PLACEHOLDER_USABLE_ADDRS /
 	// PLACEHOLDER_UNUSABLE_ADDRS in its Gateway fixture with the entries
@@ -245,7 +251,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		CleanupBaseResources: false,
 		SupportedFeatures:    supported,
 		RoundTripper:         rt,
-		GRPCClient:           grpcClient,
 		TimeoutConfig:        timeoutCfg,
 		Implementation: suite.ParseImplementation(
 			"haproxy-haptic",

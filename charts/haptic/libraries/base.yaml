@@ -852,6 +852,20 @@ templateSnippets:
       {%- else %}
       backend default_backend
           guid be:default_backend
+          # gRPC unmatched-request handling. We need a trailers-only style
+          # response (HEADERS frame with END_STREAM, no DATA) that carries
+          # content-type: application/grpc + grpc-status: 12. Without
+          # content-type, grpc-go reports "malformed header: missing HTTP
+          # content-type" and tears down the HTTP/2 connection, cancelling
+          # every sibling multiplexed stream.
+          #
+          # HAProxy's `http-request return` action strips `content-type`
+          # from `hdr` arguments when no body source is provided. We
+          # restore it via `http-after-response set-header`, which runs on
+          # responses produced by the `return` action.
+          http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }
+          http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }
+          # Non-gRPC: plain HTTP/1.1 / HTTP/2 404.
           http-request return status 404
       {%- end %}
 
