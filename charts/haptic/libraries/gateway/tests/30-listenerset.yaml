@@ -588,3 +588,89 @@ validationTests:
           values supported by Gateway. When specified, the listener
           will support only the kinds in allowedRoutes.kinds that are
           also supported by the Gateway").
+
+  test-listenerset-rendered-variant-includes-programmed-observed-generation:
+    description: |
+      The ListenerSet CRD defaults `status.conditions` to include both
+      Accepted and Programmed entries with `observedGeneration` unset
+      (so it serialises as 0). If the chart's rendered-variant patch
+      only writes Accepted, the API-server-defaulted Programmed entry
+      sticks around with observedGeneration=0 until the deployed-variant
+      patch lands after the data plane reload. The Gateway-API
+      conformance helper `ListenerSetListenersMustHaveConditions`
+      fast-fails (`return false, err`) the first time it observes any
+      top-level condition whose observedGeneration is behind the LS's
+      metadata.generation — so a poll between the rendered and deployed
+      applies sees Programmed (generation 0) and fails the test
+      immediately. The rendered variant must therefore emit
+      lsProgrammedCond too, so the very first apply bumps Programmed's
+      observedGeneration to the current generation. Pinned by the
+      upstream ListenerSetAllowedRoutesNamespaces conformance test —
+      this fixture mirrors the LS shape that test creates so the patch
+      payload is asserted directly here without waiting on a kind run.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-rendered-variant-programmed-observed-gen
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: gateway-listener
+                protocol: HTTP
+                port: 80
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-rendered-variant-programmed-observed-gen
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-rendered-variant-programmed-observed-gen
+            listeners:
+              - name: listener
+                protocol: HTTP
+                port: 8081
+                hostname: ls.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+    assertions:
+      # Condition objects serialise with alphabetically-ordered keys
+      # (Go map JSON), so observedGeneration always appears before type
+      # within the same {...} entry. Match a whole condition entry to
+      # bind both keys to the same object.
+      - type: contains
+        target: "status:default/ls-rendered-variant-programmed-observed-gen:rendered"
+        pattern: '\{[^}]*"observedGeneration":1[^}]*"type":"Programmed"[^}]*\}'
+        description: |
+          Rendered-variant patch must include the top-level Programmed
+          condition with observedGeneration=1 — otherwise the CRD
+          default Programmed entry (observedGeneration=0) survives
+          until the deployed-variant patch lands and fails the
+          conformance helper's fast observedGeneration check.
+
+      - type: contains
+        target: "status:default/ls-rendered-variant-programmed-observed-gen:rendered"
+        pattern: '\{[^}]*"observedGeneration":1[^}]*"type":"Accepted"[^}]*\}'
+        description: Existing top-level Accepted assertion (regression guard).
+
+      - type: contains
+        target: "status:default/ls-rendered-variant-programmed-observed-gen:deployed"
+        pattern: '\{[^}]*"observedGeneration":1[^}]*"type":"Programmed"[^}]*\}'
+        description: |
+          Deployed-variant patch still owns the post-reload Programmed
+          condition with current observedGeneration — adding it to the
+          rendered variant must not remove it here.
