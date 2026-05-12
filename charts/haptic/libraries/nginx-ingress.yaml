@@ -1296,12 +1296,13 @@ templateSnippets:
         {%- var beName = info["name"] | tostring() %}
         {%- var svcName = info["svcName"] | tostring() %}
         {%- var svcPort = info["svcPort"] | toint() %}
+        {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
         {%- if first_seen("ni_sslPassthrough_backend", beNs + "/" + beIngress) %}
       # nginx-ingress/backends-ssl-passthrough
 
       backend {{ beName }}
           mode tcp
-          {{ BackendServers(svcName, 10, svcPort, nil, nil, beName, beNs) | indent(4) }}
+          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
         {%- end %}
       {%- end %}
 
@@ -2431,6 +2432,70 @@ validationTests:
           matching backend block, haproxy_valid would also fail with
           'unable to find required use_backend' — but assert on the
           string explicitly so a test failure points at the right cause.
+
+  test-nginx-ingress-ssl-passthrough-named-port:
+    description: nginx-ingress SSL passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (regression guard for the silent fallback-to-not-rendered bug in BuildAnnotationSSLPassthrough)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: secure-app
+            namespace: default
+          spec:
+            ports:
+              - name: https
+                port: 8443
+                targetPort: https
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secure-app-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: secure-app
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.50"]
+              targetRef:
+                kind: Pod
+                name: secure-app-0
+          ports:
+            - name: https
+              port: 8443
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: secure-app
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: secure-app.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: secure-app
+                          port:
+                            name: https
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.50:8443 "
+        description: nginx-ingress SSL passthrough must use the resolved port for named-port references
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.50:80 "
+        description: Must not regress to port-80 fallback for nginx-ingress SSL passthrough
 
   test-nginx-ingress-permanent-redirect:
     description: Nginx Ingress permanent-redirect generates 301 redirect

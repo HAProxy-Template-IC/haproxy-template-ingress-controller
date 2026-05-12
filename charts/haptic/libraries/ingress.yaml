@@ -246,6 +246,7 @@ templateSnippets:
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {% macro GenerateIngressBackends(ingresses []any) string %}
         {%- for _, ingress := range ingresses -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") -%}
@@ -255,8 +256,11 @@ templateSnippets:
               {%- var svc = path | dig("backend", "service") -%}
               {%- if svc != nil -%}
                 {%- var svcName = svc | dig("name") | fallback("") -%}
-                {%- var port = svc | dig("port", "number") | fallback(80) -%}
-                {%- var portId = (svc | dig("port", "name")) | fallback(svc | dig("port", "number") | fallback("")) -%}
+                {%- var resolvedParts = split(ResolveServicePort(tostring(ns), tostring(svcName), svc | dig("port")), " ") -%}
+                {%- var port = toint(resolvedParts[0]) -%}
+                {%- var portName = resolvedParts[1] -%}
+                {%- var portId = portName -%}
+                {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
                 {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
       # Backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
                   {%- var backendKey = BackendNameIngress(ingress, path) %}
@@ -265,7 +269,7 @@ templateSnippets:
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
         default-server check{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(tostring(svcName), 0, toint(port), nil, nil, backendKey, tostring(ns)) | indent(2, true) }}
+        {{ BackendServers(tostring(svcName), 0, port, nil, portName, backendKey, tostring(ns)) | indent(2, true) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -957,3 +961,137 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend default_web-ingress_svc_web-svc_80"
         description: Must generate backend for ingress
+
+  test-ingress-named-port:
+    description: Ingress backend referencing the service port by name (port.name) must resolve to the correct numeric pod port, not fall back to 80
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: unifi
+            namespace: default
+          spec:
+            ports:
+              - name: https-gui
+                port: 8443
+                targetPort: https-gui
+              - name: controller
+                port: 8080
+                targetPort: controller
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: unifi-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: unifi
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.42"]
+              targetRef:
+                kind: Pod
+                name: unifi-0
+          ports:
+            - name: https-gui
+              port: 8443
+              protocol: TCP
+            - name: controller
+              port: 8080
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: unifi
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: unifi.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: unifi
+                          port:
+                            name: https-gui
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.42:8443 "
+        description: Server line must use the resolved numeric pod port (8443), not the previous :80 fallback
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "# Backend for: Ingress default/unifi → Service unifi:8443"
+        description: Backend comment must show the resolved numeric port, not the misleading :80
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.42:80 "
+        description: Must not regress to the port-80 fallback
+
+  test-ingress-named-port-typo-fails:
+    description: Ingress referencing a non-existent port name must fail rendering loudly with a clear message
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: unifi
+            namespace: default
+          spec:
+            ports:
+              - name: https-gui
+                port: 8443
+                targetPort: https-gui
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: unifi-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: unifi
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.42"]
+          ports:
+            - name: https-gui
+              port: 8443
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: unifi
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: unifi.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: unifi
+                          port:
+                            name: nonexistent-port-name
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "ResolveServicePort: Service default/unifi has no port named 'nonexistent-port-name'"
+        description: Rendering must fail with a message naming the offending port and the service
+      - type: contains
+        target: rendering_error
+        pattern: "https-gui\\(8443\\)"
+        description: Error message must list the service's actual port names to aid debugging

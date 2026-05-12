@@ -253,6 +253,151 @@ templateSnippets:
       {% end %}
 
   # ----------------------------------------------------------------------------
+  # Service Port Resolution
+  # ----------------------------------------------------------------------------
+
+  util-service-port-resolution:
+    template: |
+      {#-
+        ResolveServicePort - Resolve an Ingress/Gateway service-port reference to
+        a concrete {port: int, name: string} pair by consulting the target Service.
+
+        This is the single source of truth for translating the Kubernetes
+        ServiceBackendPort shape ({number?: int, name?: string}) into the values
+        BackendServers needs. All ingress / gateway / NGINX / haproxy-ingress /
+        haproxytech library backend-rendering call sites must call this macro
+        before invoking BackendServers — passing nil for portName to BackendServers
+        (the old pattern) silently produces broken `:80` configs whenever a
+        backend is referenced by port.name on a Service that does not also expose
+        port 80.
+
+        Parameters:
+          namespace    - Service namespace (string)
+          serviceName  - Service name (string)
+          portRef      - The `port` value from an Ingress / Gateway / HTTPRoute
+                         backend reference. Accepts either a dict shape
+                         {number?: int, name?: string} (Kubernetes Ingress) or
+                         a bare integer (Gateway API BackendObjectReference.port),
+                         or nil.
+
+        Returns:
+          string — space-separated "<portNumber> <portName>" where portName is
+          "" (empty string) when the Service port is unnamed. The macro must
+          return a content-format type (Scriggo language constraint), which is
+          why this is encoded as a string instead of a map. Unpack with
+          split(ResolveServicePort(...), " ") → [portNumber, portName]. See
+          the Example block below.
+
+        Failure modes (call fail() and abort the render):
+          - portRef is nil or has neither number nor name
+          - portRef.name is set but the Service cannot be found (number cannot be derived without the Service)
+          - portRef.name is set but the Service has no port with that name
+          - Resolved port is <= 0 (defensive: e.g. Service port entry has port: 0)
+
+        Non-failure: when portRef.number is given and the Service does not exist,
+        the macro succeeds with name="" — the numeric port is trusted without
+        Service validation. Name backfill is best-effort in that case.
+
+        Why fail() not silent fallback:
+          The previous fallback-to-80 behavior silently produced unusable HAProxy
+          configs (server lines pointing at ports nothing was listening on) that
+          looked syntactically valid; a real-world ingress for a unifi controller
+          served 503 with <NOSRV>/SC-- for 73 days before the issue was noticed.
+          fail() aborts the render, surfaces in controller logs and Ingress/
+          Gateway `deployFailed` status, and leaves the last-known-good config
+          serving — so a single misconfigured ingress doesn't break the cluster.
+
+        Example:
+          {%- var resolved = split(ResolveServicePort(tostring(ns), tostring(svcName), svc | dig("port")), " ") -%}
+          {%- var port = toint(resolved[0]) -%}
+          {%- var portName = resolved[1] -%}
+          # Now: port is the Service port number; portName is "" if the Service port is unnamed.
+          # Pass both to BackendServers(svcName, 0, port, nil, portName, backendKey, ns).
+      -#}
+      {% macro ResolveServicePort(namespace string, serviceName string, portRef any) string %}
+        {%%
+          // Accept either a {number?, name?} dict (Ingress's ServiceBackendPort shape)
+          // or a bare numeric port (Gateway API's BackendObjectReference.port is a
+          // *PortNumber — a bare int).
+          var portNumber = 0
+          var portName = ""
+          if portRef != nil {
+            // Try the dict shape first.
+            var n = toint(portRef | dig("number") | fallback(0))
+            var nm = tostring(portRef | dig("name") | fallback(""))
+            if n > 0 || nm != "" {
+              portNumber = n
+              portName = nm
+            } else {
+              // Fall back to the bare-int shape.
+              portNumber = toint(portRef)
+            }
+          }
+
+          var resolvedPort = 0
+          var resolvedName = ""
+
+          if portNumber > 0 {
+            // Number given: trust it. Try to backfill name from the Service for the
+            // `# Backend for:` comment and the first_seen deduplication key.
+            resolvedPort = portNumber
+            var svc = resources.services.GetSingle(namespace, serviceName)
+            if svc != nil {
+              for _, sp := range svc | dig("spec", "ports") | toSlice() {
+                if toint(sp | dig("port") | fallback(0)) == portNumber {
+                  resolvedName = tostring(sp | dig("name") | fallback(""))
+                  break
+                }
+              }
+            }
+          } else if portName != "" {
+            // Name given, no number: look up the numeric port from the Service.
+            // The Service MUST exist in this case — we cannot resolve the port number without it.
+            var svc = resources.services.GetSingle(namespace, serviceName)
+            if svc == nil {
+              fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+                " not found (needed to resolve port name '" + portName + "')")
+            }
+            var found = false
+            for _, sp := range svc | dig("spec", "ports") | toSlice() {
+              if tostring(sp | dig("name") | fallback("")) == portName {
+                resolvedPort = toint(sp | dig("port") | fallback(0))
+                resolvedName = portName
+                found = true
+                break
+              }
+            }
+            if !found {
+              // Build a list of the Service's actual port names so the operator
+              // can spot typos at a glance in the controller logs.
+              var available = []any{}
+              for _, sp := range svc | dig("spec", "ports") | toSlice() {
+                available = append(available, tostring(sp | dig("name") | fallback("")) +
+                  "(" + tostring(toint(sp | dig("port") | fallback(0))) + ")")
+              }
+              fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+                " has no port named '" + portName + "' (available: [" +
+                join(toStringSlice(available), ", ") + "])")
+            }
+          } else {
+            var portRefStr = "nil"
+            if portRef != nil {
+              portRefStr = tostring(portRef)
+            }
+            fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+              " referenced with neither port.number nor port.name (portRef=" +
+              portRefStr + ")")
+          }
+
+          if resolvedPort <= 0 {
+            fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
+              " port resolution yielded 0 (portRef=" + tostring(portRef) + ")")
+          }
+          show tostring(resolvedPort) + " " + resolvedName
+        %%}
+      {% end %}
+
+  # ----------------------------------------------------------------------------
   # Backend Server Generation - Main Macro
   # ----------------------------------------------------------------------------
 
@@ -658,17 +803,20 @@ templateSnippets:
   util-default-backend:
     template: |
       {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {%- var defaultBackendSvc = extraContext | dig("defaultBackendService") | fallback(nil) -%}
       {%- if defaultBackendSvc != nil %}
       {%%
         var dbNamespace = defaultBackendSvc | dig("namespace") | fallback("") | tostring()
         var dbName = defaultBackendSvc | dig("name") | fallback("") | tostring()
-        var dbPort = defaultBackendSvc | dig("port") | fallback(80)
       %%}
+      {%- var resolvedParts = split(ResolveServicePort(dbNamespace, dbName, defaultBackendSvc | dig("port")), " ") -%}
+      {%- var dbPort = toint(resolvedParts[0]) -%}
+      {%- var dbPortName = resolvedParts[1] -%}
       backend default_backend
           guid be:default_backend
           default-server check
-          {{ BackendServers(dbName, 0, toint(dbPort), nil, nil, "default_backend", dbNamespace) | indent(2, true) }}
+          {{ BackendServers(dbName, 0, dbPort, nil, dbPortName, "default_backend", dbNamespace) | indent(2, true) }}
       {%- else %}
       backend default_backend
           guid be:default_backend
@@ -1077,6 +1225,55 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request return status 404"
         description: Must not use 404 fallback when service is configured
+
+  test-default-backend-named-port:
+    description: Default backend resolves a Service port referenced by name (port.name) to the correct numeric pod port
+    extraContext:
+      defaultBackendService:
+        namespace: default
+        name: api-svc
+        port:
+          name: api
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api-svc
+            namespace: default
+          spec:
+            ports:
+              - name: api
+                port: 9000
+                targetPort: api
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.2.0.1"]
+              targetRef:
+                kind: Pod
+                name: api-pod-0
+          ports:
+            - name: api
+              port: 9000
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.2.0.1:9000 "
+        description: Default backend must resolve named port to the correct numeric pod port
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.2.0.1:80 "
+        description: Must not regress to port-80 fallback for default backend named-port references
 
   test-default-backend-same-namespace:
     description: Default backend works with explicit namespace
