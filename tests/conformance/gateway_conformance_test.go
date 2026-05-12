@@ -178,17 +178,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// stay at upstream defaults — those are reads against the apiserver,
 	// not the chart's data plane, and we don't gain by tightening them).
 	timeoutCfg := conformanceconfig.DefaultTimeoutConfig()
-	// MaxTimeToConsistency and RequestTimeout are kept tight (5s) on
-	// purpose. They form the controller's performance contract: a chart
-	// reconcile → render → validate → deploy → HAProxy reload must
-	// converge inside this budget. If a test times out here, it's a
-	// performance regression in the chart or controller — investigate
-	// the slowness, don't bump the timeout. The test framework adds its
-	// own retry budget on top of RequestTimeout (50 retries) so brief
-	// transient races are absorbed without raising the per-request
-	// ceiling.
-	timeoutCfg.MaxTimeToConsistency = 5 * time.Second
-	timeoutCfg.RequestTimeout = 5 * time.Second
+	// 10s is the contract ceiling — haptic must complete reconcile →
+	// render → validate → deploy → HAProxy reload within this budget.
+	// Anything longer is to be treated as a bug and fixed, not papered
+	// over by raising the timeout (see CLAUDE-memory
+	// feedback_no_blind_timeout_bumps). Tests that fail at 10s point at
+	// genuine slowness on the chart or controller side.
+	timeoutCfg.MaxTimeToConsistency = 10 * time.Second
+	timeoutCfg.RequestTimeout = 10 * time.Second
 	timeoutCfg.GatewayMustHaveAddress = 30 * time.Second
 	timeoutCfg.GatewayMustHaveCondition = 30 * time.Second
 	timeoutCfg.GatewayStatusMustHaveListeners = 30 * time.Second
