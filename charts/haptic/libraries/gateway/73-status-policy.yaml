@@ -269,15 +269,15 @@ templateSnippets:
               }
             }
             if len(ancestors) > 0 {
+              // BackendTLSPolicy conditions (Accepted, ResolvedRefs per
+              // ancestor) are data-plane-independent — they reflect
+              // index-time resolution of cert refs and ancestor admission.
+              // Phase-scoped field managers mean we only need to emit
+              // these in the rendered variant; haptic-deployed and
+              // haptic-deployFailed never touch policy status.
               statusPatch(policyNs, policyName, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
-                    "ancestors": ancestors,
-                  },
-                  "deployed": map[string]interface{}{
-                    "ancestors": ancestors,
-                  },
-                  "deployFailed": map[string]interface{}{
                     "ancestors": ancestors,
                   },
                 })
