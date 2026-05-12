@@ -955,6 +955,7 @@ templateSnippets:
       {#-   dedupCategory: category name for first_seen deduplication #}
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {%- macro GenerateGatewayBackends(routes []any, protoFlag string, dedupCategory string) -%}
       {%- for _, route := range routes -%}
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") -%}
@@ -978,7 +979,9 @@ templateSnippets:
         {%- continue -%}
       {%- end -%}
       {%- var backendName = backendRef | dig("name") | fallback("") -%}
-      {%- var backendPort = backendRef | dig("port") | fallback(80) -%}
+      {%- var resolvedParts = split(ResolveServicePort(tostring(routeNs), tostring(backendName), backendRef | dig("port")), " ") -%}
+      {%- var backendPort = toint(resolvedParts[0]) -%}
+      {%- var backendPortName = resolvedParts[1] -%}
       {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
       {%- var backendKey = routeNs + "_" + routeName + "_" + backendName + "_" + (backendPort) -%}
       {%- if first_seen(dedupCategory, backendKey) -%}
@@ -989,7 +992,7 @@ templateSnippets:
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
         default-server check{%- if protoFlag != "" %} proto {{ protoFlag }}{%- end %}
-        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, tostring(routeNs)) | indent(2, true) -}}
+        {{ BackendServers(backendName, 10, backendPort, nil, backendPortName, beKey, tostring(routeNs)) | indent(2, true) -}}
       {%- end -%}
       {%- end -%}
       {%- end -%}
@@ -1070,6 +1073,7 @@ templateSnippets:
       -#}
       {#- Get cached SSL passthrough analysis (runs once, shared across all renders) #}
       {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {{ render "util-gateway-ssl-passthrough" }}
 
       {%- var sslPassthroughData = shared.Get("gateway_ssl_passthrough").(map[string]any) %}
@@ -1090,13 +1094,15 @@ templateSnippets:
                 {%- for _, backendRef := range rule | dig("backendRefs") | toSlice() %}
                   {%- if !generated %}
                     {%- var refName = backendRef | dig("name") | fallback("") %}
-                    {%- var refPort = backendRef | dig("port") | fallback(80) %}
+                    {%- var resolvedParts = split(ResolveServicePort(tostring(biNamespace), tostring(refName), backendRef | dig("port")), " ") %}
+                    {%- var refPort = toint(resolvedParts[0]) %}
+                    {%- var refPortName = resolvedParts[1] %}
       # gateway/backends-gateway-ssl-passthrough
 
       backend {{ biName }}
           guid {{ make_guid("be", biName) }}
           mode tcp
-          {{ BackendServers(refName, 10, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
+          {{ BackendServers(refName, 10, refPort, nil, refPortName, biName, tostring(biNamespace)) | indent(4, false) }}
                     {%- generated = true %}
                   {%- end %}
                 {%- end %}
@@ -5779,3 +5785,161 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend gtw_default_grpc-route"
         description: Must generate backend for GRPCRoute
+
+  test-httproute-numeric-port-resolves:
+    description: HTTPRoute backendRef.port resolves through the Service to the pod port (regression guard for the named-Service-port bug applied to Gateway API)
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: api
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+            hostnames: ["api.example.com"]
+            rules:
+              - backendRefs:
+                  - name: api-svc
+                    port: 8443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api-svc
+            namespace: default
+          spec:
+            ports:
+              - name: https
+                port: 8443
+                targetPort: https
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.7"]
+              targetRef:
+                kind: Pod
+                name: api-svc-0
+          ports:
+            - name: https
+              port: 8443
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.7:8443 "
+        description: Gateway backend server line must use the resolved numeric pod port
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.7:80 "
+        description: Must not regress to the port-80 fallback for Gateway backends
+
+  test-httproute-ssl-passthrough-port-resolution:
+    description: HTTPRoute with SSL passthrough ExtensionRef filter must resolve backendRef.port through the Service to the pod port
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                tls:
+                  mode: Passthrough
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: passthrough
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+            hostnames: ["secure.example.com"]
+            rules:
+              - filters:
+                  - type: ExtensionRef
+                    extensionRef:
+                      group: ""
+                      kind: SSLPassthrough
+                      name: passthrough
+                backendRefs:
+                  - name: secure-svc
+                    port: 9443
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: secure-svc
+            namespace: default
+          spec:
+            ports:
+              - name: https
+                port: 9443
+                targetPort: https
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secure-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: secure-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.99"]
+          ports:
+            - name: https
+              port: 9443
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.99:9443 "
+        description: SSL passthrough backend must use the resolved numeric pod port
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.99:80 "
+        description: Must not regress to port-80 fallback for SSL passthrough

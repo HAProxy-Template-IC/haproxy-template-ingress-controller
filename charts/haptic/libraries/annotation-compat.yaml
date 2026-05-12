@@ -80,14 +80,20 @@ templateSnippets:
 
         Backend entry shape (must stay identical across libraries):
           {
-            "name":      namePrefix + ns + "-" + name,
-            "sni":       host,
-            "namespace": ns,
-            "ingress":   name,
-            "svcName":   <first path's service name>,
-            "svcPort":   <first path's service port (int)>,
+            "name":        namePrefix + ns + "-" + name,
+            "sni":         host,
+            "namespace":   ns,
+            "ingress":     name,
+            "svcName":     <first path's service name>,
+            "svcPort":     <first path's service port (int)>,
+            "svcPortName": <first path's service port name (string, "" if unnamed)>,
           }
+
+        svcPortName was added when BuildAnnotationSSLPassthrough was switched to
+        ResolveServicePort so that consumers can pass the resolved name to
+        BackendServers as the 5th arg (was nil) for multi-port Services.
       -#}
+      {%- import "util-service-port-resolution" for ResolveServicePort %}
       {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
         {%- for _, ingress := range resources.ingresses.List() %}
           {%- var passthrough = ingress | dig("metadata", "annotations", annotationKey) | fallback("") | tostring() %}
@@ -100,15 +106,17 @@ templateSnippets:
                 semantics; passthrough by SNI doesn't route by path). -#}
             {%- var svcName = "" %}
             {%- var svcPort = 0 %}
+            {%- var svcPortName = "" %}
             {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
               {%- if svcName == "" %}
                 {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) %}
                   {%- if svcName == "" %}
                     {%- var n = path | dig("backend", "service", "name") | fallback("") | tostring() %}
-                    {%- var p = path | dig("backend", "service", "port", "number") | fallback(path | dig("backend", "service", "port", "name")) | toint() %}
-                    {%- if n != "" && p != 0 %}
+                    {%- if n != "" %}
+                      {%- var resolvedParts = split(ResolveServicePort(tostring(ns), n, path | dig("backend", "service", "port")), " ") %}
                       {%- svcName = n %}
-                      {%- svcPort = p %}
+                      {%- svcPort = toint(resolvedParts[0]) %}
+                      {%- svcPortName = resolvedParts[1] %}
                     {%- end %}
                   {%- end %}
                 {%- end %}
@@ -121,7 +129,7 @@ templateSnippets:
                   {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
                     "name": namePrefix + ns + "-" + name,
                     "sni": host, "namespace": ns, "ingress": name,
-                    "svcName": svcName, "svcPort": svcPort,
+                    "svcName": svcName, "svcPort": svcPort, "svcPortName": svcPortName,
                   }) %}
                 {%- end %}
               {%- end %}

@@ -773,12 +773,13 @@ templateSnippets:
         {%- var beName = info["name"] | tostring() %}
         {%- var svcName = info["svcName"] | tostring() %}
         {%- var svcPort = info["svcPort"] | toint() %}
+        {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
         {%- if first_seen("sslPassthrough_backend", beNs + "/" + beIngress) %}
       # haproxytech/backends-haproxytech-ssl-passthrough
 
       backend {{ beName }}
           mode tcp
-          {{ BackendServers(svcName, 10, svcPort, nil, nil, beName, beNs) | indent(4) }}
+          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
         {%- end %}
       {%- end %}
 
@@ -1851,3 +1852,67 @@ validationTests:
         target: haproxy.cfg
         pattern: "4 ready pods"
         description: Must not count Pending or not-Ready pods
+
+  test-haproxytech-ssl-passthrough-named-port:
+    description: haproxy.org/ssl-passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (mirrors the original unifi-controller bug scenario)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: unifi
+            namespace: default
+          spec:
+            ports:
+              - name: https-gui
+                port: 8443
+                targetPort: https-gui
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: unifi-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: unifi
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.42"]
+              targetRef:
+                kind: Pod
+                name: unifi-0
+          ports:
+            - name: https-gui
+              port: 8443
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: unifi
+            namespace: default
+            annotations:
+              haproxy.org/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: unifi.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: unifi
+                          port:
+                            name: https-gui
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.42:8443 "
+        description: The exact unifi reproduction (via haproxy.org/ssl-passthrough) must produce a server line on the actual pod port
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.42:80 "
+        description: Must not regress to port-80 fallback for haproxytech SSL passthrough

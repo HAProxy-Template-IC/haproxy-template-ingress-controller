@@ -1298,12 +1298,13 @@ templateSnippets:
         {%- var beName = info["name"] | tostring() %}
         {%- var svcName = info["svcName"] | tostring() %}
         {%- var svcPort = info["svcPort"] | toint() %}
+        {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
         {%- if first_seen("hi_sslPassthrough_backend", beNs + "/" + beIngress) %}
       # haproxy-ingress/backends-ssl-passthrough
 
       backend {{ beName }}
           mode tcp
-          {{ BackendServers(svcName, 10, svcPort, nil, nil, beName, beNs) | indent(4) }}
+          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
         {%- end %}
       {%- end %}
 
@@ -4616,3 +4617,67 @@ validationTests:
         target: rendering_error
         pattern: "default/orphan-waf sets annotation 'haproxy-ingress\\.github\\.io/waf' but the spoaHub coraza plugin is not enabled"
         description: Render must fail with explicit annotation-without-coraza error
+
+  test-haproxy-ingress-ssl-passthrough-named-port:
+    description: haproxy-ingress.github.io/ssl-passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: secure-grpc
+            namespace: default
+          spec:
+            ports:
+              - name: grpc-tls
+                port: 9443
+                targetPort: grpc-tls
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secure-grpc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: secure-grpc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.60"]
+              targetRef:
+                kind: Pod
+                name: secure-grpc-0
+          ports:
+            - name: grpc-tls
+              port: 9443
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: secure-grpc
+            namespace: default
+            annotations:
+              haproxy-ingress.github.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: grpc.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: secure-grpc
+                          port:
+                            name: grpc-tls
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.60:9443 "
+        description: haproxy-ingress SSL passthrough must use the resolved port for named-port references
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.60:80 "
+        description: Must not regress to port-80 fallback
