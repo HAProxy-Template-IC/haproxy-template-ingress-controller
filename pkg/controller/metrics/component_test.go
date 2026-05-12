@@ -74,7 +74,7 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ReconciliationErrors))
 
 	// Publish reconciliation failed event
-	eventBus.Publish(events.NewReconciliationFailedEvent("template error", "render"))
+	eventBus.Publish(events.NewReconciliationFailedEvent("template error", "render", nil))
 
 	time.Sleep(100 * time.Millisecond)
 

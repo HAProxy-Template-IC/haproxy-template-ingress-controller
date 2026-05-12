@@ -14,6 +14,12 @@
 
 package events
 
+import (
+	"slices"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+)
+
 // ReconciliationTriggeredEvent is published when a reconciliation cycle should start.
 //
 // This event is typically published by the Reconciler after the debounce timer.
@@ -127,6 +133,16 @@ func (e *ReconciliationCompletedEvent) EventType() string { return EventTypeReco
 type ReconciliationFailedEvent struct {
 	Error string
 	Phase string // Which phase failed: "render", "validate", "deploy"
+
+	// StatusPatches are the chart-rendered status patches from the most
+	// recent SUCCESSFUL render (the failure itself rarely produces patches —
+	// render failures have none; validation failures have the just-rendered
+	// set). The StatusApplier reads them to write the renderFailed /
+	// deployFailed variant on the affected resources. May be nil if no
+	// successful render has happened yet (early bootstrap failures); the
+	// applier handles nil gracefully by skipping the apply.
+	StatusPatches []templating.StatusPatch
+
 	timestamped
 
 	// Correlation embeds correlation tracking for event tracing.
@@ -135,16 +151,20 @@ type ReconciliationFailedEvent struct {
 
 // NewReconciliationFailedEvent creates a new ReconciliationFailedEvent.
 //
+// statusPatches should be the patches from the most recent successful render,
+// or nil if none exists yet. The outer slice is defensively cloned.
+//
 // Use WithCorrelation() to propagate correlation from the pipeline:
 //
-//	event := events.NewReconciliationFailedEvent(err, phase,
+//	event := events.NewReconciliationFailedEvent(err, phase, statusPatches,
 //	    events.WithCorrelation(correlationID, causationID))
-func NewReconciliationFailedEvent(err, phase string, opts ...CorrelationOption) *ReconciliationFailedEvent {
+func NewReconciliationFailedEvent(err, phase string, statusPatches []templating.StatusPatch, opts ...CorrelationOption) *ReconciliationFailedEvent {
 	return &ReconciliationFailedEvent{
-		Error:       err,
-		Phase:       phase,
-		timestamped: newTimestamped(),
-		Correlation: newCorrelation(opts...),
+		Error:         err,
+		Phase:         phase,
+		StatusPatches: slices.Clone(statusPatches),
+		timestamped:   newTimestamped(),
+		Correlation:   newCorrelation(opts...),
 	}
 }
 

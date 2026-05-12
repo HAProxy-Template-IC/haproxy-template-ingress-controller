@@ -22,6 +22,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // scheduleOrQueue either queues a deployment if one is in progress, or schedules it immediately.
@@ -36,6 +37,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 	endpoints []dataplane.Endpoint,
 	reason string,
 	correlationID string,
+	statusPatches []templating.StatusPatch,
 	coalescible bool,
 ) {
 	s.schedulerMutex.Lock()
@@ -49,6 +51,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 			endpoints:     endpoints,
 			reason:        reason,
 			correlationID: correlationID,
+			statusPatches: statusPatches,
 			coalescible:   coalescible,
 		}
 		s.schedulerMutex.Unlock()
@@ -68,7 +71,7 @@ func (s *DeploymentScheduler) scheduleOrQueue(
 
 	// Schedule deployment asynchronously to avoid blocking event loop
 	// This allows new events to be received and queued while we handle rate limiting
-	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, parsedConfig, endpoints, reason, correlationID, coalescible)
+	go s.scheduleWithRateLimitUnlocked(ctx, config, auxFiles, parsedConfig, endpoints, reason, correlationID, statusPatches, coalescible)
 }
 
 // scheduleWithRateLimitUnlocked schedules a deployment, enforcing rate limiting.
@@ -83,6 +86,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 	endpoints []dataplane.Endpoint,
 	reason string,
 	correlationID string,
+	statusPatches []templating.StatusPatch,
 	coalescible bool,
 ) {
 	// Get last deployment time for rate limiting
@@ -154,7 +158,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 		"correlation_id", correlationID)
 
 	s.eventBus.Publish(events.NewDeploymentScheduledEvent(
-		config, auxFiles, parsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum, coalescible,
+		config, auxFiles, parsedConfig, endpoints, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum, statusPatches, coalescible,
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
@@ -197,7 +201,7 @@ func (s *DeploymentScheduler) scheduleWithRateLimitUnlocked(
 
 	// Recursive: schedule pending (we're still in non-idle state)
 	s.scheduleWithRateLimitUnlocked(ctx, pending.config, pending.auxFiles, pending.parsedConfig,
-		pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
+		pending.endpoints, pending.reason, pending.correlationID, pending.statusPatches, pending.coalescible)
 }
 
 // checkDeploymentTimeout checks if the current deployment has exceeded the timeout.
@@ -255,7 +259,7 @@ func (s *DeploymentScheduler) checkDeploymentTimeout(ctx context.Context) {
 			"reason", pending.reason+"_timeout_retry",
 			"correlation_id", pending.correlationID)
 		s.scheduleOrQueue(ctx, pending.config, pending.auxFiles, pending.parsedConfig,
-			pending.endpoints, pending.reason+"_timeout_retry", pending.correlationID, pending.coalescible)
+			pending.endpoints, pending.reason+"_timeout_retry", pending.correlationID, pending.statusPatches, pending.coalescible)
 	}
 
 	// Trigger a new reconciliation to recover from the stuck state

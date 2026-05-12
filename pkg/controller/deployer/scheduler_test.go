@@ -397,7 +397,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", true)
+		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -412,8 +412,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", true)
-		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", true)
+		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true)
+		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -687,6 +687,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
 		"test-rate-limit",
 		"correlation-456",
+		nil,  // statusPatches
 		true, // coalescible
 	)
 
@@ -733,6 +734,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 			[]dataplane.Endpoint{},
 			"test-cancel",
 			"correlation-789",
+			nil,  // statusPatches
 			true, // coalescible
 		)
 		close(done)
@@ -779,6 +781,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 		[]dataplane.Endpoint{},
 		"test-compute-runtime",
 		"correlation-compute",
+		nil,  // statusPatches
 		true, // coalescible
 	)
 
@@ -822,6 +825,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 		[]dataplane.Endpoint{},
 		"first",
 		"correlation-1",
+		nil,  // statusPatches
 		true, // coalescible
 	)
 

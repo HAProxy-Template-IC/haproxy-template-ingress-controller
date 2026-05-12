@@ -272,8 +272,13 @@ func (c *Coordinator) handlePipelineFailure(
 		))
 	}
 
+	// Forward the last successful render's patches so StatusApplier can
+	// apply the renderFailed / deployFailed variant. May be nil if no
+	// successful render has happened yet (early bootstrap failure); the
+	// applier skips the apply in that case.
 	c.eventBus.Publish(events.NewReconciliationFailedEvent(
 		err.Error(),
 		phase,
+		c.lastStatusPatches,
 	))
 }

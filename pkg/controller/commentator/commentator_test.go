@@ -285,7 +285,7 @@ func TestEventCommentator_GenerateInsight_ReconciliationEvents(t *testing.T) {
 
 	t.Run("ReconciliationFailedEvent", func(t *testing.T) {
 		// Constructor is NewReconciliationFailedEvent(err, phase string)
-		event := events.NewReconciliationFailedEvent("template syntax error", "template")
+		event := events.NewReconciliationFailedEvent("template syntax error", "template", nil)
 
 		insight, attrs := ec.generateInsight(event)
 

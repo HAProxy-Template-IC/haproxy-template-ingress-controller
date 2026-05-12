@@ -30,6 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 const (
@@ -90,8 +91,9 @@ type scheduledDeployment struct {
 	parsedConfig  *parser.StructuredConfig
 	endpoints     []dataplane.Endpoint
 	reason        string
-	correlationID string // Correlation ID for event tracing
-	coalescible   bool   // Whether this deployment can be coalesced (skipped if newer available)
+	correlationID string                   // Correlation ID for event tracing
+	statusPatches []templating.StatusPatch // Patches to forward to DeploymentScheduledEvent
+	coalescible   bool                     // Whether this deployment can be coalesced (skipped if newer available)
 }
 
 // DeploymentScheduler implements deployment scheduling with rate limiting.
@@ -117,9 +119,10 @@ type DeploymentScheduler struct {
 
 	// State protected by mutex
 	mu                      sync.RWMutex
-	lastRenderedConfig      string                    // Last rendered HAProxy config (before validation)
-	lastAuxiliaryFiles      *dataplane.AuxiliaryFiles // Last rendered auxiliary files
-	lastContentChecksum     string                    // Pre-computed content checksum from pipeline
+	lastRenderedConfig         string                    // Last rendered HAProxy config (before validation)
+	lastAuxiliaryFiles         *dataplane.AuxiliaryFiles // Last rendered auxiliary files
+	lastContentChecksum        string                    // Pre-computed content checksum from pipeline
+	lastValidatedStatusPatches []templating.StatusPatch  // Patches from the last successful render — forwarded to deploy events for StatusApplier
 	lastValidatedConfig     string                    // Last validated HAProxy config
 	lastValidatedAux        *dataplane.AuxiliaryFiles // Last validated auxiliary files
 	lastParsedConfig        *parser.StructuredConfig  // Pre-parsed desired config

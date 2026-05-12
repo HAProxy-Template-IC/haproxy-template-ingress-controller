@@ -73,6 +73,7 @@ func TestHandleDeploymentScheduled_CoalesceDrain_LatestWins(t *testing.T) {
 			"haptic",
 			"test",
 			"",   // contentChecksum
+			nil,  // statusPatches
 			true, // coalescible
 			events.WithCorrelation(id, id),
 		)

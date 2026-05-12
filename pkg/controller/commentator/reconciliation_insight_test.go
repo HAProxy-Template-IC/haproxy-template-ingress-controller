@@ -243,7 +243,7 @@ func TestReconciliationInsight_FailedEvent_PhaseAndErrorAlwaysSurface(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ec := rcECommentator()
-			evt := ctlevents.NewReconciliationFailedEvent(tt.errString, tt.phase)
+			evt := ctlevents.NewReconciliationFailedEvent(tt.errString, tt.phase, nil)
 			insight, attrs := ec.reconciliationInsight(evt, nil)
 
 			require.NotEmpty(t, insight)
