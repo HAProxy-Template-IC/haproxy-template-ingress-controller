@@ -25,20 +25,24 @@
 //
 // Event mapping:
 //
-//   - TemplateRenderedEvent: cache patches + apply the "rendered" variant. This
-//     marks the route as in-progress (Accepted=Unknown / "rendering") so the
-//     world sees activity well before HAProxy is ready.
-//   - DeploymentCompletedEvent: apply the "deployed" variant. This fires only
-//     after the deployer pushes config to HAProxy endpoints and reload completes,
-//     so Accepted=True genuinely means "HAProxy is serving this route." Listening
-//     to ReconciliationCompletedEvent instead would flip Accepted=True after the
-//     coordinator's in-memory pipeline (render + validate) finishes — which
-//     happens BEFORE the deployer queues a deployment and BEFORE HAProxy reload.
-//     That early-flip used to leak into the Gateway-API conformance suite as
-//     intermittent route-not-found 404s: tests poll until Accepted=True, then
-//     dial within milliseconds, racing the HAProxy reload.
+//   - TemplateRenderedEvent: cache patches ONLY. The "rendered" variant is no
+//     longer applied to Kubernetes — doing so would flip Accepted=True before
+//     HAProxy has reloaded, racing the Gateway-API conformance suite's
+//     poll-then-dial loop (tests saw Accepted=True within ms, dialled the
+//     listener, and got 404 from default_backend while HAProxy was still
+//     reloading). The patch cache is consumed below by the deploy / failure
+//     handlers.
+//   - DeploymentCompletedEvent: apply the "deployed" variant from the cached
+//     patches. This event fires only after the deployer pushes config to
+//     HAProxy endpoints AND reload verification completes (see
+//     pkg/dataplane/orchestrator_execution.go:verifyReload and
+//     SyncOptions.VerifyReload=true default), so Accepted=True genuinely
+//     means "HAProxy is serving this route." This is the sole writer of
+//     success-state status conditions.
 //   - ReconciliationFailedEvent: apply the failure variant ("renderFailed" /
-//     "validateFailed" / "deployFailed") based on the phase that failed.
+//     "validateFailed" / "deployFailed") from the cached patches based on the
+//     phase that failed. Failures apply immediately — there is no reload to
+//     wait for.
 package statusapplier
 
 import (
@@ -95,10 +99,10 @@ type GVRResolver interface {
 //
 // Event flow:
 //
-//	TemplateRenderedEvent → cache patches, apply "rendered" variant (if leader)
-//	DeploymentCompletedEvent → apply "deployed" variant (if leader)
-//	ReconciliationFailedEvent → apply "renderFailed" or "deployFailed" variant (if leader)
-//	BecameLeaderEvent → clear checksum cache, apply cached "rendered" variant
+//	TemplateRenderedEvent → cache patches (no Kubernetes write — see package doc)
+//	DeploymentCompletedEvent → apply "deployed" variant from cache (if leader)
+//	ReconciliationFailedEvent → apply "renderFailed" or "deployFailed" variant from cache (if leader)
+//	BecameLeaderEvent → clear checksum cache (next deploy cycle produces fresh status)
 //	LostLeadershipEvent → clear pending state
 type Component struct {
 	eventBus      *busevents.EventBus
@@ -221,19 +225,18 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	}
 }
 
-// handleTemplateRendered caches the status patches from a successful render
-// and applies the "rendered" variant if this replica is the leader.
-func (c *Component) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
+// handleTemplateRendered caches the status patches from a successful render.
+//
+// It does NOT apply the "rendered" variant to Kubernetes. Applying rendered
+// eagerly would flip Accepted=True / Programmed=True before HAProxy has
+// reloaded, racing the Gateway-API conformance suite's poll-then-dial loop.
+// The cached patches are consumed by handleDeploymentCompleted (success) and
+// handleReconciliationFailed (failure) — both of which fire only after
+// outcomes that the chart's status actually reflects.
+func (c *Component) handleTemplateRendered(_ context.Context, event *events.TemplateRenderedEvent) {
 	c.mu.Lock()
 	c.cachedPatches = event.StatusPatches
-	isLeader := c.isLeader
 	c.mu.Unlock()
-
-	if !isLeader || len(event.StatusPatches) == 0 {
-		return
-	}
-
-	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseRendered)
 }
 
 // handleDeploymentCompleted applies the "deployed" variant after the deployer
@@ -304,22 +307,24 @@ func (c *Component) handleReconciliationFailed(ctx context.Context, event *event
 	c.applyVariant(ctx, patches, phase)
 }
 
-// handleBecameLeader clears the checksum cache and applies cached patches.
-func (c *Component) handleBecameLeader(ctx context.Context) {
+// handleBecameLeader marks this replica as the leader and resets the checksum
+// cache so the next deploy cycle re-emits status from scratch.
+//
+// It does NOT replay any cached patches. The Reconciler triggers a fresh
+// reconciliation on BecameLeaderEvent (see pkg/controller/CLAUDE.md leadership
+// transition section), so the new leader will produce a fresh
+// render → deploy → DeploymentCompletedEvent cycle within seconds, and the
+// "deployed" variant will be applied through the normal path. Replaying the
+// rendered variant here would prematurely flip Accepted=True before that
+// fresh deploy completes — the exact race we're avoiding.
+func (c *Component) handleBecameLeader(_ context.Context) {
 	c.mu.Lock()
 	c.isLeader = true
 	// Clear checksum cache — the previous leader may have applied different checksums.
 	c.checksumCache = make(map[string]string)
-	patches := c.cachedPatches
 	c.mu.Unlock()
 
 	c.logger.Info("became leader, clearing status checksum cache")
-
-	if len(patches) > 0 {
-		c.logger.Info("replaying cached status patches for rendered phase",
-			"patch_count", len(patches))
-		c.applyVariant(ctx, patches, events.StatusPatchPhaseRendered)
-	}
 }
 
 // handleLostLeadership clears the leader flag.

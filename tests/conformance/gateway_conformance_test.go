@@ -178,8 +178,15 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// stay at upstream defaults — those are reads against the apiserver,
 	// not the chart's data plane, and we don't gain by tightening them).
 	timeoutCfg := conformanceconfig.DefaultTimeoutConfig()
-	timeoutCfg.MaxTimeToConsistency = 5 * time.Second
-	timeoutCfg.RequestTimeout = 5 * time.Second
+	// MaxTimeToConsistency and RequestTimeout are deliberately above the
+	// per-request budget to absorb realistic chart latency under sustained
+	// fixture churn: render → validate → deploy → HAProxy reload verification.
+	// Earlier 5s values flaked the Category-A tests where Accepted=True was
+	// applied only after DeploymentCompletedEvent (post-reload). Empirically
+	// the chart converges in 1-3s typical and up to ~6s queued, so 15s leaves
+	// margin without letting genuinely stuck tests run unbounded.
+	timeoutCfg.MaxTimeToConsistency = 15 * time.Second
+	timeoutCfg.RequestTimeout = 10 * time.Second
 	timeoutCfg.GatewayMustHaveAddress = 30 * time.Second
 	timeoutCfg.GatewayMustHaveCondition = 30 * time.Second
 	timeoutCfg.GatewayStatusMustHaveListeners = 30 * time.Second
