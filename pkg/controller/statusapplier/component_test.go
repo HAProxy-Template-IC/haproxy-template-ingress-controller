@@ -170,11 +170,7 @@ func TestHandleTemplateRendered_CachesPatches(t *testing.T) {
 	comp.mu.RUnlock()
 }
 
-// TestHandleTemplateRendered_CachesButDoesNotApplyWhenLeader exercises the
-// new "rendered is cache-only" contract: even as leader the handler must NOT
-// fire a StatusUpdateCompletedEvent (no SSA call). The cached patches are
-// reserved for handleDeploymentCompleted / handleReconciliationFailed.
-func TestHandleTemplateRendered_CachesButDoesNotApplyWhenLeader(t *testing.T) {
+func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()
 	resolver := newTestResolver()
@@ -194,16 +190,14 @@ func TestHandleTemplateRendered_CachesButDoesNotApplyWhenLeader(t *testing.T) {
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
-	// No status apply — even as leader, the rendered phase is cache-only.
-	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
-
-	// Patches were cached for the deploy / failure handlers.
-	comp.mu.RLock()
-	assert.Equal(t, patches, comp.cachedPatches)
-	comp.mu.RUnlock()
+	// Should publish StatusUpdateCompletedEvent
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseRendered, completedEvent.Phase)
+	assert.Equal(t, 1, completedEvent.AppliedCount)
+	assert.Equal(t, 0, completedEvent.SkippedCount)
 }
 
-func TestHandleTemplateRendered_CachesWhenNotLeader(t *testing.T) {
+func TestHandleTemplateRendered_SkipsWhenNotLeader(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClient()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -220,15 +214,11 @@ func TestHandleTemplateRendered_CachesWhenNotLeader(t *testing.T) {
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
+	// Should NOT publish any event (no apply when not leader)
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
-
-	// Patches cached regardless of leadership — the cache is replica-wide.
-	comp.mu.RLock()
-	assert.Equal(t, patches, comp.cachedPatches)
-	comp.mu.RUnlock()
 }
 
-func TestHandleTemplateRendered_EmptyPatchesClearsCache(t *testing.T) {
+func TestHandleTemplateRendered_SkipsEmptyPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClient()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -238,23 +228,12 @@ func TestHandleTemplateRendered_EmptyPatchesClearsCache(t *testing.T) {
 
 	setLeader(comp)
 
-	// Pre-populate cache to ensure nil event clears it.
-	comp.mu.Lock()
-	comp.cachedPatches = newTestPatches(map[string]map[string]any{
-		"rendered": {"conditions": []any{}},
-	})
-	comp.mu.Unlock()
-
 	templateEvent := events.NewTemplateRenderedEvent(
 		"haproxy config", nil, nil, nil, 0, 100, "test", "abc123", false,
 	)
 	comp.handleTemplateRendered(context.Background(), templateEvent)
 
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
-
-	comp.mu.RLock()
-	assert.Nil(t, comp.cachedPatches)
-	comp.mu.RUnlock()
 }
 
 func TestHandleDeploymentCompleted_AppliesDeployedVariant(t *testing.T) {
@@ -367,16 +346,7 @@ func TestHandleReconciliationFailed_RenderPhase(t *testing.T) {
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
-// TestHandleBecameLeader_DoesNotReplayCachedPatches exercises the leadership
-// transition contract: BecameLeader sets the leader flag and clears the
-// checksum cache, but does NOT replay cached patches as the rendered phase.
-// Replaying would prematurely flip Accepted=True before the next deploy
-// cycle's reload completes — the same race we're fixing in Category A.
-// The reconciler triggers a fresh reconciliation on BecameLeaderEvent
-// independently (see pkg/controller/CLAUDE.md), so the new leader will
-// produce a fresh deploy → DeploymentCompletedEvent → "deployed" apply
-// within seconds.
-func TestHandleBecameLeader_DoesNotReplayCachedPatches(t *testing.T) {
+func TestHandleBecameLeader_ReplaysCachedPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()
 	comp := newTestComponent(bus, fakeClient, newTestResolver())
@@ -398,8 +368,10 @@ func TestHandleBecameLeader_DoesNotReplayCachedPatches(t *testing.T) {
 	assert.True(t, comp.isLeader)
 	comp.mu.RUnlock()
 
-	// Must NOT have applied any status patches on leader transition.
-	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
+	// Should have replayed patches
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseRendered, completedEvent.Phase)
+	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
 func TestHandleBecameLeader_ClearsChecksumCache(t *testing.T) {
@@ -721,45 +693,33 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	}()
 	time.Sleep(testutil.StartupDelay)
 
-	// 1. Receive template rendered while not leader — caches only, no apply.
+	// 1. Receive template rendered while not leader — caches only
 	patches := newTestPatches(map[string]map[string]any{
 		"rendered": {"conditions": []any{map[string]any{"type": "Accepted"}}},
-		"deployed": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
 	})
 	bus.Publish(events.NewTemplateRenderedEvent(
 		"config", nil, patches, nil, 0, 50, "test", "hash1", false,
 	))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 
-	// 2. Become leader — no patches applied on transition; deploy events are
-	// the sole trigger for K8s writes.
+	// 2. Become leader — should replay cached patches
 	bus.Publish(events.NewBecameLeaderEvent("test-identity"))
-	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
-
-	// 3. Deployment completion — should apply the cached "deployed" variant.
-	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
 	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
-	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
+	assert.Equal(t, events.StatusPatchPhaseRendered, completedEvent.Phase)
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 
-	// 4. Lose leadership
+	// 3. Lose leadership
 	bus.Publish(events.NewLostLeadershipEvent("test-identity", "demoted"))
 	time.Sleep(testutil.StartupDelay) // Wait for event to process
 
-	// 5. Receive another template rendered — should cache but not apply.
+	// 4. Receive another template rendered — should not apply
 	testutil.DrainChannel(eventChan)
 	patches2 := newTestPatches(map[string]map[string]any{
 		"rendered": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
-		"deployed": {"conditions": []any{map[string]any{"type": "Accepted", "status": "True"}}},
 	})
 	bus.Publish(events.NewTemplateRenderedEvent(
 		"config2", nil, patches2, nil, 0, 50, "test", "hash2", false,
 	))
-	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
-
-	// 6. Even with cached patches, a deploy completion while not leader does
-	// not apply.
-	bus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{Total: 1, Succeeded: 1}))
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
