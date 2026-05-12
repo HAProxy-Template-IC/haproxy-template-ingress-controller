@@ -74,8 +74,16 @@ const (
 	// and leadership events.
 	EventBufferSize = busevents.StandardSubscriberBuffer
 
-	// fieldManager is the SSA field manager name used for status patches.
-	fieldManager = "haptic"
+	// fieldManagerPrefix is the SSA field manager prefix for status patches.
+	// The full manager name is suffixed with the phase (e.g. "haptic-rendered",
+	// "haptic-deployed", "haptic-deployFailed") so each phase owns a disjoint
+	// set of conditions. Server-Side Apply's listType=map semantics relinquish
+	// ownership of any list entry not present in the most recent apply by the
+	// same manager — so reusing one manager across phases requires every apply
+	// to enumerate every condition, which forces the rendered phase to claim
+	// Programmed=Pending (causing flicker against the deployed phase's
+	// Programmed=True). Phase-scoped managers sidestep that entirely.
+	fieldManagerPrefix = "haptic"
 
 	statusKey = "status"
 )
@@ -428,7 +436,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 			types.ApplyPatchType,
 			ssaBytes,
 			metav1.PatchOptions{
-				FieldManager: fieldManager,
+				FieldManager: fieldManagerPrefix + "-" + phaseKey,
 				Force:        new(true),
 			},
 			statusKey,

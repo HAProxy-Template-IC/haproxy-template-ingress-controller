@@ -357,23 +357,19 @@ templateSnippets:
               // caught this; tracking the loop index is the fix.)
               // Rendered parents = deployed parents (byte-identical). See
               // the analogous comment in 70-status-gateway.yaml — the
-              // previous transform (Accepted True→False/Pending in rendered)
-              // raced the deployed variant via SSA and timed out the
-              // conformance suite's Test Setup at 90s. Letting both phases
-              // write the same value eliminates the tug-of-war; the brief
-              // window where Accepted=True is visible before HAProxy has
-              // actually reloaded is absorbed by the test framework's
-              // 5s RequestTimeout retry loop.
-              var renderedParents = parents
+              // Route conditions (Accepted, ResolvedRefs per parent) are
+              // all data-plane-independent — the controller knows whether
+              // the parent Gateway admits the route and whether backend
+              // refs resolve from the index alone, without any HAProxy
+              // reload. So the whole payload goes in the rendered
+              // variant; deployed and deployFailed are omitted (each
+              // phase has its own SSA field manager, and skipping the
+              // variant means haptic-deployed never touches this route's
+              // status). The companion Gateway.Programmed condition that
+              // tests dial-gate on still waits for reload separately.
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
-                    "parents": renderedParents,
-                  },
-                  "deployed": map[string]interface{}{
-                    "parents": parents,
-                  },
-                  "deployFailed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
@@ -720,23 +716,19 @@ templateSnippets:
               // caught this; tracking the loop index is the fix.)
               // Rendered parents = deployed parents (byte-identical). See
               // the analogous comment in 70-status-gateway.yaml — the
-              // previous transform (Accepted True→False/Pending in rendered)
-              // raced the deployed variant via SSA and timed out the
-              // conformance suite's Test Setup at 90s. Letting both phases
-              // write the same value eliminates the tug-of-war; the brief
-              // window where Accepted=True is visible before HAProxy has
-              // actually reloaded is absorbed by the test framework's
-              // 5s RequestTimeout retry loop.
-              var renderedParents = parents
+              // Route conditions (Accepted, ResolvedRefs per parent) are
+              // all data-plane-independent — the controller knows whether
+              // the parent Gateway admits the route and whether backend
+              // refs resolve from the index alone, without any HAProxy
+              // reload. So the whole payload goes in the rendered
+              // variant; deployed and deployFailed are omitted (each
+              // phase has its own SSA field manager, and skipping the
+              // variant means haptic-deployed never touches this route's
+              // status). The companion Gateway.Programmed condition that
+              // tests dial-gate on still waits for reload separately.
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
                   "rendered": map[string]interface{}{
-                    "parents": renderedParents,
-                  },
-                  "deployed": map[string]interface{}{
-                    "parents": parents,
-                  },
-                  "deployFailed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
