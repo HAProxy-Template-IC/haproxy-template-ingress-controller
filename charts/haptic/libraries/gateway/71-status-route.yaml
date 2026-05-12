@@ -1,0 +1,781 @@
+templateSnippets:
+  util-generate-route-status-patches:
+    template: |
+      {#-
+        Generate Route Status Patches (HTTPRoute / GRPCRoute)
+
+        For each route, registers a status patch with parents[] entries
+        containing parentRef, controllerName, and conditions (Accepted, ResolvedRefs).
+
+        Per-parent Accepted condition follows the Gateway API spec:
+          - True/Accepted              — at least one listener of the parent
+                                          gateway accepts this route (passing
+                                          all five listener-attachment
+                                          predicates: sectionName, kinds,
+                                          namespaces, hostname intersection)
+          - False/NoMatchingListenerHostname — every candidate listener has a
+                                          hostname that doesn't intersect
+                                          spec.hostnames
+          - False/NoMatchingParent     — sectionName references a listener
+                                          that doesn't exist on the gateway
+          - False/NotAllowedByListeners — every candidate listener excludes
+                                          the route via allowedRoutes.kinds
+                                          or allowedRoutes.namespaces
+
+        Parameters:
+          routes: Slice of route resources to process
+          apiVersion: API version string (e.g. "gateway.networking.k8s.io/v1")
+          kind: Resource kind (e.g. "HTTPRoute" or "GRPCRoute")
+
+        Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
+      -#}
+      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
+        {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
+
+        {#- Build a set of our gateway keys for quick lookup -#}
+        {%- var ourGateways = map[string]bool{} %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%%
+            var gwKey = tostring(dig(gw, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(gw, "metadata", "name") | fallback(""))
+            ourGateways[gwKey] = true
+          %%}
+        {%- end %}
+
+        {%- for _, route := range routes %}
+          {%%
+            var namespace = dig(route, "metadata", "namespace") | fallback("")
+            var name = dig(route, "metadata", "name") | fallback("")
+            var generation = dig(route, "metadata", "generation") | fallback(0)
+            var nsStr = tostring(namespace)
+            var nameStr = tostring(name)
+            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
+
+            // Per Gateway API spec, ResolvedRefs=False can carry one
+            // of these reasons (most-specific wins; first failure
+            // wins fail-fast):
+            //   InvalidKind     — backendRef.kind is not Service
+            //   RefNotPermitted — cross-namespace ref without a
+            //                      matching ReferenceGrant
+            //   BackendNotFound — referenced Service doesn't exist
+            // RefNotPermitted is checked before BackendNotFound so a
+            // user fixing cross-ns auth doesn't first see the
+            // not-found error.
+            var allRefsResolved = true
+            var refFailReason = ""
+            var refFailMsg = ""
+            for _, rule := range dig(route, "spec", "rules") | toSlice() {
+              for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
+                var svcName = dig(backendRef, "name") | fallback("") | tostring()
+                var svcNamespace = dig(backendRef, "namespace") | fallback(namespace) | tostring()
+                var group = dig(backendRef, "group") | fallback("") | tostring()
+                var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
+
+                if !((group == "" || group == "core") && refKind == "Service") {
+                  allRefsResolved = false
+                  refFailReason = "InvalidKind"
+                  refFailMsg = "Unsupported backend kind " + group + "/" + refKind
+                  break
+                }
+                if svcNamespace != nsStr {
+                  // Cross-namespace backend ref: requires a matching
+                  // ReferenceGrant in the target Service's namespace.
+                  if ReferenceGrantPermitted(
+                    "gateway.networking.k8s.io", kind, nsStr,
+                    "", "Service", svcNamespace, svcName) != "true" {
+                    allRefsResolved = false
+                    refFailReason = "RefNotPermitted"
+                    refFailMsg = "Cross-namespace backend ref " + svcNamespace + "/" + svcName + " requires a matching ReferenceGrant"
+                    break
+                  }
+                }
+                var svc = resources.services.GetSingle(svcNamespace, svcName)
+                if svc == nil {
+                  allRefsResolved = false
+                  refFailReason = "BackendNotFound"
+                  refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
+                  break
+                }
+              }
+              if !allRefsResolved {
+                break
+              }
+            }
+
+            // Build parents array
+            var parents = []any{}
+            var parentIdx = 0
+            for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
+              var gwGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
+              var gwKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
+              var gwNamespace = dig(parentRef, "namespace") | fallback(namespace) | tostring()
+              var gwName = dig(parentRef, "name") | fallback("") | tostring()
+
+              // ListenerSet parentRef → resolve to its parent Gateway
+              // for the listener-attach evaluation, but emit the
+              // status entry with kind=ListenerSet so conformance
+              // readers see the route as attached to the LS (the
+              // upstream `ListenerSetHTTPRouting` test asserts
+              // `expected ParentReference.Kind to be ListenerSet`).
+              var lsResolvedGw any = nil
+              if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
+                var lsObj = resources.listenersets.GetSingle(gwNamespace, gwName)
+                if lsObj != nil {
+                  var lsParentRef = dig(lsObj, "spec", "parentRef")
+                  var pName = tostring(dig(lsParentRef, "name") | fallback(""))
+                  var pNs = tostring(dig(lsParentRef, "namespace") | fallback(gwNamespace))
+                  lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
+                }
+              }
+              // Only process parentRefs targeting our gateways
+              // (Gateway-kind directly, or ListenerSet whose parent
+              // resolves to one of ours).
+              if gwGroup == "gateway.networking.k8s.io" && (gwKind == "Gateway" || (gwKind == "ListenerSet" && lsResolvedGw != nil)) {
+                var gwKey = gwNamespace + "/" + gwName
+                if gwKind == "ListenerSet" {
+                  // Use resolved Gateway's identity for ourGateways
+                  // membership check — ourGateways is keyed by the
+                  // backing Gateway, not by ListenerSet.
+                  var pName = tostring(dig(lsResolvedGw, "metadata", "name") | fallback(""))
+                  var pNs = tostring(dig(lsResolvedGw, "metadata", "namespace") | fallback(""))
+                  gwKey = pNs + "/" + pName
+                }
+                if ourGateways[gwKey] {
+                  var parentRefStatus = map[string]any{
+                    "group": "gateway.networking.k8s.io",
+                    "kind":  gwKind,
+                    "name":  gwName,
+                  }
+                  // Mirror spec.parentRefs[].namespace exactly:
+                  // include the namespace whenever the spec set it,
+                  // omit only when the spec omitted it. The previous
+                  // "only when different from route namespace" rule
+                  // dropped the namespace whenever it happened to
+                  // match — which conformance reads as a status
+                  // mismatch (the spec said "X", status says nil).
+                  if dig(parentRef, "namespace") != nil {
+                    parentRefStatus["namespace"] = gwNamespace
+                  }
+                  var sectionName = dig(parentRef, "sectionName")
+                  var sectionNameStr = ""
+                  if sectionName != nil {
+                    parentRefStatus["sectionName"] = tostring(sectionName)
+                    sectionNameStr = tostring(sectionName)
+                  }
+                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
+
+                  // Evaluate Accepted-by-listener for this parentRef.
+                  // Walk the gateway's listeners; the first that accepts
+                  // the route → Accepted=True. If none accepts, the most
+                  // specific failure-reason wins. The spec ranks the
+                  // reasons:
+                  //   NoMatchingParent (sectionName missing) > NotAllowedByListeners (kinds/namespaces) > NoMatchingListenerHostname
+                  //
+                  // For ListenerSet parentRefs the listeners come from
+                  // the ListenerSet's own spec.listeners (not the parent
+                  // Gateway's) — the LS exposes its OWN listeners, the
+                  // Gateway's are evaluated only for direct Gateway
+                  // parentRefs.
+                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+                  var listenerOwner any = gw
+                  if gwKind == "ListenerSet" {
+                    listenerOwner = resources.listenersets.GetSingle(gwNamespace, gwName)
+                  }
+                  var acceptedStatus = "False"
+                  var acceptedReason = "NotAllowedByListeners"
+                  var acceptedMsg = "No listener accepts this route"
+                  var sawSectionMatch = false
+                  var sawPortMatch = false
+                  var sawKindNs = false
+                  var sawHostnameMismatch = false
+                  if listenerOwner != nil {
+                    for _, listener := range dig(listenerOwner, "spec", "listeners") | toSlice() {
+                      var listenerName = dig(listener, "name") | fallback("") | tostring()
+
+                      if sectionNameStr != "" && listenerName != sectionNameStr {
+                        continue
+                      }
+                      if sectionNameStr != "" {
+                        sawSectionMatch = true
+                      }
+                      // parentRef.port (Gateway API): when the route's
+                      // parentRef sets `.port`, only the listener with
+                      // the same `spec.port` is a match. Mismatched
+                      // parents fail with NoMatchingParent (more specific
+                      // than NotAllowedByListeners).
+                      var listenerPort = toint(dig(listener, "port") | fallback(0))
+                      if parentPort != 0 && listenerPort != parentPort {
+                        continue
+                      }
+                      if parentPort != 0 {
+                        sawPortMatch = true
+                      }
+
+                      // Kind filter
+                      var kindOk = true
+                      var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
+                      if allowedKindsRaw != nil {
+                        kindOk = false
+                        for _, ak := range toSlice(allowedKindsRaw) {
+                          var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                          var akKind = dig(ak, "kind") | fallback("") | tostring()
+                          if akGroup == "gateway.networking.k8s.io" && akKind == kind {
+                            kindOk = true
+                            break
+                          }
+                        }
+                      }
+
+                      // Namespace filter
+                      var nsOk = false
+                      var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                      switch fromMode {
+                      case "Same":
+                        nsOk = nsStr == gwNamespace
+                      case "All":
+                        nsOk = true
+                      case "Selector":
+                        var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
+                        if ml != nil {
+                          var nsObj = resources.namespaces.GetSingle(nsStr)
+                          if nsObj != nil {
+                            var nsLabels = dig(nsObj, "metadata", "labels")
+                            if nsLabels != nil {
+                              var labelMap = nsLabels.(map[string]any)
+                              var allMatch = true
+                              for k, v := range ml.(map[string]any) {
+                                var actual, ok = labelMap[k]
+                                if !ok || tostring(actual) != tostring(v) {
+                                  allMatch = false
+                                  break
+                                }
+                              }
+                              nsOk = allMatch
+                            }
+                          }
+                        }
+                      }
+
+                      if !kindOk || !nsOk {
+                        sawKindNs = true
+                        continue
+                      }
+
+                      // Hostname intersection
+                      var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                      if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
+                        sawHostnameMismatch = true
+                        continue
+                      }
+
+                      // All five predicates passed.
+                      acceptedStatus = "True"
+                      acceptedReason = "Accepted"
+                      acceptedMsg = "Route accepted"
+                      break
+                    }
+                  }
+                  if acceptedStatus == "False" {
+                    if sectionNameStr != "" && !sawSectionMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "Section " + sectionNameStr + " not found on parent gateway"
+                    } else if parentPort != 0 && !sawPortMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "No listener with port " + tostring(parentPort) + " on parent gateway"
+                    } else if sawHostnameMismatch && !sawKindNs {
+                      acceptedReason = "NoMatchingListenerHostname"
+                      acceptedMsg = "No listener hostname intersects the route's hostnames"
+                    } else {
+                      acceptedReason = "NotAllowedByListeners"
+                      acceptedMsg = "No listener accepts the route's namespace or kind"
+                    }
+                  }
+
+                  // ResolvedRefs follows backend resolution. The
+                  // refFailReason / refFailMsg were set during the
+                  // backend-ref scan above (InvalidKind /
+                  // BackendNotFound, fail-fast on first violation).
+                  var resolvedStatus = "True"
+                  var resolvedReason = "ResolvedRefs"
+                  var resolvedMsg = "All backend references resolved"
+                  if !allRefsResolved {
+                    resolvedStatus = "False"
+                    resolvedReason = refFailReason
+                    resolvedMsg = refFailMsg
+                  }
+
+                  parents = append(parents, map[string]any{
+                    "parentRef":      parentRefStatus,
+                    "controllerName": controllerName,
+                    "conditions": []any{
+                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                      condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                    },
+                  })
+                }
+              }
+              parentIdx = parentIdx + 1
+            }
+
+            if len(parents) > 0 {
+              // Rendered phase holds Accepted=False/Pending. Deployed
+              // phase flips to Accepted=True/Accepted. The conformance
+              // suite's `RoutesAndParentMustBeAccepted` polls the
+              // route's parents[].conditions[Accepted] looking for
+              // True+matching-controllerName, then dialled traffic
+              // is sent immediately after. With Accepted=True only
+              // in the rendered phase, the dial fires before HAProxy
+              // has the route's path-map / host-map entries — the
+              // chart's `frontend http_frontend{,_h2c}` lookup misses
+              // and the request falls through to default_backend,
+              // returning a 404 that gRPC reports as
+              // `unexpected HTTP status code received from server`.
+              // Closes the GRPCRoute* / HTTPRouteBackendProtocol*
+              // conformance gaps that surfaced in CI under parallel
+              // shard load (locally the reload was fast enough that
+              // the rendered-phase race didn't trip; CI's per-shard
+              // reload churn widens the window).
+              //
+              // Both patches still carry observedGeneration (it's
+              // part of every condition we emit), so the conformance
+              // GatewayObservedGenerationBump test still sees the
+              // bump on the rendered phase — the bit it cares about
+              // is observedGeneration matching spec.metadata.
+              // generation, NOT the Status value.
+              // Use the per-parent loop index for RouteParentTransitionTime —
+              // parentIdx (the outer accumulator) sits at len(parents) by the
+              // time we get here, so passing parentIdx-1 to the lookup hands
+              // every rendered parent the LAST parent's transition time. With
+              // multiple parentRefs that means every "Accepted=False/Pending"
+              // condition we emit during the rendered phase carries the wrong
+              // lastTransitionTime — only the last parent gets a stable value,
+              // every other parent gets the wrong stamp on each render. (Gitar
+              // caught this; tracking the loop index is the fix.)
+              // Rendered parents = deployed parents (byte-identical). See
+              // the analogous comment in 70-status-gateway.yaml — the
+              // Route conditions (Accepted, ResolvedRefs per parent) are
+              // contractually config-level per Gateway-API spec, but the
+              // gRPC conformance suite (and similar dialing tests) treats
+              // Route.Accepted=True as their "data plane is ready" signal —
+              // they call kubernetes.GatewayAndRoutesMustBeAccepted which
+              // ONLY waits for Route Accepted, never for listener
+              // Programmed. Once a dial fails the conformance gRPC client's
+              // persistent HTTP/2 connection enters a "closing" state and
+              // every subsequent retry returns Canceled immediately, so we
+              // get exactly one shot at the first dial.
+              //
+              // To make that shot succeed we emit Route status only on the
+              // deployed variant. With phase-scoped field managers the
+              // haptic-rendered manager never touches Route status — only
+              // haptic-deployed writes the conditions, after HAProxy has
+              // reloaded with the route. Tests block in their Accepted=True
+              // wait until that happens, then dial against an HAProxy that
+              // already serves the route. Stricter than spec (we delay
+              // signalling "Accepted" until data plane is ready), but
+              // still spec-compliant: Accepted=True is eventually emitted
+              // and always correct when it appears.
+              statusPatch(nsStr, nameStr, apiVersion, kind,
+                map[string]interface{}{
+                  "deployed": map[string]interface{}{
+                    "parents": parents,
+                  },
+                })
+            }
+          %%}
+        {%- end %}
+      {% end %}
+
+  util-sharded-route-status-patches:
+    template: |
+      {#-
+        Sharded Route Status Patches
+
+        Wraps GenerateRouteStatusPatches with automatic parallel sharding.
+      -#}
+      {%- import "util-generate-route-status-patches" for GenerateRouteStatusPatches -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {% macro ShardedRouteStatusPatches(routes []any, apiVersion string, kind string) %}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateRouteStatusPatches(routes, apiVersion, kind) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateRouteStatusPatches(shard_slice(routes, i, n), apiVersion, kind) }}
+          {%- end -%}
+        {%- end -%}
+      {% end %}
+
+  util-generate-tlsroute-status-patches:
+    template: |
+      {#-
+        Generate TLSRoute Status Patches
+
+        TLSRoute-specific status patches. The shape parallels HTTPRoute /
+        GRPCRoute (`util-generate-route-status-patches`) but the listener
+        attachment rules differ in three ways:
+
+          1. **Protocol filter** — TLSRoute attaches only to listeners
+             with protocol == "TLS". Listeners with protocol HTTP or
+             HTTPS reject the route with NotAllowedByListeners regardless
+             of their explicit allowedRoutes.kinds setting (the HTTP /
+             HTTPS protocol-default kinds don't include TLSRoute, so
+             conformance treats this as "no listener accepts").
+
+          2. **ProtocolConflict guard** — when sibling listeners on the
+             same gateway/port mix Passthrough + Terminate, those
+             listeners are Accepted=False/ProtocolConflict (set by
+             util-generate-gateway-status-patches) and the spec says
+             they must NOT accept any route. We mirror that here with
+             NotAllowedByListeners on routes parented to those
+             listeners.
+
+          3. **Backend ref kind** — the spec restricts TLSRoute
+             backendRefs to core/v1 Service like the other routes; the
+             ref-resolution loop matches HTTPRoute exactly.
+
+        Conditions emitted per parentRef:
+          - Accepted: True/Accepted | False/{NoMatchingParent,
+                       NotAllowedByListeners, NoMatchingListenerHostname}
+          - ResolvedRefs: True/ResolvedRefs | False/{InvalidKind,
+                       RefNotPermitted, BackendNotFound}
+
+        Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
+      -#}
+      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {% macro GenerateTLSRouteStatusPatches(routes []any) %}
+        {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
+        {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
+            was retired and the API server returns 404 on patch attempts to
+            gateway.networking.k8s.io/v1alpha2. Use v1 to match the
+            current CRD storageVersion. -#}
+        {%- var apiVersion = "gateway.networking.k8s.io/v1" %}
+        {%- var kind = "TLSRoute" %}
+
+        {%- var ourGateways = map[string]bool{} %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%%
+            var gwKey = tostring(dig(gw, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(gw, "metadata", "name") | fallback(""))
+            ourGateways[gwKey] = true
+          %%}
+        {%- end %}
+
+        {%- for _, route := range routes %}
+          {%%
+            var namespace = dig(route, "metadata", "namespace") | fallback("")
+            var name = dig(route, "metadata", "name") | fallback("")
+            var generation = dig(route, "metadata", "generation") | fallback(0)
+            var nsStr = tostring(namespace)
+            var nameStr = tostring(name)
+            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
+
+            // ResolvedRefs computation — fail-fast on first invalid
+            // backendRef. Same precedence as HTTPRoute: InvalidKind >
+            // RefNotPermitted > BackendNotFound.
+            var allRefsResolved = true
+            var refFailReason = ""
+            var refFailMsg = ""
+            for _, rule := range dig(route, "spec", "rules") | toSlice() {
+              for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
+                var svcName = dig(backendRef, "name") | fallback("") | tostring()
+                var svcNamespace = dig(backendRef, "namespace") | fallback(namespace) | tostring()
+                var group = dig(backendRef, "group") | fallback("") | tostring()
+                var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
+
+                if !((group == "" || group == "core") && refKind == "Service") {
+                  allRefsResolved = false
+                  refFailReason = "InvalidKind"
+                  refFailMsg = "Unsupported backend kind " + group + "/" + refKind
+                  break
+                }
+                if svcNamespace != nsStr {
+                  if ReferenceGrantPermitted(
+                    "gateway.networking.k8s.io", kind, nsStr,
+                    "", "Service", svcNamespace, svcName) != "true" {
+                    allRefsResolved = false
+                    refFailReason = "RefNotPermitted"
+                    refFailMsg = "Cross-namespace backend ref " + svcNamespace + "/" + svcName + " requires a matching ReferenceGrant"
+                    break
+                  }
+                }
+                var svc = resources.services.GetSingle(svcNamespace, svcName)
+                if svc == nil {
+                  allRefsResolved = false
+                  refFailReason = "BackendNotFound"
+                  refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
+                  break
+                }
+              }
+              if !allRefsResolved {
+                break
+              }
+            }
+
+            var parents = []any{}
+            var parentIdx = 0
+            for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
+              var gwGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
+              var gwKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
+              var gwNamespace = dig(parentRef, "namespace") | fallback(namespace) | tostring()
+              var gwName = dig(parentRef, "name") | fallback("") | tostring()
+
+              if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
+                var gwKey = gwNamespace + "/" + gwName
+                if ourGateways[gwKey] {
+                  var parentRefStatus = map[string]any{
+                    "group": "gateway.networking.k8s.io",
+                    "kind":  "Gateway",
+                    "name":  gwName,
+                  }
+                  if dig(parentRef, "namespace") != nil {
+                    parentRefStatus["namespace"] = gwNamespace
+                  }
+                  var sectionName = dig(parentRef, "sectionName")
+                  var sectionNameStr = ""
+                  if sectionName != nil {
+                    parentRefStatus["sectionName"] = tostring(sectionName)
+                    sectionNameStr = tostring(sectionName)
+                  }
+                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
+
+                  var gw = resources.gateways.GetSingle(gwNamespace, gwName)
+                  // Pre-compute mixed-mode map so we can flag listeners
+                  // that ProtocolConflict applies to.
+                  var portModes = map[int]map[string]bool{}
+                  if gw != nil {
+                    for _, l := range dig(gw, "spec", "listeners") | toSlice() {
+                      var lProto = tostring(dig(l, "protocol") | fallback(""))
+                      if lProto == "TLS" {
+                        var lPort = toint(dig(l, "port") | fallback(0))
+                        var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+                        if portModes[lPort] == nil {
+                          portModes[lPort] = map[string]bool{}
+                        }
+                        portModes[lPort][lMode] = true
+                      }
+                    }
+                  }
+
+                  var acceptedStatus = "False"
+                  var acceptedReason = "NotAllowedByListeners"
+                  var acceptedMsg = "No listener accepts this route"
+                  var sawSectionMatch = false
+                  var sawPortMatch = false
+                  var sawKindNs = false
+                  var sawHostnameMismatch = false
+                  if gw != nil {
+                    for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                      var listenerName = dig(listener, "name") | fallback("") | tostring()
+
+                      if sectionNameStr != "" && listenerName != sectionNameStr {
+                        continue
+                      }
+                      if sectionNameStr != "" {
+                        sawSectionMatch = true
+                      }
+                      var listenerPort = toint(dig(listener, "port") | fallback(0))
+                      if parentPort != 0 && listenerPort != parentPort {
+                        continue
+                      }
+                      if parentPort != 0 {
+                        sawPortMatch = true
+                      }
+
+                      // Protocol filter: TLSRoute only attaches to TLS
+                      // protocol listeners. Other protocols never list
+                      // TLSRoute in their default kinds (per the
+                      // listener-status snippet's defaultKinds map),
+                      // so an HTTP / HTTPS listener never accepts
+                      // TLSRoute regardless of allowedRoutes.kinds
+                      // explicit settings.
+                      var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+                      if listenerProto != "TLS" {
+                        sawKindNs = true
+                        continue
+                      }
+
+                      // ProtocolConflict guard: a TLS listener whose
+                      // sibling on the same port carries the other
+                      // mode is itself unaccepted; routes parented to
+                      // it must not be accepted either.
+                      var pm = portModes[listenerPort]
+                      if pm != nil && pm["Passthrough"] && pm["Terminate"] {
+                        sawKindNs = true
+                        continue
+                      }
+
+                      // allowedRoutes.kinds intersection
+                      var kindOk = true
+                      var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
+                      if allowedKindsRaw != nil {
+                        kindOk = false
+                        for _, ak := range toSlice(allowedKindsRaw) {
+                          var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                          var akKind = dig(ak, "kind") | fallback("") | tostring()
+                          if akGroup == "gateway.networking.k8s.io" && akKind == kind {
+                            kindOk = true
+                            break
+                          }
+                        }
+                      }
+
+                      var nsOk = false
+                      var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                      switch fromMode {
+                      case "Same":
+                        nsOk = nsStr == gwNamespace
+                      case "All":
+                        nsOk = true
+                      case "Selector":
+                        var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
+                        if ml != nil {
+                          var nsObj = resources.namespaces.GetSingle(nsStr)
+                          if nsObj != nil {
+                            var nsLabels = dig(nsObj, "metadata", "labels")
+                            if nsLabels != nil {
+                              var labelMap = nsLabels.(map[string]any)
+                              var allMatch = true
+                              for k, v := range ml.(map[string]any) {
+                                var actual, ok = labelMap[k]
+                                if !ok || tostring(actual) != tostring(v) {
+                                  allMatch = false
+                                  break
+                                }
+                              }
+                              nsOk = allMatch
+                            }
+                          }
+                        }
+                      }
+
+                      if !kindOk || !nsOk {
+                        sawKindNs = true
+                        continue
+                      }
+
+                      var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                      if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
+                        sawHostnameMismatch = true
+                        continue
+                      }
+
+                      acceptedStatus = "True"
+                      acceptedReason = "Accepted"
+                      acceptedMsg = "Route accepted"
+                      break
+                    }
+                  }
+                  if acceptedStatus == "False" {
+                    if sectionNameStr != "" && !sawSectionMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "Section " + sectionNameStr + " not found on parent gateway"
+                    } else if parentPort != 0 && !sawPortMatch {
+                      acceptedReason = "NoMatchingParent"
+                      acceptedMsg = "No listener with port " + tostring(parentPort) + " on parent gateway"
+                    } else if sawHostnameMismatch && !sawKindNs {
+                      acceptedReason = "NoMatchingListenerHostname"
+                      acceptedMsg = "No listener hostname intersects the route's hostnames"
+                    } else {
+                      acceptedReason = "NotAllowedByListeners"
+                      acceptedMsg = "No listener accepts the route's namespace, kind, or protocol"
+                    }
+                  }
+
+                  var resolvedStatus = "True"
+                  var resolvedReason = "ResolvedRefs"
+                  var resolvedMsg = "All backend references resolved"
+                  if !allRefsResolved {
+                    resolvedStatus = "False"
+                    resolvedReason = refFailReason
+                    resolvedMsg = refFailMsg
+                  }
+
+                  parents = append(parents, map[string]any{
+                    "parentRef":      parentRefStatus,
+                    "controllerName": controllerName,
+                    "conditions": []any{
+                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                        generation, RouteParentTransitionTime(route, parentIdx, "Accepted", acceptedStatus)),
+                      condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                        generation, RouteParentTransitionTime(route, parentIdx, "ResolvedRefs", resolvedStatus)),
+                    },
+                  })
+                }
+              }
+              parentIdx = parentIdx + 1
+            }
+
+            if len(parents) > 0 {
+              // Same rendered/deployed gate as the HTTPRoute / GRPCRoute
+              // path above — hold Accepted=True until HAProxy actually
+              // reloads with the new TLSRoute, so the test's dial sees
+              // a routable backend instead of falling through to
+              // default_backend.
+              // Use the per-parent loop index for RouteParentTransitionTime —
+              // parentIdx (the outer accumulator) sits at len(parents) by the
+              // time we get here, so passing parentIdx-1 to the lookup hands
+              // every rendered parent the LAST parent's transition time. With
+              // multiple parentRefs that means every "Accepted=False/Pending"
+              // condition we emit during the rendered phase carries the wrong
+              // lastTransitionTime — only the last parent gets a stable value,
+              // every other parent gets the wrong stamp on each render. (Gitar
+              // caught this; tracking the loop index is the fix.)
+              // Rendered parents = deployed parents (byte-identical). See
+              // the analogous comment in 70-status-gateway.yaml — the
+              // Route conditions (Accepted, ResolvedRefs per parent) are
+              // contractually config-level per Gateway-API spec, but the
+              // gRPC conformance suite (and similar dialing tests) treats
+              // Route.Accepted=True as their "data plane is ready" signal —
+              // they call kubernetes.GatewayAndRoutesMustBeAccepted which
+              // ONLY waits for Route Accepted, never for listener
+              // Programmed. Once a dial fails the conformance gRPC client's
+              // persistent HTTP/2 connection enters a "closing" state and
+              // every subsequent retry returns Canceled immediately, so we
+              // get exactly one shot at the first dial.
+              //
+              // To make that shot succeed we emit Route status only on the
+              // deployed variant. With phase-scoped field managers the
+              // haptic-rendered manager never touches Route status — only
+              // haptic-deployed writes the conditions, after HAProxy has
+              // reloaded with the route. Tests block in their Accepted=True
+              // wait until that happens, then dial against an HAProxy that
+              // already serves the route. Stricter than spec (we delay
+              // signalling "Accepted" until data plane is ready), but
+              // still spec-compliant: Accepted=True is eventually emitted
+              // and always correct when it appears.
+              statusPatch(nsStr, nameStr, apiVersion, kind,
+                map[string]interface{}{
+                  "deployed": map[string]interface{}{
+                    "parents": parents,
+                  },
+                })
+            }
+          %%}
+        {%- end %}
+      {% end %}
+
+  util-sharded-tlsroute-status-patches:
+    template: |
+      {#-
+        Sharded TLSRoute Status Patches
+
+        Wraps GenerateTLSRouteStatusPatches with automatic parallel
+        sharding (mirrors util-sharded-route-status-patches).
+      -#}
+      {%- import "util-generate-tlsroute-status-patches" for GenerateTLSRouteStatusPatches -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {% macro ShardedTLSRouteStatusPatches(routes []any) %}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateTLSRouteStatusPatches(routes) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateTLSRouteStatusPatches(shard_slice(routes, i, n)) }}
+          {%- end -%}
+        {%- end -%}
+      {% end %}

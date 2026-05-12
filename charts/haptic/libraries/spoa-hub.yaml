@@ -73,22 +73,6 @@ templateSnippets:
   # enough that disallowing whitespace and newlines covers every
   # realistic injection vector while passing every legitimate
   # https://... value operators care about.
-  util-auth-validate-url:
-    template: |-
-      {%- macro ValidateAuthURL(url string, annotation string, ns string, ingressName string) %}
-        {%- if strings_contains(url, "\n") || strings_contains(url, "\r") || strings_contains(url, " ") || strings_contains(url, "\t") -%}
-          {{- fail("Invalid URL in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ": value contains whitespace or newlines. URLs must not contain whitespace — they are interpolated into HAProxy directives where whitespace is significant and could be used to inject arbitrary config.") -}}
-        {%- end -%}
-      {%- end %}
-
-  # features-* runs early in haproxyConfig.template (side-effect render).
-  # We use it to register spoe.conf as a general file so the HAProxy
-  # `filter spoe ... config <path>` directive resolves at validation
-  # and runtime.
-  # util-spoa-hub-enabled returns "true"/"false" so callers can test
-  # truthiness with a cheap string compare. Scriggo's `if` requires a
-  # bool, and `extraContext | dig(...)` returns `any`; tostring() routes
-  # the value through Go's fmt and gives us a stable boolean string.
   util-spoa-hub-enabled:
     template: |-
       {{- extraContext | dig("spoaHub", "enabled") | fallback(false) | tostring() -}}
@@ -895,7 +879,35 @@ validationTests:
         timeoutProcessing: 500ms
         poolMaxConn: 100
         poolPurgeDelay: 30s
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend (where the SPOE filter directive +
+      # frontend-filters auth-flow assertions live). The auth-url
+      # annotation also activates the external-auth dispatch path so
+      # the `http-request send-spoe-group ... check-auth-group` and
+      # `deny deny_status 401` assertions actually have a route to
+      # apply to. After the bind-derivation refactor, an empty
+      # fixture leaves the http_frontend unrendered.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: auth-trigger
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "http://auth.svc.cluster.local/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with spoaHub enabled
@@ -982,19 +994,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: ff-svc-abc
-            labels:
-              kubernetes.io/service-name: ff-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1025,12 +1024,7 @@ validationTests:
         description: option forwardfor and filter spoe must not concatenate
 
   test-spoa-hub-mode-tcp-on-haproxy-3-0:
-    description: |
-      On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced
-      in 3.1). The chart must auto-fall-back the spoa-hub backend to
-      `mode tcp` — both transports work with the SPOE filter; mode
-      spop is just the more efficient one on newer versions. This
-      test pins haproxyVersion=3.0 and asserts the fallback.
+    description: "On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced in 3.1). The chart must auto-fall-back the spoa-hub backend to `mode tcp` — both transports work with the SPOE filter; mode spop is just..."
     extraContext:
       haproxyVersion: "3.0"
       spoaHub:
@@ -1314,14 +1308,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      Multi-tenant isolation: Two Ingresses with distinct
-      modsecurity-snippet annotations each get their own
-      [plugins.params.applications."<ns>/<name>"] block in the
-      rendered spoa-hub-config.toml. Ingress A's SecRule must NOT
-      appear inside Ingress B's app block (and vice versa). The
-      chart-default base directives ARE shared — they appear inside
-      every per-app block — but the per-Ingress rules stay scoped.
+    description: "Multi-tenant isolation: Two Ingresses with distinct modsecurity-snippet annotations each get their own [plugins.params.applications.\"<ns>/<name>\"] block in the rendered spoa-hub-config.toml."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1402,13 +1389,7 @@ validationTests:
 
   test-spoa-hub-coraza-app-map-routes-by-resource-id:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      coraza-app.map carries one identity row per Ingress with a
-      modsecurity-snippet, keyed by `<namespace>/<name>` (resource id).
-      The frontend filter sets `txn.coraza_app` from
-      `var(txn.resource_id),map(...)` and the SPOE check-request message
-      passes it as `app=` so the plugin routes to the right per-app
-      WAF, regardless of which path matched at the routing layer.
+    description: coraza-app.map carries one identity row per Ingress with a modsecurity-snippet, keyed by `<namespace>/<name>` (resource id). The frontend filter sets `txn.coraza_app` from `var(txn.resource_id),map(..
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1442,16 +1423,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: echo }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: echo-abc
-            labels: { kubernetes.io/service-name: echo }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1549,14 +1520,7 @@ validationTests:
           row keyed by <ns>/<name>.
 
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
-    description: |
-      An Ingress whose modsecurity-snippet contains a TOML triple-quote
-      delimiter (""") is rejected at render time. The annotation value
-      lands inside `directives = """..."""`; allowing the delimiter
-      verbatim would let an Ingress-write RBAC holder break out of the
-      string and inject arbitrary TOML keys into the rendered hub
-      config. Fail-loud at admission keeps that escalation vector
-      closed.
+    description: "An Ingress whose modsecurity-snippet contains a TOML triple-quote delimiter (\"\"\") is rejected at render time. The annotation value lands inside `directives = \"\"\"..."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1693,7 +1657,29 @@ validationTests:
             dependsOn: []
             params: |
               ja4 = true
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend so the SPOE filter directive can
+      # render. After the bind-derivation refactor, an empty
+      # fixture leaves no http frontend.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must remain valid
@@ -1754,7 +1740,31 @@ validationTests:
             directives: |
               SecRuleEngine On
             params: ""
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend so the Coraza dispatch lines (which
+      # render inside frontend-filters-*) can emit. After the bind-
+      # derivation refactor, an empty fixture leaves no http_frontend
+      # at all. The Ingress carries no coraza-* annotation so the
+      # opt-in path's "no Ingress opted in" assertions still hold.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must remain valid in opt-in mode
@@ -1810,7 +1820,32 @@ validationTests:
             directives: |
               SecRuleEngine On
             params: ""
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend so the Coraza dispatch lines (which
+      # render inside frontend-filters-*) can emit. After the bind-
+      # derivation refactor, an empty fixture leaves no http_frontend
+      # at all. The Ingress carries no coraza-* annotation so the
+      # default-on path's "coraza-disabled.map is empty" assertion
+      # still holds.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must remain valid in default-on mode
@@ -1870,7 +1905,30 @@ validationTests:
             directives: |
               SecRuleEngine On
             params: ""
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend so the Coraza dispatch lines (which
+      # render inside frontend-filters-*) can emit. After the bind-
+      # derivation refactor, an empty fixture leaves no http_frontend
+      # at all.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must remain valid in default-on detect mode

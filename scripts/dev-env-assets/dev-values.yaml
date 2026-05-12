@@ -67,12 +67,23 @@ controller:
       extraContext:
         debug: true  # Enable introspection headers for development
 
-    # HTTP Store Demo: Block requests based on header values from HTTP-fetched blocklist
+    # HTTP Store Demo: Block requests based on header values from HTTP-fetched blocklist.
+    #
+    # critical is intentionally absent (defaults to false): if the blocklist-server
+    # is unreachable (e.g. during cluster startup, or under load when conformance
+    # fixtures churn) the template renders an empty map rather than aborting the
+    # whole HAProxy config render. The deny rule that consumes this map still
+    # emits — it just matches nothing until the http-store's background refresh
+    # populates the cache (delay: 60s). Critical-mode here was killing conformance
+    # CI: a single failed fetch would block the entire chart render past the 30s
+    # context deadline, leaving HAProxy with partial config (rule comments emitted
+    # but http-request set-var lines truncated) and breaking every header-matching
+    # / hostname-matching test in the suite.
     maps:
       header-blocklist.map:
         template: |
           {%- var blocklist_url = "http://blocklist-server.echo.svc:80/blocklist.txt" -%}
-          {%- var blocklist_content, _ = http.Fetch(blocklist_url, map[string]any{"critical": true, "delay": "60s"}) -%}
+          {%- var blocklist_content, _ = http.Fetch(blocklist_url, map[string]any{"delay": "60s"}) -%}
           {%- for _, line := range (blocklist_content | tostring() | split("\n")) -%}
           {%- var value = trimSpace(line) -%}
           {%- if value != "" -%}

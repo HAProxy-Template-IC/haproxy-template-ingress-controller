@@ -14,14 +14,44 @@
 
 // Package statusapplier applies template-driven status patches to Kubernetes resources.
 //
-// The StatusApplier subscribes to pipeline events (TemplateRenderedEvent,
-// ReconciliationCompletedEvent, ReconciliationFailedEvent) and applies the
-// appropriate status patch variant for each lifecycle phase using Server-Side Apply (SSA).
+// The StatusApplier is a stateless consumer: each event carries the patches it
+// needs to apply. There is no side-channel cache. The patches travelling on a
+// deploy event are tautologically the patches for the configuration that
+// deploy carried — no LATEST-vs-deployed race is possible.
 //
 // Status patches are fully defined by templates — the controller never hardcodes
 // knowledge of specific resource types or condition names. Templates register patches
 // via the statusPatch() template function during rendering, including outcome-keyed
 // variants for each pipeline phase (rendered, deployed, renderFailed, deployFailed).
+//
+// Event mapping:
+//
+//   - TemplateRenderedEvent: apply the "rendered" variant directly from
+//     event.StatusPatches. Marks the resource as in-progress (Accepted=Unknown /
+//     "rendering") well before HAProxy reload completes.
+//   - DeploymentCompletedEvent: apply the "deployed" variant from
+//     event.StatusPatches. The Deployer forwards the patches from the
+//     DeploymentScheduledEvent that triggered the deploy, so the patches
+//     describe exactly the config the deploy shipped. Programmed=True
+//     genuinely means "HAProxy is serving this config" because reload
+//     verification gates DeploymentCompletedEvent.
+//   - DeploymentSkippedEvent: apply the "deployed" variant from
+//     event.StatusPatches. Same data-plane-is-converged semantics as
+//     DeploymentCompletedEvent, reached by the scheduler determining the
+//     data plane is already at this config. Without this branch, any
+//     resource whose addition or update produces no config change (Gateway
+//     with no routes attached, status-only deltas) would stay at the
+//     CRD-default condition state indefinitely.
+//   - ReconciliationFailedEvent: apply the failure variant ("renderFailed" /
+//     "deployFailed") from event.StatusPatches. The Coordinator forwards
+//     the patches from the last successful render — failure paths don't
+//     produce fresh patches, so a "last good" snapshot is the only thing
+//     the chart's failure variants can be applied against.
+//
+// Leader transitions: the Reconciler triggers an immediate reconciliation on
+// BecameLeaderEvent (per pkg/controller/reconciler/CLAUDE.md), producing a
+// fresh TemplateRenderedEvent with patches. The applier therefore has no
+// replay responsibility on leadership change.
 package statusapplier
 
 import (
@@ -57,8 +87,16 @@ const (
 	// and leadership events.
 	EventBufferSize = busevents.StandardSubscriberBuffer
 
-	// fieldManager is the SSA field manager name used for status patches.
-	fieldManager = "haptic"
+	// fieldManagerPrefix is the SSA field manager prefix for status patches.
+	// The full manager name is suffixed with the phase (e.g. "haptic-rendered",
+	// "haptic-deployed", "haptic-deployFailed") so each phase owns a disjoint
+	// set of conditions. Server-Side Apply's listType=map semantics relinquish
+	// ownership of any list entry not present in the most recent apply by the
+	// same manager — so reusing one manager across phases requires every apply
+	// to enumerate every condition, which forces the rendered phase to claim
+	// Programmed=Pending (causing flicker against the deployed phase's
+	// Programmed=True). Phase-scoped managers sidestep that entirely.
+	fieldManagerPrefix = "haptic"
 
 	statusKey = "status"
 )
@@ -76,13 +114,16 @@ type GVRResolver interface {
 // patches from TemplateRenderedEvent and applies the appropriate variant based
 // on pipeline lifecycle events. Only the leader applies patches to avoid conflicts.
 //
-// Event flow:
+// Event flow (every applied phase reads patches directly from event.StatusPatches):
 //
-//	TemplateRenderedEvent → cache patches, apply "rendered" variant (if leader)
-//	ReconciliationCompletedEvent → apply "deployed" variant (if leader)
+//	TemplateRenderedEvent → apply "rendered" variant (if leader)
+//	DeploymentCompletedEvent → apply "deployed" variant (if leader)
+//	DeploymentSkippedEvent → apply "deployed" variant (if leader); the data
+//	    plane is already at the rendered config so Programmed conditions
+//	    should reflect the current generation
 //	ReconciliationFailedEvent → apply "renderFailed" or "deployFailed" variant (if leader)
-//	BecameLeaderEvent → clear checksum cache, apply cached "rendered" variant
-//	LostLeadershipEvent → clear pending state
+//	BecameLeaderEvent → clear checksum cache; rely on Reconciler to fire a fresh reconcile
+//	LostLeadershipEvent → flip the leader flag off
 type Component struct {
 	eventBus      *busevents.EventBus
 	eventChan     <-chan busevents.Event
@@ -92,9 +133,8 @@ type Component struct {
 	healthTracker *lifecycle.HealthTracker
 
 	// mu protects all mutable state below.
-	mu            sync.RWMutex
-	isLeader      bool
-	cachedPatches []templating.StatusPatch
+	mu       sync.RWMutex
+	isLeader bool
 
 	// checksumCache maps "namespace/name/gvr" to the SHA-256 of the last
 	// successfully applied patch payload. Used to skip redundant SSA calls.
@@ -127,7 +167,22 @@ func New(cfg *Config) *Component {
 	}
 
 	bus := cfg.EventBus
-	eventChan := bus.Subscribe(ComponentName, EventBufferSize)
+	// SubscribeTypes (not Subscribe) — the bus prefilters by event type at
+	// publish, so the 50-event buffer holds ONLY events we actually dispatch
+	// on. With a plain Subscribe the buffer would fill within seconds during
+	// conformance setup (resource.index.updated and reconciliation.* fire at
+	// kHz) and overflow — silently dropping deployment.completed events along
+	// with the rest. We saw exactly that in CI: the "deployed" status patches
+	// never fired, Gateways never got Programmed=True, and conformance Test
+	// Setup timed out on every shard.
+	eventChan := bus.SubscribeTypes(ComponentName, EventBufferSize,
+		events.EventTypeTemplateRendered,
+		events.EventTypeDeploymentCompleted,
+		events.EventTypeDeploymentSkipped,
+		events.EventTypeReconciliationFailed,
+		events.EventTypeBecameLeader,
+		events.EventTypeLostLeadership,
+	)
 
 	return &Component{
 		eventBus:      bus,
@@ -176,8 +231,11 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	case *events.TemplateRenderedEvent:
 		c.handleTemplateRendered(ctx, e)
 
-	case *events.ReconciliationCompletedEvent:
-		c.handleReconciliationCompleted(ctx, e)
+	case *events.DeploymentCompletedEvent:
+		c.handleDeploymentCompleted(ctx, e)
+
+	case *events.DeploymentSkippedEvent:
+		c.handleDeploymentSkipped(ctx, e)
 
 	case *events.ReconciliationFailedEvent:
 		c.handleReconciliationFailed(ctx, e)
@@ -190,70 +248,92 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	}
 }
 
-// handleTemplateRendered caches the status patches from a successful render
-// and applies the "rendered" variant if this replica is the leader.
+// handleTemplateRendered applies the "rendered" variant directly from the
+// event payload. Patches are config-level (Accepted/ResolvedRefs); no
+// data-plane gate is needed.
 func (c *Component) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
-	c.mu.Lock()
-	c.cachedPatches = event.StatusPatches
-	isLeader := c.isLeader
-	c.mu.Unlock()
-
-	if !isLeader || len(event.StatusPatches) == 0 {
+	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
 		return
 	}
-
 	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseRendered)
 }
 
-// handleReconciliationCompleted applies the "deployed" variant after successful deployment.
-func (c *Component) handleReconciliationCompleted(ctx context.Context, _ *events.ReconciliationCompletedEvent) {
-	c.mu.RLock()
-	patches := c.cachedPatches
-	isLeader := c.isLeader
-	c.mu.RUnlock()
-
-	if !isLeader || len(patches) == 0 {
+// handleDeploymentCompleted applies the "deployed" variant from the event
+// payload. The Deployer forwards the patches from the DeploymentScheduledEvent
+// that triggered this deploy, so the patches describe exactly the config the
+// deploy shipped — no cache, no LATEST-vs-deployed race.
+//
+// Partial-failure handling: any successful endpoint observed the new config,
+// so applying the "deployed" variant whenever Succeeded > 0 reflects reality
+// for those instances. Per-endpoint failures surface via
+// InstanceDeploymentFailedEvent and feed the "deployFailed" variant through
+// ReconciliationFailedEvent independently.
+func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
+	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't
+	// actually put any HAProxy on the new config — don't claim "deployed".
+	if event.Total == 0 || event.Succeeded == 0 {
 		return
 	}
-
-	c.applyVariant(ctx, patches, events.StatusPatchPhaseDeployed)
+	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+		return
+	}
+	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)
 }
 
-// handleReconciliationFailed applies the failure variant based on which phase failed.
-func (c *Component) handleReconciliationFailed(ctx context.Context, event *events.ReconciliationFailedEvent) {
-	c.mu.RLock()
-	patches := c.cachedPatches
-	isLeader := c.isLeader
-	c.mu.RUnlock()
-
-	if !isLeader || len(patches) == 0 {
+// handleDeploymentSkipped applies the "deployed" variant when the deployer
+// determines that the data plane is already at the just-rendered config and
+// no deployment was performed. Patches are carried on the event so they
+// match the config that the data plane is already serving.
+//
+// This covers the case where a resource is added/modified but the rendered
+// HAProxy config is byte-identical to the last deployed config (e.g. a
+// Gateway with no attached HTTPRoutes, status-only deltas) — without this,
+// the deployed-variant patches would never be applied and the resource
+// would stay at the CRD-default condition state indefinitely.
+func (c *Component) handleDeploymentSkipped(ctx context.Context, event *events.DeploymentSkippedEvent) {
+	if event.Total == 0 {
 		return
 	}
+	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+		return
+	}
+	c.applyVariant(ctx, event.StatusPatches, events.StatusPatchPhaseDeployed)
+}
 
+// handleReconciliationFailed applies the failure variant based on which phase
+// failed. The Coordinator forwards the patches from the most recent successful
+// render — failure paths don't produce fresh patches, so a "last good"
+// snapshot is the only thing the chart's failure variants can apply against.
+// May be nil on early bootstrap failures, in which case the apply is skipped.
+func (c *Component) handleReconciliationFailed(ctx context.Context, event *events.ReconciliationFailedEvent) {
+	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
+		return
+	}
 	phase := events.StatusPatchPhaseDeployFailed
 	if event.Phase == "render" {
 		phase = events.StatusPatchPhaseRenderFailed
 	}
-
-	c.applyVariant(ctx, patches, phase)
+	c.applyVariant(ctx, event.StatusPatches, phase)
 }
 
-// handleBecameLeader clears the checksum cache and applies cached patches.
-func (c *Component) handleBecameLeader(ctx context.Context) {
+// handleBecameLeader flips the leader flag and clears the SSA checksum cache.
+// No patches replay — the Reconciler fires an immediate reconciliation on
+// BecameLeaderEvent (see pkg/controller/reconciler/CLAUDE.md), which produces
+// a fresh TemplateRenderedEvent carrying the patches the new leader needs.
+func (c *Component) handleBecameLeader(_ context.Context) {
 	c.mu.Lock()
 	c.isLeader = true
 	// Clear checksum cache — the previous leader may have applied different checksums.
 	c.checksumCache = make(map[string]string)
-	patches := c.cachedPatches
 	c.mu.Unlock()
-
 	c.logger.Info("became leader, clearing status checksum cache")
+}
 
-	if len(patches) > 0 {
-		c.logger.Info("replaying cached status patches for rendered phase",
-			"patch_count", len(patches))
-		c.applyVariant(ctx, patches, events.StatusPatchPhaseRendered)
-	}
+// leaderRLocked returns the current leader flag under a read lock.
+func (c *Component) leaderRLocked() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.isLeader
 }
 
 // handleLostLeadership clears the leader flag.
@@ -310,7 +390,17 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 		checksum := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
 
 		// Check checksum cache — skip if already applied.
-		cacheKey := fmt.Sprintf("%s/%s/%s", patch.Namespace, patch.Name, gvrStr)
+		// Cache key includes the phase so rendered and deployed track
+		// separate "last applied checksum"s. Without that, rendered's
+		// apply (content A) updates the cache, deployed's apply (content
+		// B) updates the cache again, and the next rendered apply
+		// (content A) sees mismatch and re-writes — overwriting the
+		// deployed state in K8s. With phase-scoped keys: rendered cache
+		// hits on the second pass, K8s keeps deployed's content. SSA
+		// behaviour with field manager "haptic" still owns every field
+		// each phase touches, so the LAST write wins and we let that
+		// last write be deployed.
+		cacheKey := fmt.Sprintf("%s/%s/%s/%s", phaseKey, patch.Namespace, patch.Name, gvrStr)
 		c.mu.RLock()
 		lastChecksum := c.checksumCache[cacheKey]
 		c.mu.RUnlock()
@@ -352,7 +442,7 @@ func (c *Component) applyVariant(ctx context.Context, patches []templating.Statu
 			types.ApplyPatchType,
 			ssaBytes,
 			metav1.PatchOptions{
-				FieldManager: fieldManager,
+				FieldManager: fieldManagerPrefix + "-" + phaseKey,
 				Force:        new(true),
 			},
 			statusKey,

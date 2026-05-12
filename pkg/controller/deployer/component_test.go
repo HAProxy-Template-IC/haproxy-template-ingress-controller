@@ -59,6 +59,7 @@ func TestHandleDeploymentScheduled(t *testing.T) {
 		"test-namespace",
 		"test",
 		"",   // contentChecksum
+		nil,  // statusPatches
 		true, // coalescible
 	)
 
@@ -128,6 +129,7 @@ func TestComponent_EndToEndFlow(t *testing.T) {
 		"test-namespace",
 		"test",
 		"",   // contentChecksum
+		nil,  // statusPatches
 		true, // coalescible
 	))
 
@@ -222,7 +224,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 
 	t.Run("ignores non-deployment events", func(t *testing.T) {
 		// Should not panic or error when receiving non-DeploymentScheduledEvent
-		otherEvent := events.NewReconciliationCompletedEvent(0)
+		otherEvent := events.NewReconciliationCompletedEvent(0, nil)
 		deployer.handleEvent(ctx, otherEvent)
 	})
 
@@ -236,6 +238,7 @@ func TestComponent_HandleEvent(t *testing.T) {
 			"test-namespace",
 			"test",
 			"",   // contentChecksum
+			nil,  // statusPatches
 			true, // coalescible
 		)
 		// Should not panic when receiving valid event with no endpoints
@@ -260,6 +263,7 @@ func TestComponent_DeploymentInProgressFlag(t *testing.T) {
 		"test-namespace",
 		"test",
 		"",   // contentChecksum
+		nil,  // statusPatches
 		true, // coalescible
 	)
 
@@ -297,6 +301,7 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 		"test-namespace",
 		"duplicate",
 		"",   // contentChecksum
+		nil,  // statusPatches
 		true, // coalescible
 	)
 

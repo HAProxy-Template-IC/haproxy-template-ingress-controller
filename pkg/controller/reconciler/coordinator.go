@@ -195,6 +195,7 @@ func (c *Coordinator) handlePipelineSuccess(
 		result.HAProxyConfig,
 		result.AuxiliaryFiles,
 		result.StatusPatches,
+		result.RenderedResources,
 		result.AuxFileCount,
 		result.RenderDurationMs,
 		triggerEvent.Reason,
@@ -216,9 +217,15 @@ func (c *Coordinator) handlePipelineSuccess(
 	)
 	c.eventBus.Publish(validationEvent)
 
-	// Publish ReconciliationCompletedEvent
+	// Publish ReconciliationCompletedEvent carrying the rendered resources so
+	// ResourceApplier reads them directly from the event payload (stateless
+	// on the success path, same pattern as StatusApplier + status patches).
 	totalDuration := time.Since(startTime).Milliseconds()
-	c.eventBus.Publish(events.NewReconciliationCompletedEvent(totalDuration))
+	c.eventBus.Publish(events.NewReconciliationCompletedEvent(
+		totalDuration,
+		result.RenderedResources,
+		events.PropagateCorrelation(triggerEvent),
+	))
 
 	c.logger.Debug("Reconciliation completed",
 		"correlation_id", triggerEvent.CorrelationID(),
@@ -271,8 +278,13 @@ func (c *Coordinator) handlePipelineFailure(
 		))
 	}
 
+	// Forward the last successful render's patches so StatusApplier can
+	// apply the renderFailed / deployFailed variant. May be nil if no
+	// successful render has happened yet (early bootstrap failure); the
+	// applier skips the apply in that case.
 	c.eventBus.Publish(events.NewReconciliationFailedEvent(
 		err.Error(),
 		phase,
+		c.lastStatusPatches,
 	))
 }

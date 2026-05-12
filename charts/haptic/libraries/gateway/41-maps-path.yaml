@@ -1,0 +1,170 @@
+templateSnippets:
+  util-path-map-entry-gateway-shard:
+    template: |
+      {#-
+        Gateway Path Map Entry Shard Processor
+
+        Purpose: Generates map file entries for a slice of sorted routes.
+        This is the inner macro used by sharding.
+      -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups map[string]any, pathType string, suffix string) string %}
+      {%- for _, routeInfo := range sortedRoutes %}
+        {%- var riHostname = routeInfo["hostname"] %}
+        {%- var riPath map[string]any = routeInfo["path"] %}
+        {%- var riPath_type = riPath["type"] %}
+        {%- var riPathValue = riPath["value"] %}
+        {%- var pathKey = riHostname + "|" + riPath_type + "|" + riPathValue %}
+        {%- if first_seen("gateway_pathMap_" + pathType + suffix, pathKey) %}
+          {%- var routes []any = pathGroups[pathKey] %}
+          {%- var firstRoute map[string]any = routes[0] %}
+          {%- var frPath map[string]any = firstRoute["path"] %}
+          {%- var frPath_type = frPath["type"] %}
+        {%- if frPath != nil && frPath_type == pathType %}
+          {%- var routeIds = []any{} %}
+          {%- for _, r := range routes %}
+            {%- var rid string = r["routeId"] %}
+            {%- routeIds = append(routeIds, rid) %}
+          {%- end %}
+          {%- var routeIds_str = join(routeIds, "__") -%}
+          {%- var frHostname = firstRoute["hostname"] %}
+          {%- var frPath_val string = tostring(frPath["value"]) %}
+          {#- Skip the catch-all `/` entry only for PathPrefix routes —
+              an Exact `/` route must still emit, otherwise requests
+              to the bare root are unroutable. PathPrefix `/` matches
+              everything so its entry would otherwise pin every
+              non-matched request to that route's backend; the chart
+              relies on the path-prefix-exact / path-prefix maps for
+              specific paths, with a default fall-through to 404. The
+              GatewayBackendClientCertificateFeature fixture pins this
+              with `path: {type: Exact, value: /}`. -#}
+          {%- if suffix == "" && frPath_val == "/" && pathType == "PathPrefix" %}
+            {%- continue %}
+          {%- end %}
+          {%- var frResourceType = firstRoute["resource_type"] %}
+          {%- var routeTypeShort = frResourceType | replace("httproute", "http") | replace("grpcroute", "grpc") %}
+          {%- var pathSuffix = suffix %}
+          {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
+            {%- pathSuffix = "" %}
+          {%- end %}
+          {%- if suffix == "" && len(frPath_val) > 1 && hasSuffix(frPath_val, "/") %}
+            {%- frPath_val = frPath_val[:len(frPath_val)-1] %}
+          {%- end %}
+      {{ "\n" }}{{ MapKeyForHost(frHostname) }}{{ frPath_val }}{{ pathSuffix }} GW_ROUTE_ID:{{ routeTypeShort }}:{{ routeIds_str }}
+        {%- end %}
+        {%- end %}
+      {%- end %}
+      {% end %}
+
+  util-path-map-entry-gateway:
+    template: |
+      {#- Sharded Gateway Path Map Entry Generator #}
+      {%- import "util-path-map-entry-gateway-shard" for PathMapEntryGatewayShard -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+
+      {%- macro GeneratePathMapEntries(pathType string, suffix string) %}
+      # gateway/util-path-map-entry-gateway ({{ pathType }})
+
+      {#- Get cached route analysis (runs once, shared across all renders) #}
+      {{ render "util-gateway-analysis" }}
+
+      {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
+      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
+      {%- var pathGroups map[string]any = gatewayAnalysis["pathGroups"] %}
+
+      {%- var n = toint(CalculateShardCount(len(sortedRoutes), 100)) -%}
+      {%- if n <= 1 || len(sortedRoutes) < 100 -%}
+      {{ PathMapEntryGatewayShard(sortedRoutes, pathGroups, pathType, suffix) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go PathMapEntryGatewayShard(shard_slice(sortedRoutes, i, n), pathGroups, pathType, suffix) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro %}
+
+  util-generate-path-regex-map-gateway:
+    template: |
+      {#- Macro to generate regex path map entries for HTTPRoute -#}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- macro GeneratePathRegexMap(routes []any) -%}
+      {%- for _, route := range routes %}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
+      {%- var hostnames = route | dig("spec", "hostnames") | toSlice() | coalesce([]any{""}) %}
+      {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
+      {%- var regexEntries = []any{} %}
+      {%- for _, hostname := range hostnames %}
+      {%- for _, rule := range rules %}
+      {%- var backendRefs = rule | dig("backendRefs") %}
+      {%- if backendRefs != nil %}
+      {%- var backendRefs_slice = backendRefs | toSlice() %}
+      {%- var firstBackend = backendRefs_slice[0] %}
+      {%- var backend = map[string]any{"name": firstBackend | dig("name") | fallback(""), "port": firstBackend | dig("port") | fallback(80)} %}
+      {%- var matches []any = rule | dig("matches") | coalesce([]any{map[string]any{}}) %}
+      {%- for _, match := range matches %}
+      {%- var matchPath_type = match | dig("path", "type") | fallback("") %}
+      {%- var matchPathValue = match | dig("path", "value") | fallback("/") %}
+      {%- if matchPath_type == "RegularExpression" %}
+      {%- regexEntries = append(regexEntries, map[string]any{
+        "hostname": hostname,
+        "pathValue": matchPathValue,
+        "backend": backend,
+      }) %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- if len(regexEntries) > 0 %}
+      # HTTPRoute: {{ routeNs }}/{{ routeName }} ({{ len(regexEntries) }} regex paths)
+      {% for _, entry := range regexEntries -%}
+      {{ MapKeyForHost(entry["hostname"]) }}{{ entry["pathValue"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {% end -%}
+      {%- end %}
+      {%- end %}
+      {%- end macro -%}
+
+  util-sharded-path-regex-map-gateway:
+    template: |
+      {#- Sharded regex path map generator for HTTPRoute -#}
+      {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedPathRegexMap(routes []any) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GeneratePathRegexMap(routes) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GeneratePathRegexMap(shard_slice(routes, i, n)) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
+  map-path-exact-500-gateway:
+    template: |
+      {#- Generate exact path map entries for HTTPRoute #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
+      # gateway/map-path-exact-gateway
+      {{ GeneratePathMapEntries("Exact", "") }}
+
+  map-pfxexact-500-gateway:
+    template: |
+      {#- Generate prefix-exact path map entries for HTTPRoute #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
+      # gateway/map-pfxexact-gateway
+      {{ GeneratePathMapEntries("PathPrefix", "") }}
+
+  map-path-prefix-500-gateway:
+    template: |
+      {#- Generate prefix path map entries with trailing slash for HTTPRoute #}
+      {%- import "util-path-map-entry-gateway" for GeneratePathMapEntries %}
+      # gateway/map-path-prefix-gateway
+      {{ GeneratePathMapEntries("PathPrefix", "/") }}
+
+  map-path-regex-500-gateway:
+    template: |
+      {#- Generate regex path map entries for HTTPRoute with RegularExpression type -#}
+      {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}
+      # gateway/map-path-regex-gateway
+      {{ ShardedPathRegexMap(resources.httproutes.List()) }}

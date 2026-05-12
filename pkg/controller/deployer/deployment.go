@@ -28,6 +28,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // handleDeploymentScheduled implements "latest wins" coalescing for deployment scheduled events.
@@ -117,7 +118,7 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		"correlation_id", correlationID)
 
 	// Execute deployment with cancellable context
-	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, correlationID)
+	c.deployToEndpoints(deployCtx, event.Config, event.AuxiliaryFiles, event.ParsedConfig, event.Endpoints, event.RuntimeConfigName, event.RuntimeConfigNamespace, event.Reason, event.ContentChecksum, event.StatusPatches, correlationID)
 }
 
 // deployToEndpoints deploys configuration to all HAProxy endpoints in parallel.
@@ -138,6 +139,7 @@ func (c *Component) deployToEndpoints(
 	runtimeConfigNamespace string,
 	reason string,
 	contentChecksum string,
+	statusPatches []templating.StatusPatch,
 	correlationID string,
 ) {
 	// Clear deployment flag after this function completes (after wg.Wait())
@@ -147,9 +149,12 @@ func (c *Component) deployToEndpoints(
 
 	if len(endpoints) == 0 {
 		c.logger.Error("no valid endpoints to deploy to")
-		// Publish completion event so downstream components know deployment didn't happen
+		// Publish completion event so downstream components know deployment didn't happen.
+		// Forward the status patches anyway so the StatusApplier can still write the
+		// "deployed" variant if appropriate (the zero-endpoint guard in StatusApplier
+		// will skip the apply, but the data is on the event for consistency).
 		c.eventBus.Publish(events.NewDeploymentCompletedEvent(
-			events.DeploymentResult{},
+			&events.DeploymentResult{StatusPatches: statusPatches},
 			events.WithCorrelation(correlationID, correlationID),
 		))
 		return
@@ -203,15 +208,19 @@ func (c *Component) deployToEndpoints(
 		"duration_ms", totalDurationMs,
 		"correlation_id", correlationID)
 
-	// Publish DeploymentCompletedEvent with correlation
+	// Publish DeploymentCompletedEvent with correlation. StatusPatches are
+	// forwarded unchanged from the DeploymentScheduledEvent so the StatusApplier
+	// applies the patches that match THIS deployment's config (no side-channel,
+	// no stale-LATEST race).
 	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
-		events.DeploymentResult{
+		&events.DeploymentResult{
 			Total:              len(endpoints),
 			Succeeded:          int(state.successCount),
 			Failed:             int(state.failureCount),
 			DurationMs:         totalDurationMs,
 			ReloadsTriggered:   int(state.reloadsTriggered),
 			TotalAPIOperations: int(state.totalOperations),
+			StatusPatches:      statusPatches,
 			OperationBreakdown: state.operationBreakdown,
 			BackendDiffFields:  state.backendDiffFields,
 		},

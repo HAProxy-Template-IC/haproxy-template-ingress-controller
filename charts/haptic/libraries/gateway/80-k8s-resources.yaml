@@ -1,0 +1,95 @@
+k8sResources:
+  gateway-static-addresses:
+    template: |
+      {%- var rawSvcs = shared.Get("gatewayStaticAddressServices") %}
+      {%- if rawSvcs != nil %}
+      {%%
+        var svcs = rawSvcs.(map[string]any)
+        var keysList = []any{}
+        for k := range svcs {
+          keysList = append(keysList, k)
+        }
+        var sortedKeys = sort_strings(keysList)
+        var docs = []any{}
+        for _, key := range sortedKeys {
+          var entry = svcs[tostring(key)].(map[string]any)
+          var resource = map[string]any{
+            "apiVersion": "v1",
+            "kind":       "Service",
+            "metadata": map[string]any{
+              "name":        entry["name"],
+              "namespace":   entry["namespace"],
+              "labels":      entry["labels"],
+              "annotations": entry["annotations"],
+            },
+            "spec": map[string]any{
+              "type":     "LoadBalancer",
+              "selector": entry["selector"],
+              "ports":    entry["ports"],
+            },
+          }
+          var rendered, _ = marshalYAML(resource)
+          docs = append(docs, rendered)
+        }
+      %%}
+      {%- for i, doc := range docs -%}
+      {%- if i > 0 %}{{ "---" }}
+      {% end %}
+      {{ doc }}
+      {%- end %}
+      {%- end %}
+
+  # Per-Gateway headless marker Service for
+  # SupportGatewayInfrastructurePropagation.
+  #
+  # Reads back the per-Gateway marker-Service specs that the
+  # `frontends-500-gateway-listener-status` snippet stashes into
+  # `shared["gatewayInfrastructureServices"]` for Gateways that declare
+  # `spec.infrastructure` but no `spec.addresses`. Each entry becomes a
+  # headless ClusterIP Service whose only purpose is to carry the
+  # propagated labels and annotations.
+  gateway-infrastructure-propagation:
+    template: |
+      {%- var rawSvcs = shared.Get("gatewayInfrastructureServices") %}
+      {%- if rawSvcs != nil %}
+      {%%
+        var svcs = rawSvcs.(map[string]any)
+        var keysList = []any{}
+        for k := range svcs {
+          keysList = append(keysList, k)
+        }
+        var sortedKeys = sort_strings(keysList)
+        var docs = []any{}
+        for _, key := range sortedKeys {
+          var entry = svcs[tostring(key)].(map[string]any)
+          var resource = map[string]any{
+            "apiVersion": "v1",
+            "kind":       "Service",
+            "metadata": map[string]any{
+              "name":        entry["name"],
+              "namespace":   entry["namespace"],
+              "labels":      entry["labels"],
+              "annotations": entry["annotations"],
+            },
+            "spec": map[string]any{
+              "type":      "ClusterIP",
+              "clusterIP": "None",
+              "ports": []any{
+                map[string]any{
+                  "name":     "marker",
+                  "port":     1,
+                  "protocol": "TCP",
+                },
+              },
+            },
+          }
+          var rendered, _ = marshalYAML(resource)
+          docs = append(docs, rendered)
+        }
+      %%}
+      {%- for i, doc := range docs -%}
+      {%- if i > 0 %}{{ "---" }}
+      {% end %}
+      {{ doc }}
+      {%- end %}
+      {%- end %}

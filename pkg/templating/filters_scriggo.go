@@ -107,6 +107,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 
 	// Sorting functions
 	decl[FuncSortStrings] = scriggoSortStrings
+	decl[FuncSortInts] = scriggoSortInts
 
 	// Deduplication and filtering functions
 	decl[FuncFirstSeen] = scriggoFirstSeen

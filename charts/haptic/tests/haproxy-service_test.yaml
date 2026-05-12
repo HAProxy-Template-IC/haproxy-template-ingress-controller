@@ -2,166 +2,71 @@
 suite: haproxy service
 templates:
   - haproxy-service.yaml
+# templates/haproxy-service.yaml renders the chart-internal dataplane
+# Service only. The user-facing HAProxy LoadBalancer Service is no
+# longer chart-static — it is declared in libraries/base.yaml as a
+# `k8sResources.haproxy-service` template, rendered by the controller
+# from listener state, and applied via Server-Side Apply with an
+# OwnerReference to the HAProxyTemplateConfig CR. This test suite
+# therefore covers ONLY the dataplane Service; the user-facing
+# Service's port set, type, annotations, and load-balancer fields are
+# pinned by chart-validation tests under
+# charts/haptic/libraries/base.yaml (k8sResources.haproxy-service).
 tests:
-  - it: should render haproxy service with correct kind
-    documentIndex: 0
-    asserts:
-      - isKind:
-          of: Service
-
-  - it: should create NodePort service by default
-    documentIndex: 0
-    asserts:
-      - equal:
-          path: spec.type
-          value: NodePort
-
-  - it: should expose http port
-    documentIndex: 0
-    asserts:
-      - contains:
-          path: spec.ports
-          content:
-            name: http
-            port: 80
-            targetPort: http
-            protocol: TCP
-            nodePort: 30080
-
-  - it: should expose https port
-    documentIndex: 0
-    asserts:
-      - contains:
-          path: spec.ports
-          content:
-            name: https
-            port: 443
-            targetPort: https
-            protocol: TCP
-            nodePort: 30443
-
-  - it: should expose stats port
-    documentIndex: 0
-    asserts:
-      - contains:
-          path: spec.ports
-          content:
-            name: stats
-            port: 8404
-            targetPort: stats
-            protocol: TCP
-            nodePort: 30404
-
-  - it: should use custom service type when specified
-    documentIndex: 0
-    set:
-      haproxy.service.type: LoadBalancer
-    asserts:
-      - equal:
-          path: spec.type
-          value: LoadBalancer
-
-  - it: should render annotations when specified
-    documentIndex: 0
-    set:
-      haproxy.service.annotations:
-        service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    asserts:
-      - equal:
-          path: metadata.annotations["service.beta.kubernetes.io/aws-load-balancer-type"]
-          value: "nlb"
-
-  - it: should include standard labels
-    documentIndex: 0
-    asserts:
-      - exists:
-          path: metadata.labels["app.kubernetes.io/name"]
-      - exists:
-          path: metadata.labels["app.kubernetes.io/instance"]
-      - equal:
-          path: metadata.labels["app.kubernetes.io/component"]
-          value: loadbalancer
-
-  # Tests for service configuration values that should be rendered
-  - it: should render loadBalancerIP when type is LoadBalancer
-    documentIndex: 0
-    set:
-      haproxy.service.type: LoadBalancer
-      haproxy.service.loadBalancerIP: "192.168.1.100"
-    asserts:
-      - equal:
-          path: spec.loadBalancerIP
-          value: "192.168.1.100"
-
-  - it: should render loadBalancerSourceRanges when type is LoadBalancer
-    documentIndex: 0
-    set:
-      haproxy.service.type: LoadBalancer
-      haproxy.service.loadBalancerSourceRanges:
-        - "10.0.0.0/8"
-        - "192.168.0.0/16"
-    asserts:
-      - equal:
-          path: spec.loadBalancerSourceRanges
-          value:
-            - "10.0.0.0/8"
-            - "192.168.0.0/16"
-
-  - it: should render loadBalancerClass when type is LoadBalancer
-    documentIndex: 0
-    set:
-      haproxy.service.type: LoadBalancer
-      haproxy.service.loadBalancerClass: "service.k8s.aws/nlb"
-    asserts:
-      - equal:
-          path: spec.loadBalancerClass
-          value: "service.k8s.aws/nlb"
-
-  - it: should render externalTrafficPolicy when specified
-    documentIndex: 0
-    set:
-      haproxy.service.type: LoadBalancer
-      haproxy.service.externalTrafficPolicy: Local
-    asserts:
-      - equal:
-          path: spec.externalTrafficPolicy
-          value: Local
-
-  - it: should render internalTrafficPolicy when specified
-    documentIndex: 0
-    set:
-      haproxy.service.internalTrafficPolicy: Local
-    asserts:
-      - equal:
-          path: spec.internalTrafficPolicy
-          value: Local
-
-  - it: should render healthCheckNodePort when specified with Local traffic policy
-    documentIndex: 0
-    set:
-      haproxy.service.type: LoadBalancer
-      haproxy.service.externalTrafficPolicy: Local
-      haproxy.service.healthCheckNodePort: 32000
-    asserts:
-      - equal:
-          path: spec.healthCheckNodePort
-          value: 32000
-
-  - it: should render publishNotReadyAddresses when set to true
-    documentIndex: 0
-    set:
-      haproxy.service.publishNotReadyAddresses: true
-    asserts:
-      - equal:
-          path: spec.publishNotReadyAddresses
-          value: true
-
-  # Test for dataplane service (second document)
   - it: should render dataplane service
-    documentIndex: 1
+    documentIndex: 0
     asserts:
       - isKind:
           of: Service
       - matchRegex:
           path: metadata.name
           pattern: ".*-haproxy-dataplane$"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: dataplane-api
+      - equal:
+          path: spec.type
+          value: ClusterIP
+      - contains:
+          path: spec.ports
+          content:
+            name: dataplane
+            port: 5555
+            targetPort: dataplane
+            protocol: TCP
+
+  - it: should select pods labelled as the loadbalancer component
+    documentIndex: 0
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: loadbalancer
+
+  - it: should honour haproxy.dataplane.service.type override
+    documentIndex: 0
+    set:
+      haproxy.dataplane.service.type: NodePort
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+
+  - it: should honour haproxy.ports.dataplane override
+    documentIndex: 0
+    set:
+      haproxy.ports.dataplane: 6666
+    asserts:
+      - contains:
+          path: spec.ports
+          content:
+            name: dataplane
+            port: 6666
+            targetPort: dataplane
+            protocol: TCP
+
+  - it: should not render anything when haproxy is disabled
+    set:
+      haproxy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0

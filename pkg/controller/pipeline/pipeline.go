@@ -81,6 +81,11 @@ type PipelineResult struct {
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
 	StatusPatches []templating.StatusPatch
 
+	// RenderedResources contains full Kubernetes resources the templates declared
+	// the controller should own and reconcile (e.g. per-Gateway LoadBalancer
+	// Services for SupportGatewayStaticAddresses).
+	RenderedResources []templating.RenderedResource
+
 	// AuxFileCount is the total number of auxiliary files.
 	AuxFileCount int
 
@@ -203,6 +208,7 @@ func (p *Pipeline) Execute(ctx context.Context, provider stores.StoreProvider) (
 		HAProxyConfig:      renderResult.HAProxyConfig,
 		AuxiliaryFiles:     renderResult.AuxiliaryFiles,
 		StatusPatches:      renderResult.StatusPatches,
+		RenderedResources:  renderResult.RenderedResources,
 		AuxFileCount:       renderResult.AuxFileCount,
 		ContentChecksum:    contentChecksum,
 		RenderDurationMs:   renderResult.DurationMs,

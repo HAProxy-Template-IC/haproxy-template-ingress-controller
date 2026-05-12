@@ -16,10 +16,12 @@ package events
 
 import (
 	"maps"
+	"slices"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // DeploymentStartedEvent is published when deployment to HAProxy instances begins.
@@ -135,6 +137,16 @@ type DeploymentCompletedEvent struct {
 	// Example: "[GUID] (48 backends)" or "[Mode, Balance] (3 backends)"
 	BackendDiffFields string
 
+	// StatusPatches are the chart-rendered status patches that correspond to
+	// the configuration this deployment carried. The StatusApplier reads them
+	// from this event and applies the "deployed" variant — guaranteeing that
+	// the status conditions it writes describe the config the data plane is
+	// actually serving (no side-channel cache, no LATEST-vs-deployed race).
+	//
+	// Threaded through unchanged from the DeploymentScheduledEvent that
+	// triggered this deployment.
+	StatusPatches []templating.StatusPatch
+
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
 }
@@ -157,13 +169,27 @@ type DeploymentResult struct {
 	// BackendDiffFields summarizes which BackendBase fields caused backend updates.
 	// Empty when no backend attribute diffs were detected.
 	BackendDiffFields string
+
+	// StatusPatches are the chart-rendered status patches for the
+	// configuration this deployment carried. Forwarded from the
+	// DeploymentScheduledEvent and surfaced on DeploymentCompletedEvent for
+	// the StatusApplier to consume.
+	StatusPatches []templating.StatusPatch
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
 //
+// `result` is taken by pointer because DeploymentResult is large enough
+// (≥96 bytes) that gocritic flags pass-by-value as `hugeParam`.
+//
+// `result.StatusPatches` should be forwarded unchanged from the
+// DeploymentScheduledEvent that triggered the deployment so the
+// StatusApplier reads the patches that correspond exactly to the
+// configuration that just shipped (the chart's "deployed" variant).
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+//	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 //	    Total:              len(endpoints),
 //	    Succeeded:          successCount,
 //	    Failed:             failureCount,
@@ -171,8 +197,9 @@ type DeploymentResult struct {
 //	    ReloadsTriggered:   reloads,
 //	    TotalAPIOperations: ops,
 //	    OperationBreakdown: breakdown,
+//	    StatusPatches:      scheduledEvent.StatusPatches, // forward unchanged
 //	}, events.PropagateCorrelation(startedEvent))
-func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
+func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOption) *DeploymentCompletedEvent {
 	// Defensive copy of the map
 	var breakdownCopy map[string]int
 	if result.OperationBreakdown != nil {
@@ -189,12 +216,106 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 		TotalAPIOperations: result.TotalAPIOperations,
 		OperationBreakdown: breakdownCopy,
 		BackendDiffFields:  result.BackendDiffFields,
+		StatusPatches:      slices.Clone(result.StatusPatches),
 		timestamped:        newTimestamped(),
 		Correlation:        newCorrelation(opts...),
 	}
 }
 
 func (e *DeploymentCompletedEvent) EventType() string { return EventTypeDeploymentCompleted }
+
+// DeploymentSkippedEvent is published when the deployment scheduler determines
+// that the data plane is already at the just-rendered configuration and no
+// deployment work needs to be performed (typically: rendered config hash and
+// pod-set hash both match the last successful deployment).
+//
+// Semantically this is NOT a deployment — nothing was pushed, no reload was
+// triggered, no API operations were issued. It exists as its own event type
+// so that downstream consumers can distinguish "the controller is converged"
+// from "the controller just completed work."
+//
+// Currently consumed by:
+//   - statusapplier, which treats this equivalently to DeploymentCompletedEvent
+//     for the purpose of applying the "deployed" status-patch variant — the
+//     data plane is serving the latest config, so Kubernetes status conditions
+//     gated on data-plane readiness (e.g. Gateway.Programmed) should reflect
+//     the current generation.
+//
+// Other consumers (metrics, commentator, drift_monitor, scheduler,
+// statecache) do not subscribe by design — skipped deployments are a
+// steady-state signal and bursting through those consumers would either
+// produce log spam (commentator) or misleading counters (metrics). They can
+// opt in later if there's a concrete need.
+//
+// This event propagates the correlation ID from the triggering event
+// (typically ValidationCompletedEvent) so the converged path remains
+// observable in correlation-based tracing.
+type DeploymentSkippedEvent struct {
+	// Total is the number of HAProxy endpoints already serving the rendered
+	// configuration. Mirrors DeploymentCompletedEvent.Total so subscribers
+	// can apply the same "is there actually a data plane to talk to?" guard.
+	Total int
+
+	// Reason is a short tag describing why the deployment was skipped.
+	// Currently always "config_unchanged"; left as a string to leave room
+	// for future skip causes (e.g. "drift_check_only") without an event
+	// schema change.
+	Reason string
+
+	// ConfigHash is the content checksum of the rendered HAProxy
+	// configuration that matched the last successful deployment. Useful
+	// for debugging / correlation across the deployer's logs.
+	ConfigHash string
+
+	// PodSetHash is the hash of the endpoint set that matched the last
+	// successful deployment. Useful for debugging / correlation.
+	PodSetHash string
+
+	// StatusPatches are the chart-rendered status patches for the
+	// already-deployed configuration. The StatusApplier reads them from
+	// this event to write the "deployed" variant — the data plane is
+	// serving this exact config, so conditions gated on data-plane
+	// readiness (e.g. Gateway.Programmed) should reflect the current
+	// generation.
+	StatusPatches []templating.StatusPatch
+
+	timestamped
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
+}
+
+// NewDeploymentSkippedEvent creates a new DeploymentSkippedEvent.
+//
+// statusPatches is the chart-rendered patch set for the already-deployed
+// configuration; the StatusApplier reads it from the event to write the
+// "deployed" variant. The outer slice is defensively cloned per the
+// immutability contract documented in events/CLAUDE.md.
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering
+// event so the skip remains correlated with the originating reconciliation:
+//
+//	event := events.NewDeploymentSkippedEvent(
+//	    len(endpoints),
+//	    "config_unchanged",
+//	    configHash,
+//	    podSetHash,
+//	    statusPatches,
+//	    events.PropagateCorrelation(scheduledEvent),
+//	)
+func NewDeploymentSkippedEvent(total int, reason, configHash, podSetHash string, statusPatches []templating.StatusPatch, opts ...CorrelationOption) *DeploymentSkippedEvent {
+	return &DeploymentSkippedEvent{
+		Total:         total,
+		Reason:        reason,
+		ConfigHash:    configHash,
+		PodSetHash:    podSetHash,
+		StatusPatches: slices.Clone(statusPatches),
+		timestamped:   newTimestamped(),
+		Correlation:   newCorrelation(opts...),
+	}
+}
+
+func (e *DeploymentSkippedEvent) EventType() string { return EventTypeDeploymentSkipped }
 
 // DeploymentScheduledEvent is published when the deployment scheduler has decided.
 // to execute a deployment. This event contains all necessary data for the deployer
@@ -240,6 +361,13 @@ type DeploymentScheduledEvent struct {
 	// Examples: "config_validation", "pod_discovery", "drift_prevention"
 	Reason string
 
+	// StatusPatches are the chart-rendered status patches for this
+	// configuration. The Deployer forwards them unchanged into
+	// DeploymentCompletedEvent so the StatusApplier can apply the
+	// "deployed" variant with the patches that correspond exactly to
+	// the config this deployment shipped.
+	StatusPatches []templating.StatusPatch
+
 	// coalescible indicates if this event can be safely skipped when a newer
 	// event of the same type is available. Propagated from ValidationCompletedEvent.
 	coalescible bool
@@ -263,11 +391,16 @@ type DeploymentScheduledEvent struct {
 // TemplateRenderedEvent. It enables the deployer to skip expensive aux file comparison
 // when the content hasn't changed since the last successful sync to an endpoint.
 //
+// statusPatches is the chart-rendered patch set for this configuration. The Deployer
+// forwards it unchanged into DeploymentCompletedEvent so the StatusApplier can apply
+// the "deployed" variant with the patches that correspond exactly to the config this
+// deployment shipped. The outer slice is defensively cloned.
+//
 // Use PropagateCorrelation() to propagate correlation from the triggering event:
 //
-//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, coalescible,
+//	event := events.NewDeploymentScheduledEvent(config, auxFiles, parsedConfig, endpoints, name, ns, reason, contentChecksum, statusPatches, coalescible,
 //	    events.PropagateCorrelation(validationEvent))
-func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
+func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFiles, parsedConfig *parser.StructuredConfig, endpoints []dataplane.Endpoint, runtimeConfigName, runtimeConfigNamespace, reason, contentChecksum string, statusPatches []templating.StatusPatch, coalescible bool, opts ...CorrelationOption) *DeploymentScheduledEvent {
 	return &DeploymentScheduledEvent{
 		Config:                 config,
 		AuxiliaryFiles:         auxFiles,
@@ -277,6 +410,7 @@ func NewDeploymentScheduledEvent(config string, auxFiles *dataplane.AuxiliaryFil
 		RuntimeConfigNamespace: runtimeConfigNamespace,
 		ContentChecksum:        contentChecksum,
 		Reason:                 reason,
+		StatusPatches:          slices.Clone(statusPatches),
 		coalescible:            coalescible,
 		timestamped:            newTimestamped(),
 		Correlation:            newCorrelation(opts...),

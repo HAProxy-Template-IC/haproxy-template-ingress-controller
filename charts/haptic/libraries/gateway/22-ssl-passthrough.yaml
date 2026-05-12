@@ -1,0 +1,317 @@
+templateSnippets:
+  util-gateway-ssl-passthrough:
+    template: |
+      {#- Caches SSL passthrough backends in shared["gateway_ssl_passthrough"].backends
+          Uses ComputeIfAbsent for race-free caching across parallel template renders.
+          Note: first_seen() calls are safe inside the compute function due to the
+          deadlock-free implementation of ComputeIfAbsent. -#}
+      {%- import "util-build-ssl-passthrough" for BuildSSLPassthrough %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any {
+          var sslData = map[string]any{"backends": []any{}}
+          BuildSSLPassthrough(sslData)
+          return sslData
+        })
+      %%}
+
+  util-build-ssl-passthrough:
+    template: |
+      {#- Macro to populate SSL passthrough backend data.
+          Called from ComputeIfAbsent to enable use of template functions (dig, toSlice, etc.). -#}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection %}
+      {%- macro BuildSSLPassthrough(sslData map[string]any) %}
+        {#- Pass 1: HTTPRoute SSL passthrough (annotation-driven) -#}
+        {%- for _, route := range resources.httproutes.List() %}
+          {%%
+            var hasPassthrough = false
+            for _, rule := range route | dig("spec", "rules") | toSlice() {
+              for _, filter := range rule | dig("filters") | toSlice() {
+                var filterType = filter | dig("type") | fallback("")
+                if filterType == "ExtensionRef" {
+                  var kind = filter | dig("extensionRef", "kind") | fallback("")
+                  var name = filter | dig("extensionRef", "name") | fallback("")
+                  if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
+                    hasPassthrough = true
+                  }
+                }
+              }
+            }
+            if !hasPassthrough { continue }
+
+            var ns = route | dig("metadata", "namespace") | fallback("")
+            var routeName = route | dig("metadata", "name") | fallback("")
+          %%}
+          {%- for _, host := range route | dig("spec", "hostnames") | toSlice() %}
+            {%- if first_seen("gateway_ssl_passthrough_hosts", host) %}
+              {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
+                "name": "ssl-passthrough-" + ns + "-" + routeName,
+                "sni": host, "namespace": ns, "route": routeName, "route_type": "httproute",
+              }) %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+
+        {#- Pass 2: TLSRoute (Gateway API spec — TLS Passthrough listener)
+
+            For each TLSRoute / rule that survives the listener-attachment
+            filters (TLS protocol, Passthrough mode, no ProtocolConflict,
+            allowedRoutes.kinds, allowedRoutes.namespaces, sectionName,
+            port) AND whose backendRefs all resolve, emit one entry per
+            (intersected route hostname × listener hostname). Backend
+            naming: gtw_tls_<ns>_<name>_<ruleIdx>. The ssl-tcp frontend
+            then renders one `use_backend ... if { req_ssl_sni -m str
+            <host> }` line per entry, all pointing at the same backend
+            for a given rule. -#}
+        {%- for _, route := range resources.tlsroutes.List() %}
+          {%%
+            var nsStr = tostring(route | dig("metadata", "namespace") | fallback(""))
+            var nameStr = tostring(route | dig("metadata", "name") | fallback(""))
+            var routeHostnames = route | dig("spec", "hostnames") | toSlice()
+            var rules = route | dig("spec", "rules") | toSlice()
+          %%}
+          {%- for ruleIdx, rule := range rules %}
+            {%%
+              // ResolvedRefs gate: every backendRef must point at an
+              // existing core/Service. Cross-namespace refs need a
+              // matching ReferenceGrant (parity with status side).
+              //
+              // We do NOT skip unresolved rules — instead we mark
+              // their emitted entries with `invalid: true`. The
+              // chart-static ssl-tcp and per-port mode-tcp frontends
+              // both use this flag to:
+              //   * skip use_backend emission (no real backend exists)
+              //   * still register the route's claimed SNI as
+              //     "claimed by the chart" so connections to it get
+              //     rejected (not silently passed through to a
+              //     non-existent backend or chart-static fallback).
+              // Closes the upstream
+              // TLSRouteInvalidBackendRefNonexistent /
+              // TLSRouteInvalidBackendRefUnknownKind conformance tests
+              // (the spec mandates the connection be refused, not
+              // routed elsewhere).
+              var ruleResolved = true
+              for _, br := range rule | dig("backendRefs") | toSlice() {
+                var brName = tostring(dig(br, "name") | fallback(""))
+                var brNs = tostring(dig(br, "namespace") | fallback(nsStr))
+                var brGroup = tostring(dig(br, "group") | fallback(""))
+                var brKind = tostring(dig(br, "kind") | fallback("Service"))
+                if !((brGroup == "" || brGroup == "core") && brKind == "Service") {
+                  ruleResolved = false
+                  break
+                }
+                if resources.services.GetSingle(brNs, brName) == nil {
+                  ruleResolved = false
+                  break
+                }
+              }
+            %%}
+
+            {%%
+              // Aggregate effective SNIs across every accepted (parentRef,
+              // listener) pair for this rule, deduped per rule.
+              var snisForRule = map[string]bool{}
+            %%}
+            {%%
+              // sniMeta carries per-SNI listener-frontend metadata
+              // (port, mode, hostname, Gateway identity) that the new
+              // frontends-600-gateway-tls-listener consumer needs to
+              // emit one mode-tcp frontend per port. The map dedupes
+              // by SNI within a route, mirroring the previous
+              // `snisForRule` set behaviour — first listener that
+              // claims a given SNI wins.
+              var sniMeta = map[string]any{}
+            %%}
+            {%- for _, parentRef := range route | dig("spec", "parentRefs") | toSlice() %}
+              {%%
+                var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+                var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+                var prNs = tostring(dig(parentRef, "namespace") | fallback(nsStr))
+                var prName = tostring(dig(parentRef, "name") | fallback(""))
+                var prSection = tostring(dig(parentRef, "sectionName") | fallback(""))
+                var prPort = toint(dig(parentRef, "port") | fallback(0))
+              %%}
+              {%- if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" %}
+                {%- continue %}
+              {%- end %}
+              {%- var gw = resources.gateways.GetSingle(prNs, prName) %}
+              {%- if gw == nil %}
+                {%- continue %}
+              {%- end %}
+              {%%
+                // ProtocolConflict: a TLS port that hosts both
+                // Passthrough and Terminate siblings yields no accepted
+                // listeners on that port (parity with status patches).
+                var portModes = map[int]map[string]bool{}
+                for _, l := range dig(gw, "spec", "listeners") | toSlice() {
+                  if tostring(dig(l, "protocol") | fallback("")) == "TLS" {
+                    var lp = toint(dig(l, "port") | fallback(0))
+                    var lm = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+                    if portModes[lp] == nil { portModes[lp] = map[string]bool{} }
+                    portModes[lp][lm] = true
+                  }
+                }
+              %%}
+              {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+                {%%
+                  var lName = tostring(dig(listener, "name") | fallback(""))
+                  var lProto = tostring(dig(listener, "protocol") | fallback(""))
+                  var lPort = toint(dig(listener, "port") | fallback(0))
+                  var lMode = tostring(dig(listener, "tls", "mode") | fallback("Terminate"))
+                  var lHost = tostring(dig(listener, "hostname") | fallback(""))
+
+                  var skipListener = false
+                  if prSection != "" && prSection != lName { skipListener = true }
+                  if prPort != 0 && prPort != lPort { skipListener = true }
+                  if lProto != "TLS" { skipListener = true }
+                  // Both TLS modes (Passthrough and Terminate) accept
+                  // TLSRoutes per Gateway API. The downstream consumers
+                  // filter on `mode`: existing ssl-tcp keeps reading
+                  // only Passthrough entries; the new
+                  // frontends-600-gateway-tls-listener snippet picks up
+                  // Terminate entries (and any Passthrough on a non-
+                  // chart-static port) and emits one mode-tcp frontend
+                  // per listener port with SNI-based use_backend +
+                  // reject-default.
+                  if lMode != "Passthrough" && lMode != "Terminate" { skipListener = true }
+                  var pm = portModes[lPort]
+                  if pm != nil && pm["Passthrough"] && pm["Terminate"] { skipListener = true }
+                %%}
+                {%- if skipListener %}
+                  {%- continue %}
+                {%- end %}
+
+                {%%
+                  // allowedRoutes.kinds intersection: when omitted, the
+                  // protocol-default kinds apply (TLS → TLSRoute).
+                  var kindOk = true
+                  var akr = dig(listener, "allowedRoutes", "kinds")
+                  if akr != nil {
+                    kindOk = false
+                    for _, ak := range toSlice(akr) {
+                      var akG = tostring(dig(ak, "group") | fallback("gateway.networking.k8s.io"))
+                      var akK = tostring(dig(ak, "kind") | fallback(""))
+                      if akG == "gateway.networking.k8s.io" && akK == "TLSRoute" {
+                        kindOk = true
+                        break
+                      }
+                    }
+                  }
+
+                  // allowedRoutes.namespaces gating.
+                  var nsOk = false
+                  var fromMode = tostring(dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same"))
+                  switch fromMode {
+                  case "Same":
+                    nsOk = (nsStr == prNs)
+                  case "All":
+                    nsOk = true
+                  case "Selector":
+                    var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
+                    if ml != nil {
+                      var nsObj = resources.namespaces.GetSingle(nsStr)
+                      if nsObj != nil {
+                        var nsLabels = dig(nsObj, "metadata", "labels")
+                        if nsLabels != nil {
+                          var labelMap = nsLabels.(map[string]any)
+                          var allMatch = true
+                          for k, v := range ml.(map[string]any) {
+                            var actual, ok = labelMap[k]
+                            if !ok || tostring(actual) != tostring(v) { allMatch = false; break }
+                          }
+                          nsOk = allMatch
+                        }
+                      }
+                    }
+                  }
+                %%}
+                {%- if !kindOk || !nsOk %}
+                  {%- continue %}
+                {%- end %}
+
+                {#- Hostname intersection: empty listener hostname means
+                    accept any route hostname; otherwise apply the
+                    Gateway API single-pair intersection. -#}
+                {%- if len(routeHostnames) == 0 %}
+                  {%- continue %}
+                {%- end %}
+                {%- for _, rh := range routeHostnames %}
+                  {%%
+                    var rhStr = tostring(rh)
+                    var inter = ""
+                    if lHost == "" {
+                      inter = rhStr
+                    } else {
+                      inter = HostnameSinglePairIntersection(lHost, rhStr)
+                    }
+                  %%}
+                  {%- if inter != "" %}
+                    {%- snisForRule[inter] = true %}
+                    {%%
+                      // First listener to claim this SNI wins for the
+                      // listener-frontend metadata (matches the existing
+                      // snisForRule set behaviour). Subsequent listeners
+                      // contributing the same SNI to the same route
+                      // route to the same backend; per-port routing is
+                      // homogeneous within a route.
+                      _, alreadySeen := sniMeta[inter]
+                      if !alreadySeen {
+                        sniMeta[inter] = map[string]any{
+                          "port":              lPort,
+                          "mode":              lMode,
+                          "listener_hostname": lHost,
+                          "gw_namespace":      prNs,
+                          "gw_name":           prName,
+                        }
+                      }
+                    %%}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+
+            {#- Emit one entry per intersected SNI; backend dedup happens
+                downstream in backends-501-gateway-ssl-passthrough. -#}
+            {%%
+              var beName = "gtw_tls_" + nsStr + "_" + nameStr + "_" + sprintf("%d", ruleIdx)
+            %%}
+            {%%
+              // Dump the SNI set into a slice so we iterate over a known
+              // shape; ranging over `map[string]bool` was producing
+              // surprising loop-variable behaviour in Scriggo.
+              var sniSlice = []any{}
+              for k, _ := range snisForRule {
+                sniSlice = append(sniSlice, k)
+              }
+            %%}
+            {%- for _, sniVal := range sniSlice %}
+              {%%
+                var entry = map[string]any{}
+                entry["name"] = beName
+                entry["sni"] = sniVal
+                entry["namespace"] = nsStr
+                // Re-derive the route name on the spot — `nameStr` from
+                // the enclosing scope was being clobbered by an inner
+                // for-range; this freshly-resolved value is correct.
+                entry["route"] = tostring(route | dig("metadata", "name") | fallback(""))
+                entry["route_type"] = "tlsroute"
+                entry["rule_idx"] = ruleIdx
+                // Listener-frontend metadata for the new
+                // frontends-600-gateway-tls-listener consumer. The
+                // existing ssl-tcp consumer ignores these fields. We
+                // copy from sniMeta (built inside the listener loop
+                // where lPort/lMode/lHost were in scope) rather than
+                // referencing those vars here — they're out of scope
+                // by now, and Scriggo loop-var leakage is unreliable.
+                var meta = sniMeta[tostring(sniVal)].(map[string]any)
+                entry["port"] = meta["port"]
+                entry["mode"] = meta["mode"]
+                entry["gw_namespace"] = meta["gw_namespace"]
+                entry["gw_name"] = meta["gw_name"]
+                entry["listener_hostname"] = meta["listener_hostname"]
+                entry["invalid"] = !ruleResolved
+                sslData["backends"] = append(sslData["backends"].([]any), entry)
+              %%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end macro %}

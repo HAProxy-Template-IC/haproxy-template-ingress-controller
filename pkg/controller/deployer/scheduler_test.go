@@ -64,6 +64,7 @@ func TestDeploymentScheduler_HandleTemplateRendered(t *testing.T) {
 		"global\n  daemon\n",        // haproxyConfig
 		&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
 		nil,                         // statusPatches
+		nil,                         // renderedResources
 		2,                           // auxFileCount
 		50,                          // durationMs
 		"",                          // triggerReason
@@ -323,7 +324,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler.state.phase = phaseDeploying
 	scheduler.schedulerMutex.Unlock()
 
-	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		DurationMs: 100,
@@ -396,7 +397,7 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", true)
+		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -411,8 +412,8 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", true)
-		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", true)
+		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true)
+		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -435,6 +436,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 			"global\n  daemon\n",        // haproxyConfig
 			&dataplane.AuxiliaryFiles{}, // auxiliaryFiles
 			nil,                         // statusPatches
+			nil,                         // renderedResources
 			2,                           // auxFileCount
 			50,                          // durationMs
 			"",                          // triggerReason
@@ -514,7 +516,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.state.phase = phaseDeploying
 		scheduler.schedulerMutex.Unlock()
 
-		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 			Total:      1,
 			Succeeded:  1,
 			DurationMs: 50,
@@ -541,7 +543,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 	t.Run("ignores unknown events", func(t *testing.T) {
 		// Should not panic
-		otherEvent := events.NewReconciliationCompletedEvent(0)
+		otherEvent := events.NewReconciliationCompletedEvent(0, nil)
 		scheduler.handleEvent(ctx, otherEvent)
 	})
 
@@ -635,7 +637,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 	}
 	scheduler.schedulerMutex.Unlock()
 
-	event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      1,
 		Succeeded:  1,
 		DurationMs: 100,
@@ -685,6 +687,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
 		"test-rate-limit",
 		"correlation-456",
+		nil,  // statusPatches
 		true, // coalescible
 	)
 
@@ -731,6 +734,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testin
 			[]dataplane.Endpoint{},
 			"test-cancel",
 			"correlation-789",
+			nil,  // statusPatches
 			true, // coalescible
 		)
 		close(done)
@@ -777,6 +781,7 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 		[]dataplane.Endpoint{},
 		"test-compute-runtime",
 		"correlation-compute",
+		nil,  // statusPatches
 		true, // coalescible
 	)
 
@@ -820,6 +825,7 @@ func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
 		[]dataplane.Endpoint{},
 		"first",
 		"correlation-1",
+		nil,  // statusPatches
 		true, // coalescible
 	)
 

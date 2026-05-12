@@ -1,0 +1,148 @@
+templateSnippets:
+  # ============================================================================
+  # Per-Gateway HAProxy bind emission (phase 4 of the per-Gateway-IP refactor)
+  #
+  # Hooks into the existing `https-bind-extra-*` extension point in
+  # `frontends-500-https`, so the chart's `frontend https` body
+  # (routing logic, filters, matchers) is reused unchanged. For each
+  # Gateway HTTPS listener:
+  #
+  #   * Allocated pod port comes from phase 1
+  #     (`util-gateway-pod-port-allocator`) — unique per (Gateway,
+  #     listener) tuple so different binds don't collide on
+  #     `0.0.0.0:<listener-port>`.
+  #   * Per-listener crt-list filename comes from phase 2
+  #     (`util-gateway-listener-crtlist-name`) — carries the
+  #     listener-specific cert + verify clause.
+  #   * Per-Gateway LB Service from phase 3 maps the listener port
+  #     to the allocated pod port via kube-proxy DNAT.
+  #
+  # Skipped:
+  #   * mTLS-blocked listeners (CA refs unresolvable). Phase 2 didn't
+  #     emit a crt-list for them, so referencing one here would fail
+  #     HAProxy parse. Dropping the bind makes connections to the
+  #     listener RST at the pod boundary — which is what
+  #     GatewayFrontendInvalidDefaultClientCertificateValidation
+  #     requires.
+  #   * Listeners whose `tls.certificateRefs[0]` failed to resolve
+  #     (Secret missing, malformed, or wrong group/kind). The chart's
+  #     existing `features-100-gateway-tls` skips registering such
+  #     certs (they don't appear in `gf.tlsCertificates`), and phase 2
+  #     follows suit by skipping the per-listener crt-list emission.
+  #     Phase 4 mirrors the same gate so the bind never references a
+  #     non-existent crt-list file (which would fail HAProxy parse and
+  #     abort the entire reconcile, leaving every Gateway in the
+  #     cluster stuck at observedGeneration=0). Same observable
+  #     behaviour as the mTLS-blocked branch: the listener has no
+  #     bind, so connections to it land on no socket — the
+  #     `GatewayInvalidTLSConfiguration` conformance contract is that
+  #     `Programmed=False / Invalid` with no traffic acceptance,
+  #     which is exactly what dropping the bind achieves.
+  #   * Non-HTTPS listeners. HTTP listeners flow through the chart-
+  #     static `bind *:<httpPort>` path. TLS-Passthrough flows
+  #     through `frontend ssl-tcp`. TLS-Terminate non-default ports
+  #     use `frontends-600-gateway-tls-listener`.
+  #
+  # Naming this `https-bind-extra-100-...` so it sorts AFTER the
+  # existing `https-bind-extra-050-gateway-multi-port-bind` (which
+  # emits `bind *:<listener-port>` for non-default listener ports
+  # using the chart-static crt-list). The two coexist:
+  #   * Pinned-IP Gateways (`spec.addresses` set) use the per-IP
+  #     Service from `gateway-static-addresses`, whose targetPort =
+  #     listener-port → traffic lands on the
+  #     `https-bind-extra-050` bind.
+  #   * Non-pinned HTTPS Gateways use the per-Gateway Service from
+  #     phase 3, whose targetPort = allocated pod port → traffic
+  #     lands on this bind.
+  # ============================================================================
+
+  https-bind-extra-100-per-gateway:
+    template: |
+      {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
+      {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
+      {{ render "util-gateway-pod-port-allocator" -}}
+      {{ render "util-tls-cert-by-secret" -}}
+      {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {%- var perListenerMTLS = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {#- Same cert-resolvability gate phase 2 (16-crtlist-per-listener)
+          uses: drop the bind when the listener's cert ref didn't
+          resolve. Without this gate, the bind references a crt-list
+          file phase 2 never emitted (because
+          `features-100-gateway-tls` skipped the missing/malformed
+          Secret), HAProxy's parser errors on the missing file, and
+          the entire reconcile aborts in semantic validation — taking
+          the status patches for every Gateway in the cluster down
+          with it. -#}
+      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
+      {%- if resources != nil && resources.gateways != nil %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
+          {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+          {#- Pinned-IP Gateways (spec.addresses set) take the
+              gateway-static-addresses path, NOT phase-3's
+              per-Gateway Service. Phase 1's allocator skips them
+              too, so allocations[allocKey] would miss and the
+              bind below would fall back to lPort — colliding with
+              the chart-static `https-bind-extra-050-gateway-multi-
+              port-bind` emission that already serves non-default
+              ports for pinned Gateways. Skip the whole Gateway
+              here, mirroring phase 3's gate at
+              17-per-gateway-services.yaml. -#}
+          {%- if gwNs != "" && gwName != "" && len(dig(gw, "spec", "addresses") | toSlice()) == 0 %}
+            {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+              {%- var lProto = tostring(dig(listener, "protocol") | fallback("")) %}
+              {%- if lProto == "HTTPS" %}
+                {%- var lName = tostring(dig(listener, "name") | fallback("")) %}
+                {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
+                {%- var blockedKey = gwNs + "/" + gwName + "/" + lName %}
+                {%- var isBlocked = mtlsBlocked[blockedKey] != nil %}
+                {#- Does the listener's cert ref resolve? Same path
+                    phase 2 walks: take the FIRST entry of
+                    `tls.certificateRefs`, look it up by
+                    `<crNs>/<crName>` in the shared cert registry.
+                    Missing → phase 2 skipped emission → we must too. -#}
+                {%- var certResolved = false %}
+                {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() %}
+                {%- if len(certRefs) > 0 %}
+                  {%- var cr = certRefs[0] %}
+                  {%- var crNs = tostring(dig(cr, "namespace") | fallback(gwNs)) %}
+                  {%- var crName = tostring(dig(cr, "name") | fallback("")) %}
+                  {%- if certBySecret[crNs + "/" + crName] != nil %}
+                    {%- certResolved = true %}
+                  {%- end %}
+                {%- end %}
+                {%- if lName != "" && lPort > 0 && !isBlocked && certResolved %}
+                  {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
+                  {%- var podPort = lPort %}
+                  {%- if val, ok := allocations[allocKey]; ok %}
+                    {%- podPort = toint(val) %}
+                  {%- end %}
+                  {%- var crtlist = CrtlistName(gwNs, gwName, lName) %}
+                  {#- AllowInsecureFallback (verify_mode == "optional"):
+                      complete the TLS handshake even when the client
+                      cert fails CA validation (the Gateway-API spec
+                      requires this; HAProxy's default `verify
+                      optional` behaviour aborts on validation
+                      failure). The lift comes from bind-scope
+                      `ca-ignore-err all crt-ignore-err all`. With
+                      per-listener binds these flags are scoped to ONE
+                      Gateway listener, so a sibling listener that
+                      wants strict `verify required` keeps its
+                      strictness intact. -#}
+                  {%- var ignoreErrSuffix = "" %}
+                  {%- var mtlsCfg = perListenerMTLS[gwNs + "/" + gwName + "/" + lName] %}
+                  {%- if mtlsCfg != nil %}
+                    {%- var cfg = mtlsCfg.(map[string]any) %}
+                    {%- if tostring(cfg["verify_mode"]) == "optional" %}
+                      {%- ignoreErrSuffix = " ca-ignore-err all crt-ignore-err all" %}
+                    {%- end %}
+                  {%- end %}
+      bind *:{{ podPort }}{{ SSLBindOptionsForCrtlist(crtlist) }}{{ ignoreErrSuffix }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}

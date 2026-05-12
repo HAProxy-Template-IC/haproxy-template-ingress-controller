@@ -1,0 +1,333 @@
+validationTests:
+  test-gateway-infrastructure-propagation-labels-only:
+    description: Gateway with spec.infrastructure.labels triggers marker Service emission and renders cleanly
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-labels
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            infrastructure:
+              labels:
+                key2: value2
+                team: platform
+            listeners:
+              - name: http
+                port: 8080
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with infrastructure-labels Gateway
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'name: gw-gateway-conformance-infra-gateway-with-labels'
+        description: Marker Service is named gw-<gw-ns>-<gw-name>.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: gateway-conformance-infra'
+        description: |
+          Marker Service lands in the Gateway's own namespace (where the
+          upstream conformance test searches), not the controller's.
+
+      - type: not_contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: haptic-system'
+        description: |
+          Marker Service must NOT also land in the controller namespace —
+          static-address Services already carry the propagation there
+          when applicable; duplicating into the controller namespace
+          would just be cluster noise for the infrastructure-only case.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-labels'
+        description: |
+          Marker carries the discovery label the upstream conformance
+          test lists by.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'team: platform'
+        description: User-provided infrastructure label propagated.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'key2: value2'
+        description: Second user-provided infrastructure label propagated.
+
+  test-gateway-infrastructure-propagation-annotations-only:
+    description: Gateway with spec.infrastructure.annotations triggers marker Service emission and renders cleanly
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-annotations
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            infrastructure:
+              annotations:
+                key1: value1
+                example.com/managed-by: gateway-controller
+            listeners:
+              - name: http
+                port: 8080
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with infrastructure-annotations Gateway
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: gateway-conformance-infra'
+        description: |
+          Annotation-only marker Service also lands in the Gateway's
+          namespace — placement isn't conditional on label vs annotation
+          contents.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-annotations'
+        description: Discovery label present on the annotation-only marker.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'key1: value1'
+        description: User-provided infrastructure annotation propagated.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'example\.com/managed-by: gateway-controller'
+        description: Second user-provided infrastructure annotation propagated.
+
+  test-gateway-infrastructure-propagation-marker-name-fits-rfc1123-label:
+    description: |
+      Marker Service emission stays within the 63-char K8s name limit even when
+      the natural `gw-<ns>-<name>` join exceeds it. Regression for the
+      conformance fixture `gateway-with-infrastructure-metadata` in namespace
+      `gateway-conformance-infra` (65 chars unbounded — the API server rejected
+      it as `metadata.name: must be no more than 63 characters`).
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services: []
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-infrastructure-metadata
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            infrastructure:
+              labels:
+                must.propagate/label: "yes"
+            listeners:
+              - name: http
+                port: 8080
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid for long-name Gateway
+
+      - type: not_contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'name: gw-gateway-conformance-infra-gateway-with-infrastructure-metadata'
+        description: |
+          The unbounded `gw-<ns>-<name>` join is 65 chars — over the RFC 1123
+          label limit. The bounded helper must replace it before emission.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'name: gw-[a-zA-Z0-9-]+-[a-f0-9]{8}\b'
+        description: |
+          The replacement uses a `-<8-hex>` SHA-256 suffix to preserve
+          uniqueness while keeping the result inside the 63-char K8s name
+          limit.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-with-infrastructure-metadata'
+        description: |
+          Discovery label still carries the original (untruncated) Gateway
+          name. The conformance test searches by this label, not by the
+          Service name itself.
+
+  test-gateway-infrastructure-propagation-with-static-addresses:
+    description: Gateway with both spec.infrastructure and spec.addresses propagates labels/annotations onto the static-addresses Service
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: gw-default-pinned-gw
+            namespace: haptic-system
+          spec:
+            type: LoadBalancer
+            loadBalancerIP: "192.0.2.10"
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "192.0.2.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: pinned-gw
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            addresses:
+              - type: IPAddress
+                value: "192.0.2.10"
+            infrastructure:
+              labels:
+                team: platform
+              annotations:
+                example.com/managed-by: gateway-controller
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with combined infrastructure + spec.addresses Gateway
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'name: gw-default-pinned-gw'
+        description: |
+          Marker Service emits even when spec.addresses is set —
+          static-address Services live in the controller namespace
+          (where MetalLB allocates), so they aren't visible to the
+          conformance test's Gateway-namespace search.
+
+      - type: contains
+        target: "k8s:gateway-infrastructure-propagation"
+        pattern: 'namespace: default'
+        description: Marker lands in the Gateway's namespace (`default`).
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'namespace: haptic-system'
+        description: |
+          Static-address Service still lands in the controller's
+          namespace (MetalLB IPAddressPool target).
+
+  test-gateway-infrastructure-propagation-empty:
+    description: Gateway without spec.infrastructure or spec.addresses skips marker Service emission and renders cleanly
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: bare-gw
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid for bare Gateway (no infrastructure, no addresses)

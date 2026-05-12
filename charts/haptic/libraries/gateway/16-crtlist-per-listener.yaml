@@ -1,0 +1,143 @@
+templateSnippets:
+  # ============================================================================
+  # Per-Gateway-listener crt-list emission
+  #
+  # Each Gateway HTTPS listener gets its OWN crt-list file. Phase 4
+  # (per-Gateway HAProxy bind) references this file via `bind ... ssl
+  # crt-list <per-listener-crt-list>`, so the bind-line SSL options
+  # are scoped to one (Gateway, listener) — different Gateways on the
+  # same logical port can have different `verify required` /
+  # `verify optional` / `ca-ignore-err` configs without clobbering
+  # each other.
+  #
+  # The chart-static `features-150-ssl-crtlist` continues to emit the
+  # shared `certificate-list.txt` for the chart-static bind (Ingress
+  # TLS, default cert). Per-Gateway crt-lists are ADDITIONAL files,
+  # one per (Gateway, listener) tuple. The crt-list of a listener
+  # whose mTLS CA refs failed to resolve is intentionally NOT emitted
+  # — phase 4 sees the missing file and drops that listener's bind,
+  # which is what the `GatewayFrontendInvalidDefaultClientCertificateValidation`
+  # conformance contract requires (the listener doesn't accept
+  # traffic).
+  #
+  # File naming: `gw-<gwNs>-<gwName>-<listenerName>.crt-list.txt`,
+  # k8s-name-sanitised. Phase 4 derives the same path from the same
+  # inputs.
+  # ============================================================================
+
+  util-gateway-listener-crtlist-name:
+    template: >-
+      {%- macro CrtlistName(gwNs string, gwName string, listenerName string) string %}
+        {#- Single dot for the extension only — interior dots get
+            sanitized to underscores by the chart's storage-name
+            sanitizer (filters.go:sanitizeStorageName). Keeping the
+            base dot-free means `crt-list:<filename>` lookups in
+            chart tests use the same string the registry stores
+            under. -#}
+        {{- "gw-" + gwNs + "-" + gwName + "-" + listenerName + "-crtlist.txt" -}}
+      {%- end %}
+
+  features-160-gateway-crtlist-per-listener:
+    template: |
+      {#- Per-(Gateway, HTTPS listener) crt-list file emission.
+          Reads back the shared cert registry (`gf.tlsCertificates`)
+          to look up the cert's sanitized filename without
+          re-resolving Secrets, then composes a single crt-list line
+          per listener:
+
+            <cert-file> [ocsp-update on[ ca-file <ca> verify <mode>]]\
+                       [ <sni-filter>]
+
+          ssl-option components:
+            * `ca-file <ca> verify <mode>`: emitted when the listener
+              has a resolved frontend mTLS validation config.
+
+          NOTE: `ca-ignore-err all crt-ignore-err all` (the
+          AllowInsecureFallback lift — HAProxy's default `verify
+          optional` aborts on cert-validation failure, the
+          Gateway-API spec requires the handshake to complete
+          anyway) is BIND-scope, NOT crt-list-scope. HAProxy
+          rejects the keywords inside a crt-list line. Phase 4's
+          per-Gateway bind picks them up via
+          `gatewayListenerMTLSConfig.verify_mode == "optional"` and
+          appends them to its `bind *:<podPort>` directive; the
+          per-listener bind keeps the ignore-err scope to one
+          listener, so a sibling listener that wants strict
+          `verify required` is unaffected.
+
+          SNI filter:
+            * Listener with hostname → SNI filter that hostname.
+            * Catchall listener (no hostname) → no SNI filter
+              (the per-listener bind serves all SNIs that reach it,
+              i.e. any SNI on its dedicated pod port).
+
+          Skipped:
+            * mTLS-blocked listeners (their CA refs failed to
+              resolve). Phase 4's bind path checks for the file and
+              drops the bind when missing.
+            * Listeners with no resolved cert (the cert registration
+              failed in `features-100-gateway-tls`).
+      -#}
+      {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
+      {%- import "util-crtlist-line" for CrtListLine %}
+      {{ render "util-tls-cert-by-secret" -}}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {#- Per-listener mTLS state populated by
+          features-110-gateway-frontend-mtls. Key:
+          `<gwNs>/<gwName>/<listenerName>`. We use this — not the
+          hostname-keyed `clientCertVerifyHosts` — because two
+          Gateways with overlapping listener hostnames (or both
+          catchall) would otherwise share the same map entry, so
+          the second Gateway's mTLS config would silently apply to
+          the first. Per-listener keying scopes resolution
+          unambiguously. -#}
+      {%- var perListenerMTLS = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
+
+      {%- if resources != nil && resources.gateways != nil %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
+          {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+          {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+            {%- var lProto = tostring(dig(listener, "protocol") | fallback("")) %}
+            {%- if lProto == "HTTPS" %}
+              {%- var lName = tostring(dig(listener, "name") | fallback("")) %}
+              {%- var lHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+              {%- var blockedKey = gwNs + "/" + gwName + "/" + lName %}
+              {%- var isBlocked = mtlsBlocked[blockedKey] != nil %}
+
+              {%- if !isBlocked && lName != "" %}
+                {#- Resolve the listener's cert. The chart's existing
+                    Gateway TLS path takes the FIRST entry of
+                    `tls.certificateRefs`; do the same here so
+                    behaviour matches features-150's view. -#}
+                {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() %}
+                {%- if len(certRefs) > 0 %}
+                  {%- var cr = certRefs[0] %}
+                  {%- var crNs = tostring(dig(cr, "namespace") | fallback(gwNs)) %}
+                  {%- var crName = tostring(dig(cr, "name") | fallback("")) %}
+                  {%- var certKey = crNs + "/" + crName %}
+                  {%- if certBySecret[certKey] != nil %}
+                    {%- var tcm = certBySecret[certKey].(map[string]any) %}
+                    {%- var certFilename = tostring(tcm["sanitized_filename"] | fallback(crNs + "_" + crName + ".pem")) %}
+
+                    {#- mTLS resolution: per-listener key
+                        `<gwNs>/<gwName>/<listenerName>` so each
+                        listener sees its own resolved validation
+                        regardless of overlapping hostnames with
+                        sibling Gateways. -#}
+                    {%- var mtlsCfg = perListenerMTLS[gwNs + "/" + gwName + "/" + lName] %}
+                    {%- var content = CrtListLine(certFilename, mtlsCfg, lHostname) + "\n" %}
+                    {%- var fname = CrtlistName(gwNs, gwName, lName) %}
+                    {%- var _, regErr = fileRegistry.Register("crt-list", fname, content) %}
+                    {%- if regErr != nil %}
+                      {{ fail("failed to register per-listener crt-list " + fname + ": " + tostring(regErr)) }}
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}

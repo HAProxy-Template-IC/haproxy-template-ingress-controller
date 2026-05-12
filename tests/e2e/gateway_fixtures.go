@@ -303,3 +303,189 @@ spec:
 	}
 	return BackendRef{Service: "echo-server-v2", Port: 80}
 }
+
+// grpcEchoImage is the upstream Gateway-API echo-basic image; with the
+// `GRPC_ECHO_SERVER=1` env var it boots the gRPC echo server on port
+// 3000. We use the same image the conformance suite uses so behaviour
+// matches the upstream gRPC test surface byte-for-byte.
+const grpcEchoImage = "gcr.io/k8s-staging-gateway-api/echo-basic:v20260204-monthly-2026.01-60-g28382302"
+
+// NewGRPCEchoBackend deploys the Gateway-API echo-basic image in
+// gRPC-server mode (GRPC_ECHO_SERVER=1) plus a Service exposing port
+// 9090 that targets the container's gRPC port (3000). Service port
+// declares `appProtocol: kubernetes.io/h2` so the chart annotates the
+// backend correctly. Returns the BackendRef the caller passes to
+// NewGRPCRoute.
+//
+// Cleaned up automatically when the test namespace is deleted.
+func NewGRPCEchoBackend(ctx context.Context, t *testing.T, client klient.Client, namespace string) BackendRef {
+	t.Helper()
+	const (
+		name = "grpc-echo"
+		port = int32(9090)
+	)
+
+	manifest := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: %s
+  template:
+    metadata:
+      labels:
+        app: %s
+    spec:
+      containers:
+        - name: server
+          image: %s
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GRPC_ECHO_SERVER
+              value: "1"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: grpc
+              containerPort: 3000
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app: %s
+spec:
+  selector:
+    app: %s
+  ports:
+    - name: grpc
+      port: %d
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: kubernetes.io/h2
+`, name, namespace, name, name, name, grpcEchoImage,
+		name, namespace, name, name, port)
+
+	if err := kubectlApplyStdin(ctx, []byte(manifest)); err != nil {
+		t.Fatalf("create grpc-echo backend: %v", err)
+	}
+	if err := waitForServiceEndpointReady(ctx, client, namespace, name); err != nil {
+		t.Fatalf("grpc-echo endpoint not ready: %v", err)
+	}
+	return BackendRef{Service: name, Port: port}
+}
+
+// GRPCRouteSpec captures everything NewGRPCRoute needs to render a
+// gateway.networking.k8s.io/v1 GRPCRoute manifest. Mirrors the shape of
+// HTTPRouteSpec.
+type GRPCRouteSpec struct {
+	Name        string
+	GatewayName string
+	Hostnames   []string
+	Rules       []GRPCRouteRule
+}
+
+// GRPCRouteRule describes one rule in a GRPCRoute.
+type GRPCRouteRule struct {
+	// MethodService matches the gRPC service name (e.g.
+	// "gateway_api_conformance.echo_basic.grpcecho.GrpcEcho"). Empty
+	// means "no service constraint".
+	MethodService string
+	// MethodName matches the gRPC method (e.g. "Echo"). Empty means
+	// "no method constraint".
+	MethodName string
+	// HeaderMatches map header name → value, exact match.
+	HeaderMatches []HTTPRouteHeaderMatch
+	// BackendRefs lists the upstream Services this rule routes to.
+	BackendRefs []HTTPRouteBackendRef
+}
+
+// NewGRPCRoute renders a GRPCRoute manifest from spec and applies it.
+// Returns the route's name.
+func NewGRPCRoute(ctx context.Context, t *testing.T, namespace string, spec GRPCRouteSpec) string {
+	t.Helper()
+
+	const tmpl = `apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .GatewayName }}
+{{- if .Hostnames }}
+  hostnames:
+{{- range .Hostnames }}
+    - "{{ . }}"
+{{- end }}
+{{- end }}
+  rules:
+{{- range .Rules }}
+    -
+{{- if or .MethodService .MethodName .HeaderMatches }}
+      matches:
+        -
+{{- if or .MethodService .MethodName }}
+          method:
+            type: Exact
+{{- if .MethodService }}
+            service: "{{ .MethodService }}"
+{{- end }}
+{{- if .MethodName }}
+            method: "{{ .MethodName }}"
+{{- end }}
+{{- end }}
+{{- if .HeaderMatches }}
+          headers:
+{{- range .HeaderMatches }}
+            - name: "{{ .Name }}"
+{{- if .Type }}
+              type: {{ .Type }}
+{{- end }}
+              value: "{{ .Value }}"
+{{- end }}
+{{- end }}
+{{- end }}
+      backendRefs:
+{{- range .BackendRefs }}
+        - name: {{ .Service }}
+          port: {{ .Port }}
+{{- if .Weight }}
+          weight: {{ .Weight }}
+{{- end }}
+{{- end }}
+{{- end }}
+`
+
+	tpl, err := template.New("grpcroute").Parse(tmpl)
+	if err != nil {
+		t.Fatalf("parse GRPCRoute template: %v", err)
+	}
+	var buf bytes.Buffer
+	data := struct {
+		Namespace string
+		GRPCRouteSpec
+	}{Namespace: namespace, GRPCRouteSpec: spec}
+	if err := tpl.Execute(&buf, data); err != nil {
+		t.Fatalf("render GRPCRoute manifest: %v", err)
+	}
+	if err := kubectlApplyStdin(ctx, buf.Bytes()); err != nil {
+		t.Fatalf("create GRPCRoute %s/%s: %v\nmanifest:\n%s", namespace, spec.Name, err, buf.String())
+	}
+	return spec.Name
+}

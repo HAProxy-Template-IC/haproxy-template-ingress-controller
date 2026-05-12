@@ -16,6 +16,7 @@ package testrunner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -81,30 +82,31 @@ func (r *Runner) createTestPaths(workerID, testNum int) (*dataplane.ValidationPa
 	return resolvedPaths.ToValidationPaths(), nil
 }
 
+// RenderOutput bundles every artifact produced by a single test render so
+// callers don't have to thread six positional return values.
+type RenderOutput struct {
+	HAProxyConfig  string
+	AuxiliaryFiles *dataplane.AuxiliaryFiles
+	K8sResources   map[string]string
+	StatusPatches  map[string]string
+	IncludeStats   []templating.IncludeStats
+}
+
 // renderWithStores renders HAProxy configuration using test fixture stores and worker-specific engine.
 //
 // This follows the same pattern as DryRunValidator.renderWithOverlayStores.
 // When profileIncludes is enabled, it returns timing statistics for included templates.
 // The currentConfig parameter enables slot-aware server assignment testing (nil for first deployment).
 // The testExtraContext parameter allows test-specific extraContext values to override global ones.
-func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (string, *dataplane.AuxiliaryFiles, []templating.IncludeStats, error) {
+//
+// Returns rendered haproxy.cfg, auxiliary files, k8sResources (template name → YAML),
+// status patches (key `<ns>/<name>:<phase>` → JSON-marshalled status content), and
+// include-stats (when profiling) bundled in a RenderOutput, plus the render error.
+func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]stores.Store, validationPaths *dataplane.ValidationPaths, httpStore *FixtureHTTPStoreWrapper, currentConfig *parserconfig.StructuredConfig, testExtraContext map[string]any) (RenderOutput, error) {
 	// Build rendering context with fixture stores
 	renderCtx := r.buildRenderingContext(storeMap, validationPaths, httpStore, currentConfig)
 
-	// Merge test-specific extraContext (overrides global extraContext values)
-	// IMPORTANT: Make a copy to avoid modifying the shared config map which would
-	// cause state leakage between parallel test runs.
-	if testExtraContext != nil {
-		globalExtraContext := renderCtx["extraContext"].(map[string]any)
-		mergedExtraContext := make(map[string]any, len(globalExtraContext)+len(testExtraContext))
-		maps.Copy(mergedExtraContext, globalExtraContext)
-		for key, value := range testExtraContext {
-			mergedExtraContext[key] = value
-			// Also merge into top-level context for direct access
-			renderCtx[key] = value
-		}
-		renderCtx["extraContext"] = mergedExtraContext
-	}
+	mergeTestExtraContext(renderCtx, testExtraContext)
 
 	// Render main HAProxy configuration using worker-specific engine
 	var haproxyConfig string
@@ -117,13 +119,31 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 		haproxyConfig, err = engine.Render(context.Background(), names.MainTemplateName, renderCtx)
 	}
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+		return RenderOutput{}, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
 	}
 
 	// Render auxiliary files using worker-specific engine (pre-declared files)
 	staticFiles, err := r.renderAuxiliaryFiles(engine, renderCtx, validationPaths)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("rendering auxiliary files: %w", err)
+		return RenderOutput{}, fmt.Errorf("rendering auxiliary files: %w", err)
+	}
+
+	// Render k8sResources templates using the worker-specific engine. These
+	// are surfaced into the test result so assertions can target them via
+	// `target: k8s:<template-name>` and the --dump-rendered flag can show
+	// them alongside haproxy.cfg / map files.
+	k8sResources := make(map[string]string, len(r.config.K8sResources))
+	for name := range r.config.K8sResources {
+		rendered, err := engine.Render(context.Background(), name, renderCtx)
+		if err != nil {
+			return RenderOutput{}, fmt.Errorf("rendering k8sResources %s: %w", name, err)
+		}
+		k8sResources[name] = rendered
+	}
+
+	statusPatches, err := collectStatusPatches(renderCtx)
+	if err != nil {
+		return RenderOutput{}, err
 	}
 
 	// Extract dynamic files registered during template rendering
@@ -142,7 +162,59 @@ func (r *Runner) renderWithStores(engine templating.Engine, storeMap map[string]
 			"dynamic_count", dynamicCount)
 	}
 
-	return haproxyConfig, auxiliaryFiles, includeStats, nil
+	return RenderOutput{
+		HAProxyConfig:  haproxyConfig,
+		AuxiliaryFiles: auxiliaryFiles,
+		K8sResources:   k8sResources,
+		StatusPatches:  statusPatches,
+		IncludeStats:   includeStats,
+	}, nil
+}
+
+// mergeTestExtraContext folds a per-test extraContext map into the rendering
+// context built from the global config. The merge is destructive on a fresh
+// per-test copy (never the shared global map) so parallel test workers don't
+// leak state into each other.
+func mergeTestExtraContext(renderCtx, testExtraContext map[string]any) {
+	if testExtraContext == nil {
+		return
+	}
+	globalExtraContext := renderCtx["extraContext"].(map[string]any)
+	merged := make(map[string]any, len(globalExtraContext)+len(testExtraContext))
+	maps.Copy(merged, globalExtraContext)
+	for key, value := range testExtraContext {
+		merged[key] = value
+		// Also merge into top-level context for direct access.
+		renderCtx[key] = value
+	}
+	renderCtx["extraContext"] = merged
+}
+
+// collectStatusPatches drains the StatusPatchCollector that the templates'
+// statusPatch() calls populated during the haproxy.cfg render. Each patch's
+// variants (rendered / deployed / renderFailed / deployFailed) flatten into
+// one map entry per phase keyed by `<ns>/<name>:<phase>` (or `:<phase>` for
+// cluster-scoped resources without a namespace, e.g. GatewayClass). Values
+// are JSON-marshalled so chart validation tests can assert on substrings via
+// the standard contains / not_contains machinery (see assertion_helpers.go's
+// `target: status:` resolver).
+func collectStatusPatches(renderCtx map[string]any) (map[string]string, error) {
+	out := make(map[string]string)
+	collector, ok := renderCtx["statusPatchCollector"].(*templating.StatusPatchCollector)
+	if !ok || collector == nil {
+		return out, nil
+	}
+	for _, patch := range collector.Patches() {
+		keyPrefix := patch.Namespace + "/" + patch.Name
+		for phase, payload := range patch.Variants {
+			bytes, err := json.Marshal(payload)
+			if err != nil {
+				return nil, fmt.Errorf("marshalling status patch for %s/%s phase %s: %w", patch.Namespace, patch.Name, phase, err)
+			}
+			out[keyPrefix+":"+phase] = string(bytes)
+		}
+	}
+	return out, nil
 }
 
 // buildRenderingContext builds the template rendering context using fixture stores.
@@ -175,8 +247,7 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 		rendercontext.WithCurrentConfig(currentConfig),
 	)
 
-	renderCtx, _, _ := builder.Build()
-	return renderCtx
+	return builder.Build().Context
 }
 
 // renderAuxiliaryFiles renders all auxiliary files (maps, general files, SSL certificates) using worker-specific engine.

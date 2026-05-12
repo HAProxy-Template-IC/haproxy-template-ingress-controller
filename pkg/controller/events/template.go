@@ -42,6 +42,13 @@ type TemplateRenderedEvent struct {
 	// for different pipeline lifecycle phases (rendered, deployed, renderFailed, deployFailed).
 	StatusPatches []templating.StatusPatch
 
+	// RenderedResources contains full Kubernetes resources the templates declared
+	// the controller should own and reconcile (e.g. per-Gateway LoadBalancer
+	// Services for SupportGatewayStaticAddresses). The applier compares each
+	// against the last-applied checksum and skips unchanged entries to avoid
+	// hammering the API server.
+	RenderedResources []templating.RenderedResource
+
 	// ContentChecksum is the pre-computed content checksum covering config + aux files.
 	// Computed once in the pipeline and propagated to downstream consumers to avoid
 	// redundant hashing in config publisher and deployment scheduler.
@@ -81,6 +88,7 @@ func NewTemplateRenderedEvent(
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
 	statusPatches []templating.StatusPatch,
+	renderedResources []templating.RenderedResource,
 	auxFileCount int,
 	durationMs int64,
 	triggerReason string,
@@ -92,6 +100,7 @@ func NewTemplateRenderedEvent(
 		HAProxyConfig:      haproxyConfig,
 		AuxiliaryFiles:     auxiliaryFiles,
 		StatusPatches:      statusPatches,
+		RenderedResources:  renderedResources,
 		ContentChecksum:    contentChecksum,
 		ConfigBytes:        len(haproxyConfig),
 		AuxiliaryFileCount: auxFileCount,

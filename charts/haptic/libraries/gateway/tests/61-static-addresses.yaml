@@ -1,0 +1,146 @@
+validationTests:
+  test-gateway-static-addresses-per-ip-services:
+    description: "Mirrors the upstream Gateway-API GatewayStaticAddresses conformance fixture's mid-flight state: a Gateway with TWO IPv4 addresses in spec."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: haptic-haproxy
+            namespace: haptic-system
+            labels:
+              app.kubernetes.io/name: haptic
+              app.kubernetes.io/component: loadbalancer
+          spec:
+            type: LoadBalancer
+          status:
+            loadBalancer:
+              ingress:
+                - ip: "203.0.113.10"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-ip-gw
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            addresses:
+              - type: IPAddress
+                value: "192.0.2.10"   # usable
+              - type: IPAddress
+                value: "1.0.0.1"      # RFC 5737 unusable
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with multi-IP Gateway
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-default-multi-ip-gw-192-0-2-10'
+        description: |
+          Per-IP Service for the usable IP exists, named with dot-to-
+          dash IP suffix to keep the resource name a valid RFC 1123
+          label.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-default-multi-ip-gw-1-0-0-1'
+        description: |
+          Per-IP Service for the unusable RFC 5737 IP also exists —
+          MetalLB will fail to allocate it (the chart's status-patch
+          read-back surfaces this as Programmed=False/AddressNotUsable
+          on the Gateway).
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'metallb\.universe\.tf/loadBalancerIPs: 192\.0\.2\.10'
+        description: |
+          Usable Service's annotation carries the single IP, NOT a
+          comma-separated list. MetalLB rejects multi-IPv4
+          annotations via its IPFamilyForAddresses guard.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'metallb\.universe\.tf/loadBalancerIPs: 1\.0\.0\.1'
+        description: Unusable Service's annotation carries its single IP too.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: multi-ip-gw'
+        description: |
+          Both Services carry the gateway-name label so per-Gateway
+          status read-back (and the conformance test's discovery) finds
+          them.
+
+  test-gateway-static-addresses-name-fits-rfc1123-label:
+    description: |
+      Per-IP Service emission stays within the 63-char K8s name limit even when
+      the natural `gw-<ns>-<name>-<ip-with-dashes>` join exceeds it. Regression
+      for the conformance fixture `gateway-static-addresses` in namespace
+      `gateway-conformance-infra` with IP `172.19.255.249` (68 chars unbounded
+      — the API server rejected it as `metadata.name: must be no more than 63
+      characters`).
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+      controllerNamespace: "haptic-system"
+      haproxyPodSelector:
+        app.kubernetes.io/name: haptic
+        app.kubernetes.io/component: haproxy
+    fixtures:
+      controller_services: []
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-static-addresses
+            namespace: gateway-conformance-infra
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            addresses:
+              - type: IPAddress
+                value: "172.19.255.249"
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid for long-name static-addresses Gateway
+
+      - type: not_contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-gateway-conformance-infra-gateway-static-addresses-172-19-255-249'
+        description: |
+          The unbounded `gw-<ns>-<name>-<ip>` join is 68 chars — over the RFC
+          1123 label limit. The bounded helper must replace it before
+          emission.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'name: gw-[a-zA-Z0-9-]+-[a-f0-9]{8}-172-19-255-249\b'
+        description: |
+          The replacement uses a `-<8-hex>` SHA-256 fingerprint between the
+          truncated `<ns>-<name>` middle and the IP suffix, so distinct
+          Gateways that collide after truncation still produce distinct
+          per-IP Service names. The IP suffix is preserved verbatim for the
+          status-patch read-back path.
+
+      - type: contains
+        target: "k8s:gateway-static-addresses"
+        pattern: 'gateway\.networking\.k8s\.io/gateway-name: gateway-static-addresses'
+        description: |
+          Discovery label still carries the original (untruncated) Gateway
+          name. The conformance test and the per-Gateway status read-back
+          both key off this label, not the Service name.

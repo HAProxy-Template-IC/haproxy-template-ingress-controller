@@ -1,0 +1,99 @@
+templateSnippets:
+  util-generate-weighted-backend-map-gateway:
+    template: |
+      {#- Macro to generate weighted backend map entries for HTTPRoute -#}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- macro GenerateWeightedBackendMap(routes []any) -%}
+      {%- for _, route := range routes %}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
+      {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
+      {%- var weightedEntries = []any{} %}
+      {%- var ruleIdx = 0 %}
+      {%- for _, rule := range rules %}
+        {%- var backendRefs = rule | dig("backendRefs") %}
+        {%- if backendRefs != nil %}
+          {%- var refsSlice = backendRefs | toSlice() %}
+          {%- if len(refsSlice) > 1 %}
+            {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
+            {%- var cumulative = 0 %}
+            {%- for _, backendRef := range refsSlice %}
+              {%- var backend = map[string]any{"name": backendRef | dig("name") | fallback(""), "port": backendRef | dig("port") | fallback(80)} %}
+              {%- var weight = backendRef | dig("weight") | fallback(1) %}
+              {%- for i := cumulative; i < cumulative + weight; i++ %}
+                {%- weightedEntries = append(weightedEntries, map[string]any{
+                  "index": i,
+                  "routeKey": routeKey,
+                  "backend": backend,
+                }) %}
+              {%- end %}
+              {%- cumulative = cumulative + weight %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- ruleIdx = ruleIdx + 1 %}
+      {%- end %}
+      {%- if len(weightedEntries) > 0 %}
+      # HTTPRoute: {{ routeNs }}/{{ routeName }} (weighted rules)
+      {% for _, entry := range weightedEntries -%}
+      {{ entry["index"] }}:{{ entry["routeKey"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {% end -%}
+      {%- end %}
+      {%- end %}
+      {%- end macro -%}
+
+  util-sharded-weighted-backend-map-gateway:
+    template: |
+      {#- Sharded weighted backend map generator for HTTPRoute -#}
+      {%- import "util-generate-weighted-backend-map-gateway" for GenerateWeightedBackendMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedWeightedBackendMap(routes []any) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateWeightedBackendMap(routes) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateWeightedBackendMap(shard_slice(routes, i, n)) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
+  map-weighted-backend-500-gateway:
+    template: |
+      {#- Generate weighted backend map entries for HTTPRoute and
+          GRPCRoute. Both kinds support multi-backendRef rules with
+          weights — the chart's weighted-multi-backend.map is
+          backend-kind-agnostic (lookups key off `<random_weight>:
+          <route_key>` produced by the routing chain). The
+          GRPCRouteWeight conformance test pins this contract:
+          a GRPCRoute with `[v1: weight=70, v2: weight=30, v3:
+          weight=0]` must distribute requests 70/30 across v1 and v2
+          (and never to v3). Without GRPCRoute coverage here, the
+          MULTIBACKEND lookup at runtime returned an empty
+          backend_name and the request fell through to
+          default_backend (404). -#}
+      {%- import "util-sharded-weighted-backend-map-gateway" for ShardedWeightedBackendMap %}
+      # gateway/map-weighted-backend-gateway
+      {{ ShardedWeightedBackendMap(resources.httproutes.List()) }}
+      {{ ShardedWeightedBackendMap(resources.grpcroutes.List()) }}
+
+  # Frontend-extra: HTTPS misdirected-request detection (Gateway API
+  # SupportGatewayHTTPSListenerDetectMisdirectedRequests).
+  #
+  # Per RFC 9110 §15.5.20 / Gateway API spec, an HTTPS listener that
+  # carves up TLS connections by SNI must reject requests whose Host
+  # header doesn't match the SNI: the client connected to a server
+  # certificate the route doesn't authorise for that hostname.
+  #
+  # We only emit the directive on the HTTPS path (`{ ssl_fc }`); the
+  # HTTP frontend renders the same snippet but the guards skip it.
+  # Comparing via strcmp(<var>) in a converter chain — sample-fetch
+  # to-sample-fetch comparison isn't expressible with `-m str`, but
+  # strcmp returns 0 on equality which we negate.
+  # gateway/http-bind-extra-050-gateway-multi-port-bind:
+  # Emits an additional `bind *:<port>` directive for every unique
+  # non-default Gateway HTTP listener port we observe. Hooks into the
+  # HTTP-frontend-only http-bind-extra-* extension point so the binds
+  # don't double-render into the HTTPS frontend (where they would
+  # conflict with the existing https port bind). HTTPS-listener-port
+  # binds are emitted by a sibling snippet (https-bind-extra-*).

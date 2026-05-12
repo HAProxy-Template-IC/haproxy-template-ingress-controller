@@ -17,7 +17,9 @@ package controller
 import (
 	"fmt"
 	"log/slog"
+	"os"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
@@ -30,6 +32,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceapplier"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
@@ -57,6 +60,7 @@ type reconciliationComponents struct {
 	configPublisher     *ctrlconfigpublisher.Component
 	statusUpdater       *configchange.StatusUpdater  // Updates CRD status with validation results
 	statusApplier       *statusapplier.Component     // Applies template-driven status patches via SSA
+	resourceApplier     *resourceapplier.Component   // Applies template-declared owned resources (e.g. per-Gateway LB Services) via SSA
 	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
 	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
 	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
@@ -65,6 +69,7 @@ type reconciliationComponents struct {
 // createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
 func createReconciliationComponents(
 	cfg *coreconfig.Config,
+	crd *v1alpha1.HAProxyTemplateConfig,
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
@@ -229,6 +234,8 @@ func createReconciliationComponents(
 		Logger:        logger,
 	})
 
+	resourceApplierComponent := newResourceApplier(crd, k8sClient, bus, logger)
+
 	// Register components with the lifecycle registry using builder pattern
 	// Coordinator is leader-only because it performs rendering (state changes).
 	// DriftMonitor is leader-only to avoid multi-replica race conditions.
@@ -241,6 +248,7 @@ func createReconciliationComponents(
 			httpStoreComponent,
 			proposalValidatorComponent,
 			statusApplierComponent,
+			resourceApplierComponent,
 		).
 		LeaderOnly(
 			coordinatorComponent,
@@ -262,10 +270,51 @@ func createReconciliationComponents(
 		configPublisher:     configPublisherComponent,
 		statusUpdater:       statusUpdaterComponent,
 		statusApplier:       statusApplierComponent,
+		resourceApplier:     resourceApplierComponent,
 		httpStore:           httpStoreComponent,
 		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
 	}, nil
+}
+
+// newResourceApplier builds the all-replica/leader-only ResourceApplier
+// component. Extracted from createReconciliationComponents so the parent
+// stays under the function-length lint cap; the inputs (CR identity for
+// ownerRef, namespace for restriction default) and outputs are otherwise
+// independent of the rest of the wiring.
+//
+// All-replica subscriber, leader-only applier — same shape as StatusApplier.
+// Resource-agnostic: templates declare resources under spec.k8sResources and
+// the applier reconciles whatever the renderer parsed out of them, with
+// checksum dedup so unchanged resources don't hammer kube-api. Cross-
+// namespace SSA is allowed at the controller boundary; the security gate is
+// the chart's RBAC (a misbehaving template still gets Forbidden when the
+// granted Role/ClusterRole doesn't cover the target namespace).
+func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.Client, bus *busevents.EventBus, logger *slog.Logger) *resourceapplier.Component {
+	ownNamespace := os.Getenv("POD_NAMESPACE")
+	if ownNamespace == "" {
+		ownNamespace = k8sClient.Namespace()
+	}
+	// OwnerReference identity from the live HAProxyTemplateConfig CR. The
+	// applier injects this into every full-ownership SSA payload so
+	// Kubernetes garbage collection cascade-deletes the rendered resources
+	// when the CR is removed (e.g. `helm uninstall`).
+	ownerRef := resourceapplier.OwnerReference{
+		APIVersion: v1alpha1.SchemeGroupVersion.String(),
+		Kind:       "HAProxyTemplateConfig",
+		Name:       crd.GetName(),
+		UID:        string(crd.GetUID()),
+	}
+	return resourceapplier.New(&resourceapplier.Config{
+		EventBus:               bus,
+		DynamicClient:          k8sClient.DynamicClient(),
+		DiscoveryClient:        k8sClient.Clientset().Discovery(),
+		GVRResolver:            statusapplier.NewRestMapperResolver(),
+		Logger:                 logger,
+		OwnNamespace:           ownNamespace,
+		RestrictToOwnNamespace: false,
+		OwnerRef:               ownerRef,
+	})
 }
 
 // createConfigPublisher creates a config publisher with informer-backed listers for cached reads.

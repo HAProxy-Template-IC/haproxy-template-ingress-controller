@@ -997,7 +997,7 @@ func TestRunAssertion(t *testing.T) {
 			Pattern: "backend mybackend",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "contains", result.Type)
 	})
@@ -1009,7 +1009,7 @@ func TestRunAssertion(t *testing.T) {
 			Pattern: "error",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "not_contains", result.Type)
 	})
@@ -1022,7 +1022,7 @@ func TestRunAssertion(t *testing.T) {
 			Expected: "1",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "match_count", result.Type)
 	})
@@ -1034,7 +1034,7 @@ func TestRunAssertion(t *testing.T) {
 			Expected: haproxyConfig,
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "equals", result.Type)
 	})
@@ -1050,7 +1050,7 @@ func TestRunAssertion(t *testing.T) {
 			"test": "value",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, templateCtx, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, templateCtx, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "jsonpath", result.Type)
 	})
@@ -1062,7 +1062,7 @@ func TestRunAssertion(t *testing.T) {
 			Patterns: []string{"frontend", "backend"},
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, nil, "", nil, nil)
 		assert.True(t, result.Passed)
 		assert.Equal(t, "match_order", result.Type)
 	})
@@ -1072,7 +1072,7 @@ func TestRunAssertion(t *testing.T) {
 			Type: "invalid_type",
 		}
 
-		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, haproxyConfig, nil, nil, nil, nil, "", nil, nil)
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "unknown assertion type")
 	})
@@ -1094,7 +1094,7 @@ func TestAssertContains(t *testing.T) {
 			Description: "Should contain backend test",
 		}
 
-		result := runner.assertContains("frontend test\nbackend my_test", nil, assertion, "")
+		result := runner.assertContains("frontend test\nbackend my_test", nil, nil, nil, assertion, "")
 		assert.True(t, result.Passed)
 		assert.Equal(t, "Should contain backend test", result.Description)
 	})
@@ -1106,7 +1106,7 @@ func TestAssertContains(t *testing.T) {
 			Pattern: "backend.*missing",
 		}
 
-		result := runner.assertContains("frontend test\nbackend my_test", nil, assertion, "")
+		result := runner.assertContains("frontend test\nbackend my_test", nil, nil, nil, assertion, "")
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "pattern")
 		assert.Contains(t, result.Error, "not found")
@@ -1119,7 +1119,7 @@ func TestAssertContains(t *testing.T) {
 			Pattern: "[invalid(regex",
 		}
 
-		result := runner.assertContains("frontend test", nil, assertion, "")
+		result := runner.assertContains("frontend test", nil, nil, nil, assertion, "")
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "invalid regex pattern")
 	})
@@ -1132,7 +1132,7 @@ func TestAssertContains(t *testing.T) {
 			Description: "",
 		}
 
-		result := runner.assertContains("test", nil, assertion, "")
+		result := runner.assertContains("test", nil, nil, nil, assertion, "")
 		assert.True(t, result.Passed)
 		assert.Contains(t, result.Description, "must contain pattern")
 	})
@@ -1144,7 +1144,7 @@ func TestAssertContains(t *testing.T) {
 			Pattern: "Service.*not found",
 		}
 
-		result := runner.assertContains("", nil, assertion, "Service 'api' not found")
+		result := runner.assertContains("", nil, nil, nil, assertion, "Service 'api' not found")
 		assert.True(t, result.Passed)
 	})
 }
@@ -1432,7 +1432,7 @@ func TestAssertDeterministic(t *testing.T) {
 			Type: "deterministic",
 		}
 
-		result := runner.runAssertion(ctx, assertion, "test config", nil, nil, "", nil, nil)
+		result := runner.runAssertion(ctx, assertion, "test config", nil, nil, nil, nil, "", nil, nil)
 
 		assert.False(t, result.Passed)
 		assert.Contains(t, result.Error, "requires render dependencies")

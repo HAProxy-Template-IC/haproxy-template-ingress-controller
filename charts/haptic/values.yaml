@@ -1005,9 +1005,29 @@ haproxy:
   # HAProxy container ports
   # These are the ports HAProxy listens on inside the container
   # Services and NetworkPolicies reference these by name or value
+  #
+  # IMPORTANT: http/https default to the literal Gateway-listener-port
+  # numbers (80/443) so that Gateway listeners on arbitrary ports never
+  # collide with the chart-static internal binds. With http=8080 a
+  # Gateway listener on port 8080 (legitimate per spec) shares HAProxy's
+  # `bind *:8080` with the chart-static http frontend (Service NAT
+  # routes Service port 80 → containerPort 8080), making `dst_port`
+  # ambiguous between the two logical listeners. Binding on the literal
+  # numbers eliminates the collision: each Gateway listener port owns
+  # its own bind and dst_port is unambiguous. The HAProxy container has
+  # `CAP_NET_BIND_SERVICE` granted (see haproxy-deployment.yaml) so
+  # privileged ports work as non-root.
+  #
+  # Plumbing: the chart automatically threads these values into the
+  # template engine via `extraContext.httpPort` / `extraContext.httpsPort`
+  # so HAProxy's bind directives (in base/ssl) and the redirect-filter's
+  # well-known-port omit logic (in gateway) all reference the same
+  # values. Override via this knob — no need to also set
+  # `controller.config.templatingSettings.extraContext.httpPort`
+  # explicitly.
   ports:
-    http: 8080 # HTTP frontend
-    https: 8443 # HTTPS frontend
+    http: 80 # HTTP frontend
+    https: 443 # HTTPS frontend
     stats: 8404 # Health/stats page
     dataplane: 5555 # Dataplane API (for controller communication)
   # Number of HAProxy replicas
@@ -1072,6 +1092,36 @@ haproxy:
       port: 8404
       # targetPort: stats (set in template)
       nodePort: 30404
+    # Additional Service ports. Operators using haptic without
+    # Gateway API (e.g. an Ingress-only deployment that also exposes
+    # a raw TCP frontend via a custom haproxyConfig snippet, or
+    # anything else not modelled by an Ingress / Gateway /
+    # ListenerSet) declare them here. The chart concatenates these
+    # entries with the http/https/stats triple above into a single
+    # `extraContext.haproxyService.ports` list that the
+    # `k8sResources.haproxy-service` template iterates verbatim.
+    #
+    # Each entry mirrors a `corev1.ServicePort` shape: at minimum
+    # `name` + `port`. `targetPort` defaults to `port`, `protocol`
+    # defaults to TCP. `nodePort` only applies when
+    # `haproxy.service.type` is `NodePort` or `LoadBalancer`.
+    # Names must be RFC 1123 labels and unique across all Service
+    # ports (including the http/https/stats entries above and any
+    # Gateway-derived `gw-*` entries the controller adds at render
+    # time).
+    #
+    # To drop a default entry (e.g. expose only http on the
+    # Service), set the matching `haproxy.service.<name>.port` to
+    # 0 — entries with port 0 are filtered out at chart-render time.
+    #
+    # Example — exposing a raw TCP frontend on port 5432:
+    #   extraPorts:
+    #     - name: postgres
+    #       port: 5432
+    #       targetPort: 5432
+    #       protocol: TCP
+    #       nodePort: 30432
+    extraPorts: []
   # Dataplane API sidecar configuration
   dataplane:
     service:

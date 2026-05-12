@@ -76,12 +76,12 @@ func TestCoalescibleContract(t *testing.T) {
 		},
 		{
 			name:    "TemplateRenderedEvent honours coalescible=true",
-			event:   NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", true),
+			event:   NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", true),
 			wantVal: true,
 		},
 		{
 			name:    "TemplateRenderedEvent honours coalescible=false",
-			event:   NewTemplateRenderedEvent("cfg", nil, nil, 0, 0, "", "", false),
+			event:   NewTemplateRenderedEvent("cfg", nil, nil, nil, 0, 0, "", "", false),
 			wantVal: false,
 		},
 		{
@@ -96,12 +96,12 @@ func TestCoalescibleContract(t *testing.T) {
 		},
 		{
 			name:    "DeploymentScheduledEvent honours coalescible=true",
-			event:   NewDeploymentScheduledEvent("", nil, nil, nil, "", "", "", "", true),
+			event:   NewDeploymentScheduledEvent("", nil, nil, nil, "", "", "", "", nil, true),
 			wantVal: true,
 		},
 		{
 			name:    "DeploymentScheduledEvent honours coalescible=false",
-			event:   NewDeploymentScheduledEvent("", nil, nil, nil, "", "", "", "", false),
+			event:   NewDeploymentScheduledEvent("", nil, nil, nil, "", "", "", "", nil, false),
 			wantVal: false,
 		},
 	}

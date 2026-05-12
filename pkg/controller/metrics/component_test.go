@@ -64,7 +64,7 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	eventBus.Start()
 
 	// Publish reconciliation completed event
-	eventBus.Publish(events.NewReconciliationCompletedEvent(1500))
+	eventBus.Publish(events.NewReconciliationCompletedEvent(1500, nil))
 
 	// Give component time to process
 	time.Sleep(100 * time.Millisecond)
@@ -74,7 +74,7 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ReconciliationErrors))
 
 	// Publish reconciliation failed event
-	eventBus.Publish(events.NewReconciliationFailedEvent("template error", "render"))
+	eventBus.Publish(events.NewReconciliationFailedEvent("template error", "render", nil))
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -100,7 +100,7 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	eventBus.Start()
 
 	// Publish deployment completed event
-	eventBus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		DurationMs: 2500,
@@ -113,7 +113,7 @@ func TestComponent_DeploymentEvents(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.DeploymentErrors))
 
 	// Publish deployment with partial failure
-	eventBus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  1,
 		Failed:     1,
@@ -302,8 +302,8 @@ func TestComponent_AllEventTypes(t *testing.T) {
 	eventBus.Start()
 
 	// Publish various event types
-	eventBus.Publish(events.NewReconciliationCompletedEvent(1000))
-	eventBus.Publish(events.NewDeploymentCompletedEvent(events.DeploymentResult{
+	eventBus.Publish(events.NewReconciliationCompletedEvent(1000, nil))
+	eventBus.Publish(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total:      2,
 		Succeeded:  2,
 		Failed:     0,
@@ -350,7 +350,7 @@ func TestComponent_GracefulShutdown(t *testing.T) {
 	eventBus.Start()
 
 	// Publish some events
-	eventBus.Publish(events.NewReconciliationCompletedEvent(500))
+	eventBus.Publish(events.NewReconciliationCompletedEvent(500, nil))
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -386,7 +386,7 @@ func TestComponent_HighEventVolume(t *testing.T) {
 
 	// Publish many events rapidly
 	for i := range 100 {
-		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i)))
+		eventBus.Publish(events.NewReconciliationCompletedEvent(int64(i), nil))
 		if i%10 == 0 {
 			eventBus.Publish(events.NewValidationCompletedEvent(nil, 100, "", nil, true))
 		}

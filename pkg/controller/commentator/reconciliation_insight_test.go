@@ -73,7 +73,7 @@ func TestReconciliationInsight_TriggeredEvent_PriorReconciliationCorrelation(t *
 				// correlation suffix. Time math uses the events'
 				// own timestamps so a freshly-constructed event
 				// will always satisfy the window check.
-				rb.Add(ctlevents.NewReconciliationCompletedEvent(50))
+				rb.Add(ctlevents.NewReconciliationCompletedEvent(50, nil))
 			},
 			reason:      "debounce_timer",
 			wantContain: "(previous reconciliation was",
@@ -183,7 +183,7 @@ func TestReconciliationInsight_CompletedEvent_StartedCorrelationFork(t *testing.
 			ec := rcECommentator()
 			tt.seedBuffer(ec.ringBuffer)
 
-			evt := ctlevents.NewReconciliationCompletedEvent(tt.durationMs)
+			evt := ctlevents.NewReconciliationCompletedEvent(tt.durationMs, nil)
 			insight, attrs := ec.reconciliationInsight(evt, nil)
 
 			require.NotEmpty(t, insight)
@@ -243,7 +243,7 @@ func TestReconciliationInsight_FailedEvent_PhaseAndErrorAlwaysSurface(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ec := rcECommentator()
-			evt := ctlevents.NewReconciliationFailedEvent(tt.errString, tt.phase)
+			evt := ctlevents.NewReconciliationFailedEvent(tt.errString, tt.phase, nil)
 			insight, attrs := ec.reconciliationInsight(evt, nil)
 
 			require.NotEmpty(t, insight)

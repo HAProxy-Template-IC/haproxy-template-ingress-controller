@@ -7,8 +7,8 @@ _helm_load:
   enable: '{{ .Values.controller.templateLibraries.ssl.enabled }}'
 
 # Test certificate fixtures (YAML anchors for reuse across validation tests)
-_test_tls_crt: &test_tls_crt LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
-_test_tls_key: &test_tls_key LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+_test_tls_crt: &test_tls_crt LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+_test_tls_key: &test_tls_key LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
 
 # Watch secrets for SSL certificate loading
 watchedResources:
@@ -23,6 +23,66 @@ templateSnippets:
   util-ssl-bind-options:
     template: >-
       {{- " " -}}ssl crt-list {{ pathResolver.GetPath("certificate-list.txt", "crt-list") }} alpn h2,http/1.1
+
+  # Parameterised counterpart of `util-ssl-bind-options` — emits the
+  # same `ssl crt-list <path> alpn h2,http/1.1` suffix but reads the
+  # crt-list filename from the caller. Used by phase 4 of the
+  # per-Gateway-IP refactor (`https-bind-extra-*` snippet) to give
+  # each (Gateway, listener) bind its own crt-list (different SSL
+  # configs without bind-line collision). The macro form keeps the
+  # chart-static path on the simpler bare snippet above so that
+  # call site stays a one-liner.
+  util-ssl-bind-options-for-crtlist:
+    template: |
+      {%- macro SSLBindOptionsForCrtlist(crtlistFilename string) string -%}
+        {{- " " -}}ssl crt-list {{ pathResolver.GetPath(crtlistFilename, "crt-list") }} alpn h2,http/1.1
+      {%- end -%}
+
+  util-crtlist-line:
+    template: |
+      {#- Build a single crt-list line.
+
+            <certFilename> [ocsp-update on[ ca-file <ca> verify <mode>]]\
+                          [ <sniSuffix>]
+
+          Inputs:
+            certFilename   The cert file as stored on disk (sanitized
+                           filename from features-100-{ingress,gateway}-tls).
+            mtlsCfg        Optional `map[string]any{"ca_path": …,
+                           "verify_mode": …}` — either nil (no client-
+                           cert validation) or a resolved validation
+                           block. The bracketed clause is emitted only
+                           when both fields are non-empty.
+            sniSuffix      Space-joined SNI patterns (shared chart-static
+                           crt-list groups multiple SNIs per line) OR a
+                           single listener hostname (per-listener
+                           crt-list scopes one cert to one hostname).
+                           Empty string for catchall — no trailing SNI
+                           filter is appended.
+
+          NOTE: `ca-ignore-err all crt-ignore-err all` (the
+          AllowInsecureFallback lift) is BIND-scope, not crt-list-
+          scope — HAProxy rejects the keywords inside a crt-list line.
+          Phase 4's per-Gateway bind reads `gatewayListenerMTLSConfig`
+          directly and adds the flags to its `bind *:<podPort>`
+          directive; this macro does NOT emit them.
+      -#}
+      {%- macro CrtListLine(certFilename string, mtlsCfg any, sniSuffix string) string %}
+        {%- var opts = "ocsp-update on" %}
+        {%- if mtlsCfg != nil %}
+          {%- var cfg = mtlsCfg.(map[string]any) %}
+          {%- var caPath = tostring(cfg["ca_path"]) %}
+          {%- var verifyMode = tostring(cfg["verify_mode"]) %}
+          {%- if caPath != "" && verifyMode != "" %}
+            {%- opts = opts + " ca-file " + caPath + " verify " + verifyMode %}
+          {%- end %}
+        {%- end %}
+        {%- var line = certFilename + " [" + opts + "]" %}
+        {%- if sniSuffix != "" %}
+          {%- line = line + " " + sniSuffix %}
+        {%- end %}
+        {{- line -}}
+      {%- end %}
 
   features-050-ssl-initialization:
     template: |
@@ -51,10 +111,22 @@ templateSnippets:
       {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once #}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
         return map[string]any{
-          "sslPassthroughBackends": []any{},
-          "tlsCertificates": []any{},
-          "sslRedirectHosts": []any{},
-          "clientCertVerifyHosts": map[string]any{},
+          "sslPassthroughBackends":      []any{},
+          "tlsCertificates":             []any{},
+          "sslRedirectHosts":            []any{},
+          "clientCertVerifyHosts":       map[string]any{},
+          "bindHTTPDefault":             false,
+          "bindHTTPSDefault":            false,
+          "needHTTPFrontend":            false,
+          "needHTTPSFrontend":           false,
+          // mtlsBlockedListeners + gatewayListenerMTLSConfig are
+          // populated by features-110-gateway-frontend-mtls (in the
+          // gateway library) and consumed by phases 2+4. Seeding
+          // them here means downstream readers can do bare
+          // gf["mtlsBlockedListeners"] / gf["gatewayListenerMTLSConfig"]
+          // without a coalesce-with-empty-map dance.
+          "mtlsBlockedListeners":        map[string]any{},
+          "gatewayListenerMTLSConfig":   map[string]any{},
         }
       }) -%}
       {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
@@ -71,9 +143,48 @@ templateSnippets:
       {%- if gf["clientCertVerifyHosts"] == nil -%}
         {%- gf["clientCertVerifyHosts"] = map[string]any{} -%}
       {%- end -%}
+      {%- if gf["mtlsBlockedListeners"] == nil -%}
+        {%- gf["mtlsBlockedListeners"] = map[string]any{} -%}
+      {%- end -%}
+      {%- if gf["gatewayListenerMTLSConfig"] == nil -%}
+        {%- gf["gatewayListenerMTLSConfig"] = map[string]any{} -%}
+      {%- end -%}
+      {#- Bind-decision flags: each resource library's features-100-* phase
+          OR's its contribution into these. Reading happens later in
+          base.yaml's http_frontend block and ssl.yaml's https / ssl-tcp
+          frontends to decide whether to emit the chart-static
+          `bind *:httpPort` / `bind *:httpsPort` line and whether to
+          render the surrounding frontend block at all.
+
+          * bindHTTPDefault — emit `bind *:httpPort` in http_frontend
+          * bindHTTPSDefault — emit `bind *:httpsPort` in https/ssl-tcp
+          * needHTTPFrontend — render http_frontend block
+          * needHTTPSFrontend — render https / ssl-tcp frontend blocks
+
+          The bind-default flag is narrower than need-frontend: a Gateway
+          HTTP listener at port 9090 (non-default) sets needHTTPFrontend
+          (so http-bind-extra-* gets a frontend to attach to) but does
+          NOT set bindHTTPDefault (the chart's default port stays
+          unbound). For HTTPS, listeners with successfully-resolved
+          certs at httpsPort set bindHTTPSDefault — listeners that fail
+          cert validation (e.g. NoValidCACertificate) deliberately do
+          not, so HAProxy doesn't answer handshakes for them. -#}
+      {%- if gf["bindHTTPDefault"] == nil -%}
+        {%- gf["bindHTTPDefault"] = false -%}
+      {%- end -%}
+      {%- if gf["bindHTTPSDefault"] == nil -%}
+        {%- gf["bindHTTPSDefault"] = false -%}
+      {%- end -%}
+      {%- if gf["needHTTPFrontend"] == nil -%}
+        {%- gf["needHTTPFrontend"] = false -%}
+      {%- end -%}
+      {%- if gf["needHTTPSFrontend"] == nil -%}
+        {%- gf["needHTTPSFrontend"] = false -%}
+      {%- end -%}
 
   features-150-ssl-crtlist:
     template: |
+      {%- import "util-crtlist-line" for CrtListLine -%}
       {#-
         SSL CRT-List Generation
 
@@ -142,7 +253,18 @@ templateSnippets:
         {%- var winner = keyMap[tostring(sortedKeys[0])] -%}
         {%- defaultCertFilename = tostring(winner["sanitized_filename"] | fallback(tostring(winner["secret_namespace"]) + "_" + tostring(winner["secret_name"]) + ".pem")) -%}
       {%- end -%}
-      {%- var crtlistLines = []any{tostring(defaultCertFilename) + " [ocsp-update on]"} -%}
+      {#- The default cert line covers TLS handshakes whose SNI doesn't
+          match any specific SNI line below. If a Gateway listener with
+          no hostname registered client-cert validation, that intent
+          lands in clientCertVerifyHosts["*"] (gateway.yaml's mTLS pass
+          uses "*" as the wildcard-SNI key). Apply that config to the
+          default line so port-N TLS handshakes whose SNI doesn't match
+          any per-listener hostname still get the right CA + verify
+          mode — closes the conformance gap where port 443 (no
+          listener hostname, default frontend validation) was answering
+          handshakes without client-cert verification. -#}
+      {%- var defaultCfg = clientCertVerifyHosts["*"] -%}
+      {%- var crtlistLines = []any{tostring(CrtListLine(tostring(defaultCertFilename), defaultCfg, ""))} -%}
 
       {# Generate entries for each registered TLS certificate.
          Per-host client-cert verification (driven by the ingress
@@ -188,14 +310,12 @@ templateSnippets:
         {%- var sortedKeys = sort_strings(keyList) -%}
         {%- for _, key := range sortedKeys -%}
           {%- var groupSnis = snisByConfig[key] -%}
-          {%- var sslOptions = "[ocsp-update on" -%}
+          {%- var cfg any = nil -%}
           {%- if key != "" -%}
-            {%- var cfg = configForKey[key].(map[string]any) -%}
-            {%- sslOptions = sslOptions + " ca-file " + tostring(cfg["ca_path"]) + " verify " + tostring(cfg["verify_mode"]) -%}
+            {%- cfg = configForKey[key] -%}
           {%- end -%}
-          {%- sslOptions = sslOptions + "]" -%}
           {%- var sniList = groupSnis | toStringSlice() | join(" ") -%}
-          {%- var line = tostring(certFilename) + " " + sslOptions + " " + sniList -%}
+          {%- var line = tostring(CrtListLine(tostring(certFilename), cfg, sniList)) -%}
           {%- crtlistLines = append(crtlistLines, line) -%}
         {%- end -%}
       {%- end -%}
@@ -301,16 +421,6 @@ templateSnippets:
       {%- end %}
 
   # Global OCSP configuration - enables automatic OCSP stapling for all SSL certificates
-  global-ssl-ocsp-config:
-    template: |
-      {# Global OCSP Update Configuration #}
-      {# Enables automatic fetching and caching of OCSP responses for certificate validation #}
-      {# See: https://www.haproxy.com/documentation/haproxy-configuration-manual/latest/#3.1-ocsp-update.mode #}
-      # ssl/global-ssl-ocsp-config
-      ocsp-update.mode on
-      ocsp-update.mindelay 300
-      ocsp-update.maxdelay 3600
-
   frontends-500-ssl-tcp:
     template: |
       {#-
@@ -332,8 +442,10 @@ templateSnippets:
           - features-100-*-ssl-passthrough snippets
       -#}
       {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
-      {%- if len(passthroughBackends) > 0 -%}
+      {%- var gfMap = gf.(map[string]any) -%}
+      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
+      {%- if len(passthroughBackends) > 0 && bindHTTPSDefault -%}
       {# TCP frontend extracts SNI and routes to passthrough backends or loopback #}
       # ssl/frontends-ssl-tcp
 
@@ -344,16 +456,247 @@ templateSnippets:
 
           # Extract SNI for routing decisions (wait up to 5s for client hello)
           tcp-request inspect-delay 5s
+
+          {#- Reject contract for TLS-Passthrough listeners.
+
+              Per Gateway-API spec, a TLS-Passthrough listener with
+              hostname H claims SNIs matching H. A TLSRoute attached
+              to that listener narrows further (route hostnames ∩
+              listener hostname). For a connection whose SNI
+                * matches a TLSRoute's effective SNI → routed to its
+                  backend (the use_backend block below)
+                * matches the listener's hostname pattern but NO
+                  TLSRoute's effective SNI → MUST be rejected (no
+                  route claims it; Gateway-API "should not reach
+                  backend" contract)
+                * matches NO listener pattern → falls through (an
+                  HTTPS-terminating listener may legitimately accept
+                  it; the chart cannot tell from req_ssl_sni alone
+                  whether a different mechanism wants the SNI)
+
+              This produces two ACLs:
+                * `route_sni`     — req_ssl_sni in the use_backend
+                                    allowlist (per-route effective SNI)
+                * `listener_sni`  — req_ssl_sni in any TLS-Passthrough
+                                    listener's hostname pattern
+
+              Reject when listener_sni && !route_sni. The reject must
+              precede `tcp-request content accept` because accept
+              terminates the tcp-request content phase, so a later
+              reject would never fire.
+
+              Closes the upstream `TLSRouteHostnameIntersection`
+              "should not reach backend" subtests, plus
+              `TLSRouteInvalidBackendRefNonexistent` /
+              `TLSRouteInvalidBackendRefUnknownKind` (an unresolvable-
+              backend route is filtered at Pass 2's ResolvedRefs gate
+              so the route's effective SNI never enters route_sni; the
+              listener_hostname stays in listener_sni so its claimed
+              SNIs hit the reject path). -#}
+          {#- Per-Gateway routing isolation. The chart shares one bind
+              across every TLSRoute attached to port httpsPort, but the
+              Gateway-API spec requires per-Gateway listener-claim
+              semantics: a Gateway whose listener pattern matches the
+              inbound SNI must reject the connection if no route under
+              THAT Gateway claims it, even if a sibling Gateway on the
+              same port has routes that would accept the SNI under a
+              wider pattern. Without this isolation, the upstream
+              `TLSRouteHostnameIntersection` "should not reach backend"
+              sub-tests fail when 4 Gateways with different listener-
+              hostname patterns share port 443 (route SNI patterns
+              from one Gateway would pass through another Gateway's
+              listener filter).
+
+              Bucket entries by (gw_namespace, gw_name) and emit per-
+              Gateway listener_sni / route_sni / invalid_sni ACL +
+              reject rules. Each Gateway X gets a sanitized ACL prefix
+              `gw_<ns>_<name>` (dashes/dots/colons → underscores) and a
+              reject rule of the form
+                tcp-request content reject if <gwX>_listener_sni !<gwX>_route_sni
+              for non-empty listeners, OR
+                tcp-request content reject if !<gwX>_route_sni
+              for empty (catch-all) listeners. Entries flagged invalid
+              get their own per-Gateway invalid_sni ACL + unconditional
+              reject (so the route's claimed SNI gets a TCP RST instead
+              of a use_backend pointing at a non-existent Service).
+
+              Ingress-level passthroughBackends (Pass 1, no Gateway
+              identity) are NOT subject to the reject — they keep
+              their existing fall-through behaviour. -#}
+          {%%
+            var byGateway = map[string]any{}
+            var gwOrder = []any{}
+            var hasIngressEntry = false
+            var validPassthroughCount = 0
+            for _, backend := range passthroughBackends {
+              var b = backend.(map[string]any)
+              var bMode = tostring(b["mode"] | fallback("Passthrough"))
+              if bMode != "Passthrough" {
+                continue
+              }
+              var gwNs = tostring(b | dig("gw_namespace") | fallback(""))
+              var gwName = tostring(b | dig("gw_name") | fallback(""))
+              if gwName == "" {
+                hasIngressEntry = true
+                continue
+              }
+              var gwKey = gwNs + ":" + gwName
+              var gi map[string]any
+              if existing, ok := byGateway[gwKey]; ok {
+                gi = existing.(map[string]any)
+              } else {
+                gi = map[string]any{
+                  "ns":               gwNs,
+                  "name":             gwName,
+                  "listenerPatterns": map[string]bool{},
+                  "hasEmptyListener": false,
+                  "routeSNIs":        map[string]bool{},
+                  "invalidSNIs":      map[string]bool{},
+                }
+                byGateway[gwKey] = gi
+                gwOrder = append(gwOrder, gwKey)
+              }
+              var lh = tostring(b | dig("listener_hostname") | fallback(""))
+              if lh == "" {
+                gi["hasEmptyListener"] = true
+              } else {
+                gi["listenerPatterns"].(map[string]bool)[lh] = true
+              }
+              var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true"
+              var sni = tostring(b["sni"])
+              if bInvalid {
+                gi["invalidSNIs"].(map[string]bool)[sni] = true
+              } else {
+                gi["routeSNIs"].(map[string]bool)[sni] = true
+                validPassthroughCount = validPassthroughCount + 1
+              }
+            }
+            // Stable per-Gateway emission order: sort by gwKey.
+            var gwOrderSorted = sort_strings(gwOrder)
+          %%}
+          {%- for _, gwKey := range gwOrderSorted %}
+            {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
+            {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}
+            {%- var listenerPatterns = gi["listenerPatterns"].(map[string]bool) %}
+            {%- var hasEmptyListener = gi["hasEmptyListener"].(bool) %}
+            {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
+            {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
+            {#- Collect sorted lists for deterministic output. -#}
+            {%%
+              var lpRaw = []any{}
+              for k := range listenerPatterns {
+                lpRaw = append(lpRaw, k)
+              }
+              var lpKeys = sort_strings(lpRaw)
+              var rsRaw = []any{}
+              for k := range routeSNIs {
+                rsRaw = append(rsRaw, k)
+              }
+              var rsKeys = sort_strings(rsRaw)
+              var invRaw = []any{}
+              for k := range invalidSNIs {
+                invRaw = append(invRaw, k)
+              }
+              var invKeys = sort_strings(invRaw)
+            %%}
+            {%- for _, lpAny := range lpKeys %}
+              {%- var lp = tostring(lpAny) %}
+              {%- if hasPrefix(lp, "*.") %}
+          acl {{ aclSan }}_listener_sni req_ssl_sni -m end {{ lp[1:] }}
+              {%- else %}
+          acl {{ aclSan }}_listener_sni req_ssl_sni -m str {{ lp }}
+              {%- end %}
+            {%- end %}
+            {%- for _, sniAny := range rsKeys %}
+              {%- var sni = tostring(sniAny) %}
+              {%- if hasPrefix(sni, "*.") %}
+          acl {{ aclSan }}_route_sni req_ssl_sni -m end {{ sni[1:] }}
+              {%- else %}
+          acl {{ aclSan }}_route_sni req_ssl_sni -m str {{ sni }}
+              {%- end %}
+            {%- end %}
+            {%- for _, sniAny := range invKeys %}
+              {%- var sni = tostring(sniAny) %}
+              {%- if hasPrefix(sni, "*.") %}
+          acl {{ aclSan }}_invalid_sni req_ssl_sni -m end {{ sni[1:] }}
+              {%- else %}
+          acl {{ aclSan }}_invalid_sni req_ssl_sni -m str {{ sni }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+          {%- var needHTTPSTermination_pre = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
+          {%- for _, gwKey := range gwOrder %}
+            {%- var gi = byGateway[tostring(gwKey)].(map[string]any) %}
+            {%- var aclSan = "gw_" + replace(replace(replace(replace(tostring(gi["ns"]) + "_" + tostring(gi["name"]), "-", "_"), ".", "_"), ":", "_"), "/", "_") %}
+            {%- var listenerPatterns = gi["listenerPatterns"].(map[string]bool) %}
+            {%- var hasEmptyListener = gi["hasEmptyListener"].(bool) %}
+            {%- var routeSNIs = gi["routeSNIs"].(map[string]bool) %}
+            {%- var invalidSNIs = gi["invalidSNIs"].(map[string]bool) %}
+            {%- if hasEmptyListener %}
+              {#- Empty listener: claims every SNI. Reject any SNI not
+                  claimed by a valid route under THIS Gateway. When all
+                  routes are invalid, route_sni ACL is undefined, so we
+                  reject the per-route invalid_sni patterns explicitly
+                  (still scoped to this Gateway's claimed SNIs — other
+                  SNIs aren't this Gateway's concern). -#}
+              {%- if len(routeSNIs) > 0 %}
+          tcp-request content reject if !{{ aclSan }}_route_sni
+              {%- else if len(invalidSNIs) > 0 %}
+          tcp-request content reject if {{ aclSan }}_invalid_sni
+              {%- end %}
+            {%- else %}
+              {#- Non-empty listener: reject if listener pattern matches
+                  but no route under this Gateway claims the SNI. -#}
+              {%- if len(routeSNIs) > 0 %}
+          tcp-request content reject if {{ aclSan }}_listener_sni !{{ aclSan }}_route_sni
+              {%- else if len(listenerPatterns) > 0 %}
+          tcp-request content reject if {{ aclSan }}_listener_sni
+              {%- end %}
+            {%- end %}
+          {%- end %}
           tcp-request content accept if { req_ssl_hello_type 1 }
 
-          # Route to passthrough backends based on SNI
+          # Route to passthrough backends based on SNI. Wildcard
+          # patterns (`*.example.com`) match any single-label
+          # subdomain; SSL passthrough emits `-m end .example.com` for
+          # those, exact patterns use `-m str`. Per Gateway API
+          # hostname semantics, `*.example.com` matches `foo.example.com`
+          # but NOT the bare `example.com`, so the `.` prefix in the
+          # `-m end` literal preserves the single-label-required rule
+          # (anything ending in `.example.com`).
+          {# Filter to Passthrough-mode entries only — the
+             gateway-ssl-passthrough builder now also emits Terminate
+             entries (consumed by frontends-600-gateway-tls-listener for
+             the per-port mode-tcp frontends with TLS termination).
+             Ingress entries don't carry `mode`, so an empty/missing
+             value defaults to Passthrough behaviour for back-compat.
+             Also skip entries flagged `invalid` — their backend block
+             was suppressed (Pass 2 ResolvedRefs gate failure), so
+             routing the SNI here would point at a non-existent
+             backend. The reject ACLs above already cover them. #}
           {% for _, backend := range passthroughBackends -%}
           {%- var b map[string]any = backend %}
-          use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ b["sni"] }} }
+          {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
+          {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
+          {%- if bMode == "Passthrough" && !bInvalid %}
+          {%- var sni = tostring(b["sni"]) %}
+          {%- if hasPrefix(sni, "*.") %}
+          use_backend {{ b["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }
+          {%- else %}
+          use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ sni }} }
+          {%- end %}
+          {%- end %}
           {%- end %}
 
-          # Default: route to loopback backend for SSL termination
+          {%- var needHTTPSTermination = tostring(gfMap | dig("needHTTPSTermination")) == "true" %}
+          {%- if needHTTPSTermination %}
+          # Default: route to loopback backend for SSL termination.
+          # Some routing on this port expects TLS termination (HTTPS
+          # Gateway listener, Ingress with spec.tls, …) — ssl-loopback
+          # is the chart's HTTPS-frontend bridge, so unmatched SNIs
+          # land there for cert-based termination + Host-based routing.
           default_backend ssl-loopback
+          {%- end %}
 
       {% end -%}
 
@@ -404,17 +747,42 @@ templateSnippets:
           - features-150-ssl-crtlist (certificate list)
       -#}
       {%- var gf = shared.Get("globalFeatures") -%}
-      {%- var passthroughBackends []any = gf["sslPassthroughBackends"] -%}
+      {%- var gfMap = gf.(map[string]any) -%}
+      {%- var passthroughBackends []any = gfMap["sslPassthroughBackends"] -%}
+      {%- var needHTTPSFrontend = tostring(gfMap | dig("needHTTPSFrontend")) == "true" -%}
+      {%- var bindHTTPSDefault = tostring(gfMap | dig("bindHTTPSDefault")) == "true" -%}
+      {#- The https frontend renders only when at least one resource
+          actually wants TLS termination — Ingress with spec.tls,
+          Gateway/ListenerSet HTTPS or TLS listener (any port), or
+          SSL passthrough backends (which need a unix-socket
+          loopback target). Without it we'd emit an HAProxy frontend
+          with no binds (validation error) any time the chart is
+          installed without a TLS-terminating resource.
+
+          The chart-static `bind *:httpsPort` itself is gated by
+          bindHTTPSDefault, which is set ONLY when at least one
+          listener with a successfully-resolved cert (or any
+          passthrough backend) wants traffic on that port. A
+          listener with NoValidCACertificate at port 443 leaves
+          bindHTTPSDefault=false, so HAProxy doesn't answer
+          handshakes for it — closes the conformance bug
+          GatewayFrontendInvalidDefaultClientCertificateValidation
+          relies on. -#}
+      {%- if needHTTPSFrontend -%}
       # ssl/frontends-https
 
       frontend https
           guid fe:https
           mode http
-      {% if len(passthroughBackends) > 0 %}
+      {%- if len(passthroughBackends) > 0 && bindHTTPSDefault %}
           bind unix@/etc/haproxy/ssl-frontend.sock mode 660{{ render "util-ssl-bind-options" }} accept-proxy
-      {% else %}
+      {%- else if bindHTTPSDefault %}
           bind *:{{ extraContext | dig("httpsPort") | fallback(8443) }}{{ render "util-ssl-bind-options" }}
-      {% end -%}
+      {%- end %}
+          {# Extension point for additional HTTPS bind directives (Gateway HTTPS listener ports, etc.). #}
+          {# Sibling to http-bind-extra-* in base.yaml; resource libraries emit one bind per #}
+          {# non-default Gateway HTTPS listener port using the same SSL options as the chart-static bind. #}
+          {{- render_glob "https-bind-extra-*" | indent(2, true) }}
 
           {# Extension point for early frontend directives (options, captures, ACLs) #}
           {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
@@ -432,6 +800,7 @@ templateSnippets:
 
           # Default backend
           default_backend default_backend
+      {%- end -%}
 
 # SSL certificate files
 #
@@ -506,7 +875,34 @@ validationTests:
 
   test-ssl-https-frontend-basic:
     description: Verify HTTPS frontend is generated with correct bind options
-    fixtures: {}  # Uses _global fixtures
+    fixtures:
+      # Trigger the chart's HTTPS frontend by declaring an Ingress with
+      # spec.tls. After the bind-derivation refactor (chart-static
+      # frontends are gated on listener state), an empty fixture would
+      # leave the chart with nothing terminating SSL — and therefore no
+      # `frontend https` rendered.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -518,8 +914,8 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
-        pattern: "bind .*:8443.*ssl crt"
-        description: HTTPS frontend must bind with SSL options
+        pattern: "bind .*:443.*ssl crt"
+        description: HTTPS frontend must bind with SSL options on the chart's https port
 
       - type: contains
         target: haproxy.cfg
@@ -528,7 +924,32 @@ validationTests:
 
   test-ssl-crtlist-basic:
     description: Verify crt-list file is generated with OCSP configuration
-    fixtures: {}  # Uses _global fixtures
+    fixtures:
+      # Trigger the chart's HTTPS frontend (and its `ssl crt-list ...`
+      # bind option) — see comment on test-ssl-https-frontend-basic for
+      # why the bind-derivation refactor needs an explicit trigger here.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: tls-trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts: ["example.com"]
+                secretName: default-ssl-cert
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -583,18 +1004,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress

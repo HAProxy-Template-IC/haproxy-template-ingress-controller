@@ -122,6 +122,27 @@ func TestScriggoSortStrings(t *testing.T) {
 	}
 }
 
+func TestScriggoSortInts(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []any
+		want []int
+	}{
+		{name: "int slice", in: []any{30, 10, 20}, want: []int{10, 20, 30}},
+		{name: "numeric strings coerce", in: []any{"30", "10", "20"}, want: []int{10, 20, 30}},
+		// Pre-filter motivation: lexicographic sort would produce {10, 2, 8080}; sort_ints gives the right order.
+		{name: "lexicographic-vs-numeric", in: []any{10, 8080, 2}, want: []int{2, 10, 8080}},
+		{name: "empty slice", in: nil, want: []int{}},
+		{name: "non-numeric coerces to zero", in: []any{"abc", 5, "10"}, want: []int{0, 5, 10}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, scriggoSortInts(tt.in))
+		})
+	}
+}
+
 func TestScriggoAppendAny(t *testing.T) {
 	tests := []struct {
 		name  string

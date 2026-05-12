@@ -58,6 +58,104 @@ spec:
   {{- /* HAProxy version (used by version-gated features such as shm-stats-file) */ -}}
   {{- $_ := set $extraContext "haproxyVersion" .Values.haproxyVersion }}
 
+  {{- /* Controller's own namespace + HAProxy pod selector. Templates that
+         emit owned resources via renderResource() (e.g. per-Gateway
+         LoadBalancer Services for SupportGatewayStaticAddresses) need
+         both: the namespace because the resourceapplier refuses to
+         apply outside the controller's namespace by default, and the
+         selector so the spawned Service routes traffic to the shared
+         HAProxy pods. We compute these here from chart values once
+         rather than asking Scriggo to reach for them. */ -}}
+  {{- $_ := set $extraContext "controllerNamespace" .Release.Namespace }}
+  {{- $_ := set $extraContext "haproxyPodSelector" (include "haptic.haproxy.selectorLabels" . | fromYaml) }}
+  {{- /* Resolved name of the chart-emitted HAProxy Service. Templates
+         that partial-patch its spec.ports (e.g. the gateway-listener-
+         ports snippet) need this so the SSA payload targets the same
+         object the chart created. The controller never hardcodes the
+         name — the chart computes it via fullname conventions and
+         hands it through extraContext. */ -}}
+  {{- $_ := set $extraContext "haproxyServiceName" (include "haptic.haproxyFullname" .) }}
+
+  {{- /* Plumb the chart's HAProxy bind-port values through extraContext
+         so the base/ssl/gateway libraries' bind directives stay in
+         lockstep with `haproxy.ports`. The fallbacks in those libraries
+         (8080/8443) only apply when the chart hasn't provided values,
+         so chart-managed installs always emit binds that match the
+         Service targetPort / containerPort wiring. Defaulting these to
+         the literal Gateway listener-port numbers (80/443) keeps each
+         Gateway listener port unambiguous on its own bind — see
+         comment in values.yaml on `haproxy.ports.http` for the full
+         rationale. */ -}}
+  {{- $_ := set $extraContext "httpPort" (.Values.haproxy.ports.http | int) }}
+  {{- $_ := set $extraContext "httpsPort" (.Values.haproxy.ports.https | int) }}
+
+  {{- /* Plumb the chart's haproxy.service.* values through extraContext so
+         the k8sResources.haproxy-service template (in libraries/base.yaml)
+         can render the user-facing LoadBalancer Service from listener
+         state. This replaces the chart-static templates/haproxy-service.yaml
+         main-Service block: the controller now owns the Service end-to-end
+         and emits an OwnerReference pointing at the HAProxyTemplateConfig
+         CR, so `helm uninstall` cascade-GCs it. The bag is intentionally
+         flat so the template can read fields without re-walking
+         values.yaml. */ -}}
+  {{- if $haproxy := .Values.haproxy }}
+  {{- if $haproxy.enabled }}
+  {{- $svc := $haproxy.service }}
+  {{- $svcLabels := dict }}
+  {{- range $k, $v := (include "haptic.labels" . | fromYaml) }}
+    {{- $_ := set $svcLabels $k $v }}
+  {{- end }}
+  {{- $_ := set $svcLabels "app.kubernetes.io/component" "loadbalancer" }}
+  {{- $svcSelectorLabels := dict }}
+  {{- range $k, $v := (include "haptic.selectorLabels" . | fromYaml) }}
+    {{- $_ := set $svcSelectorLabels $k $v }}
+  {{- end }}
+  {{- $_ := set $svcSelectorLabels "app.kubernetes.io/component" "loadbalancer" }}
+  {{- /* Build a single Service-port list with chart-static defaults
+         (http / https / stats) and any operator-declared extras
+         appended. The k8sResources.haproxy-service template just
+         iterates this list — there is no static / dynamic split on
+         the Scriggo side. Operators can:
+           * drop a default entry by overriding the matching
+             `haproxy.service.{http,https,stats}` block with
+             `port: 0` (the build below skips zero-port entries)
+           * change a default port number via the existing
+             `haproxy.service.{http,https,stats}.port` keys
+           * append additional ports via
+             `haproxy.service.extraPorts` (one entry per extra). */ -}}
+  {{- $defaultPorts := list }}
+  {{- range $name := list "http" "https" "stats" }}
+    {{- $entry := index $svc $name }}
+    {{- if $entry }}
+      {{- $portNum := int ($entry.port | default 0) }}
+      {{- if gt $portNum 0 }}
+        {{- $portDict := dict "name" $name "port" $portNum "targetPort" $name "protocol" "TCP" }}
+        {{- with ($entry.nodePort | default 0) }}
+          {{- $_ := set $portDict "nodePort" (int .) }}
+        {{- end }}
+        {{- $defaultPorts = append $defaultPorts $portDict }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  {{- $allPorts := concat $defaultPorts ($svc.extraPorts | default list) }}
+  {{- $haproxyService := dict
+      "type" $svc.type
+      "labels" $svcLabels
+      "selector" $svcSelectorLabels
+      "annotations" ($svc.annotations | default dict)
+      "loadBalancerIP" ($svc.loadBalancerIP | default "")
+      "loadBalancerClass" ($svc.loadBalancerClass | default "")
+      "loadBalancerSourceRanges" ($svc.loadBalancerSourceRanges | default list)
+      "externalTrafficPolicy" ($svc.externalTrafficPolicy | default "")
+      "internalTrafficPolicy" ($svc.internalTrafficPolicy | default "")
+      "healthCheckNodePort" (int ($svc.healthCheckNodePort | default 0))
+      "publishNotReadyAddresses" ($svc.publishNotReadyAddresses | default false)
+      "ports" $allPorts
+  }}
+  {{- $_ := set $extraContext "haproxyService" $haproxyService }}
+  {{- end }}
+  {{- end }}
+
   {{- /* Pass spoaHub wiring through extraContext when the sidecar is
          enabled AND at least one plugin contributes an SPOE message.
          The spoa-hub template library reads this to render spoe.conf
@@ -165,7 +263,7 @@ spec:
   {{- end }}
   {{- /* Merge template libraries into config */ -}}
   {{- $mergedLibraries := include "haptic.mergeLibraries" . | fromYaml }}
-  {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "haproxyConfig" "validationTests" }}
+  {{- range $key := list "templateSnippets" "maps" "files" "sslCertificates" "k8sResources" "haproxyConfig" "validationTests" }}
     {{- with index $mergedLibraries $key }}
       {{- $_ := set $config $key . }}
     {{- end }}

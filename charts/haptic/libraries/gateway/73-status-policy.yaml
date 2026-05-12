@@ -1,0 +1,296 @@
+templateSnippets:
+  util-generate-backendtlspolicy-status-patches:
+    template: |
+      {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {% macro GenerateBackendTLSPolicyStatusPatches(policies []any, controllerName string) %}
+        {%- for _, policy := range policies %}
+          {%%
+            var policyNs = tostring(dig(policy, "metadata", "namespace") | fallback(""))
+            var policyName = tostring(dig(policy, "metadata", "name") | fallback(""))
+            var generation = dig(policy, "metadata", "generation") | fallback(0)
+            var apiVersion = "gateway.networking.k8s.io/v1"
+            var kind = "BackendTLSPolicy"
+
+            // Validate caCertificateRefs / wellKnownCACertificates.
+            // Per spec, exactly one must be set; caCertificateRefs takes
+            // precedence if both are present.
+            var validation = dig(policy, "spec", "validation")
+            var caRefs []any = dig(validation, "caCertificateRefs") | toSlice()
+            if caRefs == nil {
+              caRefs = []any{}
+            }
+            var wkca = dig(validation, "wellKnownCACertificates") | fallback("") | tostring()
+
+            var resolvedStatus = "True"
+            var resolvedReason = "ResolvedRefs"
+            var resolvedMsg = "All references resolved"
+            // noValidCA tracks the spec-defined "Accepted=False/NoValidCACertificate"
+            // condition, distinct from "ResolvedRefs". Per Gateway API
+            // BackendTLSPolicy types, NoValidCACertificate is the *Accepted*
+            // reason emitted when every CACertificateRef on the policy is
+            // unresolvable; the *ResolvedRefs* reason for that same case is
+            // InvalidCACertificateRef. Conformance test
+            // BackendTLSPolicyInvalidCACertificateRef asserts both conditions.
+            var noValidCA = false
+            var noValidCAMsg = ""
+
+            if len(caRefs) > 0 {
+              var hasValid = false
+              var hasInvalidGroupKind = false
+              for _, ref := range caRefs {
+                var refGroup = tostring(dig(ref, "group") | fallback(""))
+                var refKind = tostring(dig(ref, "kind") | fallback(""))
+                var refName = tostring(dig(ref, "name") | fallback(""))
+                if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+                  var cm = resources.configmaps.GetSingle(policyNs, refName)
+                  if cm != nil {
+                    var data = dig(cm, "data") | fallback(map[string]any{})
+                    var dataMap = data.(map[string]any)
+                    var caCrt, ok = dataMap["ca.crt"]
+                    if ok && tostring(caCrt) != "" {
+                      hasValid = true
+                    }
+                  }
+                } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+                  var sec = resources.secrets.GetSingle(policyNs, refName)
+                  if sec != nil {
+                    var data = dig(sec, "data") | fallback(map[string]any{})
+                    var dataMap = data.(map[string]any)
+                    var caCrt, ok = dataMap["ca.crt"]
+                    if ok && tostring(caCrt) != "" {
+                      hasValid = true
+                    }
+                    if !ok {
+                      var tlsCrt, ok2 = dataMap["tls.crt"]
+                      if ok2 && tostring(tlsCrt) != "" {
+                        hasValid = true
+                      }
+                    }
+                  }
+                } else {
+                  hasInvalidGroupKind = true
+                }
+              }
+              if !hasValid {
+                resolvedStatus = "False"
+                if hasInvalidGroupKind {
+                  resolvedReason = "InvalidKind"
+                  resolvedMsg = "CACertificateRef points at an unsupported group / kind"
+                } else {
+                  resolvedReason = "InvalidCACertificateRef"
+                  resolvedMsg = "No CACertificateRef resolves to a valid CA certificate (missing or malformed)"
+                }
+                // BackendTLSPolicyInvalidKind expects Accepted=False/
+                // NoValidCACertificate even when the failure is purely
+                // invalid kind — Accepted reflects "every CACertificateRef
+                // is invalid" regardless of *why*. The ResolvedRefs reason
+                // (InvalidKind vs InvalidCACertificateRef) is the more
+                // specific signal.
+                noValidCA = true
+                noValidCAMsg = resolvedMsg
+              }
+            } else if wkca != "" {
+              if wkca != "System" {
+                resolvedStatus = "False"
+                resolvedReason = "Invalid"
+                resolvedMsg = "wellKnownCACertificates value " + wkca + " is not recognised"
+              }
+            } else {
+              // Spec invariants reject this at admission, but be defensive
+              resolvedStatus = "False"
+              resolvedReason = "InvalidCACertificateRef"
+              resolvedMsg = "Validation must specify caCertificateRefs or wellKnownCACertificates"
+              noValidCA = true
+              noValidCAMsg = resolvedMsg
+            }
+
+            // Conflict detection: another BackendTLSPolicy targets the
+            // same (group, kind, name, sectionName) tuple.
+            //
+            // Within one policy, targetRefs are validated by the CRD to
+            // be distinct, so the conflict is across policies. We pick
+            // a deterministic winner — earliest creationTimestamp, then
+            // lex ordering on namespace/name — to avoid flapping when
+            // two policies are written simultaneously.
+            var acceptedStatus = "True"
+            var acceptedReason = "Accepted"
+            var acceptedMsg = "Policy accepted"
+            var policyKey = policyNs + "/" + policyName
+            var policyTs = tostring(dig(policy, "metadata", "creationTimestamp") | fallback(""))
+            for _, tr := range dig(policy, "spec", "targetRefs") | toSlice() {
+              var trGroup = tostring(dig(tr, "group") | fallback(""))
+              var trKind = tostring(dig(tr, "kind") | fallback(""))
+              var trName = tostring(dig(tr, "name") | fallback(""))
+              var trSec = tostring(dig(tr, "sectionName") | fallback(""))
+              for _, other := range resources.backendtlspolicies.List() {
+                var otherNs = tostring(dig(other, "metadata", "namespace") | fallback(""))
+                var otherName = tostring(dig(other, "metadata", "name") | fallback(""))
+                var otherKey = otherNs + "/" + otherName
+                if otherKey == policyKey || otherNs != policyNs {
+                  continue
+                }
+                var otherTs = tostring(dig(other, "metadata", "creationTimestamp") | fallback(""))
+                for _, otr := range dig(other, "spec", "targetRefs") | toSlice() {
+                  var otrGroup = tostring(dig(otr, "group") | fallback(""))
+                  var otrKind = tostring(dig(otr, "kind") | fallback(""))
+                  var otrName = tostring(dig(otr, "name") | fallback(""))
+                  var otrSec = tostring(dig(otr, "sectionName") | fallback(""))
+                  if otrGroup == trGroup && otrKind == trKind && otrName == trName && otrSec == trSec {
+                    // Same (g, k, n, sec). The earlier policy wins.
+                    var thisIsLoser = false
+                    if otherTs != "" && policyTs != "" && otherTs < policyTs {
+                      thisIsLoser = true
+                    } else if otherTs != "" && policyTs != "" && otherTs == policyTs && otherKey < policyKey {
+                      thisIsLoser = true
+                    } else if otherTs != "" && policyTs == "" {
+                      thisIsLoser = true
+                    } else if otherTs == policyTs && otherKey < policyKey {
+                      thisIsLoser = true
+                    }
+                    if thisIsLoser {
+                      acceptedStatus = "False"
+                      acceptedReason = "Conflicted"
+                      acceptedMsg = "Another BackendTLSPolicy already targets " + trKind + "/" + trName + "/" + trSec
+                    }
+                  }
+                }
+                if acceptedStatus == "False" {
+                  break
+                }
+              }
+              if acceptedStatus == "False" {
+                break
+              }
+            }
+
+            // NoValidCACertificate wins over Accepted=True. Per
+            // BackendTLSPolicy spec the Accepted=False/NoValidCACertificate
+            // condition is set when every CACertificateRef is unresolvable.
+            // Conflicted (already-False) keeps precedence — the spec leaves
+            // the relative ordering unspecified but a conflicting policy
+            // with an unresolvable CA bundle should not silently flip to
+            // NoValidCACertificate (the conflict is the more actionable
+            // signal for the operator).
+            if noValidCA && acceptedStatus == "True" {
+              acceptedStatus = "False"
+              acceptedReason = "NoValidCACertificate"
+              acceptedMsg = noValidCAMsg
+            }
+
+            // Compute ancestors: the set of Gateways whose routes
+            // reference any of the policy's target Services. Per spec
+            // implementations MUST emit at least one ancestor entry;
+            // when no Gateway is found we fall back to the targeted
+            // Service so the policy is observable in status.
+            var ancestorSet = map[string]bool{}
+            var ancestors = []any{}
+            for _, tr := range dig(policy, "spec", "targetRefs") | toSlice() {
+              var trKind = tostring(dig(tr, "kind") | fallback(""))
+              var trName = tostring(dig(tr, "name") | fallback(""))
+              if trKind != "Service" {
+                continue
+              }
+              for _, route := range resources.httproutes.List() {
+                var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+                if routeNs != policyNs {
+                  continue
+                }
+                var refsHit = false
+                for _, rule := range dig(route, "spec", "rules") | toSlice() {
+                  for _, br := range dig(rule, "backendRefs") | toSlice() {
+                    var brName = tostring(dig(br, "name") | fallback(""))
+                    var brKind = tostring(dig(br, "kind") | fallback("Service"))
+                    if brKind == "Service" && brName == trName {
+                      refsHit = true
+                      break
+                    }
+                  }
+                  if refsHit {
+                    break
+                  }
+                }
+                if !refsHit {
+                  continue
+                }
+                for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
+                  var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+                  var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+                  if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+                    continue
+                  }
+                  var gwName = tostring(dig(parentRef, "name") | fallback(""))
+                  var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+                  var ancKey = "Gateway/" + gwNs + "/" + gwName
+                  if ancestorSet[ancKey] {
+                    continue
+                  }
+                  ancestorSet[ancKey] = true
+                  var aref = map[string]any{
+                    "group": "gateway.networking.k8s.io",
+                    "kind":  "Gateway",
+                    "name":  gwName,
+                  }
+                  if dig(parentRef, "namespace") != nil {
+                    aref["namespace"] = gwNs
+                  }
+                  ancestors = append(ancestors, map[string]any{
+                    "ancestorRef":    aref,
+                    "controllerName": controllerName,
+                    "conditions": []any{
+                      condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                        generation, RouteParentTransitionTime(policy, len(ancestors), "Accepted", acceptedStatus)),
+                      condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                        generation, RouteParentTransitionTime(policy, len(ancestors), "ResolvedRefs", resolvedStatus)),
+                    },
+                  })
+                }
+              }
+            }
+            if len(ancestors) == 0 {
+              for _, tr := range dig(policy, "spec", "targetRefs") | toSlice() {
+                var trGroup = tostring(dig(tr, "group") | fallback(""))
+                var trKind = tostring(dig(tr, "kind") | fallback(""))
+                var trName = tostring(dig(tr, "name") | fallback(""))
+                ancestors = append(ancestors, map[string]any{
+                  "ancestorRef": map[string]any{
+                    "group":     trGroup,
+                    "kind":      trKind,
+                    "name":      trName,
+                    "namespace": policyNs,
+                  },
+                  "controllerName": controllerName,
+                  "conditions": []any{
+                    condition("Accepted", acceptedStatus, acceptedReason, acceptedMsg,
+                      generation, RouteParentTransitionTime(policy, len(ancestors), "Accepted", acceptedStatus)),
+                    condition("ResolvedRefs", resolvedStatus, resolvedReason, resolvedMsg,
+                      generation, RouteParentTransitionTime(policy, len(ancestors), "ResolvedRefs", resolvedStatus)),
+                  },
+                })
+              }
+            }
+            if len(ancestors) > 0 {
+              // BackendTLSPolicy conditions (Accepted, ResolvedRefs per
+              // ancestor) are data-plane-independent — they reflect
+              // index-time resolution of cert refs and ancestor admission.
+              // Phase-scoped field managers mean we only need to emit
+              // these in the rendered variant; haptic-deployed and
+              // haptic-deployFailed never touch policy status.
+              statusPatch(policyNs, policyName, apiVersion, kind,
+                map[string]interface{}{
+                  "rendered": map[string]interface{}{
+                    "ancestors": ancestors,
+                  },
+                })
+            }
+          %%}
+        {%- end %}
+      {% end %}
+
+  status-patches-300-backendtlspolicy:
+    template: |
+      {%- import "util-generate-backendtlspolicy-status-patches" for GenerateBackendTLSPolicyStatusPatches %}
+      {%- var allPolicies = resources.backendtlspolicies.List() -%}
+      {%- if len(allPolicies) > 0 -%}
+        {%- var controllerName = extraContext | dig("controllerName") | fallback("haproxy.org/haptic") | tostring() -%}
+        {{- GenerateBackendTLSPolicyStatusPatches(allPolicies, controllerName) -}}
+      {%- end -%}

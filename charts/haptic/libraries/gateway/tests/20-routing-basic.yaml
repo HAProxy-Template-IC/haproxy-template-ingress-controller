@@ -1,0 +1,592 @@
+validationTests:
+  test-httproute-duplicate-backend-different-ports:
+    description: HTTPRoute with multiple rules to same service but different ports (tests deduplication)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+              - name: admin
+                port: 81
+                targetPort: 8081
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: api-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: api-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+              targetRef:
+                kind: Pod
+                name: api-pod-1
+          ports:
+            - name: http
+              port: 8080
+              protocol: TCP
+            - name: admin
+              port: 8081
+              protocol: TCP
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: multi-port
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                backendRefs:
+                  - name: api-svc
+                    port: 80
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /admin
+                backendRefs:
+                  - name: api-svc
+                    port: 81
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /app
+                backendRefs:
+                  - name: api-svc
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_multi-port_api-svc_80"
+        description: Must generate backend for port 80
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_multi-port_api-svc_81"
+        description: Must generate backend for port 81
+
+      - type: match_count
+        target: haproxy.cfg
+        pattern: "(?m)^backend gtw_default_multi-port_api-svc_"
+        expected: "2"
+        description: Must generate exactly 2 backends (deduplication test)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "10.0.0.1:8080"
+        description: Must include server with resolved targetPort 8080 (from service port 80)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "10.0.0.1:8081"
+        description: Must include server with resolved targetPort 8081 (from service port 81)
+
+  test-grpcroute-duplicate-backend-different-ports:
+    description: GRPCRoute with multiple rules to same service but different ports (tests deduplication)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-svc
+            namespace: default
+          spec:
+            ports:
+              - name: grpc
+                port: 9090
+                targetPort: 9090
+              - name: grpc-admin
+                port: 9091
+                targetPort: 9091
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: multi-port
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - grpc.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.API
+                      method: Method1
+                backendRefs:
+                  - name: grpc-svc
+                    port: 9090
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.Admin
+                      method: Method1
+                backendRefs:
+                  - name: grpc-svc
+                    port: 9091
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.App
+                      method: Method1
+                backendRefs:
+                  - name: grpc-svc
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_multi-port_grpc-svc_9090"
+        description: Must generate backend for port 9090
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_multi-port_grpc-svc_9091"
+        description: Must generate backend for port 9091
+
+      - type: match_count
+        target: haproxy.cfg
+        pattern: "(?m)^backend gtw_default_multi-port_grpc-svc_"
+        expected: "2"
+        description: Must generate exactly 2 backends (deduplication test)
+
+  test-httproute-single-backend:
+    description: HTTPRoute with single backend uses BACKEND qualifier
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: single-backend
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - single.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: app
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_single-backend_app_80"
+        description: Must generate backend for single backend
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "single.example.com/ GW_ROUTE_ID:http:default_single-backend_0"
+        description: Single backend must use GW_ROUTE_ID qualifier
+
+      - type: not_contains
+        target: map:weighted-multi-backend.map
+        pattern: "default_single-backend"
+        description: Single backend must not generate weighted-multi-backend entries
+
+  test-httproute-method-matching:
+    description: HTTPRoute with method matching (GET vs POST to same path)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: read-service
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: write-service
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: method-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    method: GET
+                backendRefs:
+                  - name: read-service
+                    port: 80
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    method: POST
+                backendRefs:
+                  - name: write-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http"
+        description: Conflicting paths must use GW_ROUTE_ID qualifier
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_method-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method GET \\}"
+        description: Must generate txn.gw_rule_id for GET method
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_method-route_1\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_method-route_0__default_method-route_1\" \\} \\{ method POST \\}"
+        description: Must generate txn.gw_rule_id for POST method
+
+  test-httproute-multi-hostname-map-newlines:
+    description: HTTPRoute with 3 hostnames must generate separate map file lines
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: multi-host
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - one.example.com
+              - two.example.com
+              - three.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: app
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: not_contains
+        target: map:host.map
+        pattern: "one\\.example\\.com one\\.example\\.comtwo\\.example\\.com"
+        description: Host map must NOT concatenate hostnames without newlines (bug detection)
+
+      - type: match_count
+        target: map:host.map
+        pattern: "(?m)^.*\\.example\\.com .*\\.example\\.com$"
+        expected: "3"
+        description: Host map must have exactly 3 separate lines for hostnames
+
+  test-grpcroute-multi-hostname-map-newlines:
+    description: GRPCRoute with 3 hostnames must generate separate map file lines
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-app
+            namespace: default
+          spec:
+            ports:
+              - name: grpc
+                port: 9090
+                targetPort: 9090
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: multi-host-grpc
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - one.example.com
+              - two.example.com
+              - three.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.Service
+                      method: TestMethod
+                backendRefs:
+                  - name: grpc-app
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: not_contains
+        target: map:host.map
+        pattern: "one\\.example\\.com one\\.example\\.comtwo\\.example\\.com"
+        description: Host map must NOT concatenate hostnames without newlines (bug detection)
+
+      - type: match_count
+        target: map:host.map
+        pattern: "(?m)^.*\\.example\\.com .*\\.example\\.com$"
+        expected: "3"
+        description: Host map must have exactly 3 separate lines for hostnames
+
+  test-httproute-path-exact:
+    description: HTTPRoute with Exact path type (no prefix matching)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: exact-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: exact-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: Exact
+                      value: /api/users
+                backendRefs:
+                  - name: exact-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-exact.map
+        pattern: "api.example.com/api/users GW_ROUTE_ID:http:default_exact-route_0"
+        description: Exact path must be in path-exact.map
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "api.example.com/api/users"
+        description: Exact path must not be in path-prefix.map
+
+  test-httproute-path-regex:
+    description: HTTPRoute with RegularExpression path type
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: versioned-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: regex-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: RegularExpression
+                      value: "^/api/v[0-9]+/users$"
+                backendRefs:
+                  - name: versioned-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-regex.map
+        pattern: "api\\.example\\.com\\^/api/v\\[0-9\\]\\+/users\\$ gtw_default_regex-route_versioned-service_80"
+        description: Regex path must be in path-regex.map
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "api.example.com/.*users"
+        description: Regex path must not be in path-prefix.map
+
+  test-httproute-listener-port-matching:
+    description: Routes attached to listeners on different ports get port-suffixed host map entries
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: l-80
+                port: 80
+                hostname: foo.com
+                protocol: HTTP
+              - name: l-8080
+                port: 8080
+                hostname: foo.com
+                protocol: HTTP
+              - name: l-8090
+                port: 8090
+                hostname: foo.com
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-on-80
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                port: 80
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-on-8080
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                port: 8080
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-on-8090-by-section
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: l-8090
+            rules:
+              - backendRefs:
+                  - name: backend
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^foo\\.com foo\\.com$"
+        description: Port-80 route emits unsuffixed host entry
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^foo\\.com:8080 foo\\.com:8080$"
+        description: Port-8080 route emits :8080 suffixed host entry
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^foo\\.com:8090 foo\\.com:8090$"
+        description: Port-8090 route emits :8090 suffixed host entry
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.host_full\\) req\\.hdr\\(Host\\),lower"
+        description: Routing logic captures full Host header (with port) for port-aware lookup

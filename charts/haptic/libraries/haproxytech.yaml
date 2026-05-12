@@ -17,34 +17,6 @@ templateSnippets:
   # ============================================================================
   # Annotation Helpers
   # ============================================================================
-
-  util-haproxytech-helpers:
-    template: |
-      {#- Annotation processing helpers -#}
-
-      {#- Gets haproxy.org/<name> annotation with default -#}
-      {% macro Ann(ingress any, name string, def string) string %}
-        {%% show ingress | dig("metadata", "annotations", "haproxy.org/" + name) | fallback(def) | tostring() %%}
-      {% end %}
-
-      {#- Gets Ingress key as ns/name -#}
-      {% macro IKey(ingress any) string %}
-        {%% show (ingress | dig("metadata", "namespace") | fallback("")) + "/" + (ingress | dig("metadata", "name") | fallback("")) %%}
-      {% end %}
-
-      {#- Extracts hosts from Ingress rules -#}
-      {% macro IHosts(ingress any) []any %}
-        {%%
-          var hosts = []any{}
-          for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
-            if h := rule | dig("host"); h != nil {
-              hosts = append(hosts, h)
-            }
-          }
-          show hosts
-        %%}
-      {% end %}
-
   util-haproxytech-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations.
@@ -831,23 +803,6 @@ validationTests:
             ports:
               - port: 443
                 targetPort: 8443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-xyz789
-            namespace: production
-            labels:
-              kubernetes.io/service-name: api-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.1.5"]
-              targetRef:
-                kind: Pod
-                name: api-pod-1
-          ports:
-            - port: 8443
-              protocol: TCP
     assertions:
       - type: haproxy_valid
         description: HAProxy configuration must be syntactically valid
@@ -907,23 +862,6 @@ validationTests:
           spec:
             ports:
               - port: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-def456
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.2.10"]
-              targetRef:
-                kind: Pod
-                name: api-pod-2
-          ports:
-            - port: 8080
-              protocol: TCP
     assertions:
       - type: haproxy_valid
         description: HAProxy configuration must be syntactically valid
@@ -979,19 +917,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: contains
         target: rendering_error
@@ -1043,19 +968,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy configuration must be syntactically valid
@@ -1134,39 +1046,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: app1-service-aaa111
-            namespace: default
-            labels:
-              kubernetes.io/service-name: app1-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.3.20"]
-              targetRef:
-                kind: Pod
-                name: app1-pod-1
-          ports:
-            - port: 80
-              protocol: TCP
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: app2-service-bbb222
-            namespace: default
-            labels:
-              kubernetes.io/service-name: app2-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.3.21"]
-              targetRef:
-                kind: Pod
-                name: app2-pod-1
-          ports:
-            - port: 80
-              protocol: TCP
     assertions:
       - type: haproxy_valid
         description: HAProxy configuration must be syntactically valid
@@ -1219,26 +1098,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc123
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          addressType: IPv4
-          endpoints:
-            - addresses:
-                - 10.0.0.1
-              conditions:
-                ready: true
-              targetRef:
-                kind: Pod
-                name: api-pod-1
-          ports:
-            - port: 8080
-              protocol: TCP
     assertions:
       - type: haproxy_valid
         description: HAProxy configuration must be syntactically valid
@@ -1282,19 +1141,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: api-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: api-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with regex $ anchor in CORS origin
@@ -1352,19 +1198,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: contains
         target: rendering_error
@@ -1423,19 +1256,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -1476,19 +1296,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -1531,19 +1338,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -1582,19 +1376,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -1645,19 +1426,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid with map-based SSL redirect
@@ -1702,22 +1470,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-              targetRef:
-                kind: Pod
-                name: test-pod-1
-          ports:
-            - port: 8080
       haproxy-pods:
         - apiVersion: v1
           kind: Pod
@@ -1783,22 +1535,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-              targetRef:
-                kind: Pod
-                name: test-pod-1
-          ports:
-            - port: 8080
       haproxy-pods:
         - apiVersion: v1
           kind: Pod

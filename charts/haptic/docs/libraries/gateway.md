@@ -50,6 +50,8 @@ The Gateway API library hooks into these extension points from base.yaml. Snippe
 | `frontend-filters-*` | `frontend-filters-500-gateway-response-header` | `ResponseHeaderModifier` filter |
 | `frontend-filters-*` | `frontend-filters-500-gateway-redirect` | `RequestRedirect` filter |
 | `frontend-filters-*` | `frontend-filters-500-gateway-urlrewrite` | `URLRewrite` filter |
+| `http-bind-extra-*` | `http-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port>` per non-default Gateway HTTP listener port (skips chart-static `httpPort` and `httpsPort` to avoid duplicate-bind errors) |
+| `https-bind-extra-*` | `https-bind-extra-050-gateway-multi-port-bind` | One `bind *:<port> ssl crt-list ...` per non-default Gateway HTTPS listener port (skips chart-static `httpsPort` and `httpPort` to avoid duplicate-bind errors); reuses `util-ssl-bind-options` so the SSL handshake matches the chart-static HTTPS bind |
 | `status-patches-*` | `status-patches-200-gateway` | Patches Gateway / HTTPRoute / GRPCRoute `status` (Accepted, ResolvedRefs, attachedRoutes, addresses) |
 
 ### Injecting Custom Configuration
@@ -767,6 +769,19 @@ These headers are useful for:
 - Debugging complex routing configurations
 
 ---
+
+## Per-Gateway Kubernetes Resources
+
+Two Gateway-API features cause the gateway library to emit additional Kubernetes resources alongside the chart's main HAProxy Service. Both flow through the controller CRD's top-level `spec.k8sResources` map (sibling of `templateSnippets`, `maps`, `files`, `sslCertificates`); the controller renderer parses the rendered YAML and the resourceapplier reconciles each emitted resource via Server-Side Apply with field manager `haptic` and a `controller=true` `OwnerReference` to the `HAProxyTemplateConfig` CR (so cascade-delete / `helm uninstall` GCs them).
+
+| Template name | Triggered when | Emits |
+|---------------|----------------|-------|
+| `gateway-static-addresses` | A Gateway's `spec.addresses[]` lists at least one valid `IPAddress` entry — `SupportGatewayStaticAddresses` (Extended). | One `LoadBalancer` Service per such Gateway in the controller's namespace, named `gw-<gateway-namespace>-<gateway-name>`, carrying the requested addresses via `metallb.universe.tf/loadBalancerIPs` annotation (and `spec.loadBalancerIP` for non-MetalLB cloud LBs). The Service selects the chart's shared HAProxy pods, so the per-Gateway IP routes to the same data plane the rest of the cluster uses. |
+| `gateway-infrastructure-propagation` | A Gateway sets `spec.infrastructure` (labels and / or annotations) but no `spec.addresses[]` — `SupportGatewayInfrastructurePropagation` (Extended). | One headless `ClusterIP` Service per such Gateway, also named `gw-<gateway-namespace>-<gateway-name>`. The Service has a placeholder `marker` port and an empty selector — its only purpose is to surface the propagated `spec.infrastructure` labels and annotations on a discoverable Kubernetes object. |
+
+Both templates draw their data from the per-Gateway computation that already runs during `haproxy.cfg` rendering (the listener-status block in `frontends-500-gateway-listener-status`). That block stashes the per-Gateway Service spec into the per-render `shared` cache (`shared.Get("gatewayStaticAddressServices")` / `gatewayInfrastructureServices`) keyed by `<namespace>/<name>`; the `k8sResources` templates read the same map back during their post-`haproxyConfig` render pass and emit one Service per entry. Multi-doc YAML (`---`-separated) is used because a single template emits zero, one, or many Services depending on cluster state.
+
+These templates replace the previous in-template `renderResource()` calls. The semantics on the cluster are unchanged: same Service name, same selector, same ownership story. The wire-up is now declarative — anyone reading the rendered `HAProxyTemplateConfig` sees the templates explicitly under `spec.k8sResources`, and the controller's overlay-store dry-run path can validate them like any other rendered output.
 
 ## Features Summary
 
