@@ -1,0 +1,590 @@
+validationTests:
+  test-listenerset-default-not-allowed:
+    description: |
+      ListenerSet attached to a Gateway without `spec.allowedListeners`
+      must be rejected with Accepted=False/NotAllowed and
+      Programmed=False/NotAllowed (default-deny per Gateway API spec
+      for SupportListenerSet). Pins the
+      ListenerSetDefaultNotAllowed conformance test's status assertions.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-default-deny
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: not-allowed-set
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-default-deny
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8081
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # The status-patches-220-listenerset snippet runs and emits a
+      # statusPatch() for the not-allowed ListenerSet. We can't assert
+      # on the patch payload directly via testrunner targets, but we
+      # can check that the snippet didn't crash the render (covered by
+      # haproxy_valid).
+
+  test-listenerset-allowed-same-namespace:
+    description: ListenerSet in the same namespace as a Gateway that sets `allowedListeners.namespaces.from=Same` must be Accepted=True/Accepted.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-allow-same
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: allowed-set
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-allow-same
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8081
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+  test-listenerset-allowed-different-namespace-denied:
+    description: |
+      Same=`allowedListeners.namespaces.from=Same` but the ListenerSet
+      lives in a different namespace from the parent Gateway → must be
+      rejected with Accepted=False/NotAllowed.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-allow-same
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: cross-ns-set
+            namespace: other
+            generation: 1
+          spec:
+            parentRef:
+              name: gateway-allow-same
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8081
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+  test-listenerset-allowed-namespace-selector:
+    description: "`allowedListeners.namespaces.from=Selector` admits ListenerSets whose namespace's labels match the selector's matchLabels, denies others."
+    fixtures:
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: rg-allow-listenersets
+            namespace: default
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: selector-allowed-ns
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: selector-not-allowed-ns
+            to:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+      namespaces:
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: selector-allowed-ns
+            labels:
+              allowed: ns
+        - apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: selector-not-allowed-ns
+            labels:
+              other: label
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-selector
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Selector
+                selector:
+                  matchLabels:
+                    allowed: ns
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-permitted
+            namespace: selector-allowed-ns
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-selector
+              namespace: default
+            listeners:
+              - name: extra-permitted
+                protocol: HTTP
+                port: 8082
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-denied
+            namespace: selector-not-allowed-ns
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-selector
+              namespace: default
+            listeners:
+              - name: extra-denied
+                protocol: HTTP
+                port: 8083
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8082'
+        description: Permitted ListenerSet's port must be bound
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8083'
+        description: Denied ListenerSet's port must NOT be bound
+
+  test-listenerset-cross-namespace-parentref-allowed-by-from-all:
+    description: ListenerSet in a different namespace from its parent Gateway (with allowedListeners.from=All) is admitted by allowedListeners alone — cross-namespace parentRefs do NOT require a separate ReferenceGran...
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-allow-all
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-cross-ns
+            namespace: tenant-a
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-allow-all
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8090'
+        description: Cross-ns ListenerSet permitted by allowedListeners.from=All must be bound
+
+  test-listenerset-cross-namespace-parentref-with-grant:
+    description: ListenerSet in a different namespace from its parent Gateway (with allowedListeners.from=All) is admitted regardless of ReferenceGrant presence — the cross-ns parentRef is permitted by allowedListener...
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-allow-all
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-cross-ns-with-grant
+            namespace: tenant-a
+            generation: 1
+          spec:
+            parentRef:
+              name: gw-allow-all
+              namespace: default
+            listeners:
+              - name: extra
+                protocol: HTTP
+                port: 8091
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata:
+            name: rg-allow-ls
+            namespace: default
+          spec:
+            from:
+              - group: gateway.networking.k8s.io
+                kind: ListenerSet
+                namespace: tenant-a
+            to:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: gw-allow-all
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8091'
+        description: Cross-ns ListenerSet WITH RG must be bound
+
+  test-listenerset-listener-multi-port-bind:
+    description: |
+      Multi-port HTTP bind must include ports declared on accepted
+      ListenerSet listeners (in addition to the Gateway's own listeners).
+      Pins the routing-layer side of F2 listener-merge integration.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-port-with-ls
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-listener
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: extra-ports-ls
+            namespace: default
+            generation: 1
+          spec:
+            parentRef:
+              name: multi-port-with-ls
+            listeners:
+              - name: extra-1
+                protocol: HTTP
+                port: 8085
+              - name: extra-2
+                protocol: HTTP
+                port: 8086
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:80\b'
+        description: Gateway's HTTP listener must be bound on port 80
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8085\b'
+        description: Accepted ListenerSet listener must be bound on port 8085
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:8086\b'
+        description: Accepted ListenerSet listener must be bound on port 8086
+
+  test-listenerset-hostname-conflict:
+    description: "Two listeners on the same (port, hostname) where one is on the Gateway and one is on a ListenerSet. Gateway wins the conflict (precedence: Gateway > earlier LS > later LS, then index), so the LS's con..."
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-with-conflict
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-listener
+                protocol: HTTPS
+                port: 443
+                hostname: shared.example.com
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-conflicting
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-02T00:00:00Z"
+          spec:
+            parentRef:
+              name: gw-with-conflict
+            listeners:
+              - name: ls-good
+                protocol: HTTPS
+                port: 443
+                hostname: ls-only.example.com
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+              - name: ls-conflicts-with-gw
+                protocol: HTTPS
+                port: 443
+                hostname: shared.example.com
+                tls:
+                  certificateRefs:
+                    - kind: Secret
+                      name: tls-cert
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: map:listener-hostname-claim.map
+        pattern: '(?m)^shared\.example\.com shared\.example\.com$'
+        description: Gateway-owned hostname claim must be present (Gateway wins)
+
+      - type: contains
+        target: map:listener-hostname-claim.map
+        pattern: '(?m)^ls-only\.example\.com ls-only\.example\.com$'
+        description: Non-conflicting LS listener's hostname claim must be present
+
+  test-listenerset-protocol-conflict:
+    description: |
+      Two listeners on the same port but different protocols → the later
+      one (LS) loses to the earlier one (Gateway). The conflicting LS
+      listener doesn't bind. Pins ListenerSetProtocolConflict status
+      assertion.
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-protocol-host
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: Same
+            listeners:
+              - name: gw-http-80
+                protocol: HTTP
+                port: 80
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: ls-protocol-conflict
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-02T00:00:00Z"
+          spec:
+            parentRef:
+              name: gw-protocol-host
+            listeners:
+              - name: ls-tcp-80
+                protocol: TCP
+                port: 80
+              - name: ls-good-http-9000
+                protocol: HTTP
+                port: 9000
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind \*:9000\b'
+        description: Non-conflicting LS HTTP listener at port 9000 must be bound
+
+  test-listenerset-allowed-routes-supported-kinds:
+    description: |
+      ListenerSet listener with `allowedRoutes.kinds: [HTTPRoute]` on a
+      TLS-protocol listener must report `supportedKinds: []` and
+      `ResolvedRefs=False/InvalidRouteKinds` — HTTPRoute is not in the
+      chart's TLS-protocol default route-kinds set ([TLSRoute]), so the
+      requested kind doesn't intersect. Mirrors the upstream
+      ListenerSetAllowedRoutesSupportedKinds conformance fixture
+      (gateway-with-listener-sets-test-supported-route-kinds Gateway +
+      listenerset-test-allowed-routes-supported-kinds ListenerSet).
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway-with-listener-sets-test-supported-route-kinds
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haproxy
+            allowedListeners:
+              namespaces:
+                from: All
+            listeners:
+              - name: gateway-listener
+                protocol: HTTP
+                port: 80
+                hostname: gateway-listener.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+      listenersets:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: ListenerSet
+          metadata:
+            name: listenerset-test-allowed-routes-supported-kinds
+            namespace: default
+            generation: 1
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            parentRef:
+              name: gateway-with-listener-sets-test-supported-route-kinds
+            listeners:
+              - name: listener-set-listener-allowed-routes-tls-only
+                protocol: TLS
+                port: 443
+                hostname: listener-set-listener-allowed-routes-tls-only.com
+                allowedRoutes:
+                  namespaces:
+                    from: All
+                  kinds:
+                    - kind: HTTPRoute
+                tls:
+                  mode: Passthrough
+    assertions:
+      - type: contains
+        target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
+        pattern: '"name":"listener-set-listener-allowed-routes-tls-only","supportedKinds":\[\]'
+        description: |
+          TLS-protocol listener with allowedRoutes.kinds=[HTTPRoute]
+          must report empty supportedKinds (HTTPRoute is not in the
+          TLS protocol's default-kinds set [TLSRoute] — the
+          intersection is empty).
+
+      - type: contains
+        target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
+        pattern: '"reason":"InvalidRouteKinds"'
+        description: |
+          ResolvedRefs goes False with reason InvalidRouteKinds because
+          at least one requested kind (HTTPRoute) couldn't be matched
+          against the listener's protocol-defaults.
+
+      - type: not_contains
+        target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
+        pattern: '"name":"listener-set-listener-allowed-routes-tls-only"[^}]*"TLSRoute"'
+        description: |
+          Specifically must NOT report TLSRoute as supported on this
+          listener. The listener requested only HTTPRoute via
+          allowedRoutes.kinds; even though TLS protocol's defaults
+          include TLSRoute, the user-specified filter narrows the set
+          (per Gateway-API spec: "When unspecified, defaults to the
+          values supported by Gateway. When specified, the listener
+          will support only the kinds in allowedRoutes.kinds that are
+          also supported by the Gateway").

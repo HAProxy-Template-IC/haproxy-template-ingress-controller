@@ -99,6 +99,7 @@ const (
 	EventTypeInstanceDeployed         = "instance.deployed"
 	EventTypeInstanceDeploymentFailed = "instance.deployment.failed"
 	EventTypeDeploymentCompleted      = "deployment.completed"
+	EventTypeDeploymentSkipped        = "deployment.skipped"
 	EventTypeDeploymentCancelRequest  = "deployment.cancel.request"
 	EventTypeDriftPreventionTriggered = "drift.prevention.triggered"
 

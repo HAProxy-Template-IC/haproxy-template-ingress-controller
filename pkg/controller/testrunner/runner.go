@@ -364,29 +364,16 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		"fixture_count", len(httpFixtures))
 
 	// 4. Parse current config if provided (for slot-aware server assignment testing)
-	var currentConfig *parserconfig.StructuredConfig
-	if test.CurrentConfig != "" {
-		p, err := parser.New()
-		if err != nil {
-			result.Passed = false
-			result.RenderError = fmt.Sprintf("creating parser for currentConfig: %v", err)
-			result.Duration = time.Since(startTime)
-			return result
-		}
-		currentConfig, err = p.ParseFromString(test.CurrentConfig)
-		if err != nil {
-			result.Passed = false
-			result.RenderError = fmt.Sprintf("parsing currentConfig: %v", err)
-			result.Duration = time.Since(startTime)
-			return result
-		}
-		r.logger.Log(context.Background(), logging.LevelTrace, "Parsed currentConfig for test",
-			"test", testName,
-			"backends", len(currentConfig.Backends))
+	currentConfig, parseErr := r.parseCurrentConfig(testName, test.CurrentConfig)
+	if parseErr != "" {
+		result.Passed = false
+		result.RenderError = parseErr
+		result.Duration = time.Since(startTime)
+		return result
 	}
 
 	// 5. Render HAProxy configuration and auxiliary files (using worker-specific engine)
-	haproxyConfig, auxiliaryFiles, includeStats, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.ExtraContext)
+	rendered, err := r.renderWithStores(engine, fixtureStores, validationPaths, httpStore, currentConfig, test.ExtraContext)
 	if err != nil {
 		result.RenderError = dataplane.SimplifyRenderingError(err)
 
@@ -401,10 +388,16 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 		// Some tests expect rendering to fail (negative tests with rendering_error assertions)
 	} else {
 		// Store rendered content for --dump-rendered flag
-		result.RenderedConfig = haproxyConfig
-		r.storeAuxiliaryFiles(&result, auxiliaryFiles)
+		result.RenderedConfig = rendered.HAProxyConfig
+		r.storeAuxiliaryFiles(&result, rendered.AuxiliaryFiles)
+		if len(rendered.K8sResources) > 0 {
+			result.RenderedK8sResources = rendered.K8sResources
+		}
+		if len(rendered.StatusPatches) > 0 {
+			result.RenderedStatusPatches = rendered.StatusPatches
+		}
 		// Store include stats for --profile-includes flag
-		result.IncludeStats = includeStats
+		result.IncludeStats = rendered.IncludeStats
 	}
 
 	// 6. Build template context for JSONPath assertions
@@ -421,7 +414,7 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 	}
 
 	// 8. Run all assertions (whether rendering succeeded or failed)
-	r.executeAssertions(ctx, &result, test, haproxyConfig, auxiliaryFiles, templateContext, validationPaths, renderDeps)
+	r.executeAssertions(ctx, &result, test, rendered.HAProxyConfig, rendered.AuxiliaryFiles, rendered.K8sResources, rendered.StatusPatches, templateContext, validationPaths, renderDeps)
 
 	// Test passes if either:
 	// - Rendering succeeded AND all assertions passed
@@ -432,6 +425,29 @@ func (r *Runner) runSingleTest(ctx context.Context, testName string, test *confi
 
 	result.Duration = time.Since(startTime)
 	return result
+}
+
+// parseCurrentConfig parses the optional `currentConfig` block from a test
+// definition. Returns the parsed config (or nil if the test didn't supply
+// one) and a non-empty error message string when parsing failed; the message
+// is intended to land directly in TestResult.RenderError so the caller can
+// stop with a uniform short-circuit shape.
+func (r *Runner) parseCurrentConfig(testName, raw string) (cfg *parserconfig.StructuredConfig, errMsg string) {
+	if raw == "" {
+		return nil, ""
+	}
+	p, err := parser.New()
+	if err != nil {
+		return nil, fmt.Sprintf("creating parser for currentConfig: %v", err)
+	}
+	cfg, err = p.ParseFromString(raw)
+	if err != nil {
+		return nil, fmt.Sprintf("parsing currentConfig: %v", err)
+	}
+	r.logger.Log(context.Background(), logging.LevelTrace, "Parsed currentConfig for test",
+		"test", testName,
+		"backends", len(cfg.Backends))
+	return cfg, ""
 }
 
 // storeAuxiliaryFiles stores rendered auxiliary files in the test result for --dump-rendered flag.

@@ -87,6 +87,16 @@ Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:
 
 See ADR-0002 for the rationale (centralized vs decentralized loading rules).
 
+### Split-library directories
+
+A library that has grown past comfortable one-file size may live as a directory of fragments instead of a single YAML file. The convention (see ADR-0008):
+
+- Add a directory entry like `"libraries/foo/"` (trailing slash) to `$libraryFiles` in place of `"libraries/foo.yaml"`.
+- Inside the directory, `_index.yaml` is required and acts as the load-rule authority — it carries the `_helm_load` block and any small structural pieces (typically `watchedResources`).
+- All other YAML files at the top level, plus any YAML files one level deep (e.g. `tests/foo.yaml`), are fragment files. Fragments contribute entries to `templateSnippets`, `validationTests`, `k8sResources`, etc., but must NOT carry their own `_helm_load` block.
+- Fragments merge into the per-library accumulator in lexicographic order (numeric prefixes like `10-features.yaml` are the idiomatic ordering hint) before inject/unset/strip/cross-library merge runs. Each `templateSnippets` / `validationTests` / `k8sResources` entry must be declared in exactly one fragment — duplicates would have the lexicographically-later file win, silently.
+- Glob depth is one level (Helm's `Files.Glob` doesn't recurse). One optional `tests/` subdirectory per split library is the supported convention; deeper nesting is not.
+
 ### Library Knowledge Hierarchy
 
 Libraries form a dependency hierarchy - each library may only reference snippets and variables from libraries it "knows about":
@@ -239,6 +249,8 @@ direct field access.
 
 The base template uses `render_glob` to discover and render snippets from all libraries. Snippets are rendered in alphabetical order, so numeric prefixes control execution order.
 
+In addition to the snippet-based extension points below, libraries may declare full Kubernetes resources via the top-level `k8sResources:` map (sibling of `templateSnippets:`, `maps:`, `files:`, `sslCertificates:`). Each entry is a Scriggo template with full engine context (`resources`, filters, snippets, `fileRegistry`, `extraContext`, `shared`); the rendered output is parsed as one or more YAML documents (multi-doc supported via `---`) and applied via Server-Side Apply with field manager `haptic`. The controller injects an `OwnerReference` to the `HAProxyTemplateConfig` CR (`controller=true`, `blockOwnerDeletion=true`) so cascade-delete (e.g. `helm uninstall`) removes the resources. Use this for resources whose shape derives from listener / Ingress state — the `k8sResources.haproxy-service` entry in `base.yaml` is the canonical example. The `haproxy-haptic.org/ownership: partial` annotation on a rendered resource opts into partial-ownership SSA (no `managed-by` label, no orphan-cleanup tracking) for objects shared with another field manager.
+
 | Pattern | Purpose | Contributing Libraries |
 |---------|---------|----------------------|
 | `global-settings-*` | Global section directives (logging, process, paths, SSL) | base |
@@ -247,6 +259,8 @@ The base template uses `render_glob` to discover and render snippets from all li
 | `features-*` | Feature registration (SSL, TLS certs) | gateway, haproxytech, ingress, ssl |
 | `backends-*` | Backend definitions | gateway, ingress, ssl |
 | `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
+| `http-bind-extra-*` | Additional HTTP-frontend `bind *:<port>` directives (Gateway HTTP listener ports) | gateway |
+| `https-bind-extra-*` | Additional HTTPS-frontend `bind *:<port> ssl crt-list ...` directives (Gateway HTTPS listener ports) | gateway |
 | `frontend-extra-*` | Early frontend directives after bind (options, captures, ACLs) | (user) |
 | `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
 | `frontend-filters-*` | Request/response filters (after routing) | gateway, haproxytech |
@@ -1681,6 +1695,25 @@ Control whitespace around template tags:
 {{ item }}
 {%- end -%}
 ```
+
+**Both flavours strip ALL adjacent whitespace including newlines** —
+Jinja2-compatible "trim across line boundaries" semantics
+(`internal/compiler/parser.go:trimAllTrailing` / `trimAllLeading` in
+the Scriggo fork). This applies equally to comment blocks:
+
+| Form | Effect on surrounding whitespace |
+|------|----------------------------------|
+| `{# ... #}` | Preserve both sides |
+| `{#- ... #}` | Strip ALL leading whitespace (incl. newline) |
+| `{# ... -#}` | Strip ALL trailing whitespace (incl. newline) |
+| `{#- ... -#}` | Strip ALL whitespace (incl. newlines) on both sides |
+
+When the directive following a comment block must remain on its own
+line (e.g. an HAProxy `# section-marker` followed by `http-request
+set-var ...`), use the non-stripping `{# ... #}` form. The stripping
+form will fuse the marker with the directive into a single comment
+line and silently drop the directive — visible in the rendered config
+as `# section-markerhttp-request set-var(...)` (no separator).
 
 ### Scriggo vs Jinja2 Syntax Comparison
 

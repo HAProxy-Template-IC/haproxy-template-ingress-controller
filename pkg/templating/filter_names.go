@@ -54,6 +54,14 @@ const (
 	// Useful when append() returns []any but you need sorted strings.
 	FuncSortStrings = "sort_strings"
 
+	// FuncSortInts sorts a []any slice of integer values numerically.
+	// Useful for sorting port numbers, IDs, or any other integer keys
+	// where lexicographic sort_strings ordering would be wrong
+	// (e.g. "10" before "2"). Non-integer entries are coerced via
+	// toint() and sort to the front (toint of a non-numeric value
+	// returns 0).
+	FuncSortInts = "sort_ints"
+
 	// String manipulation functions (Scriggo).
 
 	// FuncStringsContains checks if a string contains a substring.

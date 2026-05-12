@@ -30,27 +30,31 @@ spec:
 
   # Ingress rules - what can access HAProxy
   ingress:
-    # Allow traffic on HTTP/HTTPS ports
+    {{- if $np.allowExternal }}
+    # Permissive mode: allow ALL TCP traffic from anywhere. The chart
+    # already declares the workload as externally reachable; restricting
+    # by port adds no security and would block dynamic Gateway-listener
+    # ports added by the controller via partial-SSA on the Service. This
+    # rule covers the static http/https/stats ports plus any
+    # gw-<port>-<proto> entries the gateway library writes onto
+    # haptic-haproxy.
+    - {}
+    {{- else }}
+    # Restrictive mode: explicit port + source allowlist.
     - ports:
         - port: {{ $ports.http }}
           protocol: TCP
         - port: {{ $ports.https }}
           protocol: TCP
-      {{- if not $np.allowExternal }}
-      # Restrictive mode - only allow from specific sources
       from:
         {{- with $np.allowedSources }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- end }}
-      # When allowExternal: true, no 'from' clause = allow from ANY source
-      # This is the standard Kubernetes pattern for allowing external traffic
 
     # Allow stats checks
     - ports:
         - port: {{ $ports.stats }}
           protocol: TCP
-      {{- if not $np.allowExternal }}
       from:
         {{- with $np.allowedSources }}
         {{- toYaml . | nindent 8 }}
@@ -58,7 +62,7 @@ spec:
         # Default to same-namespace when no sources specified
         - podSelector: {}
         {{- end }}
-      {{- end }}
+    {{- end }}
 
     # Allow HAProxy Dataplane API access from controller
     - ports:

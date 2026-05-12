@@ -270,38 +270,6 @@ templateSnippets:
   # ============================================================================
   # Annotation Helpers
   # ============================================================================
-
-  util-haproxy-ingress-helpers:
-    template: |
-      {#- HAProxy-Ingress annotation processing helpers -#}
-
-      {#- Gets haproxy-ingress.github.io/<name> annotation with default -#}
-      {% macro HIAnn(ingress any, name string, def string) string %}
-        {%% show ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/" + name) | fallback(def) | tostring() %%}
-      {% end %}
-
-      {#- Gets Ingress key as ns/name -#}
-      {% macro HIKey(ingress any) string %}
-        {%% show (ingress | dig("metadata", "namespace") | fallback("")) + "/" + (ingress | dig("metadata", "name") | fallback("")) %%}
-      {% end %}
-
-      {#- Extracts hosts from Ingress rules -#}
-      {% macro HIHosts(ingress any) []any %}
-        {%%
-          var hosts = []any{}
-          for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) {
-            if h := rule | dig("host"); h != nil {
-              hosts = append(hosts, h)
-            }
-          }
-          show hosts
-        %%}
-      {% end %}
-
-  # ============================================================================
-  # Backend Directives - Phase 1: Timeouts, Load Balancing, Health Checks
-  # ============================================================================
-
   backend-directives-600-haproxy-ingress-timeouts:
     template: |
       {#-
@@ -1782,19 +1750,6 @@ validationTests:
             ports:
               - port: 80
                 targetPort: 8080
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: timeout-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: timeout-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1846,19 +1801,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: lb-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: lb-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1900,19 +1842,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: health-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: health-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -1954,19 +1883,6 @@ validationTests:
           spec:
             ports:
               - port: 443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: secure-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: secure-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8443
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2008,19 +1924,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: h2-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: h2-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2062,19 +1965,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: snippet-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: snippet-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2126,19 +2016,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: redirect-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: redirect-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2181,19 +2058,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: hsts-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: hsts-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2312,19 +2176,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: cors-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: cors-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2376,19 +2227,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: approot-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: approot-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2434,19 +2272,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: exact-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: exact-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2495,19 +2320,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: prefix-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: prefix-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2549,19 +2361,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: begin-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: begin-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2592,15 +2391,7 @@ validationTests:
         description: Map entry must carry the `BACKEND:<backend_name>` qualifier prefix.
 
   test-haproxy-ingress-path-type-regex:
-    description: |
-      HAProxy-Ingress path-type=regex annotation produces a path-regex.map
-      row keyed by the literal regex pattern with a `BACKEND:<backend_name>`
-      qualifier value. base.yaml's frontend-routing-logic looks this up
-      via `map_reg(...)` so a request matching the regex resolves to the
-      named backend rather than falling through to default_backend.
-      Catches the historical three-way bug in
-      `map-path-regex-600-haproxy-ingress`: missing BACKEND: prefix,
-      `render` instead of macro call, and no MapKeyForHost normalisation.
+    description: "HAProxy-Ingress path-type=regex annotation produces a path-regex.map row keyed by the literal regex pattern with a `BACKEND:<backend_name>` qualifier value. base."
     fixtures:
       services:
         - apiVersion: v1
@@ -2611,19 +2402,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: regex-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: regex-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2661,15 +2439,7 @@ validationTests:
           calls it, so the row is well-formed.
 
   test-haproxy-ingress-path-type-regex-wildcard-host:
-    description: |
-      HAProxy-Ingress path-type=regex annotation on a wildcard-host
-      Ingress produces a valid regex (no leading literal `*`). The
-      historical renderer used the raw rule.host value, leaking `*`
-      into the regex pattern; HAProxy then rejected the path-regex.map
-      at parse time with "regex '*.example.com/...' is invalid
-      (quantifier does not follow a repeatable item)" and the entire
-      config failed to load. With MapKeyForHost normalisation, the key
-      becomes `.example.com<pathRegex>` which is a well-formed regex.
+    description: HAProxy-Ingress path-type=regex annotation on a wildcard-host Ingress produces a valid regex (no leading literal `*`). The historical renderer used the raw rule.
     fixtures:
       services:
         - apiVersion: v1
@@ -2680,19 +2450,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: wild-regex-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: wild-regex-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2752,19 +2509,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: affinity-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: affinity-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2806,19 +2550,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: affinity-custom-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: affinity-custom-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2875,19 +2606,6 @@ validationTests:
           spec:
             ports:
               - port: 443
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: passthrough-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: passthrough-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8443
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -2950,19 +2668,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: auth-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: auth-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3046,19 +2751,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: contains
         target: rendering_error
@@ -3113,19 +2805,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: test-svc-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: test-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
     assertions:
       - type: haproxy_valid
         description: HAProxy config must be valid
@@ -3135,14 +2814,7 @@ validationTests:
         description: User must be in config
 
   test-haproxy-ingress-auth-tls-secret:
-    description: |
-      haproxy-ingress.github.io/auth-tls-secret references a
-      Secret whose `ca.crt` is written to the general file dir
-      (not ssl/ — Dataplane validates ssl/ uploads as cert+key)
-      and used in the crt-list line for the matching SNI as
-      `ca-file <path> verify required`. Combined with auth-tls-error-page
-      (302 redirect on verification failure) and auth-tls-cert-header
-      (forward client cert as headers to the backend on success).
+    description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line...
     fixtures:
       services:
         - apiVersion: v1
@@ -3153,19 +2825,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: mtls-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: mtls-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       secrets:
         - apiVersion: v1
           kind: Secret
@@ -3174,7 +2833,7 @@ validationTests:
             name: client-ca
           type: kubernetes.io/tls
           data:
-            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
         - apiVersion: v1
           kind: Secret
           metadata:
@@ -3182,8 +2841,8 @@ validationTests:
             name: server-tls
           type: kubernetes.io/tls
           data:
-            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURDekNDQWZPZ0F3SUJBZ0lVT2FGRWhyWlRXZ1JpbEorSFJCOWhJQnlzT2xNd0RRWUpLb1pJaHZjTkFRRUwKQlFBd0ZERVNNQkFHQTFVRUF3d0piRzlqWVd4b2IzTjBNQ0FYRFRJMU1URXhPVEU0TWpVMU1Wb1lEekl4TWpVeApNREkyTVRneU5UVXhXakFVTVJJd0VBWURWUVFEREFsc2IyTmhiR2h2YzNRd2dnRWlNQTBHQ1NxR1NJYjNEUUVCCkFRVUFBNElCRHdBd2dnRUtBb0lCQVFDWDJIQnA0V00rbFIvSXljLzRMR01qUHk0bUdFcUtVYm5xaFdRbU9nMXgKNHlnRkkzMkcyNWZYR1djZ0ZtVmg4YkZSZVFxdTB0Z1k2SUo5UE9nWmd5eHNhaUgzeldBMi8wbkdEejVvN2dYeQp5Z0VLaTdZY3M3bHNFNng0Y3lLK2tZaFdvZkNNaDJDck5LNWVCVzlRUnh3U3pieDNWREZqVS9HdVVaQnRBVWxICkRLd2ZCb0ZHNEhzaEZDUHl2Y3BuTlNLbUdwS0wwZ0UyczNBTHN5NWpqYjRpMnpyQng4Mng0Y3hQZUlCOEt6ckMKMDZvQXVwbzJDdUxaQTFMMkMrZVB5UlQ0QWxRUGNOL2l3WmdqMyt3eG8vWkFJaUxQK2NXbUY1dUdXeTZUREoybAo2K2FLYWFOajFCVVBWSkxTdW92WFhCMmc2akYxdWxIM1VWNVhPMlVMQ1ZzUkFnTUJBQUdqVXpCUk1CMEdBMVVkCkRnUVdCQlRHdi9VWG5nZ2tKaytpTkN0WnFwMStTSS9JaGpBZkJnTlZIU01FR0RBV2dCVEd2L1VYbmdna0prK2kKTkN0WnFwMStTSS9JaGpBUEJnTlZIUk1CQWY4RUJUQURBUUgvTUEwR0NTcUdTSWIzRFFFQkN3VUFBNElCQVFBSwozb3QyQTRyR05DWEpuZHB5OWlBa0dUUnk2SWxCcExKUlNJZ1JOWmlZQkU4SEtlWnUyR3JnUGI3V0ZUL1RyWkI2Cm5jMjhzVjdsYUNDNXlyZVUxeGVpL2ZjTllPSHlscWdBR2lFYmt2Um1za1hTd24wSlFaanpUNWl1a2hObVBkV0QKSWx0bWhCU3FsZlRsWFRYaytjMVlzeUJrVkN5TVNOdUZMd3pkODlLanJlU2xsZzE5clRVUmlLRzZGU0o2azBPSQprVE1lbWczRGZabldZSytNZnBxdjlVSDJSblBhMVJlbHJ4aTNLTWZoV0h2b2wxeUlVSGdnT0g3MkE4Wkd6eFZMClh4L09rSS8weXozUFhvM0xtUkRqczMzWUpXSzRTMmRwaFpyS3RMS2hqcEFIZzI1Nk8zUlN1bWd2d2NpYzZVRWMKaEpvWitneWZacUdBcnJ6M1dWTTkKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
-            tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV1d0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktVd2dnU2hBZ0VBQW9JQkFRQ1gySEJwNFdNK2xSL0kKeWMvNExHTWpQeTRtR0VxS1VibnFoV1FtT2cxeDR5Z0ZJMzJHMjVmWEdXY2dGbVZoOGJGUmVRcXUwdGdZNklKOQpQT2daZ3l4c2FpSDN6V0EyLzBuR0R6NW83Z1h5eWdFS2k3WWNzN2xzRTZ4NGN5SytrWWhXb2ZDTWgyQ3JOSzVlCkJXOVFSeHdTemJ4M1ZERmpVL0d1VVpCdEFVbEhES3dmQm9GRzRIc2hGQ1B5dmNwbk5TS21HcEtMMGdFMnMzQUwKc3k1ampiNGkyenJCeDgyeDRjeFBlSUI4S3pyQzA2b0F1cG8yQ3VMWkExTDJDK2VQeVJUNEFsUVBjTi9pd1pnagozK3d4by9aQUlpTFArY1dtRjV1R1d5NlRESjJsNithS2FhTmoxQlVQVkpMU3VvdlhYQjJnNmpGMXVsSDNVVjVYCk8yVUxDVnNSQWdNQkFBRUNnZjhKSHBhaHhVZVFtcVF1Q3ZEU2x0ZmRaZzMvZTdYK1dLb3h5NUVZT3FSVUVyQjAKbm8wTGJHVFNKbFJyT08wZDFNWXhmbk9GekdQdUd3aTdQTTB6dXcwUDljL1VjaUUxTEYvaDVVaDZSTkZXbzRzcwpkdmVaQWJKQksyMVFUcG5ubUJYNEhnRzBidXovVzBxZG12WDBmRkRUVUVmaFlzMFVpaFlad2d4S2Y2bEcrd1FzClZRclNiTzlMKzRJaHN2cnNSQlRGYU1nV0FMNGp0a3VpcTdSaVFkamRpejRkMmZJd1FtcVR5VEFvWlh5ZW9WRmEKM2JlRXh3aWtJME5pcXBNTWlaUjlXeTYzZkw2TlowZ0F5T0dKL09FaVU2Q3kyV2JCQzZrbVhnRlpOVW1Va1B5dAp3TXlqNTg5ZG1taDNaTGw1VEloNzVOc1dTNlVvTm1abzV3MmxLWUVDZ1lFQXh5N3dJeWxFbDlLaURvT1Q5V3gyCjFOcnp3bjQzLzVVbFAxakVFM0NiMXBiRDJCQjRUNXM4TmxCSEFOa0tFeFI1RUJnNTNYakw3aVlvTU1rWWUwL1YKRFVOdWFLRzlaaHhUSklualdPNURNUDE2NVFwNlBzdklObmlVZ1JLcW1Bc1hSNkNkN0NXeVIzcEZVOUZPcEJpWgo2aWt1eFVNYnZFWW8xVHNUWjB2Umw5RUNnWUVBd3lpNVNORWpEM2x6UHozcm5OVllRTEJBL2V1NS8wS1JXc2hQCmJVcit0YUszN1l4ZEJMV1JHOVpjOHd2ZU9pVWZTUHhWNmwyWnFRdVQ0VVVFdmYrbTlJWEZGZXZxUE1IanNZUVQKVVlRQVRxMkgwelF3Mm5kS2thdDlWSk81UVZKV252N0YxaWY5S3VPRFozbEhiUk96aEJjZjZXUWlBS0RNQWQ3cwpQNDNYbjBFQ2dZRUFxNmFacjlONmwxUWY4RjRYL2lLdzdaS2JDdnQzQ3J6ZlVvNE91Nm9Kd280K3pFNjFQL1ZKCm1JenFBNk1HK1pabEZpZXFobC81Ym94WGltTml3N0h5cXZGM2pwZ0QvcUZlVFZpL0lmNkN6UTlFLzJsZUhBdkYKeUp0MWJ4NUZBYTVkSzQ4UlNWYmJJcG9PY01NcUFHUnJEODdaelltZHQwekhGNnRIZDNkeGNtRUNnWUFzRWJNZApWVlNVZHZsbVM0WTc2UlUvcmsxT3lYODd1LzEwd1l6bUFpeFlPY0ZNM0FoWk91TGtwVmhoN2NrbDJpSWhhaEhBCmxaaFFTdlAreDRZVm5YaEcrVG9UQkMzbHdHYTVQRGpjakhGQlV3QTcyaW81K3Z3VXZ1UFRTSFJwNHJ6NnRFOWEKVjdkY2l2bXVVUDJuRE83Wm9oc3JxZGZmeW0rbThIN3FydzRFd1FLQmdEV1RqME82TXpyUUVhQVlrUVVucERVLwpYOFd5OGlPcStFYU5ZejNWWUtKSm5xVkJTeldLZDIrRFRQVmlvVHZqOVhVYkhGK1p3MW9ieXljcklDcVgrd0RCCkl4ZXBoMlBNNERKUHVlRnFJVzRqY3lQSkJuVGt4OVBuNUNKem1XSUJybE1vZjZON2tvWFIzMFBMbjlDRlRpNFoKa1dhTnhjR3BROVNldjVQeEoxL2QKLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQo=
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3229,14 +2888,7 @@ validationTests:
         description: auth-tls-cert-header forwards the client cert (base64 DER) on requests that presented a cert
 
   test-haproxy-ingress-auth-tls-error-page-injection-rejected:
-    description: |
-      An auth-tls-error-page value containing whitespace (or
-      newlines, tabs, etc.) must fail loudly — without validation,
-      the value would be interpolated into a `http-request redirect
-      location <url>` directive where whitespace is significant and
-      could be used to inject arbitrary HAProxy directives. Defence
-      in depth against any future code path where Ingress-write RBAC
-      isn't strictly scoped.
+    description: An auth-tls-error-page value containing whitespace (or newlines, tabs, etc.) must fail loudly — without validation, the value would be interpolated into a `http-request redirect location <url>` direct...
     fixtures:
       services:
         - apiVersion: v1
@@ -3247,19 +2899,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            name: mtls-service-abc
-            namespace: default
-            labels:
-              kubernetes.io/service-name: mtls-service
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3326,19 +2965,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-protected-svc-abc
-            labels:
-              kubernetes.io/service-name: hi-protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3411,19 +3037,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-protected-svc-abc
-            labels:
-              kubernetes.io/service-name: hi-protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3495,19 +3108,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3548,14 +3148,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-headers-request annotation
-      populates auth-forward-headers.map and threads through the
-      SPOE check-auth message's `forward_headers` arg, narrowing
-      (or extending — see snippet docstring) which captured request
-      headers the plugin forwards to the auth service. The
-      external-auth plugin v0.3.0+ falls back to its plugin-level
-      forward_headers list when this map lookup is empty.
+    description: "haproxy-ingress.github.io/auth-headers-request annotation populates auth-forward-headers.map and threads through the SPOE check-auth message's `forward_headers` arg, narrowing (or extending — see snip..."
     extraContext:
       spoaHub:
         enabled: true
@@ -3578,19 +3171,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3631,14 +3211,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request-extends-spoe-message:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-headers-request listing a custom
-      header (one not in the hardcoded six) must auto-extend the SPOE
-      check-auth message body with a `hdr_<name>=req.hdr(<Name>)`
-      capture, so the plugin actually sees the header. Headers that
-      ARE in the hardcoded six must NOT be re-emitted (would produce
-      a duplicate SPOE arg). Multiple ingresses listing the same
-      custom header must dedupe to a single capture.
+    description: haproxy-ingress.github.io/auth-headers-request listing a custom header (one not in the hardcoded six) must auto-extend the SPOE check-auth message body with a `hdr_<name>=req.
     extraContext:
       spoaHub:
         enabled: true
@@ -3661,19 +3234,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3745,15 +3305,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Two header spellings that differ only in dashes vs underscores
-      (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to
-      different strings but collapse to the same SPOE arg name
-      after dash→underscore replacement (`hdr_x_request_id`).
-      Without dedup on the post-replacement name, the chart would
-      emit two `hdr_x_request_id=...` tokens on the same args= line
-      — SPOE doesn't allow duplicate arg keys, so the parser's
-      handling becomes undefined. Regression test for that.
+    description: Two header spellings that differ only in dashes vs underscores (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to different strings but collapse to the same SPOE arg name after dash→underscore rep...
     extraContext:
       spoaHub:
         enabled: true
@@ -3776,19 +3328,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3842,14 +3381,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-succeed-fail:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail
-      annotations both populate auth-extract-headers.map (their union
-      per ingress) and produce per-unique-header HAProxy directives:
-      `http-request set-header` for pass (fires on success, allowed=true)
-      and `http-response set-header` for fail (fires on auth failure,
-      after the deny rule, gated on `auth_url -m found` and
-      `!allowed`).
+    description: haproxy-ingress.github.io/auth-headers-succeed and auth-headers-fail annotations both populate auth-extract-headers.
     extraContext:
       spoaHub:
         enabled: true
@@ -3872,19 +3404,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -3938,13 +3457,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      A header name in auth-headers-succeed / auth-headers-fail that
-      doesn't match the RFC 7230 token grammar (e.g. contains
-      whitespace, fetch syntax, or other special characters) must
-      fail loudly at template-render time. Defence in depth against
-      malformed annotation values being embedded into HAProxy
-      directives.
+    description: "A header name in auth-headers-succeed / auth-headers-fail that doesn't match the RFC 7230 token grammar (e.g."
     extraContext:
       spoaHub:
         enabled: true
@@ -3967,19 +3480,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: protected-svc-abc
-            labels:
-              kubernetes.io/service-name: protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4042,19 +3542,6 @@ validationTests:
           spec:
             ports:
               - port: 80
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-protected-svc-abc
-            labels:
-              kubernetes.io/service-name: hi-protected-svc
-          addressType: IPv4
-          endpoints:
-            - addresses: ["10.0.0.1"]
-          ports:
-            - port: 8080
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4123,16 +3610,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: hi-waf-svc }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-waf-svc-abc
-            labels: { kubernetes.io/service-name: hi-waf-svc }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4207,16 +3684,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: hi-shadow-svc }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: hi-shadow-svc-abc
-            labels: { kubernetes.io/service-name: hi-shadow-svc }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4475,13 +3942,7 @@ validationTests:
 
   test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and
-      haproxy-ingress.github.io/waf are present in the cluster, nginx's
-      "global rules + always dispatch" wins for dispatch (the
-      send-spoe-group line has no `if` clause). The waf-map is still
-      populated so per-path detect mode is respected — the deny rule
-      still has its `!{ var(txn.coraza_mode) -m str detect }` predicate.
+    description: "When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and haproxy-ingress.github.io/waf are present in the cluster, nginx's \"global rules + always dispatch\" wins for dispatch (the send-spoe-group..."
     extraContext:
       spoaHub:
         enabled: true
@@ -4508,16 +3969,6 @@ validationTests:
           kind: Service
           metadata: { namespace: default, name: coexist-svc }
           spec: { ports: [{ port: 80 }] }
-      endpoints:
-        - apiVersion: discovery.k8s.io/v1
-          kind: EndpointSlice
-          metadata:
-            namespace: default
-            name: coexist-svc-abc
-            labels: { kubernetes.io/service-name: coexist-svc }
-          addressType: IPv4
-          endpoints: [{ addresses: ["10.0.0.1"] }]
-          ports: [{ port: 8080 }]
       ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
@@ -4575,13 +4026,7 @@ validationTests:
 
   test-haproxy-ingress-waf-without-coraza-fails:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Ingress with haproxy-ingress.github.io/waf set while the spoaHub
-      coraza plugin is NOT enabled fails the render with an explicit
-      diagnostic. Silent ignore would hide a misconfiguration: the
-      operator wrote a per-Ingress WAF directive and nothing enforces
-      it. Mirrors the equivalent fail-loud for nginx-ingress's
-      /modsecurity-snippet.
+    description: Ingress with haproxy-ingress.github.io/waf set while the spoaHub coraza plugin is NOT enabled fails the render with an explicit diagnostic.
     extraContext:
       spoaHub:
         enabled: true

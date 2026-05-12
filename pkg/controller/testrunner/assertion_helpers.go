@@ -24,14 +24,36 @@ import (
 
 // resolveTarget resolves the target content based on the target specification.
 //
-// Target format: "haproxy.cfg" or "map:<name>" or "file:<name>" or "cert:<name>" or "rendering_error".
-func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dataplane.AuxiliaryFiles, renderError string) string {
+// Target format: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>",
+// "crt-list:<name>", "k8s:<template-name>", "status:<ns>/<name>:<phase>",
+// or "rendering_error".
+func (r *Runner) resolveTarget(target, haproxyConfig string, auxiliaryFiles *dataplane.AuxiliaryFiles, k8sResources, statusPatches map[string]string, renderError string) string {
 	if target == "rendering_error" {
 		return renderError
 	}
 
 	if target == names.MainTemplateName || target == "" {
 		return haproxyConfig
+	}
+
+	// k8sResources lookup by template name. Returns the rendered YAML
+	// (potentially multi-doc with `---` separators) for `k8s:<name>`.
+	if after, ok := strings.CutPrefix(target, "k8s:"); ok {
+		if k8sResources != nil {
+			return k8sResources[after]
+		}
+		return ""
+	}
+
+	// Status-patch lookup by `<namespace>/<name>:<phase>`. Returns the
+	// JSON-marshalled status payload that the corresponding
+	// statusPatch() template call emitted. Phase is one of
+	// rendered / deployed / renderFailed / deployFailed.
+	if after, ok := strings.CutPrefix(target, "status:"); ok {
+		if statusPatches != nil {
+			return statusPatches[after]
+		}
+		return ""
 	}
 
 	// Check for auxiliary file targets with type prefix

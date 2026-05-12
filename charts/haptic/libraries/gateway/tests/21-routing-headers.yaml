@@ -1,0 +1,539 @@
+validationTests:
+  test-httproute-header-exact:
+    description: HTTPRoute with exact header matching
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: v1-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: header-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    headers:
+                      - type: Exact
+                        name: X-Version
+                        value: v1
+                backendRefs:
+                  - name: v1-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_header-route_0\" \\} \\{ req\\.hdr\\(X-Version\\) \"v1\" \\}"
+        description: Must generate header exact match condition
+
+  test-httproute-header-regex:
+    description: HTTPRoute with regex header matching
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: regex-header-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    headers:
+                      - type: RegularExpression
+                        name: User-Agent
+                        value: "^Mozilla.*"
+                backendRefs:
+                  - name: api-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_regex-header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-header-route_0\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^Mozilla\\.\\*\" \\}"
+        description: Must generate header regex match condition
+
+  test-httproute-query-params:
+    description: HTTPRoute with query parameter matching
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: search-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: query-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /search
+                    queryParams:
+                      - type: Exact
+                        name: version
+                        value: v2
+                      - type: RegularExpression
+                        name: filter
+                        value: "^active.*"
+                backendRefs:
+                  - name: search-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_query-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_query-route_0\" \\} \\{ urlp\\(version\\) \"v2\" \\} \\{ urlp\\(filter\\) -m reg \"\\^active\\.\\*\" \\}"
+        description: Must generate query parameter match conditions
+
+  test-httproute-regex-dollar-escaping:
+    description: HTTPRoute with query parameter regex containing dollar signs for anchoring
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: api-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: regex-dollar-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    queryParams:
+                      - type: RegularExpression
+                        name: token
+                        value: "^secret[0-9]+$"
+                backendRefs:
+                  - name: api-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_regex-dollar-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_regex-dollar-route_0\" \\} \\{ urlp\\(token\\) -m reg \"\\^secret\\[0-9\\]\\+\\\\\\$\" \\}"
+        description: Must generate query parameter regex with escaped dollar sign
+
+  test-grpcroute-headers:
+    description: GRPCRoute with header matching (Exact and RegularExpression)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-api
+            namespace: default
+          spec:
+            ports:
+              - port: 9090
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: grpc-header-route
+            namespace: default
+          spec:
+            hostnames:
+              - grpc.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.API
+                      method: GetUser
+                    headers:
+                      - type: Exact
+                        name: X-API-Version
+                        value: v1
+                      - type: RegularExpression
+                        name: User-Agent
+                        value: "^grpc-.*"
+                backendRefs:
+                  - name: grpc-api
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-header-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\}.*\\{ req\\.hdr\\(X-API-Version\\) \"v1\" \\} \\{ req\\.hdr\\(User-Agent\\) -m reg \"\\^grpc-\\.\\*\" \\}"
+        description: Must generate header match conditions for GRPCRoute
+
+  test-grpcroute-method-regex:
+    description: GRPCRoute with RegularExpression method type
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-multi
+            namespace: default
+          spec:
+            ports:
+              - port: 9090
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: grpc-regex-route
+            namespace: default
+          spec:
+            hostnames:
+              - grpc.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: RegularExpression
+                      service: com.example.*
+                      method: Get.*
+                backendRefs:
+                  - name: grpc-multi
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-regex-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-regex-route_0\" \\} \\{ path -m reg \"/com\\.example\\.\\*/Get\\.\\*\" \\}"
+        description: |
+          GRPCRoute method match emits a `path` ACL — the URL path
+          fetch — not `req.hdr(:path)`. HAProxy's `req.hdr` targets
+          regular HTTP/1.1 headers and yields an empty string for the
+          HTTP/2 `:path` pseudo-header, so a `req.hdr(:path)` matcher
+          would silently never fire and gRPC traffic would fall
+          through to default_backend (404).
+
+  test-httproute-all-matchers:
+    description: HTTPRoute with all matcher types combined (method + headers + query params)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: combined-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: combined-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    method: POST
+                    headers:
+                      - type: Exact
+                        name: Content-Type
+                        value: application/json
+                    queryParams:
+                      - type: Exact
+                        name: version
+                        value: v2
+                backendRefs:
+                  - name: combined-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_combined-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_combined-route_0\" \\} \\{ method POST \\} \\{ req\\.hdr\\(Content-Type\\) \"application/json\" \\} \\{ urlp\\(version\\) \"v2\" \\}"
+        description: Must combine all matchers with AND logic
+
+  test-grpcroute-multiple-headers:
+    description: GRPCRoute with multiple header matchers of different types
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-multi-header
+            namespace: default
+          spec:
+            ports:
+              - port: 9090
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: grpc-multi-header-route
+            namespace: default
+          spec:
+            hostnames:
+              - grpc.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.API
+                      method: Create
+                    headers:
+                      - type: Exact
+                        name: X-Tenant-ID
+                        value: tenant1
+                      - type: Exact
+                        name: X-Environment
+                        value: production
+                      - type: RegularExpression
+                        name: Authorization
+                        value: "^Bearer .*"
+                backendRefs:
+                  - name: grpc-multi-header
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "\\{ req\\.hdr\\(X-Tenant-ID\\) \"tenant1\" \\} \\{ req\\.hdr\\(X-Environment\\) \"production\" \\} \\{ req\\.hdr\\(Authorization\\) -m reg \"\\^Bearer \\.\\*\" \\}"
+        description: Must combine all header matchers with AND logic
+
+  test-httproute-invalid-regex:
+    description: HTTPRoute with invalid regex pattern (negative test)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: test-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: invalid-route
+            namespace: default
+          spec:
+            hostnames:
+              - invalid.example.com
+            rules:
+              - matches:
+                  - headers:
+                      - type: RegularExpression
+                        name: X-Token
+                        value: "[invalid"  # Unclosed bracket - invalid regex
+                backendRefs:
+                  - name: test-service
+                    port: 80
+    assertions:
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "invalid\\.example\\.com"
+        description: Invalid regex should not generate routing config
+
+  test-httproute-header-matching-conformance-fixture:
+    description: |
+      Mirrors the upstream Gateway-API conformance suite's
+      HTTPRouteHeaderMatching fixture: a Gateway with a wildcard-hostname
+      HTTP listener on port 80, and an HTTPRoute whose rules use ONLY
+      header matchers (no path, no method, no host). This is the
+      scenario that fails in CI shards (404 instead of 200). The chart
+      must emit set-var statements that pick the right backend based on
+      header values, even though the request has no path-or-host
+      specificity that would normally drive map lookups.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: same-namespace
+            namespace: gateway-conformance-infra
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v2
+            namespace: gateway-conformance-infra
+          spec:
+            ports:
+              - port: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: header-matching
+            namespace: gateway-conformance-infra
+          spec:
+            parentRefs:
+              - name: same-namespace
+            rules:
+              - matches:
+                  - headers:
+                      - name: version
+                        value: one
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+              - matches:
+                  - headers:
+                      - name: version
+                        value: two
+                backendRefs:
+                  - name: infra-backend-v2
+                    port: 8080
+              - matches:
+                  - headers:
+                      - name: color
+                        value: blue
+                  - headers:
+                      - name: color
+                        value: green
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "\\{ req\\.hdr\\(version\\) \"one\" \\}"
+        description: |
+          The rule matching `version: one` must emit a header-value
+          predicate. Failing this means the chart silently dropped the
+          header matcher.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "\\{ req\\.hdr\\(color\\) \"blue\" \\}"
+        description: |
+          The rule matching `color: blue` (one of an OR-list of two
+          color values) must emit its predicate too.
+
+  test-httproute-header-edge-cases:
+    description: HTTPRoute with edge case header matching (special characters)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: edge-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: edge-route
+            namespace: default
+          spec:
+            hostnames:
+              - edge.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    headers:
+                      - type: Exact
+                        name: X-Special-Chars
+                        value: "value-with-dashes_and_underscores.dots"
+                backendRefs:
+                  - name: edge-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "\\{ req\\.hdr\\(X-Special-Chars\\) \"value-with-dashes_and_underscores\\.dots\" \\}"
+        description: Must handle special characters in header values

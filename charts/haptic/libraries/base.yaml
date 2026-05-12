@@ -97,41 +97,78 @@ templateSnippets:
   # Frontend Routing Logic
   # ============================================================================
 
-  frontend-routing-logic:
+  # ----------------------------------------------------------------------------
+  # util-routing-prefix / util-routing-suffix
+  #
+  # The two `frontend-routing-logic{,-regex-last}` variants share ~100 lines
+  # of host extraction + host_match cascade + listener_port translation
+  # (the prefix) and ~30 lines of qualifier parsing + MULTIBACKEND routing
+  # + owner-resource identity (the suffix). The only difference is the
+  # four path-matching set-var lines in the middle (regex's place in the
+  # cascade). Hoisting the prefix and suffix into shared snippets means
+  # there's exactly one source for the cascade — Gitar already caught a
+  # lockstep drift on this MR (the regex-last variant was missing the
+  # listener_port setup), and the shared snippet is what prevents the
+  # next one. The variants below are 1-line shells that render the
+  # prefix, emit their unique path-match cascade, and render the suffix.
+  # ----------------------------------------------------------------------------
+  util-routing-prefix:
     template: |-
-      {#-
-        Path-based routing with qualifier system for backend selection.
-
-        Qualifiers (set by map files, resolved here):
-          - BACKEND:<name> → Direct routing to named backend
-          - MULTIBACKEND:<weight>:<key> → Weighted routing via weighted-multi-backend.map
-
-        Path Matching Order: Exact > Regex > Prefix-exact > Prefix
-        (To select the alternative performance-first order — Exact > Prefix-exact >
-         Prefix > Regex — set controller.config.routing.regexMatchOrder=last in
-         values.yaml. The chart swaps in the frontend-routing-logic-regex-last
-         variant below at load time.)
-
-        Extension Points:
-          - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
-      -#}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
-      # base/frontend-routing-logic
-
       # Host and path extraction
       http-request set-var(txn.base) base
       http-request set-var(txn.path) path
+      # txn.host_full keeps the Host header verbatim (with any :port suffix)
+      # so port-pinned routes — Gateway listeners on non-default ports —
+      # match before the port-stripped fallback lookups. The full-host
+      # lookup only fires when a request actually carried a port,
+      # so the common port-default case has zero overhead.
+      http-request set-var(txn.host_full) req.hdr(Host),lower
       http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }})
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
+      # Seed host_match to '' so the cascade below can consistently use
+      # `len 0` to mean "no match yet" — works whether or not the
+      # `host_full -m sub :` gate fired on the first lookup.
+      http-request set-var(txn.host_match) str()
+      http-request set-var(txn.host_match) var(txn.host_full),map({{ mapPath("host.map") }},'') if { var(txn.host_full) -m sub : } { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
+      # Per-Gateway pod-port translation: phase 4's per-Gateway HTTPS
+      # binds listen on allocated pod ports (e.g. 18002) but the chart
+      # emits host/path map entries and redirect-filter port logic
+      # keyed by the original listener port (e.g. 8443). The
+      # pod-listener-port.map (populated by `features-170-pod-listener-
+      # port-map` from phase 1's allocator) maps pod port → listener
+      # port for each per-Gateway allocation. We translate
+      # unconditionally and stash the result in `txn.listener_port`
+      # so every downstream consumer (host.map fallback below,
+      # frontend-filters-500-gateway-redirect, any future port-aware
+      # logic) sees the correct user-facing listener port regardless
+      # of which bind the connection physically landed on. dst_port
+      # passes through unchanged for chart-static / non-allocated
+      # binds (the map lookup falls back to dst_port when the entry
+      # is absent).
+      http-request set-var(txn.dst_port) dst_port
+      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
+      http-request set-var(txn.listener_port) var(txn.dst_port) if !{ var(txn.listener_port) -m found }
+      # Per-listener-port fallback: when no hostname-based lookup
+      # matched, isolate routes by the inbound listener port.
+      # Resource libraries that emit listeners on non-default ports
+      # (e.g. Gateway API listener-port-matching) write
+      # `<host>:<port>` and / or `:<port>` entries into host.map.
+      #
+      # Gate: `len 0` rather than `!found`, because the host_full and
+      # host-regex lookups above may have already SET host_match (to
+      # an empty string when the lookup yielded no match). `-m found`
+      # would be true after that, blocking this fallback. `-m len 0`
+      # fires whenever the variable is set-but-empty, which is
+      # exactly the post-cascade state we want to recover from.
+      http-request set-var(txn.host_match) var(txn.host),concat(:,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
+      http-request set-var(txn.host_match) str(:),concat(,txn.listener_port,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
 
-      # Path matching: Exact > Regex > Prefix-exact > Prefix
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
-      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
-
+  util-routing-suffix:
+    template: |-
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # Parse qualifier type
       http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
 
@@ -164,6 +201,34 @@ templateSnippets:
       http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
       http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
 
+  frontend-routing-logic:
+    template: |-
+      {#-
+        Path-based routing with qualifier system for backend selection.
+
+        Qualifiers (set by map files, resolved here):
+          - BACKEND:<name> → Direct routing to named backend
+          - MULTIBACKEND:<weight>:<key> → Weighted routing via weighted-multi-backend.map
+
+        Path Matching Order: Exact > Regex > Prefix-exact > Prefix
+        (To select the alternative performance-first order — Exact > Prefix-exact >
+         Prefix > Regex — set controller.config.routing.regexMatchOrder=last in
+         values.yaml. The chart swaps in the frontend-routing-logic-regex-last
+         variant below at load time.)
+
+        Extension Points:
+          - frontend-matchers-advanced-* → Advanced matchers (method, headers, query)
+      -#}
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      # base/frontend-routing-logic
+      {{ render "util-routing-prefix" }}
+      # Path matching: Exact > Regex > Prefix-exact > Prefix
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
+      http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
+      {{ render "util-routing-suffix" }}
+
   frontend-routing-logic-regex-last:
     template: |-
       {#-
@@ -175,52 +240,19 @@ templateSnippets:
         the operator-visible HAProxyTemplateConfig output.
 
         Differs from the default variant only in the four path-matching set-var
-        lines below (regex moved to last). All other logic is identical and must
-        stay in lockstep with frontend-routing-logic.
+        lines below (regex moved to last); the shared prefix and suffix are
+        emitted via util-routing-prefix / util-routing-suffix to eliminate
+        lockstep drift.
       -#}
       {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
       # base/frontend-routing-logic (regex-last variant)
-
-      # Host and path extraction
-      http-request set-var(txn.base) base
-      http-request set-var(txn.path) path
-      http-request set-var(txn.host) req.hdr(Host),field(1,:),lower
-      http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }})
-      http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if !{ var(txn.host_match) -m found }
-      http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-
+      {{ render "util-routing-prefix" }}
       # Path matching: Exact > Prefix-exact > Prefix > Regex
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-exact.map") }})
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map({{ mapPath("path-prefix-exact.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_beg({{ mapPath("path-prefix.map") }}) if !{ var(txn.path_match) -m found }
       http-request set-var(txn.path_match) var(txn.host_match),concat(,txn.path,),map_reg({{ mapPath("path-regex.map") }}) if !{ var(txn.path_match) -m found }
-
-      # Parse qualifier type
-      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-
-      # Extension point: advanced matchers (method/header/query)
-      {{- render_glob "frontend-matchers-advanced-*" }}
-      http-request set-var(txn.path_match_qualifier) var(txn.path_match),field(1,:)
-
-      # MULTIBACKEND: weighted routing via random selection
-      http-request set-var(txn.total_weight) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.random_weight) rand(),mod(txn.total_weight) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.route_key) var(txn.path_match),field(3,:) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.lookup_key) var(txn.random_weight),concat(:,txn.route_key,) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-
-      # BACKEND: direct routing
-      http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
-
-      # Owner-resource identity (mirrors frontend-routing-logic; must stay
-      # in lockstep — see charts/CLAUDE.md "All other logic is identical").
-      http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
-      http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
-      http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
-      http-request set-var(txn.resource_namespace) var(req.gw_rule_id),field(1,_)   if { var(req.gw_rule_id) -m found }
-      http-request set-var(txn.resource_name)      var(req.gw_rule_id),field(2,_)   if { var(req.gw_rule_id) -m found }
-      http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
+      {{ render "util-routing-suffix" }}
 
   # ============================================================================
   # Backend Server Generation
@@ -820,6 +852,20 @@ templateSnippets:
       {%- else %}
       backend default_backend
           guid be:default_backend
+          # gRPC unmatched-request handling. We need a trailers-only style
+          # response (HEADERS frame with END_STREAM, no DATA) that carries
+          # content-type: application/grpc + grpc-status: 12. Without
+          # content-type, grpc-go reports "malformed header: missing HTTP
+          # content-type" and tears down the HTTP/2 connection, cancelling
+          # every sibling multiplexed stream.
+          #
+          # HAProxy's `http-request return` action strips `content-type`
+          # from `hdr` arguments when no body source is provided. We
+          # restore it via `http-after-response set-header`, which runs on
+          # responses produced by the `return` action.
+          http-request return status 200 hdr "grpc-status" "12" hdr "grpc-message" "Unimplemented" if { req.hdr(content-type) -m sub "application/grpc" }
+          http-after-response set-header content-type "application/grpc" if { res.hdr(grpc-status) -m found }
+          # Non-gRPC: plain HTTP/1.1 / HTTP/2 404.
           http-request return status 404
       {%- end %}
 
@@ -966,6 +1012,218 @@ files:
       <p>The server didn't respond in time.</p>
       </body></html>
 
+k8sResources:
+  # User-facing HAProxy LoadBalancer Service. Replaces the chart-static
+  # templates/haproxy-service.yaml main-Service block so the controller
+  # owns the Service end-to-end:
+  #
+  #   - The set of `spec.ports` is derived from listener state at render
+  #     time, not from chart-install-time defaults: the static
+  #     http/https/stats triple is augmented with `gw-<port>-<proto>`
+  #     entries for every Gateway / admitted ListenerSet listener whose
+  #     port is not one of {80, 443, 8404}.
+  #   - The resourceapplier injects an OwnerReference at apply time
+  #     (controller=true, blockOwnerDeletion=true), so `helm uninstall`
+  #     cascade-GCs this Service when the HAProxyTemplateConfig CR
+  #     disappears.
+  #
+  # Service identity (name + namespace) and chart-shaped fields
+  # (`type`, `loadBalancerIP`, `loadBalancerClass`,
+  # `loadBalancerSourceRanges`, `externalTrafficPolicy`,
+  # `internalTrafficPolicy`, `healthCheckNodePort`,
+  # `publishNotReadyAddresses`, annotations, labels, selector,
+  # per-port `nodePort`) are plumbed in from values.yaml via
+  # `extraContext.haproxyService` by `templates/haproxytemplateconfig.yaml`.
+  haproxy-service:
+    template: |
+      {%- var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback("")) %}
+      {%- var svcName = tostring(extraContext | dig("haproxyServiceName") | fallback("")) %}
+      {%- var svc = extraContext | dig("haproxyService") %}
+      {%- if ctrlNs == "" || svcName == "" || svc == nil %}{# Service identity not plumbed — chart bug; emit nothing. #}{%- else %}
+      {%%
+        var svcMap = svc.(map[string]any)
+        var svcType = tostring(svcMap | dig("type") | fallback("LoadBalancer"))
+        var exposesNodePort = svcType == "NodePort" || svcType == "LoadBalancer"
+
+        // Service ports. The chart's templates/haproxytemplateconfig.yaml
+        // builds this list with the http / https / stats defaults
+        // (drawn from `haproxy.service.{http,https,stats}` in
+        // values.yaml) plus anything the operator added under
+        // `haproxy.service.extraPorts`. Non-default Gateway listener
+        // ports are appended to the same list below as
+        // `gw-<port>-<proto-letter>` entries. Operators consume
+        // changes here purely through values.yaml — we don't
+        // hardcode anything Service-port-shaped on the Scriggo side.
+        var ports = []any{}
+        var seenNames = map[string]bool{}
+        var seenPorts = map[int]bool{}
+        for _, rawPort := range svcMap | dig("ports") | toSlice() {
+          var entry = rawPort.(map[string]any)
+          var entryName = tostring(entry | dig("name") | fallback(""))
+          var entryPort = toint(entry | dig("port") | fallback(0))
+          if entryName == "" || entryPort <= 0 {
+            continue
+          }
+          if seenNames[entryName] {
+            continue
+          }
+          seenNames[entryName] = true
+          seenPorts[entryPort] = true
+          var built = map[string]any{
+            "name":     entryName,
+            "port":     entryPort,
+            "protocol": tostring(entry | dig("protocol") | fallback("TCP")),
+          }
+          var targetVal = dig(entry, "targetPort")
+          if targetVal == nil {
+            built["targetPort"] = entryPort
+          } else {
+            built["targetPort"] = targetVal
+          }
+          if exposesNodePort {
+            var entryNodePort = toint(entry | dig("nodePort") | fallback(0))
+            if entryNodePort > 0 {
+              built["nodePort"] = entryNodePort
+            }
+          }
+          var appProto = dig(entry, "appProtocol")
+          if appProto != nil {
+            built["appProtocol"] = tostring(appProto)
+          }
+          ports = append(ports, built)
+        }
+
+        // Dynamic gw-<port>-<proto> entries: mirror the deleted
+        // features-090-gateway-listener-ports-service snippet, but
+        // emit the entries directly into the Service we own rather
+        // than as a partial-SSA patch onto a chart-managed object.
+        // Skip ports already in the static set so they don't
+        // collide. Skip Gateways with spec.addresses set — those
+        // get their own dedicated LoadBalancer Service via the
+        // gateway-static-addresses k8sResources template.
+        var seen = map[string]bool{}
+      %%}
+      {%- if resources != nil && resources.gateways != nil %}
+      {%- for _, gw := range resources.gateways.List() %}
+      {%%
+        var gwAddrs = dig(gw, "spec", "addresses") | toSlice()
+        if len(gwAddrs) > 0 {
+          continue
+        }
+        for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+          var port = toint(dig(listener, "port") | fallback(0))
+          var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+          if port <= 0 || seenPorts[port] {
+            continue
+          }
+          var key = tostring(port) + "-" + toLower(protocol[0:1])
+          if seen[key] {
+            continue
+          }
+          seen[key] = true
+          seenPorts[port] = true
+          ports = append(ports, map[string]any{
+            "name":       "gw-" + key,
+            "port":       port,
+            "targetPort": port,
+            "protocol":   "TCP",
+          })
+        }
+      %%}
+      {%- if resources.listenersets != nil %}
+      {%- for _, ls := range resources.listenersets.List() %}
+      {%%
+        // Conservative: we don't re-import the listenerset admission
+        // gate here (would add a knowledge dependency from base on
+        // gateway). All declared listenersets contribute their ports
+        // to the Service surface; the admission decision still
+        // applies at the routing layer. A future refactor can plumb
+        // the admitted set through extraContext for stricter gating.
+        var lsParents = dig(ls, "spec", "parentRef") | toSlice()
+        _ = lsParents
+        for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
+          var port = toint(dig(listener, "port") | fallback(0))
+          var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
+          if port <= 0 || seenPorts[port] {
+            continue
+          }
+          var key = tostring(port) + "-" + toLower(protocol[0:1])
+          if seen[key] {
+            continue
+          }
+          seen[key] = true
+          seenPorts[port] = true
+          ports = append(ports, map[string]any{
+            "name":       "gw-" + key,
+            "port":       port,
+            "targetPort": port,
+            "protocol":   "TCP",
+          })
+        }
+      %%}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%%
+        var labels = svcMap | dig("labels") | fallback(map[string]any{})
+        var selector = svcMap | dig("selector") | fallback(map[string]any{})
+        var annotations = svcMap | dig("annotations") | fallback(map[string]any{})
+        var spec = map[string]any{
+          "type":     svcType,
+          "selector": selector,
+          "ports":    ports,
+        }
+        // Optional spec fields — only set when non-empty so the rendered
+        // YAML stays compact and SSA doesn't track empty-string fields.
+        var lbIP = tostring(svcMap | dig("loadBalancerIP") | fallback(""))
+        if lbIP != "" {
+          spec["loadBalancerIP"] = lbIP
+        }
+        var lbClass = tostring(svcMap | dig("loadBalancerClass") | fallback(""))
+        if lbClass != "" {
+          spec["loadBalancerClass"] = lbClass
+        }
+        var lbRanges = svcMap | dig("loadBalancerSourceRanges") | toSlice()
+        if len(lbRanges) > 0 {
+          spec["loadBalancerSourceRanges"] = lbRanges
+        }
+        var extPolicy = tostring(svcMap | dig("externalTrafficPolicy") | fallback(""))
+        if extPolicy != "" {
+          spec["externalTrafficPolicy"] = extPolicy
+        }
+        var intPolicy = tostring(svcMap | dig("internalTrafficPolicy") | fallback(""))
+        if intPolicy != "" {
+          spec["internalTrafficPolicy"] = intPolicy
+        }
+        var hcNodePort = toint(svcMap | dig("healthCheckNodePort") | fallback(0))
+        if hcNodePort > 0 {
+          spec["healthCheckNodePort"] = hcNodePort
+        }
+        var publishNotReady = svcMap | dig("publishNotReadyAddresses") | fallback(false)
+        if tostring(publishNotReady) == "true" {
+          spec["publishNotReadyAddresses"] = true
+        }
+        var meta = map[string]any{
+          "name":      svcName,
+          "namespace": ctrlNs,
+          "labels":    labels,
+        }
+        var annotationsMap = annotations.(map[string]any)
+        if len(annotationsMap) > 0 {
+          meta["annotations"] = annotationsMap
+        }
+        var resource = map[string]any{
+          "apiVersion": "v1",
+          "kind":       "Service",
+          "metadata":   meta,
+          "spec":       spec,
+        }
+        var rendered, _ = marshalYAML(resource)
+      %%}
+      {{ rendered }}
+      {%- end %}
+
 haproxyConfig:
   template: |
     global
@@ -997,9 +1255,106 @@ haproxyConfig:
         {# Extension point for status frontend directives (e.g., Prometheus exporter) #}
         {{- render_glob "status-extra-*" | indent(2, true) }}
 
+    {#- The http_frontend renders only when at least one resource
+        actually wants traffic on an HTTP port — Ingress, Gateway/
+        ListenerSet HTTP listener at any port. Without it we'd emit
+        an HAProxy frontend with no binds (validation error) any
+        time the chart is installed for a use case that never opens
+        port 80, e.g. an HTTPS-only Gateway whose listeners have
+        unresolvable certs (the GatewayFrontendInvalidDefault
+        ClientCertificateValidation conformance scenario).
+
+        The chart-static `bind *:httpPort` itself is gated by a
+        narrower flag — bindHTTPDefault — so a Gateway with only a
+        non-default-port HTTP listener (say :9090) gets the
+        frontend rendered (so http-bind-extra-* can attach `bind
+        *:9090` to it) but NO `bind *:80`. -#}
+    {%- var gf = shared.Get("globalFeatures") -%}
+    {%- if gf != nil && tostring(gf.(map[string]any) | dig("needHTTPFrontend")) == "true" %}
+
+    {# ─────────────────────────────────────────────────────────────────
+       HTTP listener architecture: tcp inspector + dual loopback frontends.
+
+       To multiplex HTTP/1.1 and HTTP/2 cleartext (h2c) on the same plain
+       port, we mirror the chart's existing ssl-tcp → ssl-loopback → https
+       chain (libraries/ssl.yaml ~lines 367-536). HAProxy 3.x can't
+       multiplex h2c with HTTP/1.1 on a single bind: `proto h2` locks the
+       bind H2-only, no `Upgrade: h2c` parser, ALPN works only inside TLS.
+       So we inspect the first 24 bytes at a `mode tcp` outer frontend
+       (the HTTP/2 prior-knowledge preface
+       `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` — what gRPC-Go's insecure dial
+       sends, and what the upstream Gateway-API GRPCRoute conformance
+       suite exercises) and route to one of two unix-socket-bound inner
+       frontends in `mode http`. PROXY-protocol v2 across the hop
+       preserves the original client IP. The two inner frontends share
+       the same routing logic via the same render_glob extension points,
+       so any chart snippet that emits HTTP-level directives lands in
+       both protocols' paths.
+
+       The cost is ~10µs/request for a unix-socket roundtrip, which is
+       invisible against typical backend latency. Plain HTTP carries
+       little real-world edge traffic post-HSTS, so this trade-off is
+       cheap; the upside is full Gateway-API conformance for GRPCRoutes
+       attached to plaintext HTTP listeners.
+    -#}
+
+    frontend http-tcp
+        guid fe:http-tcp
+        mode tcp
+        {%- if tostring(gf.(map[string]any) | dig("bindHTTPDefault")) == "true" %}
+        bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
+        {%- end %}
+        {# Extension point for additional bind directives (Gateway HTTP listener ports). #}
+        {# Lands on the OUTER tcp frontend so every HTTP port — chart-static and #}
+        {# Gateway-derived — goes through the same h2c-detection inspector. #}
+        {{- render_glob "http-bind-extra-*" | indent(2, true) }}
+
+        # Wait up to 1s for the first wire bytes so the byte-preface ACL
+        # can decide. Both protocols deliver first bytes immediately on
+        # well-behaved clients; the delay is the safety net for slow
+        # initial sends, not the common path.
+        tcp-request inspect-delay 1s
+
+        # h2c prior-knowledge preface: PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
+        # (24 bytes). The hex below is the byte-exact match.
+        # gRPC-Go's insecure dial uses prior-knowledge by default; HAProxy
+        # can't parse Upgrade: h2c, so the wire-byte preface is the only
+        # signal available in mode tcp. The conformance suite's
+        # vendor/sigs.k8s.io/gateway-api/conformance/utils/grpc/grpc.go
+        # uses insecure.NewCredentials() unconditionally — every
+        # GRPCRoute test exercises this path.
+        acl is_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+
+        # Accept as soon as we have 24 bytes (enough for the preface
+        # decision) — fast path for both protocols. Fall through to
+        # WAIT_END for slow initial sends (HTTP/1.1 minimal requests
+        # under 24 bytes — rare in practice but possible).
+        tcp-request content accept if { req.len ge 24 }
+        tcp-request content accept if WAIT_END
+
+        use_backend http-h2c-loopback if is_h2c
+        default_backend http-h1-loopback
+
+    backend http-h1-loopback
+        guid be:http-h1-loopback
+        mode tcp
+        # send-proxy-v2 mirrors the existing ssl-loopback pattern
+        # (libraries/ssl.yaml ~line 460); preserves original client IP
+        # and port across the unix-socket hop.
+        server loopback unix@/etc/haproxy/http-h1-frontend.sock send-proxy-v2
+
+    backend http-h2c-loopback
+        guid be:http-h2c-loopback
+        mode tcp
+        server loopback unix@/etc/haproxy/http-h2c-frontend.sock send-proxy-v2
+
     frontend http_frontend
         guid fe:http_frontend
-        bind *:{{ extraContext | dig("httpPort") | fallback(8080) }}
+        mode http
+        # accept-proxy parses the PROXY v2 header from http-h1-loopback's
+        # send-proxy-v2, so `src` and request logging see the original
+        # client. Mode 660 matches ssl-frontend.sock for consistency.
+        bind unix@/etc/haproxy/http-h1-frontend.sock mode 660 accept-proxy
         {# Extension point for early frontend directives (options, captures, ACLs) #}
         {# Runs BEFORE routing logic; use frontend-filters-* for post-routing manipulation #}
         {{- render_glob "frontend-extra-*" | indent(2, true) }}
@@ -1016,6 +1371,25 @@ haproxyConfig:
 
         # Default backend
         default_backend default_backend
+
+    frontend http_frontend_h2c
+        guid fe:http_frontend_h2c
+        mode http
+        # `proto h2` locks this bind to HTTP/2 cleartext — required because
+        # HAProxy can't auto-detect h2c on plaintext binds. The outer tcp
+        # inspector has already classified the connection by preface, so
+        # only h2c traffic reaches this socket.
+        bind unix@/etc/haproxy/http-h2c-frontend.sock mode 660 accept-proxy proto h2
+        {# Same render_glob extension points as the h1 sibling — every #}
+        {# routing/filter snippet lands in both protocols' frontends so #}
+        {# behaviour stays in lockstep regardless of which protocol the #}
+        {# client uses. #}
+        {{- render_glob "frontend-extra-*" | indent(2, true) }}
+        {{ render "frontend-routing-logic" | indent(2, true) }}
+        {{- render_glob "frontend-filters-*" | indent(2, true) }}
+        use_backend %[var(txn.backend_name)] if { var(txn.backend_name) -m found }
+        default_backend default_backend
+    {%- end %}
 
     {# Extension point for additional frontends (e.g., custom TCP services) #}
     {# Resource libraries can inject frontends-* snippets #}
@@ -1046,6 +1420,168 @@ validationTests:
         description: Base configuration must be valid
       - type: deterministic
         description: Template rendering must be deterministic (identical output on repeated renders)
+
+  test-k8s-haproxy-service-default-ports:
+    description: "k8sResources.haproxy-service emits whatever ports the chart hands it under `extraContext.haproxyService.ports`. The chart's default builds an http / https / stats triple from `haproxy.service."
+    fixtures: {}
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "kind: Service"
+        description: Must emit a Service resource
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: http\n"
+        description: Default http port is emitted
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: https\n"
+        description: Default https port is emitted
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: stats"
+        description: Default stats port is emitted
+
+  test-k8s-haproxy-service-extra-ports:
+    description: Operators using haptic without Gateway API (e.g. exposing a raw TCP frontend via a custom haproxyConfig snippet) declare additional Service ports through `haproxy.service.extraPorts` in values.yaml.
+    fixtures: {}
+    extraContext:
+      haproxyService:
+        type: ClusterIP
+        labels:
+          app.kubernetes.io/component: loadbalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        annotations: {}
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        loadBalancerSourceRanges: []
+        externalTrafficPolicy: ""
+        internalTrafficPolicy: ""
+        healthCheckNodePort: 0
+        publishNotReadyAddresses: false
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+            protocol: TCP
+          - name: https
+            port: 443
+            targetPort: https
+            protocol: TCP
+          - name: stats
+            port: 8404
+            targetPort: stats
+            protocol: TCP
+          - name: postgres
+            port: 5432
+            targetPort: 5432
+            protocol: TCP
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: postgres"
+        description: Operator-declared extra port is emitted
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "port: 5432"
+        description: Extra port number reaches the rendered Service
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: http\n"
+        description: Default http port still emitted alongside the extras
+
+  test-k8s-haproxy-service-gateway-listener-ports:
+    description: |
+      Gateway listeners on non-default ports must add corresponding `gw-<port>-<proto>`
+      port entries to the haproxy-service Service. Without these, kube-proxy
+      doesn't route LoadBalancer-IP traffic on those ports to the haproxy pod —
+      the upstream `HTTPRouteListenerPortMatching` conformance test failed in CI
+      precisely because port 80 worked (default Service port) but 8080/8090
+      timed out (no Service port → no kube-proxy DNAT).
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-port-gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: l-80
+                port: 80
+                protocol: HTTP
+              - name: l-8080
+                port: 8080
+                protocol: HTTP
+              - name: l-8090
+                port: 8090
+                protocol: HTTP
+    extraContext:
+      haproxyService:
+        type: LoadBalancer
+        labels:
+          app.kubernetes.io/component: loadbalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        annotations: {}
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        loadBalancerSourceRanges: []
+        externalTrafficPolicy: ""
+        internalTrafficPolicy: ""
+        healthCheckNodePort: 0
+        publishNotReadyAddresses: false
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+            protocol: TCP
+          - name: https
+            port: 443
+            targetPort: https
+            protocol: TCP
+          - name: stats
+            port: 8404
+            targetPort: stats
+            protocol: TCP
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: http\n"
+        description: Default http port (80) still emitted
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: gw-8080-h"
+        description: |
+          Gateway listener on port 8080 (HTTP) adds gw-8080-h port entry.
+          Without this kube-proxy can't DNAT LB-IP:8080 → haproxy-pod:8080
+          and the conformance suite's HTTPRouteListenerPortMatching test
+          fails with `context deadline exceeded`.
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: gw-8090-h"
+        description: Gateway listener on port 8090 (HTTP) adds gw-8090-h port entry
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"
+        description: gw-8080-h Service port maps to port 8080
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"
+        description: gw-8090-h Service port maps to port 8090
 
   test-address-discovery:
     description: Address discovery reads LoadBalancer status from controller service
@@ -1131,7 +1667,30 @@ validationTests:
 
   test-guid-directives:
     description: GUIDs are present on frontends, backends, and default_backend
-    fixtures: {}
+    fixtures:
+      # Trigger the http_frontend by declaring an Ingress. After the
+      # bind-derivation refactor (chart-static http_frontend is gated
+      # on actual listener state), an empty fixture wouldn't render
+      # the http_frontend at all.
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: trigger
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: trigger-svc
+                          port:
+                            number: 80
     assertions:
       - type: haproxy_valid
         description: HAProxy config with GUIDs must be valid

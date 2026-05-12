@@ -16,14 +16,18 @@ package renderer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"gopkg.in/yaml.v3"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/currentconfigstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
@@ -47,6 +51,13 @@ type RenderResult struct {
 	// StatusPatches contains status patches registered by templates during rendering.
 	// Each patch targets a Kubernetes resource and contains outcome-keyed variants.
 	StatusPatches []templating.StatusPatch
+
+	// RenderedResources contains full Kubernetes resources the templates declared
+	// the controller should own and reconcile (e.g. per-Gateway LoadBalancer
+	// Services for SupportGatewayStaticAddresses). The applier compares each
+	// against the last-applied checksum and skips unchanged entries to avoid
+	// hammering the API server.
+	RenderedResources []templating.RenderedResource
 
 	// DurationMs is the total render duration in milliseconds.
 	DurationMs int64
@@ -187,7 +198,7 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	}
 
 	// Build rendering context from stores
-	renderContext, fileRegistry, statusPatchCollector := s.buildRenderingContext(ctx, provider)
+	renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector := s.buildRenderingContext(ctx, provider)
 
 	// Render main HAProxy config
 	haproxyConfig, err := s.engine.Render(ctx, names.MainTemplateName, renderContext)
@@ -198,6 +209,15 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 	// Render auxiliary files
 	staticFiles, err := s.renderAuxiliaryFiles(ctx, renderContext)
 	if err != nil {
+		return nil, err
+	}
+
+	// Render Kubernetes resource templates (`spec.k8sResources`). Each
+	// template's output is one or more YAML documents; every doc gets
+	// parsed and registered with the same RenderedResourceCollector
+	// the runtime renderResource() filter populated previously, so
+	// downstream consumers (resourceapplier) see no shape change.
+	if err := s.renderK8sResources(ctx, renderContext, renderedResourceCollector); err != nil {
 		return nil, err
 	}
 
@@ -222,17 +242,25 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		len(auxiliaryFiles.SSLCaFiles) +
 		len(auxiliaryFiles.CRTListFiles)
 
+	// Validate rendered resources before surfacing them. Any structural
+	// problem aborts the render so the deployment scheduler doesn't get a
+	// half-formed payload.
+	if err := renderedResourceCollector.Validate(); err != nil {
+		return nil, fmt.Errorf("rendering %s: %w", names.MainTemplateName, err)
+	}
+
 	return &RenderResult{
-		HAProxyConfig:  haproxyConfig,
-		AuxiliaryFiles: auxiliaryFiles,
-		StatusPatches:  statusPatchCollector.Patches(),
-		DurationMs:     time.Since(startTime).Milliseconds(),
-		AuxFileCount:   auxFileCount,
+		HAProxyConfig:     haproxyConfig,
+		AuxiliaryFiles:    auxiliaryFiles,
+		StatusPatches:     statusPatchCollector.Patches(),
+		RenderedResources: renderedResourceCollector.Resources(),
+		DurationMs:        time.Since(startTime).Milliseconds(),
+		AuxFileCount:      auxFileCount,
 	}, nil
 }
 
 // buildRenderingContext constructs the template rendering context from stores.
-func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector) {
+func (s *RenderService) buildRenderingContext(ctx context.Context, provider stores.StoreProvider) (map[string]any, *rendercontext.FileRegistry, *templating.StatusPatchCollector, *templating.RenderedResourceCollector) {
 	renderContext := make(map[string]any)
 
 	// Add path resolver for file path resolution in templates
@@ -290,6 +318,14 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	statusPatchCollector := templating.NewStatusPatchCollector()
 	renderContext["statusPatchCollector"] = statusPatchCollector
 
+	// Create rendered resource collector for template-driven owned-resource
+	// reconciliation. Same shape as statusPatchCollector but for whole
+	// resources instead of status-only updates. Resource-agnostic by design
+	// (the controller never names "Service" or "Gateway" in code — it
+	// applies whatever the template emits via SSA).
+	renderedResourceCollector := templating.NewRenderedResourceCollector()
+	renderContext["renderedResourceCollector"] = renderedResourceCollector
+
 	// Create shared cache for cross-template data sharing
 	renderContext["shared"] = templating.NewSharedContext()
 
@@ -323,7 +359,7 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		renderContext["http"] = httpFetcher
 	}
 
-	return renderContext, fileRegistry, statusPatchCollector
+	return renderContext, fileRegistry, statusPatchCollector, renderedResourceCollector
 }
 
 // renderAuxiliaryFiles renders all auxiliary files in parallel.
@@ -385,6 +421,80 @@ func (s *RenderService) renderAuxiliaryFiles(ctx context.Context, renderCtx map[
 func (s *RenderService) ClearVMPool() {
 	if s.engine != nil {
 		s.engine.ClearVMPool()
+	}
+}
+
+// renderK8sResources renders every entry in spec.k8sResources in parallel,
+// parses the rendered output as one or more YAML documents (multi-doc
+// supported via `---` separators), and registers each document with the
+// supplied RenderedResourceCollector. The collector is the same input
+// downstream consumers (resourceapplier) read off RenderResult.
+//
+// Each YAML document must declare apiVersion, kind, and metadata.name
+// (plus metadata.namespace for namespaced kinds). A bad document aborts
+// the render with an error scoped to the offending template name so
+// authors can locate it.
+func (s *RenderService) renderK8sResources(ctx context.Context, renderCtx map[string]any, collector *templating.RenderedResourceCollector) error {
+	if len(s.config.K8sResources) == 0 {
+		return nil
+	}
+	g, _ := errgroup.WithContext(ctx)
+	for name := range s.config.K8sResources {
+		g.Go(func() error {
+			rendered, err := s.engine.Render(ctx, name, renderCtx)
+			if err != nil {
+				return fmt.Errorf("rendering k8sResources %s: %w", name, err)
+			}
+			return registerK8sResourceDocs(name, rendered, collector)
+		})
+	}
+	return g.Wait()
+}
+
+// registerK8sResourceDocs parses rendered YAML (one or more documents
+// separated by `---`), validates each, and adds it to the collector.
+func registerK8sResourceDocs(templateName, rendered string, collector *templating.RenderedResourceCollector) error {
+	if strings.TrimSpace(rendered) == "" {
+		// Empty render is a valid "no resources to emit this cycle"
+		// signal — common when a template gates its output on a
+		// resource state that doesn't currently exist.
+		return nil
+	}
+	dec := yaml.NewDecoder(strings.NewReader(rendered))
+	docIdx := 0
+	for {
+		var doc map[string]any
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("parsing k8sResources %s document %d: %w", templateName, docIdx, err)
+		}
+		docIdx++
+		if len(doc) == 0 {
+			continue
+		}
+		apiVersion, _ := doc["apiVersion"].(string)
+		kind, _ := doc["kind"].(string)
+		metadata, _ := doc["metadata"].(map[string]any)
+		var name, namespace string
+		if metadata != nil {
+			name, _ = metadata["name"].(string)
+			namespace, _ = metadata["namespace"].(string)
+		}
+		if apiVersion == "" || kind == "" || name == "" {
+			return fmt.Errorf("k8sResources %s document %d: apiVersion, kind, and metadata.name are required", templateName, docIdx)
+		}
+		// Strip the identifying fields before handing the object to
+		// Register — Register re-injects them from the explicit
+		// arguments, and leaving them in would have Register copy
+		// them back over no-ops. metadata is intentionally kept
+		// since templates may add labels / annotations / ownerRefs
+		// the applier then merges with the resource it sends.
+		if err := collector.Register(apiVersion, kind, namespace, name, doc); err != nil {
+			return fmt.Errorf("k8sResources %s document %d: %w", templateName, docIdx, err)
+		}
 	}
 }
 

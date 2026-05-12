@@ -1,0 +1,790 @@
+templateSnippets:
+  # ----------------------------------------------------------------------------
+  # util-tls-cert-by-secret
+  #
+  # Indexes gf.tlsCertificates by `<secret_namespace>/<secret_name>` so the
+  # cert-resolvability check in phases 1/2/4 plus features-150-gateway-bind
+  # is a single map lookup instead of an O(N) scan. Cached via
+  # shared.ComputeIfAbsent so the index is built at most once per render
+  # (any caller can render this util — order is irrelevant since the cache
+  # ignores duplicate calls).
+  #
+  # Usage:
+  #   {{ render "util-tls-cert-by-secret" -}}
+  #   {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
+  #
+  # Map value: the full tlsCertificate entry (so callers needing
+  # `.sanitized_filename` get it for free). For presence-only callers,
+  # `certBySecret[key] != nil` is the membership test.
+  # ----------------------------------------------------------------------------
+  util-tls-cert-by-secret:
+    template: |
+      {%- var _, _ = shared.ComputeIfAbsent("tlsCertBySecret", func() any {
+        var gf = shared.Get("globalFeatures").(map[string]any)
+        var index = map[string]any{}
+        for _, tc := range gf["tlsCertificates"].([]any) {
+          var tcm = tc.(map[string]any)
+          var key = tostring(tcm["secret_namespace"]) + "/" + tostring(tcm["secret_name"])
+          index[key] = tcm
+        }
+        return index
+      }) %}
+
+  features-100-gateway-ssl-passthrough:
+    template: |
+      {#- Register SSL passthrough backends with global feature registry. -#}
+      {{ render "util-gateway-ssl-passthrough" }}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var gwVal, _ = shared.ComputeIfAbsent("gateway_ssl_passthrough", func() any { return nil }) %}
+        {%- if gwVal != nil %}
+          {%- var gwPassthrough = gwVal.(map[string]any) %}
+          {%- var gatewayBackends = gwPassthrough["backends"].([]any) %}
+          {%- for _, backend := range gatewayBackends %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  # NOTE: The historical `features-090-gateway-listener-ports-service`
+  # snippet has been removed. Its responsibility (folding non-default
+  # Gateway listener ports into the chart's HAProxy Service) is now
+  # handled declaratively by the `k8sResources.haproxy-service` template
+  # in `libraries/base.yaml`, which renders the Service end-to-end from
+  # listener state — so there is no longer a partial-SSA patch to
+  # contribute entries to.
+
+  # Register Gateway TLS Terminate mode certificates with SSL infrastructure
+  features-100-gateway-tls:
+    template: |
+      {% import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
+      {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
+      {#- Dynamically generates certificate files using fileRegistry.Register() #}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {#- Gateway API TLS configuration structure:
+          Gateway.spec.listeners[]:
+            - name: https
+              protocol: HTTPS  # or GRPC
+              port: 443
+              hostname: example.com  # optional, can be wildcard
+              tls:
+                mode: Terminate  # we only handle Terminate here, not Passthrough
+                certificateRefs:
+                  - kind: Secret
+                    name: example-tls
+                    namespace: default  # optional, defaults to Gateway namespace
+      #}
+      {#- Two-pass cert registration:
+          Pass 1: walk every (gateway, listener, certRef) triple to compute
+                  a per-secret aggregate — which SNIs it should bind, and
+                  whether at least one of its listeners has no hostname
+                  (in which case it qualifies as the chart's TLS default).
+          Pass 2: emit one tlsCert entry per unique secret, with the
+                  aggregated sni_patterns and is_gateway_default.
+          The previous single-pass scheme used first_seen() to dedup
+          per-secret, which dropped the SNI patterns of every listener
+          after the first — so a Gateway whose listeners "https-A" and
+          "https-B" share a cert ended up with only "https-A"'s SNI
+          bound. Conformance HTTPRouteHTTPSListener exposes that gap.
+
+          Cross-namespace refs are gated by ReferenceGrant: a Gateway
+          referencing a Secret in a different namespace requires a
+          ReferenceGrant in the Secret's namespace whose `from` matches
+          the Gateway and `to` matches the Secret. Without a matching
+          grant the cert is skipped (status patch reflects this with
+          ResolvedRefs=False/RefNotPermitted, set elsewhere). -#}
+      {%- var certAggregates = map[string]map[string]any{} %}
+      {%- for _, gateway := range resources.gateways.List() %}
+        {%%
+          var gwSpec = gateway | dig("spec")
+          if gwSpec == nil {
+            continue
+          }
+        %%}
+        {%- for _, listener := range gwSpec | dig("listeners") | toSlice() %}
+          {%%
+            var listenerTls = listener | dig("tls")
+            var tlsMode = listenerTls | dig("mode") | fallback("")
+            // Gateway API: tls.mode defaults to Terminate when
+            // unspecified. Skip only when explicitly set to a
+            // non-Terminate value (Passthrough is handled
+            // separately by the SSL passthrough feature).
+            if listenerTls == nil || (tlsMode != "" && tlsMode != "Terminate") {
+              continue
+            }
+          %%}
+          {%- for _, certRef := range listenerTls | dig("certificateRefs") | toSlice() %}
+            {%%
+              var gatewayNs = gateway | dig("metadata", "namespace") | fallback("")
+              var certNamespace = certRef | dig("namespace") | fallback(gatewayNs)
+              var certName = certRef | dig("name") | fallback("")
+
+              var certKind = certRef | dig("kind") | fallback("Secret")
+              if certKind != "Secret" {
+                continue
+              }
+
+              // Cross-namespace gate. Same-namespace refs are always
+              // permitted (no grant needed); cross-ns refs without a
+              // matching ReferenceGrant are skipped (the listener-status
+              // path elsewhere surfaces this as ResolvedRefs=False
+              // /RefNotPermitted).
+              var nsStr = tostring(gatewayNs)
+              var refNsStr = tostring(certNamespace)
+              if refNsStr != nsStr {
+                if ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", "Gateway", nsStr,
+                  "", "Secret", refNsStr, tostring(certName)) != "true" {
+                  continue
+                }
+              }
+
+              var secretKey = tostring(certNamespace) + "/" + tostring(certName)
+              var listenerHostname = listener | dig("hostname") | fallback("")
+              var listenerHostnameStr = tostring(listenerHostname)
+
+              var existing = certAggregates[secretKey]
+              if existing == nil {
+                certAggregates[secretKey] = map[string]any{
+                  "secret_namespace":   certNamespace,
+                  "secret_name":        certName,
+                  "sni_patterns":       []any{},
+                  "is_gateway_default": false,
+                  "listener_ports":     []any{},
+                }
+                existing = certAggregates[secretKey]
+              }
+              if listenerHostnameStr != "" {
+                existing["sni_patterns"] = append(existing["sni_patterns"].([]any), listenerHostnameStr)
+              } else {
+                // Listener with no hostname → cert is a default
+                // candidate (per spec, any SNI accepted).
+                existing["is_gateway_default"] = true
+              }
+              // Track ports the cert is bound to, so the bind-decision
+              // pass downstream knows which listener ports to enable.
+              var listenerPort = toint(listener | dig("port") | fallback(0))
+              if listenerPort > 0 {
+                existing["listener_ports"] = append(existing["listener_ports"].([]any), listenerPort)
+              }
+              certAggregates[secretKey] = existing
+            %%}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+      {#- Pass 2: emit one tlsCert entry per unique secret. Keys sorted
+          for deterministic ordering — Scriggo map iteration is not stable
+          and a reordered tlsCerts list would churn the rendered crt-list
+          (HAProxy reload thrash on otherwise-identical input). -#}
+      {%- var aggKeys = []any{} %}
+      {%- for k := range certAggregates %}
+        {%- aggKeys = append(aggKeys, k) %}
+      {%- end %}
+      {%- var sortedAggKeys = sort_strings(aggKeys) %}
+      {%- for _, secretKey := range sortedAggKeys %}
+        {%%
+          var agg = certAggregates[tostring(secretKey)]
+          var certNamespace = tostring(agg["secret_namespace"])
+          var certName = tostring(agg["secret_name"])
+
+          var secret = resources.secrets.GetSingle(certNamespace, certName)
+          if secret == nil {
+            continue
+          }
+          var secretData = secret | dig("data")
+          var tlsCrtB64 = tostring(secretData | dig("tls.crt") | fallback(""))
+          var tlsKeyB64 = tostring(secretData | dig("tls.key") | fallback(""))
+          if secretData == nil || tlsCrtB64 == "" || tlsKeyB64 == "" {
+            continue
+          }
+          // Decode and verify the data really is PEM. The conformance
+          // suite's malformed-cert fixture has non-empty tls.crt /
+          // tls.key fields whose decoded bytes aren't valid PEM —
+          // writing such a cert into the crt-list crashes HAProxy at
+          // reload time, which in turn fails the entire render-validate
+          // pipeline so NO status patch ever reaches the API server
+          // (the listener-level InvalidCertificateRef condition our
+          // status macro produces is silently dropped). Skip the
+          // registration; the listener-status path elsewhere already
+          // surfaces the failure as ResolvedRefs=False
+          // /InvalidCertificateRef.
+          var tlsCrt, crtErr = b64decode(tlsCrtB64)
+          var tlsKey, keyErr = b64decode(tlsKeyB64)
+          if crtErr != nil || keyErr != nil {
+            continue
+          }
+          if !hasPrefix(tlsCrt, "-----BEGIN ") || !hasPrefix(tlsKey, "-----BEGIN ") {
+            continue
+          }
+
+          var combinedPem = tlsCrt + "\n" + tlsKey
+          var certFilename = certNamespace + "_" + certName + ".pem"
+          var certPath, _ = fileRegistry.Register("cert", certFilename, combinedPem)
+          var sanitizedFilename = basename(certPath)
+
+          var tlsCert = map[string]any{
+            "secret_namespace":   certNamespace,
+            "secret_name":        certName,
+            "sni_patterns":       agg["sni_patterns"],
+            "sanitized_filename": sanitizedFilename,
+            "is_gateway_default": agg["is_gateway_default"],
+            "listener_ports":     agg["listener_ports"],
+          }
+          var tlsCerts []any = gf["tlsCertificates"]
+          gf["tlsCertificates"] = append(tlsCerts, tlsCert)
+        %%}
+      {%- end %}
+
+  features-110-gateway-frontend-mtls:
+    template: |
+      {{ render "util-effective-listeners" }}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var clientCertVerifyHosts = gf["clientCertVerifyHosts"].(map[string]any) %}
+      {#- mtlsBlockedListeners: set of listener keys
+          (`<gw-ns>/<gw-name>/<listener-name>`) where the configured
+          frontend mTLS validation either failed to resolve any CA
+          (caCertificateRefs all unresolvable) or pointed at an empty
+          set. Per Gateway API spec a Gateway listener with
+          spec.tls.frontend.default.validation set MUST refuse TLS
+          handshakes when the configured CA can't be resolved — closes
+          the GatewayFrontendInvalidDefaultClientCertificateValidation
+          conformance gap. Read by features-150-gateway-bind to gate
+          bindHTTPSDefault / needHTTPSFrontend so the listener's bind
+          line drops out of the rendered HAProxy config. -#}
+      {%- var mtlsBlockedListeners = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {#- gatewayListenerMTLSConfig: per-(Gateway, listener) resolved
+          mTLS state, keyed by `<gwNs>/<gwName>/<listenerName>`. Each
+          entry is `{ca_path, verify_mode}` (the same shape stored
+          under `clientCertVerifyHosts[hostname]`, but unambiguously
+          scoped to ONE listener so two Gateways with different
+          mTLS configs but overlapping hostnames don't collide).
+          Phase 2 of the per-Gateway-IP refactor
+          (features-160-gateway-crtlist-per-listener) reads this
+          map to emit one crt-list line per listener with the
+          listener-specific verify clause. Phase 4's per-Gateway
+          bind references the resulting crt-list. -#}
+      {%- var gatewayListenerMTLSConfig = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
+      {%- for _, gateway := range resources.gateways.List() %}
+        {%%
+          var gwSpec = gateway | dig("spec")
+          if gwSpec == nil {
+            continue
+          }
+          var gwNs = tostring(gateway | dig("metadata", "namespace") | fallback(""))
+          var gwName = tostring(gateway | dig("metadata", "name") | fallback(""))
+          var frontend = gwSpec | dig("tls", "frontend")
+          if frontend == nil {
+            continue
+          }
+          var defaultValidation = frontend | dig("default", "validation")
+          var perPortValidations = map[int]any{}
+          for _, pp := range frontend | dig("perPort") | toSlice() {
+            var p = toint(pp | dig("port") | fallback(0))
+            if p > 0 {
+              var v = pp | dig("tls", "validation")
+              if v != nil {
+                perPortValidations[p] = v
+              }
+            }
+          }
+
+          // Helper: resolve a validation block to (caPath, mode)
+          // or ("", "") when it can't be resolved.
+          //
+          // HAProxy verify mode is derived from validation.mode (GEP-91):
+          //   AllowValidOnly        → verify required
+          //   AllowInsecureFallback → verify optional
+          // The optional mode lets the TLS handshake complete without a
+          // client cert OR with an invalid cert (HAProxy still records
+          // the verify state in `ssl_c_verify`); applications can then
+          // gate per-route. Required rejects both at handshake time.
+          var resolveValidation = func(validation any, suffix string) (string, string) {
+            if validation == nil {
+              return "", ""
+            }
+            var refs []any = validation | dig("caCertificateRefs") | toSlice()
+            if refs == nil {
+              return "", ""
+            }
+            var validationMode = tostring(validation | dig("mode") | fallback("AllowValidOnly"))
+            var verifyMode = "required"
+            if validationMode == "AllowInsecureFallback" {
+              verifyMode = "optional"
+            }
+            var parts = []any{}
+            for _, ref := range refs {
+              var refGroup = tostring(dig(ref, "group") | fallback(""))
+              var refKind = tostring(dig(ref, "kind") | fallback(""))
+              var refName = tostring(dig(ref, "name") | fallback(""))
+              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+                var cm = resources.configmaps.GetSingle(gwNs, refName)
+                if cm == nil {
+                  continue
+                }
+                var data = dig(cm, "data") | fallback(map[string]any{})
+                var dataMap = data.(map[string]any)
+                var caCrt, ok = dataMap["ca.crt"]
+                if ok && tostring(caCrt) != "" {
+                  parts = append(parts, tostring(caCrt))
+                }
+              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+                var sec = resources.secrets.GetSingle(gwNs, refName)
+                if sec == nil {
+                  continue
+                }
+                var data = dig(sec, "data") | fallback(map[string]any{})
+                var dataMap = data.(map[string]any)
+                var b64 = ""
+                var caCrt, ok = dataMap["ca.crt"]
+                if ok && tostring(caCrt) != "" {
+                  b64 = tostring(caCrt)
+                } else {
+                  var tlsCrt, ok2 = dataMap["tls.crt"]
+                  if ok2 && tostring(tlsCrt) != "" {
+                    b64 = tostring(tlsCrt)
+                  }
+                }
+                if b64 != "" {
+                  var decoded, decodeErr = b64decode(b64)
+                  if decodeErr == nil {
+                    parts = append(parts, decoded)
+                  }
+                }
+              }
+            }
+            if len(parts) == 0 {
+              return "", ""
+            }
+            var bundle = join(parts, "\n")
+            var fname = "frontend-mtls-" + gwNs + "-" + gwName + suffix + ".crt"
+            var p, fErr = fileRegistry.Register("file", fname, bundle)
+            if fErr != nil {
+              return "", ""
+            }
+            return p, verifyMode
+          }
+
+          var defaultPath, defaultMode = resolveValidation(defaultValidation, "-default")
+          var perPortResolved = map[int][]string{}
+          for port, v := range perPortValidations {
+            var p, m = resolveValidation(v, "-port-" + tostring(port))
+            if p != "" && m != "" {
+              perPortResolved[port] = []string{p, m}
+            }
+          }
+
+          // Walk the Gateway's own HTTPS listeners + the HTTPS listeners
+          // of every accepted ListenerSet attached to this Gateway. Per
+          // Gateway API spec the parent Gateway's spec.tls.frontend
+          // applies to all listeners under it (Gateway + ListenerSets);
+          // there is no per-ListenerSet mTLS config slot.
+          var allListeners = []any{}
+          for _, l := range gwSpec | dig("listeners") | toSlice() {
+            allListeners = append(allListeners, l)
+          }
+          // Read pre-computed admission state from the
+          // effectiveListeners cache (populated by util-effective-
+          // listeners) so the gate matches what F3 emits as
+          // Accepted/Programmed conditions on each ListenerSet.
+          var effLAny = shared.Get("effectiveListeners")
+          var lsStatuses = map[string]any{}
+          if effLAny != nil {
+            var effL, ok = effLAny.(map[string]any)
+            if ok {
+              var stAny, hasSt = effL["statuses"]
+              if hasSt {
+                lsStatuses = stAny.(map[string]any)
+              }
+            }
+          }
+          for _, ls := range resources.listenersets.List() {
+            var pRef = dig(ls, "spec", "parentRef")
+            if tostring(dig(pRef, "name") | fallback("")) != gwName {
+              continue
+            }
+            var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+            var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+            if pNs != gwNs {
+              continue
+            }
+            var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+            var lsKey = lsNs + "/" + lsName
+            var permitted = false
+            var entryAny, hasEntry = lsStatuses[lsKey]
+            if hasEntry {
+              permitted = entryAny.(map[string]any)["permitted"].(bool)
+            }
+            if !permitted {
+              continue
+            }
+            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+              allListeners = append(allListeners, l)
+            }
+          }
+          for _, listener := range allListeners {
+            var protocol = tostring(listener | dig("protocol") | fallback("HTTP"))
+            if protocol != "HTTPS" {
+              continue
+            }
+            var listenerPort = toint(listener | dig("port") | fallback(0))
+            var listenerName = tostring(listener | dig("name") | fallback(""))
+            // Decide which validation block applies to this listener:
+            // per-port override if present, otherwise the gateway-level
+            // default. A listener with no validation configured (neither
+            // default nor per-port) is unaffected and never gets blocked.
+            var hadValidationConfig = false
+            var caPath = ""
+            var verifyMode = ""
+            var override, hasOverride = perPortResolved[listenerPort]
+            if hasOverride {
+              caPath = override[0]
+              verifyMode = override[1]
+              hadValidationConfig = true
+            } else if defaultValidation != nil {
+              caPath = defaultPath
+              verifyMode = defaultMode
+              hadValidationConfig = true
+            }
+            // Per-port validation overrides default; if the listener
+            // had per-port set explicitly we ignore the default entirely
+            // (perPortResolved already encodes "this port has a
+            // configured override"). The same applies if the listener
+            // had only a default — the resolveValidation call returned
+            // ("", "") for unresolvable refs, which is what we detect
+            // here.
+            //
+            // GatewayFrontendInvalidDefaultClientCertificateValidation:
+            // a listener with validation configured but no resolvable
+            // CA must be blocked from binding so HAProxy doesn't
+            // present the chart's default cert and answer handshakes.
+            if hadValidationConfig && (caPath == "" || verifyMode == "") {
+              if listenerName != "" {
+                mtlsBlockedListeners[gwNs + "/" + gwName + "/" + listenerName] = true
+              }
+              continue
+            }
+            if caPath == "" || verifyMode == "" {
+              continue
+            }
+            var listenerHostname = tostring(listener | dig("hostname") | fallback(""))
+            var key = listenerHostname
+            if key == "" {
+              key = "*"
+            }
+            clientCertVerifyHosts[key] = map[string]any{
+              "ca_path":     caPath,
+              "verify_mode": verifyMode,
+            }
+            // Per-(Gateway, listener) mTLS state: scoped uniquely
+            // by `<gwNs>/<gwName>/<listenerName>`, so two Gateways
+            // with different mTLS configs on overlapping hostnames
+            // don't clobber each other's resolved state.
+            if listenerName != "" {
+              gatewayListenerMTLSConfig[gwNs+"/"+gwName+"/"+listenerName] = map[string]any{
+                "ca_path":     caPath,
+                "verify_mode": verifyMode,
+              }
+            }
+          }
+        %%}
+      {%- end %}
+      {%- gf["clientCertVerifyHosts"] = clientCertVerifyHosts %}
+      {%- gf["mtlsBlockedListeners"] = mtlsBlockedListeners %}
+      {%- gf["gatewayListenerMTLSConfig"] = gatewayListenerMTLSConfig %}
+
+  # ============================================================================
+  # Route Analysis (Cached)
+  # ============================================================================
+
+  features-150-gateway-bind:
+    template: |
+      {#-
+        Gateway / ListenerSet contribution to the chart-static bind decision.
+
+        Runs at priority 150, after features-100-* have populated
+        gf["tlsCertificates"] (Terminate listeners with valid certs)
+        and gf["sslPassthroughBackends"] (Passthrough listeners).
+        Here we OR our findings into:
+          - bindHTTPDefault   — emit `bind *:httpPort` for HTTP listeners
+                                at the chart's default http port
+          - bindHTTPSDefault  — emit `bind *:httpsPort` only when at
+                                least one valid cert (or passthrough
+                                backend) wants traffic on that port
+          - needHTTPFrontend  — render http_frontend block (any HTTP
+                                listener at any port — even non-default
+                                ones, so http-bind-extra-* has somewhere
+                                to attach)
+          - needHTTPSFrontend — same idea for HTTPS / TLS listeners /
+                                passthrough
+
+        The conformance gap this closes:
+        GatewayFrontendInvalidDefaultClientCertificateValidation
+        sends an HTTPS listener with NoValidCACertificate. The cert
+        registration in features-100-gateway-tls fails the PEM check
+        and skips the listener, so `tlsCertificates` ends up without
+        an entry for that secret. Reading the populated structure
+        rather than re-walking listeners means an invalid cert never
+        lights up the bind, and the LB doesn't expose port 443 to
+        connections HAProxy would otherwise answer with the chart's
+        default cert.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+      {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+      {#- Pre-compute lookup tables consumed by the per-listener checks
+          below.
+
+          certBySecret  — set of `<ns>/<name>` keys for every cert that
+                          successfully registered (passed b64decode +
+                          PEM prefix check). Read tlsCertificates,
+                          which features-100-gateway-tls and
+                          features-100-ingress-tls have already filled.
+          mtlsBlocked   — set of listener-key (`<gw-ns>/<gw-name>/
+                          <listener-name>`) for listeners whose
+                          configured frontend mTLS validation failed
+                          to resolve any CA. Set by
+                          features-110-gateway-frontend-mtls. Listed
+                          listeners MUST NOT bind, per
+                          GatewayFrontendInvalidDefaultClient
+                          CertificateValidation. -#}
+      {{ render "util-tls-cert-by-secret" -}}
+      {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
+      {%- var mtlsBlocked = gf["mtlsBlockedListeners"].(map[string]any) %}
+      {#- Walk every Gateway listener and decide its contribution to the
+          four bind-decision flags.
+
+          * HTTP at any port → needHTTPFrontend; port == httpPort →
+            bindHTTPDefault. http-bind-extra-* handles non-default
+            ports without a separate gate; the HTTP path has no
+            cert-resolvability check to apply.
+
+          * HTTPS / TLS:
+              - Drop the listener if it's in mtlsBlocked (failed CA
+                resolution → MUST NOT answer handshakes).
+              - For Terminate mode (the default when tls.mode is
+                unset), require at least one of the listener's
+                certificateRefs to have registered a cert; otherwise
+                drop (failed cert resolution).
+              - For Passthrough mode, the chart routes via the
+                ssl-tcp frontend keyed off sslPassthroughBackends —
+                we don't add a per-listener contribution here; the
+                fallback below catches that case.
+              - port == httpsPort → bindHTTPSDefault; any port lights
+                needHTTPSFrontend so https-bind-extra-* has a
+                frontend to attach to. -#}
+      {%- macro applyListener(gwNs string, gwName string, listener any) %}
+      {%%
+        var lProto = tostring(dig(listener, "protocol") | fallback(""))
+        var lPort = toint(dig(listener, "port") | fallback(0))
+        var lName = tostring(dig(listener, "name") | fallback(""))
+        if lProto == "HTTP" {
+          gf["needHTTPFrontend"] = true
+          if lPort == httpPort {
+            gf["bindHTTPDefault"] = true
+          }
+          return
+        }
+        if lProto != "HTTPS" && lProto != "TLS" {
+          return
+        }
+        // mTLS blocking — listener configured frontend validation but
+        // its CA refs didn't resolve. Drop.
+        var listenerKey = gwNs + "/" + gwName + "/" + lName
+        if lName != "" && mtlsBlocked[listenerKey] != nil {
+          return
+        }
+        var lTlsMode = tostring(listener | dig("tls", "mode") | fallback("Terminate"))
+        if lProto == "HTTPS" || (lProto == "TLS" && lTlsMode != "Passthrough") {
+          // Cert resolvability — at least one certificateRef must
+          // map to an entry in tlsCertificates (cert resolved + PEM
+          // valid). For TLS Terminate listeners we keep the same
+          // gate; without a resolvable cert HAProxy can't terminate
+          // and the listener must not bind.
+          var hasResolvedCert = false
+          for _, certRef := range listener | dig("tls", "certificateRefs") | toSlice() {
+            var refKind = tostring(dig(certRef, "kind") | fallback("Secret"))
+            if refKind != "Secret" {
+              continue
+            }
+            var refNs = tostring(dig(certRef, "namespace") | fallback(gwNs))
+            var refName = tostring(dig(certRef, "name") | fallback(""))
+            if refName == "" {
+              continue
+            }
+            if certBySecret[refNs+"/"+refName] {
+              hasResolvedCert = true
+              break
+            }
+          }
+          if !hasResolvedCert {
+            return
+          }
+        }
+        // TLS-protocol listeners (Terminate or Passthrough) feed the
+        // per-port mode-tcp frontends emitted by frontends-600-gateway-
+        // tls-listener — NOT the chart's mode-http HTTPS frontend.
+        // Each frontend's allowlist of `use_backend if { ssl_fc_sni
+        // ... }` rules is the spec contract; reject-default makes
+        // unmatched SNIs produce a connection rejection (TCP RST),
+        // which closes the upstream TLSRoute conformance gap on
+        // invalid-backend rejection. Keyed by port to support the
+        // common case of one Gateway claiming several listeners on a
+        // single port (different hostnames, same TLS mode — mixed
+        // mode is already flagged ProtocolConflict by status patches).
+        if lProto == "TLS" {
+          var byPortRaw, _ = shared.ComputeIfAbsent("gatewayTLSListenersByPort", func() any { return map[int]any{} })
+          var byPort = byPortRaw.(map[int]any)
+          var portEntry, exists = byPort[lPort]
+          if !exists {
+            portEntry = map[string]any{
+              "mode":      lTlsMode,
+              "listeners": []any{},
+            }
+          }
+          var pe = portEntry.(map[string]any)
+          var listenerEntry = map[string]any{
+            "gwNs":     gwNs,
+            "gwName":   gwName,
+            "name":     lName,
+            "hostname": tostring(dig(listener, "hostname") | fallback("")),
+            "mode":     lTlsMode,
+          }
+          pe["listeners"] = append(pe["listeners"].([]any), listenerEntry)
+          byPort[lPort] = pe
+          return
+        }
+        // HTTPS-only path below — TLS handled above. HTTPS Gateway
+        // listeners terminate TLS in the chart's HTTPS frontend, so
+        // light up needHTTPSTermination to keep ssl-tcp's default
+        // fall-through to ssl-loopback (rejecting unmatched SNIs would
+        // break HTTPS for hosts without an explicit listener match).
+        gf["needHTTPSFrontend"] = true
+        gf["needHTTPSTermination"] = true
+        if lPort == httpsPort {
+          gf["bindHTTPSDefault"] = true
+        }
+      %%}
+      {%- end macro %}
+      {%- if resources != nil && resources.gateways != nil %}
+      {%- for _, gw := range resources.gateways.List() %}
+      {%%
+        var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
+        var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+      %%}
+      {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+      {{ applyListener(gwNs, gwName, listener) }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- if resources != nil && resources.listenersets != nil %}
+      {%- for _, ls := range resources.listenersets.List() %}
+      {%%
+        // ListenerSets attach to a parent Gateway via spec.parentRef.
+        // Inherit the parent's namespace + name so mTLS blocking
+        // (keyed under the Gateway's identity in
+        // features-110-gateway-frontend-mtls) applies consistently.
+        var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+        var pRef = dig(ls, "spec", "parentRef")
+        var parentName = tostring(dig(pRef, "name") | fallback(""))
+        var parentNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+      %%}
+      {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+      {{ applyListener(parentNs, parentName, listener) }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {#- HTTPRoutes / GRPCRoutes contribute to needHTTPFrontend
+          even when they aren't pinned to a specific Gateway in the
+          fixtures we see. Their routing logic emits inside the
+          http_frontend block (regardless of bind port — the routing
+          logic uses dst_port to disambiguate listener ports), so
+          the frontend has to exist whenever at least one route is
+          declared. The narrower bindHTTPDefault flag stays gated on
+          actual listeners at the chart's default httpPort. -#}
+      {%- if resources != nil %}
+      {%- if resources.httproutes != nil %}
+      {%%
+        if len(resources.httproutes.List()) > 0 {
+          gf["needHTTPFrontend"] = true
+        }
+      %%}
+      {%- end %}
+      {%- if resources.grpcroutes != nil %}
+      {%%
+        if len(resources.grpcroutes.List()) > 0 {
+          gf["needHTTPFrontend"] = true
+        }
+      %%}
+      {%- end %}
+      {%- end %}
+      {#- Ingress contribution: any cert registered via
+          features-100-ingress-tls indicates an Ingress with spec.tls,
+          which the chart routes through the chart-static https
+          frontend at httpsPort. ingress.yaml's
+          features-100-ingress-bind already lit bindHTTPSDefault
+          + needHTTPSFrontend for that case; this is a defensive
+          re-affirmation when an Ingress's cert ends up in
+          tlsCertificates without going through that path. -#}
+      {%%
+        for _, certEntry := range gf["tlsCertificates"].([]any) {
+          var entry = certEntry.(map[string]any)
+          // Ingress-registered entries have no listener_ports key;
+          // detect by absence and infer the chart's default httpsPort.
+          var ports = entry | dig("listener_ports") | toSlice()
+          if len(ports) == 0 {
+            gf["needHTTPSFrontend"] = true
+            gf["bindHTTPSDefault"] = true
+            // HTTPS termination is configured: chart-static
+            // ssl-tcp's default_backend should fall through to
+            // ssl-loopback for SNIs not claimed by a passthrough
+            // route (the chart's pre-existing behaviour).
+            gf["needHTTPSTermination"] = true
+          }
+        }
+      %%}
+      {#- HTTPS-Passthrough path: sslPassthroughBackends carries an
+          entry per listener that wants TLS-passthrough. The ssl-tcp
+          frontend binds httpsPort and routes by SNI; we treat any
+          passthrough backend as evidence we need the chart-static
+          httpsPort bind on that frontend (and the corresponding
+          loopback-fed https frontend on the unix socket). The
+          frontends-500-ssl-tcp snippet itself gates further on
+          len(passthroughBackends) > 0, so this lights up both
+          flags consistently with that gate.
+
+          Note: TLS-Passthrough alone does NOT set
+          `needHTTPSTermination` — a port that hosts only TLS
+          listeners and no HTTPS terminating listeners must reject
+          SNIs that no route claims (closes the upstream
+          `TLSRouteHostnameIntersection` "should not reach backend",
+          `TLSRouteInvalidBackendRefNonexistent`, and
+          `TLSRouteInvalidBackendRefUnknownKind` conformance subtests
+          where the test expects a TCP RST, not the 404 the chart
+          would otherwise serve via the ssl-loopback fall-through). -#}
+      {%%
+        if len(gf["sslPassthroughBackends"].([]any)) > 0 {
+          gf["bindHTTPSDefault"] = true
+          gf["needHTTPSFrontend"] = true
+        }
+      %%}
+
+  # gateway/features-110-gateway-frontend-mtls:
+  #
+  # Implements GatewayFrontendClientCertificateValidation. When a Gateway
+  # carries `spec.tls.frontend.default.validation.caCertificateRefs` (or
+  # the per-port variant), HAProxy's bind line for that listener must
+  # carry `ca-file <path> verify required` so the TLS handshake demands
+  # a client certificate signed by the configured CA bundle.
+  #
+  # We piggyback on the existing per-SNI client-cert verify machinery
+  # in ssl.yaml: write the CA bundle into a registered file and
+  # register an entry in `clientCertVerifyHosts[sni]` for every
+  # SNI the listener exposes. The crt-list emitter picks up the
+  # ca-file/verify pair and adds it on the cert's crt-list line, so
+  # HAProxy applies the right CA per matched SNI.
+  #
+  # Per-port overrides are supported via spec.tls.frontend.perPort —
+  # a port entry's validation block replaces the default for any
+  # listener whose `port` matches.

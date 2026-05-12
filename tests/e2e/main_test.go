@@ -562,6 +562,13 @@ func chartCRDDir() (string, error) {
 // (which already binds 30080/30443/30404). The container-side NodePorts
 // remain 30080/30443/30404 — that's what the chart configures.
 //
+// extraPortMappings expose only the chart-static NodePorts (HTTP / HTTPS /
+// stats). Conformance tests run as a sibling container on the kind docker
+// network (see Dockerfile.conformance-test + `make test-conformance`) so
+// they reach MetalLB-allocated LoadBalancer IPs directly without needing
+// every random NodePort exported to the host. The e2e Go suite still
+// dials via NodePort + DinD remap and only needs these three ports.
+//
 // DinD compatibility: networking.apiServerAddress, the "docker" certSAN, and
 // listenAddress on extraPortMappings are all required when this suite runs
 // inside GitLab's docker:dind service container. They are harmless on a
@@ -627,3 +634,4 @@ func repoRoot() (string, error) {
 		dir = parent
 	}
 }
+

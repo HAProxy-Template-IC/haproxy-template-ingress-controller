@@ -187,15 +187,60 @@ test-acceptance-parallel: docker-build-test ## Run acceptance tests in parallel 
 	@echo "  PARALLEL        - Max concurrent tests (default: 4)"
 	$(GO) test -tags=acceptance -v -timeout 30m -parallel $${PARALLEL:-4} -run TestAllAcceptanceParallel ./tests/acceptance/...
 
-test-gateway-conformance: ## Run upstream Gateway API conformance suite against the chart (requires `make test-e2e` cluster up)
-	@echo "Running Gateway API conformance suite against the haptic-e2e cluster..."
+CONFORMANCE_IMAGE ?= haptic-conformance-test:latest
+CONFORMANCE_KIND_NETWORK ?= kind
+CONFORMANCE_KIND_CLUSTER ?= haptic-e2e
+CONFORMANCE_TIMEOUT ?= 30m
+
+test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sibling container on the kind network
+	@echo "Running Gateway API conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."
 	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
 	@echo "      and left it running (KEEP_CLUSTER=true is the default)."
 	@echo "Environment variables:"
 	@echo "  TEST_RUN_PATTERN - Run a subset of conformance tests matching the pattern"
-	@echo "                     (forwarded to 'go test -run'); useful when iterating"
-	@echo "                     on a single failure. Empty = run the full suite."
-	$(GO) test -mod=mod -tags=gateway_conformance -v -timeout 30m $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") ./tests/conformance/...
+	@echo "                     (forwarded as -test.run); empty = full suite."
+	@echo "  CONFORMANCE_IMAGE - Image tag for the test binary (default: $(CONFORMANCE_IMAGE))"
+	@echo "  CONFORMANCE_KIND_NETWORK - Docker network to attach the test container to"
+	@echo "                             (default: $(CONFORMANCE_KIND_NETWORK) — kind's default)"
+	@echo "  CONFORMANCE_KIND_CLUSTER - kind cluster name (default: $(CONFORMANCE_KIND_CLUSTER))"
+	@echo "  CONFORMANCE_DEBUG - non-empty for upstream RoundTripper debug logging"
+	@# Architecture: the conformance test binary is built statically here on
+	@# the host (CGO_ENABLED=0), packaged into a tiny distroless image, and
+	@# run as a sibling container on the kind docker network. From that
+	@# vantage point Gateway.Status MetalLB IPs are directly routable, so
+	@# the stock upstream RoundTripper handles every dial — no NodePort
+	@# tunnel, no DinD remap, no CustomDialContext. Same code path locally
+	@# and under GitLab's docker:dind, the only thing that changes is which
+	@# docker daemon owns the network (host daemon vs DinD's nested daemon).
+	@echo "Building conformance test binary (gateway_conformance tag)..."
+	@# Static binary: distroless-static has no libc / dynamic loader.
+	CGO_ENABLED=0 $(GO) test -mod=mod -tags=gateway_conformance -c -o /tmp/haptic-conformance.test ./tests/conformance/
+	@echo "Resolving kind apiserver kubeconfig (--internal, for container-network DNS)..."
+	@# The kubeconfig is BAKED INTO the image rather than bind-mounted because
+	@# bind mounts don't cross the DinD boundary — `docker run -v src:dst`
+	@# resolves `src` on the DinD daemon's filesystem, not the GitLab job
+	@# container's, and the daemon doesn't have it. Baking works in both
+	@# environments and per-cluster image churn is acceptable (we rebuild
+	@# per `make test-e2e` anyway).
+	@echo "Packaging into $(CONFORMANCE_IMAGE)..."
+	@# Build with a minimal context so the daemon isn't asked to upload the
+	@# whole repo (which is a few hundred MB and pointless — Dockerfile.
+	@# conformance-test only COPYs the test binary + kubeconfig).
+	@rm -rf /tmp/haptic-conformance-build
+	@mkdir -p /tmp/haptic-conformance-build
+	cp /tmp/haptic-conformance.test /tmp/haptic-conformance-build/
+	cp Dockerfile.conformance-test /tmp/haptic-conformance-build/Dockerfile
+	kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-conformance-build/kubeconfig
+	docker build -t $(CONFORMANCE_IMAGE) /tmp/haptic-conformance-build
+	@rm -rf /tmp/haptic-conformance-build
+	@echo "Running conformance suite..."
+	docker run \
+		--rm \
+		--network $(CONFORMANCE_KIND_NETWORK) \
+		$(if $(CONFORMANCE_DEBUG),-e CONFORMANCE_DEBUG=$(CONFORMANCE_DEBUG)) \
+		$(CONFORMANCE_IMAGE) \
+		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
+		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
 
 test-e2e: $(if $(SKIP_DOCKER_BUILD),,docker-build-test) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
 	@echo "Running e2e tests..."

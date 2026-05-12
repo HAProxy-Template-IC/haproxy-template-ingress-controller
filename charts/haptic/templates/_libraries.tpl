@@ -106,6 +106,17 @@ Returns: empty (mutates obj by side effect)
 
 {{/*
 Deep merge template libraries.
+
+Each entry in `$libraryFiles` is either:
+  - A flat-file path like "libraries/base.yaml" (the original convention).
+  - A directory path ending in "/" like "libraries/gateway/" — a "split
+    library" whose contents are spread across multiple fragment files.
+    `_index.yaml` carries the load rules (`_helm_load`); fragments at the
+    same level (and one level deep) merge into the library accumulator
+    in lexicographic order before any inject / unset / strip / merge
+    happens. Fragments must NOT carry their own `_helm_load` — the
+    convention is `_index.yaml`-owns-load-rules, fragments-own-content.
+    See ADR-0008.
 */}}
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
@@ -114,7 +125,7 @@ Deep merge template libraries.
     "libraries/base.yaml"
     "libraries/ssl.yaml"
     "libraries/ingress.yaml"
-    "libraries/gateway.yaml"
+    "libraries/gateway/"
     "libraries/annotation-compat.yaml"
     "libraries/haproxytech.yaml"
     "libraries/haproxy-ingress.yaml"
@@ -122,7 +133,38 @@ Deep merge template libraries.
     "libraries/spoa-hub.yaml"
 }}
 {{- range $file := $libraryFiles }}
-  {{- $library := $context.Files.Get $file | fromYaml }}
+  {{- $library := dict }}
+  {{- if hasSuffix "/" $file }}
+    {{- /* Split library: read _index.yaml as the load-rule authority, */ -}}
+    {{- /* then merge fragments in lexicographic order: top-level YAML */ -}}
+    {{- /* files plus any one-level-deep YAML files under subdirs.     */ -}}
+    {{- /* _index.yaml is excluded from the fragment set. We collect-  */ -}}
+    {{- /* then-sort because Helm's Files.Glob returns a map whose     */ -}}
+    {{- /* iteration order is unspecified.                             */ -}}
+    {{- $indexPath := printf "%s_index.yaml" $file }}
+    {{- $library = $context.Files.Get $indexPath | fromYaml }}
+    {{- if not $library }}
+      {{- fail (printf "split library %q is missing %s" $file $indexPath) }}
+    {{- end }}
+    {{- $fragmentPaths := list }}
+    {{- range $path, $_ := $context.Files.Glob (printf "%s*.yaml" $file) }}
+      {{- if ne $path $indexPath }}
+        {{- $fragmentPaths = append $fragmentPaths $path }}
+      {{- end }}
+    {{- end }}
+    {{- range $path, $_ := $context.Files.Glob (printf "%s*/*.yaml" $file) }}
+      {{- $fragmentPaths = append $fragmentPaths $path }}
+    {{- end }}
+    {{- range $fragmentPath := sortAlpha $fragmentPaths }}
+      {{- $fragment := $context.Files.Get $fragmentPath | fromYaml }}
+      {{- if $fragment._helm_load }}
+        {{- fail (printf "split-library fragment %q must not declare _helm_load (only _index.yaml does)" $fragmentPath) }}
+      {{- end }}
+      {{- $library = mustMergeOverwrite $library $fragment }}
+    {{- end }}
+  {{- else }}
+    {{- $library = $context.Files.Get $file | fromYaml }}
+  {{- end }}
   {{- $loadHints := $library._helm_load | default dict }}
   {{- if eq (tpl ($loadHints.enable | default "true") $context | trim) "true" }}
     {{- range $inject := $loadHints.inject | default list }}
@@ -154,6 +196,47 @@ Deep merge template libraries.
   {{- end }}
 {{- end }}
 {{- $merged = mustMergeOverwrite $merged $userConfig }}
+
+{{- /* Strip Scriggo-template comments from templateSnippets in the merged
+       output. Comments document each snippet for chart authors but
+       contribute nothing to the rendered HAProxy config — Scriggo strips
+       them at template-render time. Their unstripped source still ships
+       in the deployed HAProxyTemplateConfig CR, where it's pure overhead.
+       The chart's growth has pushed the rendered CR past the 1 MiB
+       Kubernetes Secret hard-cap that Helm's release storage hits, so
+       the rendered CR has to shrink. Library source files are
+       unchanged — chart authors still see verbose inline documentation.
+
+       Three patterns, in order:
+
+         1. Leading {#- ... -#} block at the very start of the template
+            (top-of-snippet doc header). Anchored on \A.
+
+         2. Stand-alone {# ... #} block on its own line (mid-template
+            documentation). Required to be on its own line so we don't
+            remove inline `{#- something -#}` whitespace-control markers
+            that share a line with rendered content.
+
+         3. Stand-alone Go-style `// ...` line comments inside Scriggo
+            template directives. These appear inside {%- ... -%} or
+            {%% ... %%} blocks where Scriggo accepts Go syntax. Same
+            stand-alone-line constraint to avoid touching // chars that
+            might appear in rendered text (URLs, config values).
+
+       All three patterns require their match to occupy a whole line
+       (preceded by \n + whitespace, followed by \n) so removing the
+       line collapses the source without changing the surrounding
+       formatting. */ -}}
+{{- $leadingDocComment := "(?s)\\A\\s*\\{#.*?#\\}\\s*\\n?" }}
+{{- $standaloneBlockComment := "(?ms)^[ \\t]*\\{#.*?#\\}[ \\t]*\\n" }}
+{{- $standaloneGoComment := "(?m)^[ \\t]*//[^\\n]*\\n" }}
+{{- range $name, $snippet := ($merged.templateSnippets | default dict) }}
+  {{- $tpl := $snippet.template | default "" }}
+  {{- $tpl = regexReplaceAll $leadingDocComment $tpl "" }}
+  {{- $tpl = regexReplaceAll $standaloneBlockComment $tpl "" }}
+  {{- $tpl = regexReplaceAll $standaloneGoComment $tpl "" }}
+  {{- $_ := set $snippet "template" $tpl }}
+{{- end }}
 
 {{- /* Return merged config as YAML */ -}}
 {{- $merged | toYaml }}

@@ -1,0 +1,256 @@
+validationTests:
+  test-grpcroute-h2c-on-port-80:
+    description: "Pins the chart's plaintext h2c multiplexing on port 80: the new tcp inspector + dual-loopback architecture (libraries/base."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: http
+                port: 80
+                protocol: HTTP
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: GRPCRoute
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-svc
+            namespace: default
+          spec:
+            ports:
+              - name: grpc
+                port: 9090
+                targetPort: 9090
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: grpc-h2c
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - grpc.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.API
+                      method: Echo
+                backendRefs:
+                  - name: grpc-svc
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend http-tcp$'
+        description: |
+          Outer tcp inspector frontend exists.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'acl is_h2c req\.payload\(0,24\) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a'
+        description: |
+          h2c preface byte-match ACL renders with the exact 24-byte
+          hex of `PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n`.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'use_backend http-h2c-loopback if is_h2c'
+        description: |
+          h2c-detected connections route to the h2c loopback backend.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'default_backend http-h1-loopback'
+        description: |
+          Non-h2c connections fall through to the h1 loopback backend.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'server loopback unix@/etc/haproxy/http-h1-frontend\.sock send-proxy-v2'
+        description: |
+          h1 loopback backend forwards to the unix socket with PROXY
+          protocol v2 (preserves client IP).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'server loopback unix@/etc/haproxy/http-h2c-frontend\.sock send-proxy-v2'
+        description: |
+          h2c loopback backend forwards to its own unix socket, also
+          with send-proxy-v2.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend http_frontend$'
+        description: |
+          Inner h1 frontend renders (mode http) — keeps the
+          `http_frontend` name to preserve back-compat with existing
+          chart tests asserting on `guid fe:http_frontend`.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind unix@/etc/haproxy/http-h1-frontend\.sock mode 660 accept-proxy'
+        description: |
+          h1 inner frontend binds the unix socket with accept-proxy
+          (parses the PROXY v2 header sent by the loopback backend).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend http_frontend_h2c$'
+        description: |
+          New h2c inner frontend exists.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'bind unix@/etc/haproxy/http-h2c-frontend\.sock mode 660 accept-proxy proto h2'
+        description: |
+          h2c inner frontend's bind carries `proto h2` so HAProxy
+          parses the connection as HTTP/2 cleartext (the outer
+          inspector has already verified the preface; `proto h2` here
+          is required because plaintext h2c has no in-band protocol
+          negotiation).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'backend gtw_default_grpc-h2c_grpc-svc_9090'
+        description: |
+          GRPCRoute backend exists with the conventional name shape.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'default-server check proto h2'
+        description: |
+          GRPCRoute backend's default-server line emits `proto h2` so
+          the upstream connection speaks HTTP/2 — chart's existing
+          contract, asserted here for completeness.
+
+  test-grpcroute-https-listener-alpn-h2:
+    description: "Pins the chart's gRPC-over-TLS+ALPN-h2 emission contract for the production-relevant scenario where a Gateway has an HTTPS listener + GRPCRoute (the upstream conformance suite tests the plaintext h2c ."
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gateway
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https
+                port: 443
+                protocol: HTTPS
+                hostname: grpc.example.com
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: GRPCRoute
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - group: ""
+                      kind: Secret
+                      name: grpc-tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: grpc-tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-svc
+            namespace: default
+          spec:
+            ports:
+              - name: grpc
+                port: 9090
+                targetPort: 9090
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: grpc-https
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - grpc.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.API
+                      method: Echo
+                backendRefs:
+                  - name: grpc-svc
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:443 ssl crt-list [^ ]+ alpn h2,http/1\.1'
+        description: |
+          HTTPS listener bind on port 443 carries `alpn h2,http/1.1` so
+          gRPC clients negotiate h2 over TLS.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^backend gtw_default_grpc-https_grpc-svc_9090'
+        description: GRPCRoute backend exists with the expected name shape.
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'default-server check proto h2'
+        description: |
+          GRPCRoute backend's `default-server` line emits `proto h2` so
+          the upstream connection speaks h2 (gRPC requires HTTP/2).
+
+      - type: contains
+        target: map:host.map
+        pattern: '(?m)^grpc\.example\.com\b'
+        description: |
+          Host map carries an entry for the GRPCRoute's hostname
+          (gRPC clients send it as `:authority` / SNI on TLS, and the
+          host map drives the txn.host normalization that downstream
+          method-matching keys off).

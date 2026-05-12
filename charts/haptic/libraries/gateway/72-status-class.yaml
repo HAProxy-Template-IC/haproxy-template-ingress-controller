@@ -1,0 +1,120 @@
+templateSnippets:
+  util-generate-gatewayclass-status-patches:
+    template: |
+      {#-
+        Generate GatewayClass Status Patches
+
+        Per Gateway API spec, implementations MUST populate status on every
+        GatewayClass that names them in `spec.controllerName`. The watcher
+        is field-selector-filtered to that exact match (see _helm_load
+        inject), so every GatewayClass in this list is one we own.
+
+        For each GatewayClass we set:
+          - Accepted=True with reason "Accepted" and the observed generation
+            (the value the spec was at when we acknowledged it)
+          - Or Accepted=False with reason "InvalidParameters" if the
+            optional parametersRef is malformed (wrong group / kind)
+
+        Variants written:
+          - rendered:    Accepted condition (data-plane-independent —
+                          the class is admitted or rejected purely from
+                          spec.parametersRef validation, no HAProxy state
+                          needed). Applied immediately on every render.
+
+        deployed/deployFailed are intentionally NOT emitted. With
+        phase-scoped SSA field managers, haptic-rendered owns the
+        Accepted condition exclusively; haptic-deployed and
+        haptic-deployFailed never touch the GatewayClass. Deployment
+        failures surface on the dependent Gateway (its Programmed
+        condition flips False), not on the class itself.
+
+        We don't validate that the parametersRef target resource *exists* —
+        that would require a watch on cluster-scoped HAProxyTemplateConfig
+        which the controller doesn't have. Group/kind validation is the
+        cheaper invariant that catches obvious user mistakes.
+
+        Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
+      -#}
+      {%- import "util-condition-transition-time" for TopLevelTransitionTime -%}
+      {% macro GenerateGatewayClassStatusPatches(gatewayClasses []any) %}
+        {%- for _, gc := range gatewayClasses %}
+          {%%
+            var name = dig(gc, "metadata", "name") | fallback("")
+            var generation = dig(gc, "metadata", "generation") | fallback(0)
+            var nameStr = tostring(name)
+
+            // Validate optional parametersRef. Empty / unset → accepted.
+            // Mismatched group or kind → InvalidParameters.
+            var paramsRef = dig(gc, "spec", "parametersRef")
+            var acceptedStatus = "True"
+            var acceptedReason = "Accepted"
+            var acceptedMessage = "GatewayClass accepted by haproxy-haptic controller"
+            if paramsRef != nil {
+              var pGroup = dig(paramsRef, "group") | fallback("") | tostring()
+              var pKind = dig(paramsRef, "kind") | fallback("") | tostring()
+              if pGroup != "haproxy-haptic.org" || pKind != "HAProxyTemplateConfig" {
+                acceptedStatus = "False"
+                acceptedReason = "InvalidParameters"
+                acceptedMessage = "spec.parametersRef must reference haproxy-haptic.org/HAProxyTemplateConfig (got " + pGroup + "/" + pKind + ")"
+              }
+            }
+
+            var acceptedCondition = condition(
+              "Accepted",
+              acceptedStatus,
+              acceptedReason,
+              acceptedMessage,
+              generation,
+              TopLevelTransitionTime(gc, "Accepted", acceptedStatus),
+            )
+
+            // GatewayClass is cluster-scoped; pass empty namespace.
+            statusPatch("", nameStr,
+              "gateway.networking.k8s.io/v1", "GatewayClass",
+              map[string]interface{}{
+                "rendered": map[string]interface{}{
+                  "conditions": []any{acceptedCondition},
+                },
+              })
+          %%}
+        {%- end %}
+      {% end %}
+
+  status-patches-100-gatewayclass:
+    template: |
+      {#-
+        GatewayClass Status Patch Registration
+
+        Extension Point: status-patches-* (priority 100 — runs before
+        the priority-200 Gateway/HTTPRoute snippet so the class is
+        accepted before any dependent resource's status is published).
+
+        Watcher is filtered to spec.controllerName == ours, so every
+        GatewayClass in the store is one we MUST set status on.
+      -#}
+      {%- import "util-generate-gatewayclass-status-patches" for GenerateGatewayClassStatusPatches -%}
+      {%- var allGatewayClasses = resources.gatewayclasses.List() -%}
+      {%- if len(allGatewayClasses) > 0 -%}
+        {{- GenerateGatewayClassStatusPatches(allGatewayClasses) -}}
+      {%- end -%}
+
+  # ============================================================================
+  # BackendTLSPolicy Status Patches
+  # ============================================================================
+  #
+  # Per Gateway API spec, BackendTLSPolicy status carries one
+  # PolicyAncestorStatus per Gateway that owns a route which references
+  # the policy's target Service. We compute the set of ancestors and
+  # write Accepted + ResolvedRefs conditions for each.
+  #
+  # Conditions we set:
+  #   - Accepted=True  (Reason=Accepted)
+  #     - and Accepted=False (Reason=Conflicted) when another policy
+  #       targets the same (group, kind, name, sectionName) tuple
+  #   - ResolvedRefs=True (Reason=ResolvedRefs)
+  #     - or ResolvedRefs=False (Reason=NoValidCACertificate) when
+  #       caCertificateRefs is empty / all refs are unresolvable
+  #     - or ResolvedRefs=False (Reason=InvalidCACertificateRef) when
+  #       a ref points at an unsupported group/kind
+  #     - or ResolvedRefs=False (Reason=Invalid) when the wellKnown
+  #       CACertificates value isn't recognised

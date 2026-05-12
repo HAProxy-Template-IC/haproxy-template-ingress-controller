@@ -35,6 +35,7 @@ func (s *DeploymentScheduler) handleTemplateRendered(event *events.TemplateRende
 	s.lastRenderedConfig = event.HAProxyConfig
 	s.lastAuxiliaryFiles = event.AuxiliaryFiles
 	s.lastContentChecksum = event.ContentChecksum
+	s.lastValidatedStatusPatches = event.StatusPatches
 
 	s.logger.Debug("cached rendered config for deployment after validation",
 		"config_bytes", event.ConfigBytes,
@@ -86,6 +87,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	config := s.lastRenderedConfig
 	auxFiles := s.lastAuxiliaryFiles
 	endpoints := s.currentEndpoints
+	statusPatches := s.lastValidatedStatusPatches
 	// Cache validated config immediately to prevent race condition
 	s.lastValidatedConfig = config
 	s.lastValidatedAux = auxFiles
@@ -127,6 +129,20 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 			"config_hash", configHash[:8],
 			"pod_set_hash", podSetHash[:8],
 			"last_deployed", s.lastDeployedTime.Format(time.RFC3339))
+		// Publish a DeploymentSkippedEvent so consumers that need to know
+		// "the data plane is converged on this config" can react. The
+		// status-applier uses this to write the Programmed=True condition
+		// on resources whose addition didn't change the rendered HAProxy
+		// config (e.g. a Gateway with no attached routes yet) — without
+		// this signal the status would stay at the CRD default forever.
+		s.eventBus.Publish(events.NewDeploymentSkippedEvent(
+			len(endpoints),
+			"config_unchanged",
+			configHash,
+			podSetHash,
+			statusPatches,
+			events.PropagateCorrelation(event),
+		))
 		return
 	}
 
@@ -137,7 +153,7 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 
 	// Schedule deployment to current endpoints (or queue if deployment in progress)
 	// Propagate coalescibility from validation event through the deployment pipeline
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, event.Coalescible())
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, statusPatches, event.Coalescible())
 }
 
 // handlePodsDiscovered handles HAProxy pod discovery/changes with coalescing.
@@ -176,6 +192,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
 	parsedConfig := s.lastParsedConfig
+	statusPatches := s.lastValidatedStatusPatches
 	correlationID := s.lastCorrelationID
 	coalescible := s.lastCoalescible
 	hasValidConfig := s.hasValidConfig
@@ -196,7 +213,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 
 	// Schedule deployment of last validated config to new endpoints (or queue if in progress)
 	// Use the correlation ID and coalescibility from the last validation for traceability
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, coalescible)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -215,6 +232,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	config := s.lastValidatedConfig
 	auxFiles := s.lastValidatedAux
 	parsedConfig := s.lastParsedConfig
+	statusPatches := s.lastValidatedStatusPatches
 	endpoints := s.currentEndpoints
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
@@ -238,7 +256,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 
 	// Schedule fallback deployment with last known good config
 	// Fallback deployments are NOT coalescible - they must execute to ensure consistency
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, false)
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, statusPatches, false)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
@@ -275,7 +293,7 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentComp
 
 		// Use scheduleOrQueue for proper mutex management and goroutine control
 		// This ensures only one scheduling goroutine runs at a time
-		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.parsedConfig, pending.endpoints, pending.reason, pending.correlationID, pending.coalescible)
+		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.parsedConfig, pending.endpoints, pending.reason, pending.correlationID, pending.statusPatches, pending.coalescible)
 		return
 	}
 

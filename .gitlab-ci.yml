@@ -61,7 +61,7 @@ variables:
         - .tool-versions
         - Makefile
         - Dockerfile
-        - scripts/**
+        - scripts/**/*
         - .gitlab-ci.yml
         - .golangci.yml
         # Config files (ensures lint job runs for config-only changes)
@@ -74,14 +74,14 @@ variables:
 .rules-helm:
   rules:
     - changes:
-        - charts/**
+        - charts/**/*
         - .gitlab-ci.yml
 
 .rules-docs:
   rules:
     - changes:
-        - docs/**
-        - charts/**/docs/**
+        - docs/**/*
+        - charts/**/docs/**/*
         - charts/**/mkdocs.yml
         - .gitlab-ci.yml
 
@@ -399,7 +399,7 @@ test:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**
+        - charts/**/*
         - .gitlab-ci.yml
   before_script:
     - haproxy -v
@@ -610,8 +610,8 @@ publish-chart-snapshot:
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
         - scripts/start-dev-env.sh
-        - tests/e2e/**
-        - scripts/dev-env-assets/**
+        - tests/e2e/**/*
+        - scripts/dev-env-assets/**/*
 
 # Chart-side trigger for the SPOA image-build pipeline. Composed with
 # `.rules-spoa` (via `!reference`) on `prep-spoa-plugins` and
@@ -644,8 +644,8 @@ publish-chart-snapshot:
         - charts/haptic/templates/haproxytemplateconfig.yaml
         - charts/haptic/templates/spoa-hub-configmap.yaml
         - scripts/start-dev-env.sh
-        - tests/e2e/**
-        - scripts/dev-env-assets/**
+        - tests/e2e/**/*
+        - scripts/dev-env-assets/**/*
 
 # Drift guard: the bundled-versions table in spoa-hub.md is auto-rendered
 # from versions-spoa.env. Fail CI if the doc and the env file disagree.
@@ -1143,8 +1143,8 @@ test-acceptance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**
-        - scripts/**
+        - charts/**/*
+        - scripts/**/*
         - .gitlab-ci.yml
   before_script:
     - |
@@ -1288,8 +1288,12 @@ test-e2e:
 #
 # Runs the same kind+helm setup as test-e2e (including MetalLB so Gateways
 # get reachable LoadBalancer IPs), then invokes `make test-gateway-conformance`
-# which calls the upstream conformance.RunConformanceWithOptions with our
-# pinned SupportedFeatures set.
+# which builds the test binary into a tiny distroless image and runs it as a
+# sibling container on the kind docker network. From that vantage point the
+# test process reaches MetalLB-allocated LoadBalancer IPs directly — same
+# code path locally and under DinD, no NodePort tunneling. The DinD daemon
+# owns the kind network in CI; locally it's the host daemon. The shard
+# regex from scripts/shard-conformance-tests.sh is passed as TEST_RUN_PATTERN.
 #
 # Pinned to a single HAProxy version: the conformance suite tests the
 # chart's Gateway API surface (GatewayClass / Gateway / HTTPRoute behavior
@@ -1306,7 +1310,20 @@ test-gateway-conformance:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
-  timeout: 35 minutes
+  # Per-shard timeout. The full suite (~108 upstream tests) took ~30-40
+  # minutes on local hardware before sharding; a 4-way split puts each
+  # shard at ~25-30 tests, comfortably inside 25 minutes including the
+  # 3-4 minute kind+helm cluster bootstrap that every shard pays once.
+  timeout: 25 minutes
+  # Run 4 shards in parallel. GitLab CI injects $CI_NODE_INDEX (1..4)
+  # and $CI_NODE_TOTAL (=4); the before_script invocation of
+  # scripts/shard-conformance-tests.sh hashes each upstream test name
+  # into one of those buckets. Each shard runs its slice of the suite
+  # in a fully isolated kind cluster — there's no cross-shard state
+  # leakage because every shard spins up its own kind cluster via
+  # `make test-e2e` (TEST_RUN_PATTERN="^$" shortcircuits the e2e tests
+  # themselves so the cluster boot is the only cost).
+  parallel: 4
   interruptible: true
   variables:
     CTRL_NAMESPACE: haptic
@@ -1330,8 +1347,8 @@ test-gateway-conformance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**
-        - scripts/**
+        - charts/**/*
+        - scripts/**/*
         - .gitlab-ci.yml
   before_script:
     # Reuse the test-e2e prep: pull the controller + spoa-hub snapshots
@@ -1353,43 +1370,55 @@ test-gateway-conformance:
     # writes). Using TEST_RUN_PATTERN=^$ shortcircuits the e2e tests
     # themselves so we only pay for setup.
     - TEST_RUN_PATTERN="^$" make test-e2e
-    - make test-gateway-conformance
+    # Derive the shard's `-run` regex. CI_NODE_INDEX / CI_NODE_TOTAL
+    # are populated by GitLab CI's `parallel: <N>` keyword above; the
+    # script hashes each upstream test ShortName into one of the
+    # buckets so the partition is deterministic across runs and
+    # branches (FNV-1a 32-bit modulo N).
+    - |
+      SHARD_PATTERN="$(scripts/shard-conformance-tests.sh "${CI_NODE_INDEX}" "${CI_NODE_TOTAL}")"
+      echo "Conformance shard ${CI_NODE_INDEX}/${CI_NODE_TOTAL}: ${SHARD_PATTERN}"
+      TEST_RUN_PATTERN="${SHARD_PATTERN}" make test-gateway-conformance
   after_script:
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
-        echo "Conformance failed - extracting cluster diagnostics..."
-        mkdir -p debug-logs/_conformance
+        # Per-shard subdir so 4 parallel jobs don't clobber each
+        # other's diagnostics (GitLab aggregates artifacts from all
+        # shards into the same MR artifact tab).
+        LOG_DIR="debug-logs/_conformance/shard-${CI_NODE_INDEX:-1}-of-${CI_NODE_TOTAL:-1}"
+        echo "Conformance shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} failed — extracting cluster diagnostics to ${LOG_DIR}..."
+        mkdir -p "$LOG_DIR"
 
         export KUBECONFIG=/tmp/haproxy-e2e-kubeconfig
 
         # Controller logs across replicas
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-          echo "=== Controller: $pod ===" >> debug-logs/_conformance/controller.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> debug-logs/_conformance/controller.log 2>&1 || true
+          echo "=== Controller: $pod ===" >> "$LOG_DIR/controller.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
         # HAProxy + dataplane logs
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-          echo "=== HAProxy: $pod ===" >> debug-logs/_conformance/haproxy.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> debug-logs/_conformance/haproxy.log 2>&1 || true
-          echo "=== Dataplane: $pod ===" >> debug-logs/_conformance/dataplane.log
-          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> debug-logs/_conformance/dataplane.log 2>&1 || true
+          echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
+          echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
         kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
-          cat /etc/haproxy/haproxy.cfg > debug-logs/_conformance/haproxy.cfg 2>&1 || true
+          cat /etc/haproxy/haproxy.cfg > "$LOG_DIR/haproxy.cfg" 2>&1 || true
 
         # Conformance fixtures and chart resources at point of failure
-        kubectl get gatewayclass -o yaml > debug-logs/_conformance/gatewayclasses.yaml 2>&1 || true
-        kubectl get gateway -A -o yaml > debug-logs/_conformance/gateways.yaml 2>&1 || true
-        kubectl get httproute -A -o yaml > debug-logs/_conformance/httproutes.yaml 2>&1 || true
-        kubectl get pods -A -o wide > debug-logs/_conformance/pods.log 2>&1 || true
+        kubectl get gatewayclass -o yaml > "$LOG_DIR/gatewayclasses.yaml" 2>&1 || true
+        kubectl get gateway -A -o yaml > "$LOG_DIR/gateways.yaml" 2>&1 || true
+        kubectl get httproute -A -o yaml > "$LOG_DIR/httproutes.yaml" 2>&1 || true
+        kubectl get pods -A -o wide > "$LOG_DIR/pods.log" 2>&1 || true
 
         # MetalLB state — IPAddressPool exhaustion or speaker issues
         # surface as Gateway addresses staying empty.
-        kubectl -n metallb-system get pods -o yaml > debug-logs/_conformance/metallb-pods.yaml 2>&1 || true
-        kubectl get ipaddresspool,l2advertisement -A -o yaml > debug-logs/_conformance/metallb-config.yaml 2>&1 || true
+        kubectl -n metallb-system get pods -o yaml > "$LOG_DIR/metallb-pods.yaml" 2>&1 || true
+        kubectl get ipaddresspool,l2advertisement -A -o yaml > "$LOG_DIR/metallb-config.yaml" 2>&1 || true
       fi
     - kind delete cluster --name haptic-e2e || true
   artifacts:
@@ -1675,8 +1704,8 @@ pages-preview:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &pages-preview-changes
-        - docs/**
-        - charts/**/docs/**
+        - docs/**/*
+        - charts/**/docs/**/*
         - charts/**/mkdocs.yml
   script:
     - |

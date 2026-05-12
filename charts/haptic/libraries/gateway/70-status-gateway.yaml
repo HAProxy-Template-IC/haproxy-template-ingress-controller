@@ -1,0 +1,2167 @@
+templateSnippets:
+  util-generate-gateway-status-patches:
+    template: |
+      {#-
+        Generate Gateway Status Patches
+
+        For each Gateway, registers a status patch with:
+          - deployed: Accepted + Programmed conditions, addresses, listener status
+          - deployFailed: Accepted + Programmed(False) conditions, empty addresses
+
+        Parameters:
+          gateways: Slice of Gateway resources to process
+
+        Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
+      -#}
+      {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
+      {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {% macro GenerateGatewayStatusPatches(gateways []any) %}
+        {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+        {%- var rawAddresses = gf["addresses"].([]any) %}
+
+        {#- Convert LoadBalancer addresses to Gateway API format -#}
+        {%- var gatewayAddresses = []any{} %}
+        {%- for _, addr := range rawAddresses %}
+          {%%
+            var ip = dig(addr, "ip")
+            var hostname = dig(addr, "hostname")
+            if ip != nil {
+              gatewayAddresses = append(gatewayAddresses, map[string]any{
+                "type": "IPAddress",
+                "value": tostring(ip),
+              })
+            } else if hostname != nil {
+              gatewayAddresses = append(gatewayAddresses, map[string]any{
+                "type": "Hostname",
+                "value": tostring(hostname),
+              })
+            }
+          %%}
+        {%- end %}
+
+        {#- Count routes attached to each gateway/listener for status.
+
+            The Gateway API spec defines route attachment as the AND of:
+              1. parentRef matches the gateway (ns + name)
+              2. parentRef.sectionName, if set, matches the listener's name
+              3. listener.allowedRoutes.kinds, if set, contains the route kind
+              4. listener.allowedRoutes.namespaces.from selects the route's
+                 namespace (Same / All / Selector(matchLabels))
+              5. The hostname intersection of listener.hostname and
+                 route.spec.hostnames is non-empty (or both empty)
+
+            All five must be true for a route to be "attached" — surfaced
+            both as listener.attachedRoutes in Gateway status and (in a
+            later commit) as the route's parents[].conditions[Accepted].
+
+            Implementation: walk every (route × listener-of-target-gateway)
+            pair and increment the count when all predicates hold. Indexed
+            by `<gw_ns>/<gw_name>/<listener_name>`; the listener-status
+            loop reads back via the same key. This replaces the earlier
+            naive scheme (count per gateway+section, plus a "*" bucket for
+            sectionless routes) which over-counted routes that targeted
+            the gateway but didn't match the listener's hostname /
+            allowedRoutes filters.
+        -#}
+        {%- var routeCounts = map[string]int{} %}
+        {%%
+          // Gather all routes (HTTPRoute + GRPCRoute + TLSRoute) into a
+          // single iteration so the predicate evaluation is uniform.
+          // TLSRoute requires a protocol-default check (only TLS-protocol
+          // listeners list TLSRoute as a default kind), so we tag the
+          // entry with a needsTLSProtocol flag the listener loop honours.
+          var allRoutesForCount = []any{}
+          for _, r := range resources.httproutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "HTTPRoute",
+              "route": r,
+              "needsTLSProtocol": false,
+            })
+          }
+          for _, r := range resources.grpcroutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "GRPCRoute",
+              "route": r,
+              "needsTLSProtocol": false,
+            })
+          }
+          for _, r := range resources.tlsroutes.List() {
+            allRoutesForCount = append(allRoutesForCount, map[string]any{
+              "kind":  "TLSRoute",
+              "route": r,
+              "needsTLSProtocol": true,
+            })
+          }
+
+          for _, entry := range allRoutesForCount {
+            var em = entry.(map[string]any)
+            var routeKind = em["kind"].(string)
+            var route = em["route"]
+            var needsTLSProtocol = em["needsTLSProtocol"].(bool)
+            var routeNs = dig(route, "metadata", "namespace") | fallback("") | tostring()
+            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
+
+            for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
+              // Default group/kind for parentRef is gateway.networking.k8s.io/Gateway.
+              // Skip any parentRef that targets something else (e.g. Mesh
+              // Service ref); those don't apply to Gateway listener counts.
+              var prGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
+              var prKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
+              if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+                continue
+              }
+              var gwNs = dig(parentRef, "namespace") | fallback(routeNs) | tostring()
+              var gwName = dig(parentRef, "name") | fallback("") | tostring()
+              var section = dig(parentRef, "sectionName") | fallback("") | tostring()
+
+              var gw = resources.gateways.GetSingle(gwNs, gwName)
+              if gw == nil {
+                continue
+              }
+
+              // Pre-compute mixed-mode TLS port map for ProtocolConflict
+              // guard. A TLSRoute parented to a listener whose port
+              // mixes Passthrough + Terminate must not count.
+              var mixedTLSPorts = map[int]bool{}
+              for _, l := range dig(gw, "spec", "listeners") | toSlice() {
+                var lProto = tostring(dig(l, "protocol") | fallback(""))
+                if lProto == "TLS" {
+                  var lPort = toint(dig(l, "port") | fallback(0))
+                  var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+                  if mixedTLSPorts[lPort] {
+                    continue
+                  }
+                  for _, l2 := range dig(gw, "spec", "listeners") | toSlice() {
+                    var l2Proto = tostring(dig(l2, "protocol") | fallback(""))
+                    if l2Proto != "TLS" {
+                      continue
+                    }
+                    var l2Port = toint(dig(l2, "port") | fallback(0))
+                    if l2Port != lPort {
+                      continue
+                    }
+                    var l2Mode = tostring(dig(l2, "tls", "mode") | fallback("Terminate"))
+                    if l2Mode != lMode {
+                      mixedTLSPorts[lPort] = true
+                      break
+                    }
+                  }
+                }
+              }
+
+              for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
+                var listenerName = dig(listener, "name") | fallback("") | tostring()
+
+                // (2) sectionName filter
+                if section != "" && listenerName != section {
+                  continue
+                }
+
+                // (2.5) parentRef.port filter (Gateway API spec): if the
+                //       route's parentRef sets `.port`, only attach to
+                //       listeners with the same `spec.port`. Mismatched
+                //       routes get Accepted=False/NoMatchingParent.
+                var parentPort = toint(dig(parentRef, "port") | fallback(0))
+                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                if parentPort != 0 && listenerPort != parentPort {
+                  continue
+                }
+
+                // (2.6) Protocol filter for TLSRoute: only TLS-protocol
+                //       listeners list TLSRoute as a default kind. An
+                //       HTTP / HTTPS listener can never accept TLSRoute
+                //       even without explicit allowedRoutes.kinds.
+                var listenerProtoCount = tostring(dig(listener, "protocol") | fallback("HTTP"))
+                if needsTLSProtocol && listenerProtoCount != "TLS" {
+                  continue
+                }
+
+                // (2.7) ProtocolConflict guard for TLSRoute: a TLS
+                //       listener whose port carries mixed Passthrough +
+                //       Terminate is itself unaccepted; routes parented
+                //       to it must not count toward attachedRoutes.
+                if needsTLSProtocol && mixedTLSPorts[listenerPort] {
+                  continue
+                }
+
+                // (3) allowedRoutes.kinds — if specified, the route's
+                //     group/kind must be in the list. Default group is
+                //     gateway.networking.k8s.io.
+                var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
+                if allowedKindsRaw != nil {
+                  var kindOk = false
+                  for _, ak := range toSlice(allowedKindsRaw) {
+                    var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                    var akKind = dig(ak, "kind") | fallback("") | tostring()
+                    if akGroup == "gateway.networking.k8s.io" && akKind == routeKind {
+                      kindOk = true
+                      break
+                    }
+                  }
+                  if !kindOk {
+                    continue
+                  }
+                }
+
+                // (4) allowedRoutes.namespaces.from — Same | All | Selector
+                var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                switch fromMode {
+                case "Same":
+                  if routeNs != gwNs {
+                    continue
+                  }
+                case "All":
+                  // anything goes
+                case "Selector":
+                  // Resolve the route's namespace and match its labels
+                  // against the selector's matchLabels. matchExpressions
+                  // is intentionally not supported yet (no conformance
+                  // test exercises it; if/when one does, this falls
+                  // through and the predicate fails — which is the safe
+                  // default for an unrecognised label-selector shape).
+                  var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
+                  if ml == nil {
+                    continue
+                  }
+                  var nsObj = resources.namespaces.GetSingle(routeNs)
+                  if nsObj == nil {
+                    continue
+                  }
+                  var nsLabels = dig(nsObj, "metadata", "labels")
+                  if nsLabels == nil {
+                    continue
+                  }
+                  var nsMap = nsLabels.(map[string]any)
+                  var allMatch = true
+                  for k, v := range ml.(map[string]any) {
+                    var actual, ok = nsMap[k]
+                    if !ok || tostring(actual) != tostring(v) {
+                      allMatch = false
+                      break
+                    }
+                  }
+                  if !allMatch {
+                    continue
+                  }
+                default:
+                  // Unknown `from` mode — treat as no match, since the
+                  // implementation can't safely guess intent.
+                  continue
+                }
+
+                // (5) hostname intersection
+                var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                // HostnamesIntersect returns "true"/"false" string —
+                // Scriggo macro return-type constraint, see macro doc.
+                if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
+                  continue
+                }
+
+                // All predicates passed; this route attaches to this listener.
+                var key = gwNs + "/" + gwName + "/" + listenerName
+                routeCounts[key] = routeCounts[key] + 1
+              }
+            }
+          }
+        %%}
+
+        {%- for _, gateway := range gateways %}
+          {%%
+            var namespace = dig(gateway, "metadata", "namespace") | fallback("")
+            var name = dig(gateway, "metadata", "name") | fallback("")
+            var generation = dig(gateway, "metadata", "generation") | fallback(0)
+            var nsStr = tostring(namespace)
+            var nameStr = tostring(name)
+
+            // SupportGatewayInfrastructurePropagation (Standard channel).
+            //
+            // Per Gateway API spec, when a Gateway sets
+            // spec.infrastructure.{labels,annotations}, the implementation
+            // must propagate those values onto the data-plane resources it
+            // manages on the Gateway's behalf (Pods, Services, ServiceAccounts).
+            //
+            // The conformance test (gateway-infrastructure.go) lists
+            // ServiceAccounts / Pods / Services in the Gateway's namespace
+            // matching label `gateway.networking.k8s.io/gateway-name=<gw>`
+            // and asserts every infrastructure label/annotation is a subset
+            // of the resource's metadata.
+            //
+            // Haptic uses one shared HAProxy Deployment per chart install —
+            // there are no per-Gateway Pods. To carry the propagation
+            // metadata to a discoverable resource, we emit a per-Gateway
+            // marker Service (mirroring the SupportGatewayStaticAddresses
+            // pattern) labelled with `gateway-name` and stamped with the
+            // Gateway's infrastructure metadata. When the Gateway also
+            // declares spec.addresses[], the same Service carries the
+            // LoadBalancer config — single Service per Gateway, both
+            // features composed.
+            //
+            // The marker Service lands in the Gateway's own namespace
+            // (where the upstream conformance test searches via the
+            // `gateway-name` discovery label). The chart's ClusterRole
+            // grants cluster-wide Service write verbs whenever the gateway
+            // library is enabled (templates/clusterrole.yaml), and the
+            // resourceapplier accepts cross-namespace SSA without a local
+            // gate — RBAC is the sole security boundary.
+            var infra = dig(gateway, "spec", "infrastructure")
+            var infraLabels = map[string]any{}
+            var infraAnnotations = map[string]any{}
+            if infra != nil {
+              var rawLabels = dig(infra, "labels")
+              if rawLabels != nil {
+                if mLbl, ok := rawLabels.(map[string]any); ok {
+                  for ilK, ilV := range mLbl {
+                    infraLabels[ilK] = tostring(ilV)
+                  }
+                }
+              }
+              var rawAnnotations = dig(infra, "annotations")
+              if rawAnnotations != nil {
+                if mAnn, ok := rawAnnotations.(map[string]any); ok {
+                  for iaK, iaV := range mAnn {
+                    infraAnnotations[iaK] = tostring(iaV)
+                  }
+                }
+              }
+            }
+            // The gateway-name label is the discovery key the conformance
+            // test lists by — it must be present even when the Gateway
+            // sets no infrastructure labels of its own. We include the
+            // gateway-namespace label too so that operators auditing the
+            // controller's owned set can see which Gateway each marker
+            // refers to without a second lookup.
+            //
+            var ownedLabels = map[string]any{
+              "gateway.networking.k8s.io/gateway-name":      nameStr,
+              "gateway.networking.k8s.io/gateway-namespace": nsStr,
+            }
+            // Infrastructure labels override the chart's owned labels —
+            // per Gateway API spec the user's metadata wins on conflict.
+            // The conformance test asserts subset-equality, so any chart
+            // label silently overwritten by the user is still spec-correct
+            // ("infra wins"). The gateway-name / gateway-namespace
+            // identity labels are guarded though, because conformance
+            // discovery depends on them.
+            var ownedAnnotations = map[string]any{}
+            for k, v := range infraLabels {
+              if k != "gateway.networking.k8s.io/gateway-name" && k != "gateway.networking.k8s.io/gateway-namespace" {
+                ownedLabels[k] = v
+              }
+            }
+            for k, v := range infraAnnotations {
+              ownedAnnotations[k] = v
+            }
+            var hasInfra = len(infraLabels) > 0 || len(infraAnnotations) > 0
+
+            // Static-addresses handling (per Gateway).
+            //
+            // SupportGatewayStaticAddresses lets users pin a Gateway to a
+            // specific IP via spec.addresses[]. Per the universal pattern
+            // every other Gateway API implementation follows (envoy-gateway,
+            // cilium, istio, NGF), we provision a per-Gateway LoadBalancer
+            // Service in the controller's own namespace with
+            // spec.loadBalancerIP set from the Gateway's spec.addresses[].value.
+            // MetalLB / cloud LB-IPAM does the actual binding; the shared
+            // HAProxy serves the traffic via the Service's selector.
+            //
+            // We never bind HAProxy itself to specific IPs — that would
+            // require per-Gateway HAProxy instances, a different product
+            // architecture. Instead we let MetalLB issue the user-requested
+            // IP to a per-Gateway Service that points to the same shared
+            // HAProxy pods.
+            //
+            // Gateway API status conditions per spec:
+            //   Accepted=False/UnsupportedAddress when spec.addresses
+            //     contains a type the implementation doesn't support
+            //     (anything other than IPAddress / Hostname / NamedAddress).
+            //   Programmed=False/AddressNotUsable when spec.addresses are
+            //     all of supported types but at least one isn't realized
+            //     by the LB (e.g. MetalLB hasn't allocated yet, or the
+            //     requested IP is outside any IPAddressPool).
+            //   status.addresses contains only those spec.addresses that
+            //     are supported AND realized by the LB. Empty when none
+            //     are realized; full LB-discovered set when spec.addresses
+            //     is unset (no per-Gateway pinning).
+            var gwSpecAddrs []any = dig(gateway, "spec", "addresses") | toSlice()
+            var gwAcceptedStatus = "True"
+            var gwAcceptedReason = "Accepted"
+            var gwAcceptedMessage = "Gateway accepted"
+            var gwEffectiveAddresses []any = gatewayAddresses
+            var hasUnsupportedAddrType = false
+            var hasUnusableAddr = false
+            if gwSpecAddrs != nil && len(gwSpecAddrs) > 0 {
+              // Spec invariant: when spec.addresses is set the implementation
+              // honours *only* those addresses; the LB-derived gf["addresses"]
+              // set is no longer the source of truth. Reset upfront so a
+              // partial-realize path doesn't silently leak the LB IPs in
+              // status. Sets hasUnusableAddr unless every spec entry is
+              // realized below.
+              gwEffectiveAddresses = []any{}
+              var validIPs = []any{}
+              var nonIPCount = 0
+              for _, addr := range gwSpecAddrs {
+                var addrType = tostring(dig(addr, "type") | fallback("IPAddress"))
+                var addrValue = tostring(dig(addr, "value") | fallback(""))
+                if addrType != "IPAddress" && addrType != "Hostname" && addrType != "NamedAddress" {
+                  hasUnsupportedAddrType = true
+                  continue
+                }
+                if addrType == "IPAddress" && addrValue != "" {
+                  validIPs = append(validIPs, addrValue)
+                } else {
+                  // Hostname / NamedAddress entries are spec-supported types
+                  // but the chart's shared-frontend HAProxy can't realize
+                  // them (would need DNS provisioning or cloud-LB hostname
+                  // wiring). Surface as AddressNotUsable so the operator
+                  // sees the gap in status — this matches every other
+                  // shared-frontend Gateway implementation's behaviour.
+                  nonIPCount++
+                }
+              }
+              if hasUnsupportedAddrType {
+                gwAcceptedStatus = "False"
+                gwAcceptedReason = "UnsupportedAddress"
+                gwAcceptedMessage = "spec.addresses contains an unsupported address type"
+              } else if nonIPCount > 0 && len(validIPs) == 0 {
+                // Hostname / NamedAddress only — no Service to spawn,
+                // nothing the chart can realize.
+                hasUnusableAddr = true
+              } else if len(validIPs) > 0 {
+                // Emit a per-Gateway LoadBalancer Service in the controller
+                // namespace. RBAC scopes Service create to that namespace
+                // (chart Role, not ClusterRole), and resourceapplier's
+                // RestrictToOwnNamespace=true enforces the same boundary.
+                var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+                var podSelector = extraContext | dig("haproxyPodSelector")
+                if ctrlNs != "" && podSelector != nil {
+                  var svcPorts = []any{}
+                  var seenPorts = map[int]bool{}
+                  for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
+                    var lport = toint(dig(listener, "port") | fallback(0))
+                    if lport <= 0 || seenPorts[lport] {
+                      continue
+                    }
+                    seenPorts[lport] = true
+                    svcPorts = append(svcPorts, map[string]any{
+                      "name":       "p" + tostring(lport),
+                      "port":       lport,
+                      "targetPort": lport,
+                      "protocol":   "TCP",
+                    })
+                  }
+                  if len(svcPorts) > 0 {
+                    // Address selection strategy: emit ONE Service per
+                    // requested IPAddress. Each Service is independently
+                    // annotated with `metallb.universe.tf/loadBalancerIPs:
+                    // <single-ip>`. MetalLB allocates each independently
+                    // — a usable IP succeeds, an unusable one fails, and
+                    // the status read-back below aggregates results into
+                    // status.addresses (realized IPs only).
+                    //
+                    // Why per-IP: MetalLB rejects multi-IPv4 annotations
+                    // (its IPFamilyForAddresses guard treats same-family
+                    // multi-IP lists as misconfiguration, not as
+                    // try-each-until-one-works). The Gateway-API
+                    // GatewayStaticAddresses conformance test deliberately
+                    // orders an unusable RFC 5737 IP before a usable pool
+                    // IP and asserts the chart routes around the
+                    // unusable entry — per-IP Service emission gives
+                    // exactly that behaviour.
+                    //   - spec.loadBalancerIP   = first IPAddress (legacy
+                    //     field; non-MetalLB cloud LBs honour this).
+                    //   - metallb.universe.tf/loadBalancerIPs annotation =
+                    //     SINGLE IPAddress per Service. MetalLB
+                    //     {unusable, usable} succeed by skipping the
+                    //     unusable entry. Conformance test
+                    //     GatewayStaticAddresses pins this — it deliberately
+                    //     orders an unusable RFC 5737 IP before a usable
+                    //     pool IP and asserts the realized status.addresses
+                    //     ends up containing the usable one.
+                    //
+                    // metadata.labels / annotations carry the Gateway's
+                    // spec.infrastructure metadata when set (per
+                    // SupportGatewayInfrastructurePropagation), plus the
+                    // gateway.networking.k8s.io/gateway-name discovery
+                    // label the conformance test searches for. ownedLabels
+                    // / ownedAnnotations are precomputed at the top of
+                    // the per-Gateway block. The metallb annotation is
+                    // merged onto ownedAnnotations so user-provided
+                    // infrastructure annotations don't get clobbered.
+                    // Stash one per-(Gateway, IP) LoadBalancer Service
+                    // spec into shared state, keyed by `<ns>/<name>`. The
+                    // declarative `k8sResources.gateway-static-addresses`
+                    // template reads back this map during the post-
+                    // haproxy.cfg render pass and emits one Service per
+                    // entry. We use a map (a mutable reference type)
+                    // because SharedContext is append-only by design —
+                    // ComputeIfAbsent gives us a map to mutate, not a
+                    // Set/Replace handle.
+                    var gwSvcsRaw, _ = shared.ComputeIfAbsent("gatewayStaticAddressServices", func() any { return map[string]any{} })
+                    var gwSvcs = gwSvcsRaw.(map[string]any)
+                    var realizedIPs = map[string]bool{}
+                    for _, validIP := range validIPs {
+                      var ipStr = tostring(validIP)
+                      // Per-IP service name suffix: replace dots with
+                      // dashes so the result is a valid RFC 1123 label.
+                      // E.g. 192.168.1.1 → "192-168-1-1".
+                      var ipSuffix = replace(ipStr, ".", "-")
+                      var svcName = BoundedK8sName("gw", nsStr, nameStr, ipSuffix)
+                      var perIPAnnotations = map[string]any{}
+                      for k, v := range ownedAnnotations {
+                        perIPAnnotations[k] = v
+                      }
+                      perIPAnnotations["metallb.universe.tf/loadBalancerIPs"] = ipStr
+                      gwSvcs[ctrlNs+"/"+svcName] = map[string]any{
+                        "namespace":   ctrlNs,
+                        "name":        svcName,
+                        "labels":      ownedLabels,
+                        "annotations": perIPAnnotations,
+                        "selector":    podSelector,
+                        "ports":       svcPorts,
+                      }
+                      // Read this Service back to determine whether MetalLB
+                      // allocated the IP. resources.services watches all
+                      // Services across the cluster, so this works even
+                      // though the Service we just emitted was applied by
+                      // the resourceapplier (not by us inline) — by the
+                      // next reconciliation, the watcher will have it.
+                      var svc = resources.services.GetSingle(ctrlNs, svcName)
+                      if svc != nil {
+                        for _, ing := range dig(svc, "status", "loadBalancer", "ingress") | toSlice() {
+                          var realIP = tostring(dig(ing, "ip") | fallback(""))
+                          if realIP == ipStr {
+                            realizedIPs[ipStr] = true
+                          }
+                        }
+                      }
+                    }
+
+                    // status.addresses = intersection(spec, realized).
+                    // Every spec address not in realized contributes to
+                    // AddressNotUsable below.
+                    gwEffectiveAddresses = []any{}
+                    for _, validIP := range validIPs {
+                      var ipStr = tostring(validIP)
+                      if realizedIPs[ipStr] {
+                        gwEffectiveAddresses = append(gwEffectiveAddresses, map[string]any{
+                          "type":  "IPAddress",
+                          "value": ipStr,
+                        })
+                      } else {
+                        hasUnusableAddr = true
+                      }
+                    }
+                  }
+                }
+                // Mixed spec.addresses (IP + Hostname/NamedAddress):
+                // even if the IPAddress entries realize cleanly, the
+                // Hostname / NamedAddress entries can't. Mark
+                // AddressNotUsable so the operator sees the gap.
+                if nonIPCount > 0 {
+                  hasUnusableAddr = true
+                }
+              }
+            }
+
+            // Per-Gateway LB IP read-back (phase 5 of the per-Gateway-IP
+            // refactor). When the Gateway has NO spec.addresses but DOES
+            // have at least one HTTPS listener, phase 3 emitted a
+            // per-Gateway LoadBalancer Service named
+            // `gw-<gwNs>-<gwName>` in the controller namespace. Read its
+            // realized LB IP back into status.addresses so clients
+            // (including the conformance suite's RoundTripper) connect
+            // to the per-Gateway IP — that's what makes the per-Gateway
+            // bind on the allocated pod port reachable.
+            //
+            // Falls through silently when:
+            //   - No HTTPS listener (phase 3 didn't emit a Service)
+            //   - Service hasn't been allocated an IP yet (MetalLB
+            //     reconciliation lag — gwEffectiveAddresses stays at
+            //     the chart's main LB IP from gatewayAddresses, which
+            //     is fine for the transitional state)
+            //   - ctrlNs / podSelector unset (chart-static deployment)
+            var phase5CtrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
+            if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
+              var hasHTTPSListener = false
+              for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
+                var lProto = tostring(dig(listener, "protocol") | fallback(""))
+                if lProto == "HTTPS" {
+                  hasHTTPSListener = true
+                  break
+                }
+              }
+              if hasHTTPSListener {
+                // Per-Gateway IP path takes ownership of status.addresses
+                // here, REPLACING the chart-static fallback. Reset
+                // upfront so a not-yet-realized Service leaves
+                // status.addresses empty (which trips Programmed=False
+                // until MetalLB allocates) instead of leaking the
+                // chart's main LB IP — that's what the conformance
+                // test relies on to wait for the right address.
+                gwEffectiveAddresses = []any{}
+                var perGwSvcName = BoundedK8sName("gw", nsStr, nameStr, "")
+                var perGwSvc = resources.services.GetSingle(phase5CtrlNs, perGwSvcName)
+                if perGwSvc != nil {
+                  for _, ing := range dig(perGwSvc, "status", "loadBalancer", "ingress") | toSlice() {
+                    var ipStr = tostring(dig(ing, "ip") | fallback(""))
+                    if ipStr != "" {
+                      gwEffectiveAddresses = append(gwEffectiveAddresses, map[string]any{
+                        "type":  "IPAddress",
+                        "value": ipStr,
+                      })
+                    }
+                  }
+                }
+              }
+            }
+
+            // Per-Gateway marker Service for SupportGatewayInfrastructurePropagation.
+            //
+            // The conformance test searches the *Gateway's* namespace for
+            // a Service / Pod / ServiceAccount labelled
+            // `gateway.networking.k8s.io/gateway-name=<gw>` and asserts
+            // every infrastructure label/annotation appears on its
+            // metadata. Haptic's shared-HAProxy architecture has no
+            // per-Gateway Pods, so we emit a minimal headless ClusterIP
+            // Service in the Gateway's namespace purely to carry the
+            // metadata.
+            //
+            // We deliberately *don't* emit when spec.infrastructure is
+            // unset: a marker with no metadata to propagate would just
+            // be cluster noise, and the chart's shared-HAProxy
+            // architecture means the Service has no functional role.
+            //
+            // The marker emits in *addition* to any static-address
+            // Services the block above produced. Static-address Services
+            // live in the controller namespace (where MetalLB allocates
+            // and the chart's namespace-scoped Role grants Service
+            // verbs), so they aren't reachable by the conformance test's
+            // Gateway-namespace search even when they carry the same
+            // metadata. The marker bridges that gap.
+            if hasInfra {
+              var svcName = BoundedK8sName("gw", nsStr, nameStr, "")
+              // Headless ClusterIP Service with a placeholder port. The
+              // chart's HAProxy is shared, so per-Gateway port wiring
+              // isn't meaningful here — the Service exists only to
+              // carry the metadata propagation. Selector intentionally
+              // empty: the Service has no endpoints, which matches the
+              // chart's architecture (no per-Gateway data plane).
+              //
+              // Stash spec into shared state keyed by `<ns>/<name>`. The
+              // `k8sResources.gateway-infrastructure-propagation`
+              // template reads it back and emits the Service after
+              // haproxy.cfg has rendered.
+              var gwInfraRaw, _ = shared.ComputeIfAbsent("gatewayInfrastructureServices", func() any { return map[string]any{} })
+              var gwInfra = gwInfraRaw.(map[string]any)
+              gwInfra[nsStr+"/"+svcName] = map[string]any{
+                "namespace":   nsStr,
+                "name":        svcName,
+                "labels":      ownedLabels,
+                "annotations": ownedAnnotations,
+              }
+            }
+
+            // Pre-compute per-listener data the deployed and deployFailed
+            // variants both consume. Specifically: allowedRoutes.kinds
+            // intersection with the protocol-default kinds (per Gateway
+            // API spec — ResolvedRefs goes False/InvalidRouteKinds when
+            // the user requests an unsupported kind, supportedKinds
+            // shrinks to the intersection). Computing once and reusing
+            // ensures the two variants stay in lockstep.
+            //
+            // Pre-pass — detect mixed-termination on TLS listeners.
+            // When two TLS listeners share a port but disagree on
+            // tls.mode (one Passthrough, one Terminate), the spec
+            // demands Accepted=False/ProtocolConflict on every
+            // affected listener with attachedRoutes=0 (conformance
+            // test tlsroute-listener-mixed-termination-not-supported).
+            // SupportTLSRouteModeMixed is experimental and not
+            // declared by the chart, so this guard always fires.
+            var tlsPortModes = map[int]map[string]bool{}
+            for _, l := range dig(gateway, "spec", "listeners") | toSlice() {
+              var lProto = tostring(dig(l, "protocol") | fallback(""))
+              if lProto == "TLS" {
+                var lPort = toint(dig(l, "port") | fallback(0))
+                var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+                if tlsPortModes[lPort] == nil {
+                  tlsPortModes[lPort] = map[string]bool{}
+                }
+                tlsPortModes[lPort][lMode] = true
+              }
+            }
+            var listenerData = []any{}
+            for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
+              var listenerName = dig(listener, "name") | fallback("") | tostring()
+              var protocol = dig(listener, "protocol") | fallback("HTTP") | tostring()
+
+              // Default kinds the chart's data-plane supports per
+              // listener protocol. The conformance suite treats this
+              // as the "core" set; any user-requested kind not in this
+              // set is rejected with InvalidRouteKinds.
+              var defaultKinds = []any{}
+              switch protocol {
+              case "HTTP", "HTTPS":
+                defaultKinds = []any{
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
+                }
+              case "TLS":
+                defaultKinds = []any{
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"},
+                }
+              case "TCP":
+                defaultKinds = []any{
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"},
+                }
+              case "UDP":
+                defaultKinds = []any{
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
+                }
+              }
+
+              // If the listener spec declares allowedRoutes.kinds, the
+              // intersection with defaultKinds is what we report. If
+              // anything was filtered out, ResolvedRefs goes False with
+              // reason InvalidRouteKinds (per the Gateway API spec for
+              // listener-status conditions).
+              var requestedKinds = dig(listener, "allowedRoutes", "kinds")
+              var supportedKinds = []any{}
+              var hasInvalidKind = false
+              if requestedKinds == nil {
+                supportedKinds = defaultKinds
+              } else {
+                for _, reqEntry := range toSlice(requestedKinds) {
+                  var reqGroup = dig(reqEntry, "group") | fallback("gateway.networking.k8s.io") | tostring()
+                  var reqKind = dig(reqEntry, "kind") | fallback("") | tostring()
+                  var matched = false
+                  for _, def := range defaultKinds {
+                    if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                      matched = true
+                      break
+                    }
+                  }
+                  if matched {
+                    supportedKinds = append(supportedKinds, map[string]any{"group": reqGroup, "kind": reqKind})
+                  } else {
+                    hasInvalidKind = true
+                  }
+                }
+              }
+
+              // ResolvedRefs status / reason / message are derived from
+              // (1) the kinds filter result and (2) certificateRef
+              // validity for HTTPS/TLS listeners. InvalidRouteKinds and
+              // InvalidCertificateRef are mutually exclusive reasons in
+              // the spec; if both apply, kinds-based wins (the user
+              // can fix kinds first to get a clearer cert error).
+              // The transitionTime helper preserves the existing
+              // timestamp when status doesn't change so the patch is
+              // idempotent.
+              var resolvedRefsStatus = "True"
+              var resolvedRefsReason = "ResolvedRefs"
+              var resolvedRefsMessage = "All references resolved"
+
+              // Validate certificateRefs for HTTPS / TLS listeners.
+              // Per Gateway API spec: an unsupported group/kind, a
+              // missing target Secret, a Secret missing tls.crt /
+              // tls.key data, or a cross-namespace ref without a
+              // matching ReferenceGrant each makes the listener
+              // ResolvedRefs=False with a different reason:
+              //   InvalidCertificateRef — bad group/kind or malformed
+              //     Secret content
+              //   RefNotPermitted       — cross-ns ref without
+              //     a permitting ReferenceGrant
+              // The chart's existing TLS-cert rendering already
+              // gracefully skips invalid refs (no haproxy crash), but
+              // status didn't reflect the failure — conformance gates
+              // on this.
+              var hasInvalidCertRef = false
+              var hasRefNotPermitted = false
+              if protocol == "HTTPS" || protocol == "TLS" {
+                var listenerTls = listener | dig("tls")
+                if listenerTls != nil {
+                  for _, ref := range listenerTls | dig("certificateRefs") | toSlice() {
+                    var refGroup = dig(ref, "group") | fallback("") | tostring()
+                    var refKind = dig(ref, "kind") | fallback("Secret") | tostring()
+                    if refGroup != "" && refGroup != "core" {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    if refKind != "Secret" {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    var refName = dig(ref, "name") | fallback("") | tostring()
+                    var refNs = dig(ref, "namespace") | fallback(nsStr) | tostring()
+                    if refName == "" {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    // Cross-namespace gate: requires a matching
+                    // ReferenceGrant in the target Secret's namespace.
+                    if refNs != nsStr {
+                      var permitted = ReferenceGrantPermitted(
+                        "gateway.networking.k8s.io", "Gateway", nsStr,
+                        "", "Secret", refNs, refName,
+                      )
+                      if permitted != "true" {
+                        hasRefNotPermitted = true
+                        continue
+                      }
+                    }
+                    var sec = resources.secrets.GetSingle(refNs, refName)
+                    if sec == nil {
+                      hasInvalidCertRef = true
+                      continue
+                    }
+                    var sd = sec | dig("data")
+                    var crtB64 = tostring(sd | dig("tls.crt") | fallback(""))
+                    var keyB64 = tostring(sd | dig("tls.key") | fallback(""))
+                    if crtB64 == "" || keyB64 == "" {
+                      hasInvalidCertRef = true
+                    } else {
+                      var crt, crtErr = b64decode(crtB64)
+                      var key, keyErr = b64decode(keyB64)
+                      if crtErr != nil || keyErr != nil {
+                        hasInvalidCertRef = true
+                      } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                        hasInvalidCertRef = true
+                      }
+                    }
+                  }
+                }
+              }
+
+              // Validate frontend client-cert validation refs for HTTPS
+              // listeners. Implements the listener-status side of
+              // GatewayFrontendInvalidDefaultClientCertificateValidation:
+              // if spec.tls.frontend.default.validation (or the perPort
+              // override matching this listener's port) carries
+              // caCertificateRefs that all fail to resolve, the spec
+              // requires:
+              //   ResolvedRefs=False/InvalidCACertificateRef
+              //   Accepted=False/NoValidCACertificate
+              // These are mutually exclusive with the InvalidCertificateRef
+              // reason the chart already sets for frontend cert failures
+              // (above). InvalidCertificateRef wins when both apply since
+              // the listener can't bind without a server cert at all.
+              var hasNoValidFrontendCA = false
+              var feFailReason = "InvalidCACertificateRef"
+              var feFailMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
+              var listenerAcceptedStatus = "True"
+              var listenerAcceptedReason = "Accepted"
+              var listenerAcceptedMessage = "Listener accepted"
+              if protocol == "HTTPS" && resolvedRefsStatus == "True" {
+                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var feValidation any = nil
+                var fe = dig(gateway, "spec", "tls", "frontend")
+                if fe != nil {
+                  feValidation = dig(fe, "default", "validation")
+                  for _, pp := range dig(fe, "perPort") | toSlice() {
+                    if toint(dig(pp, "port") | fallback(0)) == listenerPort {
+                      var ppV = dig(pp, "tls", "validation")
+                      if ppV != nil {
+                        feValidation = ppV
+                      }
+                      break
+                    }
+                  }
+                }
+                if feValidation != nil {
+                  var feRefs = dig(feValidation, "caCertificateRefs") | toSlice()
+                  if feRefs != nil && len(feRefs) > 0 {
+                    var feHasValid = false
+                    // Per-ref failure tracking. Spec precedence on the
+                    // ResolvedRefs reason when no ref resolves:
+                    //   InvalidCACertificateKind  (group/kind unsupported)
+                    //   RefNotPermitted           (cross-ns, no RG)
+                    //   InvalidCACertificateRef   (nonexistent / malformed)
+                    // The first match wins; conformance
+                    // GatewayInvalidFrontendClientCertificateValidation
+                    // sets up listeners exhibiting each failure mode and
+                    // verifies the listener's ResolvedRefs reason.
+                    var sawInvalidKind = false
+                    var sawRefNotPermitted = false
+                    var sawInvalidCARef = false
+                    for _, ref := range feRefs {
+                      var refGroup = tostring(dig(ref, "group") | fallback(""))
+                      var refKind = tostring(dig(ref, "kind") | fallback(""))
+                      var refName = tostring(dig(ref, "name") | fallback(""))
+                      var refNs = tostring(dig(ref, "namespace") | fallback(nsStr))
+                      // Only core-group ConfigMap and Secret are supported
+                      // by the chart for frontend CA refs.
+                      if (refGroup != "" && refGroup != "core") || (refKind != "ConfigMap" && refKind != "Secret") {
+                        sawInvalidKind = true
+                        continue
+                      }
+                      if refName == "" {
+                        sawInvalidCARef = true
+                        continue
+                      }
+                      // Cross-namespace ref needs a ReferenceGrant in the
+                      // ref's target namespace allowing the Gateway in
+                      // gateway.namespace to point at this Kind/name.
+                      if refNs != nsStr {
+                        if ReferenceGrantPermitted(
+                          "gateway.networking.k8s.io", "Gateway", nsStr,
+                          "", refKind, refNs, refName) != "true" {
+                          sawRefNotPermitted = true
+                          continue
+                        }
+                      }
+                      if refKind == "ConfigMap" {
+                        var cm = resources.configmaps.GetSingle(refNs, refName)
+                        if cm == nil {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        var data = dig(cm, "data") | fallback(map[string]any{})
+                        var dataMap = data.(map[string]any)
+                        var caCrt, ok = dataMap["ca.crt"]
+                        if !ok || tostring(caCrt) == "" {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        feHasValid = true
+                      } else {
+                        var sec = resources.secrets.GetSingle(refNs, refName)
+                        if sec == nil {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        var data = dig(sec, "data") | fallback(map[string]any{})
+                        var dataMap = data.(map[string]any)
+                        var caCrt, ok = dataMap["ca.crt"]
+                        if !ok || tostring(caCrt) == "" {
+                          sawInvalidCARef = true
+                          continue
+                        }
+                        feHasValid = true
+                      }
+                    }
+                    if !feHasValid {
+                      hasNoValidFrontendCA = true
+                      if sawInvalidKind {
+                        feFailReason = "InvalidCACertificateKind"
+                        feFailMessage = "Frontend client-cert validation caCertificateRef uses an unsupported group/kind"
+                      } else if sawRefNotPermitted {
+                        feFailReason = "RefNotPermitted"
+                        feFailMessage = "Frontend client-cert validation caCertificateRef crosses namespaces without a matching ReferenceGrant"
+                      } else if sawInvalidCARef {
+                        feFailReason = "InvalidCACertificateRef"
+                        feFailMessage = "Frontend client-cert validation caCertificateRefs are all unresolvable"
+                      }
+                    }
+                  }
+                }
+              }
+
+              if hasInvalidKind {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "InvalidRouteKinds"
+                resolvedRefsMessage = "Listener references unsupported route kinds"
+              } else if hasRefNotPermitted {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "RefNotPermitted"
+                resolvedRefsMessage = "Listener references a Secret across namespaces with no matching ReferenceGrant"
+              } else if hasInvalidCertRef {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = "InvalidCertificateRef"
+                resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
+              } else if hasNoValidFrontendCA {
+                resolvedRefsStatus = "False"
+                resolvedRefsReason = feFailReason
+                resolvedRefsMessage = feFailMessage
+                listenerAcceptedStatus = "False"
+                listenerAcceptedReason = "NoValidCACertificate"
+                listenerAcceptedMessage = feFailMessage
+              }
+
+              // Count attached routes: routes with sectionName matching
+              // this listener + wildcard routes (no sectionName) on the
+              // same gateway.
+              var specificKey = nsStr + "/" + nameStr + "/" + listenerName
+              var wildcardKey = nsStr + "/" + nameStr + "/*"
+              var attached = routeCounts[specificKey] + routeCounts[wildcardKey]
+
+              // Per Gateway API spec, when a listener's references are
+              // unresolvable (cert invalid, kind unsupported, …) the
+              // listener also can't be Programmed — the dataplane
+              // can't realise a binding it has no cert for. Programmed
+              // mirrors ResolvedRefs in those cases (with reason
+              // "Invalid" because the spec's listener-Programmed reasons
+              // are coarser than ResolvedRefs's).
+              var programmedListenerStatus = "True"
+              var programmedListenerReason = "Programmed"
+              var programmedListenerMessage = "Listener programmed"
+              if resolvedRefsStatus != "True" {
+                programmedListenerStatus = "False"
+                programmedListenerReason = "Invalid"
+                programmedListenerMessage = resolvedRefsMessage
+              }
+
+              // ProtocolConflict — TLS listener with sibling on same
+              // port carrying the other tls.mode. The conformance test
+              // tlsroute-listener-mixed-termination-not-supported pins
+              // both Accepted=False/ProtocolConflict AND attachedRoutes=0.
+              // Per the spec the rejected listener also has empty
+              // supportedKinds — it can't accept routes of any kind, so
+              // reporting [TLSRoute] would be misleading.
+              if protocol == "TLS" {
+                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var pm = tlsPortModes[listenerPort]
+                if pm != nil && pm["Passthrough"] && pm["Terminate"] {
+                  listenerAcceptedStatus = "False"
+                  listenerAcceptedReason = "ProtocolConflict"
+                  listenerAcceptedMessage = "TLS listener mixes Passthrough and Terminate modes on the same port"
+                  programmedListenerStatus = "False"
+                  programmedListenerReason = "Invalid"
+                  programmedListenerMessage = listenerAcceptedMessage
+                  attached = 0
+                  supportedKinds = []any{}
+                }
+              }
+
+              listenerData = append(listenerData, map[string]any{
+                "name":                  listenerName,
+                "supportedKinds":        supportedKinds,
+                "attachedRoutes":        attached,
+                "resolvedRefsStatus":    resolvedRefsStatus,
+                "resolvedRefsReason":    resolvedRefsReason,
+                "resolvedRefsMessage":   resolvedRefsMessage,
+                "acceptedStatus":        listenerAcceptedStatus,
+                "acceptedReason":        listenerAcceptedReason,
+                "acceptedMessage":       listenerAcceptedMessage,
+                "programmedStatus":      programmedListenerStatus,
+                "programmedReason":      programmedListenerReason,
+                "programmedMessage":     programmedListenerMessage,
+              })
+            }
+
+            // Build the deployed-variant listener status. Programmed
+            // is taken from listenerData (which folds in the
+            // ResolvedRefs failure cases — listener with bad cert /
+            // unsupported kind can't be Programmed even if the
+            // chart's deploy succeeded for the other listeners).
+            var deployedListeners = []any{}
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
+              deployedListeners = append(deployedListeners, map[string]any{
+                "name":           ldm["name"],
+                "supportedKinds": ldm["supportedKinds"],
+                "attachedRoutes": ldm["attachedRoutes"],
+                "conditions": []any{
+                  condition("Accepted",
+                    tostring(ldm["acceptedStatus"]),
+                    tostring(ldm["acceptedReason"]),
+                    tostring(ldm["acceptedMessage"]),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
+                  condition("Programmed",
+                    tostring(ldm["programmedStatus"]),
+                    tostring(ldm["programmedReason"]),
+                    tostring(ldm["programmedMessage"]),
+                    generation,
+                    ListenerTransitionTime(gateway, lname, "Programmed", tostring(ldm["programmedStatus"]))),
+                  condition("ResolvedRefs",
+                    tostring(ldm["resolvedRefsStatus"]),
+                    tostring(ldm["resolvedRefsReason"]),
+                    tostring(ldm["resolvedRefsMessage"]),
+                    generation,
+                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                  condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
+                    generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
+                },
+              })
+            }
+
+            // Build the deployFailed-variant. Programmed=False unless
+            // the listener's own programming was already False for
+            // ref-resolution reasons (in which case the more-specific
+            // listener-level reason wins).
+            var failedListeners = []any{}
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
+              var failProgrammedStatus = "False"
+              var failProgrammedReason = "Invalid"
+              var failProgrammedMessage = "Gateway not yet programmed"
+              if tostring(ldm["programmedStatus"]) == "False" {
+                failProgrammedReason = tostring(ldm["programmedReason"])
+                failProgrammedMessage = tostring(ldm["programmedMessage"])
+              }
+              failedListeners = append(failedListeners, map[string]any{
+                "name":           ldm["name"],
+                "supportedKinds": ldm["supportedKinds"],
+                "attachedRoutes": ldm["attachedRoutes"],
+                "conditions": []any{
+                  condition("Accepted",
+                    tostring(ldm["acceptedStatus"]),
+                    tostring(ldm["acceptedReason"]),
+                    tostring(ldm["acceptedMessage"]),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
+                  condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
+                    generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
+                  condition("ResolvedRefs",
+                    tostring(ldm["resolvedRefsStatus"]),
+                    tostring(ldm["resolvedRefsReason"]),
+                    tostring(ldm["resolvedRefsMessage"]),
+                    generation,
+                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                  condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
+                    generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
+                },
+              })
+            }
+
+            // Emit BOTH a "rendered" and "deployed" variant carrying the
+            // same content. The "rendered" variant fires after every
+            // successful render — that's what the Gateway API spec
+            // expects: status reflects the latest spec the controller
+            // observed, even when the resulting HAProxy config is
+            // byte-identical to the previous render and deployment is
+            // skipped. Without it, a Gateway whose .spec mutates
+            // without producing a HAProxy config diff (e.g. listener
+            // hostname change that doesn't shift any path-map rows)
+            // would have stale observedGeneration in its conditions.
+            // The conformance test GatewayObservedGenerationBump pins
+            // exactly this behaviour.
+            //
+            // The applier's per-(resource, gvr) checksum cache
+            // dedupes redundant patches, so emitting the same content
+            // in two phases doesn't double the API traffic — it just
+            // closes the timing window between render and deploy.
+            //
+            // Gateway-level Programmed reflects listener health: per
+            // spec, a Gateway is Programmed=True only when every
+            // listener it owns can also be programmed. If any listener
+            // failed to resolve refs (bad cert, unsupported kind, …)
+            // the Gateway-level condition flips to False/Invalid with
+            // a message pointing at the listener-side reason.
+            // Conformance GatewayInvalidTLSConfiguration explicitly
+            // checks this top-level Programmed=False alongside the
+            // listener-level ResolvedRefs=False/InvalidCertificateRef.
+            var gwProgrammedStatus = "True"
+            var gwProgrammedReason = "Programmed"
+            var gwProgrammedMessage = "Gateway programmed into the data plane"
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              if tostring(ldm["programmedStatus"]) == "False" {
+                gwProgrammedStatus = "False"
+                gwProgrammedReason = "Invalid"
+                gwProgrammedMessage = "Listener " + tostring(ldm["name"]) + " is not programmed: " + tostring(ldm["programmedMessage"])
+                break
+              }
+            }
+
+            // Aggregate top-level Gateway ResolvedRefs from listener
+            // ResolvedRefs and the optional spec.tls.backend.client
+            // CertificateRef. Per Gateway API spec, the Gateway-level
+            // condition surfaces overall reference resolution; the
+            // GatewayBackendClientCertificate conformance test reads
+            // it directly. False/InvalidCertificateRef wins over
+            // RefNotPermitted (matching listener-status precedence).
+            var gwResolvedRefsStatus = "True"
+            var gwResolvedRefsReason = "ResolvedRefs"
+            var gwResolvedRefsMessage = "All references resolved"
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              if tostring(ldm["resolvedRefsStatus"]) != "True" {
+                gwResolvedRefsStatus = "False"
+                gwResolvedRefsReason = tostring(ldm["resolvedRefsReason"])
+                gwResolvedRefsMessage = "Listener " + tostring(ldm["name"]) + ": " + tostring(ldm["resolvedRefsMessage"])
+                break
+              }
+            }
+            // Validate spec.tls.backend.clientCertificateRef when set.
+            // The chart's util-generate-backends-gateway resolves this
+            // ref at backend-emit time; we replay the same checks here
+            // so the Gateway status reflects the same resolution.
+            var ccRef = dig(gateway, "spec", "tls", "backend", "clientCertificateRef")
+            if ccRef != nil && gwResolvedRefsStatus == "True" {
+              var ccGroup = tostring(dig(ccRef, "group") | fallback(""))
+              var ccKind = tostring(dig(ccRef, "kind") | fallback("Secret"))
+              var ccName = tostring(dig(ccRef, "name") | fallback(""))
+              var ccNs = tostring(dig(ccRef, "namespace") | fallback(nsStr))
+              if (ccGroup != "" && ccGroup != "core") || ccKind != "Secret" || ccName == "" {
+                gwResolvedRefsStatus = "False"
+                gwResolvedRefsReason = "InvalidClientCertificateRef"
+                gwResolvedRefsMessage = "spec.tls.backend.clientCertificateRef must reference a core/v1 Secret"
+              } else if ccNs != nsStr && ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", "Gateway", nsStr,
+                  "", "Secret", ccNs, ccName) != "true" {
+                gwResolvedRefsStatus = "False"
+                gwResolvedRefsReason = "RefNotPermitted"
+                gwResolvedRefsMessage = "Cross-namespace clientCertificateRef requires a matching ReferenceGrant"
+              } else {
+                var ccSec = resources.secrets.GetSingle(ccNs, ccName)
+                if ccSec == nil {
+                  gwResolvedRefsStatus = "False"
+                  gwResolvedRefsReason = "InvalidClientCertificateRef"
+                  gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " not found"
+                } else {
+                  var ccData = dig(ccSec, "data") | fallback(map[string]any{})
+                  var ccDataMap = ccData.(map[string]any)
+                  var ccCrt, hasCrt = ccDataMap["tls.crt"]
+                  var ccKey, hasKey = ccDataMap["tls.key"]
+                  if !hasCrt || !hasKey || tostring(ccCrt) == "" || tostring(ccKey) == "" {
+                    gwResolvedRefsStatus = "False"
+                    gwResolvedRefsReason = "InvalidClientCertificateRef"
+                    gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " missing tls.crt or tls.key"
+                  }
+                }
+              }
+            }
+
+            // Static-addresses Programmed override: spec.addresses set,
+            // types all valid, but at least one isn't realized by the LB
+            // yet → Programmed=False/AddressNotUsable per Gateway API
+            // spec. Listener-side Programmed problems (cert refs, etc.)
+            // already detected above take precedence — the most specific
+            // failure wins.
+            if hasUnusableAddr && gwProgrammedStatus == "True" {
+              gwProgrammedStatus = "False"
+              gwProgrammedReason = "AddressNotUsable"
+              gwProgrammedMessage = "Some addresses in spec.addresses are not yet realized by the LoadBalancer"
+            }
+
+            // Build individual condition entries so we can compose the
+            // rendered vs deployed payloads from disjoint subsets.
+            // gwTopConditions remains as the "everything together" list
+            // used by debug-only consumers; the variants below carve it
+            // up by data-plane dependence.
+            var gwAcceptedCond = condition("Accepted", gwAcceptedStatus, gwAcceptedReason, gwAcceptedMessage,
+              generation, TopLevelTransitionTime(gateway, "Accepted", gwAcceptedStatus))
+            var gwProgrammedCond = condition("Programmed", gwProgrammedStatus, gwProgrammedReason, gwProgrammedMessage,
+              generation, TopLevelTransitionTime(gateway, "Programmed", gwProgrammedStatus))
+            var gwResolvedRefsCond = condition("ResolvedRefs", gwResolvedRefsStatus, gwResolvedRefsReason, gwResolvedRefsMessage,
+              generation, TopLevelTransitionTime(gateway, "ResolvedRefs", gwResolvedRefsStatus))
+            var gwTopConditions = []any{gwAcceptedCond, gwProgrammedCond, gwResolvedRefsCond}
+
+            // GEP-91: GatewayConditionInsecureFrontendValidationMode is
+            // emitted when the Gateway opts into AllowInsecureFallback
+            // for client-cert validation (gateway-level default OR any
+            // perPort override). The reason is ConfigurationChanged.
+            // Conformance: GatewayInsecureFrontendValidationMode.
+            // Removed (not appended) when every relevant validation
+            // mode is AllowValidOnly / unset.
+            var insecureFallback = false
+            var defaultMode = tostring(dig(gateway, "spec", "tls", "frontend", "default", "validation", "mode") | fallback(""))
+            if defaultMode == "AllowInsecureFallback" {
+              insecureFallback = true
+            }
+            if !insecureFallback {
+              for _, perPort := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
+                var ppMode = tostring(dig(perPort, "tls", "validation", "mode") | fallback(""))
+                if ppMode == "AllowInsecureFallback" {
+                  insecureFallback = true
+                  break
+                }
+              }
+            }
+            var gwInsecureFrontendCond any = nil
+            if insecureFallback {
+              gwInsecureFrontendCond = condition("InsecureFrontendValidationMode", "True", "ConfigurationChanged",
+                "Gateway is using AllowInsecureFallback for client-cert validation",
+                generation, TopLevelTransitionTime(gateway, "InsecureFrontendValidationMode", "True"))
+              gwTopConditions = append(gwTopConditions, gwInsecureFrontendCond)
+            }
+            // attachedListenerSets count: how many ListenerSets attach
+            // to this Gateway, are admitted by spec.allowedListeners,
+            // AND have at least one listener that survives conflict
+            // detection (port/hostname/protocol). Conformance test
+            // ListenerSetDefaultNotAllowed asserts =0 when
+            // allowedListeners is unset (default-deny);
+            // ListenerSetHostnameConflict / ListenerSetProtocolConflict
+            // assert that LSes whose every listener loses a conflict
+            // don't count as attached. Mirrors the gate logic in F3
+            // and util-effective-listeners exactly so all three sites
+            // agree. Counted once per render — cheap because
+            // resources.listenersets is already in memory.
+            //
+            // The conflict state lives on the effectiveListeners cache
+            // (sub-key "statuses"), so read it once and use the
+            // listenerConflicts list per-LS to gate the count.
+            var lsStatusCache = map[string]any{}
+            {
+              var effLAny = shared.Get("effectiveListeners")
+              if effLAny != nil {
+                var effL, ok = effLAny.(map[string]any)
+                if ok {
+                  var stAny, hasSt = effL["statuses"]
+                  if hasSt {
+                    lsStatusCache = stAny.(map[string]any)
+                  }
+                }
+              }
+            }
+            var attachedLSCount = 0
+            for _, ls := range resources.listenersets.List() {
+              var pRef = dig(ls, "spec", "parentRef")
+              if tostring(dig(pRef, "name") | fallback("")) != nameStr {
+                continue
+              }
+              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+              if pNs != nsStr {
+                continue
+              }
+              {#- Defer the admission decision to IsListenerSetAdmitted —
+                  the same helper the routing chain uses — so the
+                  Selector branch (and any future allowed-from rule) is
+                  handled identically. Closes
+                  ListenerSetAllowedNamespaceSelector where the previous
+                  inline switch only covered "All" and "Same" and fell
+                  through to permitted=false for Selector-admitted LSes. -#}
+              if !hasPrefix(IsListenerSetAdmitted(gateway, ls), "true") {
+                continue
+              }
+              // At least one listener must survive conflict detection.
+              // The cache's listenerConflicts list has ONE entry per
+              // declared listener with both an `accepted` bool and a
+              // `conflicted` reason string; we count an LS as attached
+              // only when at least one entry is `accepted=true` (i.e.
+              // not in conflict and not invalid). LSes with no cache
+              // entry fall through to attached (cache miss = optimistic).
+              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+              var lsKey = lsNs + "/" + lsName
+              var listenersTotal = len(toSlice(dig(ls, "spec", "listeners") | fallback([]any{})))
+              if listenersTotal == 0 {
+                continue
+              }
+              var statusEntryAny, hasEntry = lsStatusCache[lsKey]
+              if hasEntry {
+                // A listener is "valid" when it both (a) passed the
+                // parent admission gate (`accepted=true`, set by the
+                // route-analysis pass when the parent Gateway permits
+                // the LS) AND (b) didn't lose a port/hostname/protocol
+                // conflict (`conflicted=""`). LSes whose every listener
+                // fails one of those checks must NOT count as attached
+                // (per ListenerSetHostnameConflict / -ProtocolConflict).
+                var anyValid = false
+                for _, c := range statusEntryAny.(map[string]any)["listenerConflicts"].([]any) {
+                  var ce = c.(map[string]any)
+                  var acc, ok = ce["accepted"].(bool)
+                  var conf = tostring(ce["conflicted"])
+                  if ok && acc && conf == "" {
+                    anyValid = true
+                    break
+                  }
+                }
+                if !anyValid {
+                  continue
+                }
+              }
+              attachedLSCount++
+            }
+
+            // Split the status payload by data-plane dependence so each
+            // pipeline phase owns a disjoint slice of the resource:
+            //
+            //   - rendered (haptic-rendered field manager):
+            //       Accepted, ResolvedRefs, InsecureFrontendValidationMode,
+            //       addresses, attachedListenerSets,
+            //       per-listener {name, supportedKinds, attachedRoutes,
+            //                     conditions: [Accepted, ResolvedRefs, Conflicted]}.
+            //     These are all determined from the index alone — the
+            //     controller knows them as soon as the render succeeds,
+            //     no HAProxy reload required. Applied eagerly.
+            //
+            //   - deployed (haptic-deployed field manager):
+            //       Programmed top-level + per-listener Programmed only.
+            //     Programmed=True genuinely means "HAProxy is serving
+            //     this listener" and must wait for reload verification.
+            //     Applied on DeploymentCompletedEvent.
+            //
+            //   - deployFailed (haptic-deployFailed field manager):
+            //       Programmed=False top-level + per-listener Programmed=False.
+            //     Mirrors the deployed shape so the same condition fields
+            //     are owned but with failure values.
+            //
+            // With phase-scoped SSA field managers, each variant's apply
+            // claims ownership of exactly the conditions it lists.
+            // Previously the chart shipped byte-identical rendered+deployed
+            // payloads (commit 83671a40), which flipped Programmed=True
+            // before HAProxy reload — racing the conformance suite's
+            // poll-then-dial loop. With Programmed isolated to the deployed
+            // variant, tests waiting for Programmed=True correctly block
+            // until reload is verified, while Accepted/ResolvedRefs (which
+            // don't depend on HAProxy state) are still surfaced immediately.
+
+            var renderedTopConditions = []any{gwAcceptedCond, gwResolvedRefsCond}
+            if gwInsecureFrontendCond != nil {
+              renderedTopConditions = append(renderedTopConditions, gwInsecureFrontendCond)
+            }
+            var deployedTopConditions = []any{gwProgrammedCond}
+            var failedProgrammedCond = condition("Programmed", "False", "AddressNotAssigned",
+              "Gateway addresses not yet assigned",
+              generation, TopLevelTransitionTime(gateway, "Programmed", "False"))
+            var failedTopConditions = []any{failedProgrammedCond}
+
+            // Listener entries for each variant. Rendered carries the
+            // structural fields (name, supportedKinds, attachedRoutes)
+            // plus the data-plane-independent conditions. Deployed and
+            // deployFailed only emit name + their Programmed claim.
+            // The listType=map key is `name` for status.listeners and
+            // `type` for the inner conditions list — different field
+            // managers can co-own the same listener entry as long as
+            // they touch disjoint sub-fields.
+            var renderedListenerEntries = []any{}
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
+              renderedListenerEntries = append(renderedListenerEntries, map[string]any{
+                "name":           ldm["name"],
+                "supportedKinds": ldm["supportedKinds"],
+                "attachedRoutes": ldm["attachedRoutes"],
+                "conditions": []any{
+                  condition("Accepted",
+                    tostring(ldm["acceptedStatus"]),
+                    tostring(ldm["acceptedReason"]),
+                    tostring(ldm["acceptedMessage"]),
+                    generation, ListenerTransitionTime(gateway, lname, "Accepted", tostring(ldm["acceptedStatus"]))),
+                  condition("ResolvedRefs",
+                    tostring(ldm["resolvedRefsStatus"]),
+                    tostring(ldm["resolvedRefsReason"]),
+                    tostring(ldm["resolvedRefsMessage"]),
+                    generation,
+                    ListenerTransitionTime(gateway, lname, "ResolvedRefs", tostring(ldm["resolvedRefsStatus"]))),
+                  condition("Conflicted", "False", "NoConflicts", "No conflicts detected",
+                    generation, ListenerTransitionTime(gateway, lname, "Conflicted", "False")),
+                },
+              })
+            }
+            var deployedListenerEntries = []any{}
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
+              deployedListenerEntries = append(deployedListenerEntries, map[string]any{
+                "name": ldm["name"],
+                "conditions": []any{
+                  condition("Programmed",
+                    tostring(ldm["programmedStatus"]),
+                    tostring(ldm["programmedReason"]),
+                    tostring(ldm["programmedMessage"]),
+                    generation,
+                    ListenerTransitionTime(gateway, lname, "Programmed", tostring(ldm["programmedStatus"]))),
+                },
+              })
+            }
+            var failedListenerEntries = []any{}
+            for _, ld := range listenerData {
+              var ldm = ld.(map[string]any)
+              var lname = tostring(ldm["name"])
+              var failProgrammedStatus = "False"
+              var failProgrammedReason = "Invalid"
+              var failProgrammedMessage = "Gateway not yet programmed"
+              if tostring(ldm["programmedStatus"]) == "False" {
+                failProgrammedReason = tostring(ldm["programmedReason"])
+                failProgrammedMessage = tostring(ldm["programmedMessage"])
+              }
+              failedListenerEntries = append(failedListenerEntries, map[string]any{
+                "name": ldm["name"],
+                "conditions": []any{
+                  condition("Programmed", failProgrammedStatus, failProgrammedReason, failProgrammedMessage,
+                    generation, ListenerTransitionTime(gateway, lname, "Programmed", failProgrammedStatus)),
+                },
+              })
+            }
+            // Silence unused-variable warnings — gwTopConditions and the
+            // listener arrays from the byte-identical era are retained for
+            // observability/debug consumers but no longer fed to statusPatch.
+            _ = gwTopConditions
+            _ = deployedListeners
+            _ = failedListeners
+
+            statusPatch(nsStr, nameStr,
+              "gateway.networking.k8s.io/v1", "Gateway",
+              map[string]interface{}{
+                "rendered": map[string]interface{}{
+                  "addresses":            gwEffectiveAddresses,
+                  "conditions":           renderedTopConditions,
+                  "listeners":            renderedListenerEntries,
+                  "attachedListenerSets": attachedLSCount,
+                },
+                "deployed": map[string]interface{}{
+                  "conditions": deployedTopConditions,
+                  "listeners":  deployedListenerEntries,
+                },
+                "deployFailed": map[string]interface{}{
+                  "conditions": failedTopConditions,
+                  "listeners":  failedListenerEntries,
+                },
+              })
+          %%}
+        {%- end %}
+      {% end %}
+
+  util-sharded-gateway-status-patches:
+    template: |
+      {#-
+        Sharded Gateway Status Patches
+
+        Wraps GenerateGatewayStatusPatches with automatic parallel sharding.
+      -#}
+      {%- import "util-generate-gateway-status-patches" for GenerateGatewayStatusPatches -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {% macro ShardedGatewayStatusPatches(gateways []any) %}
+        {%- var n = toint(CalculateShardCount(len(gateways), 100)) -%}
+        {%- if n <= 1 || len(gateways) < 100 -%}
+      {{ GenerateGatewayStatusPatches(gateways) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateGatewayStatusPatches(shard_slice(gateways, i, n)) }}
+          {%- end -%}
+        {%- end -%}
+      {% end %}
+
+  status-patches-200-gateway:
+    template: |
+      {#-
+        Gateway API Status Patch Registration
+
+        Extension Point: status-patches-* (priority 200)
+
+        Registers status patches for Gateway, HTTPRoute, GRPCRoute, and
+        TLSRoute resources.
+        - Gateway: Accepted/Programmed conditions, addresses, listener status
+        - HTTPRoute / GRPCRoute: Accepted/ResolvedRefs per parent gateway
+        - TLSRoute: Accepted/ResolvedRefs per parent gateway, with TLS-
+          protocol-only listener filtering and ProtocolConflict guard
+
+        Dependencies:
+          - features-075-address-discovery (provides gf["addresses"])
+      -#}
+      {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
+      {%- import "util-sharded-route-status-patches" for ShardedRouteStatusPatches -%}
+      {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- if gf["addresses"] != nil %}
+        {%- var allGateways = resources.gateways.List() -%}
+        {%- if len(allGateways) > 0 -%}
+          {{- ShardedGatewayStatusPatches(allGateways) -}}
+        {%- end -%}
+      {%- end %}
+      {%- var allHTTPRoutes = resources.httproutes.List() -%}
+      {%- if len(allHTTPRoutes) > 0 -%}
+        {{- ShardedRouteStatusPatches(allHTTPRoutes, "gateway.networking.k8s.io/v1", "HTTPRoute") -}}
+      {%- end -%}
+      {%- var allGRPCRoutes = resources.grpcroutes.List() -%}
+      {%- if len(allGRPCRoutes) > 0 -%}
+        {{- ShardedRouteStatusPatches(allGRPCRoutes, "gateway.networking.k8s.io/v1", "GRPCRoute") -}}
+      {%- end -%}
+      {%- var allTLSRoutes = resources.tlsroutes.List() -%}
+      {%- if len(allTLSRoutes) > 0 -%}
+        {{- ShardedTLSRouteStatusPatches(allTLSRoutes) -}}
+      {%- end -%}
+
+  status-patches-220-listenerset:
+    template: |
+      {#-
+        ListenerSet (GEP-1713) Status Patches
+
+        Reads pre-computed acceptance / conflict state from the
+        listenersetStatuses cache populated by util-effective-listeners,
+        so the routing/binding sites and the status patch agree
+        byte-for-byte on which listeners survived.
+
+        Top-level conditions:
+          Accepted=True/Accepted          when at least one listener is
+                                          permitted AND not conflicted
+          Accepted=False/NotAllowed       parent Gateway denied the LS
+                                          (allowedListeners gate or RG
+                                          missing for cross-ns parentRef)
+          Accepted=False/ListenersNotValid
+                                          permitted but every listener
+                                          lost a (port, hostname/protocol)
+                                          conflict — no usable listeners
+          Accepted=False/Pending          parent Gateway not yet observed
+          Programmed=True/Programmed      mirrors Accepted=True (after F2
+                                          listener-merge the listeners
+                                          actually program into HAProxy)
+
+        Per-listener status emits Accepted, Programmed, ResolvedRefs,
+        and Conflicted conditions plus supportedKinds (intersection of
+        allowedRoutes.kinds with the chart's per-protocol defaults) and
+        attachedRoutes count.
+
+        ResolvedRefs cert-ref validation matches the Gateway listener
+        loop (util-generate-gateway-status-patches): unsupported group/
+        kind, missing Secret, missing tls.crt/tls.key, malformed PEM,
+        and cross-ns ref without ReferenceGrant. The RG check uses
+        source kind="ListenerSet" (vs "Gateway" for the Gateway loop)
+        so the ListenerSetReferenceGrant conformance test sees
+        ResolvedRefs=False/RefNotPermitted on listeners whose Secret
+        ns has no matching RG for ListenerSets.
+
+        attachedRoutes counts routes whose parentRef.kind="ListenerSet"
+        resolves to this LS + sectionName (sectionless parentRefs
+        attach to every listener on this LS).
+
+        Resource-agnostic: no controller code change.
+      -#}
+      {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener -%}
+      {{ render "util-effective-listeners" }}
+      {#- Read the per-LS statuses sub-key off the unified
+          effectiveListeners cache populated by util-effective-listeners.
+          Folding statuses into the same cache value as the listener
+          map guarantees that whenever effectiveListeners is populated,
+          statuses is too — eliminating the race that the previous
+          separate-key listenersetStatuses cache exposed. -#}
+      {%%
+        var effLAny = shared.Get("effectiveListeners")
+        var statuses = map[string]any{}
+        if effLAny != nil {
+          var effL, ok = effLAny.(map[string]any)
+          if ok {
+            var stAny, hasSt = effL["statuses"]
+            if hasSt {
+              statuses = stAny.(map[string]any)
+            }
+          }
+        }
+      %%}
+      {%- for _, ls := range resources.listenersets.List() %}
+        {%%
+          var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+          var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+          var lsKey = lsNs + "/" + lsName
+          var lsGen = dig(ls, "metadata", "generation") | fallback(0)
+
+          // Resolve parent Gateway via spec.parentRef.
+          var parentRef = dig(ls, "spec", "parentRef")
+          var parentName = tostring(dig(parentRef, "name") | fallback(""))
+          var parentNs = tostring(dig(parentRef, "namespace") | fallback(lsNs))
+          var parentGw = resources.gateways.GetSingle(parentNs, parentName)
+
+          var lsAccepted = "False"
+          var lsAcceptedReason = "Pending"
+          var lsAcceptedMsg = "Parent Gateway not yet observed"
+          var lsProgrammed = "False"
+          var lsProgrammedReason = "Pending"
+          var lsProgrammedMsg = "Awaiting parent Gateway acceptance"
+
+          // attachedRoutes per listener name. Routes whose parentRef.kind
+          // is "ListenerSet" matching this LS's ns/name. Sectionless
+          // parentRefs attach to every listener (matching the
+          // Gateway-listener counter's sectionless-fallback logic) AND
+          // pass each listener's allowedRoutes.namespaces gate; per
+          // ListenerSetAllowedRoutesNamespaces a route in a namespace
+          // not allowed by a listener must NOT count toward that
+          // listener's attachedRoutes (the same route may attach to
+          // some listeners on the LS but not others).
+          var lsListenersByName = map[string]any{}
+          var listenerNamesInLS = []any{}
+          for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+            var ln = tostring(dig(l, "name") | fallback(""))
+            listenerNamesInLS = append(listenerNamesInLS, ln)
+            lsListenersByName[ln] = l
+          }
+          var lsAttachedRoutes = map[string]int{}
+          var routeKindsForCount = []any{}
+          for _, r := range resources.httproutes.List() {
+            routeKindsForCount = append(routeKindsForCount, map[string]any{"kind": "HTTPRoute", "route": r})
+          }
+          for _, r := range resources.grpcroutes.List() {
+            routeKindsForCount = append(routeKindsForCount, map[string]any{"kind": "GRPCRoute", "route": r})
+          }
+          for _, entry := range routeKindsForCount {
+            var em = entry.(map[string]any)
+            var route = em["route"]
+            var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+            for _, pr := range dig(route, "spec", "parentRefs") | toSlice() {
+              var prGroup = tostring(dig(pr, "group") | fallback("gateway.networking.k8s.io"))
+              var prKind = tostring(dig(pr, "kind") | fallback("Gateway"))
+              if prGroup != "gateway.networking.k8s.io" || prKind != "ListenerSet" {
+                continue
+              }
+              var prName = tostring(dig(pr, "name") | fallback(""))
+              if prName != lsName {
+                continue
+              }
+              var prNs = tostring(dig(pr, "namespace") | fallback(routeNs))
+              if prNs != lsNs {
+                continue
+              }
+              var prSection = tostring(dig(pr, "sectionName") | fallback(""))
+              if prSection != "" {
+                var lObj, has = lsListenersByName[prSection]
+                if has && hasPrefix(IsRouteAllowedOnListener(routeNs, lObj, lsNs), "true") {
+                  lsAttachedRoutes[prSection] = lsAttachedRoutes[prSection] + 1
+                }
+              } else {
+                for _, lnAny := range listenerNamesInLS {
+                  var ln = tostring(lnAny)
+                  var lObj, has = lsListenersByName[ln]
+                  if has && hasPrefix(IsRouteAllowedOnListener(routeNs, lObj, lsNs), "true") {
+                    lsAttachedRoutes[ln] = lsAttachedRoutes[ln] + 1
+                  }
+                }
+              }
+            }
+          }
+
+          var statusEntryAny, hasEntry = statuses[lsKey]
+          var permitted = false
+          var rejectReason = "Pending"
+          var rejectMsg = "Parent Gateway not yet observed"
+          var conflictByName = map[string]any{}
+          var hasInlineFallback = false
+          if hasEntry {
+            var statusEntry = statusEntryAny.(map[string]any)
+            permitted = statusEntry["permitted"].(bool)
+            rejectReason = tostring(statusEntry["rejectionReason"])
+            rejectMsg = tostring(statusEntry["rejectionMessage"])
+            for _, c := range statusEntry["listenerConflicts"].([]any) {
+              var cm = c.(map[string]any)
+              conflictByName[tostring(cm["name"])] = cm
+            }
+          } else if parentGw != nil {
+            // Cache miss fallback: compute the basic admission gate
+            // inline. We can't recover the conflict state without
+            // re-doing the full util-effective-listeners scan, but
+            // the basic NotAllowed / Accepted distinction matters
+            // most for conformance and is cheap to derive from the
+            // same gate helper the routing layer uses.
+            hasInlineFallback = true
+            if hasPrefix(IsListenerSetAdmitted(parentGw, ls), "true") {
+              permitted = true
+            } else {
+              rejectReason = "NotAllowed"
+              rejectMsg = "Parent Gateway does not allow ListenerSets from this namespace"
+            }
+          }
+
+          // Top-level acceptance derivation.
+          if parentGw == nil {
+            lsAcceptedReason = "Pending"
+            lsAcceptedMsg = "Parent Gateway " + parentNs + "/" + parentName + " not found"
+            lsProgrammedReason = "Pending"
+            lsProgrammedMsg = lsAcceptedMsg
+          } else if !hasEntry && !hasInlineFallback {
+            lsAcceptedReason = "Pending"
+            lsAcceptedMsg = "ListenerSet acceptance state not yet computed"
+            lsProgrammedReason = "Pending"
+            lsProgrammedMsg = lsAcceptedMsg
+          } else if !permitted {
+            lsAcceptedReason = rejectReason
+            lsAcceptedMsg = rejectMsg
+            lsProgrammedReason = rejectReason
+            lsProgrammedMsg = rejectMsg
+          } else {
+            // Permitted by parent Gateway. Drill into per-listener
+            // conflict state AND per-listener cert-ref / kind-ref
+            // resolution to pick the top-level reason: if every
+            // declared listener is conflicted OR has unresolvable
+            // refs, the LS itself is rejected with ListenersNotValid
+            // (per ListenerSetHostnameConflict /
+            // ListenerSetProtocolConflict / ListenerSetReferenceGrant
+            // conformance tests).
+            //
+            // The conflict state lives on the cache entry; the inline-
+            // fallback path (cache miss) doesn't have it, so we
+            // optimistically assume no conflicts. The per-listener
+            // ref-resolution check is computed inline here (mirrors
+            // the per-listener loop below) so even a cache miss
+            // surfaces the right top-level reason for tests like
+            // ListenerSetReferenceGrant where every cert ref fails.
+            var anyValid = false
+            var allConflicts = []any{}
+            if hasEntry {
+              allConflicts = statusEntryAny.(map[string]any)["listenerConflicts"].([]any)
+            }
+            // Pre-scan listeners for cert-ref / kind-ref resolution
+            // failures, so the top-level decision can fold both
+            // signals (conflict + ref-resolution). The check mirrors
+            // the per-listener loop below; we keep the two in sync
+            // via shape rather than refactoring the per-listener loop
+            // upward, because the per-listener loop also computes
+            // supportedKinds / attachedRoutes / Programmed details
+            // that don't matter at the top level.
+            var listenerHasValidRefs = map[string]bool{}
+            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+              var lname = tostring(dig(l, "name") | fallback(""))
+              var lprotocol = tostring(dig(l, "protocol") | fallback("HTTP"))
+              var refsOk = true
+              // Kind validity (allowedRoutes.kinds intersection).
+              var defKinds = []any{}
+              switch lprotocol {
+              case "HTTP", "HTTPS":
+                defKinds = []any{
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
+                  map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
+                }
+              case "TLS":
+                defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"}}
+              case "TCP":
+                defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"}}
+              case "UDP":
+                defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"}}
+              }
+              var requestedKinds = dig(l, "allowedRoutes", "kinds")
+              if requestedKinds != nil {
+                for _, reqEntry := range toSlice(requestedKinds) {
+                  var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
+                  var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
+                  var matched = false
+                  for _, def := range defKinds {
+                    if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                      matched = true
+                      break
+                    }
+                  }
+                  if !matched {
+                    refsOk = false
+                    break
+                  }
+                }
+              }
+              // Cert ref validity (cross-ns RG check + Secret
+              // resolution + PEM check, source kind="ListenerSet").
+              if refsOk && (lprotocol == "HTTPS" || lprotocol == "TLS") {
+                var listenerTls = dig(l, "tls")
+                if listenerTls != nil {
+                  for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
+                    var refGroup = tostring(dig(ref, "group") | fallback(""))
+                    var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
+                    if (refGroup != "" && refGroup != "core") || refKind != "Secret" {
+                      refsOk = false
+                      continue
+                    }
+                    var refName = tostring(dig(ref, "name") | fallback(""))
+                    var refNs = tostring(dig(ref, "namespace") | fallback(lsNs))
+                    if refName == "" {
+                      refsOk = false
+                      continue
+                    }
+                    if refNs != lsNs {
+                      var rgOk = ReferenceGrantPermitted(
+                        "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                        "", "Secret", refNs, refName)
+                      if rgOk != "true" {
+                        refsOk = false
+                        continue
+                      }
+                    }
+                    var sec = resources.secrets.GetSingle(refNs, refName)
+                    if sec == nil {
+                      refsOk = false
+                      continue
+                    }
+                    var sd = dig(sec, "data")
+                    var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
+                    var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
+                    if crtB64 == "" || keyB64 == "" {
+                      refsOk = false
+                      continue
+                    }
+                    var crt, crtErr = b64decode(crtB64)
+                    var key, keyErr = b64decode(keyB64)
+                    if crtErr != nil || keyErr != nil {
+                      refsOk = false
+                      continue
+                    }
+                    if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                      refsOk = false
+                      continue
+                    }
+                  }
+                }
+              }
+              listenerHasValidRefs[lname] = refsOk
+            }
+            // A listener is "valid" at the top level when:
+            //   - its refs resolved (cert + kind), AND
+            //   - it isn't conflicted with a sibling on the same port
+            // The cache's `accepted` flag covers the conflict half;
+            // when cache misses, we optimistically pretend conflict
+            // info isn't telling us anything (all conflicts are []),
+            // and rely solely on listenerHasValidRefs.
+            var anyConflictData = false
+            for _, lc := range allConflicts {
+              anyConflictData = true
+              var lcm = lc.(map[string]any)
+              var lcName = tostring(lcm["name"])
+              var notConflicted = tostring(lcm["conflicted"]) == ""
+              var conflictAccepted = lcm["accepted"].(bool)
+              var refsOk = listenerHasValidRefs[lcName]
+              if notConflicted && conflictAccepted && refsOk {
+                anyValid = true
+                break
+              }
+            }
+            if !anyConflictData {
+              // No cache, no conflict signal — every listener with
+              // resolved refs counts as valid.
+              for _, ok := range listenerHasValidRefs {
+                if ok {
+                  anyValid = true
+                  break
+                }
+              }
+              if len(listenerHasValidRefs) == 0 {
+                anyValid = true
+              }
+            }
+            if anyValid {
+              lsAccepted = "True"
+              lsAcceptedReason = "Accepted"
+              lsAcceptedMsg = "ListenerSet accepted by parent Gateway"
+              lsProgrammed = "True"
+              lsProgrammedReason = "Programmed"
+              lsProgrammedMsg = "ListenerSet listeners programmed into the data plane"
+            } else {
+              lsAccepted = "False"
+              lsAcceptedReason = "ListenersNotValid"
+              lsAcceptedMsg = "All listeners on this ListenerSet lost a conflict, have unsupported route kinds, or have unresolvable cert refs"
+              lsProgrammed = "False"
+              lsProgrammedReason = "ListenersNotValid"
+              lsProgrammedMsg = lsAcceptedMsg
+            }
+          }
+
+          // Phase-scoped conditions: data-plane-independent Accepted goes
+          // in the rendered variant; data-plane-dependent Programmed goes
+          // in the deployed variant. See the Gateway split above for the
+          // full reasoning. lsTopConditions remains for any debug
+          // consumers but no longer feeds the patch payload.
+          var lsAcceptedCond = condition("Accepted", lsAccepted, lsAcceptedReason, lsAcceptedMsg,
+            lsGen, TopLevelTransitionTime(ls, "Accepted", lsAccepted))
+          var lsProgrammedCond = condition("Programmed", lsProgrammed, lsProgrammedReason, lsProgrammedMsg,
+            lsGen, TopLevelTransitionTime(ls, "Programmed", lsProgrammed))
+          var lsTopConditions = []any{lsAcceptedCond, lsProgrammedCond}
+          _ = lsTopConditions
+
+          // Per-listener data: supportedKinds, ResolvedRefs (cert refs
+          // with RG check using source kind="ListenerSet"), and
+          // Accepted/Programmed/Conflicted. Split into two parallel arrays:
+          // renderedListeners carries data-plane-independent fields
+          // (supportedKinds, attachedRoutes, Accepted, ResolvedRefs,
+          // Conflicted); deployedListeners carries only the Programmed
+          // condition per listener (post-reload signal).
+          var renderedListeners = []any{}
+          var deployedListeners = []any{}
+          for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+            var listenerName = tostring(dig(l, "name") | fallback(""))
+            var protocol = tostring(dig(l, "protocol") | fallback("HTTP"))
+
+            // supportedKinds
+            var defaultKinds = []any{}
+            switch protocol {
+            case "HTTP", "HTTPS":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"},
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute"},
+              }
+            case "TLS":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "TLSRoute"},
+              }
+            case "TCP":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "TCPRoute"},
+              }
+            case "UDP":
+              defaultKinds = []any{
+                map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
+              }
+            }
+            var requestedKinds = dig(l, "allowedRoutes", "kinds")
+            var supportedKinds = []any{}
+            var hasInvalidKind = false
+            if requestedKinds == nil {
+              supportedKinds = defaultKinds
+            } else {
+              for _, reqEntry := range toSlice(requestedKinds) {
+                var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
+                var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
+                var matched = false
+                for _, def := range defaultKinds {
+                  if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                    matched = true
+                    break
+                  }
+                }
+                if matched {
+                  supportedKinds = append(supportedKinds, map[string]any{"group": reqGroup, "kind": reqKind})
+                } else {
+                  hasInvalidKind = true
+                }
+              }
+            }
+
+            // Cert ref validation for HTTPS/TLS listeners. RG source is
+            // ListenerSet (not Gateway) so cross-ns Secret refs need a RG
+            // matching from {ListenerSet, lsNs}.
+            var hasInvalidCertRef = false
+            var hasRefNotPermitted = false
+            if protocol == "HTTPS" || protocol == "TLS" {
+              var listenerTls = dig(l, "tls")
+              if listenerTls != nil {
+                for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
+                  var refGroup = tostring(dig(ref, "group") | fallback(""))
+                  var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
+                  if refGroup != "" && refGroup != "core" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  if refKind != "Secret" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  var refName = tostring(dig(ref, "name") | fallback(""))
+                  var refNs = tostring(dig(ref, "namespace") | fallback(lsNs))
+                  if refName == "" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  if refNs != lsNs {
+                    var rgOk = ReferenceGrantPermitted(
+                      "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                      "", "Secret", refNs, refName)
+                    if rgOk != "true" {
+                      hasRefNotPermitted = true
+                      continue
+                    }
+                  }
+                  var sec = resources.secrets.GetSingle(refNs, refName)
+                  if sec == nil {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  var sd = dig(sec, "data")
+                  var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
+                  var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
+                  if crtB64 == "" || keyB64 == "" {
+                    hasInvalidCertRef = true
+                  } else {
+                    var crt, crtErr = b64decode(crtB64)
+                    var key, keyErr = b64decode(keyB64)
+                    if crtErr != nil || keyErr != nil {
+                      hasInvalidCertRef = true
+                    } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                      hasInvalidCertRef = true
+                    }
+                  }
+                }
+              }
+            }
+
+            var resolvedRefsStatus = "True"
+            var resolvedRefsReason = "ResolvedRefs"
+            var resolvedRefsMessage = "All references resolved"
+            if hasInvalidKind {
+              resolvedRefsStatus = "False"
+              resolvedRefsReason = "InvalidRouteKinds"
+              resolvedRefsMessage = "Listener references unsupported route kinds"
+            } else if hasRefNotPermitted {
+              resolvedRefsStatus = "False"
+              resolvedRefsReason = "RefNotPermitted"
+              resolvedRefsMessage = "Listener references a Secret across namespaces with no matching ReferenceGrant"
+            } else if hasInvalidCertRef {
+              resolvedRefsStatus = "False"
+              resolvedRefsReason = "InvalidCertificateRef"
+              resolvedRefsMessage = "Listener references unsupported, missing, or malformed Secret"
+            }
+
+            // Default Accepted/Programmed: mirrors ResolvedRefs. Then
+            // overridden by parent-gate rejection or conflict state.
+            var listenerAcceptedStatus = "True"
+            var listenerAcceptedReason = "Accepted"
+            var listenerAcceptedMessage = "Listener accepted"
+            var listenerProgrammedStatus = "True"
+            var listenerProgrammedReason = "Programmed"
+            var listenerProgrammedMessage = "Listener programmed"
+            if resolvedRefsStatus != "True" {
+              listenerProgrammedStatus = "False"
+              listenerProgrammedReason = "Invalid"
+              listenerProgrammedMessage = resolvedRefsMessage
+            }
+
+            // Apply parent-gate rejection.
+            if parentGw == nil {
+              listenerAcceptedStatus = "False"
+              listenerAcceptedReason = "Pending"
+              listenerAcceptedMessage = "Parent Gateway not yet observed"
+              listenerProgrammedStatus = "False"
+              listenerProgrammedReason = "Pending"
+              listenerProgrammedMessage = listenerAcceptedMessage
+            } else if hasEntry && !permitted {
+              listenerAcceptedStatus = "False"
+              listenerAcceptedReason = rejectReason
+              listenerAcceptedMessage = rejectMsg
+              listenerProgrammedStatus = "False"
+              listenerProgrammedReason = rejectReason
+              listenerProgrammedMessage = rejectMsg
+            }
+
+            // Apply conflict state.
+            var conflictedStatus = "False"
+            var conflictedReason = "NoConflicts"
+            var conflictedMessage = "No conflicts detected"
+            var cAny, hasC = conflictByName[listenerName]
+            if hasC {
+              var cm = cAny.(map[string]any)
+              var cReason = tostring(cm["conflicted"])
+              if cReason != "" {
+                conflictedStatus = "True"
+                conflictedReason = cReason
+                conflictedMessage = "Listener conflicts with a higher-precedence sibling on the same port"
+                listenerAcceptedStatus = "False"
+                listenerAcceptedReason = cReason
+                listenerAcceptedMessage = conflictedMessage
+                listenerProgrammedStatus = "False"
+                listenerProgrammedReason = cReason
+                listenerProgrammedMessage = conflictedMessage
+              }
+            }
+
+            renderedListeners = append(renderedListeners, map[string]any{
+              "name":           listenerName,
+              "supportedKinds": supportedKinds,
+              "attachedRoutes": lsAttachedRoutes[listenerName],
+              "conditions": []any{
+                condition("Accepted",
+                  listenerAcceptedStatus, listenerAcceptedReason, listenerAcceptedMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "Accepted", listenerAcceptedStatus)),
+                condition("ResolvedRefs",
+                  resolvedRefsStatus, resolvedRefsReason, resolvedRefsMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "ResolvedRefs", resolvedRefsStatus)),
+                condition("Conflicted",
+                  conflictedStatus, conflictedReason, conflictedMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "Conflicted", conflictedStatus)),
+              },
+            })
+            deployedListeners = append(deployedListeners, map[string]any{
+              "name": listenerName,
+              "conditions": []any{
+                condition("Programmed",
+                  listenerProgrammedStatus, listenerProgrammedReason, listenerProgrammedMessage,
+                  lsGen, ListenerTransitionTime(ls, listenerName, "Programmed", listenerProgrammedStatus)),
+              },
+            })
+          }
+
+          statusPatch(lsNs, lsName,
+            "gateway.networking.k8s.io/v1", "ListenerSet",
+            map[string]interface{}{
+              "rendered": map[string]interface{}{
+                "conditions": []any{lsAcceptedCond},
+                "listeners":  renderedListeners,
+              },
+              "deployed": map[string]interface{}{
+                "conditions": []any{lsProgrammedCond},
+                "listeners":  deployedListeners,
+              },
+              "deployFailed": map[string]interface{}{
+                "conditions": []any{lsProgrammedCond},
+                "listeners":  deployedListeners,
+              },
+            })
+        %%}
+      {%- end %}

@@ -124,7 +124,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with changes is info",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   1,
@@ -134,7 +134,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with reloads but no ops is info",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   1,
@@ -144,7 +144,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with ops but no reloads is info",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   0,
@@ -154,7 +154,7 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 		},
 		{
 			name: "deployment completed with no changes is debug",
-			event: events.NewDeploymentCompletedEvent(events.DeploymentResult{
+			event: events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 				Total:              2,
 				Succeeded:          2,
 				ReloadsTriggered:   0,
@@ -275,7 +275,7 @@ func TestEventCommentator_GenerateInsight_ReconciliationEvents(t *testing.T) {
 	})
 
 	t.Run("ReconciliationCompletedEvent", func(t *testing.T) {
-		event := events.NewReconciliationCompletedEvent(123)
+		event := events.NewReconciliationCompletedEvent(123, nil)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -285,7 +285,7 @@ func TestEventCommentator_GenerateInsight_ReconciliationEvents(t *testing.T) {
 
 	t.Run("ReconciliationFailedEvent", func(t *testing.T) {
 		// Constructor is NewReconciliationFailedEvent(err, phase string)
-		event := events.NewReconciliationFailedEvent("template syntax error", "template")
+		event := events.NewReconciliationFailedEvent("template syntax error", "template", nil)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -306,7 +306,7 @@ func TestEventCommentator_GenerateInsight_TemplateEvents(t *testing.T) {
 		// haproxyConfig, auxiliaryFiles, auxFileCount, durationMs, triggerReason
 		// ConfigBytes is calculated from len(haproxyConfig)
 		haproxyConfig := "test haproxy config content"
-		event := events.NewTemplateRenderedEvent(haproxyConfig, nil, nil, 3, 50, "", "", true)
+		event := events.NewTemplateRenderedEvent(haproxyConfig, nil, nil, nil, 3, 50, "", "", true)
 
 		insight, attrs := ec.generateInsight(event)
 
@@ -382,7 +382,7 @@ func TestEventCommentator_GenerateInsight_DeploymentEvents(t *testing.T) {
 	})
 
 	t.Run("DeploymentCompletedEvent", func(t *testing.T) {
-		event := events.NewDeploymentCompletedEvent(events.DeploymentResult{
+		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 			Total:              3,
 			Succeeded:          2,
 			Failed:             1,
@@ -874,7 +874,7 @@ func TestEventCommentator_ReconciliationCorrelation(t *testing.T) {
 	ec := NewEventCommentator(bus, logger, 100)
 
 	// Pre-populate with a completed reconciliation
-	completedEvent := events.NewReconciliationCompletedEvent(100)
+	completedEvent := events.NewReconciliationCompletedEvent(100, nil)
 	ec.ringBuffer.Add(completedEvent)
 
 	// Small delay

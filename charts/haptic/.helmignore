@@ -21,3 +21,11 @@
 .idea/
 *.tmproj
 .vscode/
+# Chart-level documentation (mkdocs site source, not needed for install).
+# These files are rendered into the project's Pages site separately;
+# packaging them inflates the Helm release Secret toward the K8s 1 MiB limit.
+docs/
+mkdocs.yml
+# Chart-level CHANGELOG and README — informational, not chart-functional.
+CHANGELOG.md
+README.md

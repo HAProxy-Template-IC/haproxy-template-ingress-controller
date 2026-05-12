@@ -28,6 +28,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 func TestNewCoordinator(t *testing.T) {
@@ -219,6 +220,107 @@ func TestCoordinator_Name(t *testing.T) {
 	assert.Equal(t, CoordinatorComponentName, coordinator.Name())
 }
 
+// TestCoordinator_PipelineFailureForwardsLastSuccessfulPatches pins the
+// contract that the Coordinator caches `lastSuccessfulPatches` on every
+// successful pipeline run and forwards it into `ReconciliationFailedEvent`
+// when a subsequent pipeline fails. The StatusApplier reads patches from
+// the failure event directly — there is no fallback cache anywhere — so a
+// regression here would silently stop the chart from emitting
+// renderFailed / deployFailed status variants.
+func TestCoordinator_PipelineFailureForwardsLastSuccessfulPatches(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	patches := []templating.StatusPatch{
+		{Name: "gw", Kind: "Gateway"},
+		{Name: "route", Kind: "HTTPRoute"},
+	}
+
+	// Pipeline that returns success on first call, failure on second.
+	mp := &flipFlopPipeline{
+		success: &pipeline.PipelineResult{
+			HAProxyConfig:  "global\n  daemon\n",
+			AuxiliaryFiles: &dataplane.AuxiliaryFiles{},
+			StatusPatches:  patches,
+		},
+		failure: &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: errors.New("second-pass template error"),
+		},
+	}
+
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      mp,
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		Logger:        logger,
+	})
+
+	eventChan := bus.Subscribe("test", 100)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = coordinator.Start(ctx)
+	}()
+	time.Sleep(testutil.StartupDelay)
+
+	// First reconcile: success — coordinator caches lastSuccessfulPatches.
+	bus.Publish(events.NewReconciliationTriggeredEvent("first", true))
+	_ = testutil.WaitForEvent[*events.ReconciliationCompletedEvent](t, eventChan, testutil.EventTimeout)
+
+	// Second reconcile: failure — the failure event must carry the cached patches.
+	bus.Publish(events.NewReconciliationTriggeredEvent("second", true))
+	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
+
+	require.Equal(t, 2, len(failedEvent.StatusPatches),
+		"ReconciliationFailedEvent must carry lastSuccessfulPatches so the "+
+			"StatusApplier can apply the renderFailed / deployFailed variant")
+	require.Equal(t, "gw", failedEvent.StatusPatches[0].Name)
+}
+
+// TestCoordinator_FailureBeforeAnySuccessHasNilPatches pins the
+// early-bootstrap case: a pipeline failure before any successful render
+// means lastSuccessfulPatches is nil, and the failure event carries nil
+// (not empty) so the StatusApplier's `len(patches) == 0` guard cleanly
+// short-circuits.
+func TestCoordinator_FailureBeforeAnySuccessHasNilPatches(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+
+	mp := &mockPipeline{
+		err: &pipeline.PipelineError{
+			Phase: pipeline.PhaseRender,
+			Cause: errors.New("first-pass template error"),
+		},
+	}
+
+	coordinator := NewCoordinator(&CoordinatorConfig{
+		EventBus:      bus,
+		Pipeline:      mp,
+		StoreProvider: stores.NewRealStoreProvider(nil),
+		Logger:        logger,
+	})
+
+	eventChan := bus.Subscribe("test", 100)
+	bus.Start()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	go func() {
+		_ = coordinator.Start(ctx)
+	}()
+	time.Sleep(testutil.StartupDelay)
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("first", true))
+	failedEvent := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, eventChan, testutil.EventTimeout)
+
+	require.Nil(t, failedEvent.StatusPatches,
+		"failure before any successful render should carry nil patches "+
+			"(StatusApplier guards on len(patches) == 0)")
+}
+
 // mockPipeline implements PipelineExecutor interface for testing.
 type mockPipeline struct {
 	result *pipeline.PipelineResult
@@ -230,4 +332,21 @@ func (m *mockPipeline) Execute(_ context.Context, _ stores.StoreProvider) (*pipe
 		return nil, m.err
 	}
 	return m.result, nil
+}
+
+// flipFlopPipeline returns success once, then failure thereafter. Used to
+// pin the Coordinator's "cache patches on success, attach to failure event"
+// contract.
+type flipFlopPipeline struct {
+	success *pipeline.PipelineResult
+	failure error
+	calls   int
+}
+
+func (m *flipFlopPipeline) Execute(_ context.Context, _ stores.StoreProvider) (*pipeline.PipelineResult, error) {
+	m.calls++
+	if m.calls == 1 {
+		return m.success, nil
+	}
+	return nil, m.failure
 }

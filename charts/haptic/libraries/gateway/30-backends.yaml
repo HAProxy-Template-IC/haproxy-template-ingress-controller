@@ -1,0 +1,513 @@
+templateSnippets:
+  util-generate-backends-gateway:
+    template: |
+      {#- Macro to generate backends for Gateway API routes (HTTPRoute/GRPCRoute) #}
+      {#- Deduplicates backends across all routes using first_seen for deduplication tracking #}
+      {#- Parameters: #}
+      {#-   routes: list of routes to process (from resources.httproutes or resources.grpcroutes) #}
+      {#-   protoFlag: protocol flag for default-server ("" for HTTP, "h2" for gRPC) #}
+      {#-   dedupCategory: category name for first_seen deduplication #}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- macro GenerateGatewayBackends(routes []any, protoFlag string, dedupCategory string) -%}
+      {%- for _, route := range routes -%}
+      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") -%}
+      {%- var routeName = route | dig("metadata", "name") | fallback("") -%}
+      {%- for _, rule := range route | dig("spec", "rules") | toSlice() -%}
+      {%- var backendRefs = rule | dig("backendRefs") -%}
+      {%- if backendRefs != nil %}
+      {%- for _, backendRef := range backendRefs | toSlice() -%}
+      {#- Skip backendRefs the chart can't realise as a HAProxy backend.
+          Per Gateway API spec, only core/v1 Service refs are routable;
+          anything else (custom kind, wrong group) results in
+          ResolvedRefs=False/InvalidKind on the route. The backend
+          rendering below would otherwise silently use the ref's `name`
+          field (which can collide with a real Service of the same
+          name) and incorrectly route traffic. The route-matcher path
+          below detects all-invalid rules and routes them to
+          gw-invalid-backend (HTTP 500) instead. -#}
+      {%- var refGroup = backendRef | dig("group") | fallback("") | tostring() -%}
+      {%- var refKind = backendRef | dig("kind") | fallback("Service") | tostring() -%}
+      {%- if (refGroup != "" && refGroup != "core") || refKind != "Service" -%}
+        {%- continue -%}
+      {%- end -%}
+      {%- var backendName = backendRef | dig("name") | fallback("") -%}
+      {%- var backendPort = backendRef | dig("port") | fallback(80) -%}
+      {#- backendRef.namespace defaults to the route's namespace (per
+          Gateway API spec). For cross-namespace backendRefs, the
+          target Service + EndpointSlice live in the ref's namespace,
+          so endpoint resolution must look there — not in routeNs.
+          Conformance test HTTPRouteReferenceGrant sets up a
+          cross-namespace HTTPRoute → Service ref permitted by RG;
+          previously the chart resolved endpoints in routeNs which
+          turned up nothing and HAProxy returned 503 / no server. -#}
+      {%- var backendNs = tostring(backendRef | dig("namespace") | fallback(routeNs)) -%}
+      {%- var backend = map[string]any{"name": backendName, "port": backendPort} -%}
+      {%- var backendKey = backendNs + "_" + routeNs + "_" + routeName + "_" + backendName + "_" + (backendPort) -%}
+      {%- if first_seen(dedupCategory, backendKey) -%}
+      {%- var routeTypeLabel = "GRPCRoute" -%}
+      {%- if protoFlag == "" -%}{%- routeTypeLabel = "HTTPRoute" -%}{%- end -%}
+      {%- var beKey = BackendNameGateway(route, backend) -%}
+      {#- Per Gateway API spec, when the target Service port declares
+          appProtocol (kubernetes.io/h2c, kubernetes.io/ws[s]), the data
+          plane MUST honour that protocol. HAProxy's `proto` directive on
+          default-server gives us h2c; WebSocket flows through native HTTP
+          handling without any directive. We look up the Service by
+          (namespace, name) and find the port matching backendRef.port. -#}
+      {%- var resolvedProtoFlag = protoFlag -%}
+      {%- if protoFlag == "" -%}
+        {%- var svc = resources.services.GetSingle(backendNs, tostring(backendName)) -%}
+        {%- if svc != nil -%}
+          {%- for _, p := range svc | dig("spec", "ports") | toSlice() -%}
+            {%- if (p | dig("port") | toint()) == toint(backendPort) -%}
+              {%- var ap = p | dig("appProtocol") | fallback("") | tostring() -%}
+              {%- if ap == "kubernetes.io/h2c" -%}
+                {%- resolvedProtoFlag = "h2" -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {#- BackendTLSPolicy lookup: per Gateway API spec, when a
+          BackendTLSPolicy in the same namespace targets this Service
+          (optionally pinned to a sectionName matching the port name),
+          the data plane MUST connect to the backend over TLS, validate
+          the server cert against the policy's CA bundle, and use
+          policy.validation.hostname for SNI + cert hostname check.
+          We resolve the policy's CA refs to a single PEM blob and
+          stash it via fileRegistry; the default-server line below picks
+          up the resulting `ssl ca-file ... verify required sni ...`. -#}
+      {%- var btlsCaPath = "" -%}
+      {%- var btlsHostname = "" -%}
+      {%- var btlsConflictedReason = "" -%}
+      {%- var btlsBroken = false -%}
+      {#- gw client-cert: per Gateway API spec, when the route's parent
+          Gateway carries `spec.tls.backend.clientCertificateRef`, the
+          backend connection MUST present that cert. Resolve once per
+          backend so the default-server line below can emit
+          `crt <path>` alongside any BackendTLSPolicy-driven options. -#}
+      {%- var gwClientCertPath = "" -%}
+      {%%
+        var portNameForBackend = ""
+        if protoFlag == "" {
+          var svcLookup = resources.services.GetSingle(tostring(routeNs), tostring(backendName))
+          if svcLookup != nil {
+            for _, p := range svcLookup | dig("spec", "ports") | toSlice() {
+              if (p | dig("port") | toint()) == toint(backendPort) {
+                portNameForBackend = tostring(p | dig("name") | fallback(""))
+              }
+            }
+          }
+        }
+        var winningPolicy any = nil
+        var winningPolicyTs = ""
+        var winningPolicyKey = ""
+        for _, pol := range resources.backendtlspolicies.List() {
+          var polNs = tostring(dig(pol, "metadata", "namespace") | fallback(""))
+          if polNs != tostring(routeNs) {
+            continue
+          }
+          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
+            var trGroup = tostring(dig(tr, "group") | fallback(""))
+            var trKind = tostring(dig(tr, "kind") | fallback(""))
+            var trName = tostring(dig(tr, "name") | fallback(""))
+            var trSec = tostring(dig(tr, "sectionName") | fallback(""))
+            if (trGroup != "" && trGroup != "core") || trKind != "Service" {
+              continue
+            }
+            if trName != tostring(backendName) {
+              continue
+            }
+            if trSec != "" && trSec != portNameForBackend {
+              continue
+            }
+            // Conflict tiebreak — earliest creationTimestamp wins.
+            var polTs = tostring(dig(pol, "metadata", "creationTimestamp") | fallback(""))
+            var polKey = polNs + "/" + tostring(dig(pol, "metadata", "name") | fallback(""))
+            if winningPolicy == nil {
+              winningPolicy = pol
+              winningPolicyTs = polTs
+              winningPolicyKey = polKey
+            } else if polTs != "" && (winningPolicyTs == "" || polTs < winningPolicyTs) {
+              winningPolicy = pol
+              winningPolicyTs = polTs
+              winningPolicyKey = polKey
+            } else if polTs == winningPolicyTs && polKey < winningPolicyKey {
+              winningPolicy = pol
+              winningPolicyTs = polTs
+              winningPolicyKey = polKey
+            }
+            break
+          }
+        }
+        if winningPolicy != nil {
+          var validation = dig(winningPolicy, "spec", "validation")
+          btlsHostname = tostring(dig(validation, "hostname") | fallback(""))
+          var caRefs []any = dig(validation, "caCertificateRefs") | toSlice()
+          var caBundleParts = []any{}
+          if caRefs != nil {
+            for _, ref := range caRefs {
+              var refGroup = tostring(dig(ref, "group") | fallback(""))
+              var refKind = tostring(dig(ref, "kind") | fallback(""))
+              var refName = tostring(dig(ref, "name") | fallback(""))
+              if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
+                var cm = resources.configmaps.GetSingle(tostring(routeNs), refName)
+                if cm != nil {
+                  var data = dig(cm, "data") | fallback(map[string]any{})
+                  var dataMap = data.(map[string]any)
+                  var caCrt, ok = dataMap["ca.crt"]
+                  if ok && tostring(caCrt) != "" {
+                    caBundleParts = append(caBundleParts, tostring(caCrt))
+                  }
+                }
+              } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
+                var sec = resources.secrets.GetSingle(tostring(routeNs), refName)
+                if sec != nil {
+                  var data = dig(sec, "data") | fallback(map[string]any{})
+                  var dataMap = data.(map[string]any)
+                  var caCrt, ok = dataMap["ca.crt"]
+                  var b64 = ""
+                  if ok && tostring(caCrt) != "" {
+                    b64 = tostring(caCrt)
+                  } else {
+                    var tlsCrt, ok2 = dataMap["tls.crt"]
+                    if ok2 && tostring(tlsCrt) != "" {
+                      b64 = tostring(tlsCrt)
+                    }
+                  }
+                  if b64 != "" {
+                    var decoded, decodeErr = b64decode(b64)
+                    if decodeErr == nil {
+                      caBundleParts = append(caBundleParts, decoded)
+                    }
+                  }
+                }
+              }
+            }
+          }
+          var wkca = tostring(dig(validation, "wellKnownCACertificates") | fallback(""))
+          if len(caBundleParts) > 0 {
+            var caBundle = join(caBundleParts, "\n")
+            var policyName = tostring(dig(winningPolicy, "metadata", "name") | fallback(""))
+            var caFilename = "btls-" + tostring(routeNs) + "-" + policyName + ".crt"
+            var resolvedPath, fileErr = fileRegistry.Register("file", caFilename, caBundle)
+            if fileErr == nil {
+              btlsCaPath = resolvedPath
+            }
+          } else if wkca == "System" {
+            btlsCaPath = "@system-ca"
+          }
+          // Per Gateway API spec, when a BackendTLSPolicy targets a
+          // backend but its caCertificateRefs all fail to resolve (and
+          // no System wellKnownCACertificates fallback), the policy is
+          // *invalid* and the backend MUST not be reachable — clients
+          // must see 5xx, not be silently downgraded to plaintext.
+          // Conformance: BackendTLSPolicyInvalidCACertificateRef.
+          if btlsCaPath == "" {
+            btlsBroken = true
+          }
+        }
+        // Resolve gateway client cert ref via the route's parentRefs.
+        // Walk the route's parents in declaration order and pick the
+        // first one with a working clientCertificateRef.
+        for _, parentRef := range route | dig("spec", "parentRefs") | toSlice() {
+          if gwClientCertPath != "" {
+            break
+          }
+          var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
+          var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+          if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+            continue
+          }
+          var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+          var gwName = tostring(dig(parentRef, "name") | fallback(""))
+          var gw = resources.gateways.GetSingle(gwNs, gwName)
+          if gw == nil {
+            continue
+          }
+          var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
+          if ccRef == nil {
+            continue
+          }
+          var refGroup = tostring(dig(ccRef, "group") | fallback(""))
+          var refKind = tostring(dig(ccRef, "kind") | fallback("Secret"))
+          var refName = tostring(dig(ccRef, "name") | fallback(""))
+          var refNs = tostring(dig(ccRef, "namespace") | fallback(gwNs))
+          if (refGroup != "" && refGroup != "core") || refKind != "Secret" || refName == "" {
+            continue
+          }
+          var sec = resources.secrets.GetSingle(refNs, refName)
+          if sec == nil {
+            continue
+          }
+          var data = dig(sec, "data") | fallback(map[string]any{})
+          var dataMap = data.(map[string]any)
+          var crtB64, ok1 = dataMap["tls.crt"]
+          var keyB64, ok2 = dataMap["tls.key"]
+          if !ok1 || !ok2 || tostring(crtB64) == "" || tostring(keyB64) == "" {
+            continue
+          }
+          var crtPem, e1 = b64decode(tostring(crtB64))
+          var keyPem, e2 = b64decode(tostring(keyB64))
+          if e1 != nil || e2 != nil {
+            continue
+          }
+          var combined = crtPem + "\n" + keyPem
+          var fname = "gw-clientcert-" + gwNs + "-" + gwName + ".pem"
+          {#- Register the bundle as type "cert" so the file lands under
+              the chart's SSL dir (`ssl/`). HAProxy's `crt-base ssl`
+              will prepend `ssl/` to the emitted relative path on the
+              `crt` directive — so we emit JUST the filename (without
+              the `ssl/` prefix that fileRegistry returns) and let
+              crt-base re-add it. Closes the GatewayBackendClient
+              CertificateFeature webhook admission failure ("unable to
+              stat SSL certificate from file 'ssl/general/gw-clientcert-
+              ...'"): the previous "file" registration produced
+              `general/<fname>` which crt-base turned into the
+              non-existent `ssl/general/<fname>`. -#}
+          var _, fErr = fileRegistry.Register("cert", fname, combined)
+          if fErr == nil {
+            gwClientCertPath = fname
+          }
+        }
+      %%}
+      # Backend for: {{ routeTypeLabel }} {{ routeNs }}/{{ routeName }} → Service {{ backendName }}:{{ backendPort }}
+      backend {{ beKey }}
+          guid {{ make_guid("be", beKey) }}
+        default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
+      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- else if gwClientCertPath != "" %} ssl verify none
+      {%- end -%}
+      {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
+      {%- end %}
+      {%- if btlsBroken %}
+          # BackendTLSPolicy targeting this backend has unresolved
+          # caCertificateRefs (and no wellKnownCACertificates: System
+          # fallback). Refuse all traffic per Gateway API spec —
+          # silently downgrading to plaintext would defeat the policy.
+          http-request return status 503
+      {%- end %}
+      {#- Per-rule HTTPRoute timeouts: applied here in the backend
+          (HAProxy doesn't allow `set-timeout server` in the frontend
+          section, since no backend is bound at frontend phase). The
+          matched rule's id is stashed in txn.gw_rule_id by the
+          frontend matcher; we gate set-timeout on it. Only emit for
+          HTTPRoute (protoFlag == ""), not GRPCRoute. -#}
+      {%- if protoFlag == "" %}
+        {%- var ruleIdxLocal = 0 %}
+        {%- for _, rl := range route | dig("spec", "rules") | toSlice() %}
+          {%- var rlTimeouts = rl | dig("timeouts") %}
+          {%- if rlTimeouts != nil %}
+            {%- var rlReq = rlTimeouts | dig("request") | fallback("") | tostring() %}
+            {%- var rlBeReq = rlTimeouts | dig("backendRequest") | fallback("") | tostring() %}
+            {%- var tval = rlReq %}
+            {%- if tval == "" || tval == "0s" %}{%- tval = rlBeReq %}{%- end %}
+            {%- if tval != "" && tval != "0s" %}
+              {%- var ruleRouteId = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxLocal) %}
+        http-request set-timeout server {{ tval }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteId }}" }
+            {%- end %}
+          {%- end %}
+          {%- ruleIdxLocal = ruleIdxLocal + 1 %}
+        {%- end %}
+        {#- Per-backendRef RequestHeaderModifier
+            (SupportHTTPRouteBackendRequestHeaderModification).
+
+            Multiple rules of the same HTTPRoute can reference the
+            same (service, port) backend with DIFFERENT filter sets —
+            the upstream `HTTPRouteBackendRequestHeaderModifier`
+            conformance fixture has five rules (`/set`, `/add`,
+            `/remove`, `/multiple`, `/case-insensitivity`) all
+            pointing at `infra-backend-v1:8080` with distinct header
+            modifications. The chart deduplicates the backend block
+            (one HAProxy `backend` per `(route, service, port)`), so
+            the filter directives MUST be gated by `gw_rule_id` to
+            keep them rule-scoped — emitting them unconditionally
+            would cross-bleed.
+
+            Walk every rule of the route, find each rule's matching
+            backendRef, and emit its filters with an `if { var(txn.
+            gw_rule_id) -m str <ruleRouteId> }` guard that the
+            frontend matcher already populated. -#}
+        {%- var ruleIdxBe = 0 %}
+        {%- for _, rl := range route | dig("spec", "rules") | toSlice() %}
+          {%- for _, bRef := range rl | dig("backendRefs") | toSlice() %}
+            {%- if (bRef | dig("name") | fallback("") | tostring()) == backendName -%}
+            {%- if (toint(bRef | dig("port") | fallback(0))) == toint(backendPort) %}
+              {%- var ruleRouteIdBe = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) %}
+              {%- for _, bf := range bRef | dig("filters") | fallback([]any{}) %}
+                {%- if (bf | dig("type")) == "RequestHeaderModifier" %}
+                  {%- var mod = bf | dig("requestHeaderModifier") %}
+                  {%- if mod != nil %}
+                    {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+        http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
+                    {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+        http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
+                    {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+        http-request del-header {{ name }} if { var(txn.gw_rule_id) -m str "{{ ruleRouteIdBe }}" }
+                    {%- end %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {%- end %}
+          {%- end %}
+          {%- ruleIdxBe = ruleIdxBe + 1 %}
+        {%- end %}
+      {%- end %}
+        {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
+  util-sharded-gateway-backends:
+    template: |
+      {#-
+        Sharded Gateway Backend Generator
+
+        Wraps GenerateGatewayBackends with automatic parallel sharding.
+        Sharding is auto-calculated: clamp(resourceCount / 300, 1, 2 * GOMAXPROCS)
+        Deduplication via first_seen() is thread-safe (uses sync.Map).
+      -#}
+      {%- import "util-generate-backends-gateway" for GenerateGatewayBackends -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+      {%- macro ShardedGatewayBackends(routes []any, protoFlag string, dedupCategory string) -%}
+      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+      {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateGatewayBackends(routes, protoFlag, dedupCategory) }}
+      {%- else -%}
+      {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateGatewayBackends(shard_slice(routes, i, n), protoFlag, dedupCategory) }}
+      {%- end -%}
+      {%- end -%}
+      {%- end macro -%}
+
+  backends-500-gateway:
+    template: |
+      {#- Generate backend definitions from HTTPRoute and GRPCRoute resources -#}
+      {%- import "util-sharded-gateway-backends" for ShardedGatewayBackends -%}
+      {#- Pre-cache gateway analysis during haproxy.cfg render (sequential).
+          This ensures the cache is populated BEFORE map files render in parallel,
+          preventing race conditions on the shared map. -#}
+      {{- render "util-gateway-analysis" -}}
+      # gateway/backends-gateway
+      {{ ShardedGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") }}
+      {{- ShardedGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
+
+  backends-501-gateway-invalid:
+    template: |
+      {#-
+        Sink backend for HTTPRoute rules where every backendRef is
+        invalid (unsupported kind, non-core group). Per Gateway API
+        spec, requests matching such a rule must receive HTTP 500.
+
+        The chart's frontend-matchers-advanced-900-path-match snippet
+        routes such rules' traffic here (qualifier
+        "BACKEND:gw-invalid-backend") rather than to a real Service-
+        backed backend whose `name` happened to collide with the
+        invalid ref's `name` field.
+
+        Always rendered (even when no Gateway API resources exist) so
+        the BACKEND qualifier always resolves; HAProxy refuses to load
+        a config that references a non-existent backend.
+      -#}
+      # gateway/backends-501-gateway-invalid
+      backend gw-invalid-backend
+          guid be:gw-invalid-backend
+          http-request return status 500
+
+  backends-501-gateway-ssl-passthrough:
+    template: |
+      {#-
+        Gateway API SSL Passthrough Backends
+
+        Purpose:
+          TCP backends for SSL passthrough from Gateway API resources.
+          Forwards encrypted traffic directly to pods without SSL termination.
+          Uses util-gateway-ssl-passthrough for cached analysis.
+
+        Generated HAProxy Config:
+          backend ssl-passthrough-<namespace>-<name>
+            mode tcp
+            server SRV_1 <pod-ip>:<pod-port> check
+      -#}
+      {#- Get cached SSL passthrough analysis (runs once, shared across all renders) #}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {{ render "util-gateway-ssl-passthrough" }}
+
+      {%- var sslPassthroughData = shared.Get("gateway_ssl_passthrough").(map[string]any) %}
+      {%- var sslBackends []any = sslPassthroughData["backends"] %}
+      {%- for _, backendInfo := range sslBackends %}
+        {#- Skip entries flagged invalid by Pass 2 (failed
+            ResolvedRefs gate). They keep their slot in the
+            passthrough list so the SNI consumers (ssl-tcp,
+            frontends-600-gateway-tls-listener) can register the
+            claimed SNI as "claimed but unrouteable" and reject
+            inbound connections. Emitting a backend block here
+            would point at a non-existent Service. -#}
+        {%- if tostring(backendInfo | dig("invalid") | fallback("false")) == "true" %}
+          {%- continue %}
+        {%- end %}
+        {%- var biNamespace = backendInfo["namespace"] %}
+        {%- var biRoute = backendInfo["route"] %}
+        {%- var biName = backendInfo["name"] %}
+        {%- var biRouteType = backendInfo["route_type"] %}
+        {#- Dedup by backend name so multi-rule TLSRoutes (one entry per
+            intersected SNI, possibly several entries per rule) emit
+            exactly one `backend gtw_tls_...` block per (route, ruleIdx). -#}
+        {%- if first_seen("gateway_ssl_passthrough_backends", tostring(biName)) %}
+          {%- if biRouteType == "httproute" %}
+            {#- Get the actual HTTPRoute resource to extract service details #}
+            {%- var route = resources.httproutes.GetSingle(biNamespace, biRoute) %}
+            {%- var generated = false %}
+            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
+              {%- if !generated %}
+                {%- for _, backendRef := range rule | dig("backendRefs") | toSlice() %}
+                  {%- if !generated %}
+                    {%- var refName = backendRef | dig("name") | fallback("") %}
+                    {%- var refPort = backendRef | dig("port") | fallback(80) %}
+      # gateway/backends-gateway-ssl-passthrough
+
+      backend {{ biName }}
+          guid {{ make_guid("be", biName) }}
+          mode tcp
+          {{ BackendServers(refName, 10, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
+                    {%- generated = true %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- else if biRouteType == "tlsroute" %}
+            {#- TLSRoute: emit one TCP backend per rule. Use the rule
+                index from the entry to find the right backendRef. -#}
+            {%- var route = resources.tlsroutes.GetSingle(biNamespace, biRoute) %}
+            {%- if route != nil %}
+              {%- var ruleIdx = toint(backendInfo["rule_idx"]) %}
+              {%- var rules = route | dig("spec", "rules") | toSlice() %}
+              {%- if ruleIdx < len(rules) %}
+                {%- var rule = rules[ruleIdx] %}
+                {%- var generated = false %}
+                {%- for _, backendRef := range rule | dig("backendRefs") | toSlice() %}
+                  {%- if !generated %}
+                    {%- var refName = tostring(backendRef | dig("name") | fallback("")) %}
+                    {%- var refPort = toint(backendRef | dig("port") | fallback(443)) %}
+                    {%- var refNs = tostring(backendRef | dig("namespace") | fallback(biNamespace)) %}
+      # gateway/backends-gateway-ssl-passthrough (tlsroute)
+
+      backend {{ biName }}
+          guid {{ make_guid("be", biName) }}
+          mode tcp
+          {{ BackendServers(refName, 10, refPort, nil, nil, biName, refNs) | indent(4, false) }}
+                    {%- generated = true %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}

@@ -30,6 +30,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 const (
@@ -90,8 +91,9 @@ type scheduledDeployment struct {
 	parsedConfig  *parser.StructuredConfig
 	endpoints     []dataplane.Endpoint
 	reason        string
-	correlationID string // Correlation ID for event tracing
-	coalescible   bool   // Whether this deployment can be coalesced (skipped if newer available)
+	correlationID string                   // Correlation ID for event tracing
+	statusPatches []templating.StatusPatch // Patches to forward to DeploymentScheduledEvent
+	coalescible   bool                     // Whether this deployment can be coalesced (skipped if newer available)
 }
 
 // DeploymentScheduler implements deployment scheduling with rate limiting.
@@ -116,21 +118,22 @@ type DeploymentScheduler struct {
 	ctx                   context.Context // Main event loop context for scheduling
 
 	// State protected by mutex
-	mu                      sync.RWMutex
-	lastRenderedConfig      string                    // Last rendered HAProxy config (before validation)
-	lastAuxiliaryFiles      *dataplane.AuxiliaryFiles // Last rendered auxiliary files
-	lastContentChecksum     string                    // Pre-computed content checksum from pipeline
-	lastValidatedConfig     string                    // Last validated HAProxy config
-	lastValidatedAux        *dataplane.AuxiliaryFiles // Last validated auxiliary files
-	lastParsedConfig        *parser.StructuredConfig  // Pre-parsed desired config
-	lastCorrelationID       string                    // Correlation ID from last validation event
-	lastCoalescible         bool                      // Coalescibility flag from last validation event
-	currentEndpoints        []dataplane.Endpoint      // Current HAProxy pod endpoints
-	hasValidConfig          bool                      // Whether we have a validated config to deploy
-	runtimeConfigName       string                    // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
-	runtimeConfigNamespace  string                    // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
-	templateConfigName      string                    // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
-	templateConfigNamespace string                    // Namespace from ConfigValidatedEvent.TemplateConfig
+	mu                         sync.RWMutex
+	lastRenderedConfig         string                    // Last rendered HAProxy config (before validation)
+	lastAuxiliaryFiles         *dataplane.AuxiliaryFiles // Last rendered auxiliary files
+	lastContentChecksum        string                    // Pre-computed content checksum from pipeline
+	lastValidatedStatusPatches []templating.StatusPatch  // Patches from the last successful render — forwarded to deploy events for StatusApplier
+	lastValidatedConfig        string                    // Last validated HAProxy config
+	lastValidatedAux           *dataplane.AuxiliaryFiles // Last validated auxiliary files
+	lastParsedConfig           *parser.StructuredConfig  // Pre-parsed desired config
+	lastCorrelationID          string                    // Correlation ID from last validation event
+	lastCoalescible            bool                      // Coalescibility flag from last validation event
+	currentEndpoints           []dataplane.Endpoint      // Current HAProxy pod endpoints
+	hasValidConfig             bool                      // Whether we have a validated config to deploy
+	runtimeConfigName          string                    // Name of HAProxyCfg resource (set by ConfigPublishedEvent)
+	runtimeConfigNamespace     string                    // Namespace of HAProxyCfg resource (set by ConfigPublishedEvent)
+	templateConfigName         string                    // Name from ConfigValidatedEvent.TemplateConfig (for early runtimeConfigName computation)
+	templateConfigNamespace    string                    // Namespace from ConfigValidatedEvent.TemplateConfig
 
 	// Deployment scheduling and rate limiting
 	schedulerMutex    sync.Mutex

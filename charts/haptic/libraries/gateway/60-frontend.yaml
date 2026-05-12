@@ -1,0 +1,977 @@
+templateSnippets:
+  frontend-extra-100-gateway-misdirected:
+    template: |
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- var exactEntries = []any{} %}
+      {%- var regexEntries = []any{} %}
+      {#- catchallEntries — per-Gateway "this Gateway has at least one
+          HTTPS/TLS listener with no hostname (or hostname `*`)" markers.
+          Appended to the regex map AFTER the more-specific wildcard
+          patterns so map_reg's first-match-wins picks specific
+          listeners over the catch-all fallback. The identity is the
+          Gateway's namespace+name — the catch-all is a property of the
+          Gateway as a whole; multiple catch-all listeners on the same
+          Gateway collapse to the same identity (which is correct per
+          spec since they all accept the same un-claimed hostnames). -#}
+      {%%
+        // classifyHostname appends entries to the right output slice
+        // for a single (HTTPS / TLS) listener hostname `lh`. Returns
+        // true when the listener is a catch-all (empty / `*`), so the
+        // outer loop knows to emit the per-Gateway catch-all marker
+        // once. Shared between the Gateway-owned and ListenerSet-owned
+        // listener loops below — keeping the classification in one
+        // place is what blocks drift between the two halves
+        // (previously the wildcard regex's `$` anchor was escaped
+        // inconsistently across the duplicated bodies).
+        var classifyHostname = func(lh string) bool {
+          if lh == "" || lh == "*" {
+            return true
+          }
+          if regex_search(lh, "^\\*\\.") {
+            var suffix = lh[2:]
+            var regexBase = tostring(replace(suffix, ".", "\\."))
+            regexEntries = append(regexEntries, "^[^.]+\\." + regexBase + "$ " + lh)
+            return false
+          }
+          exactEntries = append(exactEntries, lh + " " + lh)
+          return false
+        }
+      %%}
+      {%- var catchallEntries = []any{} %}
+      {%- for _, gw := range resources.gateways.List() | toSlice() %}
+        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
+        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+        {%- var gwHasCatchall = false %}
+        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+          {%- if protocol == "HTTPS" || protocol == "TLS" %}
+            {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+            {%- if classifyHostname(lh) %}
+              {%- gwHasCatchall = true %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {#- Walk accepted ListenerSet listeners on this Gateway too so
+            the misdirected-listener detection covers ListenerSet-claimed
+            HTTPS hostnames. -#}
+        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+          {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
+            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
+              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+              {%- if protocol == "HTTPS" || protocol == "TLS" %}
+                {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+                {%- if classifyHostname(lh) %}
+                  {%- gwHasCatchall = true %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- if gwHasCatchall %}
+          {%- catchallEntries = append(catchallEntries, "^.*$ catchall:" + gwNs + "/" + gwName) %}
+        {%- end %}
+      {%- end %}
+      {#- Append catch-all entries last so wildcard regexes win. The
+          identity prefix `catchall:` makes catch-all-vs-catch-all
+          comparisons explicit and keeps catch-all identities distinct
+          from any user hostname (HTTP host header rules forbid `:` in
+          a hostname, so the prefix is collision-free). -#}
+      {%- for _, e := range catchallEntries %}
+        {%- regexEntries = append(regexEntries, e) %}
+      {%- end %}
+      {%- var exactPath, _ = fileRegistry.Register("map", "listener-hostname-claim.map", join(exactEntries, "\n") + "\n") %}
+      {%- var regexPath, _ = fileRegistry.Register("map", "listener-hostname-claim-regex.map", join(regexEntries, "\n") + "\n") %}
+      # gateway/frontend-extra-misdirected
+      http-request set-var(txn.gw_host_canonical) req.fhdr(Host),lower,field(1,:)
+      http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map({{ exactPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 }
+      http-request set-var(txn.gw_sni_listener) ssl_fc_sni,lower,map_reg({{ regexPath }},'') if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_sni_listener) -m len 0 }
+      http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map({{ exactPath }},'') if { var(txn.gw_host_canonical) -m found }
+      http-request set-var(txn.gw_host_listener) var(txn.gw_host_canonical),map_reg({{ regexPath }},'') if { var(txn.gw_host_canonical) -m found } { var(txn.gw_host_listener) -m len 0 }
+      # 421 only when SNI matched a listener AND that listener differs
+      # from the Host's listener. With the catch-all marker emitted
+      # into the regex map (`^.*$ catchall:<gw-ns>/<gw-name>`), every
+      # request whose SNI matches a Gateway with at least one
+      # hostname-less HTTPS listener gets a non-empty
+      # `gw_sni_listener`. The `len 0` gate now only fires when SNI
+      # matches NO Gateway at all (orphan TLS, served by HAProxy's
+      # default cert) — in which case routing decides the response
+      # and returning 421 would mis-flag a request the server never
+      # *claimed* belonged to a different listener.
+      #
+      # Conformance: HTTPRouteHTTPSListenerDetectMisdirectedRequests's
+      # 15 sub-cases (Gateway with a no-hostname `https` listener +
+      # specific-hostname listeners + a wildcard listener) all hinge
+      # on the catch-all marker — without it, SNI=example.org gets
+      # `gw_sni_listener=""` and the 421 gate's `!len 0` blocks all
+      # 421 emissions, including the spec-mandated cases like
+      # `SNI=example.org` + `Host=second-example.org`.
+      http-request return status 421 if { ssl_fc } { ssl_fc_has_sni 1 } { var(txn.gw_host_canonical) -m found } !{ var(txn.gw_sni_listener) -m len 0 } !{ var(txn.gw_sni_listener),strcmp(txn.gw_host_listener) eq 0 }
+  # Advanced matcher setup - processes GW_ROUTE_ID qualifier (runs early)
+  # Named with 010- prefix so alphabetical sort matches intended execution order
+  frontend-matchers-advanced-010-route-id-setup:
+    template: |
+      {#- Process GW_ROUTE_ID qualifier to extract route type and route ID #}
+      {#- Format: GW_ROUTE_ID:<route_type>:<routeIds> #}
+      {#- Example: GW_ROUTE_ID:http:ns1_route1_0__ns2_route2_1 #}
+      {#- This runs first (010 prefix) to set variables used by later matchers #}
+      # gateway/frontend-matchers-advanced-010-route-id-setup
+      http-request set-var(req.gw_route_type) var(txn.path_match),field(2,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
+      http-request set-var(req.gw_routeId) var(txn.path_match),field(3,:) if { var(txn.path_match),field(1,:) -m str GW_ROUTE_ID }
+
+  # Advanced matcher generator - creates http-request statements for method/header/query matching
+  # Named with 500- prefix so alphabetical sort matches intended execution order (runs after 010-)
+  frontend-matchers-advanced-500-gateway:
+    template: |
+      {{- "" }}
+      {# Generate http-request statements for routes with advanced matchers
+         This is injected into base template via the advanced-matcher-* extension point #}
+      # gateway/frontend-matchers-advanced-500-gateway
+      {{ render "util-gateway-analysis" -}}
+      {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
+      {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
+      {%- if len(sortedRoutes) > 0 %}
+      # Advanced route matching (method/header/query)
+      {%- for _, routeInfo := range sortedRoutes %}
+        {%- var riMatch map[string]any = routeInfo["match"] %}
+        {%- var riRoute map[string]any = routeInfo["route"] %}
+        {%- var riRouteMeta = riRoute | dig("metadata") %}
+        {%- var riResourceType = routeInfo["resource_type"] %}
+        {%- var riIsGrpc bool = routeInfo["is_grpc"] %}
+        {%- var riRouteId = routeInfo["routeId"] %}
+        {%- var riConflictGroup = routeInfo["conflictGroup"] %}
+        {%- var riRuleIdx = routeInfo["ruleIdx"] %}
+        {%- var riPath map[string]any = routeInfo["path"] %}
+        {#- Detect "path-only" rules — those with no method/header/query/grpc
+            sub-matchers. The Gateway API spec requires evaluating rules in
+            order of specificity, falling through to less-specific rules
+            when a more-specific rule's sub-matchers don't all pass. The
+            existing gw_routeId scope check (set by the path-map step to the
+            most-specific path's rule IDs) blocks fallback across paths
+            within the same HTTPRoute, so a path-only catch-all loses to a
+            failed-but-more-specific sibling. We give path-only rules a
+            relaxed scope check (gw_routeId begins with this HTTPRoute's
+            prefix) plus a direct path predicate, restoring spec-compliant
+            fallback semantics without altering the strict scope check for
+            rules that already gate on their own sub-matchers. #}
+        {%- var riHeaders_check = riMatch["headers"] %}
+        {%- var riParams_check = riMatch["queryParams"] %}
+        {%- var riMethod_check = riMatch["method"] %}
+        {%- var grpcMethodCheck = riMatch["method"] %}
+        {%- var isPathOnly = (riMethod_check == nil || riResourceType != "httproute") && riHeaders_check == nil && riParams_check == nil && (!riIsGrpc || grpcMethodCheck == nil) %}
+        {#- Early exit: skip if another matcher already won #}
+        {%- var conditions = []any{"!{ var(txn.gw_rule_id) -m found }"} %}
+
+        {%- if isPathOnly %}
+          {#- Path-only fallback: scope to this HTTPRoute (any rule of it
+              must have been the path-map winner), plus the rule's path
+              must match the request directly. -#}
+          {%- var riNsScope = riRouteMeta | dig("namespace") | fallback("") | tostring() %}
+          {%- var riNameScope = riRouteMeta | dig("name") | fallback("") | tostring() %}
+          {%- var httprouteScope = riNsScope + "_" + riNameScope + "_" %}
+          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + httprouteScope + "\" }") %}
+          {#- Direct path match for safety so different paths within the
+              same HTTPRoute don't cross-match. -#}
+          {%- if riPath != nil %}
+            {%- var pathOnlyType = tostring(riPath["type"]) %}
+            {%- var pathOnlyValue = tostring(riPath["value"]) %}
+            {%- if pathOnlyType == "Exact" %}
+              {%- conditions = append(conditions, "{ path \"" + pathOnlyValue + "\" }") %}
+            {%- else if pathOnlyType == "RegularExpression" %}
+              {%- var escapedPathOnly = replace(pathOnlyValue, "$", "\\$") %}
+              {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
+            {%- else %}
+              {#- PathPrefix (default). Per Gateway API spec, PathPrefix
+                  matches whole segments — `/v2` matches `/v2`, `/v2/`,
+                  `/v2/foo`, but NOT `/v2example`. HAProxy's plain
+                  `path_beg` is byte-prefix (no boundary) and matches
+                  the last case incorrectly; `path_dir` does a segment
+                  match but it matches a directory ANYWHERE in the
+                  path (so `/v2` would match `/foo/v2/example`). The
+                  spec requires anchoring at the START of the path.
+
+                  Use a regex anchored to ^ that matches either the
+                  exact prefix or the prefix followed by a slash:
+
+                      ^<prefix>(/|$)
+
+                  Special case: bare `/` (root) matches every path —
+                  emit a trivial path_beg "/" condition that's cheaper
+                  than a regex and still always satisfied. -#}
+              {%- if pathOnlyValue == "/" || pathOnlyValue == "" %}
+                {%- conditions = append(conditions, "{ path_beg \"/\" }") %}
+              {%- else %}
+                {%- var pathPrefixValue = pathOnlyValue %}
+                {%- if hasSuffix(pathPrefixValue, "/") %}
+                  {%- pathPrefixValue = pathPrefixValue[:len(pathPrefixValue)-1] %}
+                {%- end %}
+                {%- var escaped = sanitize_regex(pathPrefixValue) %}
+                {#- HAProxy expands $VAR / ${VAR} in config strings; the
+                    documented escape for a literal dollar is `\$`. -#}
+                {%- conditions = append(conditions, "{ path -m reg \"^" + escaped + "(/|\\$)\" }") %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- else %}
+          {#- Rule has sub-matchers — keep the strict same-path conflictGroup
+              check; the sub-matchers' own predicates already narrow the rule
+              to its declared path. -#}
+          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
+        {%- end %}
+
+        {#- Method matcher (HTTPRoute only) #}
+        {%- var riMethod = riMatch["method"] %}
+        {%- if riMethod != nil && riResourceType == "httproute" %}
+          {%- conditions = append(conditions, "{ method " + (riMethod) + " }") %}
+        {%- end %}
+
+        {#- Header matchers. Gateway-API spec: HTTPHeaderMatch.type
+            defaults to "Exact" when omitted. The chart sees the
+            HTTPRoute as authored — a server-side CRD apply DOES default
+            the field, but our chart-validation harness doesn't, and the
+            conformance suite's fixtures omit `type:` to exercise the
+            spec default. Treat empty / missing type as "Exact" so both
+            forms produce the same HAProxy predicate. #}
+        {%- var riHeaders = riMatch["headers"] %}
+        {%- for _, header := range riHeaders | toSlice() %}
+          {%- var headerType = tostring(header["type"] | fallback("Exact")) %}
+          {%- var headerName = header["name"] %}
+          {%- var headerValue = header["value"] %}
+          {%- if headerType == "Exact" %}
+            {%- conditions = append(conditions, "{ req.hdr(" + headerName + ") \"" + headerValue + "\" }") %}
+          {%- else if headerType == "RegularExpression" %}
+            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
+            {%- var escapedHeaderValue = replace(headerValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ req.hdr(" + headerName + ") -m reg \"" + escapedHeaderValue + "\" }") %}
+          {%- end %}
+        {%- end %}
+
+        {#- Query parameter matchers (HTTPRoute only). Same spec default
+            as headers: QueryParamMatch.type → "Exact" when omitted. #}
+        {%- var riParams = riMatch["queryParams"] %}
+        {%- for _, param := range riParams | toSlice() %}
+          {%- var paramType = tostring(param["type"] | fallback("Exact")) %}
+          {%- var paramName = param["name"] %}
+          {%- var paramValue = param["value"] %}
+          {%- if paramType == "Exact" %}
+            {%- conditions = append(conditions, "{ urlp(" + paramName + ") \"" + paramValue + "\" }") %}
+          {%- else if paramType == "RegularExpression" %}
+            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
+            {%- var escapedParamValue = replace(paramValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ urlp(" + paramName + ") -m reg \"" + escapedParamValue + "\" }") %}
+          {%- end %}
+        {%- end %}
+
+        {#- GRPCRoute method matcher #}
+        {%- var grpcMethod = riMatch["method"] %}
+        {%- if riIsGrpc && grpcMethod != nil %}
+          {%- var grpcMethod_map map[string]any = grpcMethod %}
+          {%- var grpcService = grpcMethod_map["service"] %}
+          {%- if grpcService != nil %}
+            {%- var grpcPath = "/" + (grpcService) %}
+            {%- var grpcMethod_name = grpcMethod_map["method"] %}
+            {%- if grpcMethod_name != nil %}
+              {%- grpcPath = grpcPath + "/" + (grpcMethod_name) %}
+            {%- end %}
+            {#- Match against the request URL path. For HTTP/2 (which is
+                what GRPCRoute requires per the Gateway API spec, plus
+                what HAProxy emits via ALPN h2 on chart-static HTTPS
+                frontends and via the http_frontend_h2c plumbing on
+                plaintext h2c), HAProxy parses the `:path` pseudo-header
+                and exposes it through the `path` sample fetch — NOT
+                through `req.hdr(:path)`, which targets regular HTTP/1.1
+                headers and yields an empty string for the pseudo-header.
+                Using `req.hdr(:path)` here meant every gRPC method
+                matcher silently never fired and the request fell
+                through to default_backend (404), which broke
+                test-grpcroute-https-listener-alpn-h2 and the upstream
+                GRPCExactMethodMatching / GRPCRouteHeaderMatching /
+                GRPCRouteListenerHostnameMatching / GRPCRouteNamedRule /
+                GRPCRouteWeight conformance suites. #}
+            {#- GRPCMethodMatch.type defaults to "Exact" when omitted
+                (Gateway-API spec). Same defaulting fix as headers/
+                queryParams above. #}
+            {%- var grpcType = tostring(grpcMethod_map["type"] | fallback("Exact")) %}
+            {%- if grpcType == "Exact" %}
+              {%- conditions = append(conditions, "{ path \"" + grpcPath + "\" }") %}
+            {%- else if grpcType == "RegularExpression" %}
+              {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
+              {%- var escapedGrpcPath = replace(grpcPath, "$", "\\$") %}
+              {%- conditions = append(conditions, "{ path -m reg \"" + escapedGrpcPath + "\" }") %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+
+        {#- Set txn.gw_rule_id to mark this rule as winner #}
+        {%- if len(conditions) > 0 %}
+          {#- Build matcher type description for provenance comment #}
+          {%- var descParts = []any{} %}
+          {%- if riMethod != nil && riResourceType == "httproute" %}
+            {%- descParts = append(descParts, "method " + (riMethod)) %}
+          {%- end %}
+          {%- if riHeaders != nil %}
+            {%- descParts = append(descParts, len(toSlice(riHeaders)) + " headers") %}
+          {%- end %}
+          {%- if riParams != nil %}
+            {%- descParts = append(descParts, len(toSlice(riParams)) + " query params") %}
+          {%- end %}
+          {%- if riIsGrpc && grpcMethod != nil %}
+            {%- descParts = append(descParts, "gRPC method") %}
+          {%- end %}
+          {%- var matcherDesc = "path-only" %}
+          {%- if len(descParts) > 0 %}{%- matcherDesc = join(descParts, ", ") %}{%- end %}
+          {%- var riNs = riRouteMeta | dig("namespace") | fallback("") %}
+          {%- var riName = riRouteMeta | dig("name") | fallback("") %}
+      # Rule: {{ riResourceType | title() }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
+      http-request set-var(txn.gw_rule_id) str({{ riRouteId }}) if {{ join(conditions, " ") }}
+          {#- Debug headers if enabled #}
+          {%- if debug | fallback(false) %}
+            {#- Build detailed match reason #}
+            {%- var matchTypes = []any{} %}
+            {%- if riMethod != nil && riResourceType == "httproute" %}
+              {%- matchTypes = append(matchTypes, "method") %}
+            {%- end %}
+            {%- if riHeaders != nil %}
+              {%- matchTypes = append(matchTypes, "header") %}
+            {%- end %}
+            {%- if riParams != nil %}
+              {%- matchTypes = append(matchTypes, "query") %}
+            {%- end %}
+            {%- if riIsGrpc && grpcMethod != nil %}
+              {%- matchTypes = append(matchTypes, "grpc-method") %}
+            {%- end %}
+            {%- var matchTypes_str = "advanced" %}
+            {%- if len(matchTypes) > 0 %}{%- matchTypes_str = join(matchTypes, "+") %}{%- end %}
+      http-request set-var(txn.matched_route) str({{ riNs }}/{{ riName }}/rule{{ riRuleIdx }}) if {{ join(conditions, " ") }}
+      http-request set-var(txn.match_reason) str({{ matchTypes_str }}) if {{ join(conditions, " ") }}
+          {% end %}
+        {% end %}
+      {% end %}
+      {% end %}
+
+  # Path match setting - sets txn.path_match based on winning rule ID
+  # Named with 900- prefix so alphabetical sort matches intended execution order (runs last)
+  frontend-matchers-advanced-900-path-match:
+    template: |
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {{- "" }}
+      {# Set txn.path_match for backend selection based on winning rule
+         Runs after frontend-matchers-advanced-500-gateway sets txn.gw_rule_id (900 prefix ensures late ordering) #}
+      # gateway/frontend-matchers-advanced-900-path-match
+      {{ render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- var gatewayAllRoutes = ga["allRoutes"] | toSlice() %}
+      {%- if len(gatewayAllRoutes) > 0 %}
+      # Set txn.path_match for backend selection based on txn.gw_rule_id
+      {% for _, routeInfo := range gatewayAllRoutes -%}
+        {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | fallback([]any{}) %}
+        {%- if len(backendRefs) > 0 %}
+          {#- Filter to backendRefs the chart can route to. Per Gateway API
+              spec, a backendRef is "valid" only when:
+                - Group is "" or "core" (kept simple, the chart only
+                  supports core/v1 Services)
+                - Kind is Service
+                - The referenced Service actually exists
+              Anything else must result in HTTP 500 for traffic that
+              matches this rule. The route's ResolvedRefs status
+              condition reflects the failure separately
+              (InvalidKind / BackendNotFound, set elsewhere). Filter
+              once here and dispatch on the valid count. -#}
+          {%- var validRefs = []any{} %}
+          {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
+          {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
+          {%- for _, ref := range backendRefs %}
+            {%- var refMap map[string]any = ref %}
+            {%- var refGroup = refMap | dig("group") | fallback("") | tostring() %}
+            {%- var refKind = refMap | dig("kind") | fallback("Service") | tostring() %}
+            {%- if (refGroup == "" || refGroup == "core") && refKind == "Service" %}
+              {%- var refName = tostring(refMap | dig("name") | fallback("")) %}
+              {%- var refNs = tostring(refMap | dig("namespace") | fallback(routeNs)) %}
+              {%- var svc = resources.services.GetSingle(refNs, refName) %}
+              {%- if svc != nil %}
+                {#- Cross-namespace backend refs require a permitting
+                    ReferenceGrant (per Gateway API spec). Without one,
+                    the route should set ResolvedRefs=False/RefNotPermitted
+                    AND traffic must NOT flow to the unauthorized backend
+                    (we route those rules to gw-invalid-backend → 500). -#}
+                {%- var refPermitted = true %}
+                {%- if refNs != routeNs %}
+                  {%- if ReferenceGrantPermitted(
+                        "gateway.networking.k8s.io", routeKind, routeNs,
+                        "", "Service", refNs, refName) != "true" %}
+                    {%- refPermitted = false %}
+                  {%- end %}
+                {%- end %}
+                {%- if refPermitted %}
+                  {%- validRefs = append(validRefs, ref) %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+
+          {%- var qualifier = "" %}
+          {%- if len(validRefs) == 0 %}
+            {#- No valid backendRefs at all → route to the chart-level
+                500-returning sink. Spec calls for HTTP 500 (not 503)
+                whenever every backendRef in a rule is unresolvable.
+                Conformance tests gating this:
+                  HTTPRouteInvalidBackendRefUnknownKind — kind=NonExistent
+                  HTTPRouteInvalidNonExistentBackendRef — Service missing
+                Both share the same handling: route to gw-invalid-backend,
+                which carries `http-request return status 500`. -#}
+            {%- qualifier = "BACKEND:gw-invalid-backend" %}
+          {%- else if len(validRefs) == 1 %}
+            {#- Single valid backend: BACKEND qualifier #}
+            {%- var backendRef map[string]any = validRefs[0] %}
+            {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef["name"]) + "_" + (backendRef["port"]) %}
+            {%- qualifier = "BACKEND:" + backendName %}
+          {%- else %}
+            {#- Multiple valid backends: MULTIBACKEND qualifier. Note: a
+                mixed (valid + invalid) rule renders as MULTIBACKEND with
+                only the valid refs counted in the weighted distribution.
+                The traffic share that should have gone to invalid refs
+                "leaks" to the valid ones — a coarse approximation of the
+                spec's "invalid share returns 500" rule. Refining to a
+                proper weighted invalid-sink is follow-up work; the
+                all-invalid case (the conformance test that gates this)
+                is handled correctly above. -#}
+            {%- var totalWeight = 0 %}
+            {%- for _, ref := range validRefs %}
+              {%- var refMap map[string]any = ref %}
+              {%- var weight = refMap | dig("weight") | fallback(1) %}
+              {%- totalWeight = totalWeight + (weight) %}
+            {%- end %}
+            {%- var routeKey = (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (routeInfo | dig("ruleIdx")) %}
+            {%- qualifier = "MULTIBACKEND:" + totalWeight + ":" + routeKey %}
+          {%- end %}
+      http-request set-var(txn.path_match) str({{ qualifier }}) if { var(txn.gw_rule_id) -m str "{{ routeInfo | dig("routeId") }}" }
+        {% end %}
+      {% end %}
+      {% end %}
+  # Filter: RequestHeaderModifier - modifies request headers before backend selection
+  frontend-filters-450-gateway-cors:
+    template: |
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
+        {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) != "CORS" %}{%- continue %}{%- end %}
+          {%- var cors = filter | dig("cors") %}
+          {%- if cors == nil %}{%- continue %}{%- end %}
+          {#- Build origin regex. "*" = match-any (no Origin filter); else
+              alternation of exact + wildcard patterns. -#}
+          {%- var allowOrigins = cors | dig("allowOrigins") | fallback([]any{}) | toSlice() %}
+          {%- var hasWildcardOrigin = false %}
+          {%- var originAlternatives = []any{} %}
+          {%- for _, o := range allowOrigins %}
+            {%- var os = tostring(o) %}
+            {%- if os == "*" %}
+              {%- hasWildcardOrigin = true %}
+            {%- else if regex_search(os, "\\*") %}
+              {#- wildcard pattern — escape, then turn the literal `\*\.`
+                  into a single-or-more-label match. We accept any number
+                  of left labels (Gateway API allows any subdomain depth). -#}
+              {%- var literal = tostring(sanitize_regex(os)) %}
+              {%- var pattern = tostring(replace(literal, "\\*\\.", "[^.]+(?:\\.[^.]+)*\\.")) %}
+              {%- originAlternatives = append(originAlternatives, "^" + pattern + "\\$") %}
+            {%- else %}
+              {%- originAlternatives = append(originAlternatives, "^" + tostring(sanitize_regex(os)) + "\\$") %}
+            {%- end %}
+          {%- end %}
+          {%- var originRegex = "" %}
+          {%- if !hasWildcardOrigin && len(originAlternatives) > 0 %}
+            {%- originRegex = "(?:" + join(originAlternatives, "|") + ")" %}
+          {%- end %}
+          {#- Allow-credentials. With credentials true, Allow-Origin must
+              echo the request Origin (browsers reject "*"). With
+              credentials false, "*" alone makes wildcard origins also
+              echo the request Origin (sub-test compliance). -#}
+          {%- var allowCreds = cors | dig("allowCredentials") | fallback(false) %}
+          {%- var methods = cors | dig("allowMethods") | fallback([]any{}) | toSlice() %}
+          {%- var methodsList = []any{} %}
+          {%- var hasWildcardMethod = false %}
+          {%- for _, m := range methods %}
+            {%- var ms = tostring(m) %}
+            {%- if ms == "*" %}
+              {#- Wildcard methods: echo the request's
+                  Access-Control-Request-Method on the response. The
+                  CORS spec allows either `*` or the requested method
+                  with `allowCredentials: false`, but with credentials
+                  true browsers REJECT a literal `*` and demand the
+                  exact method — so echoing the requested one works in
+                  both cases. The chart used to expand `*` to a fixed
+                  list of standard methods, but the conformance suite
+                  (Gateway API HTTPRouteCORS test cases
+                  "CORS preflight request with POST method should be
+                  allowed by allowMethods with wildcard" and
+                  "CORS preflight request requesting auth and specific
+                  method and headers should be allowed and always echo
+                  the origin") only accepts the requested method or a
+                  literal `*` — not an expanded list. -#}
+              {%- hasWildcardMethod = true %}
+              {%- break %}
+            {%- end %}
+            {%- methodsList = append(methodsList, ms) %}
+          {%- end %}
+          {%- var headers = cors | dig("allowHeaders") | fallback([]any{}) | toSlice() %}
+          {%- var headersList = []any{} %}
+          {%- for _, h := range headers %}
+            {%- var hs = tostring(h) %}
+            {%- if hs == "*" %}
+              {#- Wildcard headers: echo the requested headers from
+                  Access-Control-Request-Headers verbatim. We skip the
+                  literal Allow-Headers emission and rely on a per-request
+                  echo via %[req.fhdr(...)]. -#}
+              {%- headersList = []any{"*"} %}
+              {%- break %}
+            {%- end %}
+            {%- headersList = append(headersList, hs) %}
+          {%- end %}
+          {%- var exposeHeaders = cors | dig("exposeHeaders") | fallback([]any{}) | toSlice() %}
+          {%- var exposeList = []any{} %}
+          {%- for _, eh := range exposeHeaders %}
+            {%- exposeList = append(exposeList, tostring(eh)) %}
+          {%- end %}
+          {%- var maxAge = cors | dig("maxAge") | fallback(0) %}
+          {#- Construct the route-id condition + Origin gate. The
+              originRegex is "" when allowOrigins contains "*"; we then
+              accept any non-empty Origin. -#}
+          {%- var ruleCond = RouteIdCondition(routeId) %}
+          {%- var originCond = "{ req.fhdr(Origin) -m found }" %}
+          {%- if originRegex != "" %}
+            {%- originCond = originCond + " { req.fhdr(Origin) -m reg \"" + originRegex + "\" }" %}
+          {%- end %}
+          {#- HAProxy quirk: synthetic responses from `http-request return`
+              do NOT flow through the frontend http-response phase, so any
+              CORS response header set via `http-response set-header` is
+              dropped on the floor for preflight requests. We carry the
+              CORS headers inline on the `http-request return` directive
+              itself (via repeated `hdr <name> <value>` arguments), which
+              is the only way they reach the synthesised 200 / 204
+              response. Simple (non-preflight) cross-origin responses
+              still flow through the backend, so for those we keep the
+              http-response set-header path which DOES apply on
+              backend-served responses. -#}
+      http-request set-var(txn.gw_cors_origin) req.fhdr(Origin) if {{ originCond }} {{ ruleCond }}
+          {%- if len(headersList) > 0 && headersList[0] == "*" %}
+      http-request set-var(txn.gw_cors_acrh) req.fhdr(Access-Control-Request-Headers) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
+          {%- end %}
+          {%- if hasWildcardMethod %}
+      http-request set-var(txn.gw_cors_acrm) req.fhdr(Access-Control-Request-Method) if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found }
+          {%- end %}
+          {#- Build the http-request return directive's hdr arguments.
+              All CORS preflight responses share the same set of mandatory
+              headers; some are gated on policy options (allowCreds,
+              exposeHeaders, headers list, maxAge). HAProxy caps each
+              directive at 64 tokens; the smallest practical CORS policy
+              already needs ~10 hdr triples (3 tokens each) plus the
+              return statement itself, so the chart prefers the inline
+              hdr form over multiple set-header lines. -#}
+          {%- var preflightHdrs = []any{} %}
+          {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-origin \"%[var(txn.gw_cors_origin)]\"") %}
+          {%- if allowCreds %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-credentials \"true\"") %}
+          {%- end %}
+          {%- if hasWildcardMethod %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"%[var(txn.gw_cors_acrm)]\"") %}
+          {%- else if len(methodsList) > 0 %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-methods \"" + join(methodsList, ", ") + "\"") %}
+          {%- end %}
+          {%- if len(headersList) > 0 %}
+            {%- if headersList[0] == "*" %}
+              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"%[var(txn.gw_cors_acrh)]\"") %}
+            {%- else %}
+              {%- preflightHdrs = append(preflightHdrs, "hdr access-control-allow-headers \"" + join(headersList, ", ") + "\"") %}
+            {%- end %}
+          {%- end %}
+          {%- if toint(maxAge) > 0 %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-max-age \"" + tostring(maxAge) + "\"") %}
+          {%- end %}
+          {%- if len(exposeList) > 0 %}
+            {%- preflightHdrs = append(preflightHdrs, "hdr access-control-expose-headers \"" + join(exposeList, ", ") + "\"") %}
+          {%- end %}
+      http-request return status 200 {{ join(preflightHdrs, " ") }} if METH_OPTIONS { var(txn.gw_cors_origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }}
+      {# Non-matching-origin preflight short-circuit: per Gateway API spec,
+         OPTIONS preflights to a CORS-enabled route whose Origin is NOT in
+         allowOrigins must NOT receive any access-control-* response headers.
+         The conformance suite expects a 200 / 204 / 403 — anything that
+         doesn't echo the disallowed origin. If we let the request fall
+         through to the backend, the backend's body is echoed back and the
+         test fails on the body / path expectation. Return 204 with no
+         headers when this route's CORS filter would have matched a
+         different origin. #}
+      http-request return status 204 if METH_OPTIONS { req.fhdr(Origin) -m found } { req.fhdr(Access-Control-Request-Method) -m found } {{ ruleCond }} !{ var(txn.gw_cors_origin) -m found }
+          {# Simple cross-origin responses (non-preflight): backend-served
+              responses still flow through http-response normally so the
+              set-header path works. Same allow-origin / allow-credentials
+              / expose-headers semantics as preflight. #}
+      http-response set-header "access-control-allow-origin" "%[var(txn.gw_cors_origin)]" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
+          {%- if allowCreds %}
+      http-response set-header "access-control-allow-credentials" "true" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
+          {%- end %}
+          {%- if len(exposeList) > 0 %}
+      http-response set-header "access-control-expose-headers" "{{ join(exposeList, ", ") }}" if { var(txn.gw_cors_origin) -m found } {{ ruleCond }}
+          {%- end %}
+      {# A literal blank-line separator — the `{%-` end markers below strip
+         the trailing whitespace + newline of the prior directive, which
+         fuses successive routes' last + first CORS directives onto one
+         malformed line. The `{% show "\n" %}` is the only Scriggo form
+         that survives the strip. #}{% show "\n" %}
+        {%- end %}
+      {%- end %}
+  # Filter: RequestRedirect - redirects requests to different locations
+  frontend-filters-500-gateway-request-header:
+    template: |
+      {#- RequestHeaderModifier: set, add, or remove request headers -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasRequestHeader_filter"] %}
+      # gateway/frontend-filters-gateway-request-header
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "RequestHeaderModifier" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var mod = filter | dig("requestHeaderModifier") %}
+            {%- if mod != nil %}
+              {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+      http-request set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+              {%- end %}
+              {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+      http-request add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+              {%- end %}
+              {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+      http-request del-header {{ name }} if {{ cond }}
+              {%- end %}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(RequestHeaderModifier) if {{ cond }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+  # HTTPRoute spec.rules[].timeouts is rendered directly into each
+  # gateway backend (see GenerateGatewayBackends). HAProxy doesn't allow
+  # `http-request set-timeout server` in the frontend section, so the
+  # frontend just sets txn.gw_rule_id (already done by the route matcher
+  # at frontend-matchers-advanced-900-path-match time) and the backend
+  # gates set-timeout on that variable.
+  # Filter: ResponseHeaderModifier - modifies response headers before sending to client
+  frontend-filters-500-gateway-response-header:
+    template: |
+      {#- ResponseHeaderModifier: set, add, or remove response headers -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasResponseHeader_filter"] %}
+      # gateway/frontend-filters-gateway-response-header
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "ResponseHeaderModifier" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var mod = filter | dig("responseHeaderModifier") %}
+            {%- if mod != nil %}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(ResponseHeaderModifier) if {{ cond }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
+              {%- for _, h := range mod | dig("set") | fallback([]any{}) %}
+      http-response set-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+              {%- end %}
+              {%- for _, h := range mod | dig("add") | fallback([]any{}) %}
+      http-response add-header {{ h | dig("name") }} '{{ h | dig("value") }}' if {{ cond }}
+              {%- end %}
+              {%- for _, name := range mod | dig("remove") | fallback([]any{}) %}
+      http-response del-header {{ name }} if {{ cond }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+  # Filter: HTTPRoute CORS — implements SupportHTTPRouteCORS
+  #
+  # Per Gateway API spec, the CORS filter (spec.rules[].filters[type=CORS])
+  # has these knobs:
+  #   - allowOrigins: list of origins (exact, wildcard "*", or pattern
+  #     "https://*.foo.com" — wildcard is suffix-style on host part)
+  #   - allowMethods: list of HTTP methods or "*"
+  #   - allowHeaders: list of header names or "*"
+  #   - exposeHeaders: list of headers to expose to the browser
+  #   - allowCredentials: bool
+  #   - maxAge: int (preflight cache duration, in seconds)
+  #
+  # Browsers send a CORS preflight (OPTIONS with Origin and
+  # Access-Control-Request-Method) before non-simple cross-origin
+  # requests. The data plane must short-circuit that with a synthetic
+  # 200/204 response carrying the negotiated headers — never letting
+  # the OPTIONS reach the backend. Simple cross-origin requests (with
+  # an Origin header but no preflight) flow to the backend, and the
+  # response gets the relevant headers tacked on.
+  #
+  # We render two HAProxy bits per CORS rule:
+  #   1. http-request return ... if METH_OPTIONS Origin matches ...
+  #      → preflight short-circuit (with the full set of CORS headers)
+  #   2. http-response set-header ... if Origin matches and the rule
+  #      matched (txn.gw_rule_id)
+  #      → headers on the actual response (Allow-Origin,
+  #         Allow-Credentials, Expose-Headers)
+  #
+  # Origin matching is encoded as a regex over the Origin header.
+  # Exact entries get sanitize_regex'd; wildcard entries
+  # ("https://*.foo.com") become "^https://[^.]+(?:\.[^.]+)*\.foo\.com\$";
+  # the lone "*" means "match any origin".
+  frontend-filters-500-gateway-redirect:
+    template: |
+      {#- RequestRedirect: redirect to different scheme, host, port, or path -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasRedirect_filter"] %}
+      # gateway/frontend-filters-gateway-redirect
+      {# txn.gw_request_scheme captures the inbound request's scheme
+         so a RequestRedirect with no spec.scheme can preserve it.
+         Set once per request, reused by every redirect's URL template.
+         Comment uses the non-stripping `{# #}` form (NOT `{#- -#}`)
+         so the newline between the marker comment above and the
+         http-request directives below is preserved. The stripping
+         form fused them into one comment line which silently dropped
+         every directive in the block. #}
+      http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
+      http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "RequestRedirect" && (routeInfo | dig("resource_type")) == "httproute" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var redir = filter | dig("requestRedirect") %}
+            {%- if redir != nil %}
+              {#-
+                The Gateway API redirect filter is implemented as a single
+                `http-request redirect location "<URL>" code N` line. We
+                always use the `location` form so scheme / hostname / port /
+                path / status-code can be combined freely; HAProxy's
+                `prefix` form prepends the prefix to the full original URI,
+                which doesn't match the spec's "replace matched prefix"
+                semantics for ReplacePrefixMatch.
+
+                <URL> is built from:
+                  - scheme:    spec.scheme (or sample-fetch %[var(txn.scheme)] / "http" fallback)
+                  - host:      spec.hostname (or sample-fetch from Host header)
+                  - port:      spec.port (optional, only emitted when set)
+                  - pathPart:  one of
+                                 spec.path.replaceFullPath verbatim,
+                                 ReplacePrefixMatch via a per-request var
+                                   computed by regsub on the original path,
+                                 or the original path via %[path] sample.
+              -#}
+              {%- var scheme = redir | dig("scheme") | fallback("") %}
+              {%- var hostname = redir | dig("hostname") | fallback("") %}
+              {%- var port = redir | dig("port") | fallback("") %}
+              {%- var pathMod = redir | dig("path") %}
+              {%- var statusCode = redir | dig("statusCode") | fallback(302) %}
+
+              {#- Per Gateway API spec for RequestRedirect: when
+                  spec.scheme is unset the redirect MUST keep the
+                  request's scheme, not silently downgrade to http.
+                  Use ssl_fc to discover the inbound scheme at request
+                  time (set in a txn-scope var so the redirect URL
+                  template can interpolate it). -#}
+              {%- var schemePart = scheme %}
+              {%- if schemePart == "" %}{%- schemePart = "%[var(txn.gw_request_scheme)]" %}{%- end %}
+              {%- var hostPart = hostname %}
+              {%- if hostPart == "" %}{%- hostPart = "%[req.hdr(Host),field(1,:)]" %}{%- end %}
+
+              {#- For ReplacePrefixMatch, set a per-request variable holding
+                  the rewritten path (matched prefix → replacement, rest of
+                  segment-aware path preserved verbatim). The route condition
+                  already gates segment-aware matching upstream, so any
+                  request that reaches this filter is known to start with the
+                  declared prefix. -#}
+              {%- var pathExpr = "%[path]" %}
+              {%- if pathMod != nil %}
+                {%- var pathType = pathMod | dig("type") %}
+                {%- if pathType == "ReplaceFullPath" %}
+                  {%- pathExpr = (pathMod | dig("replaceFullPath") | tostring()) %}
+                {%- else if pathType == "ReplacePrefixMatch" %}
+                  {%- var matchPrefix = routeInfo | dig("path", "value") | fallback("/") | tostring() %}
+                  {%- var replacementPrefix = (pathMod | dig("replacePrefixMatch") | fallback("") | tostring()) %}
+                  {#- regsub uses POSIX ERE: anchor at start, escape the
+                      matched prefix's regex metachars. The replacement has
+                      no metachars (Gateway API enforces a path literal). -#}
+                  {%- var escapedPrefix = sanitize_regex(matchPrefix) %}
+      http-request set-var(txn.gw_redirect_path) path,regsub("^{{ escapedPrefix }}","{{ replacementPrefix }}") if {{ cond }}
+                  {%- pathExpr = "%[var(txn.gw_redirect_path)]" %}
+                {%- end %}
+              {%- end %}
+
+              {#- Per Gateway API spec
+                  (https://gateway-api.sigs.k8s.io/reference/spec/#httprequestredirectfilter):
+                  the implementation MUST NOT include the port in the
+                  Location header when the resulting (scheme, port) pair
+                  is (http, 80) or (https, 443) — it's the default
+                  for the scheme.
+                  Conformance test HTTPRouteRequestRedirect's
+                  `/scheme-nil-and-port-80` and `/scheme-https-and-port-443`
+                  sub-tests assert this directly. We can apply the rule
+                  at template-render time only when both scheme and
+                  port are statically known (spec.scheme set + spec.port
+                  set); the dynamic-scheme + static-port case is the
+                  shape every other implementation uses, mapping
+                  empty-spec.scheme → "preserve request scheme", so for
+                  port=80 we omit when spec.scheme ∈ {"", "http"} (request
+                  is http for HTTP listeners, https won't happen on those)
+                  and for port=443 when spec.scheme ∈ {"", "https"}. -#}
+              {%- var portStr = tostring(port) %}
+              {%- var omitPort = false %}
+              {%- if portStr == "80" && (scheme == "" || scheme == "http") %}{%- omitPort = true %}{%- end %}
+              {%- if portStr == "443" && (scheme == "" || scheme == "https") %}{%- omitPort = true %}{%- end %}
+              {%- var loc = schemePart + "://" + hostPart %}
+              {%- var dynamicPort = portStr == "" && scheme == "" %}
+              {%- if portStr != "" && !omitPort %}{%- loc = loc + ":" + portStr %}{%- end %}
+              {#- Per Gateway API spec for RequestRedirect: when both
+                  spec.scheme and spec.port are unspecified, the
+                  redirect port MUST be the Gateway listener port. We
+                  can't know the listener port at template-render time
+                  (a single route can attach to multiple listeners), so
+                  we use the inbound dst_port at runtime. The chart's
+                  HTTP/HTTPS listeners bind on the literal port numbers
+                  (80/443 by default), so dst_port is the actual
+                  Gateway listener port — no Service-NAT indirection.
+                  Omit when (request scheme, dst_port) is the
+                  well-known pair (http,80) / (https,443) per the spec
+                  static-omit rule. txn.gw_redir_port_part holds the
+                  port suffix to interpolate (empty when omitted,
+                  ":<port>" otherwise). Each request matches at most
+                  one redirect rule (dispatched by the route condition
+                  upstream), so a single shared variable name is safe;
+                  the route-condition gate keeps the set-var lines
+                  inert for non-matching requests. -#}
+              {%- if dynamicPort %}
+                {#- Chart-static's HTTP / HTTPS internal ports come
+                    from the chart's `haproxy.ports.http` / `https`
+                    values, threaded through extraContext at chart-
+                    render time. Defaults are 80 / 443, matching the
+                    Gateway-API-spec well-known port numbers. We use
+                    `txn.listener_port` (set by base.yaml's frontend-
+                    routing-logic) rather than the raw `dst_port`
+                    sample so the per-Gateway-IP path (phase 4 binds
+                    on an allocated pod port like 18000 instead of
+                    the Gateway listener port) still produces the
+                    right Location header: the pod-listener-port.map
+                    translates the pod port back to the user-facing
+                    Gateway listener port, and the omit rule (Gateway
+                    API: omit port from Location when the resulting
+                    (scheme, port) is (http, 80) or (https, 443))
+                    therefore tests the listener-side value, not the
+                    Service-NAT-internal one. For chart-static binds
+                    the map lookup misses and `listener_port` ==
+                    `dst_port`, so the rule still works on operator-
+                    chosen httpPort / httpsPort overrides. -#}
+                {#- Fallbacks match every other site in the chart
+                    (10-features.yaml, 50-binds.yaml, ssl.yaml,
+                    base.yaml): defaults are the dataplane-API-internal
+                    ports 8080/8443, not the user-facing 80/443. The
+                    real defaults come from extraContext.httpPort /
+                    httpsPort, which `templates/haproxytemplateconfig.yaml`
+                    always plumbs from `haproxy.ports.http` /
+                    `haproxy.ports.https` in values.yaml — so this
+                    fallback effectively never fires in production. -#}
+                {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+                {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.listener_port) -m int {{ httpPort }} } !{ ssl_fc }
+      http-request set-var(txn.gw_redir_port_part) str() if {{ cond }} { var(txn.listener_port) -m int {{ httpsPort }} } { ssl_fc }
+      http-request set-var(txn.gw_redir_port_part) str(:),concat(,txn.listener_port,) if {{ cond }} !{ var(txn.gw_redir_port_part) -m found }
+                {%- loc = loc + "%[var(txn.gw_redir_port_part)]" %}
+              {%- end %}
+              {%- loc = loc + pathExpr %}
+
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(RequestRedirect) if {{ cond }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
+      http-request redirect location "{{ loc }}" code {{ statusCode }} if {{ cond }}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+  # Filter: URLRewrite - rewrites request URLs before sending to backend
+  frontend-filters-500-gateway-urlrewrite:
+    template: |
+      {#- URLRewrite: rewrite hostname or path before backend -#}
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasUrlrewrite_filter"] %}
+      # gateway/frontend-filters-gateway-urlrewrite
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) == "URLRewrite" && (routeInfo | dig("resource_type")) == "httproute" %}
+            {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+            {%- var cond = RouteIdCondition(routeId) %}
+            {%- var rw = filter | dig("urlRewrite") %}
+            {%- if rw != nil %}
+              {%- if debug | fallback(false) %}
+      http-request set-var(txn.filters_applied) str(URLRewrite) if {{ cond }} !{ var(txn.filters_applied) -m found }
+              {%- end %}
+              {%- var hostname = rw | dig("hostname") | fallback("") %}
+              {%- if hostname != "" %}
+      http-request set-header Host '{{ hostname }}' if {{ cond }}
+              {%- end %}
+              {%- var pathMod = rw | dig("path") %}
+              {%- if pathMod != nil %}
+                {%- var pathType = pathMod | dig("type") %}
+                {%- if pathType == "ReplaceFullPath" %}
+      http-request set-path "{{ pathMod | dig("replaceFullPath") }}" if {{ cond }}
+                {%- else if pathType == "ReplacePrefixMatch" %}
+                  {%- var origPrefix = routeInfo | dig("path", "value") | tostring() %}
+                  {#- Strip a trailing slash from origPrefix so "/foo/" matches
+                      the same paths as "/foo" — Gateway API treats them
+                      equivalently for prefix purposes. -#}
+                  {%- if hasSuffix(origPrefix, "/") && origPrefix != "/" %}
+                    {%- origPrefix = origPrefix[:len(origPrefix)-1] %}
+                  {%- end %}
+                  {%- var regexPrefix = origPrefix | replace(".", "\\.") | replace("/", "\\/") %}
+                  {%- var rp = pathMod | dig("replacePrefixMatch") | tostring() %}
+                  {#- Trim trailing slash from the replacement; we always
+                      add the slash separator ourselves before the capture
+                      group so we never produce "//rest" when rp == "/" or
+                      "/foo/" + "/rest". The exact-match line uses rp as-is
+                      (or "/" if empty) so a request that exactly equals
+                      the matched prefix gets exactly the replacement. -#}
+                  {%- var rpExact = rp %}
+                  {%- if rpExact == "" %}{%- rpExact = "/" %}{%- end %}
+                  {%- var rpStripped = rp %}
+                  {%- if hasSuffix(rpStripped, "/") && rpStripped != "/" %}
+                    {%- rpStripped = rpStripped[:len(rpStripped)-1] %}
+                  {%- end %}
+                  {%- if rpStripped == "/" %}{%- rpStripped = "" %}{%- end %}
+      http-request replace-path "^{{ regexPrefix }}/?\$" "{{ rpExact }}" if {{ cond }}
+      http-request replace-path "^{{ regexPrefix }}/(.*)\$" "{{ rpStripped }}/\\1" if {{ cond }}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Status Patch Registration
+  # ============================================================================

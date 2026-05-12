@@ -66,7 +66,7 @@ func (r *Runner) assertDeterministic(
 	}
 
 	// Render a second time
-	secondConfig, secondAuxFiles, _, err := r.renderWithStores(
+	second, err := r.renderWithStores(
 		deps.Engine,
 		deps.Stores,
 		deps.ValidationPaths,
@@ -81,16 +81,16 @@ func (r *Runner) assertDeterministic(
 	}
 
 	// Compare main HAProxy config
-	if firstConfig != secondConfig {
+	if firstConfig != second.HAProxyConfig {
 		result.Passed = false
-		diff := generateUnifiedDiff(names.MainTemplateName+" (render 1)", names.MainTemplateName+" (render 2)", firstConfig, secondConfig)
+		diff := generateUnifiedDiff(names.MainTemplateName+" (render 1)", names.MainTemplateName+" (render 2)", firstConfig, second.HAProxyConfig)
 		result.Error = fmt.Sprintf("%s differs between renders:\n%s", names.MainTemplateName, diff)
 		r.populateTargetMetadata(&result, firstConfig, names.MainTemplateName, true)
 		return result
 	}
 
 	// Compare auxiliary files
-	if diffResult := compareAuxiliaryFiles(firstAuxFiles, secondAuxFiles); diffResult != "" {
+	if diffResult := compareAuxiliaryFiles(firstAuxFiles, second.AuxiliaryFiles); diffResult != "" {
 		result.Passed = false
 		result.Error = diffResult
 		return result
@@ -195,12 +195,14 @@ func (r *Runner) executeAssertions(
 	test *config.ValidationTest,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	k8sResources map[string]string,
+	statusPatches map[string]string,
 	templateContext map[string]any,
 	validationPaths *dataplane.ValidationPaths,
 	renderDeps *RenderDependencies,
 ) {
 	for i := range test.Assertions {
-		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, templateContext, result.RenderError, validationPaths, renderDeps)
+		assertionResult := r.runAssertion(ctx, &test.Assertions[i], haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, templateContext, result.RenderError, validationPaths, renderDeps)
 		result.Assertions = append(result.Assertions, assertionResult)
 
 		if !assertionResult.Passed {
@@ -226,6 +228,8 @@ func (r *Runner) runAssertion(
 	assertion *config.ValidationAssertion,
 	haproxyConfig string,
 	auxiliaryFiles *dataplane.AuxiliaryFiles,
+	k8sResources map[string]string,
+	statusPatches map[string]string,
 	templateContext map[string]any,
 	renderError string,
 	validationPaths *dataplane.ValidationPaths,
@@ -242,22 +246,22 @@ func (r *Runner) runAssertion(
 		result = r.assertHAProxyValid(ctx, haproxyConfig, auxiliaryFiles, assertion, validationPaths)
 
 	case "contains":
-		result = r.assertContains(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertContains(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, assertion, renderError)
 
 	case "not_contains":
-		result = r.assertNotContains(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertNotContains(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, assertion, renderError)
 
 	case "match_count":
-		result = r.assertMatchCount(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertMatchCount(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, assertion, renderError)
 
 	case "equals":
-		result = r.assertEquals(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertEquals(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, assertion, renderError)
 
 	case "jsonpath":
 		result = r.assertJSONPath(templateContext, assertion)
 
 	case "match_order":
-		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, assertion, renderError)
+		result = r.assertMatchOrder(haproxyConfig, auxiliaryFiles, k8sResources, statusPatches, assertion, renderError)
 
 	case "deterministic":
 		if renderDeps == nil {

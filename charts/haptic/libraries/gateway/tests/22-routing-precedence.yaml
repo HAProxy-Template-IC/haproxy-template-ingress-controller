@@ -1,0 +1,1039 @@
+validationTests:
+  test-httproute-weight-two-backends:
+    description: HTTPRoute with two weighted backends (70/30 split)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app-v1
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app-v2
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: split-route
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - split.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /app
+                backendRefs:
+                  - name: app-v1
+                    port: 80
+                    weight: 70
+                  - name: app-v2
+                    port: 80
+                    weight: 30
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_split-route_app-v1_80"
+        description: Must generate backend for app-v1
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend gtw_default_split-route_app-v2_80"
+        description: Must generate backend for app-v2
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "split.example.com/app/ GW_ROUTE_ID:http:default_split-route_0"
+        description: Path map must use GW_ROUTE_ID qualifier
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "0:default_split-route_0 gtw_default_split-route_app-v1_80"
+        description: Weighted map must contain first entry for v1
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "69:default_split-route_0 gtw_default_split-route_app-v1_80"
+        description: Weighted map must contain last entry for v1 (weight 70 = entries 0-69)
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "70:default_split-route_0 gtw_default_split-route_app-v2_80"
+        description: Weighted map must contain first entry for v2
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "99:default_split-route_0 gtw_default_split-route_app-v2_80"
+        description: Weighted map must contain last entry for v2 (weight 30 = entries 70-99)
+
+      - type: not_contains
+        target: map:weighted-multi-backend.map
+        pattern: "0:default_split-route_0 gtw_default_split-route_app-v1_801:default_split-route_0"
+        description: Entries must be on separate lines (not concatenated)
+
+      - type: not_contains
+        target: map:weighted-multi-backend.map
+        pattern: "69:default_split-route_0 gtw_default_split-route_app-v1_8070:default_split-route_0"
+        description: Boundary entries (v1 end / v2 start) must be on separate lines
+
+      # Map Formatting Tests - Ensure comments don't concatenate with entries
+      - type: not_contains
+        target: map:host.map
+        pattern: "hosts\\)\\S"
+        description: Host map comments must not concatenate with entries (Gateway API)
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "paths\\)\\S"
+        description: Path prefix map comments must not concatenate with entries (Gateway API)
+
+      - type: not_contains
+        target: map:weighted-multi-backend.map
+        pattern: "rules\\)\\S"
+        description: Weighted map comments must not concatenate with entries
+
+      - type: contains
+        target: map:host.map
+        pattern: "(?m)^split\\.example\\.com split\\.example\\.com$"
+        description: Host map entries must start at beginning of line (Gateway API)
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^split\\.example\\.com/app/ GW_ROUTE_ID:"
+        description: Path map entries must start at beginning of line (Gateway API)
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "(?m)^\\d+:default_split-route_0 gtw_"
+        description: Weighted map entries must start at beginning of line
+
+  test-httproute-weight-no-matches:
+    description: HTTPRoute with no matches block defaults to PathPrefix /
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app-v1
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app-v2
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: default-path
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - default.example.com
+            rules:
+              - backendRefs:
+                  - name: app-v1
+                    port: 80
+                    weight: 50
+                  - name: app-v2
+                    port: 80
+                    weight: 50
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "default.example.com/ GW_ROUTE_ID:http:default_default-path_0"
+        description: Missing matches must default to PathPrefix / with weight 100
+
+  test-httproute-weight-default:
+    description: HTTPRoute with default weights (omitted weight defaults to 1)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app-v1
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: app-v2
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: default-weight
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - weight.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: Exact
+                      value: /test
+                backendRefs:
+                  - name: app-v1
+                    port: 80
+                  - name: app-v2
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-exact.map
+        pattern: "weight.example.com/test GW_ROUTE_ID:http:default_default-weight_0"
+        description: Omitted weights must default to 1 (total weight = 2)
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "0:default_default-weight_0 gtw_default_default-weight_app-v1_80"
+        description: Default weight creates single entry for v1
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "1:default_default-weight_0 gtw_default_default-weight_app-v2_80"
+        description: Default weight creates single entry for v2
+
+  test-httproute-precedence:
+    description: Complex precedence ordering with multiple conflicting routes
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc1
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc2
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc3
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route1
+            namespace: default
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            hostnames:
+              - example.com
+            rules:
+              # Most specific: /api/v1/users with method and headers
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api/v1/users
+                    method: GET
+                    headers:
+                      - type: Exact
+                        name: X-Auth
+                        value: token
+                backendRefs:
+                  - name: svc1
+                    port: 80
+              # Less specific: /api/v1 with just method
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api/v1
+                    method: GET
+                backendRefs:
+                  - name: svc2
+                    port: 80
+              # Least specific: /api with no extra matchers
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                backendRefs:
+                  - name: svc3
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      # Verify routes are ordered by Gateway API precedence (most specific first)
+      - type: match_order
+        target: map:path-prefix.map
+        patterns:
+          - "/api/v1/users/.*default_route1_0"   # Most specific: longest path + method + headers
+          - "/api/v1/ .*default_route1_1"        # Medium: medium path + method
+          - "/api/ .*default_route1_2"           # Least specific: shortest path, no extra matchers
+        description: Routes must be ordered by Gateway API precedence (most specific first)
+
+  test-httproute-same-path-matcher-precedence:
+    description: Routes with SAME path sorted by matcher specificity (method/headers/query)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-main
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: svc-v2
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: precedence-test
+            namespace: default
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            hostnames:
+              - test.example.com
+            rules:
+              # RULE 0: Medium precedence - GET + 1 header
+              # Declared FIRST but should sort to position 2
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                    method: GET
+                    headers:
+                      - type: Exact
+                        name: X-Version
+                        value: v1
+                backendRefs:
+                  - name: svc-main
+                    port: 80
+              # RULE 1: Lowest precedence - No matchers (catch-all)
+              # Declared SECOND but should sort to position 4 (last)
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                backendRefs:
+                  - name: svc-main
+                    port: 80
+              # RULE 2: Highest precedence - GET + 2 headers + 1 query
+              # Declared THIRD but should sort to position 1 (first)
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                    method: GET
+                    headers:
+                      - type: Exact
+                        name: X-Version
+                        value: v2
+                      - type: Exact
+                        name: X-Environment
+                        value: prod
+                    queryParams:
+                      - type: Exact
+                        name: debug
+                        value: "true"
+                backendRefs:
+                  - name: svc-v2
+                    port: 80
+              # RULE 3: Low precedence - GET only
+              # Declared FOURTH but should sort to position 3
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /
+                    method: GET
+                backendRefs:
+                  - name: svc-v2
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      # Verify all 4 rules are present (including catch-all)
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'gw_rule_id.*precedence-test_0'
+        description: Rule 0 (GET + 1 header) must be present
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'gw_rule_id.*precedence-test_1'
+        description: Rule 1 (catch-all) must be present
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'gw_rule_id.*precedence-test_2'
+        description: Rule 2 (GET + 2 headers + 1 query) must be present
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'gw_rule_id.*precedence-test_3'
+        description: Rule 3 (GET only) must be present
+
+  test-httproute-weighted-with-matchers:
+    description: Weighted routing combined with method/header matchers
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: canary-v1
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: canary-v2
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: canary-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    method: GET
+                    headers:
+                      - type: Exact
+                        name: X-Canary
+                        value: "true"
+                backendRefs:
+                  - name: canary-v1
+                    port: 80
+                    weight: 90
+                  - name: canary-v2
+                    port: 80
+                    weight: 10
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_canary-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_canary-route_0\" \\} \\{ method GET \\} \\{ req\\.hdr\\(X-Canary\\) \"true\" \\}"
+        description: Must generate txn.gw_rule_id with conditions
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "0:default_canary-route_0 gtw_default_canary-route_canary-v1_80"
+        description: Weighted map must contain v1 entries
+
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "90:default_canary-route_0 gtw_default_canary-route_canary-v2_80"
+        description: Weighted map must contain v2 entries
+
+  test-httproute-same-route-conflicts:
+    description: Multiple rules in same HTTPRoute with path conflicts
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: auth-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: public-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: multi-rule
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              # Rule 0: /api with auth header
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    headers:
+                      - type: Exact
+                        name: Authorization
+                        value: Bearer
+                backendRefs:
+                  - name: auth-service
+                    port: 80
+              # Rule 1: /api without auth (conflicts with rule 0)
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                backendRefs:
+                  - name: public-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_multi-rule_0__default_multi-rule_1"
+        description: Same route conflicts must include both rule indices
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_multi-rule_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_multi-rule_0__default_multi-rule_1\" \\} \\{ req\\.hdr\\(Authorization\\) \"Bearer\" \\}"
+        description: Must set txn.gw_rule_id for rule index 0 with header matcher
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.path_match\\) str\\(BACKEND:gtw_default_multi-rule_public-service_80\\) if \\{ var\\(txn\\.gw_rule_id\\) -m str \"default_multi-rule_1\" \\}"
+        description: Must set txn.path_match for rule index 1 based on txn.gw_rule_id
+
+  test-httproute-cross-route-conflicts:
+    description: Multiple separate HTTPRoutes with conflicting paths (different matchers)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: route1-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: route2-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-get
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    method: GET
+                backendRefs:
+                  - name: route1-service
+                    port: 80
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: route-post
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /api
+                    method: POST
+                backendRefs:
+                  - name: route2-service
+                    port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "api.example.com/api/ GW_ROUTE_ID:http:default_route-get_0__default_route-post_0"
+        description: Cross-route conflicts must be detected and marked with GW_ROUTE_ID qualifier
+
+  test-httproute-grpcroute-precedence:
+    description: Mixed HTTPRoute and GRPCRoute on same hostname (precedence validation)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: http-service
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: grpc-service
+            namespace: default
+          spec:
+            ports:
+              - port: 9090
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: http-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /rest
+                backendRefs:
+                  - name: http-service
+                    port: 80
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata:
+            name: grpc-route
+            namespace: default
+          spec:
+            hostnames:
+              - api.example.com
+            rules:
+              - matches:
+                  - method:
+                      type: Exact
+                      service: com.example.Service
+                      method: GetData
+                backendRefs:
+                  - name: grpc-service
+                    port: 9090
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+
+      - type: contains
+        target: map:host.map
+        pattern: "api\\.example\\.com api\\.example\\.com"
+        description: Shared hostname must be in host map
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "api\\.example\\.com/rest/ GW_ROUTE_ID:http:default_http-route_0"
+        description: HTTPRoute path must route to HTTP service
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-route_0\" \\} \\{ path \"/com\\.example\\.Service/GetData\" \\}"
+        description: |
+          GRPCRoute method match emits a `path` ACL — the URL path
+          fetch — not `req.hdr(:path)`. HAProxy's `req.hdr` targets
+          regular HTTP/1.1 headers and yields an empty string for the
+          HTTP/2 `:path` pseudo-header, so a `req.hdr(:path)` matcher
+          would silently never fire and gRPC traffic would fall
+          through to default_backend (404).
+
+  test-gateway-http-listener-isolation:
+    description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: empty-hostname
+                port: 80
+                protocol: HTTP
+              - name: wildcard-example-com
+                port: 80
+                hostname: "*.example.com"
+                protocol: HTTP
+              - name: wildcard-foo-example-com
+                port: 80
+                hostname: "*.foo.example.com"
+                protocol: HTTP
+              - name: abc-foo-example-com
+                port: 80
+                hostname: abc.foo.example.com
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: infra-backend-v1
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-empty-hostname
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: empty-hostname
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /empty-hostname
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-wildcard-example-com
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: wildcard-example-com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /wildcard-example-com
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-wildcard-foo-example-com
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: wildcard-foo-example-com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /wildcard-foo-example-com
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: attaches-to-abc-foo-example-com
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: abc-foo-example-com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /abc-foo-example-com
+                backendRefs:
+                  - name: infra-backend-v1
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles with multi-listener isolation Gateway
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^/empty-hostname/ GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        description: Empty-hostname route's path map entry has no host prefix
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^\\.example\\.com/wildcard-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
+        description: wildcard-example-com route's path map entry uses .example.com host prefix
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
+        description: wildcard-foo-example-com route's path map entry uses .foo.example.com host prefix
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com/ GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
+        description: abc-foo-example-com route's path map entry uses exact host prefix
+
+      - type: contains
+        target: map:host-regex.map
+        pattern: "(?ms)foo\\\\\\.example\\\\\\.com\\$ \\.foo\\.example\\.com.*\\^\\[\\^\\.\\]\\+\\(\\?:\\\\\\.\\[\\^\\.\\]\\+\\)\\*\\\\\\.example\\\\\\.com\\$ \\.example\\.com"
+        description: More-specific wildcard regex entry comes before less-specific (so map_reg first-match-wins picks the right listener)
+
+      # Conformance shape: trace each of the 16
+      # GatewayHTTPListenerIsolation upstream cases through the
+      # rendered host.map / path-prefix.map / path-prefix-exact.map
+      # to verify the chart's routing returns the spec-expected
+      # status without executing real HTTP requests. Each
+      # assertion's comment lists the host + path the conformance
+      # test sends and the expected response.
+
+      # Cases targeting the catch-all listener (Host=bar.com — no
+      # other listener claims it):
+      #   1: /empty-hostname            → 200 (catch-all owns
+      #      this path via attaches-to-empty-hostname route)
+      #   2-4: /wildcard-* / /abc-*     → 404 (no such route on
+      #      the catch-all listener)
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^/empty-hostname GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
+        description: |
+          Case 1 (Host=bar.com Path=/empty-hostname): catch-all
+          listener owns this path → 200. Routing chain: host_match
+          falls through to "" (catch-all), path-prefix-exact.map
+          lookup keyed by "" + "/empty-hostname" hits the entry.
+
+      # Cases targeting the wildcard-example-com listener
+      # (Host=bar.example.com):
+      #   5: /empty-hostname            → 404
+      #   6: /wildcard-example-com      → 200
+      #   7-8: /wildcard-foo-* / /abc-* → 404
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^\\.example\\.com/wildcard-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
+        description: |
+          Case 6 (Host=bar.example.com Path=/wildcard-example-com):
+          regsub strips "bar" → host_match=".example.com", path
+          lookup keyed ".example.com/wildcard-example-com" hits the
+          path-prefix-exact entry → 200.
+
+      # Cases targeting the wildcard-foo-example-com listener
+      # (Host=bar.foo.example.com):
+      #   9-10: /empty-hostname / /wildcard-example-com → 404
+      #   11: /wildcard-foo-example-com → 200
+      #   12: /abc-foo-example-com      → 404
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
+        description: |
+          Case 11 (Host=bar.foo.example.com Path=/wildcard-foo-example-com):
+          regsub strips "bar" → host_match=".foo.example.com",
+          path lookup keyed ".foo.example.com/wildcard-foo-example-com"
+          hits the path-prefix-exact entry → 200.
+
+      # Cases targeting the abc-foo-example-com listener
+      # (Host=abc.foo.example.com — exact match in host.map):
+      #   13-15: /empty-hostname / /wildcard-* / /wildcard-foo-* → 404
+      #   16: /abc-foo-example-com      → 200
+      - type: contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
+        description: |
+          Case 16 (Host=abc.foo.example.com Path=/abc-foo-example-com):
+          host.map exact match → host_match="abc.foo.example.com",
+          path lookup keyed "abc.foo.example.com/abc-foo-example-com"
+          hits the path-prefix-exact entry → 200.
+
+      # The 12 404-expected cases are pinned implicitly: a 404
+      # case (e.g. Case 13: Host=abc.foo.example.com,
+      # Path=/empty-hostname) routes to the abc-foo-example-com
+      # listener (most-specific host match) which doesn't have a
+      # /empty-hostname entry under "abc.foo.example.com/empty-hostname"
+      # in either path-prefix-exact.map (only "/empty-hostname"
+      # exists there) or path-prefix.map. No qualifier set →
+      # default backend → 404.
+      - type: not_contains
+        target: map:path-prefix-exact.map
+        pattern: "(?m)^abc\\.foo\\.example\\.com/empty-hostname GW_ROUTE_ID"
+        description: |
+          Case 13 fails-open assertion: there is NO
+          "abc.foo.example.com/empty-hostname" entry; the request
+          falls through to the default backend → 404 as the
+          conformance test expects (the empty-hostname listener's
+          route doesn't bleed into the abc-foo-example-com
+          listener).
+
+  test-gateway-listener-isolation-hostname-intersection:
+    description: Catch-all listener routes drop hostnames more-specifically claimed by sibling listeners
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: empty-hostname
+                port: 80
+                protocol: HTTP
+              - name: wildcard-example-com
+                port: 80
+                hostname: "*.example.com"
+                protocol: HTTP
+              - name: abc-example-com
+                port: 80
+                hostname: abc.example.com
+                protocol: HTTP
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: backend
+            namespace: default
+          spec:
+            ports:
+              - port: 8080
+                targetPort: 8080
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: empty-listener-route
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gw
+                sectionName: empty-hostname
+            hostnames:
+              - bar.com
+              - "*.example.com"
+              - abc.example.com
+            rules:
+              - matches:
+                  - path:
+                      type: PathPrefix
+                      value: /empty
+                backendRefs:
+                  - name: backend
+                    port: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config compiles
+
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^bar\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        description: bar.com path entry kept (no sibling claims bar.com)
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "(?m)^\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        description: "*.example.com dropped (claimed by wildcard-example-com sibling)"
+
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "(?m)^abc\\.example\\.com/empty/ GW_ROUTE_ID:http:default_empty-listener-route_0$"
+        description: abc.example.com dropped (claimed by abc-example-com sibling)
+
+  # SupportGatewayInfrastructurePropagation (Standard channel) regression
+  # tests. The chart's per-Gateway loop in util-generate-gateway-status-patches
+  # emits a marker Service in the controller namespace whenever a Gateway
+  # declares spec.infrastructure.{labels,annotations}. The conformance test
+  # (sigs.k8s.io/gateway-api/conformance/tests/gateway-infrastructure.go)
+  # discovers the resource via the gateway-name label and asserts subset
+  # equality on its labels/annotations.
+  #
+  # The testrunner does not surface the rendered-resource collector
+  # contents (see pkg/controller/testrunner/CLAUDE.md), so these tests
+  # exercise the *render path* — proving the chart compiles, renders, and
+  # produces a valid HAProxy config when infrastructure metadata is set.
+  # The actual emission shape (ownedLabels / ownedAnnotations) is pinned
+  # by the chart YAML's static structure and reviewed at PR time;
+  # functional verification of the propagation lands in the integration
+  # / conformance suite.

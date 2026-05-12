@@ -142,6 +142,18 @@ type TestResult struct {
 	// RenderedCerts contains rendered SSL certificates (for --dump-rendered).
 	RenderedCerts map[string]string `json:"renderedCerts,omitempty" yaml:"renderedCerts,omitempty"`
 
+	// RenderedK8sResources contains rendered output of every
+	// `spec.k8sResources` template (template name → rendered YAML).
+	// Asserted via `target: k8s:<template-name>`.
+	RenderedK8sResources map[string]string `json:"renderedK8sResources,omitempty" yaml:"renderedK8sResources,omitempty"`
+
+	// RenderedStatusPatches contains the JSON-marshalled status payload
+	// emitted by every `statusPatch()` call during the haproxy.cfg
+	// render, keyed by `<namespace>/<name>:<phase>` (cluster-scoped
+	// resources use `:<phase>` with empty namespace). Asserted via
+	// `target: status:<namespace>/<name>:<phase>`.
+	RenderedStatusPatches map[string]string `json:"renderedStatusPatches,omitempty" yaml:"renderedStatusPatches,omitempty"`
+
 	// IncludeStats contains timing statistics for included templates (for --profile-includes).
 	IncludeStats []templating.IncludeStats `json:"includeStats,omitempty" yaml:"includeStats,omitempty"`
 }
