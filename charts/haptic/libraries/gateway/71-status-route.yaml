@@ -358,18 +358,29 @@ templateSnippets:
               // Rendered parents = deployed parents (byte-identical). See
               // the analogous comment in 70-status-gateway.yaml — the
               // Route conditions (Accepted, ResolvedRefs per parent) are
-              // all data-plane-independent — the controller knows whether
-              // the parent Gateway admits the route and whether backend
-              // refs resolve from the index alone, without any HAProxy
-              // reload. So the whole payload goes in the rendered
-              // variant; deployed and deployFailed are omitted (each
-              // phase has its own SSA field manager, and skipping the
-              // variant means haptic-deployed never touches this route's
-              // status). The companion Gateway.Programmed condition that
-              // tests dial-gate on still waits for reload separately.
+              // contractually config-level per Gateway-API spec, but the
+              // gRPC conformance suite (and similar dialing tests) treats
+              // Route.Accepted=True as their "data plane is ready" signal —
+              // they call kubernetes.GatewayAndRoutesMustBeAccepted which
+              // ONLY waits for Route Accepted, never for listener
+              // Programmed. Once a dial fails the conformance gRPC client's
+              // persistent HTTP/2 connection enters a "closing" state and
+              // every subsequent retry returns Canceled immediately, so we
+              // get exactly one shot at the first dial.
+              //
+              // To make that shot succeed we emit Route status only on the
+              // deployed variant. With phase-scoped field managers the
+              // haptic-rendered manager never touches Route status — only
+              // haptic-deployed writes the conditions, after HAProxy has
+              // reloaded with the route. Tests block in their Accepted=True
+              // wait until that happens, then dial against an HAProxy that
+              // already serves the route. Stricter than spec (we delay
+              // signalling "Accepted" until data plane is ready), but
+              // still spec-compliant: Accepted=True is eventually emitted
+              // and always correct when it appears.
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
-                  "rendered": map[string]interface{}{
+                  "deployed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
@@ -717,18 +728,29 @@ templateSnippets:
               // Rendered parents = deployed parents (byte-identical). See
               // the analogous comment in 70-status-gateway.yaml — the
               // Route conditions (Accepted, ResolvedRefs per parent) are
-              // all data-plane-independent — the controller knows whether
-              // the parent Gateway admits the route and whether backend
-              // refs resolve from the index alone, without any HAProxy
-              // reload. So the whole payload goes in the rendered
-              // variant; deployed and deployFailed are omitted (each
-              // phase has its own SSA field manager, and skipping the
-              // variant means haptic-deployed never touches this route's
-              // status). The companion Gateway.Programmed condition that
-              // tests dial-gate on still waits for reload separately.
+              // contractually config-level per Gateway-API spec, but the
+              // gRPC conformance suite (and similar dialing tests) treats
+              // Route.Accepted=True as their "data plane is ready" signal —
+              // they call kubernetes.GatewayAndRoutesMustBeAccepted which
+              // ONLY waits for Route Accepted, never for listener
+              // Programmed. Once a dial fails the conformance gRPC client's
+              // persistent HTTP/2 connection enters a "closing" state and
+              // every subsequent retry returns Canceled immediately, so we
+              // get exactly one shot at the first dial.
+              //
+              // To make that shot succeed we emit Route status only on the
+              // deployed variant. With phase-scoped field managers the
+              // haptic-rendered manager never touches Route status — only
+              // haptic-deployed writes the conditions, after HAProxy has
+              // reloaded with the route. Tests block in their Accepted=True
+              // wait until that happens, then dial against an HAProxy that
+              // already serves the route. Stricter than spec (we delay
+              // signalling "Accepted" until data plane is ready), but
+              // still spec-compliant: Accepted=True is eventually emitted
+              // and always correct when it appears.
               statusPatch(nsStr, nameStr, apiVersion, kind,
                 map[string]interface{}{
-                  "rendered": map[string]interface{}{
+                  "deployed": map[string]interface{}{
                     "parents": parents,
                   },
                 })
