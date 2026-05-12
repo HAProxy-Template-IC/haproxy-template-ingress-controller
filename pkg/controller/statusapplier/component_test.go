@@ -200,26 +200,9 @@ func TestHandleTemplateRendered_AppliesWhenLeader(t *testing.T) {
 	assert.Equal(t, 0, completedEvent.SkippedCount)
 }
 
-func TestHandleTemplateRendered_SkipsWhenNotLeader(t *testing.T) {
-	bus := testutil.NewTestBus()
-	fakeClient := newFakeDynamicClient()
-	comp := newTestComponent(bus, fakeClient, newTestResolver())
-
-	eventChan := bus.Subscribe("test", 50)
-	bus.Start()
-
-	// Not leader
-	patches := newTestPatches(map[string]map[string]any{
-		"rendered": {"conditions": []any{}},
-	})
-	templateEvent := events.NewTemplateRenderedEvent(
-		"haproxy config", nil, patches, nil, 0, 100, "test", "abc123", false,
-	)
-	comp.handleTemplateRendered(context.Background(), templateEvent)
-
-	// Should NOT publish any event (no apply when not leader)
-	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
-}
+// (TestHandleTemplateRendered_SkipsWhenNotLeader removed: redundant with
+// TestHandleTemplateRendered_NoApplyWhenNotLeader above. Both pinned the
+// same not-leader-no-apply contract.)
 
 func TestHandleTemplateRendered_SkipsEmptyPatches(t *testing.T) {
 	bus := testutil.NewTestBus()
@@ -460,10 +443,6 @@ func TestHandleBecameLeader_ClearsChecksumCache(t *testing.T) {
 	assert.Empty(t, comp.checksumCache)
 	comp.mu.RUnlock()
 }
-
-// Removed: TestHandleBecameLeader_NoCachedPatches — superseded by
-// TestHandleBecameLeader_DoesNotReplayPatches (handleBecameLeader is
-// unconditionally no-replay now).
 
 func TestHandleLostLeadership(t *testing.T) {
 	bus := testutil.NewTestBus()

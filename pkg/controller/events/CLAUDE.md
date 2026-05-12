@@ -270,6 +270,31 @@ ReconciliationCompletedEvent{
 }
 ```
 
+### Status-patch carriage (deployment + failure events)
+
+Four events carry a `StatusPatches []templating.StatusPatch` payload so the
+`StatusApplier` is stateless — it reads patches directly from the event
+that triggers the apply, with no side-channel cache:
+
+| Event | Patches describe | Who populates | Applier writes variant |
+|---|---|---|---|
+| `DeploymentScheduledEvent` | the config this deploy will push | `DeploymentScheduler.scheduleOrQueue` from cached `lastValidatedStatusPatches` | (forwarded only — applier doesn't subscribe) |
+| `DeploymentCompletedEvent` | the config this deploy just pushed | `Deployer.deployToEndpoints` (forwarded unchanged from the scheduled event) | `deployed` (if Total>0 && Succeeded>0) |
+| `DeploymentSkippedEvent` | the config the data plane is already at | `DeploymentScheduler.handleValidationCompleted` (skip branch) | `deployed` (if Total>0) |
+| `ReconciliationFailedEvent` | the LAST successful render's patches (failure paths produce no fresh patches) | `Coordinator.handlePipelineFailure` from `lastSuccessfulPatches` | `renderFailed` or `deployFailed` |
+
+The defensive-copy contract (`slices.Clone` the outer slice in every
+constructor) is mandatory — the deployment scheduler reuses
+`s.lastValidatedStatusPatches` across reconciliation cycles, so a shared
+backing array would silently mutate previously-published events still held
+by subscribers (commentator ring buffer, debug-event dump). Tests pinning
+this contract live next to each event's constructor (e.g.
+`deployment_scheduled_test.go` `TestNew…_StatusPatchesDefensiveCopy`).
+
+`TemplateRenderedEvent` already carried `StatusPatches` before the
+stateless refactor; that pre-existing field is what the
+`DeploymentScheduler` snapshots into `lastValidatedStatusPatches`.
+
 ## Adding New Event Types
 
 ### Checklist

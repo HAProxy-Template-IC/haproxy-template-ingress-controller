@@ -18,6 +18,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // handleValidationCompleted has a load-bearing optimization branch
@@ -178,4 +179,81 @@ func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
 			"OUT of sync with the cached state. A regression that respected "+
 			"the cache here would silently break drift recovery and the "+
 			"system could never self-heal from out-of-band changes")
+}
+
+// TestHandleTemplateRendered_CachesStatusPatches pins the cache step that
+// the rest of this file's skip-branch test, the pod-discovery path, and
+// the validation-fallback path all rely on: TemplateRenderedEvent's
+// StatusPatches must be stored on the scheduler so a later
+// scheduleOrQueue / DeploymentSkippedEvent can carry them. Regression
+// fuse for the "patches travel on deploy events" architecture — if this
+// caching breaks, every downstream deploy/skip event emits zero patches
+// and the StatusApplier silently stops writing the "deployed" variant.
+func TestHandleTemplateRendered_CachesStatusPatches(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+
+	patches := []templating.StatusPatch{
+		{Name: "gw", Kind: "Gateway"},
+		{Name: "route", Kind: "HTTPRoute"},
+	}
+	event := events.NewTemplateRenderedEvent(
+		"haproxy config",
+		&dataplane.AuxiliaryFiles{},
+		patches,
+		nil, 0, 50, "test", "checksum", true,
+	)
+
+	scheduler.handleTemplateRendered(event)
+
+	scheduler.mu.RLock()
+	defer scheduler.mu.RUnlock()
+	require.Equal(t, 2, len(scheduler.lastValidatedStatusPatches))
+	require.Equal(t, "gw", scheduler.lastValidatedStatusPatches[0].Name)
+}
+
+// TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches pins
+// the end-to-end carry from TemplateRenderedEvent → cached lastValidatedStatusPatches
+// → DeploymentScheduledEvent on the happy path (config changed, no skip).
+// Companion to the skip-path test above; together they cover both event
+// types the scheduler emits.
+func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("test-sub", 50)
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	ctx := context.Background()
+	scheduler.ctx = ctx
+
+	patches := []templating.StatusPatch{
+		{Name: "gw", Kind: "Gateway"},
+	}
+	endpoints := []dataplane.Endpoint{
+		{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodNamespace: "haptic"},
+	}
+
+	scheduler.mu.Lock()
+	scheduler.lastRenderedConfig = "global\n  daemon\n"
+	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
+	scheduler.lastContentChecksum = "new-checksum" // differs from lastDeployedConfigHash
+	scheduler.lastValidatedStatusPatches = patches
+	scheduler.currentEndpoints = endpoints
+	// lastDeployedTime zero → canSkip predicate is false → real deploy path.
+	scheduler.mu.Unlock()
+
+	event := events.NewValidationCompletedEvent(
+		[]string{}, 100, "config_change", nil, true,
+	)
+	scheduler.handleValidationCompleted(ctx, event)
+
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](
+		t, eventChan, testutil.EventTimeout)
+	require.NotNil(t, scheduled, "deploy path must publish DeploymentScheduledEvent")
+	require.Equal(t, 1, len(scheduled.StatusPatches),
+		"DeploymentScheduledEvent must carry the cached StatusPatches so "+
+			"the Deployer can forward them into DeploymentCompletedEvent")
+	require.Equal(t, "gw", scheduled.StatusPatches[0].Name)
 }

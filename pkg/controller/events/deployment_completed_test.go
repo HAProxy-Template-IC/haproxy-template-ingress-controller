@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // NewDeploymentCompletedEvent's existing tests cover the scalar
@@ -132,4 +134,31 @@ func TestNewDeploymentCompletedEvent_BackendDiffFieldsRoundTripsVerbatim(t *test
 				"BackendDiffFields must round-trip verbatim; any mangling breaks log scrapers and alerts")
 		})
 	}
+}
+
+// TestNewDeploymentCompletedEvent_StatusPatchesDefensiveCopy pins the same
+// outer-slice defensive-copy contract for StatusPatches that
+// deployment_skipped_test.go pins on DeploymentSkippedEvent. The deployer
+// passes the patches it received from DeploymentScheduledEvent into
+// NewDeploymentCompletedEvent unchanged; if the constructor shared the
+// caller's backing array, a subsequent reconciliation cycle that reused the
+// same patches slice could mutate every previously-published completion
+// event still held by subscribers (commentator ring buffer, status-applier
+// handler, debug-event dump).
+func TestNewDeploymentCompletedEvent_StatusPatchesDefensiveCopy(t *testing.T) {
+	original := []templating.StatusPatch{
+		{Name: "first", Kind: "Gateway"},
+		{Name: "second", Kind: "HTTPRoute"},
+	}
+	event := NewDeploymentCompletedEvent(&DeploymentResult{
+		Total:         2,
+		Succeeded:     2,
+		StatusPatches: original,
+	})
+
+	original[0] = templating.StatusPatch{Name: "MUTATED", Kind: "Mutant"}
+
+	require.Equal(t, "first", event.StatusPatches[0].Name,
+		"event's StatusPatches must not share backing array with caller")
+	require.Equal(t, 2, len(event.StatusPatches))
 }
