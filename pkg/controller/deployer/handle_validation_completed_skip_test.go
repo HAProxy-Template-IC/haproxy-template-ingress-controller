@@ -85,6 +85,55 @@ func TestHandleValidationCompleted_SkipsWhenConfigAndPodSetUnchanged(t *testing.
 		t, eventChan, testutil.NoEventTimeout)
 }
 
+// TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit pins the
+// contract that the skip branch ALSO publishes a DeploymentSkippedEvent so
+// the status-applier can write the "deployed" status variant. Without this,
+// resources whose addition produces no config change (Gateway with no
+// routes attached, status-only deltas) would stay at the CRD-default
+// condition state indefinitely (e.g. Programmed=Unknown / obsGen=missing,
+// which the Gateway-API conformance helper reports as "generation 0").
+func TestHandleValidationCompleted_PublishesDeploymentSkippedOnCacheHit(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.Subscribe("test-sub", 50)
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	ctx := context.Background()
+	scheduler.ctx = ctx
+
+	const checksum = "stable-content-checksum"
+	endpoints := []dataplane.Endpoint{
+		{URL: "http://10.0.0.1:5555", PodName: "pod-A", PodNamespace: "haptic"},
+		{URL: "http://10.0.0.2:5555", PodName: "pod-B", PodNamespace: "haptic"},
+	}
+	podSetHash := computePodSetHash(endpoints)
+
+	scheduler.mu.Lock()
+	scheduler.lastRenderedConfig = "global\n  daemon\n"
+	scheduler.lastAuxiliaryFiles = &dataplane.AuxiliaryFiles{}
+	scheduler.lastContentChecksum = checksum
+	scheduler.currentEndpoints = endpoints
+	scheduler.lastDeployedConfigHash = checksum
+	scheduler.lastDeployedPodSetHash = podSetHash
+	scheduler.lastDeployedTime = time.Now()
+	scheduler.mu.Unlock()
+
+	event := events.NewValidationCompletedEvent(
+		[]string{}, 100, "config_change", nil, true,
+	)
+
+	scheduler.handleValidationCompleted(ctx, event)
+
+	skipped := testutil.WaitForEvent[*events.DeploymentSkippedEvent](
+		t, eventChan, testutil.EventTimeout)
+	require.NotNil(t, skipped, "skip branch must publish DeploymentSkippedEvent")
+	require.Equal(t, len(endpoints), skipped.Total,
+		"Total should reflect the endpoint count, mirroring DeploymentCompletedEvent.Total")
+	require.Equal(t, "config_unchanged", skipped.Reason)
+	require.Equal(t, checksum, skipped.ConfigHash)
+	require.Equal(t, podSetHash, skipped.PodSetHash)
+}
+
 func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)

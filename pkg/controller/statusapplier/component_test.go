@@ -300,6 +300,75 @@ func TestHandleDeploymentCompleted_SkipsZeroEndpoints(t *testing.T) {
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
+// TestHandleDeploymentSkipped_AppliesDeployedVariant exercises the converged
+// no-op path: the deployer publishes DeploymentSkippedEvent when every
+// endpoint already serves the latest rendered config. The status-applier
+// must treat this equivalently to DeploymentCompletedEvent for the purpose
+// of writing the "deployed" patch variant — the data plane IS at this
+// config, status conditions gated on data-plane readiness should reflect it.
+func TestHandleDeploymentSkipped_AppliesDeployedVariant(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	comp.mu.Lock()
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
+	})
+	comp.mu.Unlock()
+
+	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(1, "config_unchanged", "hash", "podset"))
+
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseDeployed, completedEvent.Phase)
+	assert.Equal(t, 1, completedEvent.AppliedCount)
+}
+
+// TestHandleDeploymentSkipped_SkipsZeroEndpoints mirrors the
+// completed-event zero-endpoint guard: if Total=0, there's no data plane
+// to claim Programmed against.
+func TestHandleDeploymentSkipped_SkipsZeroEndpoints(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	comp.mu.Lock()
+	comp.cachedPatches = newTestPatches(map[string]map[string]any{
+		"deployed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "True"}}},
+	})
+	comp.mu.Unlock()
+
+	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(0, "config_unchanged", "hash", "podset"))
+
+	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
+}
+
+func TestHandleDeploymentSkipped_SkipsWithoutCachedPatches(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClient()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	// No cached patches; skip event should be ignored.
+	comp.handleDeploymentSkipped(context.Background(), events.NewDeploymentSkippedEvent(1, "config_unchanged", "hash", "podset"))
+
+	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
+}
+
 func TestHandleReconciliationFailed_DeployPhase(t *testing.T) {
 	bus := testutil.NewTestBus()
 	fakeClient := newFakeDynamicClientWithPatchSuccess()

@@ -15,8 +15,9 @@
 // Package statusapplier applies template-driven status patches to Kubernetes resources.
 //
 // The StatusApplier subscribes to pipeline events (TemplateRenderedEvent,
-// DeploymentCompletedEvent, ReconciliationFailedEvent) and applies the
-// appropriate status patch variant for each lifecycle phase using Server-Side Apply (SSA).
+// DeploymentCompletedEvent, DeploymentSkippedEvent, ReconciliationFailedEvent)
+// and applies the appropriate status patch variant for each lifecycle phase
+// using Server-Side Apply (SSA).
 //
 // Status patches are fully defined by templates — the controller never hardcodes
 // knowledge of specific resource types or condition names. Templates register patches
@@ -37,6 +38,12 @@
 //     That early-flip used to leak into the Gateway-API conformance suite as
 //     intermittent route-not-found 404s: tests poll until Accepted=True, then
 //     dial within milliseconds, racing the HAProxy reload.
+//   - DeploymentSkippedEvent: also apply the "deployed" variant. Same semantics
+//     as DeploymentCompletedEvent — the data plane is serving the latest config —
+//     but reached by every endpoint already having it instead of by a fresh
+//     push. Without this branch, any resource whose addition or update produces
+//     no config change (Gateway with no routes attached, status-only deltas)
+//     would stay at the CRD-default condition state indefinitely.
 //   - ReconciliationFailedEvent: apply the failure variant ("renderFailed" /
 //     "validateFailed" / "deployFailed") based on the phase that failed.
 package statusapplier
@@ -105,6 +112,9 @@ type GVRResolver interface {
 //
 //	TemplateRenderedEvent → cache patches, apply "rendered" variant (if leader)
 //	DeploymentCompletedEvent → apply "deployed" variant (if leader)
+//	DeploymentSkippedEvent → apply "deployed" variant (if leader); the data
+//	    plane is already at the rendered config so Programmed conditions
+//	    should reflect the current generation
 //	ReconciliationFailedEvent → apply "renderFailed" or "deployFailed" variant (if leader)
 //	BecameLeaderEvent → clear checksum cache, apply cached "rendered" variant
 //	LostLeadershipEvent → clear pending state
@@ -163,6 +173,7 @@ func New(cfg *Config) *Component {
 	eventChan := bus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeTemplateRendered,
 		events.EventTypeDeploymentCompleted,
+		events.EventTypeDeploymentSkipped,
 		events.EventTypeReconciliationFailed,
 		events.EventTypeBecameLeader,
 		events.EventTypeLostLeadership,
@@ -218,6 +229,9 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 	case *events.DeploymentCompletedEvent:
 		c.handleDeploymentCompleted(ctx, e)
 
+	case *events.DeploymentSkippedEvent:
+		c.handleDeploymentSkipped(ctx, e)
+
 	case *events.ReconciliationFailedEvent:
 		c.handleReconciliationFailed(ctx, e)
 
@@ -261,6 +275,56 @@ func (c *Component) handleTemplateRendered(ctx context.Context, event *events.Te
 // via the deployer's InstanceDeploymentFailedEvent stream and feed the
 // "deployFailed" variant through ReconciliationFailedEvent independently.
 func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events.DeploymentCompletedEvent) {
+	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't
+	// actually put any HAProxy on the new config — don't claim "deployed".
+	// Partial failures still count: any successful endpoint is serving the
+	// new config, so the deployed-variant patches reflect reality for those
+	// instances.
+	if event.Total == 0 || event.Succeeded == 0 {
+		return
+	}
+	c.applyDeployedVariant(ctx)
+}
+
+// handleDeploymentSkipped applies the "deployed" variant when the deployer
+// determines that the data plane is already at the just-rendered config and
+// no deployment was performed. The data plane IS serving this configuration,
+// so any status condition gated on data-plane readiness (e.g. Gateway.Programmed)
+// should reflect the current generation.
+//
+// This handles the case where a resource is added/modified but the rendered
+// HAProxy config is byte-identical to the last deployed config (e.g. a
+// Gateway with no attached HTTPRoutes, status-only deltas, etc.) — without
+// this, the deployed-variant patches would never be applied and the resource
+// would stay at the CRD-default condition state indefinitely.
+func (c *Component) handleDeploymentSkipped(ctx context.Context, event *events.DeploymentSkippedEvent) {
+	// Mirror the zero-endpoint guard of handleDeploymentCompleted: if there
+	// are no endpoints to compare against, there's no data plane to claim.
+	if event.Total == 0 {
+		return
+	}
+	c.applyDeployedVariant(ctx)
+}
+
+// applyDeployedVariant is the shared body of handleDeploymentCompleted and
+// handleDeploymentSkipped. Both signals mean "the data plane is now serving
+// the latest rendered config" — completed because we just pushed it,
+// skipped because every endpoint already has it.
+//
+// We apply the LATEST cached patches rather than matching by correlation_id.
+// We can't reliably match: pod-discovery triggers produce
+// DeploymentCompletedEvents with fresh correlation_ids unrelated to any
+// render's correlation_id, so a strict match would silently drop those (and
+// never flip Programmed=True on the base Gateway, which is what 742ebfa5
+// broke).
+//
+// The trade-off: under sustained render churn there IS a brief window
+// where the latest patches reflect a render whose config the just-completed
+// deploy didn't include. The next deploy (typically within 1-3 seconds)
+// ships that config and the test framework's poll loop converges. The race
+// is real but bounded; strict matching is worse — it never converges at all
+// when the trigger source differs (pod discovery vs validation).
+func (c *Component) applyDeployedVariant(ctx context.Context) {
 	c.mu.RLock()
 	patches := c.cachedPatches
 	isLeader := c.isLeader
@@ -270,26 +334,6 @@ func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events
 		return
 	}
 
-	// Zero-endpoint deployment (no HAProxy pods discovered yet) doesn't
-	// actually put any HAProxy on the new config — don't claim "deployed".
-	if event.Total == 0 || event.Succeeded == 0 {
-		return
-	}
-
-	// We apply the LATEST cached patches rather than matching by
-	// correlation_id. We can't reliably match: pod-discovery triggers
-	// produce DeploymentCompletedEvents with fresh correlation_ids
-	// unrelated to any render's correlation_id, so a strict match would
-	// silently drop those (and never flip Programmed=True on the base
-	// Gateway, which is what 742ebfa5 broke).
-	//
-	// The trade-off: under sustained render churn there IS a brief
-	// window where the latest patches reflect a render whose config
-	// the just-completed deploy didn't include. The next deploy
-	// (typically within 1-3 seconds) ships that config and the test
-	// framework's poll loop converges. The race is real but bounded;
-	// strict matching is worse — it never converges at all when the
-	// trigger source differs (pod discovery vs validation).
 	c.applyVariant(ctx, patches, events.StatusPatchPhaseDeployed)
 }
 

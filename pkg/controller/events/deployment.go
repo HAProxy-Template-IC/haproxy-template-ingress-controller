@@ -196,6 +196,84 @@ func NewDeploymentCompletedEvent(result DeploymentResult, opts ...CorrelationOpt
 
 func (e *DeploymentCompletedEvent) EventType() string { return EventTypeDeploymentCompleted }
 
+// DeploymentSkippedEvent is published when the deployment scheduler determines
+// that the data plane is already at the just-rendered configuration and no
+// deployment work needs to be performed (typically: rendered config hash and
+// pod-set hash both match the last successful deployment).
+//
+// Semantically this is NOT a deployment — nothing was pushed, no reload was
+// triggered, no API operations were issued. It exists as its own event type
+// so that downstream consumers can distinguish "the controller is converged"
+// from "the controller just completed work."
+//
+// Currently consumed by:
+//   - statusapplier, which treats this equivalently to DeploymentCompletedEvent
+//     for the purpose of applying the "deployed" status-patch variant — the
+//     data plane is serving the latest config, so Kubernetes status conditions
+//     gated on data-plane readiness (e.g. Gateway.Programmed) should reflect
+//     the current generation.
+//
+// Other consumers (metrics, commentator, drift_monitor, scheduler,
+// statecache) do not subscribe by design — skipped deployments are a
+// steady-state signal and bursting through those consumers would either
+// produce log spam (commentator) or misleading counters (metrics). They can
+// opt in later if there's a concrete need.
+//
+// This event propagates the correlation ID from the triggering event
+// (typically ValidationCompletedEvent) so the converged path remains
+// observable in correlation-based tracing.
+type DeploymentSkippedEvent struct {
+	// Total is the number of HAProxy endpoints already serving the rendered
+	// configuration. Mirrors DeploymentCompletedEvent.Total so subscribers
+	// can apply the same "is there actually a data plane to talk to?" guard.
+	Total int
+
+	// Reason is a short tag describing why the deployment was skipped.
+	// Currently always "config_unchanged"; left as a string to leave room
+	// for future skip causes (e.g. "drift_check_only") without an event
+	// schema change.
+	Reason string
+
+	// ConfigHash is the content checksum of the rendered HAProxy
+	// configuration that matched the last successful deployment. Useful
+	// for debugging / correlation across the deployer's logs.
+	ConfigHash string
+
+	// PodSetHash is the hash of the endpoint set that matched the last
+	// successful deployment. Useful for debugging / correlation.
+	PodSetHash string
+
+	timestamped
+
+	// Correlation embeds correlation tracking for event tracing.
+	Correlation
+}
+
+// NewDeploymentSkippedEvent creates a new DeploymentSkippedEvent.
+//
+// Use PropagateCorrelation() to propagate correlation from the triggering
+// event so the skip remains correlated with the originating reconciliation:
+//
+//	event := events.NewDeploymentSkippedEvent(
+//	    len(endpoints),
+//	    "config_unchanged",
+//	    configHash,
+//	    podSetHash,
+//	    events.PropagateCorrelation(scheduledEvent),
+//	)
+func NewDeploymentSkippedEvent(total int, reason, configHash, podSetHash string, opts ...CorrelationOption) *DeploymentSkippedEvent {
+	return &DeploymentSkippedEvent{
+		Total:       total,
+		Reason:      reason,
+		ConfigHash:  configHash,
+		PodSetHash:  podSetHash,
+		timestamped: newTimestamped(),
+		Correlation: newCorrelation(opts...),
+	}
+}
+
+func (e *DeploymentSkippedEvent) EventType() string { return EventTypeDeploymentSkipped }
+
 // DeploymentScheduledEvent is published when the deployment scheduler has decided.
 // to execute a deployment. This event contains all necessary data for the deployer
 // to execute the deployment without maintaining state.
