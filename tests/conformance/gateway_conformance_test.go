@@ -131,17 +131,29 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// changes that don't fit haptic's scope. Each exclusion has a concrete
 	// upstream-capability reason.
 	excluded := sets.New[features.FeatureName](
-		// Mesh tests use `echo.ConnectToAppInNamespace` for service-to-service
-		// traffic between in-cluster pods (GAMMA pattern: HTTPRoute targets
-		// a Service parent, not a Gateway). That's a sidecar-per-pod
-		// architecture, fundamentally different from the chart's single
-		// front-door HAProxy. Tracked at <follow-up issue>.
+		// Mesh / GAMMA features are permanently out of scope for haptic.
+		// The conformance tests exercise pod-to-pod east-west traffic
+		// (`echo.ConnectToApp` / `ConnectToAppInNamespace`) that never
+		// traverses the chart's edge HAProxy: HTTPRoutes attach to a
+		// Service `parentRef`, ClusterIPMatching requires seeing the
+		// original destination IP before NAT, and ConsumerRoute
+		// dispatches by the source pod's namespace. All three assume a
+		// sidecar-per-pod (or kernel-level interceptor) data plane.
+		// haptic is a single front-door HAProxy by design; closing
+		// these would mean shipping a different product. Not deferred
+		// — abandoned.
 		features.SupportMesh,
 		features.SupportMeshClusterIPMatching,
 		features.SupportMeshConsumerRoute,
-		// UDPRoute relies on UDP listeners. HAProxy 3.x has experimental
-		// UDP support limited to DNS/QUIC pass-through; full UDP routing
-		// per UDPRoute spec isn't practical on the OSS data plane.
+		// UDPRoute relies on UDP listeners and backend forwarding.
+		// HAProxy OSS has no UDP load balancing — `udp@` listeners
+		// exist but are restricted to `log-forward` sections (syslog
+		// ingress), QUIC listeners terminate HTTP/3 (not arbitrary
+		// UDP), and the resolvers subsystem is outbound DNS only.
+		// There is no `mode udp` and no way to forward datagrams to
+		// upstream UDP servers. Full UDP routing is a HAPEE-only
+		// feature (the `hapee-lb-udp` enterprise module), out of
+		// scope for an OSS chart.
 		features.SupportUDPRoute,
 		// HTTPRoute requestMirror has no native HAProxy primitive — would
 		// need an SPOA mirror agent or Lua. Deferred to follow-up.
