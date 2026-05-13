@@ -1600,8 +1600,8 @@ networkPolicy:
 #           - port: stats
 #             path: /metrics
 # SPOA hub sidecar
-# Bundles the haproxy-spoa-hub binary plus six plugin shared libraries
-# (coraza, external-auth, fingerprinting, maxmind, otel, sso-auth) inside
+# Bundles the haproxy-spoa-hub binary plus seven plugin shared libraries
+# (coraza, external-auth, fingerprinting, maxmind, mirror, otel, sso-auth) inside
 # the HAProxy pod. Communicates with HAProxy over a Unix-domain socket.
 # The sidecar is rendered conditionally — absent when no plugin is
 # enabled, automatically present when at least one is.
