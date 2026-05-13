@@ -972,6 +972,138 @@ templateSnippets:
       {%- end %}
       {%- end %}
 
+  # Filter: RequestMirror — early frontend directive forcing
+  # `option http-buffer-request`. Mirroring needs HAProxy to buffer the
+  # full request body before the SPOE notification fires; without
+  # this option `req.body` arrives empty at the plugin and PUT/POST
+  # mirrors silently drop their bodies. Emitting `option ...` lives
+  # in frontend-extra-* so it lands BEFORE any http-request directive
+  # the mirror filter (or any other filter) might add.
+  frontend-extra-200-gateway-mirror-buffer:
+    template: |
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasMirror_filter"] %}
+      # gateway/frontend-extra-mirror-buffer: required so req.body reaches
+      # the mirror plugin (see frontend-filters-550-gateway-mirror).
+      option http-buffer-request
+      {%- end %}
+
+  # Filter: RequestMirror — emit per-HTTPRoute mirror dispatch.
+  #
+  # For each HTTPRoute rule with one or more RequestMirror filters:
+  # for each filter (Gateway API allows multiple — SupportHTTPRoute-
+  # RequestMultipleMirrors), emit a (set-var, send-spoe-group) pair
+  # gated by the route's RouteIdCondition and the filter's percent /
+  # fraction sampling.
+  #
+  # The mirror plugin always reads its target from
+  # `var(txn.gw_mirror_target)` (see spoe-message-mirror-body in
+  # libraries/spoa-hub.yaml). Each (set-var, send-spoe-group) pair
+  # sets that variable to the resolved backendRef, fires the SPOE
+  # NOTIFY, and the plugin dispatches a fire-and-forget HTTP request.
+  # Multiple mirrors on the same route resolve to multiple sequential
+  # pairs: each pair overwrites the variable and triggers its own
+  # NOTIFY before the next one runs, so each mirror lands at its own
+  # backend.
+  #
+  # Sampling: `rand(100) lt <percent>` is the canonical HAProxy idiom
+  # for uniform percentage gating. The Gateway API spec allows both a
+  # plain `percent` (integer 0-100) and a `fraction { numerator,
+  # denominator }`. We normalise both to a percent-of-100 integer at
+  # render time so the ACL is always the same `rand(100) lt N` shape;
+  # the precision loss from fraction → percent rounding is acceptable
+  # for traffic mirroring (the upstream SupportHTTPRouteRequestPercentage
+  # Mirror conformance test runs 500 requests with ±15% tolerance, so
+  # integer rounding within 1% has no observable effect on the result).
+  # When percent == 100 we skip the rand() ACL entirely so the
+  # generated config is identical to the no-percent case — saves a
+  # branch on every mirrored request.
+  #
+  # ReferenceGrant gating: the backendRef resolution path
+  # (gateway/30-backends.yaml) already filters out cross-namespace
+  # backendRefs that lack a matching ReferenceGrant — those routes
+  # have their `filters[*].requestMirror.backendRef` marked invalid in
+  # gatewayAnalysis. Filters with an unresolvable backendRef skip
+  # emission below (their target is empty) and the route's status
+  # condition surfaces `ResolvedRefs=False/RefNotPermitted` via the
+  # existing status-side path.
+  frontend-filters-550-gateway-mirror:
+    template: |
+      {%- import "util-route-condition" for RouteIdCondition -%}
+      {{- render "util-gateway-analysis" -}}
+      {%- var gaVal, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any { return nil }) %}
+      {%- if gaVal == nil %}{% return %}{% end %}
+      {%- var ga = gaVal.(map[string]any) %}
+      {%- if ga["hasMirror_filter"] %}
+      # gateway/frontend-filters-gateway-mirror
+      {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
+        {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
+        {%- var routeId = routeInfo | dig("routeId") | tostring() %}
+        {%- var cond = RouteIdCondition(routeId) %}
+        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+          {%- if (filter | dig("type")) != "RequestMirror" %}{%- continue %}{%- end %}
+          {%- var mirror = filter | dig("requestMirror") %}
+          {%- if mirror == nil %}{%- continue %}{%- end %}
+          {%- var backendRef = mirror | dig("backendRef") %}
+          {%- if backendRef == nil %}{%- continue %}{%- end %}
+          {%- var bName = backendRef | dig("name") | fallback("") | tostring() %}
+          {%- if bName == "" %}{%- continue %}{%- end %}
+          {%- var bNs = backendRef | dig("namespace") | fallback(routeInfo | dig("namespace")) | tostring() %}
+          {%- var bPort = backendRef | dig("port") | fallback(80) %}
+          {#- Target as Kubernetes Service DNS. kube-proxy / cluster
+              DNS load-balances across the Service's endpoints; we
+              don't resolve to pod IPs here because mirror dispatch is
+              fire-and-forget and individual endpoint failures don't
+              affect the primary request. -#}
+          {%- var target = bName + "." + bNs + ".svc.cluster.local:" + tostring(bPort) %}
+          {#- Normalise percent/fraction to integer percent. Default
+              100 (full mirror) when neither is set. -#}
+          {%- var percent int = 100 %}
+          {%- var pct = mirror | dig("percent") %}
+          {%- if pct != nil %}
+            {%- percent = toint(pct) %}
+          {%- else %}
+            {%- var frac = mirror | dig("fraction") %}
+            {%- if frac != nil %}
+              {%- var num = toint(frac | dig("numerator") | fallback(0)) %}
+              {%- var den = toint(frac | dig("denominator") | fallback(100)) %}
+              {%- if den > 0 %}
+                {%- percent = (num * 100) / den %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+          {#- CRITICAL: `rand(100)` is re-evaluated on every directive
+              that references it. If the three directives below each
+              had their own `{ rand(100) lt N }` clause, the effective
+              probability that all three fire together would be
+              (N/100)^3 — at percent=20 that's 0.8%, not 20% — AND
+              the three directives could fire independently of each
+              other, leaving txn.gw_mirror_target set but the
+              send-spoe-group never fired (or vice versa: a
+              send-spoe-group fires while the target var was stale
+              from a prior request). Evaluate the random sample ONCE
+              into a transaction variable and gate all three lines on
+              that stored value. The set-var(...gw_mirror_sample)
+              line is itself unconditional within the route, so each
+              request gets a single draw — uniform per request, not
+              per directive. -#}
+          {%- var sampleCond = "" %}
+          {%- if percent < 100 %}
+            {%- sampleCond = " { var(txn.gw_mirror_sample) -m int lt " + tostring(percent) + " }" %}
+          {%- end %}
+          {%- if percent < 100 %}
+      http-request set-var(txn.gw_mirror_sample) rand(100) if {{ cond }}
+          {%- end %}
+      http-request set-var(txn.gw_mirror_target) str({{ target }}) if {{ cond }}{{ sampleCond }}
+      http-request set-var(txn.gw_mirror_scheme) str(http) if {{ cond }}{{ sampleCond }}
+      http-request send-spoe-group spoa-hub mirror-group if {{ cond }}{{ sampleCond }}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
   # ============================================================================
   # Status Patch Registration
   # ============================================================================

@@ -1782,6 +1782,46 @@ spoaHub:
         # database   = "city"
         # path       = ["country", "iso_code"]
         # output_var = "geo_country"
+    mirror:
+      # Auto-enabled when the gateway library is on. The Gateway API
+      # HTTPRouteFilter of type RequestMirror is the only chart consumer
+      # of this plugin today; flipping the gateway library on signals the
+      # operator wants Gateway-API features including request mirroring.
+      # Without this auto-derive an operator who configures a Gateway
+      # with a RequestMirror filter would get silently-ignored mirroring
+      # unless they also flipped this flag — and the controller would
+      # then emit a chart-render error pointing at the missing plugin.
+      enabled: '{{ .Values.controller.templateLibraries.gateway.enabled }}'
+      # SPOE-side processing timeout. The plugin's `process()` only does
+      # synchronous SPOE-arg parsing and a tokio spawn — microseconds —
+      # so the ack is back to HAProxy long before this hits. The actual
+      # HTTP roundtrip to the mirror backend is governed by the plugin's
+      # own `timeout_ms` (under `params:` below) and never blocks HAProxy.
+      timeoutMs: 50
+      messages: ["mirror"]
+      dependsOn: []
+      # Plugin runtime knobs (rendered into the spoa-hub TOML's
+      # [plugins.params] block for the mirror plugin). All four fields
+      # map 1:1 to the plugin's PluginConfig struct
+      # (haproxy-spoa-hub-plugin-mirror/src/config.rs):
+      #   - timeout_ms: per-request HTTP timeout to the mirror backend.
+      #   - max_body_bytes: cap on reassembled body bytes. Bodies larger
+      #     than this are truncated and the mirror request is still sent.
+      #   - request_concurrency: bounded in-flight dispatches across all
+      #     targets. When saturated, excess dispatches are dropped (not
+      #     queued) — keeps the SPOA worker thread responsive under burst
+      #     load. Defaults match the plugin's own defaults; raise for
+      #     high-fan-out workloads.
+      #   - verify_tls: validate TLS certs for HTTPS mirror targets.
+      #     Defaults to false because the Gateway API conformance suite
+      #     uses self-signed in-cluster certs. Once BackendTLSPolicy-style
+      #     trust material is threaded through to the mirror plugin a
+      #     future minor release will flip this default to true.
+      params: |
+        timeout_ms = 200
+        max_body_bytes = 1048576
+        request_concurrency = 1024
+        verify_tls = false
     otel:
       enabled: '{{ false }}'
       timeoutMs: 50

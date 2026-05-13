@@ -386,6 +386,8 @@ templateSnippets:
       {{ render "spoe-message-check-auth-body" }}
       {%- else if msg == "check-request" -%}
       {{ render "spoe-message-check-request-body" }}
+      {%- else if msg == "mirror" -%}
+      {{ render "spoe-message-mirror-body" }}
       {%- else -%}
       spoe-message {{ msg }}
           args ip=src
@@ -497,6 +499,43 @@ templateSnippets:
     template: |-
       spoe-message check-request
           args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body app=var(txn.coraza_app)
+
+  # Canonical spoe-message mirror body. Rendered by name from
+  # spoe-conf-content's per-message dispatch when "mirror" is in the
+  # messages union (i.e. spoaHub.plugins.mirror is enabled). Args follow
+  # the haproxy-spoa-hub-plugin-mirror plugin's contract
+  # (haproxy-spoa-hub-plugin-mirror/src/request.rs):
+  #
+  #   - arg_target  : the mirror backend's <host:port>. Sourced from
+  #     `var(txn.gw_mirror_target)` — set per-request by the gateway
+  #     library's frontend-filter snippet when a route's RequestMirror
+  #     filter matches. Different routes set different targets; the
+  #     plugin reads the var-sourced value off each NOTIFY frame and
+  #     dispatches dynamically, so a single spoe-message block covers
+  #     every HTTPRoute mirror filter in the cluster.
+  #   - arg_scheme  : "http" or "https". Same per-request variable
+  #     pattern as arg_target. The chart currently only emits "http"
+  #     (BackendTLSPolicy-style TLS mirroring is a v0.2 plugin feature);
+  #     the variable plumbing is here so flipping in the future is a
+  #     chart-side change, not a plugin contract change.
+  #   - arg_method / arg_path / arg_query / arg_ver — request-line
+  #     fields, pulled directly from HAProxy's request fetches.
+  #   - arg_hdrs    : `req.hdrs_bin` — HAProxy's varint-prefixed wire
+  #     format for the full header block. The plugin's request.rs
+  #     parses this directly; using `req.hdrs` (text form) would
+  #     mismatch.
+  #   - arg_body    : raw request body, capped at the plugin's
+  #     `max_body_bytes`. Requires `option http-buffer-request` on the
+  #     consuming frontend (the gateway library forces this on any
+  #     frontend with a RequestMirror filter); without it, PUT/POST
+  #     bodies arrive empty here and the mirror sees zero-byte requests.
+  #
+  # The mirror plugin never writes back into HAProxy variables; the
+  # ack is fire-and-forget. No `output_var` configuration needed.
+  spoe-message-mirror-body:
+    template: |-
+      spoe-message mirror
+          args arg_target=var(txn.gw_mirror_target) arg_scheme=var(txn.gw_mirror_scheme) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body
 
   frontend-filters-100-spoa-hub:
     template: |-
