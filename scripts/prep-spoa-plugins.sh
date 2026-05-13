@@ -30,12 +30,13 @@ declare -A PLUGINS=(
     [external-auth]="${SPOA_PLUGIN_EXTERNAL_AUTH_VERSION}"
     [fingerprinting]="${SPOA_PLUGIN_FINGERPRINTING_VERSION}"
     [maxmind]="${SPOA_PLUGIN_MAXMIND_VERSION}"
+    [mirror]="${SPOA_PLUGIN_MIRROR_VERSION}"
     [otel]="${SPOA_PLUGIN_OTEL_VERSION}"
     [sso-auth]="${SPOA_PLUGIN_SSO_AUTH_VERSION}"
 )
 
 # plugin shortname -> SO_NAME prefix (matches the upstream filename before
-# the -<arch>-glibc<glibc> suffix). The first five plugins follow the
+# the -<arch>-glibc<glibc> suffix). Most plugins follow the
 # `lib<name>_plugin` convention; sso-auth's Cargo `name = ...` differs and
 # produces `libhaproxy_spoa_hub_plugin_sso_auth.so` instead.
 declare -A LIB_NAMES=(
@@ -43,6 +44,7 @@ declare -A LIB_NAMES=(
     [external-auth]="libexternal_auth_plugin"
     [fingerprinting]="libfingerprinting_plugin"
     [maxmind]="libmaxmind_plugin"
+    [mirror]="libmirror_plugin"
     [otel]="libotel_plugin"
     [sso-auth]="libhaproxy_spoa_hub_plugin_sso_auth"
 )

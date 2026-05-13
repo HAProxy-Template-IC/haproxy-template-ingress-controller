@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- The bundled `haptic/spoa-hub` image now layers in a seventh plugin: `haproxy-spoa-hub-plugin-mirror` (HTTP request mirroring, pinned at `v0.1.0`). Lays the groundwork for the chart's gateway library to back the Gateway API `HTTPRouteFilter` of type `RequestMirror` against per-route dynamic mirror `backendRef`s with optional percentage/fraction sampling. Adding the binary does not enable mirroring on its own — hub configs still need an explicit `[[plugins]]` entry referencing `libmirror_plugin.so` before any traffic is mirrored.
+
 ### Changed
 
 - The chart-static `haptic-haproxy` LoadBalancer Service is now declared via the controller's new `spec.k8sResources` mechanism (template `haproxy-service` in `libraries/base.yaml`) instead of being emitted by `templates/haproxy-service.yaml` at Helm install time. The controller renders the Service from listener state and applies it via Server-Side Apply with an `OwnerReference` to the `HAProxyTemplateConfig` CR, so `helm uninstall` cascade-GCs it. Operationally identical for typical operators (same name, same `spec.type`, same port set, same `loadBalancerIP` / `loadBalancerClass` / `externalTrafficPolicy` / `internalTrafficPolicy` / `healthCheckNodePort` / `publishNotReadyAddresses` from `haproxy.service.*`); the only visible change is a brief delay between `helm install` completing and the Service appearing (a few seconds, until the controller's first reconcile loop). The internal `haptic-haproxy-dataplane` Service stays chart-static — it's controller-to-haproxy plumbing with no listener-derived state. The previously partial-ownership `features-090-gateway-listener-ports-service` snippet is removed because there is no chart-static Service to patch any more — its job (folding non-default Gateway listener ports into the Service) is now done declaratively by the same `k8sResources.haproxy-service` template that also emits the static port set.

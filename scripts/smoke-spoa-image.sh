@@ -16,6 +16,7 @@ declare -A PLUGIN_LIBS=(
     [external-auth]="libexternal_auth_plugin.so"
     [fingerprinting]="libfingerprinting_plugin.so"
     [maxmind]="libmaxmind_plugin.so"
+    [mirror]="libmirror_plugin.so"
     [otel]="libotel_plugin.so"
     [sso-auth]="libhaproxy_spoa_hub_plugin_sso_auth.so"
 )
@@ -36,6 +37,7 @@ declare -A PLUGIN_PARAMS=(
     [coraza]=""
     [external-auth]=""
     [fingerprinting]=""
+    [mirror]=""
     [otel]='[plugins.params.instrumentation]
 name = "smoke-test"
 scopes = ["request"]'
@@ -43,7 +45,7 @@ scopes = ["request"]'
 cookie_secret_1 = "0123456789abcdef0"
 cookie_domain = "smoke.example.com"'
 )
-PLUGINS=(coraza external-auth fingerprinting otel sso-auth)
+PLUGINS=(coraza external-auth fingerprinting mirror otel sso-auth)
 
 echo "==> Pulling ${IMAGE}"
 docker pull "${IMAGE}"
