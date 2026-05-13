@@ -1388,6 +1388,7 @@ templateSnippets:
         {%- var hasResponseHeader = false %}
         {%- var hasRedirect = false %}
         {%- var hasUrlrewrite = false %}
+        {%- var hasMirror = false %}
         {%- for _, route := range finalAllRoutes %}
           {%- var filters []any = route["filters"] %}
           {%- for _, filter := range filters %}
@@ -1400,6 +1401,8 @@ templateSnippets:
               {%- hasRedirect = true %}
             {%- else if filterType == "URLRewrite" %}
               {%- hasUrlrewrite = true %}
+            {%- else if filterType == "RequestMirror" %}
+              {%- hasMirror = true %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -1413,4 +1416,5 @@ templateSnippets:
         {%- result["hasResponseHeader_filter"] = hasResponseHeader %}
         {%- result["hasRedirect_filter"] = hasRedirect %}
         {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
+        {%- result["hasMirror_filter"] = hasMirror %}
       {%- end macro %}

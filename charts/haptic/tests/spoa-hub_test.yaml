@@ -13,13 +13,18 @@ tests:
   # auto-enables coraza via spoaHub.plugins.coraza.enabled's `or`
   # predicate; that's the documented tradeoff for path-scoped
   # `haproxy-ingress.github.io/waf` to work without a second toggle.
-  # These baseline tests pin the inverse — when an operator turns
-  # both ingress libraries off, no sidecar.
-  - it: should render no spoa-hub sidecar when both ingress libraries are disabled
+  # The gateway library (also on by default) auto-enables the
+  # `mirror` plugin so HTTPRoute RequestMirror filters work out of
+  # the box; flipping it off is the second trigger an operator may
+  # disable. These baseline tests pin the inverse — when none of the
+  # plugin-triggering libraries (haproxyIngress / nginxIngress /
+  # gateway) is enabled, no sidecar.
+  - it: should render no spoa-hub sidecar when no plugin-triggering library is enabled
     template: haproxy-deployment.yaml
     set:
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.gateway.enabled: false
     asserts:
       - notContains:
           path: spec.template.spec.containers
@@ -37,11 +42,12 @@ tests:
             name: spoa-hub-bootstrap
           any: true
 
-  - it: should render no spoa-hub ConfigMap when both ingress libraries are disabled
+  - it: should render no spoa-hub ConfigMap when no plugin-triggering library is enabled
     template: spoa-hub-configmap.yaml
     set:
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.gateway.enabled: false
     asserts:
       - hasDocuments:
           count: 0
@@ -119,6 +125,7 @@ tests:
     set:
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.gateway.enabled: false
     asserts:
       - notContains:
           path: spec.template.spec.initContainers
@@ -281,11 +288,12 @@ tests:
           path: data["config.toml"]
           pattern: 'name = "fingerprinting"'
 
-  - it: should not surface a spoaHub extraContext entry when both ingress libraries are disabled
+  - it: should not surface a spoaHub extraContext entry when no plugin-triggering library is enabled
     template: haproxytemplateconfig.yaml
     set:
       controller.templateLibraries.haproxyIngress.enabled: false
       controller.templateLibraries.nginxIngress.enabled: false
+      controller.templateLibraries.gateway.enabled: false
     asserts:
       - isNull:
           path: spec.templatingSettings.extraContext.spoaHub
