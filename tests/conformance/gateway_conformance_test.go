@@ -155,11 +155,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// feature (the `hapee-lb-udp` enterprise module), out of
 		// scope for an OSS chart.
 		features.SupportUDPRoute,
-		// HTTPRoute requestMirror has no native HAProxy primitive — would
-		// need an SPOA mirror agent or Lua. Deferred to follow-up.
-		features.SupportHTTPRouteRequestMirror,
-		features.SupportHTTPRouteRequestMultipleMirrors,
-		features.SupportHTTPRouteRequestPercentageMirror,
 	)
 	supported := sets.Set[features.FeatureName]{}
 	for _, f := range features.AllFeatures.UnsortedList() {

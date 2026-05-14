@@ -995,19 +995,31 @@ templateSnippets:
   #
   # For each HTTPRoute rule with one or more RequestMirror filters:
   # for each filter (Gateway API allows multiple — SupportHTTPRoute-
-  # RequestMultipleMirrors), emit a (set-var, send-spoe-group) pair
-  # gated by the route's RouteIdCondition and the filter's percent /
-  # fraction sampling.
+  # RequestMultipleMirrors), emit a (set-var, set-var, send-spoe-group)
+  # triple gated by the route's RouteIdCondition and the filter's
+  # percent / fraction sampling.
+  #
+  # Per-filter indexed variables and group names. HAProxy SPOE only
+  # processes each group once per stream — quoting the SPOE docs:
+  # "only one call to a group is allowed per stream". So a route
+  # carrying N RequestMirror filters needs N distinct (message,
+  # group) pairs to actually trigger N NOTIFY frames; emitting
+  # N `send-spoe-group spoa-hub mirror-group` lines all referencing
+  # the same group silently no-ops on calls 2..N. Each filter
+  # therefore uses a per-index suffix: `gw_mirror_target_<i>`,
+  # `gw_mirror_scheme_<i>`, and `mirror-<i>-group` for i in 1..N.
+  # The plugin's spoaHub.plugins.mirror.messages list in values.yaml
+  # enumerates `mirror-1`..`mirror-4` to register matching plugin-side
+  # handlers for each index (bump if any real workload exceeds 4
+  # mirrors per rule — the conformance suite tops out at 2).
   #
   # The mirror plugin always reads its target from
-  # `var(txn.gw_mirror_target)` (see spoe-message-mirror-body in
-  # libraries/spoa-hub.yaml). Each (set-var, send-spoe-group) pair
-  # sets that variable to the resolved backendRef, fires the SPOE
-  # NOTIFY, and the plugin dispatches a fire-and-forget HTTP request.
-  # Multiple mirrors on the same route resolve to multiple sequential
-  # pairs: each pair overwrites the variable and triggers its own
-  # NOTIFY before the next one runs, so each mirror lands at its own
-  # backend.
+  # `var(txn.gw_mirror_target_<i>)` via the message body's
+  # `arg_target=var(...)` (see spoe-message-mirror-body in
+  # libraries/spoa-hub.yaml, which derives <i> from the message name's
+  # `mirror-<i>` suffix). Each triple sets its indexed variable to the
+  # resolved backendRef, fires the SPOE NOTIFY via the indexed group,
+  # and the plugin dispatches a fire-and-forget HTTP request.
   #
   # Sampling: `rand(100) lt <percent>` is the canonical HAProxy idiom
   # for uniform percentage gating. The Gateway API spec allows both a
@@ -1043,6 +1055,15 @@ templateSnippets:
         {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
         {%- var cond = RouteIdCondition(routeId) %}
+        {#- Per-route mirror counter: HAProxy SPOE processes each
+            group once per stream, so each mirror filter needs its
+            own indexed (message, group) pair. The counter resets per
+            route (different routes claim the request via the route-id
+            cond, so they never overlap on the same stream — they can
+            re-use indices 1..N independently). Index starts at 1 to
+            match the message names in spoaHub.plugins.mirror.messages
+            (mirror-1, mirror-2, ...). -#}
+        {%- var mirrorIdx = 0 %}
         {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
           {%- if (filter | dig("type")) != "RequestMirror" %}{%- continue %}{%- end %}
           {%- var mirror = filter | dig("requestMirror") %}
@@ -1051,6 +1072,7 @@ templateSnippets:
           {%- if backendRef == nil %}{%- continue %}{%- end %}
           {%- var bName = backendRef | dig("name") | fallback("") | tostring() %}
           {%- if bName == "" %}{%- continue %}{%- end %}
+          {%- mirrorIdx = mirrorIdx + 1 %}
           {%- var bNs = backendRef | dig("namespace") | fallback(routeInfo | dig("namespace")) | tostring() %}
           {%- var bPort = backendRef | dig("port") | fallback(80) %}
           {#- Target as Kubernetes Service DNS. kube-proxy / cluster
@@ -1092,14 +1114,14 @@ templateSnippets:
               per directive. -#}
           {%- var sampleCond = "" %}
           {%- if percent < 100 %}
-            {%- sampleCond = " { var(txn.gw_mirror_sample) -m int lt " + tostring(percent) + " }" %}
+            {%- sampleCond = " { var(txn.gw_mirror_sample_" + tostring(mirrorIdx) + ") -m int lt " + tostring(percent) + " }" %}
           {%- end %}
           {%- if percent < 100 %}
-      http-request set-var(txn.gw_mirror_sample) rand(100) if {{ cond }}
+      http-request set-var(txn.gw_mirror_sample_{{ mirrorIdx }}) rand(100) if {{ cond }}
           {%- end %}
-      http-request set-var(txn.gw_mirror_target) str({{ target }}) if {{ cond }}{{ sampleCond }}
-      http-request set-var(txn.gw_mirror_scheme) str(http) if {{ cond }}{{ sampleCond }}
-      http-request send-spoe-group spoa-hub mirror-group if {{ cond }}{{ sampleCond }}
+      http-request set-var(txn.gw_mirror_target_{{ mirrorIdx }}) str({{ target }}) if {{ cond }}{{ sampleCond }}
+      http-request set-var(txn.gw_mirror_scheme_{{ mirrorIdx }}) str(http) if {{ cond }}{{ sampleCond }}
+      http-request send-spoe-group spoa-hub mirror-{{ mirrorIdx }}-group if {{ cond }}{{ sampleCond }}
         {%- end %}
       {%- end %}
       {%- end %}

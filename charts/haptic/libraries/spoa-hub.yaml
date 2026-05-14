@@ -386,8 +386,8 @@ templateSnippets:
       {{ render "spoe-message-check-auth-body" }}
       {%- else if msg == "check-request" -%}
       {{ render "spoe-message-check-request-body" }}
-      {%- else if msg == "mirror" -%}
-      {{ render "spoe-message-mirror-body" }}
+      {%- else if hasPrefix(msg, "mirror-") -%}
+      {{ render "spoe-message-mirror-body" inherit_context }}
       {%- else -%}
       spoe-message {{ msg }}
           args ip=src
@@ -532,10 +532,25 @@ templateSnippets:
   #
   # The mirror plugin never writes back into HAProxy variables; the
   # ack is fire-and-forget. No `output_var` configuration needed.
+  # Body for indexed mirror messages (`mirror-1`, `mirror-2`, ...).
+  # Receives `msg` via inherit_context from spoe-conf-content's
+  # per-message dispatch loop. The trailing index is what makes each
+  # message + group unique per stream — HAProxy SPOE only processes
+  # each group once per stream ("only one call to a group is allowed
+  # per stream" per the docs), so HTTPRoutes carrying N mirror filters
+  # need N distinct (message, group) pairs to actually trigger N
+  # NOTIFY frames. The chart's frontend filter snippet (gateway library)
+  # emits per-filter `set-var(txn.gw_mirror_target_<i>) ...`,
+  # `send-spoe-group spoa-hub mirror-<i>-group ...` triples; the message
+  # body below reads from the corresponding indexed txn variable. The
+  # plugin's process() only inspects SPOE args, not the message name —
+  # so all `mirror-<i>` messages route to the same plugin and dispatch
+  # identically (just to different targets via the indexed var).
   spoe-message-mirror-body:
     template: |-
-      spoe-message mirror
-          args arg_target=var(txn.gw_mirror_target) arg_scheme=var(txn.gw_mirror_scheme) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body
+      {%- var idx = replace(msg, "mirror-", "") -%}
+      spoe-message {{ msg }}
+          args arg_target=var(txn.gw_mirror_target_{{ idx }}) arg_scheme=var(txn.gw_mirror_scheme_{{ idx }}) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body
 
   frontend-filters-100-spoa-hub:
     template: |-
