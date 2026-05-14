@@ -1798,7 +1798,18 @@ spoaHub:
       # HTTP roundtrip to the mirror backend is governed by the plugin's
       # own `timeout_ms` (under `params:` below) and never blocks HAProxy.
       timeoutMs: 50
-      messages: ["mirror"]
+      # HAProxy SPOE only processes each group once per stream
+      # ("only one call to a group is allowed per stream", per the
+      # docs). For HTTPRoutes carrying multiple RequestMirror filters,
+      # the chart emits one (set-var, set-var, send-spoe-group) triple
+      # per filter, each referencing its OWN group — so we need one
+      # message name per possible mirror index. Four is enough for the
+      # conformance suite (max 2 mirrors per rule today) plus headroom;
+      # bump if a real workload exceeds it. Plugin-side these are all
+      # routed to the same mirror plugin (the plugin's process() only
+      # reads SPOE args, not the message name), so no plugin change is
+      # required to grow this list.
+      messages: ["mirror-1", "mirror-2", "mirror-3", "mirror-4"]
       dependsOn: []
       # Plugin runtime knobs (rendered into the spoa-hub TOML's
       # [plugins.params] block for the mirror plugin). All four fields
