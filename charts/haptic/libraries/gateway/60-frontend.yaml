@@ -1081,6 +1081,30 @@ templateSnippets:
               fire-and-forget and individual endpoint failures don't
               affect the primary request. -#}
           {%- var target = bName + "." + bNs + ".svc.cluster.local:" + tostring(bPort) %}
+          {#- Scheme detection from the target Service's port spec.
+              Gateway API convention (per k8s service-port-protocols):
+              - `appProtocol: https` (KEP-4858 canonical)
+              - `appProtocol: kubernetes.io/https` (older spec form)
+              - port name == "https" (Ingress / haproxy-ingress convention)
+              Any of those marks the port as HTTPS; everything else is
+              treated as plain HTTP. Mirror dispatch doesn't validate
+              TLS certs by default (`verify_tls = false` in v0.1.0+
+              plugin params); operators wanting strict validation set
+              `verify_tls = true` once BackendTLSPolicy-style trust
+              material is plumbed through. -#}
+          {%- var bScheme = "http" %}
+          {%- var svc = resources.services.GetSingle(bNs, tostring(bName)) %}
+          {%- if svc != nil %}
+            {%- for _, p := range svc | dig("spec", "ports") | toSlice() %}
+              {%- if (p | dig("port") | toint()) == toint(bPort) %}
+                {%- var ap = p | dig("appProtocol") | fallback("") | tostring() %}
+                {%- var pn = p | dig("name") | fallback("") | tostring() %}
+                {%- if ap == "https" || ap == "kubernetes.io/https" || pn == "https" %}
+                  {%- bScheme = "https" %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
           {#- Normalise percent/fraction to integer percent. Default
               100 (full mirror) when neither is set. -#}
           {%- var percent int = 100 %}
@@ -1120,7 +1144,7 @@ templateSnippets:
       http-request set-var(txn.gw_mirror_sample_{{ mirrorIdx }}) rand(100) if {{ cond }}
           {%- end %}
       http-request set-var(txn.gw_mirror_target_{{ mirrorIdx }}) str({{ target }}) if {{ cond }}{{ sampleCond }}
-      http-request set-var(txn.gw_mirror_scheme_{{ mirrorIdx }}) str(http) if {{ cond }}{{ sampleCond }}
+      http-request set-var(txn.gw_mirror_scheme_{{ mirrorIdx }}) str({{ bScheme }}) if {{ cond }}{{ sampleCond }}
       http-request send-spoe-group spoa-hub mirror-{{ mirrorIdx }}-group if {{ cond }}{{ sampleCond }}
         {%- end %}
       {%- end %}

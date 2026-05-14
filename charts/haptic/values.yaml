@@ -1798,18 +1798,21 @@ spoaHub:
       # HTTP roundtrip to the mirror backend is governed by the plugin's
       # own `timeout_ms` (under `params:` below) and never blocks HAProxy.
       timeoutMs: 50
-      # HAProxy SPOE only processes each group once per stream
-      # ("only one call to a group is allowed per stream", per the
-      # docs). For HTTPRoutes carrying multiple RequestMirror filters,
-      # the chart emits one (set-var, set-var, send-spoe-group) triple
-      # per filter, each referencing its OWN group — so we need one
-      # message name per possible mirror index. Four is enough for the
-      # conformance suite (max 2 mirrors per rule today) plus headroom;
-      # bump if a real workload exceeds it. Plugin-side these are all
-      # routed to the same mirror plugin (the plugin's process() only
-      # reads SPOE args, not the message name), so no plugin change is
-      # required to grow this list.
-      messages: ["mirror-1", "mirror-2", "mirror-3", "mirror-4"]
+      # Placeholder message name. The chart computes the actual list
+      # of mirror message names dynamically at render time, based on
+      # the maximum number of RequestMirror filters on any HTTPRoute
+      # rule in the cluster (computed by the gateway library's
+      # 20-route-analysis.yaml). Each filter needs its own SPOE
+      # message+group pair because HAProxy SPOE processes each group
+      # at most once per stream — `mirror-<i>` for i in 1..maxN. No
+      # cap: a route with 12 mirror filters allocates 12 slots; with
+      # 0 mirrors the list expands to empty (plugin loaded but never
+      # invoked).
+      #
+      # Plugin-side these are all routed to the same mirror plugin
+      # (the plugin's process() only reads SPOE args, not the message
+      # name), so the list length is purely a chart-render concern.
+      messages: ["mirror"]
       dependsOn: []
       # Plugin runtime knobs (rendered into the spoa-hub TOML's
       # [plugins.params] block for the mirror plugin). All fields map
