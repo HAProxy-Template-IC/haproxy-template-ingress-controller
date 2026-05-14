@@ -675,6 +675,16 @@ prep-spoa-plugins:
     - saas-linux-small-amd64
   needs: []
   rules:
+    # Always fire on main pushes so the build-spoa-image-main publish
+    # has its mandatory `needs:` dep satisfied. The haptic snapshot,
+    # chart snapshot, and SPOA-hub snapshot all advance together per
+    # main commit; a CHANGELOG-only or controller-only main push that
+    # matches neither .rules-spoa nor .rules-spoa-chart would otherwise
+    # schedule build-spoa-image-main with no prep job, yielding a
+    # GitLab yaml-validation error ("prep-spoa-plugins does not exist
+    # in the pipeline") that manifests as a 0-job pipeline marked
+    # failed and blocks the merge gate of the next MR.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - !reference [.rules-spoa, rules]
     # build-spoa-image-snapshot has prep-spoa-plugins as a hard
     # `needs:` dep, so prep must trigger whenever the image build
@@ -752,7 +762,13 @@ build-spoa-image-snapshot:
     PLATFORMS: "linux/amd64"
     SPOA_TAG: "ci-${CI_PIPELINE_ID}"
 
-# Multi-arch publish from main branch.
+# Multi-arch publish from main branch. Always fires on main pushes so
+# the `main-latest` SPOA-hub snapshot tracks the haptic-controller and
+# chart snapshots in lockstep — operators pulling a `main-<sha>` set
+# get a coherent triple. `prep-spoa-plugins` mirrors this gate so the
+# mandatory `needs:` dependency is satisfied even on main pushes that
+# touch neither SPOA-image inputs nor chart YAML (e.g. controller-only
+# or CHANGELOG-only commits).
 build-spoa-image-main:
   extends: .build-spoa-image-base
   rules:
