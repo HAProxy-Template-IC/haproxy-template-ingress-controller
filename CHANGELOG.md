@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Gateway-API `HTTPRouteFilter` of type `RequestMirror` is now supported, including `SupportHTTPRouteRequestMultipleMirrors` and (provisional) `SupportHTTPRouteRequestPercentageMirror`. Backed by the bundled `haproxy-spoa-hub-plugin-mirror` plugin (per-request dynamic target via SPOE `arg_target`, percent / fraction sampling normalised to a single `rand(100)` draw per request, multiple mirrors per route render as sequential dispatch triples with per-index `mirror-<i>-group` names so HAProxy's once-per-stream group dedup doesn't drop the second NOTIFY). The three corresponding upstream conformance features are now in the `supported` set rather than `excluded`.
+
 ### Changed
 
 - `ResourceApplier` is now stateless on the success path, mirroring the StatusApplier contract: `RenderedResources` travels on `ReconciliationCompletedEvent` and is read directly from the event payload, replacing the previous `cachedResources` field overwritten on every `TemplateRenderedEvent` and read on a later `ReconciliationCompletedEvent`. The previous shape was structurally identical to the racy StatusApplier `cachedPatches` pattern that this release already removes for status; eliminating it from the resource path closes the symmetric architectural inconsistency before render N+1 could clobber render N's resources between trigger and apply (the existing `ReconciliationCompletedEvent` is published synchronously after `TemplateRenderedEvent`, so the race wasn't observable in production, but the pattern was fragile to any future re-trigger that introduces a slow gap). `handleBecameLeader` no longer re-applies a cached set — the Reconciler's already-existing BecameLeader-fresh-reconcile trigger produces a new `ReconciliationCompletedEvent` carrying the current rendered set. No user-visible behaviour change.
