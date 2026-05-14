@@ -1812,8 +1812,8 @@ spoaHub:
       messages: ["mirror-1", "mirror-2", "mirror-3", "mirror-4"]
       dependsOn: []
       # Plugin runtime knobs (rendered into the spoa-hub TOML's
-      # [plugins.params] block for the mirror plugin). All four fields
-      # map 1:1 to the plugin's PluginConfig struct
+      # [plugins.params] block for the mirror plugin). All fields map
+      # 1:1 to the plugin's PluginConfig struct
       # (haproxy-spoa-hub-plugin-mirror/src/config.rs):
       #   - timeout_ms: per-request HTTP timeout to the mirror backend.
       #   - max_body_bytes: cap on reassembled body bytes. Bodies larger
@@ -1828,11 +1828,32 @@ spoaHub:
       #     uses self-signed in-cluster certs. Once BackendTLSPolicy-style
       #     trust material is threaded through to the mirror plugin a
       #     future minor release will flip this default to true.
+      #   - worker_threads (v0.2.0+, omitted by default): tokio worker
+      #     thread count. Omitting the line lets the plugin auto-derive
+      #     from std::thread::available_parallelism() (cgroup-aware on
+      #     Linux 5.16+ / glibc 2.36+, so a sidecar with cpu:100m sees
+      #     its limit rather than the host's CPU count) and floor at 2.
+      #     The floor of 2 is load-bearing — a single-worker tokio
+      #     runtime self-deadlocks under load because reqwest's
+      #     connection driver and per-request dispatch tasks would have
+      #     to share one worker. Operators who want predictable
+      #     resource accounting can pin a specific count by uncommenting
+      #     the line below; the default scales with the available
+      #     parallelism so high-load multi-core deployments aren't
+      #     bottlenecked on the pre-v0.2.0 hardcoded `worker_threads=2`.
+      #   - pool_max_idle_per_host (v0.2.0+, default 32): bounds the
+      #     per-target idle-connection pool. reqwest's default is
+      #     unbounded, which is fine for a single hot target but
+      #     accumulates unbounded idle keep-alive sockets in a
+      #     long-running plugin mirroring to many distinct backends.
+      #     0 disables idle reuse entirely.
       params: |
         timeout_ms = 200
         max_body_bytes = 1048576
         request_concurrency = 1024
         verify_tls = false
+        # worker_threads = 4
+        pool_max_idle_per_host = 32
     otel:
       enabled: '{{ false }}'
       timeoutMs: 50
