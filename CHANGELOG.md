@@ -9,6 +9,18 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Plugin metrics across the SPOA bundle.** Every plugin in the bundled `haproxy-spoa-hub` image now emits Prometheus counters / gauges / histograms through the hub's `/metrics` endpoint. Names appear under the `plugin_<plugin>_` prefix the hub adds. Operators get first-class observability for the SPOA dispatch path without `kubectl exec` to inspect logs.
+  - **Hub** bumped to `v0.6.0` (plugin-API v2). Vtable evolution is append-only — every existing v1 plugin still loads on the v2 hub, and every v2 plugin still loads on a v0.5.x hub (metrics silent there).
+  - **mirror** v0.3.0: `dispatches_total`, `dispatch_dropped_total`, `dispatch_outcomes_total`, `dispatch_duration_seconds`, `in_flight`. Saturation rate (drops / dispatches) is the right alert input for tuning `request_concurrency`.
+  - **coraza** v0.5.0: `evaluations_total{phase, action, app}`, `evaluation_duration_seconds`, `denials_total{phase, rule_id, app}`. "Which rules are blocking traffic" is now a single PromQL query.
+  - **external-auth** v0.5.0: `auth_requests_total{outcome, status_class}`, `auth_duration_seconds`.
+  - **fingerprinting** v0.3.0: `fingerprints_computed_total{kind}`, `compute_duration_seconds{kind}` where `kind ∈ {ja3, ja4}`.
+  - **maxmind** v0.4.0: `lookups_total{lookup, status}`, `lookup_duration_seconds`.
+  - **otel** v0.4.0: `dispatches_total{outcome}`, `dispatch_duration_seconds`.
+  - **sso-auth** v0.3.0: `auth_decisions_total{outcome}` (outcome maps 1:1 to AuthAction variants), `auth_decision_duration_seconds`.
+
 ### Fixed
 
 - Auxiliary file UPDATEs (`spoe.conf`, maps, SSL certificates that go through the storage API) no longer trigger an auto-reload at the dataplane API. The controller now sends `skip_reload=true` on every `Update*` call and batches every aux-file change into the single reload triggered by the main config sync — or, when only aux content changed and the main config sync had no operations to trigger one, an explicit force-reload at the end of fine-grained sync. Previously the dataplane's default behaviour was to fire an auxiliary reload immediately after each `PUT /storage/*`, against the *current* haproxy.cfg, which raced an in-flight haproxy.cfg push: an HTTPRoute deletion that removed `send-spoe-group mirror-<i>-group` references would land the new spoe.conf first, the auto-reload would abort with "unable to find SPOE group mirror-<i>-group", and the raw-config fallback got stuck on the same error. With the new ordering, the new aux files exist on disk before the reload fires, but HAProxy keeps using the in-memory pre-update copy until the reload, so the new haproxy.cfg and the new aux content are loaded atomically. Same fix path resolves the equivalent race for crt-list shrinkage and any future aux-file content reduction.
