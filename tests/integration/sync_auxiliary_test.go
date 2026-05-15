@@ -237,8 +237,13 @@ func TestSyncAuxiliary(t *testing.T) {
 				// But map file update is tracked
 				"Updated map file domains.map",
 			},
-			expectedReload: false, // No config changes, but map should still update
-			// Verify the map file was actually updated
+			expectedReload: true, // Map file PUT skips auto-reload; the orchestrator
+			// now force-reloads at the end of fine-grained sync when aux content
+			// changed but no config-side reload fired. Without this force-reload
+			// the new map content would persist to disk but HAProxy would keep
+			// the pre-update map in memory until the next reload. SyncResult
+			// surfaces this reload via ReloadTriggered=true; the value is "any
+			// reload during sync", not just PhaseConfig's reload.
 			verifyMapFiles: map[string]string{
 				"domains.map": "map-files/domains-updated.map",
 			},

@@ -1053,14 +1053,11 @@ validationTests:
   test-httproute-request-mirror-dynamic-max:
     description: |
       Cluster with two routes carrying 1 and 3 mirror filters
-      respectively. The chart's spoa-hub library emits mirror-1
-      through mirror-4 in spoe.conf — the static floor of 4 slots
-      that always exists regardless of route count (matching plugin
-      v0.2.0's race-safe baseline) — and would extend to mirror-5,
-      mirror-6, … if any route had more than 4 mirror filters. The
-      plugin's hub-TOML messages list enumerates the same four (or
-      more) names so the hub routes every declared SPOE message to
-      the plugin.
+      respectively. The chart's spoa-hub library must dynamically
+      register message names mirror-1, mirror-2, mirror-3 in spoe.conf
+      (matching the maximum across all routes); the plugin's hub-TOML
+      messages list must enumerate the same three names. No hardcoded
+      cap.
     fixtures:
       services:
         - apiVersion: v1
@@ -1127,102 +1124,14 @@ validationTests:
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-3'
-        description: mirror-3 message emitted (matches the actual per-route max)
+        description: mirror-3 message emitted (sized by max-mirrors-per-route, not a static cap)
 
-      - type: contains
+      - type: not_contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-4'
-        description: |
-          mirror-4 emitted from the static floor of 4 slots, even though
-          no route uses a 4th mirror filter. The floor exists to avoid
-          a controller-side spoe.conf-before-haproxy.cfg race on route
-          deletion (see spoa-hub.yaml's spoa-hub-config-content comment).
-
-      - type: not_contains
-        target: file:spoe.conf
-        pattern: 'spoe-message mirror-5'
-        description: mirror-5 NOT emitted — floor is 4, no route needs more
+        description: mirror-4 NOT emitted — the dynamic max is 3, not a fixed pre-allocated 4
 
       - type: contains
         target: file:spoe.conf
-        pattern: 'spoe-group mirror-4-group'
-        description: matching group for the floor's highest index
-
-  test-httproute-request-mirror-beyond-floor:
-    description: |
-      HTTPRoute carrying 6 RequestMirror filters on a single rule —
-      double the static floor of 4. The chart must expand the spoe.conf
-      message+group set to mirror-1..mirror-6 (no upper bound) so each
-      mirror filter has its own SPOE group; HAProxy SPOE dedups
-      send-spoe-group calls per stream, so duplicate group names would
-      drop frames silently.
-    fixtures:
-      services:
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: api-service, namespace: default}
-          spec: {ports: [{port: 80}]}
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: m1, namespace: default}
-          spec: {ports: [{port: 8081}]}
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: m2, namespace: default}
-          spec: {ports: [{port: 8082}]}
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: m3, namespace: default}
-          spec: {ports: [{port: 8083}]}
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: m4, namespace: default}
-          spec: {ports: [{port: 8084}]}
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: m5, namespace: default}
-          spec: {ports: [{port: 8085}]}
-        - apiVersion: v1
-          kind: Service
-          metadata: {name: m6, namespace: default}
-          spec: {ports: [{port: 8086}]}
-      httproutes:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: HTTPRoute
-          metadata: {name: r-six, namespace: default}
-          spec:
-            hostnames: [api.example.com]
-            rules:
-              - matches: [{path: {type: PathPrefix, value: /six}}]
-                filters:
-                  - type: RequestMirror
-                    requestMirror: {backendRef: {name: m1, namespace: default, port: 8081}}
-                  - type: RequestMirror
-                    requestMirror: {backendRef: {name: m2, namespace: default, port: 8082}}
-                  - type: RequestMirror
-                    requestMirror: {backendRef: {name: m3, namespace: default, port: 8083}}
-                  - type: RequestMirror
-                    requestMirror: {backendRef: {name: m4, namespace: default, port: 8084}}
-                  - type: RequestMirror
-                    requestMirror: {backendRef: {name: m5, namespace: default, port: 8085}}
-                  - type: RequestMirror
-                    requestMirror: {backendRef: {name: m6, namespace: default, port: 8086}}
-                backendRefs: [{name: api-service, port: 80}]
-    assertions:
-      - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
-
-      - type: contains
-        target: file:spoe.conf
-        pattern: 'spoe-group mirror-6-group'
-        description: highest-index group exists (no static cap)
-
-      - type: contains
-        target: file:spoe.conf
-        pattern: 'spoe-message mirror-6'
-        description: matching message body for the highest slot
-
-      - type: not_contains
-        target: file:spoe.conf
-        pattern: 'spoe-message mirror-7'
-        description: nothing past the actual per-route max is emitted
+        pattern: 'spoe-group mirror-3-group'
+        description: matching group for the max-index mirror

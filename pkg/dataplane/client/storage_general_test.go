@@ -111,3 +111,36 @@ func TestGetGeneralFileContent_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
+
+// TestUpdateGeneralFile_SendsSkipReload pins the load-bearing query parameter
+// that prevents the dataplane API from auto-reloading after a content update.
+// Without it, an aux-file UPDATE that REMOVES a SPOE group / crt-list entry /
+// errorfile reference can race the in-flight haproxy.cfg push: the auto-reload
+// fires against a stale haproxy.cfg that still references the removed name,
+// and parsing aborts (see fix(spoa-hub): static floor of 4 mirror slots in
+// spoe.conf, and the controller-side rework that obsoleted it).
+func TestUpdateGeneralFile_SendsSkipReload(t *testing.T) {
+	var capturedQuery string
+	server := newMockServer(t, mockServerConfig{
+		handlers: map[string]http.HandlerFunc{
+			"/services/haproxy/storage/general/spoe.conf": func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				capturedQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusOK)
+			},
+		},
+	})
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	_, err := client.UpdateGeneralFile(context.Background(), "spoe.conf", "[spoa-hub]\n")
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedQuery, "skip_reload=true",
+		"UpdateGeneralFile must always send skip_reload=true so the dataplane API "+
+			"does not auto-reload against a stale haproxy.cfg; got query %q", capturedQuery)
+}

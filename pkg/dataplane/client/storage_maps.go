@@ -101,35 +101,38 @@ func (c *DataplaneClient) CreateMapFile(ctx context.Context, name, content strin
 }
 
 // UpdateMapFile updates an existing map file using text/plain content-type.
-// Returns the reload ID if a reload was triggered (empty string if not) and any error.
-// Note: The Dataplane API requires text/plain or application/json for UPDATE operations,
-// while CREATE operations accept multipart/form-data.
+// Always sends skip_reload=true; see UpdateGeneralFile for the rationale (auto-reload
+// after PUT raced against stale haproxy.cfg on shrinking aux content). Returns the
+// reload ID if a reload was triggered (always empty under skip_reload=true) and any
+// error. Note: The Dataplane API requires text/plain or application/json for UPDATE
+// operations, while CREATE operations accept multipart/form-data.
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) UpdateMapFile(ctx context.Context, name, content string) (string, error) {
 	// Use text/plain content-type for UPDATE (API v3 requirement)
 	body := bytes.NewReader([]byte(content))
 
+	skipReload := true
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v33.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v32.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V31: func(c *v31.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v31.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V30: func(c *v30.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v30.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v32ee.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V31EE: func(c *v31ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v31ee.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V30EE: func(c *v30ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageMapFileWithBody(ctx, name, nil, "text/plain", body)
+			return c.ReplaceStorageMapFileWithBody(ctx, name, &v30ee.ReplaceStorageMapFileParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 	})
 

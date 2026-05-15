@@ -247,7 +247,7 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	// Step 9: Run a fine-grained sync (pass pre-computed diffs).
 	// Returns whether PhasePreConfig (aux files) completed, so the fallback
 	// below can skip re-syncing them if the failure happened later.
-	result, auxFilesSynced, err := o.executeFineGrainedSync(ctx, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
+	result, auxFilesSynced, err := o.executeFineGrainedSync(ctx, desiredConfig, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
 
 	// Step 9: If fine-grained sync failed and fallback is enabled, try raw config push
 	if err != nil && opts.FallbackToRaw {

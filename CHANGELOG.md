@@ -9,6 +9,10 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Auxiliary file UPDATEs (`spoe.conf`, maps, SSL certificates that go through the storage API) no longer trigger an auto-reload at the dataplane API. The controller now sends `skip_reload=true` on every `Update*` call and batches every aux-file change into the single reload triggered by the main config sync — or, when only aux content changed and the main config sync had no operations to trigger one, an explicit force-reload at the end of fine-grained sync. Previously the dataplane's default behaviour was to fire an auxiliary reload immediately after each `PUT /storage/*`, against the *current* haproxy.cfg, which raced an in-flight haproxy.cfg push: an HTTPRoute deletion that removed `send-spoe-group mirror-<i>-group` references would land the new spoe.conf first, the auto-reload would abort with "unable to find SPOE group mirror-<i>-group", and the raw-config fallback got stuck on the same error. With the new ordering, the new aux files exist on disk before the reload fires, but HAProxy keeps using the in-memory pre-update copy until the reload, so the new haproxy.cfg and the new aux content are loaded atomically. Same fix path resolves the equivalent race for crt-list shrinkage and any future aux-file content reduction.
+
 ### Added
 
 - Gateway-API `HTTPRouteFilter` of type `RequestMirror` is now supported, including `SupportHTTPRouteRequestMultipleMirrors` and (provisional) `SupportHTTPRouteRequestPercentageMirror`. Backed by the bundled `haproxy-spoa-hub-plugin-mirror` plugin (per-request dynamic target via SPOE `arg_target`, percent / fraction sampling normalised to a single `rand(100)` draw per request, multiple mirrors per route render as sequential dispatch triples with per-index `mirror-<i>-group` names so HAProxy's once-per-stream group dedup doesn't drop the second NOTIFY). The three corresponding upstream conformance features are now in the `supported` set rather than `excluded`.
