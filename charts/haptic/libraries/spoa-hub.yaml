@@ -281,35 +281,16 @@ templateSnippets:
             group at most once per stream — so we declare
             `mirror-1`..`mirror-<routeMirrorCount>` where
             `routeMirrorCount` is the actual max-mirrors-per-route in
-            the cluster. Computed by the gateway library's
-            20-route-analysis pass; written into
-            globalFeatures["mirrorRouteMirrorCount"]. No upper bound —
-            a route with 12 mirror filters gets 12 message slots.
-
-            A static FLOOR of 4 slots is always emitted regardless of
-            current route count. This matches plugin v0.2.0 behavior
-            and avoids a controller-side ordering race: when a route
-            with mirror filters is deleted, the controller's pre-config
-            phase PUTs the new spoe.conf BEFORE the new haproxy.cfg.
-            That PUT triggers an auxiliary haproxy reload against the
-            CURRENT haproxy.cfg, which still references the now-removed
-            mirror-<i>-group. The reload aborts with "unable to find
-            SPOE group mirror-<i>-group", the controller's raw-config
-            fallback also fails on the stuck state, and HAProxy is left
-            running an old config. Holding the spoe.conf group set
-            steady at ≥4 keeps the aux reload valid for the common
-            case (≤4 mirror filters per route — the v0.2.0 cap). Routes
-            with >4 mirror filters retain the race on deletion; the
-            controller's auto-recovery on the next reconcile cleans it
-            up, but a brief deployment failure window is observable. -#}
+            the cluster (NOT a configured upper bound). Computed by the
+            gateway library's 20-route-analysis pass; written into
+            globalFeatures["mirrorRouteMirrorCount"]. No cap — a route
+            with 12 mirror filters gets 12 message slots; with 0 mirror
+            filters anywhere the list stays empty and the plugin is
+            loaded but never invoked. -#}
         {%- if pName == "mirror" -%}
           {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
           {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
           {%- var routeMirrorCount = gf | dig("mirrorRouteMirrorCount") | fallback(0) | toint() -%}
-          {%- var mirrorFloor = 4 -%}
-          {%- if routeMirrorCount < mirrorFloor -%}
-            {%- routeMirrorCount = mirrorFloor -%}
-          {%- end -%}
           {%- pMessages = []any{} -%}
           {%- for i := 1; i <= routeMirrorCount; i++ -%}
             {%- pMessages = append(pMessages, "mirror-" + tostring(i)) -%}
@@ -411,23 +392,12 @@ templateSnippets:
           The gateway library writes the actual max-mirrors-per-route
           (`routeMirrorCount`) into globalFeatures, and we expand it
           into `mirror-1`..`mirror-<routeMirrorCount>` here, replacing
-          the "mirror" placeholder from values.yaml. No upper bound —
-          a route with 12 filters gets 12 message slots.
-
-          A static FLOOR of 4 slots is always emitted regardless of
-          current route count. See the mirror plugin block in
-          spoa-hub-config-content above for the full rationale; in
-          short, this prevents an auxiliary-reload race when the
-          controller pushes spoe.conf before haproxy.cfg on route
-          deletion. The floor matches plugin v0.2.0's static slot
-          count, so the spoe.conf group set never shrinks below what
-          v0.2.0 declared. -#}
+          the "mirror" placeholder from values.yaml. No cap — a route
+          with 12 filters gets 12 message slots. When no route uses
+          mirror filters, the count stays 0 and the placeholder is
+          removed entirely (plugin is loaded but never invoked). -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var routeMirrorCount = gf | dig("mirrorRouteMirrorCount") | fallback(0) | toint() %}
-      {%- var mirrorFloor = 4 %}
-      {%- if routeMirrorCount < mirrorFloor %}
-        {%- routeMirrorCount = mirrorFloor %}
-      {%- end %}
       {%- var expanded = []any{} %}
       {%- for _, m := range messages %}
         {%- if m != "mirror" %}

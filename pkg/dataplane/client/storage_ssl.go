@@ -206,9 +206,13 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 }
 
 // UpdateSSLCertificate updates an existing SSL certificate using text/plain content.
-// Returns the reload ID if a reload was triggered (empty string if not) and any error.
-// The name parameter can use dots (e.g., "example.com.pem"), which will be sanitized
-// automatically before calling the API.
+// Always sends skip_reload=true; see UpdateGeneralFile for the rationale. The new
+// PEM is written to disk but HAProxy keeps serving the old cert in memory until the
+// next reload, which the orchestrator triggers explicitly when only aux files
+// changed (and the main config sync's commit triggers it otherwise).
+// Returns the reload ID if a reload was triggered (always empty under
+// skip_reload=true) and any error. The name parameter can use dots (e.g.,
+// "example.com.pem"), which will be sanitized automatically before calling the API.
 // Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, content string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.pem" -> "example_com.pem")
@@ -217,27 +221,28 @@ func (c *DataplaneClient) UpdateSSLCertificate(ctx context.Context, name, conten
 	// Send certificate content as text/plain (per API spec: postHAProxyConfigurationData)
 	body := bytes.NewBufferString(content)
 
+	skipReload := true
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v33.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v32.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V31: func(c *v31.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v31.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V30: func(c *v30.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v30.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v32ee.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V31EE: func(c *v31ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v31ee.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 		V30EE: func(c *v30ee.Client) (*http.Response, error) {
-			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, nil, "text/plain", body)
+			return c.ReplaceStorageSSLCertificateWithBody(ctx, sanitizedName, &v30ee.ReplaceStorageSSLCertificateParams{SkipReload: &skipReload}, "text/plain", body)
 		},
 	})
 

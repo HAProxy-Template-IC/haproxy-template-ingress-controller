@@ -109,3 +109,32 @@ func TestGetAllMapFiles_NilStorageNames(t *testing.T) {
 	assert.Len(t, maps, 1)
 	assert.Equal(t, "valid.map", maps[0])
 }
+
+// TestUpdateMapFile_SendsSkipReload mirrors the spoe.conf test for map files.
+// Same rationale: aux-file UPDATEs must not trigger the dataplane auto-reload
+// because that reload runs against the current haproxy.cfg, which may
+// reference content the new map no longer provides.
+func TestUpdateMapFile_SendsSkipReload(t *testing.T) {
+	var capturedQuery string
+	server := newMockServer(t, mockServerConfig{
+		handlers: map[string]http.HandlerFunc{
+			"/services/haproxy/storage/maps/hosts.map": func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPut {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				capturedQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusOK)
+			},
+		},
+	})
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	_, err := client.UpdateMapFile(context.Background(), "hosts.map", "example.com backend1\n")
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedQuery, "skip_reload=true",
+		"UpdateMapFile must always send skip_reload=true; got query %q", capturedQuery)
+}

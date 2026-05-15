@@ -37,6 +37,7 @@ import (
 // PhaseConfig, PhasePostConfig) and finally verifies the triggered reload.
 func (o *orchestrator) executeFineGrainedSync(
 	ctx context.Context,
+	desiredConfig string,
 	diff *comparator.ConfigDiff,
 	opts *SyncOptions,
 	fileDiff *auxiliaryfiles.FileDiff,
@@ -46,8 +47,14 @@ func (o *orchestrator) executeFineGrainedSync(
 	crtlistDiff *auxiliaryfiles.CRTListDiff,
 	startTime time.Time,
 ) (*SyncResult, bool, error) {
-	// PhasePreConfig: sync auxiliary files and verify any reloads they
-	// trigger, so PhaseConfig doesn't race against pending file reloads.
+	// PhasePreConfig: sync auxiliary files. The Update* storage methods send
+	// skip_reload=true so no aux reloads fire here — every aux-file change
+	// batches into the single reload triggered by PhaseConfig below (or, when
+	// PhaseConfig has no operations to trigger one, the explicit force-reload
+	// at the end of this function). syncAuxiliaryFilesPreConfig still returns
+	// reload IDs (e.g. for legacy paths or CREATE responses that briefly
+	// reload); verifyAuxiliaryReloads waits on whatever it gets back, which
+	// is a no-op when the slice is empty.
 	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, fileDiff, sslDiff, caFileDiff, mapDiff)
 	if err != nil {
 		return nil, false, err
@@ -61,6 +68,41 @@ func (o *orchestrator) executeFineGrainedSync(
 	appliedOps, reloadTriggered, reloadID, retries, err := o.executeConfigOperations(ctx, diff, opts)
 	if err != nil {
 		return nil, auxFilesSynced, err
+	}
+
+	// If aux files changed but PhaseConfig didn't trigger a reload (empty
+	// diff, or every op was applied via the runtime API without reload), the
+	// new aux content sits on disk but HAProxy is still running with the
+	// pre-update in-memory copy — silently ignored until the next reload.
+	// Force one via a raw config push (same desiredConfig + force_reload).
+	// This converts the case "only aux content changed" into the same
+	// post-state as "structural config change + aux change": one reload at
+	// the end, loading the new haproxy.cfg and the new aux files together.
+	if !reloadTriggered && anyAuxFileHasUpdates(fileDiff, sslDiff, caFileDiff, mapDiff) {
+		o.logger.Debug("Auxiliary files changed without a config-side reload — forcing a reload to pick up on-disk updates",
+			"file_updates", auxiliaryUpdateCount(fileDiff, sslDiff, caFileDiff, mapDiff))
+		version, vErr := o.client.GetVersion(ctx)
+		if vErr != nil {
+			return nil, auxFilesSynced, &SyncError{
+				Stage:   "aux_only_reload_version",
+				Message: "failed to fetch version for aux-only force-reload",
+				Cause:   vErr,
+			}
+		}
+		forcedReloadID, pushErr := o.client.PushRawConfiguration(ctx, desiredConfig, version)
+		if pushErr != nil {
+			return nil, auxFilesSynced, &SyncError{
+				Stage:   "aux_only_reload",
+				Message: "failed to force reload after aux-only changes",
+				Cause:   pushErr,
+				Hints: []string{
+					"Auxiliary file updates require a reload to take effect; the explicit force-reload after PhaseConfig failed",
+					hintCheckHAProxyLogs,
+				},
+			}
+		}
+		reloadTriggered = true
+		reloadID = forcedReloadID
 	}
 
 	// Verify reload BEFORE PhasePostConfig deletes orphaned files.

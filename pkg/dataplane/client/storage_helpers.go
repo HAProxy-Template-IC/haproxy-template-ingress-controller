@@ -79,15 +79,21 @@ func checkCreateResponse(resp *http.Response, resourceType, name string) (string
 
 // checkUpdateResponse validates an Update operation response and extracts the reload ID.
 // Returns the reload ID (empty string if no reload triggered) and any error.
-// Handles: 404 NotFound, expects 200/202.
+// Handles: 404 NotFound, expects 200/202/204.
+//
+// 204 No Content is returned by the dataplane API when the caller requested
+// skip_reload=true: there is no reload-id to communicate back, so the API
+// drops the body entirely. All Update* aux-file callers now send
+// skip_reload=true (see UpdateGeneralFile etc.), so 204 is the common case.
 func checkUpdateResponse(resp *http.Response, resourceType, name string) (string, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return "", fmt.Errorf("%s '%s' not found", resourceType, name)
 	}
 
-	// Accept 200 (OK) and 202 (Accepted) as success
+	// Accept 200 (OK), 202 (Accepted, reload triggered), and 204 (No Content,
+	// returned when skip_reload=true is set) as success.
 	switch resp.StatusCode {
-	case http.StatusOK:
+	case http.StatusOK, http.StatusNoContent:
 		return "", nil // No reload triggered
 	case http.StatusAccepted:
 		return resp.Header.Get(ReloadIDHeader), nil // Reload triggered

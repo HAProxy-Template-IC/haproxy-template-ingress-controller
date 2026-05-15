@@ -33,6 +33,45 @@ func preConfigDiff[T auxiliaryfiles.FileItem](diff *auxiliaryfiles.FileDiffGener
 	}
 }
 
+// anyAuxFileHasUpdates reports whether any of the supplied aux-file diffs has
+// content the orchestrator wrote (or will write) to disk during PhasePreConfig
+// — i.e. any non-zero ToCreate or ToUpdate slice. ToDelete is intentionally
+// excluded: orphan deletions happen in PhasePostConfig, after the new config
+// is already live, so they don't need an extra reload to take effect.
+func anyAuxFileHasUpdates(
+	fileDiff *auxiliaryfiles.FileDiff,
+	sslDiff *auxiliaryfiles.SSLCertificateDiff,
+	caFileDiff *auxiliaryfiles.SSLCaFileDiff,
+	mapDiff *auxiliaryfiles.MapFileDiff,
+) bool {
+	return auxiliaryUpdateCount(fileDiff, sslDiff, caFileDiff, mapDiff) > 0
+}
+
+// auxiliaryUpdateCount sums the create+update entries across every aux-file
+// diff. Used for the "aux content changed without a config-side reload"
+// detection (callers also surface the count in debug logs).
+func auxiliaryUpdateCount(
+	fileDiff *auxiliaryfiles.FileDiff,
+	sslDiff *auxiliaryfiles.SSLCertificateDiff,
+	caFileDiff *auxiliaryfiles.SSLCaFileDiff,
+	mapDiff *auxiliaryfiles.MapFileDiff,
+) int {
+	var n int
+	if fileDiff != nil {
+		n += len(fileDiff.ToCreate) + len(fileDiff.ToUpdate)
+	}
+	if sslDiff != nil {
+		n += len(sslDiff.ToCreate) + len(sslDiff.ToUpdate)
+	}
+	if caFileDiff != nil {
+		n += len(caFileDiff.ToCreate) + len(caFileDiff.ToUpdate)
+	}
+	if mapDiff != nil {
+		n += len(mapDiff.ToCreate) + len(mapDiff.ToUpdate)
+	}
+	return n
+}
+
 // deleteUnreferencedFilesPostConfig deletes auxiliary files no longer referenced by the
 // rendered HAProxy config, AFTER the new config has been applied successfully.
 // Errors are logged as warnings but do not fail the sync since config is already applied.
