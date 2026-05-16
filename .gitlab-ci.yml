@@ -272,6 +272,42 @@ build-python-docs:
 # Lint Stage
 # =============================================================================
 
+# Tiny guard against empty pipelines on MR events.
+#
+# GitLab's `Pipeline must contain at least one runnable job` rule marks an
+# MR's pipeline as `failed` (status only — no jobs ever started) when every
+# job's `rules:` evaluates to "don't run" for the diff. The project requires
+# `ci_must_pass` for merges, so an empty-failed pipeline silently blocks the
+# MR until something else gets pushed.
+#
+# Empirically reproducible with MRs that touch `charts/haptic/CHANGELOG.md`
+# only (MR !945 closed, MR !953 closed, MR !956 stuck): the change matches
+# `.rules-helm`'s `charts/**/*` but no job extends `.rules-helm` — the
+# `audit` / `test` / `build-snapshot` family all extend `.rules-code` whose
+# globs don't pick up nested `*.md` reliably (GitLab's `**/*.md` matches
+# root `CHANGELOG.md` but not `charts/haptic/CHANGELOG.md`, verified by
+# comparing MR !944's 16-job pipeline with MR !945's 0-job pipeline). The
+# existing `lint:` job has a `- when: on_success` catch-all but `needs:
+# build-ci` — if build-ci's matrix evaluates to "don't run" for the diff
+# (it's gated by `.build-ci-image`'s rules), `lint` can't run either.
+#
+# This job is the fallback floor: no `needs:`, no rules-set dependency,
+# fires on every MR event. The script is a single echo (no I/O), so the
+# cost is one runner slot + ~5s of overhead. The real fix is to widen
+# `.rules-code` / fix the build-ci `needs:` chain so docs-only MRs trigger
+# the usual lint / audit stack, but this guard keeps merges from getting
+# stuck in the meantime.
+pipeline-jobs-must-exist:
+  stage: .pre
+  image: alpine:latest
+  tags:
+    - saas-linux-small-amd64
+  needs: []
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - echo "MR pipeline non-empty — see .gitlab-ci.yml comment for context."
+
 lint:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.3
