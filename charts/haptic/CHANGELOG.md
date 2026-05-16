@@ -9,6 +9,8 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+<!-- floor-job-empty-pipeline-repro: test that the post-!957 floor job actually fires on a docs-only MR. Revert this comment after the experiment. -->
+
 ### Changed
 
 - HTTPRoute `RequestMirror` filter now detects HTTPS targets and dispatches over TLS. Previously the chart hardcoded `set-var(txn.gw_mirror_scheme_<i>) str(http)` for every mirror filter — operators setting up a mirror to an HTTPS Service would have seen mirrors silently sent over plain HTTP (the plugin supported `arg_scheme=https` since v0.1.0 but never received it). The chart now resolves the mirror's `backendRef` → Service → port spec and emits `str(https)` when the port carries `appProtocol: https`, `appProtocol: kubernetes.io/https`, or `name: https` (the three Gateway-API / Kubernetes Service conventions for declaring an HTTPS port). Mirror dispatch still doesn't validate TLS certs by default (`verify_tls = false` plugin param) — operators wanting strict validation flip it once `BackendTLSPolicy`-style trust material is plumbed through.
