@@ -54,6 +54,17 @@ variables:
 # Reusable rules for path-based filtering
 .rules-code:
   rules:
+    # On every merge_request_event, always include `.rules-code`-extending
+    # jobs in the MR pipeline. Path-glob `changes:` rules empirically do
+    # NOT reliably match nested files for MR pipelines on this project —
+    # the depth-list approach (MR !959) was disproven by MR !956's
+    # post-rebase pipeline (still 0 jobs with `*.md`, `*/*.md`,
+    # `*/*/*.md`, `*/*/*/*.md`, `**/*.md` all present and a 2-deep
+    # `.md` in the diff). Trading some extra CI time on docs-only MRs
+    # for guaranteed merge-gate coverage; the changes-list still
+    # applies on non-MR (branch push) pipelines so the saving stays for
+    # the main-branch push case that produces the snapshot images.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - changes:
         - "**/*.go"
         - go.mod
@@ -68,19 +79,6 @@ variables:
         - "**/*.yaml"
         - "**/*.yml"
         - "**/*.json"
-        # `.md` patterns are repeated at every depth GitLab actually matches
-        # on. Empirically (MR !945 / !953 / !956 / !958 reproducers),
-        # `**/*.md` matches root-level `CHANGELOG.md` but does NOT match
-        # nested paths like `charts/haptic/CHANGELOG.md` or
-        # `docs/adr/0009-aux-file-skip-reload.md` — those produce an
-        # MR pipeline with zero runnable jobs which GitLab marks `failed`
-        # and silently blocks the merge gate. Spelling each depth out
-        # explicitly is the only thing that reliably matches. Bump the
-        # depth list if a future `.md` lands deeper than four levels.
-        - "*.md"
-        - "*/*.md"
-        - "*/*/*.md"
-        - "*/*/*/*.md"
         - "**/*.md"
         - .markdownlint-cli2.jsonc
 
