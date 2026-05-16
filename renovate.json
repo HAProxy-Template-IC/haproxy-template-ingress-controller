@@ -42,12 +42,12 @@
     },
     {
       "customType": "regex",
-      "description": "SPOA hub bundle versions in versions-spoa.env. Each entry has a `# renovate:` comment naming the upstream GitLab Generic Package, then a `<NAME>_VERSION=\"vX.Y.Z\"` assignment. The shipped customManagers:gitlabPipelineVersions preset only matches .gitlab-ci.yml so we need a dedicated manager for this file.",
+      "description": "SPOA hub bundle versions in versions-spoa.env. Each entry has a `# renovate:` comment naming the upstream GitLab Generic Package, optionally followed by free-form `#` notes documenting the bump, then a `<NAME>_VERSION=\"vX.Y.Z\"` assignment. The intermediate `(?:#[^\\n]*\\n)*` group allows any number of comment lines between the renovate directive and the assignment so the file stays readable as the metric set + behaviour notes grow. The shipped customManagers:gitlabPipelineVersions preset only matches .gitlab-ci.yml so we need a dedicated manager for this file.",
       "fileMatch": [
         "^versions-spoa\\.env$"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-z-]+) packageName=(?<packageName>\\S+) registryUrl=(?<registryUrl>\\S+) depName=(?<depName>\\S+)\\s*\\n[A-Z_]+_VERSION=\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>[a-z-]+) packageName=(?<packageName>\\S+) registryUrl=(?<registryUrl>\\S+) depName=(?<depName>\\S+)\\s*\\n(?:#[^\\n]*\\n)*[A-Z_]+_VERSION=\"(?<currentValue>[^\"]+)\""
       ]
     }
   ],
