@@ -51,20 +51,25 @@ variables:
   # Short hash-based tags avoid the 128-char OCI tag limit while maintaining cacheability
   CI_IMAGE_BASE: ${CI_REGISTRY_IMAGE}/ci
 
-# Reusable rules for path-based filtering
+# Reusable rules for path-based filtering.
+#
+# Every job that does `- !reference [.rules-code, rules]` MUST also
+# precede that reference with a direct `- if: $CI_PIPELINE_SOURCE ==
+# "merge_request_event"` rule of its own, so MR pipelines include the
+# job regardless of which files changed. Reason: GitLab's
+# `!reference [.rules-code, rules]` substitutes the imported rules as
+# a single NESTED array element inside the consuming job's `rules:`
+# list (merged YAML shape: `- - if: ... - changes: [...]`, the inner
+# two-element list is one outer rule). GitLab does evaluate the inner
+# `changes:` clause from that nested form, but does NOT evaluate inner
+# `if:` clauses — verified by MR !960 which moved the MR-event match
+# into `.rules-code` itself and got 0 jobs on a docs-only MR pipeline.
+# Inlining the same condition AS A TOP-LEVEL rule in each consuming
+# job sidesteps the nesting and actually fires. The `!reference` still
+# pulls in the `changes:` clause for non-MR (branch push) pipelines,
+# so the path-based gating still applies for snapshot/main builds.
 .rules-code:
   rules:
-    # On every merge_request_event, always include `.rules-code`-extending
-    # jobs in the MR pipeline. Path-glob `changes:` rules empirically do
-    # NOT reliably match nested files for MR pipelines on this project —
-    # the depth-list approach (MR !959) was disproven by MR !956's
-    # post-rebase pipeline (still 0 jobs with `*.md`, `*/*.md`,
-    # `*/*/*.md`, `*/*/*/*.md`, `**/*.md` all present and a 2-deep
-    # `.md` in the diff). Trading some extra CI time on docs-only MRs
-    # for guaranteed merge-gate coverage; the changes-list still
-    # applies on non-MR (branch push) pipelines so the saving stays for
-    # the main-branch push case that produces the snapshot images.
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - changes:
         - "**/*.go"
         - go.mod
@@ -316,6 +321,7 @@ audit:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
@@ -361,6 +367,7 @@ test:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-large-amd64
@@ -524,6 +531,7 @@ build-snapshot:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   interruptible: true
   variables:
@@ -941,6 +949,7 @@ smoke-spoa-arm64:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
       when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   timeout: 30 minutes
   interruptible: true
@@ -980,6 +989,7 @@ coverage-combined:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
@@ -1043,6 +1053,7 @@ test-acceptance:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   timeout: 30 minutes
   interruptible: true
