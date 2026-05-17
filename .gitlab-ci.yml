@@ -53,21 +53,17 @@ variables:
 
 # Reusable rules for path-based filtering.
 #
-# Every job that does `- !reference [.rules-code, rules]` MUST also
-# precede that reference with a direct `- if: $CI_PIPELINE_SOURCE ==
-# "merge_request_event"` rule of its own, so MR pipelines include the
-# job regardless of which files changed. Reason: GitLab's
-# `!reference [.rules-code, rules]` substitutes the imported rules as
-# a single NESTED array element inside the consuming job's `rules:`
-# list (merged YAML shape: `- - if: ... - changes: [...]`, the inner
-# two-element list is one outer rule). GitLab does evaluate the inner
-# `changes:` clause from that nested form, but does NOT evaluate inner
-# `if:` clauses — verified by MR !960 which moved the MR-event match
-# into `.rules-code` itself and got 0 jobs on a docs-only MR pipeline.
-# Inlining the same condition AS A TOP-LEVEL rule in each consuming
-# job sidesteps the nesting and actually fires. The `!reference` still
-# pulls in the `changes:` clause for non-MR (branch push) pipelines,
-# so the path-based gating still applies for snapshot/main builds.
+# UPDATE 2026-05-17: the per-job `- if: $CI_PIPELINE_SOURCE ==
+# "merge_request_event"` injection from MR !961 was ALSO empirically
+# disproven by MR !956's post-!961 pipeline (still 0 jobs on a
+# docs-only diff, even though the merged_yaml output showed the
+# MR-event match as a properly top-level rule entry). On this
+# project's GitLab evaluator, `if:`-only rules in jobs do NOT
+# reliably fire on MR pipelines — only `changes:`-based rules do.
+# Workaround: add a no-op edit to `.gitlab-ci.yml` itself in any
+# otherwise-docs-only MR so the diff matches `.rules-code`'s exact
+# `.gitlab-ci.yml` entry. Investigation of the underlying GitLab
+# behaviour is tracked separately.
 .rules-code:
   rules:
     - changes:
