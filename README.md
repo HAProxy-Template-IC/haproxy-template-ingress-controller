@@ -57,6 +57,16 @@ make test
 # Run integration tests (requires kind cluster)
 make test-integration
 
+# Run upstream Gateway API conformance suite (requires `make test-e2e` cluster).
+# Imports sigs.k8s.io/gateway-api/conformance as a Go library.
+make test-gateway-conformance
+
+# Run upstream Kubernetes Ingress conformance suite (requires `make test-e2e` cluster).
+# Builds the upstream binary from a pinned `git clone` of
+# kubernetes-sigs/ingress-controller-conformance. Note: upstream is
+# dormant (last commit 2023-08-28); we pin the SHA and do not auto-follow.
+make test-ingress-conformance
+
 # Run linting checks
 make lint
 

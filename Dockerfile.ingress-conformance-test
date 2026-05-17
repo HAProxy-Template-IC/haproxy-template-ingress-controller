@@ -1,0 +1,51 @@
+# Sibling-container ingress-conformance test image. Same shape as
+# Dockerfile.conformance-test, with one extra moving piece: the upstream
+# `ingress-controller-conformance` binary (built from a `git clone` at
+# the pinned SHA — see the `test-ingress-conformance` Makefile target).
+# Our Go test wrapper exec's that binary at runtime.
+#
+# Why two Dockerfiles and not one parameterized image: the gateway
+# suite is a single Go binary (the suite is a library it imports); the
+# ingress suite needs that PLUS the upstream binary PLUS a snapshot of
+# the upstream `features/` tree. Keeping the images separate is clearer
+# than a single Dockerfile with optional COPY layers.
+#
+# Both kubeconfig and the binaries are baked at build time rather than
+# bind-mounted because bind mounts don't cross the DinD boundary — see
+# Dockerfile.conformance-test for the full rationale.
+#
+# Runtime: distroless-static — both binaries are Go, compiled with
+# CGO_ENABLED=0, so only the CA bundle (for kube-apiserver TLS) is
+# needed at runtime.
+#
+# Invocation: `docker run --network <kind-network> --rm
+#   haptic-ingress-conformance-test:<tag> -test.v -test.run='...'`
+
+FROM gcr.io/distroless/static-debian12:latest
+
+# Our Go test wrapper. ENTRYPOINT — `docker run` flags are appended to
+# this and arrive as `-test.v` / `-test.run=...` on the wrapper.
+COPY haptic-ingress-conformance.test /haptic-ingress-conformance.test
+
+# Upstream `ingress-controller-conformance` binary. Path is what the
+# wrapper looks for (see `upstreamBinaryPath` in
+# tests/conformance/ingress_conformance_test.go). Override at run time
+# via $INGRESS_CONFORMANCE_BIN.
+COPY ingress-controller-conformance /usr/local/bin/ingress-controller-conformance
+
+# Upstream `features/` tree (Gherkin .feature files). The upstream
+# binary loads them via paths like `features/default_backend.feature`
+# resolved relative to its CWD, so we COPY into `/features/` and set
+# WORKDIR=/. Override at run time via $INGRESS_CONFORMANCE_FEATURES_DIR.
+COPY features /features
+
+# Kubeconfig for the haptic-e2e cluster. The wrapper requires KUBECONFIG
+# to be set; ENV provides it without callers having to.
+COPY kubeconfig /etc/kubeconfig
+ENV KUBECONFIG=/etc/kubeconfig
+
+# Run from / so the upstream binary's relative `features/...` paths
+# resolve under `/features/`.
+WORKDIR /
+
+ENTRYPOINT ["/haptic-ingress-conformance.test"]

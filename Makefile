@@ -1,5 +1,5 @@
 .PHONY: help version lint lint-fix lint-chart lint-chart-ci audit check-all \
-        test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance build-integration-test \
+        test test-integration test-acceptance test-acceptance-parallel test-e2e test-gateway-conformance test-ingress-conformance build-integration-test \
         test-coverage test-integration-coverage test-coverage-combined bench \
         build docker-build docker-build-multiarch docker-build-multiarch-push docker-load-kind docker-push docker-clean \
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
@@ -192,6 +192,15 @@ CONFORMANCE_KIND_NETWORK ?= kind
 CONFORMANCE_KIND_CLUSTER ?= haptic-e2e
 CONFORMANCE_TIMEOUT ?= 30m
 
+# Ingress conformance variables. The upstream
+# kubernetes-sigs/ingress-controller-conformance project is dormant
+# (last commit 2023-08-28, no releases, single maintainer); we pin to
+# a specific SHA and never auto-follow master. Bumping the SHA is a
+# deliberate, code-reviewed change.
+INGRESS_CONFORMANCE_IMAGE ?= haptic-ingress-conformance-test:latest
+INGRESS_CONFORMANCE_REPO ?= https://github.com/kubernetes-sigs/ingress-controller-conformance.git
+INGRESS_CONFORMANCE_SHA ?= d920ed36a0076e169a9a329a850844ab3a695ae8
+
 test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sibling container on the kind network
 	@echo "Running Gateway API conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."
 	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
@@ -239,6 +248,76 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sib
 		--network $(CONFORMANCE_KIND_NETWORK) \
 		$(if $(CONFORMANCE_DEBUG),-e CONFORMANCE_DEBUG=$(CONFORMANCE_DEBUG)) \
 		$(CONFORMANCE_IMAGE) \
+		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
+		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
+
+test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite as a sibling container on the kind network
+	@echo "Running Ingress conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."
+	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
+	@echo "      and left it running (KEEP_CLUSTER=true is the default)."
+	@echo "Note: upstream kubernetes-sigs/ingress-controller-conformance is dormant"
+	@echo "      (last commit 2023-08-28, no releases). Pinned to SHA:"
+	@echo "      $(INGRESS_CONFORMANCE_SHA). We do NOT auto-follow master."
+	@echo "Environment variables:"
+	@echo "  TEST_RUN_PATTERN - Run a subset of conformance scenarios matching the pattern"
+	@echo "                     (forwarded as -test.run); empty = full suite."
+	@echo "  INGRESS_CONFORMANCE_IMAGE - Image tag for the test image"
+	@echo "                              (default: $(INGRESS_CONFORMANCE_IMAGE))"
+	@echo "  INGRESS_CONFORMANCE_REPO  - Upstream git repo URL"
+	@echo "                              (default: $(INGRESS_CONFORMANCE_REPO))"
+	@echo "  INGRESS_CONFORMANCE_SHA   - Upstream commit SHA to build"
+	@echo "                              (default: $(INGRESS_CONFORMANCE_SHA))"
+	@echo "  CONFORMANCE_KIND_NETWORK  - Docker network for the test container"
+	@echo "                              (default: $(CONFORMANCE_KIND_NETWORK))"
+	@echo "  CONFORMANCE_KIND_CLUSTER  - kind cluster name"
+	@echo "                              (default: $(CONFORMANCE_KIND_CLUSTER))"
+	@# Architecture: identical to test-gateway-conformance. Two binaries
+	@# get baked into a distroless image: our Go test wrapper (built with
+	@# the ingress_conformance tag, exec's the upstream and parses its
+	@# Cucumber JSON into go-test subtests) and the upstream binary
+	@# itself (built from a git clone at the pinned SHA, the same way
+	@# upstream's own Makefile builds it). The container runs as a
+	@# sibling on the kind docker network so it can reach the apiserver
+	@# by its docker-DNS hostname.
+	@echo "Building wrapper binary (ingress_conformance tag)..."
+	CGO_ENABLED=0 $(GO) test -mod=mod -tags=ingress_conformance -c -o /tmp/haptic-ingress-conformance.test ./tests/conformance/
+	@echo "Cloning upstream at $(INGRESS_CONFORMANCE_SHA)..."
+	@rm -rf /tmp/haptic-ingress-conformance-upstream
+	git clone --quiet $(INGRESS_CONFORMANCE_REPO) /tmp/haptic-ingress-conformance-upstream
+	git -C /tmp/haptic-ingress-conformance-upstream -c advice.detachedHead=false checkout --quiet $(INGRESS_CONFORMANCE_SHA)
+	@echo "Applying vendored patches (see tests/conformance/patches/README)..."
+	@# Upstream PR #101 (convergence retry) — vendored because upstream is
+	@# dormant and never merged it. Cilium carries the same patch in its
+	@# fork. Without this, single-shot HTTP requests lose to the inherent
+	@# K8s-Endpoints→runtime-config-push race that every Ingress controller
+	@# has a non-zero gap on.
+	@for patch in tests/conformance/patches/*.patch; do \
+	  echo "  applying $$patch"; \
+	  git -C /tmp/haptic-ingress-conformance-upstream apply --verbose "$(CURDIR)/$$patch" || \
+	    { echo "patch $$patch failed to apply — re-resolve against $(INGRESS_CONFORMANCE_SHA)"; exit 1; }; \
+	done
+	@echo "Building upstream ingress-controller-conformance binary..."
+	@# Mirror upstream's own Makefile flags (-trimpath, ldflags). Running
+	@# `go test -c` from inside the cloned tree uses the upstream's
+	@# go.mod, not haptic's — that's exactly what we want for the pin
+	@# to be honored end-to-end.
+	cd /tmp/haptic-ingress-conformance-upstream && CGO_ENABLED=0 $(GO) test -c -trimpath -ldflags="-buildid= -w" -o /tmp/ingress-controller-conformance .
+	@echo "Resolving kind apiserver kubeconfig (--internal, for container-network DNS)..."
+	@echo "Packaging into $(INGRESS_CONFORMANCE_IMAGE)..."
+	@rm -rf /tmp/haptic-ingress-conformance-build
+	@mkdir -p /tmp/haptic-ingress-conformance-build
+	cp /tmp/haptic-ingress-conformance.test /tmp/haptic-ingress-conformance-build/
+	cp /tmp/ingress-controller-conformance /tmp/haptic-ingress-conformance-build/
+	cp -r /tmp/haptic-ingress-conformance-upstream/features /tmp/haptic-ingress-conformance-build/features
+	cp Dockerfile.ingress-conformance-test /tmp/haptic-ingress-conformance-build/Dockerfile
+	kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-ingress-conformance-build/kubeconfig
+	docker build -t $(INGRESS_CONFORMANCE_IMAGE) /tmp/haptic-ingress-conformance-build
+	@rm -rf /tmp/haptic-ingress-conformance-build /tmp/haptic-ingress-conformance-upstream
+	@echo "Running conformance suite..."
+	docker run \
+		--rm \
+		--network $(CONFORMANCE_KIND_NETWORK) \
+		$(INGRESS_CONFORMANCE_IMAGE) \
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
 

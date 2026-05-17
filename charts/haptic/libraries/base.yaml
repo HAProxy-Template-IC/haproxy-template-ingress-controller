@@ -810,6 +810,22 @@ templateSnippets:
       errorfile 503 {{ pathResolver.GetPath("503.http", "file") }}
       errorfile 504 {{ pathResolver.GetPath("504.http", "file") }}
 
+  frontend-filters-100-server-header:
+    template: |
+      {# Identify the controller in HTTP responses. Most ingress controllers
+         (nginx-ingress, traefik, ...) emit a Server header by default; HAProxy
+         does not. The upstream Ingress conformance suite asserts that responses
+         carry a Server header (default-backend feature's header table), and
+         backends like the upstream echo image don't emit one themselves, so
+         the controller is expected to. Set rather than add so we don't stack
+         a backend-provided Server with our own. The leading newline below is
+         load-bearing: render_glob concatenates snippet outputs verbatim, and
+         the previous snippet's `option forwardfor` has no trailing newline,
+         so without one we render `option forwardforhttp-response ...` as a
+         single fused line (see test-spoa-hub-frontend-filters-newline-after-
+         forwardfor). #}
+      {{ "\n" }}http-response set-header Server haptic
+
   # Status frontend directives — override or extend via status-extra-* snippets.
   # The status frontend (port 8404) serves health checks and can expose HAProxy's
   # built-in Prometheus exporter. Snippets are rendered inside the status frontend

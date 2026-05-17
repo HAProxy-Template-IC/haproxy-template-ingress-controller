@@ -234,7 +234,15 @@ templateSnippets:
                         {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
                         {%- var actualSuffix = suffix -%}
                         {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
-                        {%- if suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
+                        {#- For pfxexact (Prefix-boundary check, suffix=""), strip the
+                           trailing slash so /foo/ Prefix's boundary entry is /foo
+                           and request /foo hits it. For Exact (also suffix=""),
+                           DO NOT strip — K8s spec says Exact is character-wise
+                           exact, so /foo/ must NOT match request /foo (upstream
+                           conformance scenario: "An Ingress with a trailing
+                           slashes in an exact path rule should not match
+                           requests without a trailing slash"). -#}
+                        {%- if pathType != "Exact" && suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
       {{ "\n" }}{{ MapKeyForHost(rule | dig("host")) }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
                       {%- end -%}
                     {%- end -%}
@@ -310,6 +318,35 @@ templateSnippets:
         default-server check{{ BuildServerOptions(serverOpts) }}
         {{ BackendServers(tostring(svcName), 0, port, nil, portName, backendKey, tostring(ns)) | indent(2, true) }}
                 {%- end -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+          {#- spec.defaultBackend — per K8s spec, handles requests that don't
+             match any rule path. Emits its own backend pool through the same
+             first_seen dedup so a default backend pointing at the same
+             service+port as a rule backend doesn't produce a duplicate
+             `backend` stanza. The synthesized path lets BackendNameIngress
+             produce a stable, ingress-scoped backend name. -#}
+          {%- var defaultBackend = ingress | dig("spec", "defaultBackend") -%}
+          {%- if defaultBackend != nil -%}
+            {%- var dbSvc = defaultBackend | dig("service") -%}
+            {%- if dbSvc != nil -%}
+              {%- var path = map[string]any{"backend": defaultBackend} -%}
+              {%- var svcName = dbSvc | dig("name") | fallback("") -%}
+              {%- var resolvedParts = split(ResolveServicePort(tostring(ns), tostring(svcName), dbSvc | dig("port")), " ") -%}
+              {%- var port = toint(resolvedParts[0]) -%}
+              {%- var portName = resolvedParts[1] -%}
+              {%- var portId = portName -%}
+              {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
+              {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
+      # Default backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
+                {%- var backendKey = BackendNameIngress(ingress, path) %}
+      backend {{ backendKey }}
+          guid {{ make_guid("be", backendKey) }}
+                {%- var serverOpts = map[string]any{"flags": []any{}} -%}
+                {{- render_glob "backend-directives-*" inherit_context }}
+        default-server check{{ BuildServerOptions(serverOpts) }}
+        {{ BackendServers(tostring(svcName), 0, port, nil, portName, backendKey, tostring(ns)) | indent(2, true) }}
               {%- end -%}
             {%- end -%}
           {%- end -%}
@@ -431,6 +468,47 @@ templateSnippets:
       {%- import "util-path-map-entry-ingress" for PathMapEntryIngress -%}
       # ingress/map-path-prefix-ingress
       {{ PathMapEntryIngress([]string{"Prefix", "ImplementationSpecific"}, "/") }}
+
+  map-path-prefix-501-ingress-default:
+    template: |
+      {#- spec.defaultBackend catch-all for rules-less Ingresses. Emits a
+         plain "/" prefix-map entry, which map_beg only resolves to when
+         no more specific path matched. Ingresses with both rules and
+         spec.defaultBackend are out of scope (K8s spec requires per-host
+         catch-all entries; upstream conformance only tests rules-less). -#}
+      {#- HAProxy map files keep only one entry per duplicate key. If two
+         rules-less defaultBackend Ingresses coexist (typical during the
+         upstream conformance suite's scenario churn — scenario N's
+         namespace is being torn down while scenario N+1's Ingress is
+         already in haptic's resource store), both want to claim the "/"
+         key. We MUST pick the newest: a first-by-list-order pick lands
+         on the dying scenario's backend whose pods are already gone,
+         producing 503s on the new scenario's traffic (confirmed in
+         GitLab MR 955 pipeline 2529981548 — backend
+         <ns-of-prev-scenario>_default-backend_svc_echo-service_8080/
+         <NOSRV> for /sub-path requests). Sort by creationTimestamp
+         desc; the freshest Ingress wins. The dying older backend is
+         about to be removed by the next reconcile anyway. Real
+         workloads rarely run multiple any-host defaultBackend
+         Ingresses; "newest wins" is also the right shape there
+         (operator just deployed a new default — honor it). -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- var candidates = []any{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
+        {%- var rules = toSlice(fallback(dig(ingress, "spec", "rules"), []any{})) -%}
+        {%- if defaultBackend != nil && len(rules) == 0 && dig(defaultBackend, "service") != nil -%}
+          {%- candidates = append(candidates, ingress) -%}
+        {%- end -%}
+      {%- end -%}
+      {%- if len(candidates) > 0 -%}
+        {%- var sorted = candidates | sort_by([]string{"$.metadata.creationTimestamp:desc"}) -%}
+        {%- var winner = sorted[0] -%}
+        {%- var defaultBackend = dig(winner, "spec", "defaultBackend") -%}
+        {%- var path = map[string]any{"backend": defaultBackend} %}
+      # Ingress: {{ dig(winner, "metadata", "namespace") | fallback("") }}/{{ dig(winner, "metadata", "name") | fallback("") }} (default backend, rules-less; newest of {{ len(candidates) }})
+      / BACKEND:{{ BackendNameIngress(winner, path) }}
+      {%- end %}
 
   # ============================================================================
   # Status Patch Registration

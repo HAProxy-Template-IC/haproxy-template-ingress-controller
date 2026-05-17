@@ -49,18 +49,31 @@ controller:
       level: DEBUG  # Runtime log level (overrides env var if set)
 
     # Fast-timings preset for dev/CI: collapse every event-to-deploy throttle
-    # to ~100ms and push driftPreventionInterval out to 10m so it doesn't
+    # to ~10ms and push driftPreventionInterval out to 10m so it doesn't
     # fire mid-test. Production defaults (5s refractory, 2s minDeploymentInterval,
     # 30s configPublishInterval, 60s driftPreventionInterval) target steady-
     # state load on real clusters; in CI they only add latency that nobody
     # benefits from. Safety ceilings (reloadVerificationTimeout, syncTimeout,
     # deploymentTimeout, syncMaxRetries) are deliberately left at chart
     # defaults — they only matter on failure paths.
+    #
+    # Tight intervals (10/10/50ms vs the earlier 100/100/200ms) are
+    # specifically sized for the upstream Ingress conformance suite: it
+    # polls Service Endpoints every 5s and fires its HTTP request the
+    # instant a poll succeeds, with no retry budget on 503. If a backend
+    # pod readies in the few hundred ms before a 5s-poll boundary, the
+    # window between "Endpoints API has address" and "haptic has the
+    # runtime-API slot enabled" must be tighter than that gap, or the
+    # request races and gets 503 from HAProxy's all-disabled-slots
+    # fast-fail. At 100/100/200ms (~400ms worst case) we saw 2-4 random
+    # flaky 503s per run on default_backend / path_rules scenarios; at
+    # 10/10/50ms (~70ms) the race closes. Production users don't run
+    # this test loop and get the steady-state-load defaults.
     controller:
-      reconciliationDebounceInterval: 100ms
+      reconciliationDebounceInterval: 10ms
     dataplane:
-      minDeploymentInterval: 100ms
-      configPublishInterval: 200ms
+      minDeploymentInterval: 10ms
+      configPublishInterval: 50ms
       driftPreventionInterval: 10m
 
     templatingSettings:
