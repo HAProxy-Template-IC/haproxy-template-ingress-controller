@@ -1425,12 +1425,20 @@ test-gateway-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
-        # HAProxy + dataplane logs
+        # HAProxy + dataplane + spoa-hub sidecar logs. spoa-hub stdout
+        # is the only place that records SPOE NOTIFY arrivals and
+        # per-plugin dispatch errors — without it, conformance flakes
+        # like issue #45 are undebuggable from the artifacts alone.
+        # `|| true` on the spoa-hub line so older HAProxy pods that
+        # pre-date the sidecar (and clusters without the sidecar
+        # enabled) don't fail this script.
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
           echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+          echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
@@ -1552,12 +1560,20 @@ test-ingress-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
-        # HAProxy + dataplane logs
+        # HAProxy + dataplane + spoa-hub sidecar logs. spoa-hub stdout
+        # is the only place that records SPOE NOTIFY arrivals and
+        # per-plugin dispatch errors — without it, conformance flakes
+        # like issue #45 are undebuggable from the artifacts alone.
+        # `|| true` on the spoa-hub line so older HAProxy pods that
+        # pre-date the sidecar (and clusters without the sidecar
+        # enabled) don't fail this script.
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
           echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+          echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
