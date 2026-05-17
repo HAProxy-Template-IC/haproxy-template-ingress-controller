@@ -1465,6 +1465,132 @@ test-gateway-conformance:
     when: on_failure
     expire_in: 1 week
 
+# Upstream Kubernetes Ingress conformance suite
+# (kubernetes-sigs/ingress-controller-conformance).
+#
+# Same architecture as test-gateway-conformance: bring up the e2e
+# cluster via `make test-e2e` (with TEST_RUN_PATTERN=^$ to skip the e2e
+# scenarios themselves), then invoke `make test-ingress-conformance`
+# which builds two binaries (our wrapper + the upstream binary from a
+# pinned `git clone`), bakes them into a distroless image, and runs the
+# image as a sibling container on the kind docker network. The wrapper
+# parses the upstream's Cucumber JSON into Go-test subtests, so each
+# scenario shows up as a named pass/fail in this job's log.
+#
+# Upstream is dormant (last commit 2023-08-28). The Makefile pins the
+# commit SHA; this job inherits that pin. We don't auto-follow master.
+#
+# Single shard, no `parallel:` — the upstream suite is ~12-15 scenarios
+# across 5 feature files, ~3-5 minutes against a warm cluster.
+# Sharding would have 0-2 scenarios per shard and waste the per-shard
+# cluster bootstrap (3-4 min). If the suite ever grows enough to need
+# sharding, the partition has to be per-feature-file (the upstream
+# binary has no `-run`-equivalent), not per-scenario.
+#
+# HAProxy version pinned for the same reason as Gateway API conformance:
+# the chart's Ingress surface is HAProxy-version-agnostic, the matrix
+# already lives on test-e2e. Trigger rules match the gateway job's so
+# any Go/chart/script change runs both conformance suites.
+test-ingress-conformance:
+  stage: integration
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+  # ~3-5 min suite + 3-4 min cluster bootstrap + image build = comfortable
+  # margin at 20 min. If real durations creep up, investigate before
+  # raising — slow conformance runs are a regression signal, not a
+  # tuning knob.
+  timeout: 20 minutes
+  interruptible: true
+  variables:
+    CTRL_NAMESPACE: haptic
+    RELEASE_NAME: haptic
+    SPOA_TAG: "ci-${CI_PIPELINE_ID}"
+    SKIP_DOCKER_BUILD: "1"
+    # Pin to the most-recent supported HAProxy version. Matches the
+    # default in versions.env / charts/haptic/values.yaml.
+    HAPROXY_VERSION: "3.3"
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+    - job: build-snapshot
+    - job: build-spoa-image-snapshot
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - charts/**/*
+        - scripts/**/*
+        - .gitlab-ci.yml
+  before_script:
+    # Reuse the test-e2e prep: pull controller + spoa-hub snapshots
+    # built earlier in the same pipeline, retag locally so the kind
+    # cluster's containerd can find them by `haptic:test`.
+    - |
+      TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
+      docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      docker pull ${TEST_IMAGE}
+      docker tag ${TEST_IMAGE} haptic:test
+    - |
+      SPOA_IMAGE="${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_TAG}"
+      docker pull ${SPOA_IMAGE}
+      docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
+  script:
+    # Bring up the e2e cluster (kind + MetalLB + helm install) once.
+    # TEST_RUN_PATTERN=^$ shortcircuits the e2e tests themselves so we
+    # only pay for cluster setup — the conformance run uses its own
+    # generated Ingress resources, not e2e fixtures.
+    - TEST_RUN_PATTERN="^$" make test-e2e
+    - make test-ingress-conformance
+  after_script:
+    - |
+      if [ "$CI_JOB_STATUS" = "failed" ]; then
+        LOG_DIR="debug-logs/_ingress-conformance"
+        echo "Ingress conformance failed — extracting cluster diagnostics to ${LOG_DIR}..."
+        mkdir -p "$LOG_DIR"
+
+        export KUBECONFIG=/tmp/haproxy-e2e-kubeconfig
+
+        # Controller logs across replicas
+        for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/name=haptic -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "=== Controller: $pod ===" >> "$LOG_DIR/controller.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
+        done
+
+        # HAProxy + dataplane logs
+        for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
+          echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+        done
+
+        # Rendered HAProxy config (the desired config the controller pushed)
+        kubectl -n ${CTRL_NAMESPACE} exec deployment/${RELEASE_NAME}-haproxy -c haproxy -- \
+          cat /etc/haproxy/haproxy.cfg > "$LOG_DIR/haproxy.cfg" 2>&1 || true
+
+        # IngressClasses + Ingress fixtures the conformance suite created
+        # (and the echo backends it derived from them). The upstream
+        # binary creates per-scenario random namespaces, so cluster-wide
+        # listings are the right granularity here.
+        kubectl get ingressclass -o yaml > "$LOG_DIR/ingressclasses.yaml" 2>&1 || true
+        kubectl get ingress -A -o yaml > "$LOG_DIR/ingresses.yaml" 2>&1 || true
+        kubectl get pods -A -l app.kubernetes.io/name=ingress-conformance-echo -o yaml > "$LOG_DIR/echo-pods.yaml" 2>&1 || true
+        kubectl get services -A -o yaml > "$LOG_DIR/services.yaml" 2>&1 || true
+        kubectl get pods -A -o wide > "$LOG_DIR/pods.log" 2>&1 || true
+      fi
+    - kind delete cluster --name haptic-e2e || true
+  artifacts:
+    paths:
+      - debug-logs/
+    when: on_failure
+    expire_in: 1 week
+
 # Helm chart default values test with cert-manager
 # Verifies that the chart works out-of-the-box with default values when cert-manager is installed
 test-helm-defaults:

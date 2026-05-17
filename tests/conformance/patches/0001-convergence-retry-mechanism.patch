@@ -1,0 +1,114 @@
+Vendored from kubernetes-sigs/ingress-controller-conformance PR #101 by Tam Mach
+(<https://github.com/kubernetes-sigs/ingress-controller-conformance/pull/101>).
+Cilium maintains this patch in their fork (cilium/ingress-controller-conformance)
+because upstream was opened in 2022 but never merged.
+
+The upstream HTTP step does `client.Do(req)` once with no retry budget, so a
+single 5xx loses the scenario — even though every Ingress controller has
+some non-zero gap between K8s Endpoints update and runtime config push.
+PR #101 wraps CaptureRoundTrip in an `awaitConvergence` loop that requires
+3 consecutive identical-status-code responses within 30s before accepting
+the result. This absorbs short-lived 503s during steady-state convergence
+without papering over real bugs (a permanent 5xx still fails the scenario).
+
+Apply with `git apply` from the upstream checkout root. Pinned to commit
+d920ed36a0076e169a9a329a850844ab3a695ae8 — bumping that SHA in the Makefile
+may require re-resolving this patch.
+
+--- a/test/state/state.go
++++ b/test/state/state.go
+@@ -19,10 +19,16 @@ package state
+ import (
+ 	"fmt"
+ 	"strings"
++	"time"
+
+ 	"sigs.k8s.io/ingress-controller-conformance/test/http"
+ )
+
++const (
++	retryCount   = 3
++	maxRetryTime = 30 * time.Second
++)
++
+ // Scenario holds state for a test scenario
+ type Scenario struct {
+ 	Namespace   string
+@@ -43,15 +49,73 @@ func New() *Scenario {
+
+ // CaptureRoundTrip will perform an HTTP request and return the CapturedRequest and CapturedResponse tuple
+ func (s *Scenario) CaptureRoundTrip(method, scheme, hostname, path string) error {
+-	capturedRequest, capturedResponse, err := http.CaptureRoundTrip(method, scheme, hostname, path, s.IPOrFQDN)
++	var capturedRequest *http.CapturedRequest
++	var capturedResponse *http.CapturedResponse
++	var err error
++
++	err = awaitConvergence(retryCount, maxRetryTime, func(elapsed time.Duration) bool {
++		capturedRequest, capturedResponse, err = http.CaptureRoundTrip(method, scheme, hostname, path, s.IPOrFQDN)
++		if err != nil {
++			return false
++		}
++
++		defer func() {
++			s.CapturedRequest = capturedRequest
++			s.CapturedResponse = capturedResponse
++		}()
++
++		return compareResponse(s.CapturedResponse, capturedResponse)
++	})
+ 	if err != nil {
+ 		return err
+ 	}
++	return nil
++}
++
++// compareResponse compares two captured responses and returns true if they are equal.
++// Currently, only status code is compared.
++func compareResponse(prev *http.CapturedResponse, curr *http.CapturedResponse) bool {
++	if prev == nil || curr == nil {
++		return false
++	}
++	return prev.StatusCode == curr.StatusCode
++}
+
+-	s.CapturedRequest = capturedRequest
+-	s.CapturedResponse = capturedResponse
++// awaitConvergence runs the given function until it returns 'true' `threshold` times in a row.
++// Each failed attempt has a 1s delay; successful attempts have no delay.
++func awaitConvergence(threshold int, maxTimeToConsistency time.Duration, fn func(elapsed time.Duration) bool) error {
++	successes := 0
++	attempts := 0
++	start := time.Now()
++	to := time.After(maxTimeToConsistency)
++	delay := time.Second
++	for {
++		select {
++		case <-to:
++			return fmt.Errorf("timed out waiting for convergence")
++		default:
++		}
+
+-	return nil
++		completed := fn(time.Now().Sub(start))
++		attempts++
++		if completed {
++			successes++
++			if successes >= threshold {
++				return nil
++			}
++			// Skip delay if we have a success
++			continue
++		}
++
++		successes = 0
++		select {
++		// Capture the overall timeout
++		case <-to:
++			return fmt.Errorf("timeout while waiting after %d attempts, %d/%d sucessess", attempts, successes, threshold)
++			// And the per-try delay
++		case <-time.After(delay):
++		}
++	}
+ }
+
+ // AssertStatusCode returns an error if the captured response status code does not match the expected value
