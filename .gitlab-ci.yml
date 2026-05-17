@@ -53,17 +53,17 @@ variables:
 
 # Reusable rules for path-based filtering.
 #
-# UPDATE 2026-05-17: the per-job `- if: $CI_PIPELINE_SOURCE ==
-# "merge_request_event"` injection from MR !961 was ALSO empirically
-# disproven by MR !956's post-!961 pipeline (still 0 jobs on a
-# docs-only diff, even though the merged_yaml output showed the
-# MR-event match as a properly top-level rule entry). On this
-# project's GitLab evaluator, `if:`-only rules in jobs do NOT
-# reliably fire on MR pipelines — only `changes:`-based rules do.
-# Workaround: add a no-op edit to `.gitlab-ci.yml` itself in any
-# otherwise-docs-only MR so the diff matches `.rules-code`'s exact
-# `.gitlab-ci.yml` entry. Investigation of the underlying GitLab
-# behaviour is tracked separately.
+# KNOWN GAP: docs-only MRs (e.g. `charts/haptic/CHANGELOG.md` or
+# `docs/**/*.md` only, with no other file types touched) produce MR
+# pipelines with zero runnable jobs — GitLab marks them `failed` and
+# the project's `ci_must_pass` gate blocks the merge. Workaround
+# until this is properly diagnosed: include a `.gitlab-ci.yml`
+# touch (e.g. a comment edit) in any otherwise-docs-only MR so the
+# diff matches the `.gitlab-ci.yml` entry below. Four `if:`-based
+# attempts to fix this in CI rules (MRs !957, !959, !960, !961) all
+# failed empirically — `if:`-only job rules don't reliably fire on
+# this project's MR pipelines even when their condition is true.
+# Likely a project-level setting we can't see from outside.
 .rules-code:
   rules:
     - changes:
@@ -317,7 +317,6 @@ audit:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
@@ -363,7 +362,6 @@ test:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-large-amd64
@@ -527,7 +525,6 @@ build-snapshot:
   rules:
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   interruptible: true
   variables:
@@ -945,7 +942,6 @@ smoke-spoa-arm64:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   timeout: 30 minutes
   interruptible: true
@@ -985,7 +981,6 @@ coverage-combined:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   tags:
     - saas-linux-medium-amd64
@@ -1049,7 +1044,6 @@ test-acceptance:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"  # see .rules-code preamble
     - !reference [.rules-code, rules]
   timeout: 30 minutes
   interruptible: true
