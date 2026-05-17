@@ -9,8 +9,13 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Plugin metrics across the SPOA bundle. Every plugin bundled in the haptic/spoa-hub image (mirror, coraza, external-auth, fingerprinting, maxmind, otel, sso-auth) now emits Prometheus counters / gauges / histograms through the hub's `/metrics` endpoint. No chart-side opt-in — metrics surface when each plugin is enabled. Names appear with a `plugin_<plugin>_` prefix.
+
 ### Changed
 
+- Bundled SPOA image bumped to spoa-hub v0.6.0 with the v2-consumer release of every plugin (plugin-API `PLUGIN_API_VERSION` 1 → 2 transition, append-only vtable evolution — v1 plugins still load on the v0.6.0 hub, v2 plugins still load on v0.5.x hubs).
 - HTTPRoute `RequestMirror` filter now detects HTTPS targets and dispatches over TLS. Previously the chart hardcoded `set-var(txn.gw_mirror_scheme_<i>) str(http)` for every mirror filter — operators setting up a mirror to an HTTPS Service would have seen mirrors silently sent over plain HTTP (the plugin supported `arg_scheme=https` since v0.1.0 but never received it). The chart now resolves the mirror's `backendRef` → Service → port spec and emits `str(https)` when the port carries `appProtocol: https`, `appProtocol: kubernetes.io/https`, or `name: https` (the three Gateway-API / Kubernetes Service conventions for declaring an HTTPS port). Mirror dispatch still doesn't validate TLS certs by default (`verify_tls = false` plugin param) — operators wanting strict validation flip it once `BackendTLSPolicy`-style trust material is plumbed through.
 - The chart-rendered list of `mirror-<i>` SPOE messages is now sized fully dynamically per render. Previously the chart hardcoded `messages: ["mirror-1", "mirror-2", "mirror-3", "mirror-4"]` in `spoaHub.plugins.mirror.messages`, capping at 4 mirror filters per HTTPRoute rule with no clear error if exceeded. The gateway library's `20-route-analysis` pass now computes the actual max-mirrors-per-route in the cluster and writes it into `globalFeatures["mirrorRouteMirrorCount"]`; the spoa-hub library expands `messages: ["mirror"]` (a placeholder) into `mirror-1`..`mirror-<count>` in both the hub TOML and `spoe.conf`. No cap and no static floor — a route with 12 mirror filters allocates 12 message slots; with 0 mirror filters anywhere the list expands to empty and the plugin is loaded but never invoked. The earlier-floor-of-4 workaround for a controller-side ordering race is no longer needed: that race is now resolved upstream by `skip_reload=true` on auxiliary file UPDATEs (see controller CHANGELOG).
 
