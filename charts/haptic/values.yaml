@@ -1634,6 +1634,18 @@ spoaHub:
     workerThreads: null
     maxConnections: 1000
     blockingThreadKeepAliveSecs: 30
+    # Prometheus /metrics endpoint. Loopback by default so the surface
+    # is cluster-internal; the haproxy container shares the pod's
+    # network namespace with the sidecar and can scrape from there
+    # (the ServiceMonitor target / a kubectl-exec wget will both
+    # reach it). Plugin-level counters (plugin_<plugin>_dispatches_total,
+    # dispatch_dropped_total, dispatch_outcomes_total, etc.) only appear
+    # once this is set — leaving it null disables the endpoint entirely
+    # which blinds the conformance failure capture (issue #45). Override
+    # to "" to opt out; override to "0.0.0.0:9095" to expose the
+    # endpoint outside the pod (do not do this lightly — the bundled
+    # counters carry per-Ingress / per-route cardinality).
+    metricsAddr: "127.0.0.1:9095"
 
   # HAProxy-side wiring. The chart surfaces these into
   # templatingSettings.extraContext.spoaHub (see
