@@ -261,6 +261,20 @@ templateSnippets:
       log_level = "{{ hub | dig("logLevel") | fallback("info") }}"
       max_connections = {{ hub | dig("maxConnections") | fallback(1000) }}
       blocking_thread_keep_alive_secs = {{ hub | dig("blockingThreadKeepAliveSecs") | fallback(30) }}
+      {#- Prometheus metrics endpoint. Default bound on the pod loopback
+          so the sidecar surface stays cluster-internal (the haproxy pod's
+          ServiceMonitor / PodMonitor can scrape from inside via the
+          haproxy container's network namespace, since both containers
+          share it). Plugin-level counters (plugin_<plugin>_dispatches_total,
+          dispatch_dropped_total, dispatch_outcomes_total, etc., shipped
+          by the SPOA-metrics rollout in spoa-hub v0.6.0+) only become
+          observable once this address is set — leaving it `null` is what
+          made the conformance flake in issue #45 invisible to artifact
+          captures (the mirror plugin acks the SPOE NOTIFY in microseconds,
+          fire-and-forget dispatch then runs async, and the only signal
+          for whether it succeeded / dropped / errored is the
+          /metrics scrape). -#}
+      metrics_addr = "{{ hub | dig("metricsAddr") | fallback("127.0.0.1:9095") }}"
       {%- var workerThreads = hub | dig("workerThreads") -%}
       {%- if workerThreads != nil %}
       worker_threads = {{ workerThreads }}

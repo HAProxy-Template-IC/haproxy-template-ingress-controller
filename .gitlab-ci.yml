@@ -1439,6 +1439,21 @@ test-gateway-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
           echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
+
+          # SPOA-hub /metrics scrape. Bound on the pod loopback by the
+          # chart (spoaHub.hub.metricsAddr default 127.0.0.1:9095, set
+          # in libraries/spoa-hub.yaml). Plugin counters live here:
+          # plugin_mirror_dispatches_total / dispatch_dropped_total /
+          # dispatch_outcomes_total, plugin_coraza_evaluations_total,
+          # plugin_external-auth_auth_requests_total, etc. — read from
+          # the haproxy container which shares the pod's network
+          # namespace with the sidecar (the spoa-hub container is
+          # readonly + has no busybox; haproxy has wget). Returns empty
+          # if metrics_addr was operator-overridden off or the sidecar
+          # isn't on this pod; either is fine, the file records that.
+          echo "=== SPOA-hub /metrics on $pod ===" >> "$LOG_DIR/spoa-hub-metrics.txt"
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- \
+            sh -c 'wget -qO- 127.0.0.1:9095/metrics 2>/dev/null || true' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
@@ -1574,6 +1589,21 @@ test-ingress-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
           echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
+
+          # SPOA-hub /metrics scrape. Bound on the pod loopback by the
+          # chart (spoaHub.hub.metricsAddr default 127.0.0.1:9095, set
+          # in libraries/spoa-hub.yaml). Plugin counters live here:
+          # plugin_mirror_dispatches_total / dispatch_dropped_total /
+          # dispatch_outcomes_total, plugin_coraza_evaluations_total,
+          # plugin_external-auth_auth_requests_total, etc. — read from
+          # the haproxy container which shares the pod's network
+          # namespace with the sidecar (the spoa-hub container is
+          # readonly + has no busybox; haproxy has wget). Returns empty
+          # if metrics_addr was operator-overridden off or the sidecar
+          # isn't on this pod; either is fine, the file records that.
+          echo "=== SPOA-hub /metrics on $pod ===" >> "$LOG_DIR/spoa-hub-metrics.txt"
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- \
+            sh -c 'wget -qO- 127.0.0.1:9095/metrics 2>/dev/null || true' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
