@@ -105,15 +105,34 @@ const upstreamBinaryPath = "/usr/local/bin/ingress-controller-conformance"
 const upstreamFeaturesDir = "/"
 
 // waitForIngressStatus and waitForReady bound how long the upstream binary
-// waits for a freshly-created Ingress to acquire a populated status or for
-// its derived echo backend to become ready. Haptic must reconcile→render
-// →deploy→reload well within 10s on a healthy cluster (see
-// `feedback_no_blind_timeout_bumps.md`); a generous-but-not-pathological
-// 10s here will surface real regressions instead of masking them with
-// upstream's default 5-minute padding.
+// waits for two different things:
+//
+//   - waitForIngressStatus: how long for HAPTIC to populate
+//     Ingress.Status.LoadBalancer after we create the Ingress. This is
+//     haptic's reconcile budget — render → deploy → reload → status
+//     should land well under 5s on a healthy cluster, and we keep 10s
+//     here so a regression in haptic's reconcile speed surfaces
+//     immediately instead of being absorbed (see
+//     `feedback_no_blind_timeout_bumps.md`).
+//
+//   - waitForReady: how long for the upstream-created BACKEND POD
+//     (the conformance echo image) to become Ready and have a populated
+//     Endpoints entry. This is NOT haptic's reconcile — it's the kube
+//     scheduler placing the pod, kubelet pulling/starting the container,
+//     and the readiness probe ack'ing. Under sustained CI load on
+//     shared 2xlarge runners the upstream's default 5s-poll interval
+//     plus normal container-start variance routinely needs ~10-20s for
+//     a single pod. At 10s we saw two consecutive CI runs flake on
+//     different scenarios at this exact step (MR !965 pipeline
+//     2533822621); at 30s the budget gives 6 polls and is at the
+//     documented upper bound for any test/conformance timeout — going
+//     above 30s would be papering over slowness that warrants
+//     investigation, but staying at 30s here just reflects realistic
+//     scheduler+kubelet timing for a fresh-namespace pod under CI
+//     contention, which is not haptic's bug.
 const (
 	waitForIngressStatus = 10 * time.Second
-	waitForReady         = 10 * time.Second
+	waitForReady         = 30 * time.Second
 )
 
 // cucumberFeature mirrors the top-level structure godog writes for each

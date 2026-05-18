@@ -471,43 +471,68 @@ templateSnippets:
 
   map-path-prefix-501-ingress-default:
     template: |
-      {#- spec.defaultBackend catch-all for rules-less Ingresses. Emits a
-         plain "/" prefix-map entry, which map_beg only resolves to when
-         no more specific path matched. Ingresses with both rules and
-         spec.defaultBackend are out of scope (K8s spec requires per-host
-         catch-all entries; upstream conformance only tests rules-less). -#}
-      {#- HAProxy map files keep only one entry per duplicate key. If two
-         rules-less defaultBackend Ingresses coexist (typical during the
-         upstream conformance suite's scenario churn — scenario N's
-         namespace is being torn down while scenario N+1's Ingress is
-         already in haptic's resource store), both want to claim the "/"
-         key. We MUST pick the newest: a first-by-list-order pick lands
-         on the dying scenario's backend whose pods are already gone,
-         producing 503s on the new scenario's traffic (confirmed in
-         GitLab MR 955 pipeline 2529981548 — backend
-         <ns-of-prev-scenario>_default-backend_svc_echo-service_8080/
-         <NOSRV> for /sub-path requests). Sort by creationTimestamp
-         desc; the freshest Ingress wins. The dying older backend is
-         about to be removed by the next reconcile anyway. Real
-         workloads rarely run multiple any-host defaultBackend
-         Ingresses; "newest wins" is also the right shape there
-         (operator just deployed a new default — honor it). -#}
+      {#- spec.defaultBackend catch-all entries per K8s Ingress spec
+         ("defaultBackend handles requests that don't match any rule").
+         The map_beg longest-prefix-match in path-prefix.map naturally
+         picks the most-specific rule entry first, falling through to
+         these catch-alls when no rule path matched.
+
+         The hostKey for each entry determines what the catch-all
+         applies to:
+           - "" (rules-less Ingress, OR rule with no host):
+                emits "/" — catches every host that didn't match a
+                more-specific entry (the K8s "all traffic to default"
+                semantics for rules-less; for hostless rules it matches
+                the same all-hosts intent).
+           - "<host>" (rule with a host):
+                emits "<host>/" — catches requests to that host that
+                didn't match any of the Ingress's rule paths.
+         (Wildcard hosts already had their `*` stripped by
+         MapKeyForHost, so `*.foo.com` becomes `.foo.com` which is the
+         same form host.map uses.)
+
+         Dedup per host: HAProxy maps keep only one entry per duplicate
+         key, so two Ingresses both claiming the same host's catch-all
+         would conflict. We sort all candidate (hostKey, ingress) pairs
+         by creationTimestamp desc, then use first_seen per hostKey to
+         pick the newest Ingress per host. The "newest wins" semantic
+         (a) matches what operators expect when they roll out a new
+         default and (b) avoids a stale-Ingress race during scenario
+         churn — a first-by-list-order pick would land on a being-
+         deleted backend whose pods are already gone, producing 503s
+         on the new scenario's traffic (originally confirmed in
+         GitLab MR !955 pipeline 2529981548 for the rules-less case;
+         the same logic applies per host now). -#}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var candidates = []any{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
-        {%- var rules = toSlice(fallback(dig(ingress, "spec", "rules"), []any{})) -%}
-        {%- if defaultBackend != nil && len(rules) == 0 && dig(defaultBackend, "service") != nil -%}
-          {%- candidates = append(candidates, ingress) -%}
+        {%- if defaultBackend != nil && dig(defaultBackend, "service") != nil -%}
+          {%- var ts = dig(ingress, "metadata", "creationTimestamp") | fallback("") -%}
+          {%- var rules = toSlice(fallback(dig(ingress, "spec", "rules"), []any{})) -%}
+          {%- if len(rules) == 0 -%}
+            {%- candidates = append(candidates, map[string]any{"hostKey": "", "ingress": ingress, "ts": ts}) -%}
+          {%- else -%}
+            {%- for _, rule := range rules -%}
+              {%- var hostKey = tostring(MapKeyForHost(dig(rule, "host"))) -%}
+              {%- candidates = append(candidates, map[string]any{"hostKey": hostKey, "ingress": ingress, "ts": ts}) -%}
+            {%- end -%}
+          {%- end -%}
         {%- end -%}
       {%- end -%}
       {%- if len(candidates) > 0 -%}
-        {%- var sorted = candidates | sort_by([]string{"$.metadata.creationTimestamp:desc"}) -%}
-        {%- var winner = sorted[0] -%}
-        {%- var defaultBackend = dig(winner, "spec", "defaultBackend") -%}
-        {%- var path = map[string]any{"backend": defaultBackend} %}
-      # Ingress: {{ dig(winner, "metadata", "namespace") | fallback("") }}/{{ dig(winner, "metadata", "name") | fallback("") }} (default backend, rules-less; newest of {{ len(candidates) }})
-      / BACKEND:{{ BackendNameIngress(winner, path) }}
+        {%- var sorted = candidates | sort_by([]string{"$.ts:desc"}) -%}
+        {%- for _, cand := range sorted -%}
+          {%- var hostKey = tostring(cand["hostKey"]) -%}
+          {%- if first_seen("ingress_default_host", hostKey) -%}
+            {%- var ingress = cand["ingress"] -%}
+            {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
+            {%- var path = map[string]any{"backend": defaultBackend} %}
+      # Ingress: {{ dig(ingress, "metadata", "namespace") | fallback("") }}/{{ dig(ingress, "metadata", "name") | fallback("") }} (defaultBackend → "{{ hostKey }}/")
+      {{ hostKey }}/ BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end -%}
+        {%- end -%}
       {%- end %}
 
   # ============================================================================
@@ -1164,3 +1189,223 @@ validationTests:
         target: rendering_error
         pattern: "https-gui\\(8443\\)"
         description: Error message must list the service's actual port names to aid debugging
+
+  test-ingress-default-backend-rules-less:
+    description: |
+      Ingress with only spec.defaultBackend (no rules) emits a "/"
+      catch-all entry in path-prefix.map pointing at the default backend
+      pool, and the backend pool itself gets generated. Routes any
+      request that didn't match a more-specific rule to that backend.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: fallback-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: only-default
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            defaultBackend:
+              service:
+                name: fallback-svc
+                port:
+                  number: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_only-default_svc_fallback-svc_http"
+        description: Backend pool for the default backend service is emitted
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^/ BACKEND:default_only-default_svc_fallback-svc_http$"
+        description: Catch-all "/" entry points at the default backend
+      - type: match_count
+        target: map:path-prefix.map
+        pattern: "(?m)^/ BACKEND:"
+        expected: "1"
+        description: Exactly one catch-all "/" entry (no duplicates)
+
+  test-ingress-default-backend-with-rules-per-host:
+    description: |
+      Ingress with both spec.rules (host: example.com) and
+      spec.defaultBackend emits a per-host catch-all "example.com/"
+      entry in path-prefix.map alongside the rule's entries. K8s spec:
+      requests matching the Ingress's host but no rule path go to
+      defaultBackend; requests to OTHER hosts must NOT be caught.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: rule-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 80
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: fallback-svc
+            namespace: default
+          spec:
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: with-default
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            defaultBackend:
+              service:
+                name: fallback-svc
+                port:
+                  number: 8080
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rule-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_with-default_svc_rule-svc_http"
+        description: Backend pool for the rule path is emitted
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend default_with-default_svc_fallback-svc_http"
+        description: Backend pool for the default backend is emitted
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^example\\.com/api/ BACKEND:default_with-default_svc_rule-svc_http$"
+        description: Rule path /api keeps its specific entry
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^example\\.com/ BACKEND:default_with-default_svc_fallback-svc_http$"
+        description: Per-host catch-all "example.com/" points at default backend
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "(?m)^/ BACKEND:default_with-default_svc_fallback-svc_http$"
+        description: No global "/" catch-all (defaultBackend is scoped to the Ingress's host, not all hosts)
+
+  test-ingress-default-backend-newest-wins-per-host:
+    description: |
+      Two Ingresses in different namespaces both declare defaultBackend
+      for the same host. HAProxy maps keep only one entry per key, so
+      we MUST pick deterministically; the newest Ingress wins per host
+      (matches operator intent on rollout + avoids stale-Ingress 503s
+      during scenario churn).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: old-svc
+            namespace: ns-old
+          spec:
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: new-svc
+            namespace: ns-new
+          spec:
+            ports:
+              - name: http
+                port: 8080
+                targetPort: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: older
+            namespace: ns-old
+            creationTimestamp: "2024-01-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            defaultBackend:
+              service:
+                name: old-svc
+                port:
+                  number: 8080
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /old
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: old-svc
+                          port:
+                            number: 8080
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: newer
+            namespace: ns-new
+            creationTimestamp: "2024-06-01T00:00:00Z"
+          spec:
+            ingressClassName: haproxy
+            defaultBackend:
+              service:
+                name: new-svc
+                port:
+                  number: 8080
+            rules:
+              - host: example.com
+                http:
+                  paths:
+                    - path: /new
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: new-svc
+                          port:
+                            number: 8080
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: map:path-prefix.map
+        pattern: "(?m)^example\\.com/ BACKEND:ns-new_newer_svc_new-svc_http$"
+        description: Per-host catch-all points at the newer Ingress's backend
+      - type: not_contains
+        target: map:path-prefix.map
+        pattern: "(?m)^example\\.com/ BACKEND:ns-old_older_svc_old-svc_http$"
+        description: Older Ingress's defaultBackend does NOT claim the host catch-all
+      - type: match_count
+        target: map:path-prefix.map
+        pattern: "(?m)^example\\.com/ BACKEND:"
+        expected: "1"
+        description: Exactly one catch-all entry for example.com (no duplicate-key collision)
