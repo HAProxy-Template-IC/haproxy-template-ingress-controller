@@ -53,7 +53,7 @@ ARG KUBECTL_VERSION=1.36.1
 # renovate: datasource=github-releases depName=mikefarah/yq
 ARG YQ_VERSION=4.53.2
 # renovate: datasource=github-releases depName=boumenot/gocover-cobertura
-ARG GOCOVER_COBERTURA_VERSION=1.4.0
+ARG GOCOVER_COBERTURA_VERSION=1.5.0
 
 # Install git (for go modules), Docker CLI, and other build dependencies
 RUN apt-get update \
