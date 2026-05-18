@@ -266,30 +266,46 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	// Add path resolver for file path resolution in templates
 	renderContext["pathResolver"] = s.pathResolver
 
-	// Build resources map from stores
-	// Resources are already converted (floats to ints) at storage time
+	// Build resources map from stores. Each wrapper gets the IndexBy
+	// the watcher used to build the underlying store; the wrapper uses
+	// it to build its per-render snapshot index so List/Fetch/GetSingle
+	// on one wrapper instance all observe the same store state. Without
+	// IndexBy, Fetch/GetSingle fall back to a live store read that can
+	// observe a state diverging from List() — the root cause of the
+	// conformance-suite flakes tracked in issue #45 (parallel resource
+	// creation racing the chart's per-render reads).
 	resources := make(map[string]templating.ResourceStore)
 	for _, name := range provider.StoreNames() {
 		store := provider.GetStore(name)
 		if store != nil {
+			var indexBy []string
+			if wr, ok := s.config.WatchedResources[name]; ok {
+				indexBy = wr.IndexBy
+			}
 			wrapper := &rendercontext.StoreWrapper{
 				Store:        store,
 				ResourceType: name,
 				Logger:       s.logger,
+				IndexBy:      indexBy,
 			}
 			resources[name] = wrapper
 		}
 	}
 	renderContext["resources"] = resources
 
-	// Add controller context with typed ResourceStore map
-	// Must match the type expected by templates: map[string]templating.ResourceStore
+	// Add controller context with typed ResourceStore map. The
+	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent
+	// with a fixed IndexBy of ["metadata.namespace", "metadata.name"]
+	// (see pkg/controller/resourcewatcher/watcher.go) — mirror that
+	// here so the wrapper's snapshot index agrees with the underlying
+	// store, same reason as the resources loop above.
 	controller := make(map[string]templating.ResourceStore)
 	if s.haproxyPodStore != nil {
 		controller["haproxy_pods"] = &rendercontext.StoreWrapper{
 			Store:        s.haproxyPodStore,
 			ResourceType: names.HAProxyPodsResourceType,
 			Logger:       s.logger,
+			IndexBy:      []string{"metadata.namespace", "metadata.name"},
 		}
 	}
 	renderContext["controller"] = controller

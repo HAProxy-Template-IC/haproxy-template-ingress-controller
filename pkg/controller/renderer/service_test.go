@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -398,4 +399,67 @@ func TestRenderService_Render_PathResolverAvailable(t *testing.T) {
 	require.NotNil(t, result)
 	// PathResolver should resolve to relative path
 	assert.Contains(t, result.HAProxyConfig, "# map path: maps/hosts.map")
+}
+
+// TestRenderService_buildRenderingContext_PropagatesIndexBy is a regression test
+// pinning that the production renderer constructs StoreWrappers WITH the
+// `IndexBy` slice from the corresponding `spec.watchedResources` entry. The
+// wrapper's `IndexBy` is what enables Fetch/GetSingle to read from the
+// per-render snapshot instead of bypassing to the live (potentially mutating)
+// store — without it, parallel resource creation during the conformance
+// suite produced inconsistent reads and intermittent render output. Issue #45
+// tracks the original symptom (a flaky `HTTPRouteRequestMultipleMirrors`
+// timeout and `TLSRouteHostnameIntersection` EOF), both traced back to this
+// gap.
+func TestRenderService_buildRenderingContext_PropagatesIndexBy(t *testing.T) {
+	indexBy := []string{"metadata.namespace", "metadata.name"}
+	cfg := &config.Config{
+		HAProxyConfig: config.HAProxyConfig{Template: "global\n  daemon\n"},
+		Dataplane:     testDataplaneConfig(),
+		WatchedResources: map[string]config.WatchedResource{
+			"ingresses": {
+				APIVersion: "networking.k8s.io/v1",
+				Resources:  "ingresses",
+				IndexBy:    indexBy,
+			},
+			// "tlsroutes" deliberately omitted to verify the lookup
+			// falls through cleanly when WatchedResources has no entry
+			// for a present store.
+		},
+	}
+	engine, err := templating.New(templating.EngineTypeScriggo,
+		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
+		nil, nil, nil)
+	require.NoError(t, err)
+
+	svc := NewRenderService(&RenderServiceConfig{
+		Engine:       engine,
+		Config:       cfg,
+		Logger:       slog.Default(),
+		Capabilities: defaultCapabilities(),
+	})
+	provider := &mockStoreProvider{
+		storeMap: map[string]stores.Store{
+			"ingresses": &mockTypedStore{},
+			"tlsroutes": &mockTypedStore{},
+		},
+	}
+
+	renderCtx, fileRegistry, statusPatches, renderedResources := svc.buildRenderingContext(context.Background(), provider)
+	require.NotNil(t, fileRegistry, "fileRegistry collector must be wired so templates can register dynamic aux files")
+	require.NotNil(t, statusPatches, "statusPatchCollector must be wired so filters_status.go can capture mutations")
+	require.NotNil(t, renderedResources, "renderedResourceCollector must be wired so k8sResources templates can emit owned resources")
+
+	resources, ok := renderCtx["resources"].(map[string]templating.ResourceStore)
+	require.True(t, ok, "renderCtx[\"resources\"] must be map[string]ResourceStore")
+
+	ing, ok := resources["ingresses"].(*rendercontext.StoreWrapper)
+	require.True(t, ok, "ingresses wrapper must be *StoreWrapper")
+	assert.Equal(t, indexBy, ing.IndexBy,
+		"StoreWrapper must carry the IndexBy from config.WatchedResources so Fetch/GetSingle stay on the per-render snapshot")
+
+	tls, ok := resources["tlsroutes"].(*rendercontext.StoreWrapper)
+	require.True(t, ok, "tlsroutes wrapper must be *StoreWrapper")
+	assert.Nil(t, tls.IndexBy,
+		"a store present without a matching WatchedResources entry has no IndexBy hint, so the wrapper must accept that gracefully")
 }
