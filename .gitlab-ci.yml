@@ -1675,6 +1675,20 @@ test-ingress-conformance:
         kubectl get pods -A -l app.kubernetes.io/name=ingress-conformance-echo -o yaml > "$LOG_DIR/echo-pods.yaml" 2>&1 || true
         kubectl get services -A -o yaml > "$LOG_DIR/services.yaml" 2>&1 || true
         kubectl get pods -A -o wide > "$LOG_DIR/pods.log" 2>&1 || true
+
+        # Cluster-wide events + per-namespace pod descriptions. Three
+        # consecutive ingress-conformance failures (issue #45 follow-up)
+        # showed `waiting for service endpoints available: timed out`
+        # in the test step, but the existing artifact set lacks the
+        # kubelet event chain (`Pulling image`, `Failed to pull image`,
+        # `Back-off restarting failed container`) that would explain
+        # *why* the backend pod didn't reach Ready. Same capture as
+        # the gateway-conformance after_script — kept in lockstep so
+        # both flake classes get the same diagnostic.
+        kubectl get events -A --sort-by='.lastTimestamp' > "$LOG_DIR/events.log" 2>&1 || true
+        for ns in $(kubectl get ns -o jsonpath='{range .items[?(@.metadata.name=~"ingress-conformance.*")]}{.metadata.name} {end}' 2>/dev/null); do
+          kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
+        done
       fi
     - kind delete cluster --name haptic-e2e || true
   artifacts:
