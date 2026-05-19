@@ -18,6 +18,7 @@ templateSnippets:
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerProtocol, ListenerProtocolOr -%}
       {% macro GenerateGatewayStatusPatches(gateways []any) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
@@ -101,7 +102,7 @@ templateSnippets:
             var routeKind = em["kind"].(string)
             var route = em["route"]
             var needsTLSProtocol = em["needsTLSProtocol"].(bool)
-            var routeNs = dig(route, "metadata", "namespace") | fallback("") | tostring()
+            var routeNs = ResourceNamespace(route)
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
@@ -174,7 +175,7 @@ templateSnippets:
                 //       listeners list TLSRoute as a default kind. An
                 //       HTTP / HTTPS listener can never accept TLSRoute
                 //       even without explicit allowedRoutes.kinds.
-                var listenerProtoCount = tostring(dig(listener, "protocol") | fallback("HTTP"))
+                var listenerProtoCount = ListenerProtocolOr(listener, "HTTP")
                 if needsTLSProtocol && listenerProtoCount != "TLS" {
                   continue
                 }
@@ -270,11 +271,9 @@ templateSnippets:
 
         {%- for _, gateway := range gateways %}
           {%%
-            var namespace = dig(gateway, "metadata", "namespace") | fallback("")
-            var name = dig(gateway, "metadata", "name") | fallback("")
+            var nsStr = ResourceNamespace(gateway)
+            var nameStr = ResourceName(gateway)
             var generation = dig(gateway, "metadata", "generation") | fallback(0)
-            var nsStr = tostring(namespace)
-            var nameStr = tostring(name)
 
             // SupportGatewayInfrastructurePropagation (Standard channel).
             //
@@ -587,7 +586,7 @@ templateSnippets:
             if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
               var hasHTTPSListener = false
               for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-                var lProto = tostring(dig(listener, "protocol") | fallback(""))
+                var lProto = ListenerProtocol(listener)
                 if lProto == "HTTPS" {
                   hasHTTPSListener = true
                   break
@@ -1304,7 +1303,7 @@ templateSnippets:
               if tostring(dig(pRef, "name") | fallback("")) != nameStr {
                 continue
               }
-              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+              var lsNs = ResourceNamespace(ls)
               var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
               if pNs != nsStr {
                 continue
@@ -1326,7 +1325,7 @@ templateSnippets:
               // only when at least one entry is `accepted=true` (i.e.
               // not in conflict and not invalid). LSes with no cache
               // entry fall through to attached (cache miss = optimistic).
-              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+              var lsName = ResourceName(ls)
               var lsKey = lsNs + "/" + lsName
               var listenersTotal = len(toSlice(dig(ls, "spec", "listeners") | fallback([]any{})))
               if listenersTotal == 0 {
@@ -1606,6 +1605,7 @@ templateSnippets:
       {%- import "util-condition-transition-time" for TopLevelTransitionTime, ListenerTransitionTime -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName -%}
       {{ render "util-effective-listeners" }}
       {#- Read the per-LS statuses sub-key off the unified
           effectiveListeners cache populated by util-effective-listeners.
@@ -1628,8 +1628,8 @@ templateSnippets:
       %%}
       {%- for _, ls := range resources.listenersets.List() %}
         {%%
-          var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
-          var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+          var lsNs = ResourceNamespace(ls)
+          var lsName = ResourceName(ls)
           var lsKey = lsNs + "/" + lsName
           var lsGen = dig(ls, "metadata", "generation") | fallback(0)
 
@@ -1673,7 +1673,7 @@ templateSnippets:
           for _, entry := range routeKindsForCount {
             var em = entry.(map[string]any)
             var route = em["route"]
-            var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+            var routeNs = ResourceNamespace(route)
             for _, pr := range dig(route, "spec", "parentRefs") | toSlice() {
               var prGroup = tostring(dig(pr, "group") | fallback("gateway.networking.k8s.io"))
               var prKind = tostring(dig(pr, "kind") | fallback("Gateway"))

@@ -139,6 +139,191 @@ templateSnippets:
       {%- end macro %}
 
   # ============================================================================
+  # SSL Passthrough backend emission — shared macro
+  #
+  # The three protocol libraries each emit `backend ... mode tcp` blocks for
+  # entries previously stashed in their own SSL-passthrough cache slot by
+  # BuildAnnotationSSLPassthrough. The loop is mechanical and identical
+  # across libraries — only three strings differ:
+  #
+  #   - cacheKey      : shared.ComputeIfAbsent key the data lives under
+  #   - firstSeenKey  : per-library first_seen() prefix that dedupes one
+  #                     backend block per (ns/ingress) across hosts
+  #   - commentLabel  : vendor name in the leading "# <label>/..." comment
+  # ============================================================================
+
+  util-render-annotation-ssl-passthrough-backends:
+    template: |
+      {#-
+        Macro: RenderAnnotationSSLPassthroughBackends(cacheKey, firstSeenKey, commentLabel)
+
+        Renders one `backend <name> mode tcp` block per entry in
+        sslData["backends"] (built earlier by BuildAnnotationSSLPassthrough),
+        deduped per (ns/ingress) via the supplied firstSeenKey. No-op when
+        the cache slot is empty.
+      -#}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- macro RenderAnnotationSSLPassthroughBackends(cacheKey string, firstSeenKey string, commentLabel string) %}
+        {%- var rawVal, _ = shared.ComputeIfAbsent(cacheKey, func() any { return nil }) %}
+        {%- if rawVal == nil %}{% return %}{% end %}
+        {%- var sslData = rawVal.(map[string]any) %}
+        {%- var backends = sslData["backends"].([]any) %}
+        {%- for _, backendInfo := range backends %}
+          {%- var info = backendInfo.(map[string]any) %}
+          {%- var beNs = info["namespace"] | tostring() %}
+          {%- var beIngress = info["ingress"] | tostring() %}
+          {%- var beName = info["name"] | tostring() %}
+          {%- var svcName = info["svcName"] | tostring() %}
+          {%- var svcPort = info["svcPort"] | toint() %}
+          {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
+          {%- if first_seen(firstSeenKey, beNs + "/" + beIngress) %}
+      # {{ commentLabel }}/backends-ssl-passthrough
+
+      backend {{ beName }}
+          mode tcp
+          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
+          {%- end %}
+        {%- end %}
+      {%- end macro %}
+
+  # ============================================================================
+  # HSTS / SSL-redirect — shared macros
+  #
+  # Both annotation libraries (haproxy-ingress, nginx-ingress) emit the
+  # same HAProxy directives for HSTS and SSL-redirect, differing only in
+  # annotation key prefixes, default values, and the comment label. The
+  # macros below own the loop bodies; callers just feed in the per-vendor
+  # annotation keys plus any vendor-specific code-resolution logic.
+  # ============================================================================
+
+  util-emit-annotation-hsts:
+    template: |
+      {#-
+        Macro: EmitAnnotationHSTS(
+          ingress, enabledAnn, maxAgeAnn, subdomainsAnn, preloadAnn,
+          defaultMaxAge, commentLabel
+        )
+
+        Reads the HSTS annotation set off the ingress and emits the
+        `http-response set-header Strict-Transport-Security` rule scoped
+        to the ingress's hosts. No-op when the enabledAnn is not "true"
+        or the ingress has no hosts.
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- macro EmitAnnotationHSTS(ingress any, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string, commentLabel string) %}
+        {%- var enabled = ingress | dig("metadata", "annotations", enabledAnn) | fallback("") | tostring() %}
+        {%- if enabled == "true" %}
+          {%- var hosts = []any{} %}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- var h = rule | dig("host") %}
+            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- end %}
+          {%- if len(hosts) > 0 %}
+            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- var key = ns + "/" + name %}
+            {%- var maxAge = ingress | dig("metadata", "annotations", maxAgeAnn) | fallback(defaultMaxAge) | tostring() %}
+            {%- var includeSubdomains = ingress | dig("metadata", "annotations", subdomainsAnn) | fallback("") | tostring() %}
+            {%- var preload = ingress | dig("metadata", "annotations", preloadAnn) | fallback("") | tostring() %}
+            {%- var hstsValue = "max-age=" + maxAge %}
+            {%- if includeSubdomains == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
+            {%- if preload == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
+      # {{ commentLabel }} ({{ key }})
+      http-response set-header Strict-Transport-Security "{{ hstsValue }}" if { ssl_fc } {{ HostMatchCondition(hosts) }}
+          {%- end %}
+        {%- end %}
+      {%- end macro %}
+
+  util-emit-annotation-cors:
+    template: |
+      {#-
+        Macro: EmitAnnotationCORS(
+          ingress, prefix, enabledAnn, defaultMaxAge, commentLabel
+        )
+
+        Emits the four standard CORS response headers (Allow-Origin,
+        Allow-Methods, Allow-Headers, Max-Age) plus the conditional
+        Allow-Credentials and Expose-Headers headers, scoped to the
+        ingress's hosts.
+
+        Args:
+          prefix        — annotation key prefix (e.g.
+                          "haproxy-ingress.github.io" or
+                          "nginx.ingress.kubernetes.io")
+          enabledAnn    — full annotation key that gates emission
+                          (e.g. "<prefix>/cors-enable" or "<prefix>/enable-cors";
+                          libraries differ on the suffix)
+          defaultMaxAge — default value for the Max-Age header when
+                          the cors-max-age annotation is unset
+
+        The structurally-divergent haproxytech CORS (uses
+        http-request capture / set-header instead of add-header,
+        validates origin=*+credentials=true conflict) lives in
+        haproxytech.yaml directly and does NOT use this macro.
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- macro EmitAnnotationCORS(ingress any, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
+        {%- var corsEnabled = ingress | dig("metadata", "annotations", enabledAnn) | fallback("") | tostring() %}
+        {%- if corsEnabled == "true" %}
+          {%- var hosts = []any{} %}
+          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+            {%- var h = rule | dig("host") %}
+            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- end %}
+          {%- if len(hosts) > 0 %}
+            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- var key = ns + "/" + name %}
+            {%- var origin = ingress | dig("metadata", "annotations", prefix + "/cors-allow-origin") | fallback("*") | tostring() %}
+            {%- var methods = ingress | dig("metadata", "annotations", prefix + "/cors-allow-methods") | fallback("GET, PUT, POST, DELETE, PATCH, OPTIONS") | tostring() %}
+            {%- var headers = ingress | dig("metadata", "annotations", prefix + "/cors-allow-headers") | fallback("DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization") | tostring() %}
+            {%- var credentials = ingress | dig("metadata", "annotations", prefix + "/cors-allow-credentials") | fallback("") | tostring() %}
+            {%- var exposeHeaders = ingress | dig("metadata", "annotations", prefix + "/cors-expose-headers") | fallback("") | tostring() %}
+            {%- var maxAge = ingress | dig("metadata", "annotations", prefix + "/cors-max-age") | fallback(defaultMaxAge) | tostring() %}
+            {%- var cond = HostMatchCondition(hosts) %}
+      # {{ commentLabel }} ({{ key }})
+      http-response add-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
+      http-response add-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} METH_OPTIONS
+      http-response add-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} METH_OPTIONS
+            {% if credentials == "true" %}
+      http-response add-header Access-Control-Allow-Credentials 'true' if {{ cond }}
+            {% end %}
+            {% if exposeHeaders != "" %}
+      http-response add-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }}
+            {% end %}
+          {%- end %}
+        {%- end %}
+      {%- end macro %}
+
+  util-emit-annotation-ssl-redirect:
+    template: |
+      {#-
+        Macro: EmitAnnotationSSLRedirect(ingress, code, commentLabel)
+
+        Emits the `http-request redirect scheme https code <code> if
+        !{ ssl_fc } <host-match>` rule scoped to the ingress's hosts.
+        The caller pre-computes `code` because the resolution rule
+        varies across libraries — haproxy-ingress reads a single
+        `ssl-redirect-code` annotation, nginx-ingress picks between 301
+        and 308 based on `force-ssl-redirect`.
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- macro EmitAnnotationSSLRedirect(ingress any, code string, commentLabel string) %}
+        {%- var hosts = []any{} %}
+        {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
+          {%- var h = rule | dig("host") %}
+          {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+        {%- end %}
+        {%- if len(hosts) > 0 %}
+          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
+          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+      # {{ commentLabel }} ({{ ns }}/{{ name }})
+      http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
+        {%- end %}
+      {%- end macro %}
+
+  # ============================================================================
   # IP Allow/Deny ACL — shared macro
   #
   # All three protocol libraries implement CIDR-based source-range access

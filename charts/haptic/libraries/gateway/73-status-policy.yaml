@@ -2,11 +2,12 @@ templateSnippets:
   util-generate-backendtlspolicy-status-patches:
     template: |
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName -%}
       {% macro GenerateBackendTLSPolicyStatusPatches(policies []any, controllerName string) %}
         {%- for _, policy := range policies %}
           {%%
-            var policyNs = tostring(dig(policy, "metadata", "namespace") | fallback(""))
-            var policyName = tostring(dig(policy, "metadata", "name") | fallback(""))
+            var policyNs = ResourceNamespace(policy)
+            var policyName = ResourceName(policy)
             var generation = dig(policy, "metadata", "generation") | fallback(0)
             var apiVersion = "gateway.networking.k8s.io/v1"
             var kind = "BackendTLSPolicy"
@@ -123,8 +124,8 @@ templateSnippets:
               var trName = tostring(dig(tr, "name") | fallback(""))
               var trSec = tostring(dig(tr, "sectionName") | fallback(""))
               for _, other := range resources.backendtlspolicies.List() {
-                var otherNs = tostring(dig(other, "metadata", "namespace") | fallback(""))
-                var otherName = tostring(dig(other, "metadata", "name") | fallback(""))
+                var otherNs = ResourceNamespace(other)
+                var otherName = ResourceName(other)
                 var otherKey = otherNs + "/" + otherName
                 if otherKey == policyKey || otherNs != policyNs {
                   continue
@@ -191,7 +192,7 @@ templateSnippets:
                 continue
               }
               for _, route := range resources.httproutes.List() {
-                var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+                var routeNs = ResourceNamespace(route)
                 if routeNs != policyNs {
                   continue
                 }

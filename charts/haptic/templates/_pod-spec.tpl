@@ -19,9 +19,14 @@ Workload-specific concerns are NOT rendered here; the caller still emits:
 - serviceAccountName (workload-specific helper call)
 
 Output is at zero base indent; callers `nindent` it to fit their YAML position
-(typically `nindent 6` because pod.spec sits at 6-space indent).
+(typically `nindent 6` because pod.spec sits at 6-space indent). Internal
+whitespace is already trimmed, so callers can pipe straight into `nindent`.
 */}}
 {{- define "haptic.podSpec" -}}
+{{- include "haptic.podSpec.fields" . | trim -}}
+{{- end -}}
+
+{{- define "haptic.podSpec.fields" -}}
 {{- $ps := . -}}
 {{- with $ps.imagePullSecrets }}
 imagePullSecrets:

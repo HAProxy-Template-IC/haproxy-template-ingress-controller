@@ -80,6 +80,10 @@ templateSnippets:
       -#}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
       {%- import "util-crtlist-line" for CrtListLine %}
+      {%- import "util-resource-helpers" for
+          ResourceNamespace, ResourceName,
+          ListenerKey, ListenerProtocol, ListenerName, ListenerHostname,
+          ResolveCertRefKey %}
       {{ render "util-tls-cert-by-secret" -}}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {#- Per-listener mTLS state populated by
@@ -97,43 +101,36 @@ templateSnippets:
 
       {%- if resources != nil && resources.gateways != nil %}
         {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
-          {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+          {%- var gwNs = ResourceNamespace(gw) %}
+          {%- var gwName = ResourceName(gw) %}
           {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-            {%- var lProto = tostring(dig(listener, "protocol") | fallback("")) %}
-            {%- if lProto == "HTTPS" %}
-              {%- var lName = tostring(dig(listener, "name") | fallback("")) %}
-              {%- var lHostname = tostring(dig(listener, "hostname") | fallback("")) %}
-              {%- var blockedKey = gwNs + "/" + gwName + "/" + lName %}
-              {%- var isBlocked = mtlsBlocked[blockedKey] != nil %}
+            {%- if ListenerProtocol(listener) == "HTTPS" %}
+              {%- var lName = ListenerName(listener) %}
+              {%- var lHostname = ListenerHostname(listener) %}
+              {%- var listenerKey = ListenerKey(gwNs, gwName, lName) %}
+              {%- var isBlocked = mtlsBlocked[listenerKey] != nil %}
 
               {%- if !isBlocked && lName != "" %}
                 {#- Resolve the listener's cert. The chart's existing
                     Gateway TLS path takes the FIRST entry of
                     `tls.certificateRefs`; do the same here so
                     behaviour matches features-150's view. -#}
-                {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() %}
-                {%- if len(certRefs) > 0 %}
-                  {%- var cr = certRefs[0] %}
-                  {%- var crNs = tostring(dig(cr, "namespace") | fallback(gwNs)) %}
-                  {%- var crName = tostring(dig(cr, "name") | fallback("")) %}
-                  {%- var certKey = crNs + "/" + crName %}
-                  {%- if certBySecret[certKey] != nil %}
-                    {%- var tcm = certBySecret[certKey].(map[string]any) %}
-                    {%- var certFilename = tostring(tcm["sanitized_filename"] | fallback(crNs + "_" + crName + ".pem")) %}
+                {%- var certKey = ResolveCertRefKey(listener, gwNs) %}
+                {%- if certKey != "" && certBySecret[certKey] != nil %}
+                  {%- var tcm = certBySecret[certKey].(map[string]any) %}
+                  {%- var certFilename = tostring(tcm["sanitized_filename"] | fallback(replace(certKey, "/", "_") + ".pem")) %}
 
-                    {#- mTLS resolution: per-listener key
-                        `<gwNs>/<gwName>/<listenerName>` so each
-                        listener sees its own resolved validation
-                        regardless of overlapping hostnames with
-                        sibling Gateways. -#}
-                    {%- var mtlsCfg = perListenerMTLS[gwNs + "/" + gwName + "/" + lName] %}
-                    {%- var content = CrtListLine(certFilename, mtlsCfg, lHostname) + "\n" %}
-                    {%- var fname = CrtlistName(gwNs, gwName, lName) %}
-                    {%- var _, regErr = fileRegistry.Register("crt-list", fname, content) %}
-                    {%- if regErr != nil %}
-                      {{ fail("failed to register per-listener crt-list " + fname + ": " + tostring(regErr)) }}
-                    {%- end %}
+                  {#- mTLS resolution: per-listener key
+                      `<gwNs>/<gwName>/<listenerName>` so each
+                      listener sees its own resolved validation
+                      regardless of overlapping hostnames with
+                      sibling Gateways. -#}
+                  {%- var mtlsCfg = perListenerMTLS[listenerKey] %}
+                  {%- var content = CrtListLine(certFilename, mtlsCfg, lHostname) + "\n" %}
+                  {%- var fname = CrtlistName(gwNs, gwName, lName) %}
+                  {%- var _, regErr = fileRegistry.Register("crt-list", fname, content) %}
+                  {%- if regErr != nil %}
+                    {{ fail("failed to register per-listener crt-list " + fname + ": " + tostring(regErr)) }}
                   {%- end %}
                 {%- end %}
               {%- end %}

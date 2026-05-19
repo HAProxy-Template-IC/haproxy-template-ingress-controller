@@ -68,6 +68,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
+Common labels combined with operator-supplied .Values.commonLabels. Use this
+helper wherever a resource's metadata.labels block emits the chart's labels
+and then appends commonLabels — collapses the two-step pattern (an
+`include "haptic.labels"` line plus a separate `with .Values.commonLabels`
+block) into a single call.
+*/}}
+{{- define "haptic.labels.withCommon" -}}
+{{ include "haptic.labels" . }}
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
 Selector labels
 */}}
 {{- define "haptic.selectorLabels" -}}

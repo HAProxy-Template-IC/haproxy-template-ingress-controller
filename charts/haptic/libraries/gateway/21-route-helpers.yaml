@@ -6,6 +6,80 @@ templateSnippets:
       gtw_{{ route | dig("metadata", "namespace") | fallback("") }}_{{ route | dig("metadata", "name") | fallback("") }}_{{ backend | dig("name") | fallback("") }}_{{ backend | dig("port") | fallback("") }}
       {%- end macro -%}
 
+  util-resource-helpers:
+    template: |
+      {#-
+        Resource metadata & key-building helpers.
+
+        Scriggo macros are text-typed, so every helper returns a string.
+        For numeric fields (listener.port) callers still wrap with toint().
+
+        Usage:
+          {%- import "util-resource-helpers" for
+                ResourceNamespace, ResourceName,
+                GatewayKey, ListenerKey,
+                ListenerProtocol, ListenerName, ListenerHostname,
+                ResolveCertRefKey -%}
+          var gwNs    = ResourceNamespace(gw)
+          var gwName  = ResourceName(gw)
+          var gwKey   = GatewayKey(gwNs, gwName)
+          var lProto  = ListenerProtocol(listener)
+          var lName   = ListenerName(listener)
+          var lHost   = ListenerHostname(listener)
+          var listKey = ListenerKey(gwNs, gwName, lName)
+          var certKey = ResolveCertRefKey(listener, gwNs)  // "" if no certRefs
+      -#}
+      {%- macro ResourceNamespace(r any) string -%}
+      {{- tostring(dig(r, "metadata", "namespace") | fallback("")) -}}
+      {%- end macro -%}
+
+      {%- macro ResourceName(r any) string -%}
+      {{- tostring(dig(r, "metadata", "name") | fallback("")) -}}
+      {%- end macro -%}
+
+      {%- macro GatewayKey(ns string, name string) string -%}
+      {{- ns -}}/{{- name -}}
+      {%- end macro -%}
+
+      {%- macro ListenerKey(gwNs string, gwName string, listenerName string) string -%}
+      {{- gwNs -}}/{{- gwName -}}/{{- listenerName -}}
+      {%- end macro -%}
+
+      {%- macro ListenerProtocol(listener any) string -%}
+      {{- tostring(dig(listener, "protocol") | fallback("")) -}}
+      {%- end macro -%}
+
+      {#- ListenerProtocolOr — like ListenerProtocol but with a caller-supplied
+          fallback for listeners that omit `protocol`. Use "HTTP" when the
+          enclosing logic treats a missing protocol as HTTP (matches the
+          Gateway API default), "" when missing should be distinguished from
+          any concrete value. -#}
+      {%- macro ListenerProtocolOr(listener any, defaultProto string) string -%}
+      {{- tostring(dig(listener, "protocol") | fallback(defaultProto)) -}}
+      {%- end macro -%}
+
+      {%- macro ListenerName(listener any) string -%}
+      {{- tostring(dig(listener, "name") | fallback("")) -}}
+      {%- end macro -%}
+
+      {%- macro ListenerHostname(listener any) string -%}
+      {{- tostring(dig(listener, "hostname") | fallback("")) -}}
+      {%- end macro -%}
+
+      {#- ResolveCertRefKey — extract the first cert ref as "<crNs>/<crName>".
+          Returns "" when the listener has no tls.certificateRefs. Caller
+          decides whether to look the key up in the shared certBySecret cache
+          and what to do on a miss. -#}
+      {%- macro ResolveCertRefKey(listener any, defaultNs string) string -%}
+      {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() -%}
+      {%- if len(certRefs) > 0 -%}
+        {%- var cr = certRefs[0] -%}
+        {%- var crNs = tostring(dig(cr, "namespace") | fallback(defaultNs)) -%}
+        {%- var crName = tostring(dig(cr, "name") | fallback("")) -%}
+        {{- crNs -}}/{{- crName -}}
+      {%- end -%}
+      {%- end macro -%}
+
   util-route-condition:
     template: |
       {#-

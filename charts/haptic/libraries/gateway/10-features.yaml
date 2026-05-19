@@ -47,18 +47,92 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  # NOTE: The historical `features-090-gateway-listener-ports-service`
-  # snippet has been removed. Its responsibility (folding non-default
-  # Gateway listener ports into the chart's HAProxy Service) is now
-  # handled declaratively by the `k8sResources.haproxy-service` template
-  # in `libraries/base.yaml`, which renders the Service end-to-end from
-  # listener state — so there is no longer a partial-SSA patch to
-  # contribute entries to.
-
   # Register Gateway TLS Terminate mode certificates with SSL infrastructure
+  # Pass 1 of the Gateway TLS cert pipeline: walk every
+  # (gateway, listener, certRef) triple and aggregate per-secret
+  # metadata (SNI patterns, listener ports, default-cert eligibility).
+  # Lives in its own snippet so features-100-gateway-tls only contains
+  # the emission (Pass 2) — and so the aggregation runs once per render
+  # via shared.ComputeIfAbsent even if other snippets read the result.
+  util-aggregate-gateway-cert-metadata:
+    template: |
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ListenerHostname -%}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gatewayCertAggregates", func() any {
+          var certAggregates = map[string]map[string]any{}
+          for _, gateway := range resources.gateways.List() {
+            var gwSpec = gateway | dig("spec")
+            if gwSpec == nil {
+              continue
+            }
+            var nsStr = ResourceNamespace(gateway)
+            for _, listener := range gwSpec | dig("listeners") | toSlice() {
+              var listenerTls = listener | dig("tls")
+              var tlsMode = listenerTls | dig("mode") | fallback("")
+              // Gateway API: tls.mode defaults to Terminate when
+              // unspecified. Skip only when explicitly set to a
+              // non-Terminate value (Passthrough is handled
+              // separately by the SSL passthrough feature).
+              if listenerTls == nil || (tlsMode != "" && tlsMode != "Terminate") {
+                continue
+              }
+              for _, certRef := range listenerTls | dig("certificateRefs") | toSlice() {
+                var certKind = certRef | dig("kind") | fallback("Secret")
+                if certKind != "Secret" {
+                  continue
+                }
+                var certName = certRef | dig("name") | fallback("")
+                var certNamespace = certRef | dig("namespace") | fallback(nsStr)
+                var refNsStr = tostring(certNamespace)
+                // Cross-namespace gate. Same-namespace refs are always
+                // permitted (no grant needed); cross-ns refs without a
+                // matching ReferenceGrant are skipped (the listener-status
+                // path elsewhere surfaces this as ResolvedRefs=False
+                // /RefNotPermitted).
+                if refNsStr != nsStr {
+                  if ReferenceGrantPermitted(
+                    "gateway.networking.k8s.io", "Gateway", nsStr,
+                    "", "Secret", refNsStr, tostring(certName)) != "true" {
+                    continue
+                  }
+                }
+                var secretKey = refNsStr + "/" + tostring(certName)
+                var existing = certAggregates[secretKey]
+                if existing == nil {
+                  certAggregates[secretKey] = map[string]any{
+                    "secret_namespace":   certNamespace,
+                    "secret_name":        certName,
+                    "sni_patterns":       []any{},
+                    "is_gateway_default": false,
+                    "listener_ports":     []any{},
+                  }
+                  existing = certAggregates[secretKey]
+                }
+                var listenerHostnameStr = ListenerHostname(listener)
+                if listenerHostnameStr != "" {
+                  existing["sni_patterns"] = append(existing["sni_patterns"].([]any), listenerHostnameStr)
+                } else {
+                  // Listener with no hostname → cert is a default
+                  // candidate (per spec, any SNI accepted).
+                  existing["is_gateway_default"] = true
+                }
+                // Track ports the cert is bound to, so the bind-decision
+                // pass downstream knows which listener ports to enable.
+                var listenerPort = toint(listener | dig("port") | fallback(0))
+                if listenerPort > 0 {
+                  existing["listener_ports"] = append(existing["listener_ports"].([]any), listenerPort)
+                }
+                certAggregates[secretKey] = existing
+              }
+            }
+          }
+          return certAggregates
+        })
+      %%}
+
   features-100-gateway-tls:
     template: |
-      {% import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
       {#- Register TLS certificates from Gateway listeners with TLS mode "Terminate" #}
       {#- Dynamically generates certificate files using fileRegistry.Register() #}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
@@ -75,18 +149,12 @@ templateSnippets:
                     name: example-tls
                     namespace: default  # optional, defaults to Gateway namespace
       #}
-      {#- Two-pass cert registration:
-          Pass 1: walk every (gateway, listener, certRef) triple to compute
-                  a per-secret aggregate — which SNIs it should bind, and
-                  whether at least one of its listeners has no hostname
-                  (in which case it qualifies as the chart's TLS default).
-          Pass 2: emit one tlsCert entry per unique secret, with the
-                  aggregated sni_patterns and is_gateway_default.
-          The previous single-pass scheme used first_seen() to dedup
-          per-secret, which dropped the SNI patterns of every listener
-          after the first — so a Gateway whose listeners "https-A" and
-          "https-B" share a cert ended up with only "https-A"'s SNI
-          bound. Conformance HTTPRouteHTTPSListener exposes that gap.
+      {#- Two-pass cert registration. Pass 1 — walking every
+          (gateway, listener, certRef) triple to aggregate per-secret
+          (sni_patterns, listener_ports, is_gateway_default) — lives in
+          util-aggregate-gateway-cert-metadata. We render that snippet
+          to populate the shared cache, then load the result and emit
+          one tlsCert entry per unique secret here.
 
           Cross-namespace refs are gated by ReferenceGrant: a Gateway
           referencing a Secret in a different namespace requires a
@@ -94,85 +162,8 @@ templateSnippets:
           the Gateway and `to` matches the Secret. Without a matching
           grant the cert is skipped (status patch reflects this with
           ResolvedRefs=False/RefNotPermitted, set elsewhere). -#}
-      {%- var certAggregates = map[string]map[string]any{} %}
-      {%- for _, gateway := range resources.gateways.List() %}
-        {%%
-          var gwSpec = gateway | dig("spec")
-          if gwSpec == nil {
-            continue
-          }
-        %%}
-        {%- for _, listener := range gwSpec | dig("listeners") | toSlice() %}
-          {%%
-            var listenerTls = listener | dig("tls")
-            var tlsMode = listenerTls | dig("mode") | fallback("")
-            // Gateway API: tls.mode defaults to Terminate when
-            // unspecified. Skip only when explicitly set to a
-            // non-Terminate value (Passthrough is handled
-            // separately by the SSL passthrough feature).
-            if listenerTls == nil || (tlsMode != "" && tlsMode != "Terminate") {
-              continue
-            }
-          %%}
-          {%- for _, certRef := range listenerTls | dig("certificateRefs") | toSlice() %}
-            {%%
-              var gatewayNs = gateway | dig("metadata", "namespace") | fallback("")
-              var certNamespace = certRef | dig("namespace") | fallback(gatewayNs)
-              var certName = certRef | dig("name") | fallback("")
-
-              var certKind = certRef | dig("kind") | fallback("Secret")
-              if certKind != "Secret" {
-                continue
-              }
-
-              // Cross-namespace gate. Same-namespace refs are always
-              // permitted (no grant needed); cross-ns refs without a
-              // matching ReferenceGrant are skipped (the listener-status
-              // path elsewhere surfaces this as ResolvedRefs=False
-              // /RefNotPermitted).
-              var nsStr = tostring(gatewayNs)
-              var refNsStr = tostring(certNamespace)
-              if refNsStr != nsStr {
-                if ReferenceGrantPermitted(
-                  "gateway.networking.k8s.io", "Gateway", nsStr,
-                  "", "Secret", refNsStr, tostring(certName)) != "true" {
-                  continue
-                }
-              }
-
-              var secretKey = tostring(certNamespace) + "/" + tostring(certName)
-              var listenerHostname = listener | dig("hostname") | fallback("")
-              var listenerHostnameStr = tostring(listenerHostname)
-
-              var existing = certAggregates[secretKey]
-              if existing == nil {
-                certAggregates[secretKey] = map[string]any{
-                  "secret_namespace":   certNamespace,
-                  "secret_name":        certName,
-                  "sni_patterns":       []any{},
-                  "is_gateway_default": false,
-                  "listener_ports":     []any{},
-                }
-                existing = certAggregates[secretKey]
-              }
-              if listenerHostnameStr != "" {
-                existing["sni_patterns"] = append(existing["sni_patterns"].([]any), listenerHostnameStr)
-              } else {
-                // Listener with no hostname → cert is a default
-                // candidate (per spec, any SNI accepted).
-                existing["is_gateway_default"] = true
-              }
-              // Track ports the cert is bound to, so the bind-decision
-              // pass downstream knows which listener ports to enable.
-              var listenerPort = toint(listener | dig("port") | fallback(0))
-              if listenerPort > 0 {
-                existing["listener_ports"] = append(existing["listener_ports"].([]any), listenerPort)
-              }
-              certAggregates[secretKey] = existing
-            %%}
-          {%- end %}
-        {%- end %}
-      {%- end %}
+      {{ render "util-aggregate-gateway-cert-metadata" }}
+      {%- var certAggregates = shared.Get("gatewayCertAggregates").(map[string]map[string]any) %}
 
       {#- Pass 2: emit one tlsCert entry per unique secret. Keys sorted
           for deterministic ordering — Scriggo map iteration is not stable
@@ -239,6 +230,7 @@ templateSnippets:
 
   features-110-gateway-frontend-mtls:
     template: |
+      {%- import "util-resource-helpers" for ListenerKey -%}
       {{ render "util-effective-listeners" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var clientCertVerifyHosts = gf["clientCertVerifyHosts"].(map[string]any) %}
@@ -461,7 +453,7 @@ templateSnippets:
             // present the chart's default cert and answer handshakes.
             if hadValidationConfig && (caPath == "" || verifyMode == "") {
               if listenerName != "" {
-                mtlsBlockedListeners[gwNs + "/" + gwName + "/" + listenerName] = true
+                mtlsBlockedListeners[ListenerKey(gwNs, gwName, listenerName)] = true
               }
               continue
             }
@@ -500,6 +492,7 @@ templateSnippets:
 
   features-150-gateway-bind:
     template: |
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol, ListenerHostname, ListenerKey -%}
       {#-
         Gateway / ListenerSet contribution to the chart-static bind decision.
 
@@ -576,9 +569,9 @@ templateSnippets:
                 frontend to attach to. -#}
       {%- macro applyListener(gwNs string, gwName string, listener any) %}
       {%%
-        var lProto = tostring(dig(listener, "protocol") | fallback(""))
+        var lProto = ListenerProtocol(listener)
         var lPort = toint(dig(listener, "port") | fallback(0))
-        var lName = tostring(dig(listener, "name") | fallback(""))
+        var lName = ListenerName(listener)
         if lProto == "HTTP" {
           gf["needHTTPFrontend"] = true
           if lPort == httpPort {
@@ -648,7 +641,7 @@ templateSnippets:
             "gwNs":     gwNs,
             "gwName":   gwName,
             "name":     lName,
-            "hostname": tostring(dig(listener, "hostname") | fallback("")),
+            "hostname": ListenerHostname(listener),
             "mode":     lTlsMode,
           }
           pe["listeners"] = append(pe["listeners"].([]any), listenerEntry)
@@ -769,22 +762,3 @@ templateSnippets:
           gf["needHTTPSFrontend"] = true
         }
       %%}
-
-  # gateway/features-110-gateway-frontend-mtls:
-  #
-  # Implements GatewayFrontendClientCertificateValidation. When a Gateway
-  # carries `spec.tls.frontend.default.validation.caCertificateRefs` (or
-  # the per-port variant), HAProxy's bind line for that listener must
-  # carry `ca-file <path> verify required` so the TLS handshake demands
-  # a client certificate signed by the configured CA bundle.
-  #
-  # We piggyback on the existing per-SNI client-cert verify machinery
-  # in ssl.yaml: write the CA bundle into a registered file and
-  # register an entry in `clientCertVerifyHosts[sni]` for every
-  # SNI the listener exposes. The crt-list emitter picks up the
-  # ca-file/verify pair and adds it on the cert's crt-list line, so
-  # HAProxy applies the right CA per matched SNI.
-  #
-  # Per-port overrides are supported via spec.tls.frontend.perPort —
-  # a port entry's validation block replaces the default for any
-  # listener whose `port` matches.

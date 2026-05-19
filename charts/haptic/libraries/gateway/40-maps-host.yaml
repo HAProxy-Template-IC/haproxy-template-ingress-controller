@@ -24,6 +24,7 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname -%}
       {%- macro GenerateHostMap(routes []any, route_type string) -%}
       {%- for _, route := range routes %}
       {%%
@@ -60,7 +61,7 @@ templateSnippets:
             }
             resolvedGwCount = resolvedGwCount + 1
             for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-              var listenerName = tostring(dig(listener, "name") | fallback(""))
+              var listenerName = ListenerName(listener)
               if section != "" && section != listenerName {
                 continue
               }
@@ -68,14 +69,14 @@ templateSnippets:
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+              var listenerProto = ListenerProtocolOr(listener, "HTTP")
               var portSuffix = ""
               if listenerPort > 0 {
                 if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
                   portSuffix = ":" + tostring(listenerPort)
                 }
               }
-              var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+              var listenerHostname = ListenerHostname(listener)
               if len(routeHostnames) == 0 {
                 effectiveHosts[listenerHostname + portSuffix] = true
               } else if listenerHostname == "" {
@@ -106,7 +107,7 @@ templateSnippets:
           }
           resolvedGwCount = resolvedGwCount + 1
           for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            var listenerName = tostring(dig(listener, "name") | fallback(""))
+            var listenerName = ListenerName(listener)
             if section != "" && section != listenerName {
               continue
             }
@@ -116,14 +117,14 @@ templateSnippets:
             }
             // Per-port suffix for non-default HTTP/HTTPS ports, see
             // analyze_routes for the same logic.
-            var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+            var listenerProto = ListenerProtocolOr(listener, "HTTP")
             var portSuffix = ""
             if listenerPort > 0 {
               if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
                 portSuffix = ":" + tostring(listenerPort)
               }
             }
-            var listenerHostname = tostring(dig(listener, "hostname") | fallback(""))
+            var listenerHostname = ListenerHostname(listener)
             // Listener isolation (catch-all only — see analyze_routes for
             // the rationale): drop a route hostname when a sibling listener
             // on the same Gateway claims it more specifically.
@@ -135,11 +136,11 @@ templateSnippets:
                 var rhStr = tostring(rh)
                 var ownedBySibling = false
                 for _, sibling := range dig(gw, "spec", "listeners") | toSlice() {
-                  var sibName = tostring(dig(sibling, "name") | fallback(""))
+                  var sibName = ListenerName(sibling)
                   if sibName == listenerName {
                     continue
                   }
-                  var sibHost = tostring(dig(sibling, "hostname") | fallback(""))
+                  var sibHost = ListenerHostname(sibling)
                   if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank {
                     ownedBySibling = true
                     break
@@ -218,6 +219,7 @@ templateSnippets:
 
   map-host-regex-500-gateway:
     template: |
+      {%- import "util-resource-helpers" for ListenerHostname -%}
       {#-
         Wildcard listener hostnames as regex entries.
 
@@ -249,7 +251,7 @@ templateSnippets:
         var suffixEntries = []any{}
         for _, gw := range resources.gateways.List() {
           for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            var h = tostring(dig(listener, "hostname") | fallback(""))
+            var h = ListenerHostname(listener)
             if !hasPrefix(h, "*.") {
               continue
             }

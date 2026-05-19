@@ -558,6 +558,7 @@ templateSnippets:
       -#}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
+      {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname %}
       {%- macro AnalyzeRoutes(result map[string]any) %}
         {%- var allRoutes = []any{} %}
 
@@ -675,7 +676,7 @@ templateSnippets:
                   }
                 %%}
                 {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-                  {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                  {%- var listenerName = ListenerName(listener) %}
                   {%- if section == "" || section == listenerName %}
                     {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                     {#- parentRef.port pin: per Gateway API spec, attach
@@ -692,14 +693,14 @@ templateSnippets:
                           inbound Host header carries the port verbatim for
                           non-default ports, so the host-map lookup with
                           un-stripped Host directly matches `<host>:<port>`. -#}
-                      {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                      {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                       {%- var portSuffix = "" %}
                       {%- if listenerPort > 0 %}
                         {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
                           {%- portSuffix = ":" + tostring(listenerPort) %}
                         {%- end %}
                       {%- end %}
-                      {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {%- var listenerHostname = ListenerHostname(listener) %}
                       {#- Listener isolation: per Gateway API spec, when a
                           route on a less-specific listener (e.g. catch-all)
                           declares a hostname that's more-specifically owned
@@ -809,7 +810,7 @@ templateSnippets:
                 {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
                   {%- resolvedGwCount = resolvedGwCount + 1 %}
                   {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                    {%- var listenerName = ListenerName(listener) %}
                     {%- if section == "" || section == listenerName %}
                       {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                       {#- Listener-level admission gate (LS branch):
@@ -820,14 +821,14 @@ templateSnippets:
                           condition so the surrounding end-block
                           structure stays unchanged. -#}
                       {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
-                        {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                        {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                         {%- var portSuffix = "" %}
                         {%- if listenerPort > 0 %}
                           {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
                             {%- portSuffix = ":" + tostring(listenerPort) %}
                           {%- end %}
                         {%- end %}
-                        {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                        {%- var listenerHostname = ListenerHostname(listener) %}
                         {%- if len(routeHostnames) == 0 %}
                           {%- effectiveHosts[listenerHostname + portSuffix] = true %}
                         {%- else if listenerHostname == "" %}
@@ -1031,7 +1032,7 @@ templateSnippets:
                   }
                 %%}
                 {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-                  {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                  {%- var listenerName = ListenerName(listener) %}
                   {%- if section == "" || section == listenerName %}
                     {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                     {#- parentRef.port pin: per Gateway API spec, attach
@@ -1048,14 +1049,14 @@ templateSnippets:
                           inbound Host header carries the port verbatim for
                           non-default ports, so the host-map lookup with
                           un-stripped Host directly matches `<host>:<port>`. -#}
-                      {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                      {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                       {%- var portSuffix = "" %}
                       {%- if listenerPort > 0 %}
                         {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
                           {%- portSuffix = ":" + tostring(listenerPort) %}
                         {%- end %}
                       {%- end %}
-                      {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                      {%- var listenerHostname = ListenerHostname(listener) %}
                       {#- Listener isolation: per Gateway API spec, when a
                           route on a less-specific listener (e.g. catch-all)
                           declares a hostname that's more-specifically owned
@@ -1158,7 +1159,7 @@ templateSnippets:
                 {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
                   {%- resolvedGwCount = resolvedGwCount + 1 %}
                   {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = tostring(dig(listener, "name") | fallback("")) %}
+                    {%- var listenerName = ListenerName(listener) %}
                     {%- if section == "" || section == listenerName %}
                       {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
                       {#- Listener-level admission gate (LS branch):
@@ -1169,14 +1170,14 @@ templateSnippets:
                           condition so the surrounding end-block
                           structure stays unchanged. -#}
                       {%- if (prPort == 0 || prPort == listenerPort) && hasPrefix(IsRouteAllowedOnListener(routeNs, listener, lsNs), "true") %}
-                        {%- var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP")) %}
+                        {%- var listenerProto = ListenerProtocolOr(listener, "HTTP") %}
                         {%- var portSuffix = "" %}
                         {%- if listenerPort > 0 %}
                           {%- if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) %}
                             {%- portSuffix = ":" + tostring(listenerPort) %}
                           {%- end %}
                         {%- end %}
-                        {%- var listenerHostname = tostring(dig(listener, "hostname") | fallback("")) %}
+                        {%- var listenerHostname = ListenerHostname(listener) %}
                         {%- if len(routeHostnames) == 0 %}
                           {%- effectiveHosts[listenerHostname + portSuffix] = true %}
                         {%- else if listenerHostname == "" %}

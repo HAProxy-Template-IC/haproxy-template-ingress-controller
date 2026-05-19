@@ -794,28 +794,17 @@ templateSnippets:
         Generated HAProxy Config:
           http-request redirect scheme https code <code> if !{ ssl_fc } <host-match>
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-emit-annotation-ssl-redirect" for EmitAnnotationSSLRedirect -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-        {%- var key = ns + "/" + name %}
-          {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect") | fallback("") | tostring() %}
-          {%- if sslRedirect == "true" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
-            {%- end %}
-            {%- var code = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect-code") | fallback("302") | tostring() %}
-            {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
-            {%- var codeValid = false %}
-            {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
-            {%- if !codeValid %}{%- code = "302" %}{%- end %}
-            {%- if len(hosts) > 0 %}
-      # haproxy-ingress/ssl-redirect ({{ key }})
-      http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
-            {%- end %}
-          {%- end %}
+        {%- var sslRedirect = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect") | fallback("") | tostring() %}
+        {%- if sslRedirect == "true" %}
+          {%- var code = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect-code") | fallback("302") | tostring() %}
+          {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
+          {%- var codeValid = false %}
+          {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
+          {%- if !codeValid %}{%- code = "302" %}{%- end %}
+          {{ EmitAnnotationSSLRedirect(ingress, code, "haproxy-ingress/ssl-redirect") }}
+        {%- end %}
       {%- end -%}
 
   frontend-filters-630-haproxy-ingress-hsts:
@@ -834,29 +823,15 @@ templateSnippets:
         Generated HAProxy Config:
           http-response set-header Strict-Transport-Security "max-age=<age>[; includeSubDomains][; preload]" if <host-match>
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-        {%- var key = ns + "/" + name %}
-          {%- var hstsEnabled = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts") | fallback("") | tostring() %}
-          {%- if hstsEnabled == "true" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-              {%- var maxAge = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts-max-age") | fallback("15768000") | tostring() %}
-              {%- var includeSubdomains = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts-include-subdomains") | fallback("") | tostring() %}
-              {%- var preload = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/hsts-preload") | fallback("") | tostring() %}
-              {%- var hstsValue = "max-age=" + maxAge %}
-              {%- if includeSubdomains == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
-              {%- if preload == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
-      # haproxy-ingress/hsts ({{ key }})
-      http-response set-header Strict-Transport-Security "{{ hstsValue }}" if { ssl_fc } {{ HostMatchCondition(hosts) }}
-            {%- end %}
-          {%- end %}
+      {%- import "util-emit-annotation-hsts" for EmitAnnotationHSTS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationHSTS(ingress,
+            "haproxy-ingress.github.io/hsts",
+            "haproxy-ingress.github.io/hsts-max-age",
+            "haproxy-ingress.github.io/hsts-include-subdomains",
+            "haproxy-ingress.github.io/hsts-preload",
+            "15768000",
+            "haproxy-ingress/hsts") }}
       {%- end -%}
 
   frontend-filters-640-haproxy-ingress-app-root:
@@ -950,39 +925,13 @@ templateSnippets:
           http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
           ... (other CORS headers)
       -#}
-      {%- import "util-ingress-helpers" for HostMatchCondition -%}
-      {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
-        {%- var key = ns + "/" + name %}
-          {%- var corsEnabled = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-enable") | fallback("") | tostring() %}
-          {%- if corsEnabled == "true" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
-            {%- end %}
-            {%- if len(hosts) > 0 %}
-              {%- var origin = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-origin") | fallback("*") | tostring() %}
-              {%- var methods = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-methods") | fallback("GET, PUT, POST, DELETE, PATCH, OPTIONS") | tostring() %}
-              {%- var headers = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-headers") | fallback("DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization") | tostring() %}
-              {%- var credentials = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-allow-credentials") | fallback("") | tostring() %}
-              {%- var exposeHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-expose-headers") | fallback("") | tostring() %}
-              {%- var maxAge = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/cors-max-age") | fallback("86400") | tostring() %}
-              {%- var cond = HostMatchCondition(hosts) %}
-      # haproxy-ingress/cors ({{ key }})
-      http-response add-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
-      http-response add-header Access-Control-Allow-Methods '{{ methods }}' if {{ cond }} METH_OPTIONS
-      http-response add-header Access-Control-Allow-Headers '{{ headers }}' if {{ cond }} METH_OPTIONS
-      http-response add-header Access-Control-Max-Age '{{ maxAge }}' if {{ cond }} METH_OPTIONS
-              {% if credentials == "true" %}
-      http-response add-header Access-Control-Allow-Credentials 'true' if {{ cond }}
-              {% end %}
-              {% if exposeHeaders != "" %}
-      http-response add-header Access-Control-Expose-Headers '{{ exposeHeaders }}' if {{ cond }}
-              {% end %}
-            {%- end %}
-          {%- end %}
+      {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationCORS(ingress,
+            "haproxy-ingress.github.io",
+            "haproxy-ingress.github.io/cors-enable",
+            "86400",
+            "haproxy-ingress/cors") }}
       {%- end -%}
 
   frontend-filters-670-haproxy-ingress-headers:
@@ -1248,33 +1197,9 @@ templateSnippets:
 
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-passthrough
       -#}
-      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
       {{ render "util-haproxy-ingress-ssl-passthrough" }}
-      {%- var hiVal, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any { return nil }) %}
-      {%- if hiVal == nil %}{% return %}{% end %}
-      {%- var sslData = hiVal.(map[string]any) %}
-      {%- var backends = sslData["backends"].([]any) %}
-      {#- BuildAnnotationSSLPassthrough (annotation-compat.yaml) captures
-          svcName/svcPort upfront so the use_backend in ssl-tcp and the
-          backend block here both come from the same iteration. Looking
-          the ingress up again here would re-introduce the dry-run race
-          that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. -#}
-      {%- for _, backendInfo := range backends %}
-        {%- var info = backendInfo.(map[string]any) %}
-        {%- var beNs = info["namespace"] | tostring() %}
-        {%- var beIngress = info["ingress"] | tostring() %}
-        {%- var beName = info["name"] | tostring() %}
-        {%- var svcName = info["svcName"] | tostring() %}
-        {%- var svcPort = info["svcPort"] | toint() %}
-        {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
-        {%- if first_seen("hi_sslPassthrough_backend", beNs + "/" + beIngress) %}
-      # haproxy-ingress/backends-ssl-passthrough
-
-      backend {{ beName }}
-          mode tcp
-          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
-        {%- end %}
-      {%- end %}
+      {{ RenderAnnotationSSLPassthroughBackends("hi_sslPassthrough", "hi_sslPassthrough_backend", "haproxy-ingress") }}
 
   # ============================================================================
   # Phase 7: Basic Auth
