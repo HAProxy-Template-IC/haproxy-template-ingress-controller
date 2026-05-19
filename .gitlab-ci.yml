@@ -1596,6 +1596,28 @@ test-ingress-conformance:
     # only pay for cluster setup — the conformance run uses its own
     # generated Ingress resources, not e2e fixtures.
     - TEST_RUN_PATTERN="^$" make test-e2e
+    # Pre-load the upstream echoserver image into the kind cluster's
+    # containerd. The upstream ingress-controller-conformance suite
+    # creates a fresh Deployment per scenario backed by
+    # `k8s.gcr.io/ingressconformance/echoserver:v0.0.1`, then waits up
+    # to 5 min for the Deployment's Service to have ready endpoints
+    # (test/kubernetes/kubernetes.go: WaitForEndpointsTimeout). The
+    # `k8s.gcr.io` registry was retired in 2023 and now redirects to
+    # `registry.k8s.io` — first pulls from CI runners are slow and
+    # sometimes exceed the per-scenario 5 min window, surfacing as
+    # `waiting for service (foo-exact|echo-service) endpoints
+    # available: timed out`. Three consecutive failures of MR !963's
+    # pipeline showed this signature on different sub-cases (issue
+    # #45 follow-up). Pulling once on the runner + `kind load`-ing
+    # into the cluster's containerd makes per-scenario pod startup
+    # cache-hit-only, eliminating the deadline race.
+    - |
+      ECHO_IMAGE='k8s.gcr.io/ingressconformance/echoserver:v0.0.1@sha256:9b34b17f391f87fb2155f01da2f2f90b7a4a5c1110ed84cb5379faa4f570dc52'
+      echo "Pre-loading $ECHO_IMAGE into kind cluster ${CONFORMANCE_KIND_CLUSTER:-haptic-e2e}..."
+      docker pull "$ECHO_IMAGE"
+      # `kind load` re-tags by digest only; the upstream test references
+      # the image by the original `k8s.gcr.io/...` name so we keep that.
+      kind load docker-image "$ECHO_IMAGE" --name "${CONFORMANCE_KIND_CLUSTER:-haptic-e2e}"
     - make test-ingress-conformance
   after_script:
     - |
