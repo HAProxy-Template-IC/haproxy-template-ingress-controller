@@ -42,6 +42,7 @@ templateSnippets:
   util-gateway-pod-port-allocator:
     template: |
       {%- import "util-bounded-k8s-name" for BoundedK8sName %}
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerName, ListenerProtocol %}
       {#- Initialise the per-Gateway-listener pod-port allocation map.
           Idempotent — multiple snippets render this; only the first
           actually computes. Downstream consumers should `{{ render
@@ -90,14 +91,13 @@ templateSnippets:
         var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
         var allTuples = []any{}
         for _, gw := range resources.gateways.List() {
-          var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
-          var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+          var gwNs = ResourceNamespace(gw)
+          var gwName = ResourceName(gw)
           for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            var lProto = tostring(dig(listener, "protocol") | fallback(""))
-            if lProto != "HTTPS" {
+            if ListenerProtocol(listener) != "HTTPS" {
               continue
             }
-            var lName = tostring(dig(listener, "name") | fallback(""))
+            var lName = ListenerName(listener)
             var lPort = toint(dig(listener, "port") | fallback(0))
             if lName == "" || lPort <= 0 {
               continue

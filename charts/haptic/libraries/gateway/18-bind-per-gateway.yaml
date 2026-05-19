@@ -60,6 +60,10 @@ templateSnippets:
     template: |
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
+      {%- import "util-resource-helpers" for
+          ResourceNamespace, ResourceName,
+          ListenerKey, ListenerProtocol, ListenerName,
+          ResolveCertRefKey %}
       {{ render "util-gateway-pod-port-allocator" -}}
       {{ render "util-tls-cert-by-secret" -}}
       {%- var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any) %}
@@ -78,8 +82,8 @@ templateSnippets:
       {%- var certBySecret = shared.Get("tlsCertBySecret").(map[string]any) %}
       {%- if resources != nil && resources.gateways != nil %}
         {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
-          {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+          {%- var gwNs = ResourceNamespace(gw) %}
+          {%- var gwName = ResourceName(gw) %}
           {#- Pinned-IP Gateways (spec.addresses set) take the
               gateway-static-addresses path, NOT phase-3's
               per-Gateway Service. Phase 1's allocator skips them
@@ -92,27 +96,17 @@ templateSnippets:
               17-per-gateway-services.yaml. -#}
           {%- if gwNs != "" && gwName != "" && len(dig(gw, "spec", "addresses") | toSlice()) == 0 %}
             {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-              {%- var lProto = tostring(dig(listener, "protocol") | fallback("")) %}
-              {%- if lProto == "HTTPS" %}
-                {%- var lName = tostring(dig(listener, "name") | fallback("")) %}
+              {%- if ListenerProtocol(listener) == "HTTPS" %}
+                {%- var lName = ListenerName(listener) %}
                 {%- var lPort = toint(dig(listener, "port") | fallback(0)) %}
-                {%- var blockedKey = gwNs + "/" + gwName + "/" + lName %}
-                {%- var isBlocked = mtlsBlocked[blockedKey] != nil %}
+                {%- var isBlocked = mtlsBlocked[ListenerKey(gwNs, gwName, lName)] != nil %}
                 {#- Does the listener's cert ref resolve? Same path
                     phase 2 walks: take the FIRST entry of
                     `tls.certificateRefs`, look it up by
                     `<crNs>/<crName>` in the shared cert registry.
                     Missing → phase 2 skipped emission → we must too. -#}
-                {%- var certResolved = false %}
-                {%- var certRefs = dig(listener, "tls", "certificateRefs") | toSlice() %}
-                {%- if len(certRefs) > 0 %}
-                  {%- var cr = certRefs[0] %}
-                  {%- var crNs = tostring(dig(cr, "namespace") | fallback(gwNs)) %}
-                  {%- var crName = tostring(dig(cr, "name") | fallback("")) %}
-                  {%- if certBySecret[crNs + "/" + crName] != nil %}
-                    {%- certResolved = true %}
-                  {%- end %}
-                {%- end %}
+                {%- var certKey = ResolveCertRefKey(listener, gwNs) %}
+                {%- var certResolved = certKey != "" && certBySecret[certKey] != nil %}
                 {%- if lName != "" && lPort > 0 && !isBlocked && certResolved %}
                   {%- var allocKey = gwNs + "/" + gwName + ":" + lName + ":" + tostring(lPort) %}
                   {%- var podPort = lPort %}

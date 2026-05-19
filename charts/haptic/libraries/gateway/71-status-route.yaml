@@ -32,6 +32,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, GatewayKey -%}
       {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
 
@@ -39,18 +40,16 @@ templateSnippets:
         {%- var ourGateways = map[string]bool{} %}
         {%- for _, gw := range resources.gateways.List() %}
           {%%
-            var gwKey = tostring(dig(gw, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(gw, "metadata", "name") | fallback(""))
+            var gwKey = GatewayKey(ResourceNamespace(gw), ResourceName(gw))
             ourGateways[gwKey] = true
           %%}
         {%- end %}
 
         {%- for _, route := range routes %}
           {%%
-            var namespace = dig(route, "metadata", "namespace") | fallback("")
-            var name = dig(route, "metadata", "name") | fallback("")
+            var nsStr = ResourceNamespace(route)
+            var nameStr = ResourceName(route)
             var generation = dig(route, "metadata", "generation") | fallback(0)
-            var nsStr = tostring(namespace)
-            var nameStr = tostring(name)
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             // Per Gateway API spec, ResolvedRefs=False can carry one
@@ -69,7 +68,7 @@ templateSnippets:
             for _, rule := range dig(route, "spec", "rules") | toSlice() {
               for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
                 var svcName = dig(backendRef, "name") | fallback("") | tostring()
-                var svcNamespace = dig(backendRef, "namespace") | fallback(namespace) | tostring()
+                var svcNamespace = dig(backendRef, "namespace") | fallback(nsStr) | tostring()
                 var group = dig(backendRef, "group") | fallback("") | tostring()
                 var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
 
@@ -110,7 +109,7 @@ templateSnippets:
             for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
               var gwGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
               var gwKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
-              var gwNamespace = dig(parentRef, "namespace") | fallback(namespace) | tostring()
+              var gwNamespace = dig(parentRef, "namespace") | fallback(nsStr) | tostring()
               var gwName = dig(parentRef, "name") | fallback("") | tostring()
 
               // ListenerSet parentRef → resolve to its parent Gateway
@@ -448,6 +447,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnamesIntersect -%}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
+      {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, GatewayKey, ListenerProtocolOr -%}
       {% macro GenerateTLSRouteStatusPatches(routes []any) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
         {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
@@ -460,18 +460,16 @@ templateSnippets:
         {%- var ourGateways = map[string]bool{} %}
         {%- for _, gw := range resources.gateways.List() %}
           {%%
-            var gwKey = tostring(dig(gw, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(gw, "metadata", "name") | fallback(""))
+            var gwKey = GatewayKey(ResourceNamespace(gw), ResourceName(gw))
             ourGateways[gwKey] = true
           %%}
         {%- end %}
 
         {%- for _, route := range routes %}
           {%%
-            var namespace = dig(route, "metadata", "namespace") | fallback("")
-            var name = dig(route, "metadata", "name") | fallback("")
+            var nsStr = ResourceNamespace(route)
+            var nameStr = ResourceName(route)
             var generation = dig(route, "metadata", "generation") | fallback(0)
-            var nsStr = tostring(namespace)
-            var nameStr = tostring(name)
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             // ResolvedRefs computation — fail-fast on first invalid
@@ -483,7 +481,7 @@ templateSnippets:
             for _, rule := range dig(route, "spec", "rules") | toSlice() {
               for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
                 var svcName = dig(backendRef, "name") | fallback("") | tostring()
-                var svcNamespace = dig(backendRef, "namespace") | fallback(namespace) | tostring()
+                var svcNamespace = dig(backendRef, "namespace") | fallback(nsStr) | tostring()
                 var group = dig(backendRef, "group") | fallback("") | tostring()
                 var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
 
@@ -521,7 +519,7 @@ templateSnippets:
             for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
               var gwGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
               var gwKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
-              var gwNamespace = dig(parentRef, "namespace") | fallback(namespace) | tostring()
+              var gwNamespace = dig(parentRef, "namespace") | fallback(nsStr) | tostring()
               var gwName = dig(parentRef, "name") | fallback("") | tostring()
 
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
@@ -593,7 +591,7 @@ templateSnippets:
                       // so an HTTP / HTTPS listener never accepts
                       // TLSRoute regardless of allowedRoutes.kinds
                       // explicit settings.
-                      var listenerProto = tostring(dig(listener, "protocol") | fallback("HTTP"))
+                      var listenerProto = ListenerProtocolOr(listener, "HTTP")
                       if listenerProto != "TLS" {
                         sawKindNs = true
                         continue

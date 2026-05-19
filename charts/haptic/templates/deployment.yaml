@@ -5,7 +5,7 @@
 {{- $debugPortInt := $debugPort | int }}
 {{- $webhookEnabled := .Values.webhook.enabled }}
 {{- $webhookSecretName := include "haptic.webhook.secretName" . }}
-{{- $labels := include "haptic.labels" . }}
+{{- $labels := include "haptic.labels.withCommon" . }}
 {{- $validatorsEnabled := include "haptic.validators.enabled" . }}
 {{- $validators := $controller.validators }}
 apiVersion: apps/v1
@@ -14,9 +14,6 @@ metadata:
   name: {{ include "haptic.controllerFullname" . }}
   labels:
     {{- $labels | nindent 4 }}
-    {{- with .Values.commonLabels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
   {{- if or .Values.deploymentAnnotations .Values.commonAnnotations }}
   annotations:
     {{- with .Values.commonAnnotations }}
@@ -55,7 +52,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "haptic.serviceAccountName" . }}
-      {{- include "haptic.podSpec" $podSpec | trim | nindent 6 }}
+      {{- include "haptic.podSpec" $podSpec | nindent 6 }}
       {{- with $podSpec.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

@@ -727,33 +727,9 @@ templateSnippets:
   backends-501-haproxytech-ssl-passthrough:
     template: |
       {#- Generate SSL passthrough backends from Ingress resources -#}
-      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
       {{ render "util-haproxytech-ssl-passthrough" }}
-      {%- var htVal, _ = shared.ComputeIfAbsent("haproxytech_sslPassthrough", func() any { return nil }) %}
-      {%- if htVal == nil %}{% return %}{% end %}
-      {%- var sslData = htVal.(map[string]any) %}
-      {%- var backends = sslData["backends"].([]any) %}
-      {#- BuildAnnotationSSLPassthrough (annotation-compat.yaml) captures
-          svcName/svcPort upfront so the use_backend in ssl-tcp and the
-          backend block here both come from the same iteration. Looking
-          the ingress up again here would re-introduce the dry-run race
-          that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. -#}
-      {%- for _, backendInfo := range backends %}
-        {%- var info = backendInfo.(map[string]any) %}
-        {%- var beNs = info["namespace"] | tostring() %}
-        {%- var beIngress = info["ingress"] | tostring() %}
-        {%- var beName = info["name"] | tostring() %}
-        {%- var svcName = info["svcName"] | tostring() %}
-        {%- var svcPort = info["svcPort"] | toint() %}
-        {%- var svcPortName = info["svcPortName"] | fallback("") | tostring() %}
-        {%- if first_seen("sslPassthrough_backend", beNs + "/" + beIngress) %}
-      # haproxytech/backends-haproxytech-ssl-passthrough
-
-      backend {{ beName }}
-          mode tcp
-          {{ BackendServers(svcName, 10, svcPort, nil, svcPortName, beName, beNs) | indent(4) }}
-        {%- end %}
-      {%- end %}
+      {{ RenderAnnotationSSLPassthroughBackends("haproxytech_sslPassthrough", "sslPassthrough_backend", "haproxytech") }}
 
 # ============================================================================
 # Validation Tests
