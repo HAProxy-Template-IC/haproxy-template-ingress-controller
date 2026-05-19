@@ -1442,18 +1442,37 @@ test-gateway-conformance:
 
           # SPOA-hub /metrics scrape. Bound on the pod loopback by the
           # chart (spoaHub.hub.metricsAddr default 127.0.0.1:9095, set
-          # in libraries/spoa-hub.yaml). Plugin counters live here:
-          # plugin_mirror_dispatches_total / dispatch_dropped_total /
-          # dispatch_outcomes_total, plugin_coraza_evaluations_total,
-          # plugin_external-auth_auth_requests_total, etc. — read from
-          # the haproxy container which shares the pod's network
-          # namespace with the sidecar (the spoa-hub container is
-          # readonly + has no busybox; haproxy has wget). Returns empty
-          # if metrics_addr was operator-overridden off or the sidecar
-          # isn't on this pod; either is fine, the file records that.
+          # in libraries/spoa-hub.yaml + templates/spoa-hub-configmap.yaml).
+          # Plugin counters live here: plugin_mirror_dispatches_total /
+          # dispatch_dropped_total / dispatch_outcomes_total,
+          # plugin_coraza_evaluations_total,
+          # plugin_external-auth_auth_requests_total, etc.
+          #
+          # Scrape from the haproxy container which shares the pod's
+          # network namespace with the sidecar (the spoa-hub container
+          # is read-only + minimal, no scraping tools). The
+          # haproxytech/haproxy-debian image has neither curl nor
+          # busybox wget pre-installed — fall through a chain of
+          # candidates and `printf` the failure reason if all miss, so
+          # an empty scrape is debuggable instead of silent.
           echo "=== SPOA-hub /metrics on $pod ===" >> "$LOG_DIR/spoa-hub-metrics.txt"
-          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- \
-            sh -c 'wget -qO- 127.0.0.1:9095/metrics 2>/dev/null || true' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- sh -c '
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsS --max-time 5 http://127.0.0.1:9095/metrics
+            elif command -v wget >/dev/null 2>&1; then
+              wget -q -O- --timeout=5 http://127.0.0.1:9095/metrics
+            else
+              # Last-resort raw HTTP/1.0 via /dev/tcp (bash-only). The
+              # haproxy-debian image ships dash as /bin/sh, but the
+              # explicit `bash` here works because the image installs
+              # bash for the entrypoint. If even bash is missing the
+              # scrape will fail silently and we will see only the
+              # header line — at which point install curl in the image.
+              printf "GET /metrics HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" \
+                | bash -c "exec 3<>/dev/tcp/127.0.0.1/9095; cat >&3; cat <&3" 2>&1 \
+                || printf "scrape failed: no curl/wget/bash-tcp on haproxy container; install curl in haproxytech/haproxy-debian image for /metrics capture\n"
+            fi
+          ' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
@@ -1592,18 +1611,37 @@ test-ingress-conformance:
 
           # SPOA-hub /metrics scrape. Bound on the pod loopback by the
           # chart (spoaHub.hub.metricsAddr default 127.0.0.1:9095, set
-          # in libraries/spoa-hub.yaml). Plugin counters live here:
-          # plugin_mirror_dispatches_total / dispatch_dropped_total /
-          # dispatch_outcomes_total, plugin_coraza_evaluations_total,
-          # plugin_external-auth_auth_requests_total, etc. — read from
-          # the haproxy container which shares the pod's network
-          # namespace with the sidecar (the spoa-hub container is
-          # readonly + has no busybox; haproxy has wget). Returns empty
-          # if metrics_addr was operator-overridden off or the sidecar
-          # isn't on this pod; either is fine, the file records that.
+          # in libraries/spoa-hub.yaml + templates/spoa-hub-configmap.yaml).
+          # Plugin counters live here: plugin_mirror_dispatches_total /
+          # dispatch_dropped_total / dispatch_outcomes_total,
+          # plugin_coraza_evaluations_total,
+          # plugin_external-auth_auth_requests_total, etc.
+          #
+          # Scrape from the haproxy container which shares the pod's
+          # network namespace with the sidecar (the spoa-hub container
+          # is read-only + minimal, no scraping tools). The
+          # haproxytech/haproxy-debian image has neither curl nor
+          # busybox wget pre-installed — fall through a chain of
+          # candidates and `printf` the failure reason if all miss, so
+          # an empty scrape is debuggable instead of silent.
           echo "=== SPOA-hub /metrics on $pod ===" >> "$LOG_DIR/spoa-hub-metrics.txt"
-          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- \
-            sh -c 'wget -qO- 127.0.0.1:9095/metrics 2>/dev/null || true' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- sh -c '
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsS --max-time 5 http://127.0.0.1:9095/metrics
+            elif command -v wget >/dev/null 2>&1; then
+              wget -q -O- --timeout=5 http://127.0.0.1:9095/metrics
+            else
+              # Last-resort raw HTTP/1.0 via /dev/tcp (bash-only). The
+              # haproxy-debian image ships dash as /bin/sh, but the
+              # explicit `bash` here works because the image installs
+              # bash for the entrypoint. If even bash is missing the
+              # scrape will fail silently and we will see only the
+              # header line — at which point install curl in the image.
+              printf "GET /metrics HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" \
+                | bash -c "exec 3<>/dev/tcp/127.0.0.1/9095; cat >&3; cat <&3" 2>&1 \
+                || printf "scrape failed: no curl/wget/bash-tcp on haproxy container; install curl in haproxytech/haproxy-debian image for /metrics capture\n"
+            fi
+          ' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
