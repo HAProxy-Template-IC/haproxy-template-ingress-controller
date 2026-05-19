@@ -88,6 +88,8 @@ Always check with `errors.As`; the wrapped `.Cause` carries the underlying Scrig
 
 Selection: `fallback`, `coalesce`, `fail`, `merge`, `keys`, `sort_strings`, `sanitize_regex`, `semver_gte`, `toLower`, `tostring`, plus Scriggo's standard library.
 
+**Typed-dig family** (`digstr`, `digint`, `digbool`) collapses the dominant `tostring(dig(X, ...) | fallback(""))` Kubernetes-metadata idiom into a single call. `digstr(obj, "metadata", "namespace")` returns `""` on miss; `digint(obj, "spec", "port")` returns `0`; `digbool(obj, "metadata", "annotations", "haproxy.org/ssl-redirect")` returns `false` and recognises K8s string-`"true"` annotations. The full-form `tostring(dig(...) | fallback(...))` still works when callers want a non-default fallback.
+
 Canonical reference: `pkg/templating/filter_names.go`.
 
 ### Runtime Context Variables

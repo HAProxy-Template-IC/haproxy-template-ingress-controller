@@ -103,7 +103,7 @@ templateSnippets:
         var winningPolicyTs = ""
         var winningPolicyKey = ""
         for _, pol := range resources.backendtlspolicies.List() {
-          var polNs = tostring(dig(pol, "metadata", "namespace") | fallback(""))
+          var polNs = digstr(pol, "metadata", "namespace")
           if polNs != tostring(routeNs) {
             continue
           }
@@ -123,7 +123,7 @@ templateSnippets:
             }
             // Conflict tiebreak — earliest creationTimestamp wins.
             var polTs = tostring(dig(pol, "metadata", "creationTimestamp") | fallback(""))
-            var polKey = polNs + "/" + tostring(dig(pol, "metadata", "name") | fallback(""))
+            var polKey = polNs + "/" + digstr(pol, "metadata", "name")
             if winningPolicy == nil {
               winningPolicy = pol
               winningPolicyTs = polTs
@@ -188,7 +188,7 @@ templateSnippets:
           var wkca = tostring(dig(validation, "wellKnownCACertificates") | fallback(""))
           if len(caBundleParts) > 0 {
             var caBundle = join(caBundleParts, "\n")
-            var policyName = tostring(dig(winningPolicy, "metadata", "name") | fallback(""))
+            var policyName = digstr(winningPolicy, "metadata", "name")
             var caFilename = "btls-" + tostring(routeNs) + "-" + policyName + ".crt"
             var resolvedPath, fileErr = fileRegistry.Register("file", caFilename, caBundle)
             if fileErr == nil {

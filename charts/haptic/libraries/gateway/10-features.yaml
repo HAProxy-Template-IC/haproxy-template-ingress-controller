@@ -396,12 +396,12 @@ templateSnippets:
             if tostring(dig(pRef, "name") | fallback("")) != gwName {
               continue
             }
-            var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+            var lsNs = digstr(ls, "metadata", "namespace")
             var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
             if pNs != gwNs {
               continue
             }
-            var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+            var lsName = digstr(ls, "metadata", "name")
             var lsKey = lsNs + "/" + lsName
             var permitted = false
             var entryAny, hasEntry = lsStatuses[lsKey]
@@ -570,7 +570,7 @@ templateSnippets:
       {%- macro applyListener(gwNs string, gwName string, listener any) %}
       {%%
         var lProto = ListenerProtocol(listener)
-        var lPort = toint(dig(listener, "port") | fallback(0))
+        var lPort = digint(listener, "port")
         var lName = ListenerName(listener)
         if lProto == "HTTP" {
           gf["needHTTPFrontend"] = true
@@ -663,8 +663,8 @@ templateSnippets:
       {%- if resources != nil && resources.gateways != nil %}
       {%- for _, gw := range resources.gateways.List() %}
       {%%
-        var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
-        var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+        var gwNs = digstr(gw, "metadata", "namespace")
+        var gwName = digstr(gw, "metadata", "name")
       %%}
       {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
       {{ applyListener(gwNs, gwName, listener) }}
@@ -678,7 +678,7 @@ templateSnippets:
         // Inherit the parent's namespace + name so mTLS blocking
         // (keyed under the Gateway's identity in
         // features-110-gateway-frontend-mtls) applies consistently.
-        var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
+        var lsNs = digstr(ls, "metadata", "namespace")
         var pRef = dig(ls, "spec", "parentRef")
         var parentName = tostring(dig(pRef, "name") | fallback(""))
         var parentNs = tostring(dig(pRef, "namespace") | fallback(lsNs))

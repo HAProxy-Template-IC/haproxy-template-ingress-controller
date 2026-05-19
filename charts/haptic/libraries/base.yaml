@@ -1127,7 +1127,7 @@ k8sResources:
           continue
         }
         for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-          var port = toint(dig(listener, "port") | fallback(0))
+          var port = digint(listener, "port")
           var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
           if port <= 0 || seenPorts[port] {
             continue
@@ -1158,7 +1158,7 @@ k8sResources:
         var lsParents = dig(ls, "spec", "parentRef") | toSlice()
         _ = lsParents
         for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-          var port = toint(dig(listener, "port") | fallback(0))
+          var port = digint(listener, "port")
           var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
           if port <= 0 || seenPorts[port] {
             continue

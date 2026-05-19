@@ -137,8 +137,8 @@ templateSnippets:
                   // Use resolved Gateway's identity for ourGateways
                   // membership check — ourGateways is keyed by the
                   // backing Gateway, not by ListenerSet.
-                  var pName = tostring(dig(lsResolvedGw, "metadata", "name") | fallback(""))
-                  var pNs = tostring(dig(lsResolvedGw, "metadata", "namespace") | fallback(""))
+                  var pName = digstr(lsResolvedGw, "metadata", "name")
+                  var pNs = digstr(lsResolvedGw, "metadata", "namespace")
                   gwKey = pNs + "/" + pName
                 }
                 if ourGateways[gwKey] {
@@ -163,7 +163,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = tostring(sectionName)
                     sectionNameStr = tostring(sectionName)
                   }
-                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
+                  var parentPort = digint(parentRef, "port")
 
                   // Evaluate Accepted-by-listener for this parentRef.
                   // Walk the gateway's listeners; the first that accepts
@@ -204,7 +204,7 @@ templateSnippets:
                       // the same `spec.port` is a match. Mismatched
                       // parents fail with NoMatchingParent (more specific
                       // than NotAllowedByListeners).
-                      var listenerPort = toint(dig(listener, "port") | fallback(0))
+                      var listenerPort = digint(listener, "port")
                       if parentPort != 0 && listenerPort != parentPort {
                         continue
                       }
@@ -539,7 +539,7 @@ templateSnippets:
                     parentRefStatus["sectionName"] = tostring(sectionName)
                     sectionNameStr = tostring(sectionName)
                   }
-                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
+                  var parentPort = digint(parentRef, "port")
 
                   var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   // Pre-compute mixed-mode map so we can flag listeners
@@ -549,7 +549,7 @@ templateSnippets:
                     for _, l := range dig(gw, "spec", "listeners") | toSlice() {
                       var lProto = tostring(dig(l, "protocol") | fallback(""))
                       if lProto == "TLS" {
-                        var lPort = toint(dig(l, "port") | fallback(0))
+                        var lPort = digint(l, "port")
                         var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
                         if portModes[lPort] == nil {
                           portModes[lPort] = map[string]bool{}
@@ -576,7 +576,7 @@ templateSnippets:
                       if sectionNameStr != "" {
                         sawSectionMatch = true
                       }
-                      var listenerPort = toint(dig(listener, "port") | fallback(0))
+                      var listenerPort = digint(listener, "port")
                       if parentPort != 0 && listenerPort != parentPort {
                         continue
                       }

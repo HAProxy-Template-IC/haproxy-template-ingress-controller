@@ -120,6 +120,83 @@ func digMapFast(m map[string]any, keys []string) any {
 	return m
 }
 
+// scriggoDigStr is dig + tostring + empty-string fallback in one call.
+// It replaces the dominant template pattern
+//
+//	tostring(dig(obj, "k1", "k2") | fallback(""))
+//
+// with
+//
+//	digstr(obj, "k1", "k2")
+//
+// The result is "" if any key along the path is missing, the leaf value is
+// nil, or obj itself is nil. Non-string leaf values are stringified through
+// the same rules as tostring (int/float/bool → their string form).
+//
+// Usage in Scriggo templates:
+//
+//	{%- var ns = digstr(ingress, "metadata", "namespace") %}
+//	{{- digstr(route, "metadata", "name") -}}
+func scriggoDigStr(obj any, keys ...string) string {
+	v := scriggoDig(obj, keys...)
+	if v == nil {
+		return ""
+	}
+	return scriggoToString(v)
+}
+
+// scriggoDigInt is dig + toint + zero-fallback in one call.
+// It replaces the pattern
+//
+//	toint(dig(obj, "k1", "k2") | fallback(0))
+//
+// with
+//
+//	digint(obj, "k1", "k2")
+//
+// Returns 0 if any key along the path is missing or the leaf value isn't
+// coercible to int through the same rules as toint.
+//
+// Usage in Scriggo templates:
+//
+//	{%- var port = digint(listener, "port") %}
+//	{%- if digint(spec, "replicas") > 0 %}
+func scriggoDigInt(obj any, keys ...string) int {
+	v := scriggoDig(obj, keys...)
+	if v == nil {
+		return 0
+	}
+	return scriggoToInt(v)
+}
+
+// annotationTrue is the canonical wire-form for a truthy Kubernetes
+// annotation. Used by scriggoDigBool to keep the literal out of multiple
+// call sites in this file.
+const annotationTrue = "true"
+
+// scriggoDigBool is dig + bool-coerce + false-fallback in one call.
+// Returns false if any key along the path is missing, the leaf is nil, or
+// the leaf isn't truthy. Accepts native bool and string "true" / "false"
+// (Kubernetes annotation idiom).
+//
+// Usage in Scriggo templates:
+//
+//	{%- if digbool(ingress, "metadata", "annotations", "haproxy.org/ssl-redirect") %}
+func scriggoDigBool(obj any, keys ...string) bool {
+	v := scriggoDig(obj, keys...)
+	if v == nil {
+		return false
+	}
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return x == annotationTrue
+	default:
+		return false
+	}
+}
+
 // digReflect handles typed nil pointers and other edge cases with reflection.
 // This is the slow path, used for non-standard map types.
 func digReflect(obj any, keys []string) any {

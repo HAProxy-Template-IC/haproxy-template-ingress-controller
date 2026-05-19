@@ -123,23 +123,11 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncStringsSplitN] = scriggoStringsSplitN
 	decl[FilterIndent] = scriggoIndent
 
-	// Type conversion functions
-	decl[FuncToString] = scriggoToString
-	decl[FuncToInt] = scriggoToInt
-	decl[FuncToFloat] = scriggoToFloat
-
-	// Utility functions
-	decl[FuncCeil] = scriggoCeil
-	decl[FuncSeq] = scriggoSeq
-	decl[FuncRegexSearch] = scriggoRegexSearch
-	decl[FuncIsDigit] = scriggoIsDigit
-	decl[FuncSanitizeRegex] = scriggoSanitizeRegex
-	decl[FuncTitle] = scriggoTitle
-	decl[FuncDig] = scriggoDig
-	decl[FuncIsNil] = scriggoIsNil
-	decl[FuncToStringSlice] = scriggoToStringSlice
-	decl[FuncJoin] = scriggoJoin
-	decl[FuncReplace] = scriggoStringsReplace
+	// Type conversion + generic utility functions (kept together so the
+	// dig / digstr / digint / digbool family lives next to its building
+	// blocks). Extracted to keep registerScriggoCustomFunctions under the
+	// per-function statement budget; group membership is unchanged.
+	registerScriggoTypeAndUtilFunctions(decl)
 
 	// Namespace function for mutable state patterns
 	decl[FuncNamespace] = scriggoNamespace
@@ -165,6 +153,34 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 
 	// GUID functions
 	decl[FuncMakeGUID] = scriggoMakeGUID
+}
+
+// registerScriggoTypeAndUtilFunctions registers the type-conversion and
+// generic-utility families. Split out from registerScriggoCustomFunctions
+// to keep that function under the per-function statement budget; this
+// group is logically cohesive (dig and friends live alongside the
+// to{string,int,float} primitives they're composed from).
+func registerScriggoTypeAndUtilFunctions(decl native.Declarations) {
+	// Type conversion functions
+	decl[FuncToString] = scriggoToString
+	decl[FuncToInt] = scriggoToInt
+	decl[FuncToFloat] = scriggoToFloat
+
+	// Utility functions
+	decl[FuncCeil] = scriggoCeil
+	decl[FuncSeq] = scriggoSeq
+	decl[FuncRegexSearch] = scriggoRegexSearch
+	decl[FuncIsDigit] = scriggoIsDigit
+	decl[FuncSanitizeRegex] = scriggoSanitizeRegex
+	decl[FuncTitle] = scriggoTitle
+	decl[FuncDig] = scriggoDig
+	decl[FuncDigStr] = scriggoDigStr
+	decl[FuncDigInt] = scriggoDigInt
+	decl[FuncDigBool] = scriggoDigBool
+	decl[FuncIsNil] = scriggoIsNil
+	decl[FuncToStringSlice] = scriggoToStringSlice
+	decl[FuncJoin] = scriggoJoin
+	decl[FuncReplace] = scriggoStringsReplace
 }
 
 // registerScriggoBuiltins registers all Scriggo builtin functions.

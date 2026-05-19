@@ -163,6 +163,117 @@ func TestDigReflect_MultiKeyAfterStringValueReturnsNil(t *testing.T) {
 			"the depth limit")
 }
 
+// TestScriggoDigStr covers the dig+tostring+empty-fallback combination that
+// collapses the dominant tostring(dig(...) | fallback("")) template pattern.
+// The Coerce* cases below are the load-bearing variants: chart authors hit
+// each one when reading int/bool/float annotation values back from K8s
+// metadata (port numbers, replica counts, "enabled" flags).
+func TestScriggoDigStr(t *testing.T) {
+	obj := map[string]any{
+		"metadata": map[string]any{
+			"namespace": "kube-system",
+			"name":      "ingress",
+		},
+		"spec": map[string]any{
+			"port":   int64(8080),
+			"weight": 3.5,
+			"on":     true,
+		},
+	}
+
+	tests := []struct {
+		name string
+		obj  any
+		keys []string
+		want string
+	}{
+		{name: "string leaf", obj: obj, keys: []string{"metadata", "namespace"}, want: "kube-system"},
+		{name: "missing key returns empty", obj: obj, keys: []string{"metadata", "missing"}, want: ""},
+		{name: "nil object returns empty", obj: nil, keys: []string{"any"}, want: ""},
+		{name: "no keys + non-map returns empty", obj: nil, keys: nil, want: ""},
+		{name: "coerce int64 leaf", obj: obj, keys: []string{"spec", "port"}, want: "8080"},
+		{name: "coerce float leaf", obj: obj, keys: []string{"spec", "weight"}, want: "3.5"},
+		{name: "coerce bool leaf", obj: obj, keys: []string{"spec", "on"}, want: "true"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, scriggoDigStr(tt.obj, tt.keys...))
+		})
+	}
+}
+
+// TestScriggoDigInt mirrors digstr but for the int variant. Returning 0 for
+// missing/non-coercible is the natural choice for K8s numeric fields
+// (port, replicas, weight) where the chart-side check is `if v > 0`.
+func TestScriggoDigInt(t *testing.T) {
+	obj := map[string]any{
+		"spec": map[string]any{
+			"port":         8080,
+			"port_str":     "443",
+			"port_invalid": "not-a-number",
+		},
+	}
+
+	tests := []struct {
+		name string
+		obj  any
+		keys []string
+		want int
+	}{
+		{name: "int leaf", obj: obj, keys: []string{"spec", "port"}, want: 8080},
+		{name: "string coerced via toint", obj: obj, keys: []string{"spec", "port_str"}, want: 443},
+		{name: "non-coercible string returns 0", obj: obj, keys: []string{"spec", "port_invalid"}, want: 0},
+		{name: "missing key returns 0", obj: obj, keys: []string{"missing"}, want: 0},
+		{name: "nil object returns 0", obj: nil, keys: []string{"any"}, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, scriggoDigInt(tt.obj, tt.keys...))
+		})
+	}
+}
+
+// TestScriggoDigBool covers the K8s-annotation idiom: chart authors read
+// `haproxy.org/<key>: "true"` (always strings on the wire) and want a bool.
+// Native bool inputs are supported for completeness; any other type returns
+// false rather than coercing surprising values.
+func TestScriggoDigBool(t *testing.T) {
+	obj := map[string]any{
+		"metadata": map[string]any{
+			"annotations": map[string]string{
+				"enabled":  "true",
+				"disabled": "false",
+				"other":    "yes",
+			},
+		},
+		"spec": map[string]any{
+			"native": true,
+		},
+	}
+
+	tests := []struct {
+		name string
+		obj  any
+		keys []string
+		want bool
+	}{
+		{name: "annotation true", obj: obj, keys: []string{"metadata", "annotations", "enabled"}, want: true},
+		{name: "annotation false", obj: obj, keys: []string{"metadata", "annotations", "disabled"}, want: false},
+		{name: "non-canonical truthy string returns false", obj: obj, keys: []string{"metadata", "annotations", "other"}, want: false},
+		{name: "native bool", obj: obj, keys: []string{"spec", "native"}, want: true},
+		{name: "missing key returns false", obj: obj, keys: []string{"spec", "missing"}, want: false},
+		{name: "nil object returns false", obj: nil, keys: []string{"any"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, scriggoDigBool(tt.obj, tt.keys...))
+		})
+	}
+}
+
 func TestIsValueInList_Direct(t *testing.T) {
 	tests := []struct {
 		name  string

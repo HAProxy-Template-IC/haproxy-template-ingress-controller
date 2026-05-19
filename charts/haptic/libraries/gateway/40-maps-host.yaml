@@ -32,7 +32,7 @@ templateSnippets:
         var parentRefs = dig(route, "spec", "parentRefs") | toSlice()
         var effectiveHosts = map[string]bool{}
         var resolvedGwCount = 0
-        var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
+        var routeNs = digstr(route, "metadata", "namespace")
         for _, parentRef := range parentRefs {
           var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
           var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
@@ -47,7 +47,7 @@ templateSnippets:
             var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
             var lsName = tostring(dig(parentRef, "name") | fallback(""))
             var section = tostring(dig(parentRef, "sectionName") | fallback(""))
-            var prPort = toint(dig(parentRef, "port") | fallback(0))
+            var prPort = digint(parentRef, "port")
             var ls = resources.listenersets.GetSingle(lsNs, lsName)
             if ls == nil {
               continue
@@ -65,7 +65,7 @@ templateSnippets:
               if section != "" && section != listenerName {
                 continue
               }
-              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              var listenerPort = digint(listener, "port")
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
@@ -100,7 +100,7 @@ templateSnippets:
           var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
           var gwName = tostring(dig(parentRef, "name") | fallback(""))
           var section = tostring(dig(parentRef, "sectionName") | fallback(""))
-          var prPort = toint(dig(parentRef, "port") | fallback(0))
+          var prPort = digint(parentRef, "port")
           var gw = resources.gateways.GetSingle(gwNs, gwName)
           if gw == nil {
             continue
@@ -111,7 +111,7 @@ templateSnippets:
             if section != "" && section != listenerName {
               continue
             }
-            var listenerPort = toint(dig(listener, "port") | fallback(0))
+            var listenerPort = digint(listener, "port")
             if prPort != 0 && prPort != listenerPort {
               continue
             }

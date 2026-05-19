@@ -130,7 +130,7 @@ templateSnippets:
               for _, l := range dig(gw, "spec", "listeners") | toSlice() {
                 var lProto = tostring(dig(l, "protocol") | fallback(""))
                 if lProto == "TLS" {
-                  var lPort = toint(dig(l, "port") | fallback(0))
+                  var lPort = digint(l, "port")
                   var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
                   if mixedTLSPorts[lPort] {
                     continue
@@ -140,7 +140,7 @@ templateSnippets:
                     if l2Proto != "TLS" {
                       continue
                     }
-                    var l2Port = toint(dig(l2, "port") | fallback(0))
+                    var l2Port = digint(l2, "port")
                     if l2Port != lPort {
                       continue
                     }
@@ -165,8 +165,8 @@ templateSnippets:
                 //       route's parentRef sets `.port`, only attach to
                 //       listeners with the same `spec.port`. Mismatched
                 //       routes get Accepted=False/NoMatchingParent.
-                var parentPort = toint(dig(parentRef, "port") | fallback(0))
-                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var parentPort = digint(parentRef, "port")
+                var listenerPort = digint(listener, "port")
                 if parentPort != 0 && listenerPort != parentPort {
                   continue
                 }
@@ -439,7 +439,7 @@ templateSnippets:
                   var svcPorts = []any{}
                   var seenPorts = map[int]bool{}
                   for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-                    var lport = toint(dig(listener, "port") | fallback(0))
+                    var lport = digint(listener, "port")
                     if lport <= 0 || seenPorts[lport] {
                       continue
                     }
@@ -683,7 +683,7 @@ templateSnippets:
             for _, l := range dig(gateway, "spec", "listeners") | toSlice() {
               var lProto = tostring(dig(l, "protocol") | fallback(""))
               if lProto == "TLS" {
-                var lPort = toint(dig(l, "port") | fallback(0))
+                var lPort = digint(l, "port")
                 var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
                 if tlsPortModes[lPort] == nil {
                   tlsPortModes[lPort] = map[string]bool{}
@@ -854,13 +854,13 @@ templateSnippets:
               var listenerAcceptedReason = "Accepted"
               var listenerAcceptedMessage = "Listener accepted"
               if protocol == "HTTPS" && resolvedRefsStatus == "True" {
-                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var listenerPort = digint(listener, "port")
                 var feValidation any = nil
                 var fe = dig(gateway, "spec", "tls", "frontend")
                 if fe != nil {
                   feValidation = dig(fe, "default", "validation")
                   for _, pp := range dig(fe, "perPort") | toSlice() {
-                    if toint(dig(pp, "port") | fallback(0)) == listenerPort {
+                    if digint(pp, "port") == listenerPort {
                       var ppV = dig(pp, "tls", "validation")
                       if ppV != nil {
                         feValidation = ppV
@@ -1010,7 +1010,7 @@ templateSnippets:
               // supportedKinds — it can't accept routes of any kind, so
               // reporting [TLSRoute] would be misleading.
               if protocol == "TLS" {
-                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var listenerPort = digint(listener, "port")
                 var pm = tlsPortModes[listenerPort]
                 if pm != nil && pm["Passthrough"] && pm["Terminate"] {
                   listenerAcceptedStatus = "False"

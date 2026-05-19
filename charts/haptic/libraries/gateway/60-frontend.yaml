@@ -39,8 +39,8 @@ templateSnippets:
       %%}
       {%- var catchallEntries = []any{} %}
       {%- for _, gw := range resources.gateways.List() | toSlice() %}
-        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
-        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+        {%- var gwNs = digstr(gw, "metadata", "namespace") %}
+        {%- var gwName = digstr(gw, "metadata", "name") %}
         {%- var gwHasCatchall = false %}
         {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
           {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}

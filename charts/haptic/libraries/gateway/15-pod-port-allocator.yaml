@@ -98,7 +98,7 @@ templateSnippets:
               continue
             }
             var lName = ListenerName(listener)
-            var lPort = toint(dig(listener, "port") | fallback(0))
+            var lPort = digint(listener, "port")
             if lName == "" || lPort <= 0 {
               continue
             }

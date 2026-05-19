@@ -126,6 +126,24 @@ const (
 	// Available in: Scriggo only.
 	FuncDig = "dig"
 
+	// FuncDigStr is dig + tostring + empty-string fallback combined.
+	// Replaces `tostring(dig(obj, "k1", "k2") | fallback(""))` with
+	// `digstr(obj, "k1", "k2")`. Returns "" if any key is missing or the
+	// leaf is nil.
+	// Available in: Scriggo only.
+	FuncDigStr = "digstr"
+
+	// FuncDigInt is dig + toint + zero fallback combined.
+	// Returns 0 if any key is missing or the leaf isn't int-coercible.
+	// Available in: Scriggo only.
+	FuncDigInt = "digint"
+
+	// FuncDigBool is dig + bool-coerce + false fallback combined.
+	// Accepts native bool and string "true"/"false". Returns false on
+	// anything else.
+	// Available in: Scriggo only.
+	FuncDigBool = "digbool"
+
 	// FuncToStringSlice converts []any to []string.
 	// Available in: Scriggo only.
 	FuncToStringSlice = "toStringSlice"

@@ -129,7 +129,7 @@ templateSnippets:
                 var prNs = tostring(dig(parentRef, "namespace") | fallback(nsStr))
                 var prName = tostring(dig(parentRef, "name") | fallback(""))
                 var prSection = tostring(dig(parentRef, "sectionName") | fallback(""))
-                var prPort = toint(dig(parentRef, "port") | fallback(0))
+                var prPort = digint(parentRef, "port")
               %%}
               {%- if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" %}
                 {%- continue %}
@@ -145,7 +145,7 @@ templateSnippets:
                 var portModes = map[int]map[string]bool{}
                 for _, l := range dig(gw, "spec", "listeners") | toSlice() {
                   if ListenerProtocol(l) == "TLS" {
-                    var lp = toint(dig(l, "port") | fallback(0))
+                    var lp = digint(l, "port")
                     var lm = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
                     if portModes[lp] == nil { portModes[lp] = map[string]bool{} }
                     portModes[lp][lm] = true
@@ -156,7 +156,7 @@ templateSnippets:
                 {%%
                   var lName = ListenerName(listener)
                   var lProto = ListenerProtocol(listener)
-                  var lPort = toint(dig(listener, "port") | fallback(0))
+                  var lPort = digint(listener, "port")
                   var lMode = tostring(dig(listener, "tls", "mode") | fallback("Terminate"))
                   var lHost = ListenerHostname(listener)
 
