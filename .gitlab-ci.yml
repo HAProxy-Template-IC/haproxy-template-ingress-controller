@@ -1485,6 +1485,24 @@ test-gateway-conformance:
         kubectl get httproute -A -o yaml > "$LOG_DIR/httproutes.yaml" 2>&1 || true
         kubectl get pods -A -o wide > "$LOG_DIR/pods.log" 2>&1 || true
 
+        # Cluster-wide events — kubelet's "pulling image" / "container
+        # failed to start" / "service has no endpoints" lines all show
+        # up here. Critical for diagnosing flakes where a test-created
+        # pod never reaches Ready in the test's timeout window (the
+        # pods.log snapshot only shows the post-fact state, not the
+        # state machine that led there). Sorted by lastTimestamp so the
+        # tail of the file is the most recent.
+        kubectl get events -A --sort-by='.lastTimestamp' > "$LOG_DIR/events.log" 2>&1 || true
+
+        # Pod descriptions for the test namespaces — `kubectl get pods
+        # -o wide` shows ready/not-ready as a column, but only `kubectl
+        # describe pod` carries the kubelet event chain that explains
+        # *why* a pod stuck in Pending or CrashLoopBackOff did so. Cap
+        # at the test namespaces so we don't dump 100+ system pods.
+        for ns in $(kubectl get ns -o jsonpath='{range .items[?(@.metadata.name=~"(ingress-conformance|gateway-conformance).*")]}{.metadata.name} {end}' 2>/dev/null); do
+          kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
+        done
+
         # MetalLB state — IPAddressPool exhaustion or speaker issues
         # surface as Gateway addresses staying empty.
         kubectl -n metallb-system get pods -o yaml > "$LOG_DIR/metallb-pods.yaml" 2>&1 || true
