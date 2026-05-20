@@ -1488,12 +1488,54 @@ test-gateway-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
-        # HAProxy + dataplane logs
+        # HAProxy + dataplane + spoa-hub sidecar logs. spoa-hub stdout
+        # is the only place that records SPOE NOTIFY arrivals and
+        # per-plugin dispatch errors — without it, conformance flakes
+        # like issue #45 are undebuggable from the artifacts alone.
+        # `|| true` on the spoa-hub line so older HAProxy pods that
+        # pre-date the sidecar (and clusters without the sidecar
+        # enabled) don't fail this script.
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
           echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+          echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
+
+          # SPOA-hub /metrics scrape. Bound on the pod loopback by the
+          # chart (spoaHub.hub.metricsAddr default 127.0.0.1:9095, set
+          # in libraries/spoa-hub.yaml + templates/spoa-hub-configmap.yaml).
+          # Plugin counters live here: plugin_mirror_dispatches_total /
+          # dispatch_dropped_total / dispatch_outcomes_total,
+          # plugin_coraza_evaluations_total,
+          # plugin_external-auth_auth_requests_total, etc.
+          #
+          # Scrape from the haproxy container which shares the pod's
+          # network namespace with the sidecar (the spoa-hub container
+          # is read-only + minimal, no scraping tools). The
+          # haproxytech/haproxy-debian image has neither curl nor
+          # busybox wget pre-installed — fall through a chain of
+          # candidates and `printf` the failure reason if all miss, so
+          # an empty scrape is debuggable instead of silent.
+          echo "=== SPOA-hub /metrics on $pod ===" >> "$LOG_DIR/spoa-hub-metrics.txt"
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- sh -c '
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsS --max-time 5 http://127.0.0.1:9095/metrics
+            elif command -v wget >/dev/null 2>&1; then
+              wget -q -O- --timeout=5 http://127.0.0.1:9095/metrics
+            else
+              # Last-resort raw HTTP/1.0 via /dev/tcp (bash-only). The
+              # haproxy-debian image ships dash as /bin/sh, but the
+              # explicit `bash` here works because the image installs
+              # bash for the entrypoint. If even bash is missing the
+              # scrape will fail silently and we will see only the
+              # header line — at which point install curl in the image.
+              printf "GET /metrics HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" \
+                | bash -c "exec 3<>/dev/tcp/127.0.0.1/9095; cat >&3; cat <&3" 2>&1 \
+                || printf "scrape failed: no curl/wget/bash-tcp on haproxy container; install curl in haproxytech/haproxy-debian image for /metrics capture\n"
+            fi
+          ' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
@@ -1505,6 +1547,30 @@ test-gateway-conformance:
         kubectl get gateway -A -o yaml > "$LOG_DIR/gateways.yaml" 2>&1 || true
         kubectl get httproute -A -o yaml > "$LOG_DIR/httproutes.yaml" 2>&1 || true
         kubectl get pods -A -o wide > "$LOG_DIR/pods.log" 2>&1 || true
+
+        # Cluster-wide events — kubelet's "pulling image" / "container
+        # failed to start" / "service has no endpoints" lines all show
+        # up here. Critical for diagnosing flakes where a test-created
+        # pod never reaches Ready in the test's timeout window (the
+        # pods.log snapshot only shows the post-fact state, not the
+        # state machine that led there). Sorted by lastTimestamp so the
+        # tail of the file is the most recent.
+        kubectl get events -A --sort-by='.lastTimestamp' > "$LOG_DIR/events.log" 2>&1 || true
+
+        # Pod descriptions for the test namespaces — `kubectl get pods
+        # -o wide` shows ready/not-ready as a column, but only `kubectl
+        # describe pod` carries the kubelet event chain that explains
+        # *why* a pod stuck in Pending or CrashLoopBackOff did so. Cap
+        # at the test namespaces so we don't dump 100+ system pods.
+        # kubectl JSONPath doesn't support the `=~` regex operator
+        # (https://kubernetes.io/docs/reference/kubectl/jsonpath/) — a
+        # filter expression with `=~` evaluates to an empty match
+        # silently, so the for-loop never iterates and the capture is
+        # a no-op. List every namespace name and filter with `grep -E`
+        # to keep the conformance ones.
+        for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(ingress-conformance|gateway-conformance)'); do
+          kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
+        done
 
         # MetalLB state — IPAddressPool exhaustion or speaker issues
         # surface as Gateway addresses staying empty.
@@ -1615,12 +1681,54 @@ test-ingress-conformance:
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" --all-containers=true >> "$LOG_DIR/controller.log" 2>&1 || true
         done
 
-        # HAProxy + dataplane logs
+        # HAProxy + dataplane + spoa-hub sidecar logs. spoa-hub stdout
+        # is the only place that records SPOE NOTIFY arrivals and
+        # per-plugin dispatch errors — without it, conformance flakes
+        # like issue #45 are undebuggable from the artifacts alone.
+        # `|| true` on the spoa-hub line so older HAProxy pods that
+        # pre-date the sidecar (and clusters without the sidecar
+        # enabled) don't fail this script.
         for pod in $(kubectl -n ${CTRL_NAMESPACE} get pods -l app.kubernetes.io/component=loadbalancer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
           echo "=== HAProxy: $pod ===" >> "$LOG_DIR/haproxy.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c haproxy >> "$LOG_DIR/haproxy.log" 2>&1 || true
           echo "=== Dataplane: $pod ===" >> "$LOG_DIR/dataplane.log"
           kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c dataplane >> "$LOG_DIR/dataplane.log" 2>&1 || true
+          echo "=== SPOA-hub: $pod ===" >> "$LOG_DIR/spoa-hub.log"
+          kubectl -n ${CTRL_NAMESPACE} logs "$pod" -c spoa-hub >> "$LOG_DIR/spoa-hub.log" 2>&1 || true
+
+          # SPOA-hub /metrics scrape. Bound on the pod loopback by the
+          # chart (spoaHub.hub.metricsAddr default 127.0.0.1:9095, set
+          # in libraries/spoa-hub.yaml + templates/spoa-hub-configmap.yaml).
+          # Plugin counters live here: plugin_mirror_dispatches_total /
+          # dispatch_dropped_total / dispatch_outcomes_total,
+          # plugin_coraza_evaluations_total,
+          # plugin_external-auth_auth_requests_total, etc.
+          #
+          # Scrape from the haproxy container which shares the pod's
+          # network namespace with the sidecar (the spoa-hub container
+          # is read-only + minimal, no scraping tools). The
+          # haproxytech/haproxy-debian image has neither curl nor
+          # busybox wget pre-installed — fall through a chain of
+          # candidates and `printf` the failure reason if all miss, so
+          # an empty scrape is debuggable instead of silent.
+          echo "=== SPOA-hub /metrics on $pod ===" >> "$LOG_DIR/spoa-hub-metrics.txt"
+          kubectl -n ${CTRL_NAMESPACE} exec "$pod" -c haproxy -- sh -c '
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsS --max-time 5 http://127.0.0.1:9095/metrics
+            elif command -v wget >/dev/null 2>&1; then
+              wget -q -O- --timeout=5 http://127.0.0.1:9095/metrics
+            else
+              # Last-resort raw HTTP/1.0 via /dev/tcp (bash-only). The
+              # haproxy-debian image ships dash as /bin/sh, but the
+              # explicit `bash` here works because the image installs
+              # bash for the entrypoint. If even bash is missing the
+              # scrape will fail silently and we will see only the
+              # header line — at which point install curl in the image.
+              printf "GET /metrics HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n" \
+                | bash -c "exec 3<>/dev/tcp/127.0.0.1/9095; cat >&3; cat <&3" 2>&1 \
+                || printf "scrape failed: no curl/wget/bash-tcp on haproxy container; install curl in haproxytech/haproxy-debian image for /metrics capture\n"
+            fi
+          ' >> "$LOG_DIR/spoa-hub-metrics.txt" 2>&1 || true
         done
 
         # Rendered HAProxy config (the desired config the controller pushed)
@@ -1636,6 +1744,23 @@ test-ingress-conformance:
         kubectl get pods -A -l app.kubernetes.io/name=ingress-conformance-echo -o yaml > "$LOG_DIR/echo-pods.yaml" 2>&1 || true
         kubectl get services -A -o yaml > "$LOG_DIR/services.yaml" 2>&1 || true
         kubectl get pods -A -o wide > "$LOG_DIR/pods.log" 2>&1 || true
+
+        # Cluster-wide events + per-namespace pod descriptions. Three
+        # consecutive ingress-conformance failures (issue #45 follow-up)
+        # showed `waiting for service endpoints available: timed out`
+        # in the test step, but the existing artifact set lacks the
+        # kubelet event chain (`Pulling image`, `Failed to pull image`,
+        # `Back-off restarting failed container`) that would explain
+        # *why* the backend pod didn't reach Ready. Same capture as
+        # the gateway-conformance after_script — kept in lockstep so
+        # both flake classes get the same diagnostic.
+        kubectl get events -A --sort-by='.lastTimestamp' > "$LOG_DIR/events.log" 2>&1 || true
+        # kubectl JSONPath has no `=~` regex operator (see comment on
+        # the gateway-conformance after_script block for context). Use
+        # grep -E for the filter.
+        for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^ingress-conformance'); do
+          kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
+        done
       fi
     - kind delete cluster --name haptic-e2e || true
   artifacts:
