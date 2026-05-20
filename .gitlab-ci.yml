@@ -712,6 +712,69 @@ prep-spoa-plugins:
       - plugins/
     expire_in: 1 week
 
+# Mirror the upstream ingress-conformance echoserver image into our own
+# Container Registry.
+#
+# Why this exists: the upstream Cucumber suite
+# (kubernetes-sigs/ingress-controller-conformance, pinned in the
+# test-ingress-conformance job below) hard-codes
+# `k8s.gcr.io/ingressconformance/echoserver:v0.0.1` as the backend
+# image for every scenario's generated Deployment. `k8s.gcr.io` was
+# retired in 2023 and now redirects to `registry.k8s.io`. Pulls of
+# this image from GitLab.com SaaS runners reliably exceed the
+# upstream suite's 5-minute `WaitForEndpointsTimeout`
+# (test/kubernetes/kubernetes.go) on the FIRST scenario — every
+# subsequent scenario passes because containerd has the image
+# cached by then, but the first failure already marks TestSuite
+# FAIL. Issue #45 has the full investigation chain.
+#
+# Solution: mirror the upstream image (digest-pinned, byte-identical)
+# into this project's registry, then vendor an upstream patch
+# (tests/conformance/patches/0002-use-mirrored-echoserver-image.patch)
+# that replaces the `EchoContainer` constant with the mirrored path.
+# Pulls from registry.gitlab.com cache locally on the GitLab.com
+# fleet and complete in seconds, well inside the 5-min budget.
+#
+# Cadence: scheduled (weekly) + on-demand `when: manual` for the
+# initial bootstrap. Refreshes the same tag with the same content —
+# the digest pin in the patch is the authoritative version reference,
+# the tag is only there to give Docker tooling something to display.
+# A future upstream image bump (new SHA) needs:
+#   1. Update the SRC_IMAGE digest below
+#   2. Update the same digest in tests/conformance/patches/0002-*.patch
+#   3. Trigger this job to publish the new content
+mirror-ingress-conformance-image:
+  stage: build
+  image: docker:29
+  extends:
+    - .docker-dind
+  tags:
+    - saas-linux-small-amd64
+  needs: []
+  rules:
+    # Two ways to trigger:
+    # 1. Pipeline schedule with MIRROR_IMAGES=true set in the
+    #    schedule's variables (configured in the GitLab UI). The
+    #    gate is the variable, not the source — that way other
+    #    scheduled pipelines (nightly builds, dependency scans,
+    #    etc.) don't drag this job along.
+    # 2. Manual play on any pipeline that includes the job
+    #    (allow_failure so a missed click on an MR pipeline
+    #    doesn't fail the whole pipeline).
+    - if: $MIRROR_IMAGES == "true"
+    - when: manual
+      allow_failure: true
+  interruptible: false
+  variables:
+    SRC_IMAGE: "k8s.gcr.io/ingressconformance/echoserver:v0.0.1@sha256:9b34b17f391f87fb2155f01da2f2f90b7a4a5c1110ed84cb5379faa4f570dc52"
+    DST_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance-echo:v0.0.1"
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker pull "$SRC_IMAGE"
+    - docker tag "$SRC_IMAGE" "$DST_IMAGE"
+    - docker push "$DST_IMAGE"
+    - echo "Mirrored $SRC_IMAGE -> $DST_IMAGE"
+
 # Multi-arch image build template. The Dockerfile pulls plugin .so files
 # from the prep stage via --build-context plugins=plugins.
 .build-spoa-image-base:
