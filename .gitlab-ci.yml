@@ -1596,6 +1596,40 @@ test-ingress-conformance:
     # only pay for cluster setup — the conformance run uses its own
     # generated Ingress resources, not e2e fixtures.
     - TEST_RUN_PATTERN="^$" make test-e2e
+    # Warm containerd's image cache for the upstream echoserver via
+    # a one-shot kubectl run. The first conformance scenario
+    # (`Default_backend / no rules / should send all requests to
+    # the default backend`) runs cold against
+    # `k8s.gcr.io/ingressconformance/echoserver:v0.0.1` and the
+    # pull over the redirect from the retired `k8s.gcr.io` reliably
+    # exceeds the upstream suite's 5-min `WaitForEndpointsTimeout`,
+    # causing a consistent first-scenario failure (every later
+    # scenario passes because the image is then cached). Tracked
+    # in issue #45; verified across multiple MR !963 runs.
+    #
+    # Why not `kind load docker-image`? Tried that — it tags the
+    # image under containerd's `docker.io/library/import-…`
+    # convention, which trips a faulty `failed to check if this
+    # is a checkpoint image` check in containerd 2.x (kindest/node
+    # v1.35.x) and the pod fails CreateContainerError. Going
+    # through kubelet's normal CRI pull path side-steps that.
+    #
+    # The warmer pod sleeps briefly then exits; namespace
+    # `kube-system` keeps it out of the conformance test's
+    # namespace listings; deleted immediately after Ready.
+    - |
+      ECHO_IMAGE='k8s.gcr.io/ingressconformance/echoserver:v0.0.1@sha256:9b34b17f391f87fb2155f01da2f2f90b7a4a5c1110ed84cb5379faa4f570dc52'
+      export KUBECONFIG=/tmp/haproxy-e2e-kubeconfig
+      echo "Pre-warming containerd cache for $ECHO_IMAGE..."
+      kubectl -n kube-system delete pod echoserver-prewarm --ignore-not-found --wait=false
+      kubectl -n kube-system run echoserver-prewarm \
+        --image="$ECHO_IMAGE" \
+        --image-pull-policy=IfNotPresent \
+        --restart=Never \
+        --command -- /bin/sh -c 'echo prewarmed; sleep 1'
+      kubectl -n kube-system wait --for=condition=Ready pod/echoserver-prewarm --timeout=4m \
+        || kubectl -n kube-system get pod echoserver-prewarm -o yaml
+      kubectl -n kube-system delete pod echoserver-prewarm --wait=false
     - make test-ingress-conformance
   after_script:
     - |
