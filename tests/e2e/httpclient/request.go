@@ -365,6 +365,18 @@ func (r *Request) poll(t *testing.T, description string, predicate func(*Respons
 		return lastResp, nil
 	}
 
+	// Timeout. Invoke the configured snapshot callback BEFORE
+	// returning the error — at this moment the test's fixtures are
+	// still alive (no t.Cleanup has fired), so a snapshot of the
+	// chart-rendered HAProxyCfg + on-disk /etc/haproxy reflects the
+	// failing state instead of the post-cleanup empty defaults that
+	// the standard DumpLogsOnFailure captures. The callback is
+	// best-effort; failures inside it must not influence the
+	// timeout error we're about to return.
+	if r.client.onPollTimeout != nil {
+		r.client.onPollTimeout(t, description, lastResp, lastErr)
+	}
+
 	// Timeout. Build a diagnostic message with whatever we last saw.
 	if lastResp != nil {
 		return lastResp, fmt.Errorf("%s: last status=%d, last body=%s, err=%w",

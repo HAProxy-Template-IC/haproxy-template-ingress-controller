@@ -1,0 +1,1210 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: haproxytemplateconfigs.haproxy-haptic.org
+spec:
+  group: haproxy-haptic.org
+  names:
+    kind: HAProxyTemplateConfig
+    listKind: HAProxyTemplateConfigList
+    plural: haproxytemplateconfigs
+    shortNames:
+    - htplcfg
+    - haptpl
+    singular: haproxytemplateconfig
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.validationStatus
+      name: Status
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HAProxyTemplateConfig defines the configuration for the HAProxy Template Ingress Controller.
+
+          As a custom resource it provides OpenAPI validation, type safety, and support for
+          embedded validation tests.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HAProxyTemplateConfigSpec defines the desired state of HAProxyTemplateConfig.
+            properties:
+              controller:
+                description: Controller contains controller-level settings (ports,
+                  leader election, etc.).
+                properties:
+                  configPublishing:
+                    description: ConfigPublishing configures how rendered configs
+                      are stored in CRDs.
+                    properties:
+                      compressionThreshold:
+                        default: 1048576
+                        description: |-
+                          CompressionThreshold is the minimum size in bytes at which configs are compressed.
+
+                          Configs smaller than this threshold are stored uncompressed.
+                          Compression uses zstd+base64 encoding.
+
+                          Default: 1048576 (1 MiB)
+                          Set to 0 to disable compression.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                  leaderElection:
+                    description: LeaderElection configures leader election for high
+                      availability.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled determines whether leader election is active.
+
+                          If false, the controller assumes it is the sole instance (single-replica mode).
+                          Default: true
+                        type: boolean
+                      leaseDuration:
+                        description: |-
+                          LeaseDuration is the duration that non-leader candidates will wait
+                          to force acquire leadership (measured against time of last observed ack).
+
+                          Format: Go duration string (e.g., "15s", "30s")
+                          Default: 15s (DefaultLeaderElectionLeaseDuration in pkg/core/config/defaults.go;
+                          the Helm chart's values.yaml sets the same value at controller.config.controller.leaderElection.leaseDuration)
+                        type: string
+                      leaseName:
+                        description: |-
+                          LeaseName is the name of the Lease resource used for coordination.
+
+                          Default: haptic-leader
+                        minLength: 1
+                        type: string
+                      renewDeadline:
+                        description: |-
+                          RenewDeadline is the duration that the acting leader will retry
+                          refreshing leadership before giving up.
+
+                          Format: Go duration string (e.g., "10s")
+                          Default: 10s (DefaultLeaderElectionRenewDeadline)
+                          Must be less than LeaseDuration
+                        type: string
+                      retryPeriod:
+                        description: |-
+                          RetryPeriod is the duration the LeaderElector clients should wait
+                          between tries of actions.
+
+                          Format: Go duration string (e.g., "2s")
+                          Default: 2s (DefaultLeaderElectionRetryPeriod)
+                          Must be less than RenewDeadline
+                        type: string
+                    type: object
+                  reconciliationDebounceInterval:
+                    description: |-
+                      ReconciliationDebounceInterval overrides the leading-edge refractory window
+                      the Reconciler applies to resource and HTTP-resource change events before
+                      triggering a reconciliation cycle.
+
+                      The first change after the window expires fires immediately; further changes
+                      arriving within the window are batched and the timer fires once at window end.
+                      This guarantees at least this much time between any two reconciliations and at
+                      most this much latency for any single change.
+
+                      Format: Go duration string (e.g., "1s", "5s", "30s").
+                      Default: 5s (DefaultReconciliationDebounceInterval, shared with the per-watcher
+                      debounce default in pkg/k8s/types.DefaultDebounceInterval).
+
+                      Lower it when responsiveness matters more than reconciliation cost (small
+                      clusters, latency-sensitive rollouts). Raise it on high-churn clusters to
+                      absorb more changes per render and reduce GC pressure.
+
+                      Invalid values silently fall back to the default. Empty (the default) also
+                      uses the default.
+                    type: string
+                type: object
+              credentialsSecretRef:
+                description: |-
+                  CredentialsSecretRef references the Secret containing HAProxy Dataplane API credentials.
+
+                  The Secret must contain the following keys:
+                    - dataplane_username: Username for HAProxy Dataplane API
+                    - dataplane_password: Password for HAProxy Dataplane API
+
+                  If the namespace is omitted, it defaults to the same namespace as this config resource.
+                properties:
+                  name:
+                    description: Name is the name of the Secret.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace is the namespace of the Secret.
+
+                      If empty, defaults to the same namespace as the HAProxyTemplateConfig.
+                    type: string
+                required:
+                - name
+                type: object
+              dataplane:
+                description: Dataplane configures the Dataplane API for production
+                  HAProxy instances.
+                properties:
+                  configFile:
+                    description: |-
+                      ConfigFile is the path to the main HAProxy configuration file.
+
+                      Used for validation.
+                      Default: /etc/haproxy/haproxy.cfg
+                    type: string
+                  configPublishInterval:
+                    description: |-
+                      ConfigPublishInterval throttles how often the rendered HAProxy config is
+                      republished as the HAProxyCfg observability CRD. The CRD itself is not on
+                      the deployment hot path, but during endpoint churn rewriting the (~500 KB)
+                      CRD on every reconciliation creates significant etcd write pressure;
+                      throttling republishes reduces that write load while leaving the
+                      event-driven push to HAProxy pods untouched.
+
+                      Format: Go duration string (e.g., "30s", "1m").
+                      Default: 30s
+                    type: string
+                  deploymentTimeout:
+                    description: |-
+                      DeploymentTimeout is the maximum time to wait for a deployment to complete.
+                      If exceeded, the scheduler assumes the deployment was lost and retries.
+                      This is a safety net for race conditions during leadership transitions.
+                      Format: Go duration string (e.g., "30s", "1m")
+                      Default: 30s
+                    type: string
+                  driftPreventionInterval:
+                    description: |-
+                      DriftPreventionInterval triggers periodic deployments to prevent configuration drift.
+
+                      A deployment is automatically triggered if no deployment has occurred within this interval.
+                      This detects and corrects drift caused by external Dataplane API clients.
+                      Format: Go duration string (e.g., "60s", "5m")
+                      Default: 60s
+                    type: string
+                  generalStorageDir:
+                    description: |-
+                      GeneralStorageDir is the directory for general files (error pages, etc.).
+
+                      Used for both validation and deployment.
+                      Default: /etc/haproxy/general
+                    type: string
+                  mapsDir:
+                    description: |-
+                      MapsDir is the directory for HAProxy map files.
+
+                      Used for both validation and deployment.
+                      Default: /etc/haproxy/maps
+                    type: string
+                  maxParallel:
+                    description: |-
+                      MaxParallel limits concurrent Dataplane API operations during sync.
+                      This prevents overwhelming the API when syncing large configurations.
+
+                      Values:
+                        - 0 or unset: auto-calculated as dataplane GOMAXPROCS * 10
+                        - Positive integer: use that exact limit
+
+                      The auto-calculation uses the dataplane container's CPU allocation to determine
+                      an appropriate parallelism level that balances throughput and API stability.
+                    minimum: 0
+                    type: integer
+                  minDeploymentInterval:
+                    description: |-
+                      MinDeploymentInterval enforces minimum time between consecutive deployments.
+
+                      This prevents rapid-fire deployments from hammering HAProxy instances.
+                      Format: Go duration string (e.g., "2s", "500ms")
+                      Default: 2s
+                    type: string
+                  port:
+                    description: |-
+                      Port is the Dataplane API port for production HAProxy pods.
+
+                      Default: 5555
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  rawPushThreshold:
+                    default: 100
+                    description: |-
+                      RawPushThreshold sets the number of configuration changes that triggers
+                      a raw config push instead of fine-grained sync.
+
+                      Fine-grained sync applies individual API operations (create/update/delete)
+                      which is efficient for small changes but slow for large deployments.
+                      When changes exceed this threshold, the controller pushes the complete
+                      configuration as a raw config, which is faster for bulk updates.
+
+                      Additionally, when the remote HAProxy config version is 1 (initial state),
+                      raw push is always used regardless of this threshold.
+
+                      Default: 100
+                    minimum: 0
+                    type: integer
+                  reloadVerificationTimeout:
+                    description: |-
+                      ReloadVerificationTimeout is the maximum time the Dataplane sync waits for
+                      HAProxy to report a graceful reload as completed before failing the sync.
+                      Set this higher than the Dataplane API's own reload-delay setting.
+
+                      Format: Go duration string (e.g., "10s", "30s").
+                      Default: 10s
+                    type: string
+                  sslCertsDir:
+                    description: |-
+                      SSLCertsDir is the directory for SSL certificates.
+
+                      Used for both validation and deployment.
+                      Default: /etc/haproxy/ssl
+                    type: string
+                  syncMaxRetries:
+                    description: |-
+                      SyncMaxRetries is the maximum number of automatic retries the Dataplane
+                      VersionAdapter performs when a transaction commit fails with HTTP 409
+                      (config-version conflict, typically caused by a concurrent writer). Each
+                      retry re-fetches the current version and replays the transaction.
+
+                      0 disables retries. Use a pointer so unset / 0 / positive are all
+                      distinguishable: nil means "use the default", 0 means "no retries".
+                      Default: 3
+                    minimum: 0
+                    type: integer
+                  syncTimeout:
+                    description: |-
+                      SyncTimeout is the overall timeout for a single Dataplane sync to one
+                      HAProxy endpoint. The sync covers parse + diff + transactional apply +
+                      optional reload-verification. If exceeded, the sync is cancelled and the
+                      scheduler retries on the next reconciliation.
+
+                      Format: Go duration string (e.g., "2m", "30s").
+                      Default: 2m
+                    type: string
+                type: object
+              files:
+                additionalProperties:
+                  description: "GeneralFile defines a general file generated from
+                    a template.\n\nThe filename is derived from the map key in the
+                    configuration.\nThe full path is constructed using the pathResolver.GetPath()
+                    method in templates:\n\n\tExample: pathResolver.GetPath(\"503.http\",
+                    \"file\") returns /etc/haproxy/general/503.http\n\nIMPORTANT:
+                    This is a Kubernetes CRD type. When modifying this struct, you
+                    must also update:\n  - The internal config type: pkg/core/config/types.go
+                    (GeneralFile)\n  - The conversion logic: pkg/controller/conversion/converter.go
+                    (ConvertSpec function - files section)"
+                  properties:
+                    postProcessing:
+                      description: |-
+                        PostProcessing defines optional post-processors to apply after rendering.
+
+                        Post-processors run in the order specified and can transform the rendered output.
+                      items:
+                        description: |-
+                          PostProcessorConfig defines a post-processor to apply to rendered template output.
+
+                          IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                            - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
+                            - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+                        properties:
+                          params:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Params contains post-processor-specific parameters.
+
+                              For "regex_replace":
+                                - pattern: Regular expression pattern to match
+                                - replace: Replacement string
+                            type: object
+                          type:
+                            description: Type specifies the post-processor type (e.g.,
+                              "regex_replace").
+                            type: string
+                        required:
+                        - params
+                        - type
+                        type: object
+                      type: array
+                    template:
+                      description: Template is the template for generating the file
+                        content.
+                      minLength: 1
+                      type: string
+                  required:
+                  - template
+                  type: object
+                description: |-
+                  Files maps file names to their template definitions.
+
+                  These generate auxiliary files like custom error pages.
+                type: object
+              haproxyConfig:
+                description: HAProxyConfig contains the main HAProxy configuration
+                  template.
+                properties:
+                  postProcessing:
+                    description: |-
+                      PostProcessing defines optional post-processors to apply after rendering.
+
+                      Post-processors run in the order specified and can transform the rendered output.
+                      Common use case: Normalize indentation with regex_replace.
+                    items:
+                      description: |-
+                        PostProcessorConfig defines a post-processor to apply to rendered template output.
+
+                        IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                          - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
+                          - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+                      properties:
+                        params:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Params contains post-processor-specific parameters.
+
+                            For "regex_replace":
+                              - pattern: Regular expression pattern to match
+                              - replace: Replacement string
+                          type: object
+                        type:
+                          description: Type specifies the post-processor type (e.g.,
+                            "regex_replace").
+                          type: string
+                      required:
+                      - params
+                      - type
+                      type: object
+                    type: array
+                  template:
+                    description: Template is the template for generating haproxy.cfg.
+                    minLength: 1
+                    type: string
+                required:
+                - template
+                type: object
+              k8sResources:
+                additionalProperties:
+                  description: |-
+                    K8sResource defines a template that emits one or more Kubernetes
+                    resources via multi-doc YAML.
+
+                    IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                      - The internal config type: pkg/core/config/types.go (K8sResource)
+                      - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - k8sResources section)
+                  properties:
+                    postProcessing:
+                      description: |-
+                        PostProcessing defines optional post-processors to apply after rendering.
+
+                        Post-processors run in the order specified and can transform the rendered output.
+                      items:
+                        description: |-
+                          PostProcessorConfig defines a post-processor to apply to rendered template output.
+
+                          IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                            - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
+                            - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+                        properties:
+                          params:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Params contains post-processor-specific parameters.
+
+                              For "regex_replace":
+                                - pattern: Regular expression pattern to match
+                                - replace: Replacement string
+                            type: object
+                          type:
+                            description: Type specifies the post-processor type (e.g.,
+                              "regex_replace").
+                            type: string
+                        required:
+                        - params
+                        - type
+                        type: object
+                      type: array
+                    template:
+                      description: |-
+                        Template is the template for generating the resource YAML.
+
+                        The rendered output is parsed as one or more Kubernetes
+                        resources (separate documents with `---`). Each document must
+                        declare `apiVersion`, `kind`, and `metadata.name` (plus
+                        `metadata.namespace` for namespaced kinds).
+                      minLength: 1
+                      type: string
+                  required:
+                  - template
+                  type: object
+                description: |-
+                  K8sResources maps resource template names to their template
+                  definitions. Each entry's rendered output is parsed as one or
+                  more Kubernetes resources (multi-doc YAML, separated by `---`)
+                  and applied via Server-Side Apply with field manager `haptic`.
+
+                  The controller injects an OwnerReference to the
+                  HAProxyTemplateConfig CR (controller=true,
+                  blockOwnerDeletion=true) on every applied resource so cascade
+                  garbage collection removes them when the CR is deleted (e.g.
+                  `helm uninstall`). Resources that disappear from the rendered
+                  set across reconciliations are pruned via the
+                  `haproxy-haptic.org/managed-by` label the applier injects.
+
+                  Templates have full access to the same engine context as
+                  haproxyConfig — `resources`, filters, `templateSnippets`,
+                  `fileRegistry`, `extraContext`, etc. — so a k8sResources
+                  template can render extension points (`render_glob` patterns)
+                  and consume cached state (`shared.ComputeIfAbsent`).
+                type: object
+              logging:
+                description: Logging configures logging behavior.
+                properties:
+                  level:
+                    description: |-
+                      Level controls the log level.
+
+                      Values: TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive)
+
+                      If not set, the LOG_LEVEL environment variable is used.
+                      If neither is set, defaults to INFO.
+                    enum:
+                    - TRACE
+                    - DEBUG
+                    - INFO
+                    - WARN
+                    - ERROR
+                    - trace
+                    - debug
+                    - info
+                    - warn
+                    - error
+                    - ""
+                    type: string
+                type: object
+              maps:
+                additionalProperties:
+                  description: |-
+                    MapFile defines a HAProxy map file generated from a template.
+
+                    IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                      - The internal config type: pkg/core/config/types.go (MapFile)
+                      - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - maps section)
+                  properties:
+                    postProcessing:
+                      description: |-
+                        PostProcessing defines optional post-processors to apply after rendering.
+
+                        Post-processors run in the order specified and can transform the rendered output.
+                      items:
+                        description: |-
+                          PostProcessorConfig defines a post-processor to apply to rendered template output.
+
+                          IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                            - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
+                            - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+                        properties:
+                          params:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Params contains post-processor-specific parameters.
+
+                              For "regex_replace":
+                                - pattern: Regular expression pattern to match
+                                - replace: Replacement string
+                            type: object
+                          type:
+                            description: Type specifies the post-processor type (e.g.,
+                              "regex_replace").
+                            type: string
+                        required:
+                        - params
+                        - type
+                        type: object
+                      type: array
+                    template:
+                      description: |-
+                        Template is the template for generating the map file content.
+
+                        The rendered output should be in HAProxy map file format (key-value pairs).
+                      minLength: 1
+                      type: string
+                  required:
+                  - template
+                  type: object
+                description: |-
+                  Maps maps map file names to their template definitions.
+
+                  These generate HAProxy map files for backend routing and other features.
+                type: object
+              podSelector:
+                description: PodSelector identifies which HAProxy pods to configure.
+                properties:
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      MatchLabels are the labels to match HAProxy pods.
+
+                      Example:
+                        app: haproxy
+                        component: loadbalancer
+                    minProperties: 1
+                    type: object
+                required:
+                - matchLabels
+                type: object
+              sslCertificates:
+                additionalProperties:
+                  description: |-
+                    SSLCertificate defines an SSL certificate generated from a template.
+
+                    IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                      - The internal config type: pkg/core/config/types.go (SSLCertificate)
+                      - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function - sslCertificates section)
+                  properties:
+                    postProcessing:
+                      description: |-
+                        PostProcessing defines optional post-processors to apply after rendering.
+
+                        Post-processors run in the order specified and can transform the rendered output.
+                      items:
+                        description: |-
+                          PostProcessorConfig defines a post-processor to apply to rendered template output.
+
+                          IMPORTANT: This is a Kubernetes CRD type. When modifying this struct, you must also update:
+                            - The internal config type: pkg/core/config/types.go (PostProcessorConfig)
+                            - The conversion logic: pkg/controller/conversion/converter.go (ConvertSpec function)
+                        properties:
+                          params:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Params contains post-processor-specific parameters.
+
+                              For "regex_replace":
+                                - pattern: Regular expression pattern to match
+                                - replace: Replacement string
+                            type: object
+                          type:
+                            description: Type specifies the post-processor type (e.g.,
+                              "regex_replace").
+                            type: string
+                        required:
+                        - params
+                        - type
+                        type: object
+                      type: array
+                    template:
+                      description: |-
+                        Template is the template for generating the certificate content.
+
+                        The rendered output should be in PEM format (certificate + private key).
+                      minLength: 1
+                      type: string
+                  required:
+                  - template
+                  type: object
+                description: |-
+                  SSLCertificates maps certificate names to their template definitions.
+
+                  These generate SSL certificate files for HAProxy.
+                type: object
+              templateSnippets:
+                additionalProperties:
+                  description: TemplateSnippet defines a reusable template fragment.
+                  properties:
+                    template:
+                      description: |-
+                        Template is the template content.
+
+                        Can be included in other templates using {{ render "snippet_name" }}.
+                      minLength: 1
+                      type: string
+                  required:
+                  - template
+                  type: object
+                description: |-
+                  TemplateSnippets maps snippet names to reusable template fragments.
+
+                  Snippets can be included in other templates using {{ render "name" }}.
+                type: object
+              templatingSettings:
+                description: TemplatingSettings configures template rendering behavior
+                  and custom variables.
+                properties:
+                  engine:
+                    description: |-
+                      Engine specifies which template engine to use for rendering.
+
+                      Available engines:
+                        - "scriggo" (default): Go template syntax, high performance rendering
+
+                      Default: scriggo
+                    enum:
+                    - scriggo
+                    type: string
+                  extraContext:
+                    description: |-
+                      ExtraContext provides custom variables that are passed to all templates.
+
+                      This allows users to add arbitrary data to the template context without
+                      modifying controller code. Values can be any valid JSON type (string, number,
+                      boolean, object, array).
+
+                      Example:
+                        extraContext:
+                          debug:
+                            enabled: true
+                          environment: production
+                          customValue: 42
+
+                      Templates can then reference these as: {{ debug.enabled }}, {{ environment }}, etc.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
+              validationTests:
+                additionalProperties:
+                  description: |-
+                    ValidationTest defines a validation test with fixtures and assertions.
+
+                    The test name is provided by the map key in ValidationTests.
+                  properties:
+                    assertions:
+                      description: Assertions defines the validation checks to perform.
+                      items:
+                        description: ValidationAssertion defines a single validation
+                          check.
+                        properties:
+                          description:
+                            description: Description explains what this assertion
+                              validates.
+                            type: string
+                          expected:
+                            description: Expected is the expected value for equals
+                              assertions.
+                            type: string
+                          jsonpath:
+                            description: JSONPath is the JSONPath expression for jsonpath
+                              assertions.
+                            type: string
+                          pattern:
+                            description: Pattern is the regex pattern for contains/not_contains
+                              assertions.
+                            type: string
+                          patterns:
+                            description: |-
+                              Patterns is a list of regex patterns for match_order assertions.
+                              The patterns must appear in the target in the order specified.
+                            items:
+                              type: string
+                            type: array
+                          target:
+                            description: |-
+                              Target specifies what to validate.
+
+                              Format depends on assertion type:
+                                - haproxy_valid: not used
+                                - contains/not_contains/equals: "haproxy.cfg", "map:<name>", "file:<name>", "cert:<name>"
+                                - jsonpath: the resource to query
+                            type: string
+                          type:
+                            description: |-
+                              Type is the assertion type.
+
+                              Supported types:
+                                - haproxy_valid: Validates that generated HAProxy config is syntactically valid
+                                - contains: Checks if target contains pattern (regex)
+                                - not_contains: Checks if target does not contain pattern (regex)
+                                - equals: Checks if target equals expected value
+                                - jsonpath: Evaluates JSONPath expression against target
+                                - match_count: Counts how many times pattern matches in target (regex)
+                                - match_order: Validates that patterns appear in specified order
+                                - deterministic: Verifies that rendering twice produces identical output
+                            enum:
+                            - haproxy_valid
+                            - contains
+                            - not_contains
+                            - equals
+                            - jsonpath
+                            - match_count
+                            - match_order
+                            - deterministic
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      minItems: 1
+                      type: array
+                    currentConfig:
+                      description: |-
+                        CurrentConfig contains the raw HAProxy configuration from a previous deployment.
+
+                        This is used for testing slot-aware server assignment during rolling deployments.
+                        When provided, templates can access currentConfig to preserve server slot ordering.
+                        The content is parsed using the HAProxy config parser before being passed to templates.
+
+                        Example:
+                          currentConfig: |
+                            backend my-backend
+                                server srv1 10.0.0.1:8080
+                                server srv2 10.0.0.2:8080
+                      type: string
+                    description:
+                      description: Description explains what this test validates.
+                      type: string
+                    extraContext:
+                      description: |-
+                        ExtraContext provides custom variables that override the global extraContext for this test.
+
+                        This allows testing template behavior with different extraContext values without
+                        modifying the global configuration.
+
+                        Example:
+                          extraContext:
+                            sanitize_auth_realm: true
+                            debug: true
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    fixtures:
+                      additionalProperties:
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        type: array
+                      description: |-
+                        Fixtures defines the Kubernetes resources to use for this test.
+
+                        Keys are resource type names (matching WatchedResources keys).
+                        Values are arrays of resources as raw JSON.
+
+                        Example:
+                          ingresses:
+                            - apiVersion: networking.k8s.io/v1
+                              kind: Ingress
+                              metadata:
+                                name: test-ingress
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    httpResources:
+                      description: |-
+                        HTTPResources defines mock HTTP content for this test.
+
+                        These fixtures are used when templates call http.Fetch() to provide
+                        pre-defined content without making actual HTTP requests.
+
+                        Example:
+                          httpResources:
+                            - url: http://blocklist.example.com/list.txt
+                              content: |
+                                blocked-value-1
+                                blocked-value-2
+                      items:
+                        description: |-
+                          HTTPResourceFixture defines mock HTTP content for validation tests.
+
+                          When templates call http.Fetch() for the specified URL, the pre-defined
+                          content is returned instead of making an actual HTTP request.
+                        properties:
+                          content:
+                            description: |-
+                              Content is the mock response body to return.
+
+                              This content is returned when http.Fetch() is called with the
+                              matching URL during test execution.
+                            type: string
+                          url:
+                            description: |-
+                              URL is the HTTP URL to mock.
+
+                              When http.Fetch() is called with this URL during test execution,
+                              the Content field is returned instead of fetching from the network.
+                            minLength: 1
+                            type: string
+                        required:
+                        - content
+                        - url
+                        type: object
+                      type: array
+                    minHAProxyVersion:
+                      description: |-
+                        MinHAProxyVersion specifies the minimum HAProxy version required to run this test.
+
+                        When set, the test is skipped if the local HAProxy version is below this threshold.
+                        This is useful for tests that use HAProxy features only available in newer versions
+                        (e.g., shm-stats-file requires HAProxy 3.3+).
+
+                        Format: "major.minor" (e.g., "3.3")
+                      type: string
+                  required:
+                  - assertions
+                  - fixtures
+                  type: object
+                description: |-
+                  ValidationTests contains embedded validation test definitions.
+
+                  The map key is the test name, which must be unique.
+
+                  These tests are executed:
+                    - During admission webhook validation (before resource is saved)
+                    - Via the "controller validate" CLI command (pre-apply validation)
+
+                  Tests ensure templates generate valid HAProxy configurations before deployment.
+                type: object
+              validators:
+                description: |-
+                  Validators declares pluggable validator sidecars consulted by the
+                  admission webhook before admitting changes that affect plugin
+                  configuration. See `docs/controller/docs/operations/pluggable-validators.md`
+                  for setup; the wire protocol is at
+                  `docs/development/validator-protocol.md`.
+
+                  An empty list (the default) disables pluggable validation — the
+                  webhook keeps performing template + HAProxy syntax dry-run only.
+                items:
+                  description: |-
+                    ValidatorConfig declares one pluggable validator sidecar that the
+                    controller will consult during admission webhook processing.
+
+                    The wire protocol between the controller and a validator sidecar is
+                    documented in `docs/development/validator-protocol.md` and is owned
+                    by HAPTIC. Reference implementation: `haproxy-spoa-hub
+                    --validate-socket <path>` shipped alongside HAPTIC; any conforming
+                    implementation may be substituted. The validator program is opaque
+                    to HAPTIC — its internal architecture (whether it has plugins, how
+                    it dispatches files, how it parses content) is its own concern.
+
+                    Operators declare zero, one, or many validators. Each one runs in
+                    its own sidecar container in the controller pod and shares a Unix
+                    domain socket via an emptyDir volume; the chart wires this up
+                    automatically when `spec.validators` is non-empty.
+
+                    Routing: HAPTIC matches each rendered file's path against every
+                    validator's `files` glob list. Files that match are sent to that
+                    validator over its socket. A file that matches multiple validators'
+                    globs is sent to each of them. Files that match no validator's
+                    globs are not validated by any sidecar (they still flow through the
+                    existing template + HAProxy syntax dry-run).
+                  properties:
+                    files:
+                      description: |-
+                        Files is a list of glob patterns matched against rendered file
+                        paths to decide which files to send to this validator.
+
+                        Glob syntax follows Go's `path/filepath.Match` rules:
+                          - `*` matches any run of non-`/` characters.
+                          - `?` matches any single non-`/` character.
+                          - `[a-z]` matches any character in the range.
+                          - `**` is NOT supported; use multiple entries to cover
+                            directory hierarchies.
+
+                        At least one glob MUST be specified. Each glob MUST be an
+                        absolute path (start with `/`) so it matches the rendered file
+                        paths that the controller produces (e.g. `/etc/haproxy/maps/host.map`,
+                        `/etc/haproxy-spoa-hub/config.toml`). Operators get the matching
+                        behaviour they expect from a path-style glob.
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                      x-kubernetes-list-type: set
+                    maxConnections:
+                      description: |-
+                        MaxConnections caps the size of the controller's connection
+                        pool to this validator's socket. The pool starts small (one
+                        idle connection) and grows on contention up to this cap;
+                        connections idle past the validator's idle timeout are reaped
+                        transparently and reopened on next use.
+
+                        Defaults to 4 when omitted. Setting 1 reproduces a serial
+                        client (one validation in flight at a time). Higher values
+                        allow more concurrent validations during reconciliation bursts
+                        at the cost of file descriptors and validator-side resource
+                        pressure.
+                      format: int32
+                      maximum: 32
+                      minimum: 1
+                      type: integer
+                    name:
+                      description: |-
+                        Name is the operator-facing identifier for this validator.
+
+                        MUST be a valid RFC 1123 label (lowercase alphanumeric and `-`,
+                        1-63 characters). MUST be unique across the validators array.
+                        Surfaces in admission denial messages so operators can identify
+                        which validator rejected a change.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    socketPath:
+                      description: |-
+                        SocketPath is the absolute filesystem path to the validator's
+                        Unix domain socket inside the controller pod.
+
+                        The chart-rendered shared `emptyDir` volume mounts at
+                        `/var/run/haptic-validators/`; the conventional path is
+                        `/var/run/haptic-validators/<name>.sock`. Custom paths must
+                        still resolve inside the controller pod's filesystem.
+                      minLength: 1
+                      pattern: ^/
+                      type: string
+                    timeoutMs:
+                      description: |-
+                        TimeoutMs is the per-call deadline, in milliseconds, covering
+                        the request-response cycle for one file (connect-or-acquire +
+                        write + read).
+
+                        Defaults to 5000 (5 seconds) when omitted. Validator calls
+                        exceeding this deadline are surfaced as `result: "error"` so a
+                        wedged sidecar does not stall the webhook path indefinitely.
+                      format: int32
+                      maximum: 60000
+                      minimum: 1
+                      type: integer
+                  required:
+                  - files
+                  - name
+                  - socketPath
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              watchedResources:
+                additionalProperties:
+                  description: WatchedResource configures watching for a specific
+                    Kubernetes resource type.
+                  properties:
+                    apiVersion:
+                      description: APIVersion is the Kubernetes API version (e.g.,
+                        "networking.k8s.io/v1").
+                      minLength: 1
+                      type: string
+                    debounceInterval:
+                      description: |-
+                        DebounceInterval overrides the default leading-edge refractory window
+                        for this resource type's watcher.
+
+                        Format: Go duration string (e.g., "500ms", "10s").
+                        Default: 5s (pkg/k8s/types.DefaultDebounceInterval).
+
+                        Lower values make the controller respond faster to bursty changes at
+                        the cost of more reconciliations and GC pressure under load. Most
+                        workloads should leave this unset; per-resource overrides are useful
+                        for resources that need faster reaction (e.g., HTTPRoute changes
+                        during canary rollouts) or slower batching (e.g., very high-churn
+                        EndpointSlices on a large cluster).
+
+                        Invalid values silently fall back to the default — invalid means a
+                        string that fails time.ParseDuration. Empty (the default) also uses
+                        the default.
+                      type: string
+                    enableValidationWebhook:
+                      description: |-
+                        EnableValidationWebhook enables admission webhook validation for this resource.
+
+                        When enabled, the controller will validate resources of this type before they're saved.
+                        Default: false
+                      type: boolean
+                    fieldSelector:
+                      description: |-
+                        FieldSelector filters resources using client-side JSONPath evaluation.
+                        Unlike Kubernetes' native fieldSelector (which only supports limited fields),
+                        this supports any JSONPath expression.
+
+                        Format: "field.path=value"
+                        Example: "spec.ingressClassName=haproxy-internal"
+                      type: string
+                    indexBy:
+                      description: |-
+                        IndexBy specifies JSONPath expressions for extracting index keys.
+
+                        Resources are indexed by these values for O(1) lookup in templates.
+
+                        Examples:
+                          - ["metadata.namespace", "metadata.name"]
+                          - ["metadata.labels['kubernetes.io/service-name']"]
+                      items:
+                        type: string
+                      type: array
+                    labelSelector:
+                      description: |-
+                        LabelSelector filters resources by labels (server-side filtering).
+
+                        Equality-only: comma-separated "key=value" pairs.
+                        Example: "app=nginx,environment=production"
+                        Set-based syntax (e.g. "tier in (frontend,api)", "!disabled") is NOT supported —
+                        the controller's parseLabelSelector splits on ',' and '=' and silently drops the rest.
+                      type: string
+                    resources:
+                      description: |-
+                        Resources is the plural form of the Kubernetes resource type (e.g., "ingresses", "services").
+
+                        This is the name used in RBAC rules and API paths.
+                      minLength: 1
+                      type: string
+                    store:
+                      description: |-
+                        Store specifies the storage backend for this resource type.
+
+                        Valid values:
+                          - "full": MemoryStore - keeps all resources in memory (faster, higher memory usage)
+                          - "on-demand": CachedStore - fetches resources on-demand with caching (slower, lower memory usage)
+
+                        Default: "full"
+
+                        Use "on-demand" for large resources accessed infrequently (e.g., Secrets).
+                        Use "full" for frequently accessed resources (e.g., Ingress, Service, EndpointSlice).
+                      enum:
+                      - full
+                      - on-demand
+                      type: string
+                  required:
+                  - apiVersion
+                  - resources
+                  type: object
+                description: |-
+                  WatchedResources maps resource type names to their watch configuration.
+
+                  Each key is a user-defined name for the resource type (e.g., "ingresses", "services").
+                  This name is used in templates to access the resources.
+                minProperties: 1
+                type: object
+              watchedResourcesIgnoreFields:
+                description: |-
+                  WatchedResourcesIgnoreFields specifies JSONPath expressions for fields
+                  to remove from all watched resources to reduce memory usage.
+
+                  Example: ["metadata.managedFields", "metadata.resourceVersion"]
+                items:
+                  type: string
+                type: array
+            required:
+            - credentialsSecretRef
+            - haproxyConfig
+            - podSelector
+            - watchedResources
+            type: object
+          status:
+            description: HAProxyTemplateConfigStatus defines the observed state of
+              HAProxyTemplateConfig.
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the config's state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastValidated:
+                description: LastValidated is the timestamp of the last successful
+                  validation.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation most recently
+                  observed by the controller.
+                format: int64
+                type: integer
+              validationErrors:
+                description: |-
+                  ValidationErrors contains detailed validation error messages.
+                  Each entry includes the template name, error location, and context.
+                items:
+                  type: string
+                type: array
+              validationMessage:
+                description: ValidationMessage contains human-readable validation
+                  details.
+                type: string
+              validationStatus:
+                description: ValidationStatus indicates the overall validation status.
+                enum:
+                - Valid
+                - Invalid
+                - Unknown
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

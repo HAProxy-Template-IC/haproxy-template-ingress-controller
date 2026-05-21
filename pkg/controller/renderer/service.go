@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -94,6 +95,19 @@ type RenderService struct {
 	haproxyPodStore    stores.Store
 	httpStoreComponent *httpstore.Component
 	currentConfigStore *currentconfigstore.Store
+
+	// typedResourceTypes maps watched-resource user-names to the
+	// generated Go type produced by pkg/k8s/typegen at iteration
+	// start (see pkg/controller/typebootstrap). When non-empty,
+	// buildRenderingContext emits one *[]*<generated-struct>
+	// top-level context entry per type — the value Scriggo's
+	// type-checker pairs with the typed global declared via
+	// helpers.NewEngineFromConfigWithOptions.
+	//
+	// Optional: a nil / empty map means no typed access is
+	// available and templates use the untyped resources["<name>"]
+	// path as today.
+	typedResourceTypes map[string]reflect.Type
 }
 
 // RenderServiceConfig contains configuration for creating a RenderService.
@@ -118,6 +132,17 @@ type RenderServiceConfig struct {
 
 	// CurrentConfigStore is the store for current deployed config (optional).
 	CurrentConfigStore *currentconfigstore.Store
+
+	// TypedResourceTypes carries the generated Go types produced
+	// by pkg/controller/typebootstrap at iteration start. The
+	// renderer emits one *[]*<generated-struct> top-level context
+	// entry per type at render time, matching the typed-global
+	// declarations the engine constructor received.
+	//
+	// Optional. nil or empty means typed-resource access isn't
+	// available and templates fall back to the untyped
+	// resources["<name>"] path.
+	TypedResourceTypes map[string]reflect.Type
 }
 
 // NewRenderService creates a new RenderService.
@@ -171,6 +196,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		haproxyPodStore:    cfg.HAProxyPodStore,
 		httpStoreComponent: cfg.HTTPStoreComponent,
 		currentConfigStore: cfg.CurrentConfigStore,
+		typedResourceTypes: cfg.TypedResourceTypes,
 	}
 }
 
@@ -292,6 +318,22 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 		}
 	}
 	renderContext["resources"] = resources
+
+	// Typed top-level resource globals. One entry per resource
+	// whose schema resolved at iteration start (typebootstrap
+	// produced a generated Go type) AND whose store is present
+	// in this provider. Coexists with the untyped resources map
+	// above — chart templates can adopt the typed shape per
+	// snippet without breaking the existing path.
+	//
+	// Schema-side failures (typebootstrap couldn't generate a
+	// type for a resource) skip silently — that resource doesn't
+	// show up in s.typedResourceTypes, no typed entry is emitted.
+	// Wrap-side failures (the runtime data doesn't match the
+	// declared shape — a watcher regression) log at warn and
+	// omit the entry; templates compiled against that global see
+	// a typed-nil pointer, which iterates as empty.
+	addTypedRenderContextEntries(renderContext, provider, s.typedResourceTypes, s.logger)
 
 	// Add controller context with typed ResourceStore map. The
 	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent

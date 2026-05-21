@@ -51,7 +51,9 @@ import (
 //   - cfg: The internal config containing templates and validation tests
 //   - engine: Pre-compiled template engine
 //   - validationPaths: Filesystem paths for HAProxy validation
-//   - options: Runner options
+//   - options: Runner options (pointer to avoid hugeParam copy — the
+//     embedded Capabilities + new typed-resource-types map push the
+//     struct past 80 bytes). Pass nil to use defaults.
 //
 // Returns:
 //   - A new Runner instance ready to execute tests
@@ -59,8 +61,12 @@ func New(
 	cfg *config.Config,
 	engine templating.Engine,
 	validationPaths *dataplane.ValidationPaths,
-	options Options,
+	options *Options,
 ) *Runner {
+	if options == nil {
+		options = &Options{}
+	}
+
 	logger := options.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -75,16 +81,17 @@ func New(
 	traceTemplates := engine.IsTracingEnabled()
 
 	return &Runner{
-		engineTemplate:  engine,
-		validationPaths: validationPaths,
-		config:          cfg,
-		logger:          logger.With("component", "test-runner"),
-		workers:         workers,
-		debugFilters:    options.DebugFilters,
-		traceTemplates:  traceTemplates,
-		profileIncludes: options.ProfileIncludes,
-		capabilities:    options.Capabilities,
-		haproxyVersion:  options.HAProxyVersion,
+		engineTemplate:     engine,
+		validationPaths:    validationPaths,
+		config:             cfg,
+		logger:             logger.With("component", "test-runner"),
+		workers:            workers,
+		debugFilters:       options.DebugFilters,
+		traceTemplates:     traceTemplates,
+		profileIncludes:    options.ProfileIncludes,
+		capabilities:       options.Capabilities,
+		haproxyVersion:     options.HAProxyVersion,
+		typedResourceTypes: options.TypedResourceTypes,
 	}
 }
 

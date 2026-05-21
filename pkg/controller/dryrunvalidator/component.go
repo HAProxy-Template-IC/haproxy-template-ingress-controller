@@ -130,7 +130,7 @@ func New(cfg *ComponentConfig) *Component {
 			cfg.Config,
 			cfg.Engine,
 			cfg.ValidationPaths,
-			testrunner.Options{
+			&testrunner.Options{
 				Logger:       logger.With("component", "test-runner"),
 				Workers:      1, // Sequential execution in webhook context
 				Capabilities: cfg.Capabilities,

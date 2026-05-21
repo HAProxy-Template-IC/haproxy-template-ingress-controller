@@ -33,6 +33,7 @@ package rendercontext
 import (
 	"log/slog"
 	"maps"
+	"reflect"
 	"runtime"
 	"slices"
 
@@ -40,6 +41,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
@@ -53,11 +55,12 @@ type Builder struct {
 	logger       *slog.Logger
 
 	// Optional dependencies (set via options)
-	stores          map[string]stores.Store
-	haproxyPodStore stores.Store
-	httpFetcher     templating.HTTPFetcher
-	capabilities    *dataplane.Capabilities
-	currentConfig   *parserconfig.StructuredConfig
+	stores             map[string]stores.Store
+	haproxyPodStore    stores.Store
+	httpFetcher        templating.HTTPFetcher
+	capabilities       *dataplane.Capabilities
+	currentConfig      *parserconfig.StructuredConfig
+	typedResourceTypes map[string]reflect.Type
 }
 
 // Option configures a Builder.
@@ -102,6 +105,32 @@ func WithCapabilities(caps *dataplane.Capabilities) Option {
 func WithCurrentConfig(cfg *parserconfig.StructuredConfig) Option {
 	return func(b *Builder) {
 		b.currentConfig = cfg
+	}
+}
+
+// WithTypedResources supplies the per-resource generated Go types
+// produced by typebootstrap (pkg/controller/typebootstrap). When set,
+// Build emits one *additional* top-level context entry per supplied
+// type: the resource's name maps to a *[]*<generated-struct> value
+// populated by wrapping the matching store's snapshot through
+// typegen.WrapSlice.
+//
+// The typed entries coexist with the existing map-keyed
+// resources["<name>"] access — chart templates can adopt the typed
+// shape per snippet without breaking templates that still use the
+// untyped path. The two access paths may load their snapshots a
+// few microseconds apart; templates are expected to use ONE shape
+// or the OTHER for a given resource within a single render
+// (mixing wouldn't compile anyway — the untyped variable is `any`).
+//
+// Resources whose names appear in `types` but for which no store
+// is registered (via WithStores) are silently skipped. That keeps
+// the option safe to use even when typebootstrap successfully
+// generated a type for a resource the local controller doesn't
+// happen to watch — a common case in tests.
+func WithTypedResources(types map[string]reflect.Type) Option {
+	return func(b *Builder) {
+		b.typedResourceTypes = types
 	}
 }
 
@@ -253,6 +282,22 @@ func (b *Builder) Build() *BuildResult {
 		templateContext["http"] = b.httpFetcher
 	}
 
+	// Add typed top-level globals for resources whose schemas
+	// resolved at boot (typebootstrap produced a generated Go
+	// type). Each entry wraps the matching store's snapshot in a
+	// *[]*<generated-struct> shape — same shape Scriggo type-checks
+	// the corresponding global declaration against (see
+	// pkg/controller/typebootstrap.BuildEngineDeclarations).
+	//
+	// Resources whose Wrap fails (a single resource emitting a
+	// shape inconsistent with the declared type — rare, would
+	// indicate a watcher regression) are logged at warn and the
+	// typed entry is omitted. Templates that compile against the
+	// declared shape will then see a nil typed view; chart authors
+	// fall back to the untyped resources["<name>"] for that one
+	// resource. The chart still renders.
+	b.addTypedResources(templateContext)
+
 	// Merge extraContext variables into top-level context
 	MergeExtraContextInto(templateContext, b.config)
 
@@ -266,6 +311,57 @@ func (b *Builder) Build() *BuildResult {
 		FileRegistry:              fileRegistry,
 		StatusPatchCollector:      statusPatchCollector,
 		RenderedResourceCollector: renderedResourceCollector,
+	}
+}
+
+// addTypedResources populates the templateContext with one typed
+// entry per [Builder.typedResourceTypes] mapping that has a matching
+// underlying store registered. The entries are *[]*<generated-struct>
+// values mirroring what
+// [typebootstrap.BuildEngineDeclarations] declared.
+//
+// Method receiver rather than free function so the type-conversion
+// loop can read b.stores / b.logger without threading them as
+// arguments. Pulled out of Build() to keep that function under the
+// per-function statement budget.
+func (b *Builder) addTypedResources(ctx map[string]any) {
+	if len(b.typedResourceTypes) == 0 || b.stores == nil {
+		return
+	}
+	for name, t := range b.typedResourceTypes {
+		store, ok := b.stores[name]
+		if !ok {
+			// The bootstrap produced a type for a resource the
+			// local controller doesn't watch. Skip silently —
+			// the unmatched type just doesn't show up in the
+			// render context. The engine's declared global for
+			// this name stays at its zero value (typed nil
+			// pointer); templates that range over it iterate
+			// zero items, which is the correct fail-open
+			// behaviour. Common in tests; would only happen in
+			// production if the watcher build raced ahead of
+			// the bootstrap, which the iteration ordering
+			// prevents.
+			continue
+		}
+
+		items, err := store.List()
+		if err != nil {
+			b.logger.Warn("typed resource: store List failed; omitting typed view",
+				"resource", name, "error", err)
+			continue
+		}
+		typedSlice, err := typegen.WrapSlice(items, t)
+		if err != nil {
+			b.logger.Warn("typed resource: WrapSlice failed; omitting typed view",
+				"resource", name, "error", err)
+			continue
+		}
+		// Wrap the slice in a pointer for the *[]*T shape Scriggo
+		// expects (matches BuildEngineDeclarations's declaration).
+		holder := reflect.New(typedSlice.Type())
+		holder.Elem().Set(typedSlice)
+		ctx[name] = holder.Interface()
 	}
 }
 

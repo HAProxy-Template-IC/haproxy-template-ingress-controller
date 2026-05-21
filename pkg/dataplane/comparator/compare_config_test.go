@@ -1008,6 +1008,76 @@ func TestCompareACLs(t *testing.T) {
 	})
 }
 
+// countCreateOps returns how many Operations in ops have OperationCreate type.
+// Used by the same-name ACL regression tests below.
+func countCreateOps(ops []Operation) int {
+	var n int
+	for _, op := range ops {
+		if op.Type() == sections.OperationCreate {
+			n++
+		}
+	}
+	return n
+}
+
+// TestCompareACLs_SameNameLinesAllCreated pins the contract that
+// same-named ACL lines are independent positional entries from the
+// DataPlane API's perspective. HAProxy OR-combines lines that share
+// a name, so two `acl X req_ssl_sni -m str foo` + `acl X req_ssl_sni
+// -m end .bar` lines together mean "X is true for SNI=foo OR
+// SNI ends with .bar". An older implementation indexed ACLs into
+// `map[string]int` by ACLName and dropped all but the last
+// same-name entry — surfacing as conformance shard 4
+// TLSRouteHostnameIntersection wildcard subtests failing because
+// the chart-rendered route_sni ACL had two lines but the
+// dataplane-stored haproxy.cfg only had one.
+func TestCompareACLs_SameNameLinesAllCreated(t *testing.T) {
+	comp := New()
+	summary := &DiffSummary{}
+	ops := comp.compareACLs(
+		"frontend",
+		"ssl-tcp",
+		models.Acls{}, // current empty
+		models.Acls{
+			// Two same-named ACL lines: HAProxy OR-combines them at
+			// runtime; the DataPlane API stores them as independent
+			// index entries.
+			{ACLName: "gw_route_sni", Criterion: "req_ssl_sni", Value: "abc.example.com"},
+			{ACLName: "gw_route_sni", Criterion: "req_ssl_sni -m end", Value: ".example.com"},
+			// A second name to confirm we don't accidentally collapse
+			// across names either.
+			{ACLName: "gw_listener_sni", Criterion: "req_ssl_sni -m end", Value: ".com"},
+		},
+		summary,
+	)
+	assert.Equal(t, 3, countCreateOps(ops),
+		"all three ACL entries must produce create operations; same-name lines must not collapse")
+}
+
+// TestCompareACLs_SameNameLinesAddedIncrementally pins the
+// "add a same-name sibling to an existing ACL" case. The previous
+// map-based implementation collapsed both into the same map slot
+// and emitted zero or one create depending on map iteration order
+// (worse: nondeterministic per Go's map-randomization).
+func TestCompareACLs_SameNameLinesAddedIncrementally(t *testing.T) {
+	comp := New()
+	summary := &DiffSummary{}
+	ops := comp.compareACLs(
+		"frontend",
+		"ssl-tcp",
+		models.Acls{
+			{ACLName: "gw_route_sni", Criterion: "req_ssl_sni", Value: "abc.example.com"},
+		},
+		models.Acls{
+			{ACLName: "gw_route_sni", Criterion: "req_ssl_sni", Value: "abc.example.com"},
+			{ACLName: "gw_route_sni", Criterion: "req_ssl_sni -m end", Value: ".example.com"},
+		},
+		summary,
+	)
+	assert.Equal(t, 1, countCreateOps(ops),
+		"adding a second same-name ACL to an existing one must yield exactly one create operation")
+}
+
 func TestCompareHTTPRequestRules(t *testing.T) {
 	comp := New()
 

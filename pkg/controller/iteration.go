@@ -111,8 +111,8 @@ func runIteration(
 	// This allows the health endpoint to report unhealthy status until config is loaded
 	state := &configState{}
 
-	// 0. Setup components BEFORE fetching config so we can start servers early
-	setup := setupComponents(ctx, infra.IntrospectionRegistry, logger)
+	// 0. Setup components BEFORE fetching config so we can start servers early.
+	setup := setupComponents(ctx, infra.IntrospectionRegistry, newIterationTypeBootstrapper(k8sClient, logger), logger)
 	defer setup.Cancel()
 
 	// 0.25. Create EventBuffer early (subscribes in constructor)
@@ -210,7 +210,7 @@ func runIteration(
 	var dryrunValidator *dryrunvalidator.Component
 	if webhook.HasWebhookEnabled(cfg) {
 		var err error
-		dryrunValidator, err = createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, logger)
+		dryrunValidator, err = createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, logger)
 		if err != nil && !errors.Is(err, errNoWebhookRules) {
 			return fmt.Errorf("creating dry-run validator: %w", err)
 		}

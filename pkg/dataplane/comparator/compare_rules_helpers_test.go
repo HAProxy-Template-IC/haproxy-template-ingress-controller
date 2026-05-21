@@ -11,68 +11,8 @@ package comparator
 import (
 	"testing"
 
-	"github.com/haproxytech/client-native/v6/models"
 	"github.com/stretchr/testify/assert"
 )
-
-// indexACLsByName builds the lookup that compareACLs uses to detect
-// added/deleted/modified ACLs by name. The "skip nameless ACLs" rule is
-// load-bearing — without it the index would alias every nameless entry
-// onto a single empty-string key and break the diff.
-func TestIndexACLsByName(t *testing.T) {
-	tests := []struct {
-		name string
-		acls models.Acls
-		want map[string]int
-	}{
-		{
-			name: "empty input yields empty index",
-			acls: models.Acls{},
-			want: map[string]int{},
-		},
-		{
-			name: "single named ACL maps to index 0",
-			acls: models.Acls{
-				{ACLName: "is_api", Criterion: "path_beg", Value: "/api"},
-			},
-			want: map[string]int{"is_api": 0},
-		},
-		{
-			name: "multiple named ACLs preserve their slice positions",
-			acls: models.Acls{
-				{ACLName: "first"},
-				{ACLName: "second"},
-				{ACLName: "third"},
-			},
-			want: map[string]int{"first": 0, "second": 1, "third": 2},
-		},
-		{
-			name: "nameless ACLs are skipped (the 'can't address them via API anyway' rule)",
-			acls: models.Acls{
-				{ACLName: ""},
-				{ACLName: "named"},
-				{ACLName: ""},
-			},
-			want: map[string]int{"named": 1},
-		},
-		{
-			name: "duplicate names keep the LAST seen index (map overwrite semantics)",
-			acls: models.Acls{
-				{ACLName: "dup"},
-				{ACLName: "other"},
-				{ACLName: "dup"},
-			},
-			want: map[string]int{"dup": 2, "other": 1},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := indexACLsByName(tt.acls)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
 
 // compareEditedItems wires diffIndexedRules + collapseEdits to the per-section
 // (create, remove, update) op factories. Pin every dispatch path:

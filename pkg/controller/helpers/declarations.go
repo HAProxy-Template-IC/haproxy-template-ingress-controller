@@ -1,0 +1,63 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package helpers
+
+import (
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
+	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+)
+
+// BuildAdditionalDeclarations returns the additionalDeclarations
+// map that every template engine constructed by this controller
+// needs at compile time. Single source of truth — folds together
+// the static `currentConfig` slot (needed by BackendServers and
+// other slot-preservation logic) with one typed-resource global
+// per watched-resource entry derived from typebootstrap.
+//
+// `result` MUST be non-nil and reflect a successful bootstrap
+// against the cluster (or the embedded builtin set, for offline
+// validate). Callers that don't have a real Result yet — e.g.
+// the Stage-1 template validator — must obtain one via the
+// injected TypeBootstrapper before calling this helper rather
+// than passing nil. The previous envelope-only fallback path was
+// removed because it false-positively rejected charts that used
+// typed Spec/Status access (envelope only carries Metadata) and
+// silently bound them to a mismatched shape elsewhere.
+//
+// # Adding a new engine consumer
+//
+// Call this function with the Result your caller obtained from
+// typebootstrap.Bootstrap (or runTypeBootstrap in production),
+// then pass the returned map straight into
+// `templating.NewScriggoWithDeclarations` (or
+// `helpers.NewEngineFromConfigWithOptions`'s
+// `additionalDeclarations` parameter). Don't hand-merge — every
+// site that did that previously had to be updated independently
+// when the contract grew (Phase 4 added currentConfig; Phase
+// 10–11 added typed globals); the helper bundles both.
+func BuildAdditionalDeclarations(_ *config.Config, result *typebootstrap.Result) map[string]any {
+	if result == nil {
+		panic("helpers: BuildAdditionalDeclarations requires non-nil Result " +
+			"— see the doc comment for why envelope-only fallback was removed")
+	}
+	decls := map[string]any{
+		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	}
+	for name, decl := range typebootstrap.BuildEngineDeclarations(result) {
+		decls[name] = decl
+	}
+	return decls
+}

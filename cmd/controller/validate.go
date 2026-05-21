@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 
 	"github.com/spf13/cobra"
 
@@ -29,8 +30,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher/builtin"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -112,7 +114,7 @@ func runValidate(_ *cobra.Command, _ []string) error {
 	defer setup.Cleanup()
 
 	// Run tests
-	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, logger)
+	results, err := runValidationTests(ctx, setup.ConfigSpec, setup.Engine, setup.ValidationPaths, setup.Capabilities, setup.HAProxyVersion, setup.TypedResourceTypes, logger)
 	if err != nil {
 		return err
 	}
@@ -137,7 +139,17 @@ type ValidationSetup struct {
 	ValidationPaths *dataplane.ValidationPaths
 	Capabilities    dataplane.Capabilities
 	HAProxyVersion  *dataplane.Version
-	Cleanup         func()
+
+	// TypedResourceTypes is the per-resource generated Go type produced
+	// by typebootstrap against the embedded builtin schemas. Populated
+	// for any watched resource whose (apiVersion, resources-plural)
+	// pair has both a builtin schema (pkg/k8s/schemafetcher/builtin)
+	// and a GVK entry (typebootstrap.OfflineGVKResolver). Resources
+	// without typed support map to nothing here and fall through to
+	// the untyped resources["<name>"] path via dig().
+	TypedResourceTypes map[string]reflect.Type
+
+	Cleanup func()
 }
 
 // setupValidation loads config, creates engine, and sets up validation paths.
@@ -160,8 +172,20 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 		return nil, err
 	}
 
-	// Create template engine with custom filters
-	engine, err := createTemplateEngine(configSpec, logger)
+	// Run the offline type-bootstrap pipeline (typebootstrap against the
+	// embedded builtin schemas) so the engine is constructed with typed
+	// `gateways` etc. globals declared. Without this, chart templates
+	// that use the typed shape fail to compile here while still working
+	// in production — exactly the kind of offline-vs-production drift
+	// the validate CLI exists to catch.
+	typedResult, err := runOfflineTypeBootstrap(configSpec, logger)
+	if err != nil {
+		cleanupFunc()
+		return nil, fmt.Errorf("offline type bootstrap: %w", err)
+	}
+
+	// Create template engine with custom filters + typed declarations
+	engine, err := createTemplateEngine(configSpec, typedResult, logger)
 	if err != nil {
 		cleanupFunc()
 		return nil, err
@@ -178,16 +202,83 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	}
 
 	return &ValidationSetup{
-		ConfigSpec:      configSpec,
-		Engine:          engine,
-		ValidationPaths: validationPaths,
-		Capabilities:    capabilities,
-		HAProxyVersion:  haproxyVersion,
-		Cleanup:         cleanupFunc,
+		ConfigSpec:         configSpec,
+		Engine:             engine,
+		ValidationPaths:    validationPaths,
+		Capabilities:       capabilities,
+		HAProxyVersion:     haproxyVersion,
+		TypedResourceTypes: typedResult.Types,
+		Cleanup:            cleanupFunc,
 	}, nil
 }
 
+// runOfflineTypeBootstrap drives the type-bootstrap pipeline against the
+// embedded builtin schemas. Mirrors what
+// pkg/controller/typebootstrap_wiring.go's runTypeBootstrap does in the
+// production controller, but with two substitutions:
+//
+//   - Schema source is the embedded builtin set instead of the cluster's
+//     OpenAPI / CRD endpoints.
+//   - GVK resolution comes from a hardcoded table instead of a RESTMapper
+//     built from the cluster's discovery (no API server is reachable).
+//
+// Resources whose (apiVersion, resources-plural) pair isn't in the offline
+// resolver are skipped silently — they keep working through the untyped
+// resources["<name>"] path. Resources whose GVK *does* resolve but whose
+// schema isn't in the builtin set are fail-closed: typebootstrap.Bootstrap
+// aborts the run with a hard error on the first such resource (see
+// pkg/controller/typebootstrap/bootstrap.go). That's intentional — a
+// resolved GVK signals that someone declared typed support for this
+// resource, so a missing schema is a build/packaging regression rather
+// than an optional degradation. Operators see the error from
+// `haptic-controller validate` and ship the missing builtin schema or
+// drop the resolver entry.
+//
+// Always returns a non-nil *Result so callers can range/index without
+// nil checks.
+func runOfflineTypeBootstrap(
+	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
+	logger *slog.Logger,
+) (*typebootstrap.Result, error) {
+	fetcher, err := builtin.NewFetcher()
+	if err != nil {
+		return nil, fmt.Errorf("loading builtin schemas: %w", err)
+	}
+	resolver := typebootstrap.NewOfflineGVKResolver()
+
+	// Iterate by name then index back into the map by reference so we
+	// don't copy each ~128-byte WatchedResource value on every loop
+	// (gocritic rangeValCopy).
+	resources := make([]typebootstrap.Resource, 0, len(configSpec.WatchedResources))
+	for name := range configSpec.WatchedResources {
+		wr := configSpec.WatchedResources[name]
+		gvk, err := resolver.Resolve(wr.APIVersion, wr.Resources)
+		if err != nil {
+			// Unknown GVK in the offline resolver: skip without
+			// warning. Most watched resources won't have typed
+			// support yet; only the ones a chart-side adopter
+			// has both added a builtin schema AND a resolver
+			// entry for. Logging every miss would be noise.
+			logger.Debug("offline type bootstrap: no GVK mapping; skipping typed support",
+				"resource", name, "apiVersion", wr.APIVersion, "resources", wr.Resources)
+			continue
+		}
+		resources = append(resources, typebootstrap.Resource{Name: name, GVK: gvk})
+	}
+
+	return typebootstrap.Bootstrap(context.Background(), typebootstrap.Config{
+		Resources:          resources,
+		GlobalIgnoreFields: configSpec.WatchedResourcesIgnoreFields,
+		Fetcher:            fetcher,
+		Logger:             logger,
+	})
+}
+
 // runValidationTests executes the validation test suite.
+// typedResourceTypes carries the typed reflect.Types from the offline
+// type-bootstrap so the test runner's render context can declare the same
+// `gateways` / `httproutes` / … top-level globals the engine compiled
+// against (see setupValidation → runOfflineTypeBootstrap).
 func runValidationTests(
 	ctx context.Context,
 	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
@@ -195,6 +286,7 @@ func runValidationTests(
 	validationPaths *dataplane.ValidationPaths,
 	capabilities dataplane.Capabilities,
 	haproxyVersion *dataplane.Version,
+	typedResourceTypes map[string]reflect.Type,
 	logger *slog.Logger,
 ) (*testrunner.TestResults, error) {
 	// Convert CRD spec to internal config format
@@ -208,13 +300,14 @@ func runValidationTests(
 		cfg,
 		engine,
 		validationPaths,
-		testrunner.Options{
-			Logger:          logger,
-			Workers:         validateWorkers,
-			DebugFilters:    validateDebugFilters,
-			ProfileIncludes: validateProfileIncludes,
-			Capabilities:    capabilities,
-			HAProxyVersion:  haproxyVersion,
+		&testrunner.Options{
+			Logger:             logger,
+			Workers:            validateWorkers,
+			DebugFilters:       validateDebugFilters,
+			ProfileIncludes:    validateProfileIncludes,
+			Capabilities:       capabilities,
+			HAProxyVersion:     haproxyVersion,
+			TypedResourceTypes: typedResourceTypes,
 		},
 	)
 
@@ -363,8 +456,18 @@ func loadConfigFromFile(filePath string) (*v1alpha1.HAProxyTemplateConfigSpec, e
 	return &spec, nil
 }
 
-// createTemplateEngine creates and compiles the template engine from config spec with custom filters.
-func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger *slog.Logger) (templating.Engine, error) {
+// createTemplateEngine creates and compiles the template engine from config
+// spec with custom filters. typedResult carries the typed reflect.Types from
+// the offline type-bootstrap pipeline; its
+// typebootstrap.BuildEngineDeclarations output is merged with the static
+// `currentConfig` declaration before being handed to the engine, so chart
+// templates that use typed `gateways` / `httproutes` / … globals compile
+// against the same surface the production renderer provides.
+func createTemplateEngine(
+	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
+	typedResult *typebootstrap.Result,
+	logger *slog.Logger,
+) (templating.Engine, error) {
 	// Convert CRD spec to internal config
 	cfg, err := conversion.ConvertSpec(configSpec)
 	if err != nil {
@@ -382,11 +485,12 @@ func createTemplateEngine(configSpec *v1alpha1.HAProxyTemplateConfigSpec, logger
 		EnableProfiling: validateProfileIncludes,
 	}
 
-	// Provide currentConfig type declaration for templates that access slot preservation state.
-	// This enables BackendServers macro to look up existing server assignments from previous config.
-	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
-	}
+	// Single source of truth for the engine's additionalDeclarations.
+	// Folds currentConfig + per-watchedResource typed globals using
+	// the same helper every other engine consumer in this controller
+	// uses, so an offline-vs-production drift is impossible by
+	// construction.
+	additionalDeclarations := helpers.BuildAdditionalDeclarations(cfg, typedResult)
 
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, options)
 	if err != nil {

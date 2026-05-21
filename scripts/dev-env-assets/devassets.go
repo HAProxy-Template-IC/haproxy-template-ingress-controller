@@ -71,6 +71,22 @@ var HAProxyTestBackendYAML []byte
 //go:embed dev-values.yaml
 var DevValuesYAML []byte
 
+// ConformanceValuesYAML is the helm values file used by the upstream
+// Gateway API / Ingress conformance suites. Stripped-down version of
+// dev-values.yaml: no HTTP-store demo (the blocklist URL was burning
+// 7s per render against an unreachable service in conformance), no
+// coraza WAF override (e2e-specific). The e2e suite selects between
+// this and DevValuesYAML via the HAPTIC_E2E_PROFILE env var:
+//
+//	HAPTIC_E2E_PROFILE=conformance → ConformanceValuesYAML
+//	(anything else / unset)        → DevValuesYAML
+//
+// Same file shape so the e2e helmInstallChart code path is
+// indifferent to which profile is selected — only the bytes change.
+//
+//go:embed conformance-values.yaml
+var ConformanceValuesYAML []byte
+
 // KindConfigYAML is the kind cluster configuration with the
 // extraPortMappings the chart's NodePort services expect (30080 HTTP,
 // 30443 HTTPS, 30404 stats). The cluster `name:` field is overridden at

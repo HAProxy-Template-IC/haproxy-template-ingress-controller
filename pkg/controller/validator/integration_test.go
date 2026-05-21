@@ -99,7 +99,7 @@ func setupValidationTest(t *testing.T) (context.Context, *busevents.EventBus) {
 	// the BaseValidator constructors subscribe via component.Base, and bus.Start()
 	// flushes the pre-start buffer to whoever's subscribed at that moment.
 	basicValidator := NewBasicValidator(bus, logger)
-	templateValidator := NewTemplateValidator(bus, logger)
+	templateValidator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 	jsonpathValidator := NewJSONPathValidator(bus, logger)
 
 	bus.Start()

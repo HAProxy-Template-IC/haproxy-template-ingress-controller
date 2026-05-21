@@ -35,6 +35,18 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "create", "update"]
+  # CustomResourceDefinitions — read-only access so the controller's
+  # type-bootstrap (pkg/controller/typebootstrap) can resolve OpenAPI
+  # schemas for watched CRDs at iteration start. Without this, the
+  # cluster fetcher falls back to the public OpenAPI v3 endpoint
+  # (which covers built-ins and any registered CRD), but CRD-defined
+  # x-kubernetes-preserve-unknown-fields subtrees and the canonical
+  # schema-from-CRD path can't resolve, so the typed view degrades
+  # to the generic envelope for those resources. Granting list/get
+  # here keeps typed access at full fidelity in production.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
   # HAProxyTemplateConfig CRD
   - apiGroups: ["haproxy-haptic.org"]
     resources: ["haproxytemplateconfigs"]

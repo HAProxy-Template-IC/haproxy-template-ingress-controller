@@ -70,6 +70,53 @@ type Client struct {
 
 	// transport is shared across all non-mTLS requests for connection pooling.
 	transport *http.Transport
+
+	// onPollTimeout, if non-nil, is invoked when poll() exhausts its
+	// retry budget — BEFORE the timeout error propagates up to t.Fatalf
+	// and the test's t.Cleanup chain. Used by tests/e2e to snapshot
+	// the chart's rendered HAProxyCfg + the running pod's
+	// /etc/haproxy tree while the test's fixtures are still alive
+	// (the standard DumpLogsOnFailure runs in t.Cleanup after fixture
+	// deletion, so its haproxycfg.yaml capture sees post-cleanup
+	// state instead of the failing-moment state).
+	//
+	// Package-private to httpclient: tests/e2e sets it via
+	// SetDefaultPollTimeoutSnapshot during TestMain init so every
+	// Client returned by New picks it up automatically.
+	onPollTimeout PollTimeoutSnapshot
+}
+
+// PollTimeoutSnapshot is the callback invoked when a poll exhausts
+// its retry budget. Implementations receive the test handle, a
+// human-readable description of what was being polled, the last
+// response observed (may be nil if every attempt errored), and the
+// last error returned by the inner Do (may be nil if responses came
+// back but the predicate never matched).
+//
+// Implementations MUST be best-effort and side-effect-only: they
+// cannot influence the test outcome (the timeout error still
+// propagates) and they must not call t.FailNow / t.Fatalf
+// themselves, which would short-circuit the existing diagnostic
+// chain.
+type PollTimeoutSnapshot func(t *testing.T, description string, lastResp *Response, lastErr error)
+
+// defaultPollTimeoutSnapshot is the package-default callback used
+// when New constructs a Client with no per-instance override. The
+// e2e test harness's TestMain registers a callback that dumps
+// HAProxy state to debug-logs/<test>/; httpclient itself only
+// stores the function pointer.
+var defaultPollTimeoutSnapshot PollTimeoutSnapshot
+
+// SetDefaultPollTimeoutSnapshot registers the callback that
+// newly-constructed Clients pick up by default. Pass nil to
+// disable. Intended to be called once from TestMain in the
+// tests/e2e package; safe to call multiple times (last write wins).
+//
+// Implemented as a package-level setter rather than a Client option
+// so existing tests that call httpclient.New(t) directly get the
+// snapshot behaviour automatically — no per-test wiring change.
+func SetDefaultPollTimeoutSnapshot(fn PollTimeoutSnapshot) {
+	defaultPollTimeoutSnapshot = fn
 }
 
 // New constructs a Client targeting the running dev environment.
@@ -109,7 +156,8 @@ func New(t *testing.T) *Client {
 			Timeout:    180 * time.Second,
 			Multiplier: 2.0,
 		},
-		transport: newSharedTransport(nodeIP, defaultHTTPSPort),
+		transport:     newSharedTransport(nodeIP, defaultHTTPSPort),
+		onPollTimeout: defaultPollTimeoutSnapshot,
 	}
 }
 
