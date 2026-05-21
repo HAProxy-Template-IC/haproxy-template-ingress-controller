@@ -23,6 +23,7 @@ type mockOperation struct {
 	opType      sections.OperationType
 	section     string
 	priority    int
+	parent      string
 	description string
 	executeFunc func(ctx context.Context, c *client.DataplaneClient, txID string) error
 	executed    bool
@@ -31,6 +32,7 @@ type mockOperation struct {
 func (m *mockOperation) Type() sections.OperationType { return m.opType }
 func (m *mockOperation) Section() string              { return m.section }
 func (m *mockOperation) Priority() int                { return m.priority }
+func (m *mockOperation) Parent() string               { return m.parent }
 func (m *mockOperation) Describe() string             { return m.description }
 func (m *mockOperation) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	m.executed = true
@@ -454,4 +456,177 @@ func TestSyncOperations_MaxParallel_Unlimited(t *testing.T) {
 	assert.GreaterOrEqual(t, observedMax, int32(totalOps/2),
 		"With unlimited concurrency, should see high parallelism (observed: %d, expected at least: %d)",
 		observedMax, totalOps/2)
+}
+
+// TestSyncOperations_PerParentSerialization is a regression test for the
+// frontend-remove-binds flake on test-integration:[3.0] (2026-05-20).
+// HAProxy 3.0's Dataplane API returned 404 on one of two concurrent
+// DELETE calls against children of the same parent (`frontend http-in`
+// binds *:8080 and *:8081, in the same transaction). The synchronizer
+// now groups ops by Parent() within a priority bucket and serialises
+// same-parent ops; ops with different parents still run in parallel.
+//
+// This test pins both halves of the contract: same-parent ops MUST NOT
+// overlap, and different-parent ops MUST be able to overlap.
+func TestSyncOperations_SerializesSameParent(t *testing.T) {
+	var inFlight atomic.Int32
+	var maxConcurrent atomic.Int32
+
+	makeOp := func(parent, name string) *mockOperation {
+		op := newMockOperation(sections.OperationDelete, "bind", 40000)
+		op.parent = parent
+		op.description = "delete bind " + name + " from " + parent
+		op.executeFunc = func(ctx context.Context, c *client.DataplaneClient, txID string) error {
+			n := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			// Update the running max in a CAS loop so concurrent observers
+			// don't lose updates.
+			for {
+				m := maxConcurrent.Load()
+				if n <= m || maxConcurrent.CompareAndSwap(m, n) {
+					break
+				}
+			}
+			// Hold long enough that any erroneously-parallel sibling
+			// would land in the same window and bump maxConcurrent.
+			time.Sleep(20 * time.Millisecond)
+			return nil
+		}
+		return op
+	}
+
+	ops := []comparator.Operation{
+		makeOp("http-in", "*:8080"),
+		makeOp("http-in", "*:8081"),
+		makeOp("http-in", "*:8082"),
+	}
+
+	tx := &client.Transaction{ID: "tx-same-parent", Version: 1}
+	_, err := SyncOperations(context.Background(), nil, ops, tx, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, int32(1), maxConcurrent.Load(),
+		"same-parent operations must run sequentially (observed peak concurrency: %d)",
+		maxConcurrent.Load())
+}
+
+// Same priority, different parents → must run in parallel.
+func TestSyncOperations_ParallelizesAcrossParents(t *testing.T) {
+	const parents = 4
+
+	var inFlight atomic.Int32
+	var maxConcurrent atomic.Int32
+	start := make(chan struct{})
+
+	makeOp := func(parent string) *mockOperation {
+		op := newMockOperation(sections.OperationDelete, "bind", 40000)
+		op.parent = parent
+		op.description = "delete bind from " + parent
+		op.executeFunc = func(ctx context.Context, c *client.DataplaneClient, txID string) error {
+			<-start
+			n := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				m := maxConcurrent.Load()
+				if n <= m || maxConcurrent.CompareAndSwap(m, n) {
+					break
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+			return nil
+		}
+		return op
+	}
+
+	ops := make([]comparator.Operation, parents)
+	for i := 0; i < parents; i++ {
+		ops[i] = makeOp(fmt.Sprintf("frontend-%d", i))
+	}
+
+	tx := &client.Transaction{ID: "tx-diff-parents", Version: 1}
+
+	// Release all goroutines at the same instant to maximise the chance
+	// of observing actual concurrency.
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		close(start)
+	}()
+
+	_, err := SyncOperations(context.Background(), nil, ops, tx, 0)
+	require.NoError(t, err)
+
+	assert.GreaterOrEqual(t, maxConcurrent.Load(), int32(2),
+		"different-parent operations must be able to overlap (observed peak concurrency: %d)",
+		maxConcurrent.Load())
+}
+
+// TestSyncOperations_SiblingFailureCancelsPerParentChain pins the
+// context-cancellation contract on the per-parent sequential loop: when
+// any goroutine in a priority group fails, errgroup.WithContext cancels
+// gCtx; the per-parent loop must check gCtx.Err() between iterations so
+// the remaining same-parent ops don't dispatch against a doomed
+// transaction.
+//
+// Without the check, a sibling parent's failure would still see every
+// queued same-parent Execute called, racking up cancellation-error
+// responses from the dataplane API across multiple in-flight requests
+// against a transaction that's already aborting.
+func TestSyncOperations_SiblingFailureCancelsPerParentChain(t *testing.T) {
+	var executed atomic.Int32
+
+	failingOp := newMockOperation(sections.OperationDelete, "bind", 40000)
+	failingOp.parent = "frontend-a"
+	failingOp.executeFunc = func(ctx context.Context, c *client.DataplaneClient, txID string) error {
+		executed.Add(1)
+		// Hold long enough that the sibling parent's later ops
+		// in its sequential chain have time to be scheduled and
+		// hit the gCtx.Err() check.
+		time.Sleep(30 * time.Millisecond)
+		return errors.New("simulated dataplane failure")
+	}
+
+	// Sibling parent with a chain of 5 sequential ops. The first one
+	// runs (the chain is in-flight when failingOp eventually returns
+	// its error); the rest must short-circuit on gCtx cancellation
+	// rather than dispatching Execute against a cancelled context.
+	slowOp1 := newMockOperation(sections.OperationDelete, "bind", 40000)
+	slowOp1.parent = "frontend-b"
+	slowOp1.executeFunc = func(ctx context.Context, c *client.DataplaneClient, txID string) error {
+		executed.Add(1)
+		// Wait until failingOp has had time to error.
+		time.Sleep(60 * time.Millisecond)
+		return nil
+	}
+	makeStraggler := func(name string) *mockOperation {
+		op := newMockOperation(sections.OperationDelete, "bind", 40000)
+		op.parent = "frontend-b"
+		op.description = name
+		op.executeFunc = func(ctx context.Context, c *client.DataplaneClient, txID string) error {
+			executed.Add(1)
+			return nil
+		}
+		return op
+	}
+
+	ops := []comparator.Operation{
+		failingOp,
+		slowOp1,
+		makeStraggler("straggler-1"),
+		makeStraggler("straggler-2"),
+		makeStraggler("straggler-3"),
+		makeStraggler("straggler-4"),
+	}
+
+	tx := &client.Transaction{ID: "tx-cancel", Version: 1}
+	_, err := SyncOperations(context.Background(), nil, ops, tx, 0)
+	require.Error(t, err, "SyncOperations must surface the sibling failure")
+
+	// failingOp + slowOp1 ran (1 + 1 = 2). The four stragglers must NOT
+	// have executed — gCtx was cancelled by failingOp's error before
+	// the inner loop got to them, and the gCtx.Err() check at the top
+	// of each iteration short-circuits.
+	assert.Equal(t, int32(2), executed.Load(),
+		"only the in-flight ops (the failing op + the sibling chain's first op) "+
+			"should execute; stragglers must short-circuit on gCtx.Err() instead "+
+			"of dispatching against a doomed transaction")
 }

@@ -39,6 +39,17 @@ type Operation interface {
 	// Priority returns the execution priority (lower = first for creates, higher = first for deletes)
 	Priority() int
 
+	// Parent returns the name of the parent resource this operation acts on,
+	// or "" for top-level / singleton operations. Used by the synchronizer
+	// to serialize operations on the same parent within a priority group:
+	// HAProxy 3.0's Dataplane API has been observed returning 404 on one
+	// of two concurrent DELETE calls against children of the same parent
+	// (test_integration:[3.0] frontend-remove-binds, 2026-05-20), even
+	// though both children existed when the transaction opened. Operations
+	// with the same parent are now run sequentially; operations on
+	// different parents still run in parallel.
+	Parent() string
+
 	// Execute performs the operation via the Dataplane API
 	Execute(ctx context.Context, c *client.DataplaneClient, txID string) error
 

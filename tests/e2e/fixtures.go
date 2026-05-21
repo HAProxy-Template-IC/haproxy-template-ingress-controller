@@ -333,6 +333,14 @@ func NewIngress(ctx context.Context, t *testing.T, client klient.Client, namespa
 		t.Fatalf("create Ingress %s/%s: %v", namespace, spec.Name, err)
 	}
 
+	// Wait for HAProxyCfg.status to report every HAProxy pod at the
+	// current spec.Checksum, AND for the controller's latest rendered
+	// config to mention our namespace (the marker that confirms this
+	// specific Ingress made it into the render). Without this wait the
+	// caller races multi-pod reload: NodePort distributes fresh
+	// handshakes round-robin between converged and still-reloading pods.
+	waitForControllerDeployed(ctx, t, client, namespace)
+
 	// Delete the Ingress explicitly before the namespace teardown
 	// cascades, so the controller observes the Ingress disappear before
 	// any Secrets/ConfigMaps it referenced. Without this, a parallel test's

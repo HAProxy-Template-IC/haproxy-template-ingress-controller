@@ -33,21 +33,52 @@ func compareIndexedItems[T any](
 	deleteAt func(item *T, index int) Operation,
 	updateAt func(item *T, index int) Operation,
 ) []Operation {
-	var operations []Operation
+	// Emit updates and creates in ascending index order, but deletes in
+	// DESCENDING index order. The dataplane API's underlying config-parser
+	// implements Delete(idx) by shifting every later element down one slot
+	// (see haproxytech/client-native config-parser/parsers/http/http-request_generated.go's
+	// `(*Requests).Delete`: it `copy(p.data[index:], p.data[index+1:])` then
+	// truncates). When the synchronizer applies a batch of deletes
+	// sequentially under a single parent (which it must, after the per-parent
+	// serialisation fix in pkg/dataplane/synchronizer), ascending-order
+	// deletes cascade: Delete(N) shifts what used to be at N+1 down to N,
+	// so the subsequent Delete(N+1) removes a different rule than the
+	// comparator intended, and eventually we run off the end of the slice.
+	//
+	// Descending order avoids the shift entirely: Delete(highest) only
+	// shifts indices that we no longer care about (we're about to delete
+	// them too — or rather, we've already accounted for them earlier in
+	// the descending sequence). Updates and creates don't shift the list
+	// length, so their order is unchanged.
+	//
+	// Before my per-parent-serialisation change, the same bug was latent —
+	// parallel deletes were serialised by the dataplane's per-transaction
+	// lock in arrival order, which is non-deterministic across goroutines.
+	// The test suite happened to land on a working order often enough that
+	// the failure looked like a flake. Per-parent serialisation made the
+	// order deterministically ascending, so the failure became
+	// deterministic too. Emitting deletes descending makes the operation
+	// stream correct under any execution model.
+	var ops []Operation
+	var deletes []Operation
 	maxLen := max(len(desired), len(current))
 	for i := 0; i < maxLen; i++ {
 		hasCurrent := i < len(current)
 		hasDesired := i < len(desired)
 		switch {
 		case !hasCurrent && hasDesired:
-			operations = append(operations, createAt(desired[i], i))
+			ops = append(ops, createAt(desired[i], i))
 		case hasCurrent && !hasDesired:
-			operations = append(operations, deleteAt(current[i], i))
+			deletes = append(deletes, deleteAt(current[i], i))
 		case hasCurrent && hasDesired && !equal(current[i], desired[i]):
-			operations = append(operations, updateAt(desired[i], i))
+			ops = append(ops, updateAt(desired[i], i))
 		}
 	}
-	return operations
+	// Append deletes in descending index order.
+	for j := len(deletes) - 1; j >= 0; j-- {
+		ops = append(ops, deletes[j])
+	}
+	return ops
 }
 
 // compareHTTPChecks compares HTTP check configurations within a backend.

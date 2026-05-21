@@ -72,6 +72,47 @@ func indexACLsByName(acls models.Acls) map[string]int {
 // collapseEdits) over current/desired and emits create/delete/update
 // operations for the resulting edit script. Updates use the new value at the
 // position of the old item, matching what collapseEdits already pairs up.
+//
+// EMISSION ORDER: updates first (no shift), then deletes in DESCENDING
+// OldIndex order, then inserts in ASCENDING NewIndex order. The order is
+// load-bearing under sequential application against the dataplane API's
+// underlying config-parser, which:
+//
+//   - Set(idx) replaces in place — no shift.
+//   - Delete(idx) shifts every element after idx down one slot
+//     (see haproxytech/client-native config-parser/parsers/http/http-request_generated.go's
+//     `(*Requests).Delete`).
+//   - Insert(idx) shifts every element at or after idx up one slot.
+//
+// Myers emits the edit script in OLD-index forward order, which means
+// ascending-OldIndex deletes interleaved with inserts. Applied sequentially,
+// each Delete(N) cascade-shifts the rest, so a subsequent Delete(N+1) targets
+// a different rule than the comparator intended. Equally, an Insert applied
+// BEFORE a later Update/Delete shifts the target rule's position, so the
+// OldIndex on that Update/Delete no longer points at the rule the comparator
+// picked. Reordering to (updates → deletes-descending → inserts-ascending)
+// gives every op an index that resolves to the right rule in the staged
+// state:
+//
+//  1. Updates first: OldIndex matches OLD's positions exactly.
+//  2. Deletes descending: each Delete only ever shifts indices higher than
+//     itself, but we've already processed those (or they were deletes too
+//     and are now gone), so lower OldIndex values still resolve correctly.
+//  3. Inserts ascending: by now the staged state is OLD minus the deletes;
+//     ascending NewIndex inserts each new rule at its final-list position
+//     (the next-higher insert shifts further-right items, which is fine).
+//
+// Same root cause as the compareIndexedItems descending-delete fix in
+// compare_features.go — both functions previously emitted ascending deletes
+// that were silently saved by non-deterministic arrival order under parallel
+// execution. The synchronizer's per-parent serialisation made the order
+// deterministically ascending, so the failure became deterministic too.
+// Symptom in the e2e suite: a redirect rule from an Ingress with
+// nginx.ingress.kubernetes.io/{temporal,permanent}-redirect would briefly
+// land in HAProxy then disappear during a sibling-test cleanup reconcile
+// (chart re-render kept the rule, comparator's diff against the new
+// position layout emitted ascending-OldIndex deletes that wiped the
+// wrong rules).
 func compareEditedItems[T any](
 	current, desired []T,
 	equal func(T, T) bool,
@@ -82,18 +123,28 @@ func compareEditedItems[T any](
 	diffs := diffIndexedRules(current, desired, equal)
 	edits := collapseEdits(diffs)
 
-	var operations []Operation
+	var updates, deletes, inserts []Operation
 	for _, e := range edits {
 		switch e.Op {
 		case editInsert:
-			operations = append(operations, create(e.New, e.NewIndex))
+			inserts = append(inserts, create(e.New, e.NewIndex))
 		case editDelete:
-			operations = append(operations, remove(e.Old, e.OldIndex))
+			deletes = append(deletes, remove(e.Old, e.OldIndex))
 		case editUpdate:
-			operations = append(operations, update(e.New, e.OldIndex))
+			updates = append(updates, update(e.New, e.OldIndex))
 		}
 	}
-	return operations
+
+	// collapseEdits emits deletes and inserts in ascending OldIndex /
+	// NewIndex respectively (Myers' forward order). Inserts are fine as-is;
+	// deletes need reversing.
+	out := make([]Operation, 0, len(updates)+len(deletes)+len(inserts))
+	out = append(out, updates...)
+	for j := len(deletes) - 1; j >= 0; j-- {
+		out = append(out, deletes[j])
+	}
+	out = append(out, inserts...)
+	return out
 }
 
 // compareHTTPRequestRules compares HTTP request rule configurations within a frontend or backend.

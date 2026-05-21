@@ -16,8 +16,6 @@ package deployer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -160,9 +158,18 @@ func (c *Component) deployToEndpoints(
 		return
 	}
 
-	// Calculate config checksum for ConfigAppliedToPodEvent
-	hash := sha256.Sum256([]byte(config))
-	checksum := hex.EncodeToString(hash[:])
+	// Use the content checksum (config + auxiliary files) as the per-pod
+	// "what was applied here" checksum so HAProxyCfg.status.deployedToPods[].Checksum
+	// is directly comparable to HAProxyCfg.spec.Checksum (which the publisher
+	// derives from the same dataplane.ComputeContentChecksum). When every
+	// pod's per-pod checksum equals spec.Checksum, the cluster has fully
+	// converged on the current spec — that's the post-convergence signal
+	// operators and the e2e suite poll for. Previously the deployer computed
+	// a separate sha256(config) which used a different format (full hex vs
+	// truncated) AND a different input set (config-only vs config+aux), so
+	// the two could never match and there was no clean "everyone at current"
+	// signal.
+	checksum := contentChecksum
 
 	c.logger.Debug("Starting deployment",
 		"reason", reason,
