@@ -19,6 +19,7 @@ type mockOperation struct {
 func (m *mockOperation) Type() sections.OperationType { return m.opType }
 func (m *mockOperation) Section() string              { return m.section }
 func (m *mockOperation) Priority() int                { return m.priority }
+func (m *mockOperation) Parent() string               { return "" }
 func (m *mockOperation) Describe() string             { return m.desc }
 
 func (m *mockOperation) Execute(_ context.Context, _ *client.DataplaneClient, _ string) error {

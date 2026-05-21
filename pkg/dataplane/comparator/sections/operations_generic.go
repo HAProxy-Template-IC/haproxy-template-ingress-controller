@@ -182,6 +182,11 @@ func (b *opBase[TModel, TAPI]) Section() string     { return b.sectionName }
 func (b *opBase[TModel, TAPI]) Priority() int       { return b.priorityVal * PriorityMultiplier }
 func (b *opBase[TModel, TAPI]) Describe() string    { return b.describeFn() }
 
+// Parent returns "" for opBase; the synchronizer treats that as "no
+// parent" and parallelises freely. Concrete op types that DO have a
+// parent (IndexChildOp, NameChildOp, ContainerChildOp) override this.
+func (b *opBase[TModel, TAPI]) Parent() string { return "" }
+
 // transformForExecute is a thin convenience wrapper that an Op's Execute
 // method calls with its own opBase fields.
 func (b *opBase[TModel, TAPI]) transformedAPIModel() (TAPI, error) {
@@ -281,6 +286,11 @@ func (op *IndexChildOp[TModel, TAPI]) Priority() int {
 	return basePriority + op.index
 }
 
+// Parent returns the frontend / backend / etc. name the indexed child
+// belongs to. Operations on the same parent are serialised by the
+// synchronizer; operations on different parents still run in parallel.
+func (op *IndexChildOp[TModel, TAPI]) Parent() string { return op.parentName }
+
 func (op *IndexChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	apiModel, err := op.transformedAPIModel()
 	if err != nil {
@@ -324,6 +334,14 @@ func NewNameChildOp[TModel any, TAPI any](
 		executeFn:  executeFn,
 	}
 }
+
+// Parent returns the frontend / backend / etc. name the named child
+// belongs to. This is what triggered the synchronizer change in 2026-05:
+// two bind DELETEs on `frontend http-in` ran in parallel under HAProxy
+// 3.0's Dataplane API and one of them returned 404 even though both
+// binds existed at transaction open. With per-parent serialisation,
+// the bind deletes execute sequentially against the same parent.
+func (op *NameChildOp[TModel, TAPI]) Parent() string { return op.parentName }
 
 func (op *NameChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	apiModel, err := op.transformedAPIModel()
@@ -406,6 +424,11 @@ func NewContainerChildOp[TModel any, TAPI any](
 		executeFn:     executeFn,
 	}
 }
+
+// Parent returns the container name (e.g. peer-name for a peer entry,
+// backend name for a server). Same-container ops serialise; ops on
+// different containers stay parallel.
+func (op *ContainerChildOp[TModel, TAPI]) Parent() string { return op.containerName }
 
 func (op *ContainerChildOp[TModel, TAPI]) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
 	apiModel, err := op.transformedAPIModel()

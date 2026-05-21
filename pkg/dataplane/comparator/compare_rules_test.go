@@ -420,6 +420,145 @@ func TestCompare_HTTPRequestRuleMultipleInsertIndexes(t *testing.T) {
 	assert.Contains(t, indexes, 3, "should have CREATE at index 3")
 }
 
+// TestCompare_HTTPRequestRuleMultipleDeletesDescending pins the
+// emission-order half of the contract: with multiple non-trailing deletes,
+// the operations must come out with the deletes in DESCENDING OldIndex
+// order, so that sequential application against the dataplane API's
+// shifting Delete() (config-parser/.../http-request_generated.go's
+// (*Requests).Delete: copy + truncate) targets the rule the comparator
+// picked. Ascending-order deletes cascade-shift, removing the wrong rules
+// — that failure was the chart-side test-e2e:[3.x] redirect-rule
+// disappearance traced to compareEditedItems before the descending-emit
+// fix.
+func TestCompare_HTTPRequestRuleMultipleDeletesDescending(t *testing.T) {
+	comp := New()
+	// Drop B, D, F from the middle of [A, B, C, D, E, F, G]. Myers emits
+	// deletes at OldIndex 1, 3, 5 in that natural ascending order; the
+	// fix reverses to 5, 3, 1 so each Delete only shifts indices we've
+	// already processed.
+	ops := comp.compareHTTPRequestRules(
+		"frontend", "http",
+		models.HTTPRequestRules{
+			{Type: "deny", CondTest: "{ path_beg /a }"},
+			{Type: "deny", CondTest: "{ path_beg /b }"},
+			{Type: "deny", CondTest: "{ path_beg /c }"},
+			{Type: "deny", CondTest: "{ path_beg /d }"},
+			{Type: "deny", CondTest: "{ path_beg /e }"},
+			{Type: "deny", CondTest: "{ path_beg /f }"},
+			{Type: "deny", CondTest: "{ path_beg /g }"},
+		},
+		models.HTTPRequestRules{
+			{Type: "deny", CondTest: "{ path_beg /a }"},
+			{Type: "deny", CondTest: "{ path_beg /c }"},
+			{Type: "deny", CondTest: "{ path_beg /e }"},
+			{Type: "deny", CondTest: "{ path_beg /g }"},
+		},
+	)
+
+	// Three DELETEs, no creates/updates.
+	require.Len(t, ops, 3)
+	for _, op := range ops {
+		require.Equal(t, sections.OperationDelete, op.Type(),
+			"every emitted op should be a DELETE — non-cascade diff for this drop pattern")
+	}
+	indices := make([]int, len(ops))
+	for i, op := range ops {
+		indices[i] = extractIndex(t, op)
+	}
+	require.Equal(t, []int{5, 3, 1}, indices,
+		"DELETE OldIndex must come out in DESCENDING order so each Delete() only "+
+			"shifts indices we already removed — ascending would cascade-shift "+
+			"and remove the wrong rules in sequential apply.")
+}
+
+// TestCompare_HTTPRequestRuleUpdatesBeforeDeletesBeforeInserts pins the
+// other half of the emission-order contract: updates first, then deletes
+// (descending), then inserts (ascending). Inserts BEFORE updates/deletes
+// would shift the OldIndex semantics out from under them; deletes between
+// updates and inserts would similarly mis-target.
+func TestCompare_HTTPRequestRuleUpdatesBeforeDeletesBeforeInserts(t *testing.T) {
+	comp := New()
+	// OLD: [A, B, C, D, E]  DESIRED: [X, B, Z]
+	//  - keep B  (no op)
+	//  - delete A → paired with insert X → UPDATE at OldIdx 0 (B was at 1; the
+	//    Myers script aligns the keep block to old 1 / new 1, so A→X is in
+	//    block 1, paired)
+	//  - delete C → unpaired DELETE at OldIdx 2
+	//  - delete D → paired with insert Z → UPDATE at OldIdx 3 (C/D/E block)
+	//  - delete E → unpaired DELETE at OldIdx 4
+	//
+	// Exact pairing depends on collapseEdits' greedy zip; the contract this
+	// test pins is *order between* updates / deletes / inserts in the emitted
+	// slice, not which specific updates/deletes get paired.
+	ops := comp.compareHTTPRequestRules(
+		"frontend", "http",
+		models.HTTPRequestRules{
+			{Type: "deny", CondTest: "{ path_beg /a }"},
+			{Type: "deny", CondTest: "{ path_beg /b }"},
+			{Type: "deny", CondTest: "{ path_beg /c }"},
+			{Type: "deny", CondTest: "{ path_beg /d }"},
+			{Type: "deny", CondTest: "{ path_beg /e }"},
+		},
+		models.HTTPRequestRules{
+			{Type: "deny", CondTest: "{ path_beg /x }"},
+			{Type: "deny", CondTest: "{ path_beg /b }"},
+			{Type: "deny", CondTest: "{ path_beg /z }"},
+		},
+	)
+
+	// Walk the operations, asserting the type partition order:
+	//   updates → deletes → inserts.
+	type opType int
+	const (
+		typUpd opType = iota
+		typDel
+		typIns
+	)
+	classify := func(op Operation) opType {
+		switch op.Type() {
+		case sections.OperationUpdate:
+			return typUpd
+		case sections.OperationDelete:
+			return typDel
+		case sections.OperationCreate:
+			return typIns
+		}
+		t.Fatalf("unexpected op type %v", op.Type())
+		return 0
+	}
+
+	var lastSeen opType = -1
+	deleteIdxs := []int{}
+	insertIdxs := []int{}
+	for _, op := range ops {
+		c := classify(op)
+		require.GreaterOrEqual(t, int(c), int(lastSeen),
+			"emission order must be (updates → deletes → inserts); "+
+				"saw transition from class %d back to %d for op %s",
+			lastSeen, c, op.Describe())
+		lastSeen = c
+		switch c {
+		case typDel:
+			deleteIdxs = append(deleteIdxs, extractIndex(t, op))
+		case typIns:
+			insertIdxs = append(insertIdxs, extractIndex(t, op))
+		}
+	}
+
+	// Within the deletes partition, indices must be strictly descending.
+	for i := 1; i < len(deleteIdxs); i++ {
+		require.Greater(t, deleteIdxs[i-1], deleteIdxs[i],
+			"DELETE OldIndex must be strictly descending across the deletes partition; "+
+				"got %v", deleteIdxs)
+	}
+	// Within the inserts partition, indices must be ascending.
+	for i := 1; i < len(insertIdxs); i++ {
+		require.Less(t, insertIdxs[i-1], insertIdxs[i],
+			"INSERT NewIndex must be ascending across the inserts partition; "+
+				"got %v", insertIdxs)
+	}
+}
+
 func TestCompare_HTTPRequestRuleDeleteAndInsertIndexes(t *testing.T) {
 	// Delete at position 0 and insert at position 2 (in desired).
 	comp := New()

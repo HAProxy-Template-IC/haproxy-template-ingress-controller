@@ -34,6 +34,21 @@ import (
 //     the old value back).
 //  4. Position in both, equal() returns true       → no-op.
 //
+// EMISSION ORDER: updates and creates come out in ascending index
+// order (the natural for-i loop), but deletes come out in DESCENDING
+// index order, appended after all updates/creates. The descending
+// order is load-bearing under sequential application: the dataplane
+// API's underlying config-parser implements Delete(idx) by shifting
+// every later element down a slot (see
+// haproxytech/client-native/.../http-request_generated.go's
+// `(*Requests).Delete`). Ascending-order deletes applied
+// sequentially cascade-shift the remaining indices, so each
+// subsequent Delete(N+1) targets a different rule than the
+// comparator intended, eventually running off the end. Descending
+// deletes shift only indices we've already removed (or are about to
+// remove), so the operation stream is correct regardless of
+// execution order.
+//
 // The "by position" vs "by name" distinction is load-bearing: items
 // at the same index but with different content trigger UPDATE, NOT
 // delete+create. Switching to delete+create would unnecessarily
@@ -45,9 +60,10 @@ import (
 // 0) would cause every operation to target the wrong rule slot
 // at the API layer — visible only at deploy time.
 //
-// Pin all four branches plus index propagation in a table-driven
-// test. Use the same markerOp pattern as compare_named_maps_test.go
-// to avoid coupling to specific HAProxy model types.
+// Pin all four branches plus index propagation plus the
+// updates-then-descending-deletes ordering in a table-driven test.
+// Use the same markerOp pattern as compare_named_maps_test.go to
+// avoid coupling to specific HAProxy model types.
 
 // indexedMarker is markerOp's position-aware sibling. It records
 // which factory fired (kind), with which value (drives equal()), at
@@ -64,6 +80,7 @@ var _ sections.Operation = (*indexedMarker)(nil)
 func (m *indexedMarker) Type() sections.OperationType { return sections.OperationCreate }
 func (m *indexedMarker) Section() string              { return "" }
 func (m *indexedMarker) Priority() int                { return 0 }
+func (m *indexedMarker) Parent() string               { return "" }
 func (m *indexedMarker) Execute(_ context.Context, _ *client.DataplaneClient, _ string) error {
 	return nil
 }
@@ -106,10 +123,13 @@ func TestCompareIndexedItems(t *testing.T) {
 		current []string
 		desired []string
 		// expected operations as "kind:value@index" strings, in
-		// the order compareIndexedItems is documented to emit
-		// (linear from index 0 to maxLen-1). The function uses a
-		// single for-i loop so order IS deterministic, unlike
-		// compareNamedMaps which iterates a map.
+		// the order compareIndexedItems is documented to emit:
+		// updates and creates in ascending index order from the
+		// for-i loop, followed by deletes in DESCENDING index
+		// order (see the function docstring for why — sequential
+		// ascending-order deletes shift the indices of remaining
+		// rules and so silently target the wrong rules under
+		// per-parent serialisation).
 		want []string
 	}{
 		{
@@ -119,16 +139,16 @@ func TestCompareIndexedItems(t *testing.T) {
 			want:    nil,
 		},
 		{
-			name:    "current empty + desired non-empty: all creates with sequential indices",
+			name:    "current empty + desired non-empty: all creates with sequential ascending indices",
 			current: nil,
 			desired: []string{"a", "b", "c"},
 			want:    []string{"create:a@0", "create:b@1", "create:c@2"},
 		},
 		{
-			name:    "current non-empty + desired empty: all deletes with sequential indices",
+			name:    "current non-empty + desired empty: all deletes in DESCENDING index order",
 			current: []string{"x", "y"},
 			desired: nil,
-			want:    []string{"delete:x@0", "delete:y@1"},
+			want:    []string{"delete:y@1", "delete:x@0"},
 		},
 		{
 			name:    "same length all equal: no ops",
@@ -153,17 +173,32 @@ func TestCompareIndexedItems(t *testing.T) {
 			want: []string{"update:B@1", "create:c@2", "create:d@3"},
 		},
 		{
-			name:    "current longer: shared prefix updates / no-ops, trailing indices become deletes",
+			name:    "current longer: shared prefix updates / no-ops, trailing indices become deletes (DESCENDING)",
 			current: []string{"a", "B", "c", "d"},
 			desired: []string{"a", "b"},
-			// i=0: equal → no-op; i=1: changed → update; i=2,3: only in current → delete.
-			want: []string{"update:b@1", "delete:c@2", "delete:d@3"},
+			// i=0: equal → no-op; i=1: changed → update. Updates come first in
+			// ascending order. Then deletes for i=2,3 are appended in descending
+			// order: delete@3 before delete@2 so the parser's index-shift on
+			// Delete only touches indices already removed.
+			want: []string{"update:b@1", "delete:d@3", "delete:c@2"},
 		},
 		{
 			name:    "single-item swap at index 0: must be UPDATE (positional), not delete+create",
 			current: []string{"old"},
 			desired: []string{"new"},
 			want:    []string{"update:new@0"},
+		},
+		{
+			name:    "many trailing deletes emit in DESCENDING order (regression: cascade index-shift bug)",
+			current: []string{"a", "b", "c", "d", "e"},
+			desired: []string{"a"},
+			// Without the descending-emit fix this would be
+			// ["delete:b@1", "delete:c@2", "delete:d@3", "delete:e@4"]. Applied
+			// sequentially against the dataplane API's shifting Delete, each
+			// successive op targets a stale index and either removes the wrong
+			// rule or errors out-of-range. Descending order makes every Delete
+			// touch a slot whose later contents are already gone.
+			want: []string{"delete:e@4", "delete:d@3", "delete:c@2", "delete:b@1"},
 		},
 	}
 

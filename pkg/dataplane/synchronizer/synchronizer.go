@@ -61,24 +61,81 @@ func SyncOperations(ctx context.Context, dpClient *client.DataplaneClient, opera
 	return &SyncOperationsResult{}, nil
 }
 
-// executePriorityGroup runs every operation in the group in parallel. It stops
-// at the first error and returns it (wrapped with the operation description).
+// executePriorityGroup runs operations in a priority group, serialising ops
+// that share a non-empty Parent() and parallelising ops with different (or
+// empty) parents.
+//
+// Why split on parent: HAProxy 3.0's Dataplane API has been observed
+// returning 404 on one of two concurrent DELETE calls against children of
+// the same parent (test_integration:[3.0] frontend-remove-binds,
+// 2026-05-20: two parallel `DELETE /.../frontends/http-in/binds/*:N`
+// requests inside the same transaction — one 202, one 404, even though
+// both binds existed when the transaction opened). With per-parent
+// serialisation, same-parent ops execute sequentially within a single
+// goroutine, while ops on different parents still fan out across
+// goroutines up to `maxParallel`.
+//
+// Ops returning Parent() == "" (top-level resources, singletons, server
+// updates that route through the runtime API) have no parent constraint
+// and each get their own goroutine.
+//
+// Stops at the first error (returned wrapped with the operation
+// description).
 func executePriorityGroup(ctx context.Context, dpClient *client.DataplaneClient, ops []comparator.Operation, txID string, maxParallel int) error {
 	g, gCtx := errgroup.WithContext(ctx)
 	if maxParallel > 0 {
 		g.SetLimit(maxParallel)
 	}
 
+	// Group child ops by Parent(). Same-parent ops share one goroutine
+	// and run sequentially; everything else (different parents, plus
+	// every parent-less op) gets its own goroutine and runs in parallel
+	// up to `maxParallel`.
+	byParent := make(map[string][]comparator.Operation)
+	parentOrder := make([]string, 0)
+	var parentless []comparator.Operation
 	for _, op := range ops {
-		g.Go(func() error {
-			if err := op.Execute(gCtx, dpClient, txID); err != nil {
-				return fmt.Errorf("operation %q failed: %w", op.Describe(), err)
-			}
-			return nil
-		})
+		p := op.Parent()
+		if p == "" {
+			parentless = append(parentless, op)
+			continue
+		}
+		if _, seen := byParent[p]; !seen {
+			parentOrder = append(parentOrder, p)
+		}
+		byParent[p] = append(byParent[p], op)
+	}
+
+	for _, op := range parentless {
+		g.Go(func() error { return runOps(gCtx, dpClient, txID, []comparator.Operation{op}) })
+	}
+
+	for _, parent := range parentOrder {
+		parentOps := byParent[parent]
+		g.Go(func() error { return runOps(gCtx, dpClient, txID, parentOps) })
 	}
 
 	return g.Wait()
+}
+
+// runOps executes ops sequentially, checking ctx between each so a
+// sibling goroutine's failure (which cancels ctx via
+// errgroup.WithContext) short-circuits the rest of this chain instead
+// of dispatching doomed HTTP requests against a cancelled ctx. Without
+// the ctx.Err() check, an early-op success here followed by a sibling
+// failure would still send every remaining same-parent op to the
+// dataplane API, racking up cancellation errors across multiple
+// in-flight requests against a transaction that's already aborting.
+func runOps(ctx context.Context, dpClient *client.DataplaneClient, txID string, ops []comparator.Operation) error {
+	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := op.Execute(ctx, dpClient, txID); err != nil {
+			return fmt.Errorf("operation %q failed: %w", op.Describe(), err)
+		}
+	}
+	return nil
 }
 
 // groupByPriority groups operations by their Priority() level. Operations with

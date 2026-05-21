@@ -64,6 +64,7 @@ var _ sections.Operation = (*markerOp)(nil)
 func (m *markerOp) Type() sections.OperationType { return sections.OperationCreate } // unused
 func (m *markerOp) Section() string              { return "" }
 func (m *markerOp) Priority() int                { return 0 }
+func (m *markerOp) Parent() string               { return "" }
 func (m *markerOp) Execute(_ context.Context, _ *client.DataplaneClient, _ string) error {
 	return nil
 }
