@@ -214,10 +214,27 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// DinD remap. The `make test-conformance` Makefile target attaches
 	// this container to the kind network (`docker run --network kind`),
 	// which gives us identical behaviour locally and under GitLab DinD.
-	rt := &roundtripper.DefaultRoundTripper{
-		Debug:         debug,
-		TimeoutConfig: timeoutCfg,
-	}
+	// Wrap the upstream DefaultRoundTripper so any failing request
+	// triggers a snapshot of HAProxy state + the chart-published
+	// HAProxyCfg CRD into a labelled ConfigMap. The CI after_script
+	// collects those ConfigMaps; see snapshotter.go for the contract.
+	// Captures fire at the exact moment of failure, while the
+	// upstream test framework's t.Cleanup() (which deletes the
+	// conformance fixtures) hasn't run yet — so the snapshot reflects
+	// the state HAProxy was actually serving when the request failed,
+	// and the HAProxyCfg dump shows what the chart RENDERED before
+	// the dataplane API translated it into incremental ops.
+	dyn, err := dynamic.NewForConfig(cfg)
+	require.NoError(t, err, "create dynamic client for snapshot HAProxyCfg dumps")
+	rt := newSnapshottingRoundTripper(
+		&roundtripper.DefaultRoundTripper{
+			Debug:         debug,
+			TimeoutConfig: timeoutCfg,
+		},
+		cs,
+		dyn,
+		cfg,
+	)
 	// Intentionally do NOT set GRPCClient on ConformanceOptions below.
 	// Upstream PR #3130 (kubernetes-sigs/gateway-api#3130) makes
 	// MakeRequestAndExpectEventuallyConsistentResponse create a fresh

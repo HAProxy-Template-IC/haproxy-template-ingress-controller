@@ -1187,8 +1187,6 @@ test-acceptance:
         echo "Debug logs extracted"
         ls -la debug-logs/ || true
       fi
-    # Clean up cluster
-    - kind delete cluster --name haproxy-test || true
   artifacts:
     reports:
       junit: report-acceptance.xml
@@ -1362,8 +1360,6 @@ test-acceptance:
         echo "Suite diagnostics in debug-logs/_suite/; per-test diagnostics in debug-logs/<test>/"
         ls -la debug-logs/
       fi
-    # Clean up cluster
-    - kind delete cluster --name haptic-e2e || true
   artifacts:
     paths:
       - debug-logs/
@@ -1455,12 +1451,18 @@ test-gateway-conformance:
       docker pull ${SPOA_IMAGE}
       docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
   script:
-    # Bring up the e2e cluster (kind + MetalLB + helm install) once. The
-    # conformance suite reuses it: TestGatewayAPIConformance reads
-    # KUBECONFIG=/tmp/haproxy-e2e-kubeconfig (the path the e2e suite
-    # writes). Using TEST_RUN_PATTERN=^$ shortcircuits the e2e tests
-    # themselves so we only pay for setup.
-    - TEST_RUN_PATTERN="^$" make test-e2e
+    # Bring up the conformance cluster (kind + MetalLB + helm install).
+    # HAPTIC_E2E_PROFILE=conformance:
+    #   - Selects conformance-values.yaml (no HTTP-store demo, no dev
+    #     fixtures the conformance suite doesn't need) so the chart's
+    #     render hot path never blocks on an unreachable blocklist URL.
+    #   - Skips applyBackendFixtures so the conformance suite's per-scenario
+    #     backend pods are the only ones in the cluster — no e2e demo
+    #     leftovers polluting test resource ordering.
+    # TEST_RUN_PATTERN=^$ short-circuits the e2e tests so the binary
+    # exits cleanly after setup; the cluster stays up because
+    # KEEP_CLUSTER=true (default).
+    - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
     # Derive the shard's `-run` regex. CI_NODE_INDEX / CI_NODE_TOTAL
     # are populated by GitLab CI's `parallel: <N>` keyword above; the
     # script hashes each upstream test ShortName into one of the
@@ -1576,8 +1578,56 @@ test-gateway-conformance:
         # surface as Gateway addresses staying empty.
         kubectl -n metallb-system get pods -o yaml > "$LOG_DIR/metallb-pods.yaml" 2>&1 || true
         kubectl get ipaddresspool,l2advertisement -A -o yaml > "$LOG_DIR/metallb-config.yaml" 2>&1 || true
+
+        # Per-failure HAProxy snapshots collected by the conformance
+        # test binary's snapshotting RoundTripper (see
+        # tests/conformance/snapshotter.go). Each ConfigMap holds a
+        # gzipped tar of /etc/haproxy at the moment a request to a
+        # specific Gateway failed, plus annotations identifying the
+        # failing test name, request host, SNI and timestamp. The
+        # raw ConfigMaps go in one bundle for completeness; the
+        # tarballs are extracted into per-test subdirectories so
+        # the haproxy.cfg + maps/ + ssl/ + general/ tree is browsable
+        # without further base64 / tar gymnastics.
+        SNAPSHOT_DIR="$LOG_DIR/haproxy-snapshots"
+        mkdir -p "$SNAPSHOT_DIR"
+        kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot -o yaml > "$SNAPSHOT_DIR/_configmaps-raw.yaml" 2>&1 || true
+        for cm in $(kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+          # Use the haptic.io/test-name annotation when available
+          # so the on-disk dir mirrors the failing Go test path;
+          # fall back to the CM name otherwise.
+          TEST_NAME=$(kubectl -n haptic get cm "$cm" -o jsonpath='{.metadata.annotations.haptic\.io/test-name}' 2>/dev/null || echo "$cm")
+          # Strip path separators in the test name so we get one
+          # subdir per failing subtest (sanitized).
+          SAFE_NAME=$(echo "${TEST_NAME:-$cm}" | tr '/' '_' | tr -cd '[:alnum:]._-')
+          OUT="$SNAPSHOT_DIR/${SAFE_NAME:-$cm}"
+          mkdir -p "$OUT"
+          kubectl -n haptic get cm "$cm" -o jsonpath='{.metadata.annotations}' > "$OUT/_annotations.json" 2>&1 || true
+
+          # /etc/haproxy tarball — what the dataplane API actually
+          # wrote to disk on the pod. binaryData values are
+          # base64-encoded in the API response; decode + untar.
+          # kubectl jsonpath returns the raw base64 string, no
+          # extra envelope.
+          mkdir -p "$OUT/etc-haproxy"
+          kubectl -n haptic get cm "$cm" -o jsonpath='{.binaryData.etc-haproxy\.tar\.gz}' 2>/dev/null | base64 -d | tar -xzf - -C "$OUT/etc-haproxy" 2>/dev/null || \
+            echo "etc-haproxy tarball extract failed for $cm" > "$OUT/_etc-haproxy-extract-error.txt"
+
+          # HAProxyCfg CRD dump — the controller's RENDERED config
+          # before the dataplane sync. If a wrong rule was already
+          # in spec.content, the chart is to blame; if spec.content
+          # is correct but the etc-haproxy tarball above is wrong,
+          # the dataplane sync is to blame.
+          kubectl -n haptic get cm "$cm" -o jsonpath='{.binaryData.haproxycfg-crds\.yaml}' 2>/dev/null | base64 -d > "$OUT/haproxycfg-crds.yaml" 2>/dev/null || \
+            echo "haproxycfg dump extract failed for $cm" > "$OUT/_haproxycfg-extract-error.txt"
+        done
+
+        # Clean up the snapshot ConfigMaps so they don't leak
+        # across re-runs on the same persistent cluster (the kind
+        # cluster is ephemeral in CI but local KEEP_CLUSTER=true
+        # runs would otherwise accumulate them).
+        kubectl -n haptic delete configmaps -l app.kubernetes.io/component=conformance-snapshot --ignore-not-found > /dev/null 2>&1 || true
       fi
-    - kind delete cluster --name haptic-e2e || true
   artifacts:
     paths:
       - debug-logs/
@@ -1660,11 +1710,15 @@ test-ingress-conformance:
       docker pull ${SPOA_IMAGE}
       docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
   script:
-    # Bring up the e2e cluster (kind + MetalLB + helm install) once.
-    # TEST_RUN_PATTERN=^$ shortcircuits the e2e tests themselves so we
-    # only pay for cluster setup — the conformance run uses its own
-    # generated Ingress resources, not e2e fixtures.
-    - TEST_RUN_PATTERN="^$" make test-e2e
+    # Bring up the conformance cluster — HAPTIC_E2E_PROFILE=conformance
+    # selects the trimmed values file (no HTTP-store demo blocklist URL,
+    # no dev fixtures) and skips applyBackendFixtures so the conformance
+    # suite's per-scenario backends are the only pods exercised. Same
+    # rationale as the gateway-conformance job above; this fixes the
+    # ingress conformance suite hitting the same per-render http.Fetch
+    # retry burst the gateway suite did when the chart's blocklist URL
+    # was unreachable during cluster bring-up.
+    - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
     - make test-ingress-conformance
   after_script:
     - |
@@ -1762,7 +1816,6 @@ test-ingress-conformance:
           kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
         done
       fi
-    - kind delete cluster --name haptic-e2e || true
   artifacts:
     paths:
       - debug-logs/
@@ -1866,7 +1919,6 @@ test-helm-defaults:
         echo "Debug logs extracted to debug-logs/"
         ls -la debug-logs/
       fi
-    - kind delete cluster --name ${CLUSTER_NAME} || true
   artifacts:
     paths:
       - debug-logs/

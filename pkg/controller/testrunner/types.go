@@ -16,6 +16,7 @@ package testrunner
 
 import (
 	"log/slog"
+	"reflect"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -40,6 +41,15 @@ type Runner struct {
 	profileIncludes bool                   // Enable include timing profiling
 	capabilities    dataplane.Capabilities // HAProxy/DataPlane API capabilities
 	haproxyVersion  *dataplane.Version     // Local HAProxy version for test skipping
+
+	// typedResourceTypes carries the typed reflect.Types produced by
+	// typebootstrap for the offline validate path. Mirrors what
+	// renderer.RenderService receives in production. When non-empty,
+	// buildRenderingContext forwards it to rendercontext.NewBuilder
+	// via WithTypedResources so chart templates that use the typed
+	// `gateways` (etc.) globals compile against the same shape they
+	// would in production.
+	typedResourceTypes map[string]reflect.Type
 }
 
 // testEntry is a tuple of test name and test definition for worker processing.
@@ -76,6 +86,18 @@ type Options struct {
 	// HAProxyVersion is the detected local HAProxy version.
 	// When set, tests with MinHAProxyVersion above this version are skipped.
 	HAProxyVersion *dataplane.Version
+
+	// TypedResourceTypes is the per-resource generated Go type the
+	// engine was constructed with via typebootstrap. Same shape as
+	// renderer.RenderServiceConfig.TypedResourceTypes — see
+	// pkg/controller/renderer/typed_resources.go for the production
+	// counterpart. Passed straight through to
+	// rendercontext.WithTypedResources so the offline render context
+	// includes the typed top-level globals the engine compiled
+	// against. When nil/empty, the test runner behaves as before
+	// (no typed globals injected — chart code keeps using
+	// resources.<name>.List() through dig()).
+	TypedResourceTypes map[string]reflect.Type
 }
 
 // TestResults contains the results of running validation tests.

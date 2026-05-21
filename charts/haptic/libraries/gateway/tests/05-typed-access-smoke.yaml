@@ -1,0 +1,57 @@
+validationTests:
+  test-gateway-typed-access-smoke:
+    description: |
+      Typed `gateways` global is wired end-to-end through the offline
+      validate path. Asserts the typed-access-smoke snippet emits one
+      comment per Gateway with Metadata.Namespace + Metadata.Name
+      resolved via compile-time typed field access. If this test
+      regresses, the offline validate path has drifted from the
+      production renderer (typebootstrap is silently fail-opening,
+      or BuildEngineDeclarations / addTypedResources have diverged).
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haproxy
+          spec:
+            controllerName: "haproxy.org/haptic"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: edge
+            namespace: ns1
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: internal
+            namespace: ns2
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must validate with typed-access-smoke comments present
+      - type: contains
+        target: haproxy.cfg
+        pattern: "# typed-access-smoke: ns=ns1 name=edge"
+        description: First Gateway must surface through the typed global with correct namespace+name
+      - type: contains
+        target: haproxy.cfg
+        pattern: "# typed-access-smoke: ns=ns2 name=internal"
+        description: Second Gateway must surface — proves the typed slice is iterated, not just the first element
+      - type: match_count
+        target: haproxy.cfg
+        pattern: "# typed-access-smoke:"
+        expected: "2"
+        description: Exactly two smoke comments must render — one per fixture Gateway

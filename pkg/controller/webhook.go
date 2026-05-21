@@ -42,7 +42,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
@@ -150,6 +149,7 @@ func createDryRunValidator(
 	capabilities dataplane.Capabilities,
 	httpStoreComponent *ctrlhttpstore.Component,
 	pluggableValidator *pluggablevalidator.Manager,
+	engineWiring typedRendererWiring,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	// Check if there are any webhook rules - if not, no validator needed
@@ -164,10 +164,15 @@ func createDryRunValidator(
 	// Create template engine using helper (handles template extraction, filters, engine type parsing)
 	// Note: DryRunValidator does NOT use currentConfig at runtime - it validates hypothetical future state.
 	// However, the templates still need the type declaration to compile successfully.
-	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
-	}
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
+	//
+	// engineWiring.Declarations carries the typed-resource globals
+	// from typebootstrap (and the currentConfig declaration). It's
+	// the SAME wiring the reconciliation engine was built with, so
+	// chart templates compile identically against either render
+	// path. Without this, admission would reject every resource the
+	// moment a chart template references a typed global — exactly
+	// the failure mode Phase 11.5 CI surfaced.
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, engineWiring.Declarations, helpers.EngineOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
@@ -235,6 +240,13 @@ func createDryRunValidator(
 		Logger:             logger,
 		Capabilities:       capabilities,
 		HTTPStoreComponent: httpStoreComponent,
+		// TypedResourceTypes mirrors the reconciliation RenderService
+		// so dry-run renders bind the same `*[]*T` typed globals as
+		// production. Without it, the engine compile succeeds (the
+		// declarations are present) but the render-time
+		// addTypedRenderContextEntries would emit nothing and the
+		// templates iterate empty.
+		TypedResourceTypes: engineWiring.TypedResourceTypes,
 	})
 
 	// Create ValidationService (pure service for validation)
@@ -318,7 +330,7 @@ func setupReconciliation(
 	errGroup *errgroup.Group,
 ) (*reconciliationComponents, error) {
 	// Create all components
-	components, err := createReconciliationComponents(cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeManager, bus, registry, logger)
+	components, err := createReconciliationComponents(iterCtx, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeManager, bus, registry, logger)
 	if err != nil {
 		return nil, err
 	}

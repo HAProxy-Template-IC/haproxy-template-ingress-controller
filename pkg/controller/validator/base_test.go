@@ -16,6 +16,7 @@ package validator
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -25,9 +26,21 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
+
+// stubTypeBootstrapper returns an empty Result — useful for the
+// validator tests in this file that exercise event-bus / handler
+// behaviour and don't care about typed-resource declarations.
+// Tests that DO care declare their own bootstrapper inline.
+func stubTypeBootstrapper(_ context.Context, _ *coreconfig.Config) (*typebootstrap.Result, error) {
+	return &typebootstrap.Result{
+		Types:  map[string]reflect.Type{},
+		Errors: map[string]error{},
+	}, nil
+}
 
 // panicHandler is a mock validation handler that panics.
 type panicHandler struct {
@@ -210,7 +223,7 @@ func TestBasicValidator_InvalidConfigType(t *testing.T) {
 func TestTemplateValidator_InvalidConfigType(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	validator := NewTemplateValidator(bus, logger)
+	validator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -266,7 +279,7 @@ func TestJSONPathValidator_InvalidConfigType(t *testing.T) {
 func TestTemplateValidator_SnippetErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	validator := NewTemplateValidator(bus, logger)
+	validator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -309,7 +322,7 @@ func TestTemplateValidator_SnippetErrors(t *testing.T) {
 func TestTemplateValidator_MapErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	validator := NewTemplateValidator(bus, logger)
+	validator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -350,7 +363,7 @@ func TestTemplateValidator_MapErrors(t *testing.T) {
 func TestTemplateValidator_FileErrors(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	validator := NewTemplateValidator(bus, logger)
+	validator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -393,7 +406,7 @@ func TestTemplateValidator_FileErrors(t *testing.T) {
 func TestTemplateValidator_CurrentConfigDeclaration(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	validator := NewTemplateValidator(bus, logger)
+	validator := NewTemplateValidator(bus, logger, stubTypeBootstrapper)
 
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()

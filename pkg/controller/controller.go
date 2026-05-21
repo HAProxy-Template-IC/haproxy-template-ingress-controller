@@ -304,9 +304,17 @@ func (s *componentSetup) RunCleanups() {
 // setupComponents creates and starts all event-driven components.
 // The introspectionRegistry is passed in from the persistent infrastructure
 // to avoid recreating it on each iteration (which would require rebinding the port).
+//
+// typeBootstrapper is the closure the Stage-1 TemplateValidator
+// uses to resolve real reflect.Types for the request's
+// watchedResources during config validation. Production passes a
+// closure around runTypeBootstrap with the iteration's K8s
+// client; the closure must be non-nil. See
+// pkg/controller/validator.TypeBootstrapper for the contract.
 func setupComponents(
 	ctx context.Context,
 	introspectionRegistry *introspection.Registry,
+	typeBootstrapper validator.TypeBootstrapper,
 	logger *slog.Logger,
 ) *componentSetup {
 	// Create EventBus with buffer for pre-start events
@@ -341,7 +349,7 @@ func setupComponents(
 
 	// Create config validators (scatter-gather responders for HAProxyTemplateConfig CRD validation)
 	basicValidator := validator.NewBasicValidator(bus, logger)
-	templateValidator := validator.NewTemplateValidator(bus, logger)
+	templateValidator := validator.NewTemplateValidator(bus, logger, typeBootstrapper)
 	jsonpathValidator := validator.NewJSONPathValidator(bus, logger)
 
 	// Create config change channel for reinitialization signaling

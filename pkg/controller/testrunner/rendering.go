@@ -236,7 +236,12 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 		r.logger.Log(context.Background(), logging.LevelTrace, "wrapping haproxy-pods store for rendering context")
 	}
 
-	// Build context using centralized builder
+	// Build context using centralized builder. typedResourceTypes is
+	// nil unless the CLI wired typebootstrap (see cmd/controller/
+	// validate.go) — when populated, the builder emits one *[]*T
+	// top-level global per typed resource so chart templates that
+	// use the typed shape compile against the same surface the
+	// production renderer provides.
 	builder := rendercontext.NewBuilder(
 		r.config,
 		pathResolver,
@@ -245,6 +250,7 @@ func (r *Runner) buildRenderingContext(storeMap map[string]stores.Store, validat
 		rendercontext.WithHAProxyPodStore(haproxyPodStore),
 		rendercontext.WithHTTPFetcher(httpStore),
 		rendercontext.WithCurrentConfig(currentConfig),
+		rendercontext.WithTypedResources(r.typedResourceTypes),
 	)
 
 	return builder.Build().Context

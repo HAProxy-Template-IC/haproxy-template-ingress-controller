@@ -11,6 +11,7 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ### Added
 
+- ClusterRole now grants `apiextensions.k8s.io/customresourcedefinitions get/list/watch` so the controller's typebootstrap (which materialises typed top-level globals from each watched resource's OpenAPI schema) can resolve schemas via the CRD path. The OpenAPI v3 endpoint fallback works without this permission, but the CRD path gives higher-fidelity schemas (preserves x-kubernetes-preserve-unknown-fields subtrees); both are tried at controller boot. RBAC narrowed to read-only verbs only.
 - Plugin metrics across the SPOA bundle. Every plugin bundled in the haptic/spoa-hub image (mirror, coraza, external-auth, fingerprinting, maxmind, otel, sso-auth) now emits Prometheus counters / gauges / histograms through the hub's `/metrics` endpoint. No chart-side opt-in — metrics surface when each plugin is enabled. Names appear with a `plugin_<plugin>_` prefix.
 
 ### Changed

@@ -275,7 +275,7 @@ func TestRunner_RunTests(t *testing.T) {
 				cfg,
 				engine,
 				&dataplane.ValidationPaths{}, // Empty paths for unit tests
-				Options{
+				&Options{
 					TestName: tt.testName,
 					Logger:   logger,
 				},
@@ -383,7 +383,7 @@ backend {{ svcMeta["namespace"] }}-{{ svcMeta["name"] }}
 		cfg,
 		engine,
 		&dataplane.ValidationPaths{},
-		Options{Logger: logger},
+		&Options{Logger: logger},
 	)
 
 	ctx := context.Background()
@@ -456,7 +456,7 @@ func TestRunner_RenderError(t *testing.T) {
 		cfg,
 		engine,
 		&dataplane.ValidationPaths{},
-		Options{Logger: logger},
+		&Options{Logger: logger},
 	)
 
 	ctx := context.Background()
@@ -621,7 +621,7 @@ func TestRunner_RunTests_WithHTTPFixtures(t *testing.T) {
 		cfg,
 		engine,
 		&dataplane.ValidationPaths{}, // Empty paths for unit tests
-		Options{
+		&Options{
 			Logger: logger,
 		},
 	)
@@ -703,7 +703,7 @@ global
 		cfg,
 		engine,
 		&dataplane.ValidationPaths{}, // Empty paths for unit tests
-		Options{
+		&Options{
 			Logger: logger,
 		},
 	)
@@ -817,7 +817,7 @@ backend my-backend-2
 		cfg,
 		engine,
 		&dataplane.ValidationPaths{}, // Empty paths for unit tests
-		Options{
+		&Options{
 			Logger: logger,
 		},
 	)
@@ -922,7 +922,7 @@ func TestRunner_RunTests_WithoutCurrentConfig(t *testing.T) {
 		cfg,
 		engine,
 		&dataplane.ValidationPaths{},
-		Options{
+		&Options{
 			Logger: logger,
 		},
 	)

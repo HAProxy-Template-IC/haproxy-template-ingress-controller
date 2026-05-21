@@ -15,6 +15,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -40,7 +41,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	informers "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions"
@@ -64,10 +64,21 @@ type reconciliationComponents struct {
 	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
 	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
 	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
+
+	// engineWiring carries the type-bootstrap output shared between
+	// the reconciliation engine (this struct's coordinator path) and
+	// the dry-run validator engine constructed later in iteration
+	// startup. Both engines need the SAME typed-global declarations
+	// so chart templates compile identically against either render
+	// path — without this sharing, the webhook engine would see the
+	// typed globals as undefined and admission would reject every
+	// resource.
+	engineWiring typedRendererWiring
 }
 
 // createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
 func createReconciliationComponents(
+	ctx context.Context,
 	cfg *coreconfig.Config,
 	crd *v1alpha1.HAProxyTemplateConfig,
 	k8sClient *client.Client,
@@ -109,17 +120,19 @@ func createReconciliationComponents(
 	httpStoreEvictionMaxAge := 2 * driftInterval
 	httpStoreComponent := httpstore.New(bus, logger, httpStoreEvictionMaxAge)
 
-	// Create template engine for the Coordinator's Pipeline
-	// currentConfig is needed for slot preservation during renders
-	additionalDeclarations := map[string]any{
-		"currentConfig": (*parserconfig.StructuredConfig)(nil),
+	wiring, err := buildEngineWiring(ctx, cfg, k8sClient, logger)
+	if err != nil {
+		return nil, err
 	}
-	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, additionalDeclarations, helpers.EngineOptions{})
+	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, wiring.Declarations, helpers.EngineOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("creating template engine for reconciliation: %w", err)
 	}
 
-	// Create RenderService with full dependencies for production rendering
+	// Create RenderService with full dependencies for production rendering.
+	// TypedResourceTypes feeds the render-time path that wraps each store
+	// snapshot into the *[]*<generated-struct> shape Scriggo's typed globals
+	// are declared against.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
 		Engine:             engine,
 		Config:             cfg,
@@ -128,6 +141,7 @@ func createReconciliationComponents(
 		HAProxyPodStore:    haproxyPodStore,
 		HTTPStoreComponent: httpStoreComponent,
 		CurrentConfigStore: currentConfigStore,
+		TypedResourceTypes: wiring.TypedResourceTypes,
 	})
 
 	// Create ValidationService with permissive DNS validation for runtime
@@ -274,6 +288,7 @@ func createReconciliationComponents(
 		httpStore:           httpStoreComponent,
 		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
+		engineWiring:        wiring,
 	}, nil
 }
 

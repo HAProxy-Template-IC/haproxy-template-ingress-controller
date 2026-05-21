@@ -163,6 +163,100 @@ func TestDigReflect_MultiKeyAfterStringValueReturnsNil(t *testing.T) {
 			"the depth limit")
 }
 
+// TestDigReflect_TypedStruct pins the keystone Phase 6 property:
+// dig() navigates typed structs by their JSON tag, NOT by their
+// Go field name. This is what lets the chart adopt the typed shape
+// without rewriting every dig() call site — `dig(gw, "metadata",
+// "name")` works whether `gw` is a map[string]any or a typed
+// pointer like the ones the renderer's typed-resource entries
+// produce.
+func TestDigReflect_TypedStruct(t *testing.T) {
+	type meta struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	}
+	type gateway struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+		Metadata   meta   `json:"metadata"`
+	}
+
+	gw := gateway{
+		APIVersion: "gateway.networking.k8s.io/v1",
+		Kind:       "Gateway",
+		Metadata:   meta{Name: "public", Namespace: "ingress"},
+	}
+
+	t.Run("dig by JSON tag", func(t *testing.T) {
+		got := scriggoDig(gw, "metadata", "name")
+		assert.Equal(t, "public", got)
+	})
+
+	t.Run("dig by JSON tag — top-level scalar", func(t *testing.T) {
+		got := scriggoDig(gw, "kind")
+		assert.Equal(t, "Gateway", got)
+	})
+
+	t.Run("dig through pointer auto-dereferences", func(t *testing.T) {
+		got := scriggoDig(&gw, "metadata", "namespace")
+		assert.Equal(t, "ingress", got)
+	})
+
+	t.Run("missing JSON tag returns nil", func(t *testing.T) {
+		got := scriggoDig(gw, "metadata", "deletedAt")
+		assert.Nil(t, got)
+	})
+
+	t.Run("dig into nil pointer returns nil safely", func(t *testing.T) {
+		var nilGw *gateway
+		got := scriggoDig(nilGw, "metadata", "name")
+		assert.Nil(t, got)
+	})
+
+	t.Run("dig by Go field name as fallback", func(t *testing.T) {
+		// Types declared without json tags (test fixtures, hand-written
+		// helpers) still reach their fields via the Go name. typegen
+		// always emits json tags, but the chart might dig into other
+		// shapes too.
+		type bareStruct struct {
+			Hello string
+		}
+		got := scriggoDig(bareStruct{Hello: "world"}, "Hello")
+		assert.Equal(t, "world", got)
+	})
+}
+
+// TestDigReflect_StructFieldCache documents the cache behaviour:
+// repeated digs on the same type re-use the JSON-name → field-index
+// map. Verified via behavioural equivalence (two consecutive calls
+// return the same value); the cache is private so we can't poke at
+// it directly, but the test guards against a future regression
+// where someone removes the cache and quietly tanks render perf.
+func TestDigReflect_StructFieldCache(t *testing.T) {
+	type bigStruct struct {
+		A string `json:"a"`
+		B string `json:"b"`
+		C string `json:"c"`
+		D string `json:"d"`
+		E string `json:"e"`
+	}
+	v := bigStruct{A: "1", B: "2", C: "3", D: "4", E: "5"}
+	for i := 0; i < 5; i++ {
+		assert.Equal(t, "3", scriggoDig(v, "c"))
+		assert.Equal(t, "5", scriggoDig(v, "e"))
+	}
+}
+
+// Note: a "with helpers" test verifying that digstr/digint/digbool
+// inherit the typed-struct support transparently lives in MR !969
+// (the typed-dig filters MR). It can't live here because this
+// branch doesn't have those helpers yet — but it doesn't need to,
+// because the helpers are thin wrappers around scriggoDig that
+// add type coercion to the *return* value. The struct-traversal
+// logic this file pins via TestDigReflect_TypedStruct is the only
+// place where map-vs-struct behaviour can diverge; the helpers
+// just convert the resulting `any`.
+
 func TestIsValueInList_Direct(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -34,11 +34,22 @@ const levelTrace = slog.Level(-8)
 // DefaultTimeout is the default HTTP request timeout.
 const DefaultTimeout = 30 * time.Second
 
-// DefaultRetries is the default number of retry attempts.
-const DefaultRetries = 3
+// DefaultRetries is the default number of retry attempts. Combined
+// with DefaultRetryDelay's exponential backoff (0.5s + 1s = 1.5s
+// of waits across 3 total attempts), this caps the worst-case
+// budget for an unreachable URL well under the 5-second envelope a
+// non-critical HTTP fetch should respect on a template render hot
+// path. Raising either value here pushes per-render latency past
+// the conformance test convergence windows that gate CI.
+const DefaultRetries = 2
 
-// DefaultRetryDelay is the default delay between retry attempts.
-const DefaultRetryDelay = time.Second
+// DefaultRetryDelay is the base delay between retry attempts. The
+// backoff is exponential — attempt N waits `RetryDelay * 2^(N-1)`
+// — so with Retries=2 the per-call wait budget is 0.5s + 1s =
+// 1.5s. Each fetch attempt that fails fast on connection refused
+// adds at most ~1 RTT, so total worst case is ~2s on a healthy
+// network with an unreachable target.
+const DefaultRetryDelay = 500 * time.Millisecond
 
 // MaxContentSize is the maximum allowed content size (10MB).
 const MaxContentSize = 10 * 1024 * 1024

@@ -1,71 +1,47 @@
 package comparator
 
 import (
-	"slices"
-
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
 // compareACLs compares ACL configurations within a frontend or backend.
-// ACLs are identified by their name (ACLName field). Adds are emitted in
-// ascending index order so the DataPlane API sees a valid insertion sequence
-// (it requires lower indices to exist before higher ones).
+//
+// HAProxy ACLs are positional: a single ACL NAME may appear on multiple lines
+// in the rendered config, each with its own (criterion, value) pair. HAProxy
+// OR-combines lines that share a name — so two `acl X req_ssl_sni -m str foo`
+// + `acl X req_ssl_sni -m end .bar` lines together mean "ACL X is true when
+// SNI is `foo` OR ends with `.bar`". The DataPlane API addresses ACLs by
+// index within their parent and preserves this OR semantics; both lines must
+// be created as separate index entries.
+//
+// Earlier this function indexed ACLs into `map[string]int` by ACLName and
+// emitted at most one operation per name. When the chart emitted two ACL
+// lines with the same name, the second silently overwrote the first in the
+// index, so only one create operation reached the DataPlane API. Reject
+// rules that depended on the OR-combined truth then misfired (the rendered
+// haproxy.cfg had the wildcard SNI in the route_sni ACL; the dataplane
+// on-disk haproxy.cfg only had the exact-match line; SNIs that should have
+// satisfied `route_sni` failed the `!route_sni` test and triggered a
+// `tcp-request content reject`).
+//
+// Same fix as every other indexed-child rule (HTTP/TCP request rules, TCP
+// response rules, filters, …): use compareEditedItems for LCS-based
+// positional diffing. ACLs already have a content-Equal method on
+// `*models.ACL` so the pattern slots in unchanged.
 func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, desiredACLs models.Acls, _ *DiffSummary) []Operation {
 	create, remove, update := sections.NewACLBackendCreate, sections.NewACLBackendDelete, sections.NewACLBackendUpdate
 	if parentType == parentTypeFrontend {
 		create, remove, update = sections.NewACLFrontendCreate, sections.NewACLFrontendDelete, sections.NewACLFrontendUpdate
 	}
-
-	currentByName := indexACLsByName(currentACLs)
-	desiredByName := indexACLsByName(desiredACLs)
-
-	// Adds: collect indices first, then sort, then emit in index order.
-	var addIndices []int
-	for name, idx := range desiredByName {
-		if _, exists := currentByName[name]; !exists {
-			addIndices = append(addIndices, idx)
-		}
-	}
-	slices.Sort(addIndices)
-
-	operations := make([]Operation, 0, len(addIndices)+len(currentByName))
-	for _, idx := range addIndices {
-		operations = append(operations, create(parentName, desiredACLs[idx], idx))
-	}
-
-	// Deletes: in current but not in desired.
-	for name, idx := range currentByName {
-		if _, exists := desiredByName[name]; !exists {
-			operations = append(operations, remove(parentName, currentACLs[idx], idx))
-		}
-	}
-
-	// Updates: in both, content differs.
-	for name, desiredIdx := range desiredByName {
-		currentIdx, exists := currentByName[name]
-		if !exists {
-			continue
-		}
-		if !currentACLs[currentIdx].Equal(*desiredACLs[desiredIdx]) {
-			operations = append(operations, update(parentName, desiredACLs[desiredIdx], desiredIdx))
-		}
-	}
-
-	return operations
-}
-
-// indexACLsByName builds a name → slice-index lookup, skipping ACLs without
-// names (which can't be addressed by the DataPlane API anyway).
-func indexACLsByName(acls models.Acls) map[string]int {
-	index := make(map[string]int, len(acls))
-	for i, acl := range acls {
-		if acl.ACLName != "" {
-			index[acl.ACLName] = i
-		}
-	}
-	return index
+	return compareEditedItems(
+		currentACLs, desiredACLs,
+		func(a, b *models.ACL) bool { return a.Equal(*b) },
+		func(acl *models.ACL, i int) Operation { return create(parentName, acl, i) },
+		func(acl *models.ACL, i int) Operation { return remove(parentName, acl, i) },
+		func(acl *models.ACL, i int) Operation { return update(parentName, acl, i) },
+	)
 }
 
 // compareEditedItems runs an LCS-based diff (diffIndexedRules +

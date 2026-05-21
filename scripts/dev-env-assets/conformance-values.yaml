@@ -1,0 +1,141 @@
+# Conformance Helm values for the HAPTIC chart.
+#
+# Used by the upstream Gateway API / Ingress conformance suites
+# (tests/conformance) and selected via the HAPTIC_E2E_PROFILE
+# environment variable in tests/e2e's TestMain. The intent is to give
+# conformance its OWN bring-up — no shared values, no shared
+# fixtures, no shared HTTP-store demo URL that conformance doesn't
+# need and that broke shard-4 of the Gateway API suite (the chart's
+# dev-values blocklist demo was being fetched on every render even
+# in conformance environments where blocklist-server wasn't a
+# meaningful dependency).
+#
+# What's in here vs dev-values.yaml:
+#
+# IDENTICAL: credentials, ingressClass, image, controller config
+# (logLevel, fast timings, validators), haproxy service shape,
+# resources, webhook, spoaHub minus coraza directives.
+#
+# REMOVED: the HTTP store demo (maps.header-blocklist.map +
+# templateSnippets.frontend-filters-http-store-demo). Those are
+# dev-loop demos, not conformance test surfaces — the upstream
+# suites don't assert on a blocklist behaviour and the chart's
+# unconditional http.Fetch was burning the render hot path on an
+# unreachable URL during cluster boot.
+#
+# REMOVED: spoaHub.plugins.coraza.directives. The dev WAF rule
+# (User-Agent=haptic-waf-block-probe → 403) is e2e-test-specific
+# and conformance doesn't exercise it. The plugin still loads with
+# chart-default directives if any chart code enables it.
+
+credentials:
+  dataplane:
+    username: admin
+    password: adminpass
+
+ingressClass:
+  name: haptic
+
+image:
+  repository: haptic
+  tag: dev
+  pullPolicy: Never
+
+controller:
+  templateLibraries:
+    gateway:
+      enabled: true
+    nginxIngress:
+      enabled: true
+
+  validators:
+    entries:
+      - name: spoa-hub
+        socketPath: /var/run/haptic-validators/spoa-hub.sock
+        files:
+          - "general/spoa-hub-config.toml"
+
+  logLevel: DEBUG
+  config:
+    logging:
+      level: DEBUG
+
+    # Same fast-timings profile as dev-values — chosen for the
+    # upstream conformance suite's no-retry HTTP polls, see the
+    # comment block in dev-values.yaml for the full rationale.
+    controller:
+      reconciliationDebounceInterval: 10ms
+    dataplane:
+      minDeploymentInterval: 10ms
+      configPublishInterval: 50ms
+      driftPreventionInterval: 10m
+
+    templatingSettings:
+      extraContext:
+        debug: true
+
+haproxy:
+  service:
+    type: NodePort
+    http:
+      nodePort: 30080
+    https:
+      nodePort: 30443
+    stats:
+      nodePort: 30404
+  networkPolicy:
+    enabled: true
+    allowExternal: true
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+
+podLabels:
+  environment: conformance
+  managed-by: conformance-suite
+
+livenessProbe: {}
+readinessProbe: {}
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+
+webhook:
+  enabled: true
+  certManager:
+    enabled: false
+
+# SPOA hub kept enabled so any chart paths that wire SPOE messages
+# (e.g. SupportHTTPRouteRequestMirror conformance — bundled mirror
+# plugin) work. Conformance doesn't exercise coraza, so no
+# directives override here; the plugin loads with chart defaults.
+spoaHub:
+  image:
+    tag: main-latest
+  hub:
+    logLevel: debug
+  plugins:
+    external-auth:
+      params: |
+        timeout_ms = 5000
+        fail_open = false
+        method = "GET"
+        allow_plaintext = true
+        forward_headers = [
+          "authorization", "cookie",
+          "x-forwarded-for", "x-forwarded-proto",
+          "x-forwarded-host", "x-forwarded-uri"
+        ]
+        extract_headers = ["x-auth-user", "x-auth-roles"]

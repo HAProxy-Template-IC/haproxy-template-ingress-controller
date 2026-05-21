@@ -81,6 +81,18 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Wire the at-failure HAProxy state snapshotter into the
+	// httpclient package's poll-timeout hook. Triggered when a
+	// test's HTTP polling exhausts its 180s retry budget; dumps
+	// the chart-rendered HAProxyCfg + the running pod's
+	// /etc/haproxy tree BEFORE the test's t.Cleanup chain deletes
+	// per-test fixtures. Without this, the standard
+	// DumpLogsOnFailure runs after fixture deletion and captures
+	// only the empty-defaults post-cleanup state — leaving real
+	// failures undiagnosable from CI artifacts. See snapshot.go
+	// for the per-test throttle.
+	InstallFailureSnapshotter()
+
 	provider := kindcluster.NewProvider(
 		kindcluster.ProviderWithLogger(kindcmd.NewLogger()),
 	)
@@ -124,6 +136,22 @@ func TestMain(m *testing.M) {
 			return helmInstallChart(ctx, caBundleB64)
 		}),
 		phase("apply-backend-fixtures (parallel)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			// Skip the e2e backend fixtures (echo-server,
+			// blocklist-server, auth-server, …) when the
+			// conformance profile is active. The upstream
+			// conformance suites bring up their own backend
+			// pods per scenario; loading the e2e fixtures here
+			// pollutes the cluster with services conformance
+			// doesn't use and (in the blocklist-server case)
+			// triggers a per-render http.Fetch the chart would
+			// keep retrying on every reconcile until the pod
+			// becomes ready — historically the timing source
+			// behind shard-4 TLSRouteHostnameIntersection
+			// failures.
+			if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
+				fmt.Fprintln(os.Stderr, "e2e: conformance profile — skipping backend fixtures")
+				return ctx, nil
+			}
 			return applyBackendFixtures(ctx)
 		}),
 		phase("wait-environment-ready", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
@@ -405,13 +433,27 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		return ctx, err
 	}
 
-	// Write the embedded dev-values.yaml to a temp file so helm can consume it.
+	// HAPTIC_E2E_PROFILE selects which embedded values file to install
+	// with. The conformance profile strips out the HTTP-store demo
+	// and other dev-loop fixtures that don't belong in conformance
+	// runs — see ConformanceValuesYAML's doc comment for the
+	// rationale. Default (empty / "dev") uses the full dev-values.
+	profile := os.Getenv("HAPTIC_E2E_PROFILE")
+	var valuesBytes []byte
+	switch profile {
+	case "conformance":
+		valuesBytes = devassets.ConformanceValuesYAML
+		fmt.Fprintln(os.Stderr, "e2e: using conformance values profile")
+	default:
+		valuesBytes = devassets.DevValuesYAML
+	}
+	// Write the chosen values bytes to a temp file so helm can consume them.
 	valuesFile, err := os.CreateTemp("", "haptic-e2e-values-*.yaml")
 	if err != nil {
 		return ctx, fmt.Errorf("create temp values file: %w", err)
 	}
 	defer os.Remove(valuesFile.Name())
-	if _, err := valuesFile.Write(devassets.DevValuesYAML); err != nil {
+	if _, err := valuesFile.Write(valuesBytes); err != nil {
 		return ctx, fmt.Errorf("write temp values: %w", err)
 	}
 	if err := valuesFile.Close(); err != nil {

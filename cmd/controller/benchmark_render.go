@@ -116,7 +116,7 @@ func renderAllFiles(engine templating.Engine, cfg *config.Config, renderCtx map[
 // createStoresForBenchmark creates resource stores from test fixtures.
 func createStoresForBenchmark(cfg *config.Config, engine templating.Engine, fixtures map[string][]any) (map[string]stores.Store, error) {
 	// Create a minimal runner just to use its fixture processing
-	runner := testrunner.New(cfg, engine, nil, testrunner.Options{})
+	runner := testrunner.New(cfg, engine, nil, &testrunner.Options{})
 	return runner.CreateStoresFromFixtures(fixtures)
 }
 
