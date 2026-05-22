@@ -171,3 +171,4 @@ fi
 
 echo -e "${YELLOW}Running validation tests...${NC}" >&2
 "$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" ${SCHEMA_DIR_ARG} "$@"
+

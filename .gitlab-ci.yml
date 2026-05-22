@@ -5,6 +5,11 @@ stages:
   - integration
   - deploy
 
+# Triggers the documented zero-jobs-MR workaround (see lines ~56-66
+# below). This MR (!980) only edits Makefile + scripts/ — both in
+# .rules-code's changes list — yet GitLab still produced
+# zero-job MR pipelines, so the workaround applies to this diff too.
+
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:
   rules:
