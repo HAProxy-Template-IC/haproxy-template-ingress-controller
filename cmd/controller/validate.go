@@ -32,6 +32,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher/builtin"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
@@ -50,6 +51,15 @@ var (
 	validateDebugFilters    bool
 	validateProfileIncludes bool
 	validateWorkers         int
+	// validateSchemaDir is the optional kubeconform-style schema
+	// directory. When set, it overlays on top of the embedded
+	// builtin schemas — entries in the directory win, missing ones
+	// fall through. Full CRDs (apiextensions.k8s.io/v1) also
+	// auto-populate the offline GVK resolver from their
+	// spec.names.plural, so users who add CRDs to the directory
+	// don't have to also register the (apiVersion, plural) mapping
+	// in code.
+	validateSchemaDir string
 )
 
 // validateCmd represents the validate command.
@@ -93,6 +103,16 @@ func init() {
 	validateCmd.Flags().BoolVar(&validateDebugFilters, "debug-filters", false, "Show filter operation debugging (sort comparisons, etc.)")
 	validateCmd.Flags().BoolVar(&validateProfileIncludes, "profile-includes", false, "Show include timing statistics (top 20 slowest)")
 	validateCmd.Flags().IntVar(&validateWorkers, "workers", 0, "Number of parallel test workers (0=auto-detect CPUs, 1=sequential)")
+	// --schema-dir / HAPTIC_SCHEMA_DIR — kubeconform-style local
+	// schema directory. Accepts full CRD YAMLs (the wire form
+	// `kubectl get crd X -o yaml` produces) or bare OpenAPI v3
+	// spec.Schema files with an x-kubernetes-group-version-kind
+	// extension. Layered on top of the embedded builtin set: dir
+	// wins per-GVK, builtins fill the gaps.
+	validateCmd.Flags().StringVar(&validateSchemaDir, "schema-dir", os.Getenv("HAPTIC_SCHEMA_DIR"),
+		"Directory of schema files to use for typed-resource access during validation "+
+			"(accepts CustomResourceDefinition YAMLs or bare OpenAPI v3 schemas; overlays embedded defaults). "+
+			"Also reads HAPTIC_SCHEMA_DIR.")
 
 	_ = validateCmd.MarkFlagRequired("file")
 }
@@ -240,11 +260,33 @@ func runOfflineTypeBootstrap(
 	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
 	logger *slog.Logger,
 ) (*typebootstrap.Result, error) {
-	fetcher, err := builtin.NewFetcher()
+	builtinFetcher, err := builtin.NewFetcher()
 	if err != nil {
 		return nil, fmt.Errorf("loading builtin schemas: %w", err)
 	}
 	resolver := typebootstrap.NewOfflineGVKResolver()
+
+	// Layer the user-supplied schema directory (if any) on top of
+	// the embedded builtins. Dir wins per-GVK; builtins fill the
+	// gaps. Full CRDs in the dir also auto-extend the offline GVK
+	// resolver — operators who drop in their CRD YAMLs don't have
+	// to also patch NewOfflineGVKResolver to map plural → GVK.
+	var fetcher schemafetcher.Fetcher = builtinFetcher
+	if validateSchemaDir != "" {
+		dirFetcher, err := schemafetcher.NewDirFetcher(validateSchemaDir)
+		if err != nil {
+			return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
+		}
+		logger.Info("offline type bootstrap: loaded schema directory",
+			"path", validateSchemaDir,
+			"schemas", dirFetcher.Len())
+		for apiVersion, plurals := range dirFetcher.PluralsFor() {
+			for plural, gvk := range plurals {
+				resolver.Register(apiVersion, plural, gvk)
+			}
+		}
+		fetcher = schemafetcher.NewOverlay(dirFetcher, builtinFetcher)
+	}
 
 	// Iterate by name then index back into the map by reference so we
 	// don't copy each ~128-byte WatchedResource value on every loop
@@ -256,9 +298,9 @@ func runOfflineTypeBootstrap(
 		if err != nil {
 			// Unknown GVK in the offline resolver: skip without
 			// warning. Most watched resources won't have typed
-			// support yet; only the ones a chart-side adopter
-			// has both added a builtin schema AND a resolver
-			// entry for. Logging every miss would be noise.
+			// support yet; only the ones the operator has both
+			// supplied a schema for (--schema-dir or embedded
+			// builtin) AND mapped a plural → GVK for.
 			logger.Debug("offline type bootstrap: no GVK mapping; skipping typed support",
 				"resource", name, "apiVersion", wr.APIVersion, "resources", wr.Resources)
 			continue

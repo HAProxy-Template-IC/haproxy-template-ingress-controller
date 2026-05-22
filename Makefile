@@ -5,7 +5,8 @@
         spoa-prep spoa-hub-image spoa-bundle-render spoa-bundle-check \
         tidy vendor verify verify-generate generate clean fmt vet install-tools dev \
         release-controller release-chart goreleaser-snapshot \
-        pgo-profile pgo-merge
+        pgo-profile pgo-merge \
+        extract-schemas
 
 .DEFAULT_GOAL := help
 
@@ -384,6 +385,51 @@ bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=Benchmar
 		-count=$${COUNT:-1} \
 		-timeout=$${TIMEOUT:-5m} \
 		$${PKG:-./...}
+
+## Schema extraction (for offline validate)
+
+# SCHEMA_DIR is where extract-schemas writes its output. The default
+# matches the path the chart's tests reference; operators can override
+# to populate any local directory they later pass to
+# `haptic-controller validate --schema-dir=<path>`.
+SCHEMA_DIR ?= tests/schemas
+
+extract-schemas: ## Extract CustomResourceDefinitions into $(SCHEMA_DIR) for offline `validate --schema-dir`
+	@echo "Extracting schemas to $(SCHEMA_DIR)/..."
+	@mkdir -p $(SCHEMA_DIR)
+	@# Chart-bundled CRDs first — the haptic project's own CRDs
+	@# (haproxytemplateconfigs, haproxycfgs, the auxiliary file
+	@# CRDs) are always relevant for chart authors who validate
+	@# templates that reference them.
+	@if [ -d charts/haptic/crds ]; then \
+		find charts/haptic/crds -name '*.yaml' -exec cp -v {} $(SCHEMA_DIR)/ \; ; \
+	fi
+	@# Upstream Gateway API CRDs from the module cache. Picks up
+	@# whichever release go.mod is currently on, so the extracted
+	@# schemas track the build's actual dependency version. The
+	@# Dir field on `go list -m -json` is unpopulated for modules
+	@# that aren't vendored, so we reconstruct the path from
+	@# GOMODCACHE + module@version explicitly.
+	@# Upstream Gateway API resources include a ValidatingAdmissionPolicy
+	@# alongside the CRDs (gateway.networking.k8s.io_vap_safeupgrades.yaml).
+	@# Skip non-CRDs at extraction time so the output directory is
+	@# CRD-only and clean for downstream tools. DirFetcher would also
+	@# silently skip it at load time, but operators get a tidier
+	@# directory listing this way.
+	@gw_api_version="$$($(GO) list -m -f '{{.Version}}' sigs.k8s.io/gateway-api 2>/dev/null || true)"; \
+	gw_api_dir="$$($(GO) env GOMODCACHE)/sigs.k8s.io/gateway-api@$${gw_api_version}"; \
+	if [ -n "$$gw_api_version" ] && [ -d "$$gw_api_dir/config/crd/standard" ]; then \
+		for f in $$gw_api_dir/config/crd/standard/gateway.networking.k8s.io_*.yaml; do \
+			kind="$$(head -3 "$$f" | grep '^kind:' | awk '{print $$2}')"; \
+			if [ "$$kind" = "CustomResourceDefinition" ]; then \
+				cp -v "$$f" $(SCHEMA_DIR)/ ; \
+			fi \
+		done \
+	fi
+	@echo
+	@echo "Schemas written to $(SCHEMA_DIR)/. Usage:"
+	@echo "  haptic-controller validate -f config.yaml --schema-dir=$(SCHEMA_DIR)"
+	@echo "  HAPTIC_SCHEMA_DIR=$(SCHEMA_DIR) haptic-controller validate -f config.yaml"
 
 ## Build targets
 
