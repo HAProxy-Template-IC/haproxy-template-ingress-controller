@@ -144,7 +144,7 @@ func (u *StatusUpdater) Stop() {
 // handleConfigValidated updates CRD status to reflect successful validation.
 func (u *StatusUpdater) handleConfigValidated(ctx context.Context, event *events.ConfigValidatedEvent) {
 	// Skip synthetic bootstrap events
-	if event.Version == "initial" {
+	if event.Version == syntheticBootstrapVersion {
 		return
 	}
 

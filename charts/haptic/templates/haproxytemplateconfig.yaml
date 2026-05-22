@@ -214,6 +214,7 @@ spec:
           "timeoutProcessing" (toString $hub.timeoutProcessing)
           "poolMaxConn" (int $hub.poolMaxConn)
           "poolPurgeDelay" (toString $hub.poolPurgeDelay)
+          "mirrorStaticMinSlots" (int ($.Values.spoaHub.mirrorStaticMinSlots | default 4))
           "hub" (dict
               "logLevel" $hubRuntime.logLevel
               "maxConnections" (int $hubRuntime.maxConnections)
