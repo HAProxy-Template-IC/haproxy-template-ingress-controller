@@ -151,5 +151,23 @@ if [[ ! -s "$TEMP_CONFIG" ]]; then
 fi
 
 # Run controller validate with all provided arguments
+#
+# --schema-dir points at the in-tree tests/schemas/ directory so chart
+# templates that use typed access to Gateway-API resources
+# (httproute.Spec.Hostnames etc.) compile against the right schemas at
+# validate time. Without this, the validate binary only knows about its
+# embedded builtin schemas (currently just Gateway), and a chart-side
+# template referencing httproute.Spec.Hostnames would fail with
+# "unknown field Spec" instead of validating.
+#
+# tests/schemas/ is committed to the repo (regenerated via `make
+# extract-schemas` on a gateway-api `go.mod` bump). Operators who pass
+# their own --schema-dir to test-templates.sh override this default — that's
+# why we only inject if the user didn't already.
+SCHEMA_DIR_ARG=""
+if [[ -d "${PROJECT_ROOT}/tests/schemas" ]] && ! printf '%s\n' "$@" | grep -q -- '--schema-dir'; then
+    SCHEMA_DIR_ARG="--schema-dir=${PROJECT_ROOT}/tests/schemas"
+fi
+
 echo -e "${YELLOW}Running validation tests...${NC}" >&2
-"$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "$@"
+"$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" ${SCHEMA_DIR_ARG} "$@"

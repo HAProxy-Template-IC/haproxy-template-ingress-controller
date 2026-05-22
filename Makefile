@@ -416,7 +416,15 @@ extract-schemas: ## Extract CustomResourceDefinitions into $(SCHEMA_DIR) for off
 	@# CRD-only and clean for downstream tools. DirFetcher would also
 	@# silently skip it at load time, but operators get a tidier
 	@# directory listing this way.
-	@gw_api_version="$$($(GO) list -m -f '{{.Version}}' sigs.k8s.io/gateway-api 2>/dev/null || true)"; \
+	@# `-mod=mod` bypasses any vendor/modules.txt drift — extract-schemas reads
+	@# from GOMODCACHE, not vendor/, so vendor-side inconsistencies don't affect
+	@# the extraction itself but DO make `go list -m` exit non-zero on a
+	@# checkout where the last `go mod vendor` ran before the most recent
+	@# `go.mod` edit (transient between a Renovate bump and the next vendor
+	@# sync). Without -mod=mod the version detection silently fails and the
+	@# target emits the haptic CRDs only, surfacing as a confusing "where are
+	@# the Gateway API schemas?" moment downstream.
+	@gw_api_version="$$($(GO) list -mod=mod -m -f '{{.Version}}' sigs.k8s.io/gateway-api 2>/dev/null || true)"; \
 	gw_api_dir="$$($(GO) env GOMODCACHE)/sigs.k8s.io/gateway-api@$${gw_api_version}"; \
 	if [ -n "$$gw_api_version" ] && [ -d "$$gw_api_dir/config/crd/standard" ]; then \
 		for f in $$gw_api_dir/config/crd/standard/gateway.networking.k8s.io_*.yaml; do \
