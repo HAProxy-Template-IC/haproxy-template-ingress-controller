@@ -1666,6 +1666,36 @@ spoaHub:
     poolMaxConn: 100
     poolPurgeDelay: 30s
 
+  # Static floor for the mirror plugin's SPOE message slot count.
+  #
+  # The chart-rendered SPOA-hub TOML enumerates `mirror-1`..`mirror-N`
+  # under the mirror plugin's `messages` list (and the haproxy-side SPOE
+  # config declares matching `mirror-N-group` groups). N is normally the
+  # max-mirrors-per-route count across all observed HTTPRoutes; this
+  # value floors that count so the rendered list is never shorter than
+  # mirrorStaticMinSlots.
+  #
+  # Why the floor exists (issue #47): the SPOA hub sidecar reloads the
+  # plugin on TOML file changes, and rebuilds plugin handler state from
+  # scratch on every reload. If a transient render emits messages=[]
+  # (e.g. between two conformance subtests, or any reconciliation that
+  # races an HTTPRoute observation), the mirror plugin loses its handler
+  # for `mirror-1` until the next reload. Every in-flight SPOE NOTIFY
+  # for `send-spoe-group mirror-1-group` then hits the SPOA hub's "no
+  # plugins registered for message" path and gets silently dropped.
+  # Conformance test traffic spikes during this window have been
+  # observed as ~50% mirror-rate flakes on the gateway-api conformance
+  # shards.
+  #
+  # 4 is enough for the upstream Gateway-API conformance suite
+  # (TLSRouteHostnameIntersection and HTTPRouteRequestMultipleMirrors
+  # both top out at 2 mirrors per rule). Workloads with > 4 mirrors per
+  # HTTPRoute rule are still covered by the chart's dynamic extension,
+  # but slots beyond `mirrorStaticMinSlots` remain exposed to the same
+  # shrink-on-reload race. Bump this value if you regularly run a
+  # workload with > 4 mirrors per rule and observe the flake.
+  mirrorStaticMinSlots: 4
+
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
   # messages, dependsOn) plus a free-form `params:` TOML string blob spliced
   # verbatim under the hub's `[plugins.params]` table. The chart never parses

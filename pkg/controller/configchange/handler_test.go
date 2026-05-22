@@ -910,3 +910,83 @@ func TestConfigChangeHandler_HandleCredentialsUpdated_SignalsRotation(t *testing
 		t.Fatal("timeout waiting for reinit signal after credentials rotation")
 	}
 }
+
+// TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent
+// pins the regression that caused issue #46: webhook.go publishes a
+// synthetic CredentialsUpdatedEvent("initial") during iteration startup
+// to kick subscribers before the real watcher onAdd. The literal
+// "initial" version never matches the real Secret resourceVersion
+// recorded via SetInitialCredentialsVersion, so the bootstrap-match
+// check at the bottom of handleSecretRotation does NOT filter it.
+// Without the dedicated "initial"-skip, the handler treated it as a
+// rotation and scheduled an iteration restart ~1s after every startup,
+// which raced UpdateBlocklistAndRestart in the HTTP-store
+// invalid-update acceptance test and caused the new iteration's empty
+// HTTPStore to cache invalid blocklist content as accepted.
+//
+// The fix is parallel to the version="initial" skip
+// handleConfigValidated already had at the top of its handler.
+func TestConfigChangeHandler_HandleSecretRotation_SkipsSyntheticInitialEvent(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	configCh := make(chan *coreconfig.Config, 1)
+	handler := NewConfigChangeHandler(bus, logger, configCh, nil, testDebounceInterval)
+
+	bus.Start()
+	go handler.Start(t.Context())
+	time.Sleep(testutil.StartupDelay)
+
+	// Cache a validated config so the path-under-test would otherwise
+	// be able to signal reinit. Without this we can't distinguish "fix
+	// worked" from "no cached config, would have warned and bailed
+	// anyway".
+	cachedConfig := &coreconfig.Config{}
+	bus.Publish(events.NewConfigValidatedEvent(cachedConfig, nil, "v1", "sv1"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case <-configCh:
+	default:
+	}
+
+	// Record a real bootstrap version that does NOT match "initial",
+	// then enable reinit. This is the exact state at iteration startup
+	// when the bug fires: the real Secret had resourceVersion "1413"
+	// in the failing CI run; "initial" doesn't match, so the synthetic
+	// would slip past the bootstrap-match check.
+	handler.SetInitialCredentialsVersion("1413")
+	handler.SetInitialCertVersion("1414")
+	handler.EnableReinitialization()
+
+	// Synthetic credentials event — must NOT signal reinit even though
+	// "initial" != "1413".
+	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "initial"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case <-configCh:
+		t.Fatal("synthetic CredentialsUpdatedEvent(version=\"initial\") must not trigger iteration restart (issue #46)")
+	case <-time.After(testutil.NoEventTimeout):
+		// expected
+	}
+
+	// Synthetic cert event — same path, same expectation. The handler
+	// is generic over both kinds, so the skip must apply to both.
+	bus.Publish(events.NewCertParsedEvent([]byte("c"), []byte("k"), "initial"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case <-configCh:
+		t.Fatal("synthetic CertParsedEvent(version=\"initial\") must not trigger iteration restart")
+	case <-time.After(testutil.NoEventTimeout):
+		// expected
+	}
+
+	// Sanity: a real rotation event (different from both "initial"
+	// and the recorded bootstrap version) still triggers reinit, so
+	// the "initial" skip didn't accidentally swallow real rotations.
+	bus.Publish(events.NewCredentialsUpdatedEvent(nil, "9999"))
+	time.Sleep(testDebounceInterval + 50*time.Millisecond)
+	select {
+	case cfg := <-configCh:
+		assert.Same(t, cachedConfig, cfg)
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("real credentials rotation must still signal reinit after the synthetic-skip fix")
+	}
+}

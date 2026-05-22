@@ -289,24 +289,57 @@ templateSnippets:
         {%- var pLibrary = p["library"].(string) -%}
         {%- var pMessages = p["messages"] | toSlice() -%}
         {%- var pTimeoutMs = p["timeoutMs"] -%}
-        {#- Mirror plugin's messages list is computed per render. Each
-            HTTPRoute rule with N mirror filters needs N distinct SPOE
-            message+group pairs because HAProxy SPOE processes each
-            group at most once per stream — so we declare
-            `mirror-1`..`mirror-<routeMirrorCount>` where
-            `routeMirrorCount` is the actual max-mirrors-per-route in
-            the cluster (NOT a configured upper bound). Computed by the
-            gateway library's 20-route-analysis pass; written into
-            globalFeatures["mirrorRouteMirrorCount"]. No cap — a route
-            with 12 mirror filters gets 12 message slots; with 0 mirror
-            filters anywhere the list stays empty and the plugin is
-            loaded but never invoked. -#}
+        {#- Mirror plugin's messages list. Floored at a static minimum
+            (mirrorStaticMinSlots, default 4) and extended dynamically
+            beyond that based on the actual max-mirrors-per-route in
+            the cluster (routeMirrorCount, computed by the gateway
+            library's 20-route-analysis pass into
+            globalFeatures["mirrorRouteMirrorCount"]).
+
+            Why the static floor (issue #47): the SPOA hub sidecar
+            reloads its TOML on file change, but plugin handler state
+            is rebuilt from scratch on every reload — so if the
+            controller emits messages=[] at any point (e.g. during a
+            transient render where no HTTPRoute with a mirror filter
+            is observed, between two conformance subtests, etc.), the
+            mirror plugin loses its handler for "mirror-1". Every
+            in-flight SPOE NOTIFY for `send-spoe-group mirror-1-group`
+            then hits the SPOA hub's "no plugins registered for
+            message" path and gets silently dropped. The conformance
+            suite catches this as ~50% mirror-rate flakiness on
+            `test-gateway-conformance` shards — different subtests
+            failing each run depending on which side of a reload the
+            burst lands on.
+
+            DO NOT REMOVE THE FLOOR. The chart previously carried a
+            mirror-1..mirror-4 static default that was removed in
+            controller commit 77c760c2 (`skip_reload=true` on aux-file
+            UPDATEs) with the rationale "the floor workaround is no
+            longer needed". That rationale was correct for the haproxy
+            reload-ordering race (race A) but missed that the floor was
+            independently masking the SPOA hub plugin-reload race here
+            (race B). `skip_reload=true` addresses race A only. Until
+            the SPOA hub plugin loader is reworked to never unregister
+            an already-registered message on reload (upstream-plugin
+            work, tracked under #47), the floor is the only thing
+            holding race B closed.
+
+            Routes with > 4 mirrors per rule still extend dynamically
+            below — a 12-mirror route allocates 12 slots — but slots
+            5..N are still exposed to race B. Bump
+            mirrorStaticMinSlots if a real workload regularly exceeds
+            4 mirrors per rule and observes the flake. -#}
         {%- if pName == "mirror" -%}
           {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
           {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
           {%- var routeMirrorCount = gf | dig("mirrorRouteMirrorCount") | fallback(0) | toint() -%}
+          {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() -%}
+          {%- var effectiveSlots = routeMirrorCount -%}
+          {%- if mirrorStaticMinSlots > effectiveSlots -%}
+            {%- effectiveSlots = mirrorStaticMinSlots -%}
+          {%- end -%}
           {%- pMessages = []any{} -%}
-          {%- for i := 1; i <= routeMirrorCount; i++ -%}
+          {%- for i := 1; i <= effectiveSlots; i++ -%}
             {%- pMessages = append(pMessages, "mirror-" + tostring(i)) -%}
           {%- end -%}
         {%- end -%}
@@ -405,20 +438,33 @@ templateSnippets:
           HAProxy SPOE processes each group at most once per stream.
           The gateway library writes the actual max-mirrors-per-route
           (`routeMirrorCount`) into globalFeatures, and we expand it
-          into `mirror-1`..`mirror-<routeMirrorCount>` here, replacing
-          the "mirror" placeholder from values.yaml. No cap — a route
-          with 12 filters gets 12 message slots. When no route uses
-          mirror filters, the count stays 0 and the placeholder is
-          removed entirely (plugin is loaded but never invoked). -#}
+          into `mirror-1`..`mirror-<effectiveSlots>` here, replacing
+          the "mirror" placeholder from values.yaml.
+
+          Floored at `mirrorStaticMinSlots` (default 4) — see the
+          parallel logic in `spoa-hub-config-content` above for the
+          full rationale (issue #47): the SPOA hub plugin loses its
+          handler state on every TOML reload, so any transient render
+          that emits an empty messages list collapses in-flight mirror
+          NOTIFY traffic at the hub. Keeping the haproxy-side SPOE
+          group declarations in sync with the plugin-side floor means
+          haproxy can safely fire `send-spoe-group mirror-N-group` for
+          N in [1, mirrorStaticMinSlots] without depending on the
+          per-render route observation race. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var routeMirrorCount = gf | dig("mirrorRouteMirrorCount") | fallback(0) | toint() %}
+      {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() %}
+      {%- var effectiveSlots = routeMirrorCount %}
+      {%- if mirrorStaticMinSlots > effectiveSlots %}
+        {%- effectiveSlots = mirrorStaticMinSlots %}
+      {%- end %}
       {%- var expanded = []any{} %}
       {%- for _, m := range messages %}
         {%- if m != "mirror" %}
           {%- expanded = append(expanded, m) %}
         {%- end %}
       {%- end %}
-      {%- for i := 1; i <= routeMirrorCount; i++ %}
+      {%- for i := 1; i <= effectiveSlots; i++ %}
         {%- expanded = append(expanded, "mirror-" + tostring(i)) %}
       {%- end %}
       {%- messages = toStringSlice(expanded) %}

@@ -30,6 +30,15 @@ const (
 // Uses the centralized debounce interval from types package.
 var DefaultReinitDebounceInterval = types.DefaultDebounceInterval
 
+// syntheticBootstrapVersion is the literal version string webhook.go
+// stamps on the placeholder ConfigValidatedEvent and
+// CredentialsUpdatedEvent published during iteration startup so
+// subscribers (discovery, status_updater, etc.) get a known-good
+// kick before the real watcher onAdd. Multiple handlers in this
+// package check against it to skip the synthetic path; centralised
+// here so a future rename can't desync the checks.
+const syntheticBootstrapVersion = "initial"
+
 // ConfigChangeHandler coordinates configuration validation and detects config changes.
 //
 // This component has two main responsibilities:
@@ -360,7 +369,7 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 	h.configReplayer.Cache(event)
 
 	// Skip synthetic bootstrap events (version="initial") - these don't trigger reinitialization
-	if event.Version == "initial" {
+	if event.Version == syntheticBootstrapVersion {
 		h.logger.Debug("Ignoring synthetic bootstrap ConfigValidatedEvent (version='initial')")
 		return
 	}
@@ -419,6 +428,32 @@ func (h *ConfigChangeHandler) handleConfigValidated(event *events.ConfigValidate
 // hot-rotation in any individual component. This mirrors how CRD changes
 // flow through the same channel.
 func (h *ConfigChangeHandler) handleSecretRotation(kind, version string, initialVersion *string) {
+	// Skip synthetic bootstrap events (version="initial"). webhook.go
+	// publishes a placeholder CredentialsUpdatedEvent("initial") during
+	// iteration startup so components subscribing to credentials state
+	// (discovery, etc.) get a known-good kick before the real
+	// CredentialsUpdatedEvent from the watcher's onAdd arrives. The
+	// synthetic carries the literal string "initial" which never
+	// matches the real Secret resourceVersion recorded via
+	// SetInitialCredentialsVersion, so without this skip it would slip
+	// past the bootstrap-match check below and trigger an iteration
+	// restart ~1s after every startup. Mirrors the same check in
+	// handleConfigValidated (line 363) — same root cause, same fix.
+	//
+	// Root cause for issue #46: that spurious restart raced
+	// UpdateBlocklistAndRestart in the HTTP-store invalid-update
+	// acceptance test. When the new iteration's empty HTTPStore ran
+	// its first fetch, the blocklist server had already swapped to
+	// invalid content; the live-fetch path cached invalid as accepted
+	// (because Fetch stores initial-fetch results directly as accepted
+	// with no validation), then HAProxy semantic validation rejected
+	// the rendered config, and the test's debug-endpoint query saw
+	// "no files rendered yet".
+	if version == syntheticBootstrapVersion {
+		h.logger.Debug("Ignoring synthetic bootstrap " + kind + " event (version='initial')")
+		return
+	}
+
 	h.mu.RLock()
 	reinitEnabled := h.reinitializationEnabled
 	bootstrap := *initialVersion
