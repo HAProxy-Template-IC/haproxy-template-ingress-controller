@@ -20,7 +20,7 @@ require (
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260509150618-f2482f37aeee
+	gitlab.com/haproxy-haptic/scriggo v0.0.0-20260523175316-31fde9aff96d
 	golang.org/x/sync v0.20.0
 	golang.org/x/text v0.37.0
 	golang.org/x/vuln v1.3.0
