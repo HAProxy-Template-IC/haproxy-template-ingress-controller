@@ -33,7 +33,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher/builtin"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -51,13 +50,17 @@ var (
 	validateDebugFilters    bool
 	validateProfileIncludes bool
 	validateWorkers         int
-	// validateSchemaDir is the optional kubeconform-style schema
-	// directory. When set, it overlays on top of the embedded
-	// builtin schemas — entries in the directory win, missing ones
-	// fall through. Full CRDs (apiextensions.k8s.io/v1) also
-	// auto-populate the offline GVK resolver from their
-	// spec.names.plural, so users who add CRDs to the directory
-	// don't have to also register the (apiVersion, plural) mapping
+	// validateSchemaDir is the kubeconform-style schema directory the
+	// offline type-bootstrap reads from. Required for typed-access in
+	// templates; without it, watched resources fall back entirely to
+	// the untyped resources["<name>"] path and any template that reaches
+	// for a typed top-level global (e.g. `gateways[i].Spec.Listeners`)
+	// fails at engine compile time with a clear "no schema for X"
+	// pointer back to --schema-dir / HAPTIC_SCHEMA_DIR. Full CRDs
+	// (apiextensions.k8s.io/v1) also auto-populate the offline GVK
+	// resolver from their spec.names.plural, so users who add CRDs to
+	// the directory don't have to also register the (apiVersion, plural)
+	// mapping
 	// in code.
 	validateSchemaDir string
 )
@@ -107,11 +110,16 @@ func init() {
 	// schema directory. Accepts full CRD YAMLs (the wire form
 	// `kubectl get crd X -o yaml` produces) or bare OpenAPI v3
 	// spec.Schema files with an x-kubernetes-group-version-kind
-	// extension. Layered on top of the embedded builtin set: dir
-	// wins per-GVK, builtins fill the gaps.
+	// extension. Required for typed-access in templates; without it,
+	// watched resources fall back entirely to the untyped
+	// resources["<name>"] path. Templates that reach for typed top-
+	// level globals (e.g. `gateways[i].Spec.Listeners`) without
+	// --schema-dir fail at engine compile time with a clear error
+	// pointing back here.
 	validateCmd.Flags().StringVar(&validateSchemaDir, "schema-dir", os.Getenv("HAPTIC_SCHEMA_DIR"),
 		"Directory of schema files to use for typed-resource access during validation "+
-			"(accepts CustomResourceDefinition YAMLs or bare OpenAPI v3 schemas; overlays embedded defaults). "+
+			"(accepts CustomResourceDefinition YAMLs or bare OpenAPI v3 schemas). "+
+			"Required for typed-access in templates; falls through to untyped resources[\"name\"].List() if unset. "+
 			"Also reads HAPTIC_SCHEMA_DIR.")
 
 	_ = validateCmd.MarkFlagRequired("file")
@@ -161,12 +169,15 @@ type ValidationSetup struct {
 	HAProxyVersion  *dataplane.Version
 
 	// TypedResourceTypes is the per-resource generated Go type produced
-	// by typebootstrap against the embedded builtin schemas. Populated
-	// for any watched resource whose (apiVersion, resources-plural)
-	// pair has both a builtin schema (pkg/k8s/schemafetcher/builtin)
-	// and a GVK entry (typebootstrap.OfflineGVKResolver). Resources
-	// without typed support map to nothing here and fall through to
-	// the untyped resources["<name>"] path via dig().
+	// by typebootstrap against schemas loaded from --schema-dir /
+	// HAPTIC_SCHEMA_DIR. Populated for any watched resource whose
+	// (apiVersion, resources-plural) pair has both a schema in the
+	// supplied directory AND a GVK entry registered from the same
+	// directory (full CRDs auto-register; bare OpenAPI v3 schemas with
+	// an x-kubernetes-group-version-kind extension also auto-register).
+	// Resources without typed support — including the entire `nil` case
+	// when --schema-dir is not supplied — map to nothing here and fall
+	// through to the untyped resources["<name>"] path via dig().
 	TypedResourceTypes map[string]reflect.Type
 
 	Cleanup func()
@@ -193,11 +204,12 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	}
 
 	// Run the offline type-bootstrap pipeline (typebootstrap against the
-	// embedded builtin schemas) so the engine is constructed with typed
-	// `gateways` etc. globals declared. Without this, chart templates
-	// that use the typed shape fail to compile here while still working
-	// in production — exactly the kind of offline-vs-production drift
-	// the validate CLI exists to catch.
+	// schemas in --schema-dir / HAPTIC_SCHEMA_DIR) so the engine is
+	// constructed with typed `gateways` etc. globals declared. Without
+	// --schema-dir, this returns an empty Result and chart templates
+	// that use the typed shape get a clear engine-compile-time error
+	// pointing at the missing global — surfacing offline-vs-production
+	// drift the validate CLI exists to catch.
 	typedResult, err := runOfflineTypeBootstrap(configSpec, logger)
 	if err != nil {
 		cleanupFunc()
@@ -232,27 +244,32 @@ func setupValidation(logger *slog.Logger) (*ValidationSetup, error) {
 	}, nil
 }
 
-// runOfflineTypeBootstrap drives the type-bootstrap pipeline against the
-// embedded builtin schemas. Mirrors what
+// runOfflineTypeBootstrap drives the type-bootstrap pipeline against
+// schemas supplied via --schema-dir / HAPTIC_SCHEMA_DIR. Mirrors what
 // pkg/controller/typebootstrap_wiring.go's runTypeBootstrap does in the
 // production controller, but with two substitutions:
 //
-//   - Schema source is the embedded builtin set instead of the cluster's
+//   - Schema source is the user-supplied directory instead of the cluster's
 //     OpenAPI / CRD endpoints.
-//   - GVK resolution comes from a hardcoded table instead of a RESTMapper
-//     built from the cluster's discovery (no API server is reachable).
+//   - GVK resolution comes from CRDs / OpenAPI v3 documents in that same
+//     directory instead of a RESTMapper built from the cluster's
+//     discovery (no API server is reachable).
 //
-// Resources whose (apiVersion, resources-plural) pair isn't in the offline
-// resolver are skipped silently — they keep working through the untyped
+// When --schema-dir is empty (or unset and no HAPTIC_SCHEMA_DIR env var),
+// no resources receive typed support and the whole chart validates through
+// the untyped resources["<name>"] path via dig(). This is the right default:
+// `controller validate` of a tiny config with no typed-access usage doesn't
+// need to download schemas. Configs whose templates reach for typed access
+// (`gateways[i].Spec.Listeners`, …) get a compile-time error from the
+// engine pointing at the missing global, which the operator resolves by
+// passing --schema-dir.
+//
+// Resources whose (apiVersion, resources-plural) pair isn't in the schema
+// directory are skipped silently — they keep working through the untyped
 // resources["<name>"] path. Resources whose GVK *does* resolve but whose
-// schema isn't in the builtin set are fail-closed: typebootstrap.Bootstrap
-// aborts the run with a hard error on the first such resource (see
-// pkg/controller/typebootstrap/bootstrap.go). That's intentional — a
-// resolved GVK signals that someone declared typed support for this
-// resource, so a missing schema is a build/packaging regression rather
-// than an optional degradation. Operators see the error from
-// `haptic-controller validate` and ship the missing builtin schema or
-// drop the resolver entry.
+// schema is malformed are fail-closed: typebootstrap.Bootstrap aborts the
+// run with a hard error on the first such resource (see
+// pkg/controller/typebootstrap/bootstrap.go).
 //
 // Always returns a non-nil *Result so callers can range/index without
 // nil checks.
@@ -260,32 +277,35 @@ func runOfflineTypeBootstrap(
 	configSpec *v1alpha1.HAProxyTemplateConfigSpec,
 	logger *slog.Logger,
 ) (*typebootstrap.Result, error) {
-	builtinFetcher, err := builtin.NewFetcher()
-	if err != nil {
-		return nil, fmt.Errorf("loading builtin schemas: %w", err)
-	}
 	resolver := typebootstrap.NewOfflineGVKResolver()
 
-	// Layer the user-supplied schema directory (if any) on top of
-	// the embedded builtins. Dir wins per-GVK; builtins fill the
-	// gaps. Full CRDs in the dir also auto-extend the offline GVK
-	// resolver — operators who drop in their CRD YAMLs don't have
-	// to also patch NewOfflineGVKResolver to map plural → GVK.
-	var fetcher schemafetcher.Fetcher = builtinFetcher
-	if validateSchemaDir != "" {
-		dirFetcher, err := schemafetcher.NewDirFetcher(validateSchemaDir)
-		if err != nil {
-			return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
+	// Without --schema-dir there's no schema source. Return an empty
+	// Result; the chart still validates through the untyped resources
+	// path. This is the deliberate fall-through for configs that
+	// don't exercise typed access — the engine will surface a
+	// compile-time error pointing at any unbound typed global the
+	// templates actually reach for.
+	if validateSchemaDir == "" {
+		return &typebootstrap.Result{}, nil
+	}
+
+	dirFetcher, err := schemafetcher.NewDirFetcher(validateSchemaDir)
+	if err != nil {
+		return nil, fmt.Errorf("loading schema directory %q: %w", validateSchemaDir, err)
+	}
+	logger.Info("offline type bootstrap: loaded schema directory",
+		"path", validateSchemaDir,
+		"schemas", dirFetcher.Len())
+
+	// Auto-extend the offline GVK resolver from full CRDs in the dir
+	// (PluralsFor surfaces every CRD's spec.names.plural → GVK and
+	// every bare OpenAPI v3 schema's x-kubernetes-group-version-kind
+	// → GVK mapping). Operators who drop in their CRD YAMLs don't have
+	// to also patch any code to map plural → GVK.
+	for apiVersion, plurals := range dirFetcher.PluralsFor() {
+		for plural, gvk := range plurals {
+			resolver.Register(apiVersion, plural, gvk)
 		}
-		logger.Info("offline type bootstrap: loaded schema directory",
-			"path", validateSchemaDir,
-			"schemas", dirFetcher.Len())
-		for apiVersion, plurals := range dirFetcher.PluralsFor() {
-			for plural, gvk := range plurals {
-				resolver.Register(apiVersion, plural, gvk)
-			}
-		}
-		fetcher = schemafetcher.NewOverlay(dirFetcher, builtinFetcher)
 	}
 
 	// Iterate by name then index back into the map by reference so we
@@ -298,9 +318,8 @@ func runOfflineTypeBootstrap(
 		if err != nil {
 			// Unknown GVK in the offline resolver: skip without
 			// warning. Most watched resources won't have typed
-			// support yet; only the ones the operator has both
-			// supplied a schema for (--schema-dir or embedded
-			// builtin) AND mapped a plural → GVK for.
+			// support yet; only the ones the operator has supplied
+			// a schema for via --schema-dir.
 			logger.Debug("offline type bootstrap: no GVK mapping; skipping typed support",
 				"resource", name, "apiVersion", wr.APIVersion, "resources", wr.Resources)
 			continue
@@ -311,7 +330,7 @@ func runOfflineTypeBootstrap(
 	return typebootstrap.Bootstrap(context.Background(), typebootstrap.Config{
 		Resources:          resources,
 		GlobalIgnoreFields: configSpec.WatchedResourcesIgnoreFields,
-		Fetcher:            fetcher,
+		Fetcher:            dirFetcher,
 		Logger:             logger,
 	})
 }

@@ -431,6 +431,20 @@ extract-schemas: ## Extract CustomResourceDefinitions into $(SCHEMA_DIR) for off
 	@echo "  haptic-controller validate -f config.yaml --schema-dir=$(SCHEMA_DIR)"
 	@echo "  HAPTIC_SCHEMA_DIR=$(SCHEMA_DIR) haptic-controller validate -f config.yaml"
 
+validate-helm-libraries: build ## Render the chart and run `controller validate` against the merged HAProxyTemplateConfig (thin wrapper around scripts/test-templates.sh)
+	@# Smoke-tests that the chart's bundled libraries merge cleanly and
+	@# that the resulting config passes the controller's offline
+	@# validate path — engine compile + chart validationTests. Used by
+	@# CI (.validate-helm-libraries-base in .gitlab-ci.yml) and by chart
+	@# authors who want to reproduce the CI check locally.
+	@#
+	@# Delegates to scripts/test-templates.sh so the render-and-validate
+	@# flow has one source of truth — every flag/path/library decision
+	@# lives in the script. HAPROXY_VERSION is forwarded via env so CI's
+	@# per-version matrix renders with the matching haproxyVersion
+	@# value.
+	@HAPROXY_VERSION=$(HAPROXY_VERSION) bash scripts/test-templates.sh
+
 ## Build targets
 
 build: ## Build the controller binary for local development (with PGO if profile exists)
