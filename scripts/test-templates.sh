@@ -127,13 +127,23 @@ fi
 TEMP_CONFIG=$(mktemp)
 trap 'rm -f "$TEMP_CONFIG"' EXIT
 
-# Render Helm chart with Gateway API support and extract HAProxyTemplateConfig
-# Use --namespace default for consistent behavior regardless of HELM_NAMESPACE env var
-# This matches the _global fixtures which provide SSL certs in 'default' namespace
+# Render Helm chart with Gateway API support and extract HAProxyTemplateConfig.
+# Use --namespace default for consistent behavior regardless of HELM_NAMESPACE
+# env var (matches the _global fixtures which provide SSL certs in 'default').
+#
+# HAPROXY_VERSION env var is honored so CI's per-version matrix
+# (.validate-helm-libraries-base in .gitlab-ci.yml) can render with the
+# matching haproxyVersion value. When unset, the chart's values.yaml
+# default applies.
+HAPROXY_VERSION_ARG=""
+if [[ -n "${HAPROXY_VERSION:-}" ]]; then
+    HAPROXY_VERSION_ARG="--set haproxyVersion=${HAPROXY_VERSION}"
+fi
 echo -e "${YELLOW}Rendering Helm chart...${NC}" >&2
 if ! helm template "$CHART_DIR" \
     --namespace default \
     --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
+    $HAPROXY_VERSION_ARG \
     --set controller.templateLibraries.gateway.enabled=true \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
@@ -150,6 +160,26 @@ if [[ ! -s "$TEMP_CONFIG" ]]; then
     exit 1
 fi
 
-# Run controller validate with all provided arguments
+# Run controller validate with all provided arguments.
+#
+# `--schema-dir=tests/schemas` is auto-wired so typed-access in chart
+# templates (the `gateways`, `httproutes`, ... top-level globals) compiles
+# offline. Operators passing their own `--schema-dir` explicitly via
+# `$@` override this default — the loop below skips the auto-wiring if
+# either `--schema-dir` or `--schema-dir=...` appears in the forwarded
+# args. The HAPTIC_SCHEMA_DIR env var (read by the validate CLI's flag
+# default) is also a valid override and similarly skips the auto-wiring.
+#
+# An array (not a plain string) is used so an empty value contributes
+# zero arguments without relying on word-splitting behaviour — and so a
+# non-empty value passes through unchanged even if PROJECT_ROOT
+# contains spaces. shellcheck SC2086 / SC2128 stay clean.
+SCHEMA_DIR_ARGS=()
+SCHEMA_DIR="${PROJECT_ROOT}/tests/schemas"
+if [[ -d "$SCHEMA_DIR" && -z "${HAPTIC_SCHEMA_DIR:-}" ]] \
+    && ! printf '%s\n' "$@" | grep -qE -- '^--schema-dir(=|$)'; then
+    SCHEMA_DIR_ARGS=("--schema-dir=$SCHEMA_DIR")
+fi
+
 echo -e "${YELLOW}Running validation tests...${NC}" >&2
-"$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "$@"
+"$CONTROLLER_BIN" validate --file "$TEMP_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"

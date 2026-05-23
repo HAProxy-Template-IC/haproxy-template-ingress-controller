@@ -312,6 +312,53 @@ Templates access watched resources through the `resources` variable. Each store 
 {% var secret = resources.secrets.GetSingle("default", "my-secret") %}
 ```
 
+### Typed Top-Level Globals
+
+Every watched resource is **also** exposed as a typed top-level global with the same name as the `watchedResources` key. The typed global is a slice of the resource's strongly-typed struct, so field access is done directly:
+
+```go
+{# Typed access — fields resolve at engine compile time #}
+{%- for _, gw := range gateways %}
+  # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}: {{ len(gw.Spec.Listeners) }} listeners
+{%- end %}
+
+{# Equivalent untyped access via the resources map #}
+{%- for _, gw := range resources.gateways.List() %}
+  # {{ dig(gw, "metadata", "namespace") }}/{{ dig(gw, "metadata", "name") }}: ...
+{%- end %}
+```
+
+**Why typed access:** a misspelled field name (`gw.Metadata.Naamespace`) fails when the controller boots, not at the next reconcile against a live cluster. Cross-field-type bugs surface at template-compile time. `dig()` continues to navigate typed structs by JSON tag, so existing untyped code keeps working unchanged.
+
+**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation:
+
+| JSON tag (source YAML)   | Typed field        |
+|--------------------------|--------------------|
+| `metadata`               | `Metadata`         |
+| `spec`                   | `Spec`             |
+| `apiVersion`             | `ApiVersion`       |
+| `tls`                    | `Tls`              |
+| `ingressClassName`       | `IngressClassName` |
+| `kubernetes.io/foo`      | `Kubernetes_io_foo` (non-letter/digit → `_`) |
+
+The acronym rule is deliberate: there is no acronym dictionary to keep in sync. Templates write `gw.ApiVersion`, not `gw.APIVersion`.
+
+**Schema source.** Typed globals are generated from each resource's OpenAPI v3 schema:
+
+- **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, K8s core resources via the apiserver's OpenAPI v3 endpoint.
+- **Offline (`controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 spec.Schema files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support and the chart validates entirely through the untyped `resources["<name>"]` path; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
+
+This repo's `tests/schemas/` is the canonical bundle that covers the chart's bundled libraries (Gateway API CRDs + haptic CRDs). The chart-test script auto-wires it; copy it into your own project's schema-dir if your config uses the bundled libraries.
+
+**When to use which:**
+
+- **Use typed globals** for new chart code that iterates resources of one type, and any code where compile-time field validation is worth the small Scriggo type-inference cost.
+- **Stick with `resources.X.List()` / `.Fetch()` / `.GetSingle()`** when feeding into helper macros typed as `any`, when navigating across multiple resource types via shared `dig()` patterns, or when needing `Fetch(...)` / `GetSingle(...)` index-keyed lookups (the typed slice exposes only iteration).
+
+**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output), and acts as a regression canary for typed access generally.
+
+See also: [ADR-0010 — Typed Watched Resources](../../adr/0010-typed-watched-resources.md) for the design rationale and the alternatives considered.
+
 ### Index Configuration
 
 The `indexBy` field determines what parameters `Fetch()` expects:

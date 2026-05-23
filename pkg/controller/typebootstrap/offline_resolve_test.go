@@ -22,42 +22,41 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// TestOfflineGVKResolver_DefaultEntries pins what the controller
-// ships with out of the box. Adding a new bundled schema requires
-// adding to both this list and the NewOfflineGVKResolver constructor;
-// keeping the test in sync keeps the two surfaces honest about what's
-// supported offline.
-func TestOfflineGVKResolver_DefaultEntries(t *testing.T) {
+// TestOfflineGVKResolver_EmptyByDefault pins the contract: a fresh
+// resolver has no entries. Population is the caller's job (typically
+// walking a --schema-dir and emitting one Register per CRD plural).
+// The previous behaviour pre-loaded a hardcoded Gateway entry; that
+// was removed when we deleted the parallel embedded-schemas code path
+// in favour of a single offline source — see ADR-0010.
+func TestOfflineGVKResolver_EmptyByDefault(t *testing.T) {
 	r := NewOfflineGVKResolver()
 
-	gvk, err := r.Resolve(groupGatewayAPI+"/v1", "gateways")
-	require.NoError(t, err)
-	assert.Equal(t,
-		schema.GroupVersionKind{Group: groupGatewayAPI, Version: "v1", Kind: kindGateway},
-		gvk)
+	_, err := r.Resolve("gateway.networking.k8s.io/v1", "gateways")
+	require.Error(t, err,
+		"NewOfflineGVKResolver must return an empty resolver; the caller registers entries from --schema-dir")
 }
 
 // TestOfflineGVKResolver_UnknownReturnsHelpfulError pins the
-// degradation path. Resources not in the builtin table fail with an
-// error message that points at the exact two places a contributor
-// has to touch to add support, so a chart author hitting this for
-// the first time isn't left guessing.
+// degradation path. Resources without a matching entry surface an
+// error message that points at --schema-dir, so a chart author hitting
+// this for the first time knows exactly where to add the missing CRD
+// or OpenAPI v3 schema.
 func TestOfflineGVKResolver_UnknownReturnsHelpfulError(t *testing.T) {
 	r := NewOfflineGVKResolver()
 
 	_, err := r.Resolve("custom.example.com/v1", "widgets")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pkg/k8s/schemafetcher/builtin",
-		"error must direct contributors to the schemas directory")
-	assert.Contains(t, err.Error(), "NewOfflineGVKResolver",
-		"error must direct contributors to the GVK registration function")
+	assert.Contains(t, err.Error(), "--schema-dir",
+		"error must direct chart authors to the schema-dir flag")
+	assert.Contains(t, err.Error(), "HAPTIC_SCHEMA_DIR",
+		"error must also mention the env-var form so CI configs are findable")
 }
 
-// TestOfflineGVKResolver_RegisterOverrides verifies test-side
-// extensibility. Tests that need a synthetic GVK (e.g., the chart
-// fixtures for a CRD that isn't bundled) can Register their own
-// entries without modifying production code.
-func TestOfflineGVKResolver_RegisterOverrides(t *testing.T) {
+// TestOfflineGVKResolver_RegisterPopulates verifies that callers can
+// register their own entries — the only way to populate the resolver
+// now that the constructor returns empty. validate.go does exactly
+// this by iterating DirFetcher.PluralsFor().
+func TestOfflineGVKResolver_RegisterPopulates(t *testing.T) {
 	r := NewOfflineGVKResolver().Register(
 		"example.com/v1", "widgets",
 		schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})

@@ -40,6 +40,19 @@ Every entry uses one of two store backends. The choice controls memory footprint
 
 Use a mix: `store: full` for everything the templates iterate, `store: on-demand` for Secrets holding certificates or auth data.
 
+## Typed Access in Templates
+
+Every entry is exposed to templates **two ways**:
+
+1. As a store under `resources.<key>` — `.List()` / `.Fetch(...)` / `.GetSingle(...)` over untyped maps. Works for any watched resource regardless of schema availability.
+2. As a typed top-level global named `<key>` — a slice of the resource's strongly-typed struct, with field access via `.Metadata.Namespace`, `.Spec.X`, etc.
+
+The typed shape comes from the resource's OpenAPI v3 schema. In production the controller fetches schemas live from the kube-apiserver. Offline (`controller validate`), schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`.
+
+A misspelled field name in a template fails when the controller boots (or when `validate` runs against a schema-dir), not at the next reconcile.
+
+See [Typed Top-Level Globals](./templating.md#typed-top-level-globals) for the field-name convention, when to prefer typed vs untyped access, and the worked-example snippet.
+
 ## Indexing (`indexBy`)
 
 The `.Fetch()` template method takes the index keys in the order you listed them. With:

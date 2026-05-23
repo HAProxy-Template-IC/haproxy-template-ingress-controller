@@ -416,17 +416,14 @@ test:
   before_script:
     - haproxy -v
   script:
-    - make build
-    - |
-      helm template charts/haptic \
-        --api-versions=gateway.networking.k8s.io/v1/GatewayClass \
-        --set haproxyVersion=$HAPROXY_VERSION \
-        --set controller.templateLibraries.ingress.enabled=true \
-        --set controller.templateLibraries.gateway.enabled=true \
-        --set controller.templateLibraries.haproxytech.enabled=true \
-        | yq 'select(.kind == "HAProxyTemplateConfig")' \
-        > /tmp/merged-config.yaml
-      ./bin/haptic-controller validate -f /tmp/merged-config.yaml
+    # `make validate-helm-libraries` is the single source of truth for
+    # the "render chart -> validate" smoke. The make target builds the
+    # binary, renders the chart with all bundled libraries enabled,
+    # and runs `controller validate --schema-dir=tests/schemas`.
+    # Keep this CI block as a thin wrapper — every flag/path/contract
+    # change goes in the make target so devs see the same behaviour
+    # locally.
+    - make validate-helm-libraries HAPROXY_VERSION=$HAPROXY_VERSION
 
 validate-helm-libraries:
   extends:

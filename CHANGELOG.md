@@ -9,6 +9,14 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **`controller validate` now requires `--schema-dir` (or `HAPTIC_SCHEMA_DIR`) for typed access in templates.** Previously the controller binary embedded a hand-trimmed Gateway-API schema as a default fallback (`pkg/k8s/schemafetcher/builtin/`), so `controller validate` worked out of the box for the chart's bundled Gateway path. That parallel offline schema source has been removed; the offline path now consults `--schema-dir` only. `scripts/test-templates.sh` auto-wires `--schema-dir=tests/schemas` (which carries the canonical bundle for the chart's libraries), so chart authors using the supplied script see no change. Operators running `controller validate` directly against a config with typed-access templates: pass `--schema-dir` pointing at a directory of CRD YAMLs (or bare OpenAPI v3 schemas with an `x-kubernetes-group-version-kind` extension); use this repo's `tests/schemas/` as the reference bundle. Configs without typed access continue to work without the flag — chart code reaching for a typed top-level global without a schema available fails at engine compile time with a clear pointer back to `--schema-dir`. Production (live API server) is unaffected. Rationale and alternatives in [ADR-0010](./docs/adr/0010-typed-watched-resources.md).
+
+### Added
+
+- Operator docs on typed top-level globals: see [Typed Top-Level Globals](./docs/controller/docs/templating.md#typed-top-level-globals) in the templating reference + the brief note in [Watching Resources](./docs/controller/docs/watching-resources.md#typed-access-in-templates). The chart-side dev context (`charts/CLAUDE.md`) and [ADR-0010](./docs/adr/0010-typed-watched-resources.md) record the design rationale, alternatives considered, and the field-name convention.
+
 ### Fixed
 
 - Bundled SPOA hub bumped to `v0.6.1` — fixes a use-after-free in `MetricRecorder::install()` that segfaulted the hub on plugin reload (exit 139). Previous `OnceLock`-based `install()` was silently no-op on the second-and-later calls, so the NEW plugin's hub-provided `MetricCtx` pointer never replaced the OLD one; when the hub later dropped the OLD plugin's `Box<MetricCtx>`, the next metric emission anywhere in that plugin's `.so` dereferenced freed memory. Surfaced in this repo as the HTTPRouteRequestMirror conformance flake (intermittent ~1-in-3 per shard); fix confirmed by 2 consecutive clean conformance runs against the patched image. Mandatory bump for `v0.6.0` users: any deployment that reloads plugins (i.e. any haptic deployment, since the controller pushes hub config via the dataplane API and the hub file-watches it) hits this crash. Upstream fix: `haproxy-spoa-hub` !161 → `v0.6.1`.

@@ -631,6 +631,46 @@ templateSnippets:
       {%- endfor %}
 ```
 
+### Typed Top-Level Globals (Tier-2 typed-watched-resources)
+
+Every `watchedResources` entry is **also** exposed to templates as a typed top-level global with the same name as the key. The typed global is a slice of the resource's strongly-typed struct produced by `pkg/k8s/typegen` from the resource's OpenAPI v3 schema. Field access is direct — no `dig()` needed:
+
+```scriggo
+{#- Typed access — gw is *Gateway; fields resolve at engine compile time -#}
+{%- if gateways != nil %}
+  {%- for _, gw := range gateways %}
+    # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}: {{ len(gw.Spec.Listeners) }} listeners
+  {%- end %}
+{%- end %}
+```
+
+The `gateways != nil` guard is defensive: the engine always declares the typed global, but the runtime binding only fires when a store is registered (skipped in offline-validate paths that don't pre-register stores for some kinds).
+
+**Field-name convention.** Go-PascalCase of the JSON tag, NO acronym preservation:
+
+| JSON tag (source YAML) | Typed field        |
+|------------------------|--------------------|
+| `metadata`             | `Metadata`         |
+| `apiVersion`           | `ApiVersion`       |
+| `tls`                  | `Tls`              |
+| `ingressClassName`     | `IngressClassName` |
+| `kubernetes.io/foo`    | `Kubernetes_io_foo` (non-letter/digit → `_`) |
+
+The rule is canonicalised in `pkg/k8s/typegen/converter.go::goFieldName`. Templates write `gw.ApiVersion`, not `gw.APIVersion`. The reason for no acronym dictionary is in [ADR-0010](../docs/adr/0010-typed-watched-resources.md).
+
+**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end and is the regression canary for typed access generally — if it goes red, the offline validate path has drifted from the production renderer.
+
+**Schema source.**
+
+- **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, K8s core resources via the apiserver's OpenAPI v3 endpoint.
+- **Offline (`controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` is the canonical bundle covering the chart's bundled libraries (Gateway API CRDs + haptic CRDs); the test script auto-wires it. Without `--schema-dir`, no resources receive typed support — the chart validates entirely through the untyped `resources["<name>"]` path; templates that reach for typed access fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
+
+**When to use which** (cross-references the same guidance in [`docs/controller/docs/templating.md`](../docs/controller/docs/templating.md#typed-top-level-globals)):
+
+- **Use typed globals** for new chart code that iterates resources of one type, and any code where compile-time field validation is worth the small Scriggo type-inference cost.
+- **Stick with `resources.X.List()` / `.Fetch()` / `.GetSingle()`** when feeding into helper macros typed as `any`, when navigating across multiple resource types via shared `dig()` patterns, or when needing `Fetch(...)` / `GetSingle(...)` index-keyed lookups (the typed slice exposes only iteration).
+- **`dig()` continues to work** on both typed structs and untyped maps. Mixing approaches (some snippets typed, some not) is the expected adoption pattern.
+
 ### Implementing Extension Points
 
 If base.yaml defines an extension point like `{% include "resource_ingress_backends" %}`, implement it:

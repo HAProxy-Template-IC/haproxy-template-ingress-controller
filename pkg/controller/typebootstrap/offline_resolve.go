@@ -30,18 +30,24 @@ import (
 // Kubernetes pluralisation has too many irregular cases (HTTPRoute →
 // httproutes lowercases the acronym; Endpoints is already plural,
 // EndpointSlices is doubly so; IngressClass → ingressclasses runs the
-// final s straight on) to derive from a single rule reliably. Adding
-// a new offline-supported resource means one line here.
+// final s straight on) to derive from a single rule reliably.
 //
-// Resources without an entry surface as a not-found error. The
-// offline validate caller (cmd/controller/validate.go) skips
-// unresolved entries before passing the list to Bootstrap, so
-// they never reach the fail-closed schema-fetch path — the
-// chart still validates for them through dig().
+// The resolver starts empty. Callers populate it from the user's
+// `--schema-dir`: every CRD YAML in the directory contributes its
+// `spec.names.plural` → GVK mapping, and bare OpenAPI v3 schemas with
+// an `x-kubernetes-group-version-kind` extension contribute theirs.
+// Resources without a matching entry surface as a not-found error
+// pointing the operator at `--schema-dir`. The offline validate caller
+// (cmd/controller/validate.go) skips unresolved entries before passing
+// the list to Bootstrap, so they never reach the fail-closed
+// schema-fetch path — the chart still validates for them through
+// dig().
 type OfflineGVKResolver struct {
-	// entries is the runtime lookup table. Built once in
-	// NewOfflineGVKResolver from the builtin set; callers can extend
-	// via Register before passing to Bootstrap.
+	// entries is the runtime lookup table. Constructors return an
+	// empty map; callers populate via Register before passing to
+	// Bootstrap. The capacity hint is the typical chart's count of
+	// typed-watched resources (Gateway API + haptic CRDs); the map
+	// grows on demand for larger schema directories.
 	entries map[offlineKey]schema.GroupVersionKind
 }
 
@@ -50,29 +56,18 @@ type offlineKey struct {
 	resources  string
 }
 
-// kindGateway and groupGatewayAPI are repeated across the bundled GVK
-// entries and the test tables that pin them. Lifted to constants so
-// goconst stops counting occurrences without adding noise.
-const (
-	kindGateway     = "Gateway"
-	groupGatewayAPI = "gateway.networking.k8s.io"
-)
-
-// NewOfflineGVKResolver returns a resolver pre-loaded with the GVKs
-// the controller's bundled chart libraries refer to. Add new entries
-// via Register when contributing a new builtin schema in
-// pkg/k8s/schemafetcher/builtin.
+// NewOfflineGVKResolver returns an empty resolver. Callers populate
+// the (apiVersion, resources-plural) → GVK mapping via Register, most
+// commonly by walking a `--schema-dir` and emitting one Register per
+// CRD spec.names.plural entry.
 //
-// Bundled entries are deliberately conservative — only resources whose
-// typed access is actually exercised by the bundled chart libraries
-// today. Phantom entries (a GVK with no consumer) are pure noise.
+// An empty resolver is a valid state: configs without typed
+// `watchedResources` (or with watched resources whose schemas the
+// operator chose not to supply) Bootstrap to a zero Result and the
+// chart validates entirely through dig() on the untyped resources
+// map.
 func NewOfflineGVKResolver() *OfflineGVKResolver {
-	r := &OfflineGVKResolver{entries: make(map[offlineKey]schema.GroupVersionKind, 4)}
-	// Gateway API v1. Add new pairs alongside the matching builtin
-	// schema file in pkg/k8s/schemafetcher/builtin.
-	r.Register(groupGatewayAPI+"/v1", "gateways",
-		schema.GroupVersionKind{Group: groupGatewayAPI, Version: "v1", Kind: kindGateway})
-	return r
+	return &OfflineGVKResolver{entries: make(map[offlineKey]schema.GroupVersionKind, 8)}
 }
 
 // Register adds (or overrides) a single (apiVersion, resources-plural)
@@ -84,14 +79,15 @@ func (r *OfflineGVKResolver) Register(apiVersion, resources string, gvk schema.G
 
 // Resolve returns the fully qualified GVK for the supplied
 // (apiVersion, resources-plural) pair. Missing entries return an
-// error with a hint about adding a builtin schema; the bootstrap
+// error pointing the operator at `--schema-dir`; the bootstrap
 // caller logs and degrades that single resource.
 func (r *OfflineGVKResolver) Resolve(apiVersion, resources string) (schema.GroupVersionKind, error) {
 	gvk, ok := r.entries[offlineKey{apiVersion: apiVersion, resources: resources}]
 	if !ok {
 		return schema.GroupVersionKind{}, fmt.Errorf(
 			"offline GVK resolver has no entry for apiVersion=%q resources=%q "+
-				"(add a builtin schema in pkg/k8s/schemafetcher/builtin and register the GVK in NewOfflineGVKResolver)",
+				"(supply the CRD or an OpenAPI v3 schema with x-kubernetes-group-version-kind "+
+				"in the directory passed to --schema-dir / HAPTIC_SCHEMA_DIR)",
 			apiVersion, resources)
 	}
 	return gvk, nil
