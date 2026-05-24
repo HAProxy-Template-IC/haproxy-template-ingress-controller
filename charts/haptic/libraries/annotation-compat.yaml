@@ -25,25 +25,9 @@ _helm_load:
 
 templateSnippets:
 
-  # ============================================================================
-  # SSL Passthrough — shared macro
-  #
-  # Each protocol library has its own `util-build-X-ssl-passthrough` macro
-  # that loops over Ingresses, checks for a vendor-specific annotation
-  # (e.g. haproxy.org/ssl-passthrough, haproxy-ingress.github.io/ssl-passthrough,
-  # nginx.ingress.kubernetes.io/ssl-passthrough), and appends per-host
-  # entries to a `sslData["backends"]` slice. The shape of that loop is
-  # identical across libraries; only three strings differ:
-  #
-  #   - annotationKey:  the annotation name to look up
-  #   - namePrefix:     the backend-name prefix (preserves the existing per-library
-  #                     naming convention for backwards compatibility)
-  #   - firstSeenKey:   the first_seen() prefix used to dedupe hosts
-  #
-  # The protocol library's own `util-X-ssl-passthrough` snippet still owns the
-  # ComputeIfAbsent cache key (so its data slot stays distinct), but the
-  # build logic is shared.
-  # ============================================================================
+  # SSL Passthrough — shared macro. Each protocol library calls into this
+  # to feed its own ComputeIfAbsent cache slot; the build logic is shared,
+  # the cache slot is per-library.
 
   util-build-annotation-ssl-passthrough:
     template: |
@@ -55,28 +39,12 @@ templateSnippets:
         well-formed first path with a service backend. Deduplicates hosts via
         first_seen(firstSeenKey, host).
 
-        # Why service info is captured here, not by the consumer
-
-        Earlier versions had this macro store only the (name, sni, namespace,
-        ingress) tuple, leaving the consumer's `backends-*-ssl-passthrough`
-        snippet to look the ingress up again via
-        `resources.ingresses.GetSingle(ns, ingress)` and walk its rules to
-        find a service. That second lookup created a render-order race: the
-        macro's `resources.ingresses.List()` pass (which feeds the
-        `use_backend` directive in `frontends-500-ssl-tcp`) could see an
-        ingress that the later `GetSingle` did not — typically when an
-        ingress is being deleted concurrent with another's webhook dry-run.
-        The result was a config with `use_backend X` but no `backend X`
-        block, which `haproxy -c` rejects, and the webhook denied the
-        unrelated dry-run as collateral damage. (e2e
-        `TestIngressAnnotations/nginx-ssl-passthrough` flake on !893.)
-
-        Capturing svcName/svcPort here means both the use_backend directive
-        and the backend block are derived from the same single iteration of
-        the resource store, so they cannot disagree about set membership.
-        Ingresses that lack a usable first path (no rules, no http, no
-        backend.service) are dropped at build time so consumers never see
-        an entry without enough info to emit a complete backend block.
+        Service info (svcName/svcPort/svcPortName) is captured here at scan
+        time rather than re-fetched by the consumer's `backends-*-
+        ssl-passthrough` snippet. A second GetSingle() lookup in the consumer
+        could disagree with the use_backend pass under concurrent ingress
+        deletion — same iteration of resources.ingresses.List() avoids that
+        race. Pinned by TestIngressAnnotations/nginx-ssl-passthrough.
 
         Backend entry shape (must stay identical across libraries):
           {
@@ -88,10 +56,6 @@ templateSnippets:
             "svcPort":     <first path's service port (int)>,
             "svcPortName": <first path's service port name (string, "" if unnamed)>,
           }
-
-        svcPortName was added when BuildAnnotationSSLPassthrough was switched to
-        ResolveServicePort so that consumers can pass the resolved name to
-        BackendServers as the 5th arg (was nil) for multi-port Services.
       -#}
       {%- import "util-service-port-resolution" for ResolveServicePort %}
       {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
@@ -138,20 +102,6 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  # ============================================================================
-  # SSL Passthrough backend emission — shared macro
-  #
-  # The three protocol libraries each emit `backend ... mode tcp` blocks for
-  # entries previously stashed in their own SSL-passthrough cache slot by
-  # BuildAnnotationSSLPassthrough. The loop is mechanical and identical
-  # across libraries — only three strings differ:
-  #
-  #   - cacheKey      : shared.ComputeIfAbsent key the data lives under
-  #   - firstSeenKey  : per-library first_seen() prefix that dedupes one
-  #                     backend block per (ns/ingress) across hosts
-  #   - commentLabel  : vendor name in the leading "# <label>/..." comment
-  # ============================================================================
-
   util-render-annotation-ssl-passthrough-backends:
     template: |
       {#-
@@ -185,16 +135,6 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end macro %}
-
-  # ============================================================================
-  # HSTS / SSL-redirect — shared macros
-  #
-  # Both annotation libraries (haproxy-ingress, nginx-ingress) emit the
-  # same HAProxy directives for HSTS and SSL-redirect, differing only in
-  # annotation key prefixes, default values, and the comment label. The
-  # macros below own the loop bodies; callers just feed in the per-vendor
-  # annotation keys plus any vendor-specific code-resolution logic.
-  # ============================================================================
 
   util-emit-annotation-hsts:
     template: |
@@ -256,10 +196,9 @@ templateSnippets:
           defaultMaxAge — default value for the Max-Age header when
                           the cors-max-age annotation is unset
 
-        The structurally-divergent haproxytech CORS (uses
-        http-request capture / set-header instead of add-header,
-        validates origin=*+credentials=true conflict) lives in
-        haproxytech.yaml directly and does NOT use this macro.
+        haproxytech CORS is structurally different (http-request capture /
+        set-header, validates origin=*+credentials=true conflict) and lives
+        in haproxytech.yaml directly — does NOT use this macro.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationCORS(ingress any, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
@@ -323,24 +262,8 @@ templateSnippets:
         {%- end %}
       {%- end macro %}
 
-  # ============================================================================
-  # IP Allow/Deny ACL — shared macro
-  #
-  # All three protocol libraries implement CIDR-based source-range access
-  # control with the same shape: read an allowlist annotation and a denylist
-  # annotation, emit `acl <name> src <cidrs>` plus a `http-request deny if
-  # <host-match> [!]<acl>` rule, scoped to the ingress's hosts.
-  #
-  # Parameterized differences:
-  #   - allowAnnotation / denyAnnotation: vendor-specific annotation keys
-  #   - aclPrefix:    per-library ACL name prefix (haproxytech / hi / ni); validation
-  #                   tests assert on these, so they must remain library-distinct
-  #   - allowCommentFmt / denyCommentFmt: leading "# ..." comment per ruleset; each
-  #                   library has its own phrasing. Format strings may contain the
-  #                   literal {KEY} placeholder, which is substituted with the
-  #                   "<ns>/<name>" key at emission time.
-  # ============================================================================
-
+  # aclPrefix is per-library (haproxytech / hi / ni) — validation tests
+  # assert on the resulting ACL names, so they must remain distinct.
   util-emit-annotation-access-control:
     template: |
       {#-

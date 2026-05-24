@@ -65,21 +65,38 @@ var HAProxyDemoBackendYAML []byte
 //go:embed haproxy-test-backend.yaml
 var HAProxyTestBackendYAML []byte
 
-// DevValuesYAML is the helm values file used for the dev install. The
-// e2e suite layers its own overrides on top of this (e.g., image tag).
+// DevValuesYAML is the helm values file consumed by the interactive
+// dev loop (scripts/start-dev-env.sh). Single-operator manual
+// ingress-apply workflow — fast feedback is the priority. Uses
+// the tight 10/10/50ms timing preset for snappy reconcile.
 //
 //go:embed dev-values.yaml
 var DevValuesYAML []byte
+
+// E2EValuesYAML is the helm values file consumed by the automated
+// e2e suite (tests/e2e) as the default profile. Distinct from
+// DevValuesYAML because the parallel-test workload (30+ tests
+// each creating / deleting Ingresses) creates sustained HAProxy
+// worker-fork churn at the dev-values 10ms preset, racing tests'
+// polling against reload windows. E2EValuesYAML uses
+// 100/100/200ms instead — slow enough for worker-fork transitions
+// to settle, fast enough that ingress-create -> serving latency
+// stays well under 1s. Otherwise identical to dev-values.yaml.
+//
+//go:embed e2e-values.yaml
+var E2EValuesYAML []byte
 
 // ConformanceValuesYAML is the helm values file used by the upstream
 // Gateway API / Ingress conformance suites. Stripped-down version of
 // dev-values.yaml: no HTTP-store demo (the blocklist URL was burning
 // 7s per render against an unreachable service in conformance), no
-// coraza WAF override (e2e-specific). The e2e suite selects between
-// this and DevValuesYAML via the HAPTIC_E2E_PROFILE env var:
+// coraza WAF override (e2e-specific). Keeps the 10/10/50ms timing
+// preset because the conformance suite's 5s-poll-vs-all-disabled-
+// slots race requires it (see comment block in this file). The e2e
+// suite selects via the HAPTIC_E2E_PROFILE env var:
 //
 //	HAPTIC_E2E_PROFILE=conformance → ConformanceValuesYAML
-//	(anything else / unset)        → DevValuesYAML
+//	(anything else / unset)        → E2EValuesYAML
 //
 // Same file shape so the e2e helmInstallChart code path is
 // indifferent to which profile is selected — only the bytes change.

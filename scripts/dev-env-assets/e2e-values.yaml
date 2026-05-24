@@ -1,4 +1,31 @@
-# Development values for HAPTIC Helm chart
+# e2e-suite Helm values for the HAPTIC chart.
+#
+# Used by tests/e2e's TestMain as the default profile (anything other
+# than HAPTIC_E2E_PROFILE=conformance). Distinct from dev-values.yaml
+# because the dev environment (scripts/start-dev-env.sh, single
+# operator manually applying ingresses) and the e2e suite (30+
+# parallel tests each creating + deleting Ingresses) have different
+# reload-cadence requirements.
+#
+# What's in here vs dev-values.yaml:
+#
+# IDENTICAL: credentials, ingressClass, image, controller config
+# minus the timing knobs, validators, http-store demo, spoaHub
+# config (including the e2e-specific coraza WAF rule that
+# TestIngressHaproxyIngressWafDeny depends on), haproxy service
+# shape, resources, webhook.
+#
+# CHANGED: reconciliationDebounceInterval / minDeploymentInterval /
+# configPublishInterval bumped from 10ms / 10ms / 50ms to
+# 100ms / 100ms / 200ms. At the dev-values 10ms preset, parallel
+# ingress-create traffic produces sustained HAProxy worker-fork
+# churn (5+ worker generations per second observed on shard [3.2]
+# of pipeline 2549659472), and tests that poll-and-expect specific
+# responses race the worker-fork windows. 100/100/200ms is the
+# historical pre-conformance setting that works cleanly under
+# parallel load; the upstream-conformance 5s-poll-vs-all-disabled-
+# slots race only surfaces in the sequenced conformance suite,
+# which uses its own conformance-values.yaml at the tighter 10ms.
 
 # Explicit credentials for dev environment (avoids auto-generation complexity)
 # In production, leave password empty to auto-generate secure random credentials
@@ -48,16 +75,46 @@ controller:
     logging:
       level: DEBUG  # Runtime log level (overrides env var if set)
 
-    # Interactive dev loop uses the chart's production timing
-    # defaults (5s refractory / 2s minDeploymentInterval / 30s
-    # configPublishInterval) — an operator manually applying
-    # ingresses and curl-testing doesn't benefit from the
-    # millisecond-scale presets the test profiles need, and
-    # production-shaped timings give a more faithful behaviour
-    # preview. The one override is driftPreventionInterval, pushed
-    # out to 10m so a periodic drift check doesn't fire mid-
-    # experiment and surprise an operator iterating on a config.
+    # Moderately-fast timings preset for the e2e suite (parallel
+    # ingress-create tests). Production defaults (5s refractory, 2s
+    # minDeploymentInterval, 30s configPublishInterval, 60s
+    # driftPreventionInterval) target steady-state load on real
+    # clusters; in CI they only add latency. Safety ceilings
+    # (reloadVerificationTimeout, syncTimeout, deploymentTimeout,
+    # syncMaxRetries) stay at chart defaults — they only matter on
+    # failure paths.
+    #
+    # 100/100/200ms is the historical pre-conformance setting that
+    # works cleanly for the e2e suite. The conformance suite has a
+    # tighter requirement (the 5s upstream-poll vs all-disabled-
+    # slots race) and uses conformance-values.yaml's 10/10/50ms
+    # preset — that race only surfaces in the conformance test loop,
+    # not in the parallel-ingress e2e suite.
+    #
+    # Why not 10ms here too: the e2e suite runs 30+ tests in
+    # parallel, each creating + deleting Ingresses. At 10ms
+    # minDeploymentInterval every ingress event triggers a reload
+    # within 10ms, producing sustained HAProxy worker-fork churn
+    # (5+ worker generations per second observed on the [3.2]
+    # shard of pipeline 2549619472's failure artifacts). Tests
+    # that poll-and-expect specific responses race the worker-
+    # fork windows; curls land mid-reload, either time out (000)
+    # or hit a worker whose accept loop hasn't fully resumed
+    # serving rules from the new config. 100/100/200ms is fast
+    # enough that ingress-create -> serving latency stays well
+    # under 1s (the e2e suite's ExpectOK poll tolerates that)
+    # while slow enough that reload-window races mostly close.
+    # Observed flake class on the [3.2] shard at 10/10/50ms:
+    # TestIngressNginxPermanentRedirect, TestIngressNginxCanary,
+    # TestIngressAppRoot, and three TestIngressAnnotations
+    # subtests all timing out at ~91-93s with the same shape
+    # (rendered config contains the expected rule, polling phase
+    # never sees the response).
+    controller:
+      reconciliationDebounceInterval: 100ms
     dataplane:
+      minDeploymentInterval: 100ms
+      configPublishInterval: 200ms
       driftPreventionInterval: 10m
 
     templatingSettings:
