@@ -460,6 +460,15 @@ templateSnippets:
   frontend-spoe-set-pass-headers-500-nginx-ingress:
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Same render-shared dedup pattern as haproxy-ingress.yaml's
+          equivalent snippet (see issue #49). The chart renders this
+          snippet inside `frontend-filters-*` for both http_frontend
+          AND http_frontend_h2c — `first_seen` would silently dedup
+          across the two frontend renders, leaving the second
+          frontend without the set-header directives.
+      -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/auth-response-headers") | fallback("") | tostring() -%}
         {%- if passHeaders != "" -%}
@@ -473,12 +482,18 @@ templateSnippets:
                   spellings that collapse to the same plugin txn var
                   produce one set-header directive, not two. -#}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if first_seen("nginx-ingress-pass-header", varName) -%}
-      {{ "\n" }}      http-request set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.hub.external_auth.{{ varName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
 
   backend-directives-760-nginx-ingress-auth:

@@ -55,12 +55,23 @@ type deploymentStatus struct {
 	EndpointsFailed    int    `json:"endpoints_failed"`
 }
 
-// WaitForE2EEnvironmentReady blocks until the controller is up and able
-// to serve its debug endpoint. We deliberately stop short of waiting for
-// HAProxy to be Ready or for the deployment pipeline to report
-// "succeeded": the chart's HAProxy readiness probe returns 503 until a
-// backend exists, and no backend exists until a test applies an Ingress.
-// That's a per-test concern, handled by the httpclient's retry policy.
+// WaitForE2EEnvironmentReady blocks until the controller reports HTTP
+// 200 on /healthz. The /healthz endpoint aggregates every lifecycle
+// component and the "initialized" gate added in
+// pkg/controller/infrastructure.go, which only flips to healthy after:
+//
+//   - state.SetInitialized() (iteration setup completed all 8 stages),
+//   - every registered component has left StatusPending / StatusStarting —
+//     on the leader replica that means StartLeaderOnlyComponents finished
+//     bringing the deployer, scheduler, coordinator, etc. up to
+//     StatusRunning; on a follower they reach StatusStandby instead.
+//
+// Picking /healthz over "first deployment succeeded" deliberately decouples
+// the wait from any reconciliation outcome: on a fresh cluster with no
+// routing resources there is nothing to deploy and pipeline state would
+// stay empty forever. /healthz tells us the controller is *ready to accept
+// work*, which is precisely what the conformance suites need before they
+// start applying Gateway / HTTPRoute fixtures.
 //
 // Called from TestMain after helm install + fixture deploy. The job here
 // is just "the cluster is no longer in a setup-time inconsistent state."
@@ -85,12 +96,10 @@ func WaitForE2EEnvironmentReady(ctx context.Context, client klient.Client) error
 		serviceName: DebugServiceNameValue,
 		port:        strconv.Itoa(DebugPort),
 	}
-	return testutil.WaitForConditionWithDescription(ctx, cfg, "controller debug endpoint serving",
+	return testutil.WaitForConditionWithDescription(ctx, cfg,
+		"controller /healthz returns 200 (all components ready, leader-only running)",
 		func(ctx context.Context) (bool, error) {
-			if _, err := dc.getPipelineStatus(ctx); err != nil {
-				return false, err
-			}
-			return true, nil
+			return dc.healthzReady(ctx)
 		})
 }
 
@@ -116,6 +125,45 @@ func (dc *debugClient) getPipelineStatus(ctx context.Context) (*pipelineStatus, 
 		return nil, fmt.Errorf("decode pipeline status: %w (body=%s)", err, body)
 	}
 	return &st, nil
+}
+
+// healthzReady polls /healthz and returns (true, nil) when the controller
+// reports HTTP 200, i.e. every health-checked component (including the
+// "initialized" gate) is reporting healthy. On 503 the body is parsed so
+// the caller's wait loop surfaces which component is still unhealthy —
+// invaluable when the e2e suite hangs in CI on a follower that never
+// became leader or a leader-only component that failed to start.
+func (dc *debugClient) healthzReady(ctx context.Context) (bool, error) {
+	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
+		"http", dc.serviceName, dc.port, HealthzPath, nil,
+	).DoRaw(ctx)
+	if err == nil {
+		return true, nil
+	}
+	// Surface the per-component error block to the wait-loop log so a
+	// stuck "initialized" entry (leader not acquired, leader-only
+	// component still pending) shows up directly in CI output rather
+	// than hidden behind a generic 503.
+	var parsed map[string]struct {
+		Healthy bool   `json:"healthy"`
+		Error   string `json:"error,omitempty"`
+	}
+	if jerr := json.Unmarshal(body, &parsed); jerr == nil {
+		var unhealthy []string
+		for name, comp := range parsed {
+			if !comp.Healthy {
+				if comp.Error != "" {
+					unhealthy = append(unhealthy, name+": "+comp.Error)
+				} else {
+					unhealthy = append(unhealthy, name)
+				}
+			}
+		}
+		if len(unhealthy) > 0 {
+			return false, fmt.Errorf("/healthz unhealthy: %v", unhealthy)
+		}
+	}
+	return false, fmt.Errorf("/healthz not ready: %w", err)
 }
 
 // getRenderedConfig returns the current rendered haproxy.cfg as the

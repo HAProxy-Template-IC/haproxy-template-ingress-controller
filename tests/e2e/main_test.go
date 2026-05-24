@@ -121,38 +121,58 @@ func TestMain(m *testing.M) {
 		phase("ensure-namespaces", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return ctx, ensureNamespaces(ctx)
 		}),
-		phase("install-metallb", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return installMetalLB(ctx)
-		}),
-		phase("install-crds+certs (parallel)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			b, err := preInstallParallel(ctx)
-			if err != nil {
-				return ctx, err
-			}
-			caBundleB64 = b
-			return ctx, nil
-		}),
-		phase("helm-install", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return helmInstallChart(ctx, caBundleB64)
-		}),
-		phase("apply-backend-fixtures (parallel)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			// Skip the e2e backend fixtures (echo-server,
-			// blocklist-server, auth-server, …) when the
-			// conformance profile is active. The upstream
-			// conformance suites bring up their own backend
-			// pods per scenario; loading the e2e fixtures here
-			// pollutes the cluster with services conformance
-			// doesn't use and (in the blocklist-server case)
-			// triggers a per-render http.Fetch the chart would
-			// keep retrying on every reconcile until the pod
-			// becomes ready — historically the timing source
-			// behind shard-4 TLSRouteHostnameIntersection
-			// failures.
-			if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
-				fmt.Fprintln(os.Stderr, "e2e: conformance profile — skipping backend fixtures")
-				return ctx, nil
-			}
-			return applyBackendFixtures(ctx)
+		// install-cluster-services fans out two independent chains in
+		// parallel after the cluster + namespaces are up:
+		//
+		//   chain A: install-metallb              (~85s on a cold runner)
+		//   chain B: install-crds+certs → helm-install → backend-fixtures
+		//                                         (~120s end-to-end)
+		//
+		// Chains A and B are fully independent — MetalLB doesn't touch
+		// the chart and the chart doesn't talk to MetalLB until the
+		// loadbalancer Service needs an IP, which doesn't happen until
+		// helm finishes. Running A in parallel with B cuts the e2e
+		// cluster bootstrap by ~85s wall-clock on a fresh runner, which
+		// is the dominant saving the conformance jobs see (they pay the
+		// full bootstrap via `TEST_RUN_PATTERN=^$ make test-e2e` before
+		// running their actual suite).
+		//
+		// Backend fixtures (echo-server, blocklist-server, auth-server,
+		// …) are skipped when HAPTIC_E2E_PROFILE=conformance because the
+		// upstream conformance suites bring up their own per-scenario
+		// backend pods. Loading the e2e fixtures alongside pollutes the
+		// namespace inventory AND (in the blocklist-server case)
+		// triggers a per-render http.Fetch the chart keeps retrying on
+		// every reconcile until the pod becomes ready — historically
+		// the timing source behind shard-4 TLSRouteHostnameIntersection
+		// failures and the 7s-per-render burn that broke
+		// HTTPRouteReferenceGrant within its 10s convergence budget.
+		// The errgroup propagates a single error from either chain and
+		// cancels its sibling, matching the previous sequential
+		// behaviour where the first failure aborted the whole setup.
+		phase("install-cluster-services (parallel chains)", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			g, gctx := errgroup.WithContext(ctx)
+			g.Go(func() error {
+				_, err := installMetalLB(gctx)
+				return err
+			})
+			g.Go(func() error {
+				b, err := preInstallParallel(gctx)
+				if err != nil {
+					return err
+				}
+				caBundleB64 = b
+				if _, err := helmInstallChart(gctx, caBundleB64); err != nil {
+					return err
+				}
+				if os.Getenv("HAPTIC_E2E_PROFILE") == "conformance" {
+					fmt.Fprintln(os.Stderr, "e2e: conformance profile — skipping backend fixtures")
+					return nil
+				}
+				_, err = applyBackendFixtures(gctx)
+				return err
+			})
+			return ctx, g.Wait()
 		}),
 		phase("wait-environment-ready", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			client, err := cfg.NewClient()
@@ -676,4 +696,3 @@ func repoRoot() (string, error) {
 		dir = parent
 	}
 }
-

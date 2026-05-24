@@ -237,13 +237,21 @@ func runIteration(
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
 	// This call registers debug variables and updates the health checker
-	setupInfrastructureServers(setup.IterCtx, setup, stateCache, eventBuffer, pluggableMgr, logger)
+	setupInfrastructureServers(setup.IterCtx, setup, state, stateCache, eventBuffer, pluggableMgr, logger)
 
 	// 10. Enable reinitialization signaling now that startup is complete
 	// This allows future ConfigValidatedEvents to trigger controller reinitialization.
 	// During startup, multiple events occur (watcher sync, status updates) that should
 	// NOT trigger reinitialization - those were skipped while this was disabled.
 	setup.ConfigChangeHandler.EnableReinitialization()
+
+	// 11. Flip the "initialized" health bit. /healthz returns 503 until
+	// this fires and 200 (assuming other components healthy) after.
+	// This is the canonical "controller is ready to accept work"
+	// signal — see configState.SetInitialized's docstring and the
+	// "initialized" entry in the full health checker installed by
+	// setupInfrastructureServers.
+	state.SetInitialized()
 
 	logger.Info("Controller iteration initialized successfully - entering event loop")
 

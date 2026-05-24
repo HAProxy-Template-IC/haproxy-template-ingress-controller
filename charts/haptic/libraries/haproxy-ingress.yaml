@@ -1482,6 +1482,24 @@ templateSnippets:
   frontend-spoe-set-pass-headers-500-haproxy-ingress:
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Collect the unique (name, varName) pairs across all
+          ingresses ONCE per render, cached via shared.ComputeIfAbsent.
+          The chart renders this snippet inside `frontend-filters-*` for
+          both http_frontend AND http_frontend_h2c — those two
+          render_glob calls live in the same template execution, so a
+          `first_seen` dedup would silently emit the directive only in
+          the first frontend (issue #49). The cached pair list lets
+          each frontend's render iterate the same set without sharing
+          first_seen state.
+
+          ValidateAuthHeaderName fail()s at template compile time on a
+          malformed header — we keep the validation pass inside the
+          ingress loop below so the existing CR-rejection contract is
+          preserved (each malformed value still produces a clear
+          render error pointing at the ingress + annotation).
+      -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var passHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") | fallback("") | tostring() -%}
         {%- if passHeaders != "" -%}
@@ -1498,12 +1516,18 @@ templateSnippets:
                   for both, so the second directive would just
                   duplicate the first. -#}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if first_seen("haproxy-ingress-pass-header", varName) -%}
-      {{ "\n" }}      http-request set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.hub.external_auth.{{ varName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
       {%- end -%}
 
   # External-auth fail-headers allowlist. Per-ingress comma-list of
@@ -1536,6 +1560,18 @@ templateSnippets:
   frontend-spoe-set-fail-headers-500-haproxy-ingress:
     template: |-
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Same render-shared dedup pattern as
+          frontend-spoe-set-pass-headers-500-haproxy-ingress — see
+          issue #49. The chart renders this snippet inside
+          `frontend-filters-*` for both http_frontend AND
+          http_frontend_h2c; a `first_seen` dedup would silently emit
+          the directive only in whichever frontend renders first. The
+          local map-based dedup below keeps the dedup confined to the
+          ingress loop, so both frontend renders emit the same set
+          of directives.
+      -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var failHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") | fallback("") | tostring() -%}
         {%- if failHeaders != "" -%}
@@ -1549,12 +1585,18 @@ templateSnippets:
                   spellings that collapse to the same plugin txn var
                   produce one set-header directive, not two. -#}
               {%- var varName = replace(toLower(name), "-", "_") -%}
-              {%- if first_seen("haproxy-ingress-fail-header", varName) -%}
-      {{ "\n" }}      http-after-response set-header {{ name }} %[var(txn.hub.external_auth.{{ varName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ varName }}) -m found }
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-after-response set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ pVarName }}) -m found }
       {%- end -%}
 
   # WAF (Coraza, via SPOA hub): per-Ingress opt-in path-scoped WAF.
@@ -3240,6 +3282,99 @@ validationTests:
         target: file:spoe.conf
         pattern: "hdr_authorization=req\\.hdr\\(Authorization\\) .*hdr_authorization=req\\.hdr"
         description: Hardcoded Authorization header must not be re-emitted by the auto-extend snippet
+
+  test-haproxy-ingress-external-auth-headers-fail-both-frontends:
+    # Regression for issue #49 — TestIngressAuthHeadersFail in the e2e
+    # suite (pipeline 2546220821 job 14503514071) caught the chart
+    # emitting `http-request deny deny_status 401` into ONE frontend
+    # (http_frontend_h2c) but not the other (http_frontend). Plain
+    # HTTP/1.1 traffic landed in http_frontend, hit the routing chain
+    # without the deny rule, and reached the backend → 200 instead of
+    # the expected 401.
+    #
+    # Pin both frontends explicitly: the chart's haproxy-ingress
+    # auth-headers-fail path uses `first_seen` to dedupe the
+    # `http-after-response set-header` directives across ingresses, but
+    # that dedup must NOT bleed across the http_frontend and
+    # http_frontend_h2c renders — both frontends serve client traffic
+    # and need identical auth-deny semantics regardless of which one
+    # the request landed in.
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      auth-url + auth-headers-fail annotations must emit the deny 401
+      AND the http-after-response set-header directives into BOTH the
+      HTTP/1.1 and H2C frontends. Regression for the asymmetric render
+      that broke TestIngressAuthHeadersFail on MR !974 pipeline
+      2546220821.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-headers-fail
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/deny-with-fail-headers"
+              haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+
+      # Both frontends must carry the deny 401 directive.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)frontend http_frontend\b.*?http-request deny deny_status 401 if \{ var\(txn\.auth_url\) -m found \} !\{ var\(txn\.hub\.external_auth\.allowed\) -m bool \}.*?frontend http_frontend_h2c'
+        description: http_frontend (HTTP/1.1) emits the auth deny 401 rule
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)frontend http_frontend_h2c\b.*?http-request deny deny_status 401 if \{ var\(txn\.auth_url\) -m found \} !\{ var\(txn\.hub\.external_auth\.allowed\) -m bool \}'
+        description: http_frontend_h2c (HTTP/2 cleartext) emits the auth deny 401 rule
+
+      # Both frontends must carry the http-after-response set-header
+      # directives for WWW-Authenticate.
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)frontend http_frontend\b.*?http-after-response set-header WWW-Authenticate.*?frontend http_frontend_h2c'
+        description: http_frontend (HTTP/1.1) emits the WWW-Authenticate set-header
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?s)frontend http_frontend_h2c\b.*?http-after-response set-header WWW-Authenticate'
+        description: http_frontend_h2c emits the WWW-Authenticate set-header
 
   test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'

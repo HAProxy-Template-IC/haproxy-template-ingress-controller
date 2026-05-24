@@ -75,11 +75,14 @@ package conformance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -245,7 +248,27 @@ func TestIngressConformance(t *testing.T) {
 	cmd.Stderr = stderrWriter
 
 	t.Logf("running upstream binary: %s %s", bin, strings.Join(cmd.Args[1:], " "))
+
+	// Spawn a watcher on the cucumber-report tempdir so the CI log
+	// shows feature-by-feature progress while the upstream binary is
+	// running, instead of going silent for ~14 minutes between the
+	// command line above and the final PASS. Cancel before the binary
+	// exit completes so the watcher stops cleanly; one final scan()
+	// after the cancel catches anything written between the last tick
+	// and the exit.
+	progCtx, progCancel := context.WithCancel(ctx)
+	progress := newProgressReporter(t, outDir)
+	progDone := make(chan struct{})
+	go func() {
+		defer close(progDone)
+		progress.run(progCtx)
+	}()
+
 	runErr := cmd.Run()
+	progCancel()
+	<-progDone
+	progress.scan() // catch any reports written after the last tick
+
 	// Flush any trailing partial line the binary left without a final
 	// newline — common for crash messages, godog's summary, progress
 	// indicators. testLogWriter only emits on `\n`, so anything in
@@ -323,11 +346,27 @@ func sanitize(s string) string {
 // the streamed output stays anchored to the running test in `go test -v`
 // output (and in GitLab's job log) and gets the standard "    " indent.
 // Buffered to whole lines so we don't fragment log entries on partial
-// writes.
+// writes. Lines matching noisySkipLine are silently dropped — see that
+// regex for the rationale.
 type testLogWriter struct {
 	t   *testing.T
 	buf strings.Builder
 }
+
+// noisySkipLine matches output lines that fire repeatedly and add no
+// debug value. Today the only entry is the k8s v1.33+ deprecation
+// header that client-go logs every time the upstream binary polls a
+// `v1 Endpoints` object — and the upstream polls it constantly, so a
+// full run drops ~150 identical W-level lines into the log:
+//
+//	W0521 22:06:17.537610      12 warnings.go:67] v1 Endpoints is
+//	  deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+//
+// The upstream binary is pinned to a dormant repo (no v1 EndpointSlice
+// migration coming) so the warning will recur on every run for the
+// foreseeable future. Silencing here keeps the GitLab job log readable
+// without touching the upstream itself.
+var noisySkipLine = regexp.MustCompile(`v1 Endpoints is deprecated in v1\.\d+\+`)
 
 func (w *testLogWriter) Write(p []byte) (int, error) {
 	w.buf.Write(p)
@@ -339,6 +378,9 @@ func (w *testLogWriter) Write(p []byte) (int, error) {
 		}
 		line := s[:nl]
 		s = s[nl+1:]
+		if noisySkipLine.MatchString(line) {
+			continue
+		}
 		w.t.Log(line)
 	}
 	// Preserve any trailing partial line for the next write.
@@ -361,3 +403,144 @@ func (w *testLogWriter) flush() {
 	w.buf.Reset()
 }
 
+// progressReporter polls the godog cucumber-report output directory and
+// emits a t.Logf line every time a new `*-report.json` file appears
+// (one per feature, written by godog when the feature finishes). The
+// upstream binary itself is silent during execution — no per-feature
+// progress on stdout, no per-scenario marker. Without this watcher the
+// GitLab job log shows ~14 minutes of nothing-but-our-Logf for the
+// initial command line and the periodic v1-Endpoints warnings
+// (themselves now suppressed), then a single PASS at the very end.
+// With the watcher, each feature reports as it completes:
+//
+//	[conformance] feature "Default backend" passed (134s, 6 scenarios)
+//
+// so a CI log reader can see real progress AND spot which feature was
+// in flight when the suite hangs or stalls.
+type progressReporter struct {
+	t       *testing.T
+	dir     string
+	startAt time.Time
+
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func newProgressReporter(t *testing.T, dir string) *progressReporter {
+	return &progressReporter{
+		t:       t,
+		dir:     dir,
+		startAt: time.Now(),
+		seen:    map[string]bool{},
+	}
+}
+
+// run polls the directory until ctx is cancelled. Each new
+// `*-report.json` file emits one Logf line. Designed for `go func()`
+// invocation — it returns when ctx is done.
+//
+// Poll interval is 2s: small enough that the lag between a feature
+// finishing and our Logf emitting is short (single-digit seconds),
+// large enough that the watcher itself doesn't dominate the runtime
+// load on a tiny tempdir. The upstream binary writes the JSON to the
+// final filename atomically via bufio.Writer.Flush in `defer`, so
+// we won't see partial files.
+func (r *progressReporter) run(ctx context.Context) {
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
+	for {
+		r.scan()
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+func (r *progressReporter) scan() {
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		// Tempdir might not exist yet on the first tick; ignore.
+		return
+	}
+	// Sort so the order matches what the upstream binary writes:
+	// alphabetical by feature filename, which is also roughly the
+	// order it processes them in.
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, "-report.json") {
+			continue
+		}
+		r.mu.Lock()
+		if r.seen[name] {
+			r.mu.Unlock()
+			continue
+		}
+		r.mu.Unlock()
+		// Only mark "seen" once emit succeeds — godog's testFeature
+		// creates the file at the start of the feature run but content
+		// is buffered through a bufio.NewWriter that only Flush()es
+		// on defer. So the file exists in the dir well before its
+		// content is parseable; an early read race would log
+		// "parse failed: unexpected end of JSON input" and then never
+		// re-try because `seen` was set unconditionally. Re-poll until
+		// the parse succeeds — the file's still there, godog will Flush
+		// when the feature finishes.
+		if r.emit(name) {
+			r.mu.Lock()
+			r.seen[name] = true
+			r.mu.Unlock()
+		}
+	}
+}
+
+// emit reads one report and Logf's a one-line summary. We parse the
+// JSON here rather than waiting for the post-run pass — gives the
+// log line a useful pass/fail count instead of just the filename.
+// Returns true once the file has been parsed and reported; returns
+// false on any read/parse failure so scan() keeps polling (the file
+// is racy with godog's bufio.Writer — see the comment in scan()).
+func (r *progressReporter) emit(filename string) bool {
+	raw, err := os.ReadFile(filepath.Join(r.dir, filename))
+	if err != nil {
+		// File appeared in the directory listing but a read failed —
+		// almost certainly because the upstream binary is mid-write.
+		// Stay silent and let the next poll retry; this is the
+		// expected path during normal operation.
+		return false
+	}
+	var features []cucumberFeature
+	if err := json.Unmarshal(raw, &features); err != nil {
+		// Partial JSON — godog's bufio.Writer hasn't flushed yet.
+		// Same story as the read-fail case; retry on the next tick.
+		return false
+	}
+	elapsed := time.Since(r.startAt).Round(time.Second)
+	for _, f := range features {
+		passed, failed := 0, 0
+		for _, el := range f.Elements {
+			scenarioFailed := false
+			for _, s := range el.Steps {
+				if s.Result.Status != "passed" {
+					scenarioFailed = true
+					break
+				}
+			}
+			if scenarioFailed {
+				failed++
+			} else {
+				passed++
+			}
+		}
+		status := "passed"
+		if failed > 0 {
+			status = fmt.Sprintf("FAILED (%d/%d scenarios)", failed, passed+failed)
+		} else {
+			status = fmt.Sprintf("passed (%d scenarios)", passed)
+		}
+		r.t.Logf("[conformance] feature %q %s, t+%s", f.Name, status, elapsed)
+	}
+	return true
+}

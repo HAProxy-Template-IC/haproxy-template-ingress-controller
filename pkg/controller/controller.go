@@ -119,10 +119,17 @@ var (
 
 // configState tracks initialization state for health checks.
 // It allows the health endpoint to report unhealthy status until
-// the HAProxyTemplateConfig is successfully loaded.
+// the HAProxyTemplateConfig is successfully loaded AND the staged
+// startup (resource watchers, event bus, reconciliation components,
+// leader election, webhook, debug servers) has finished. /healthz
+// returns 503 until both gates pass, then 200 — operators (and the
+// e2e suite) get a single "is the controller ready to accept work"
+// signal without polling internal pipeline state that's wiped on
+// every reconciliation trigger.
 type configState struct {
 	mu           sync.RWMutex
 	configLoaded bool
+	initialized  bool
 	message      string
 }
 
@@ -142,11 +149,30 @@ func (s *configState) SetWaiting(msg string) {
 	s.message = msg
 }
 
+// SetInitialized marks the controller as having finished its staged
+// startup. Called once at the end of runIteration, right before the
+// event loop. After this flips true, /healthz can report 200 (subject
+// to the rest of the lifecycle.Registry components being healthy too).
+func (s *configState) SetInitialized() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.initialized = true
+}
+
 // IsLoaded returns true if the config has been successfully loaded.
 func (s *configState) IsLoaded() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.configLoaded
+}
+
+// IsInitialized returns true if the controller has finished its
+// staged startup. Reset implicitly when a new iteration starts because
+// configState is constructed fresh per runIteration call.
+func (s *configState) IsInitialized() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.initialized
 }
 
 // Message returns the current status message (empty if config is loaded).

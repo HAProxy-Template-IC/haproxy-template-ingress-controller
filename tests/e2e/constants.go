@@ -112,8 +112,8 @@ const (
 	DebugPathErrors    = "/debug/vars/errors"
 	DebugPathEvents    = "/debug/vars/events"
 	DebugPathAuxFiles  = "/debug/vars/auxfiles"
+	HealthzPath        = "/healthz"
 )
-
 
 // Pod label selectors for the chart's standard kubernetes.io recommended
 // labels. The chart sets app.kubernetes.io/instance=<release> and

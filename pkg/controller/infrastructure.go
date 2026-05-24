@@ -26,21 +26,32 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
-// createEarlyHealthChecker creates a health checker that reports unhealthy until config is loaded.
-// This is used during early startup before the full lifecycle-based checker is available.
+// createEarlyHealthChecker creates a health checker that reports
+// unhealthy until config is loaded AND the staged startup has finished.
+// This is used during early startup before the full lifecycle-based
+// checker is available.
+//
+// The "initialized" entry is always Healthy=false here because the
+// early checker is in use during stages 1-7 — by definition the
+// staged startup has not finished yet, otherwise setupInfrastructureServers
+// would have installed the full checker over the top of this one.
+// Operators (and the e2e suite) get a single signal — /healthz 200 —
+// for "controller is ready to accept work" regardless of which checker
+// happens to be installed at the moment of the request.
 func createEarlyHealthChecker(state *configState) func() map[string]introspection.ComponentHealth {
 	return func() map[string]introspection.ComponentHealth {
+		result := map[string]introspection.ComponentHealth{
+			"initialized": {Healthy: false, Error: "controller still initializing"},
+		}
 		if !state.IsLoaded() {
-			return map[string]introspection.ComponentHealth{
-				"config": {
-					Healthy: false,
-					Error:   state.Message(),
-				},
+			result["config"] = introspection.ComponentHealth{
+				Healthy: false,
+				Error:   state.Message(),
 			}
+		} else {
+			result["config"] = introspection.ComponentHealth{Healthy: true}
 		}
-		return map[string]introspection.ComponentHealth{
-			"config": {Healthy: true},
-		}
+		return result
 	}
 }
 
@@ -141,6 +152,7 @@ func startEarlyInfrastructureServers(
 func setupInfrastructureServers(
 	ctx context.Context,
 	setup *componentSetup,
+	state *configState,
 	stateCache *StateCache,
 	eventBuffer *debug.EventBuffer, // Pre-created buffer (created before EventBus.Start())
 	pluggableMgr *pluggablevalidator.Manager,
@@ -158,29 +170,101 @@ func setupInfrastructureServers(
 	// Register debug variables with the shared introspection registry
 	debug.RegisterVariables(setup.IntrospectionRegistry, stateCache, eventBuffer)
 
-	// Update health checker to use the full lifecycle registry
-	// This replaces the initial simple health checker set in startEarlyInfrastructureServers
-	setup.IntrospectionServer.SetHealthChecker(func() map[string]introspection.ComponentHealth {
-		status := setup.Registry.Status()
-		result := make(map[string]introspection.ComponentHealth, len(status)+1)
-		for name, info := range status {
-			// StatusStandby is healthy - component is intentionally not active
-			// (e.g., leader-only components on non-leader pods)
-			healthy := info.Status == lifecycle.StatusRunning || info.Status == lifecycle.StatusStandby
-			if info.Healthy != nil {
-				healthy = *info.Healthy
-			}
-			result[name] = introspection.ComponentHealth{
-				Healthy: healthy,
-				Error:   info.Error,
-			}
-		}
-		mergePluggableValidatorHealth(result, pluggableMgr)
-		return result
-	})
+	// Update health checker to use the full lifecycle registry.
+	// This replaces the initial simple health checker set in
+	// startEarlyInfrastructureServers. See buildFullHealthChecker for
+	// the readiness contract.
+	setup.IntrospectionServer.SetHealthChecker(buildFullHealthChecker(setup.Registry, state, pluggableMgr))
 
 	logger.Info("Debug variables registered and health checker updated",
 		"endpoints", "/debug/vars, /debug/pprof, /healthz")
+}
+
+// buildFullHealthChecker returns the /healthz callback installed once the
+// staged startup is complete. The "initialized" entry is the authoritative
+// "controller is ready to accept work" signal: it stays Healthy=false until
+// BOTH conditions hold:
+//
+//  1. state.IsInitialized() — iteration setup finished wiring and starting
+//     all components (set at the very end of runIteration).
+//  2. Every lifecycle.Registry component has left the transient
+//     Pending/Starting states. On a follower replica that means leader-only
+//     components reached StatusStandby (which Registry.StartAll(ctx, false)
+//     assigns synchronously) — so followers report /healthz 200 immediately
+//     after their staged startup completes and kubelet does NOT kill them.
+//     On the leader replica it means StartLeaderOnlyComponents finished
+//     bringing the deployer / scheduler / coordinator / etc. up to
+//     StatusRunning, i.e. the lease was acquired AND the leader-only chain
+//     finished starting.
+//
+// This gives operators (and the e2e suite) a single /healthz 200 signal
+// meaning the controller is genuinely operational, not just that
+// runIteration's goroutine fan-out returned.
+func buildFullHealthChecker(
+	registry *lifecycle.Registry,
+	state *configState,
+	pluggableMgr *pluggablevalidator.Manager,
+) func() map[string]introspection.ComponentHealth {
+	return func() map[string]introspection.ComponentHealth {
+		status := registry.Status()
+		result := make(map[string]introspection.ComponentHealth, len(status)+2)
+		firstPending := collectComponentHealth(status, result)
+		mergePluggableValidatorHealth(result, pluggableMgr)
+		result["initialized"] = computeInitializedHealth(state.IsInitialized(), firstPending)
+		return result
+	}
+}
+
+// collectComponentHealth copies each registered component's health into
+// `result` and returns the name of the first component still in
+// StatusPending / StatusStarting, or "" if all components have reached a
+// terminal state. Returning the first-pending name (instead of just a
+// boolean) lets operators see WHICH component is holding up readiness
+// without scanning the whole map — invaluable when the e2e wait loop
+// surfaces the /healthz body in CI logs.
+func collectComponentHealth(
+	status map[string]lifecycle.ComponentInfo,
+	result map[string]introspection.ComponentHealth,
+) string {
+	var firstPending string
+	for name, info := range status {
+		// StatusStandby is healthy - component is intentionally not active
+		// (e.g., leader-only components on non-leader pods)
+		healthy := info.Status == lifecycle.StatusRunning || info.Status == lifecycle.StatusStandby
+		if info.Healthy != nil {
+			healthy = *info.Healthy
+		}
+		result[name] = introspection.ComponentHealth{
+			Healthy: healthy,
+			Error:   info.Error,
+		}
+		if firstPending == "" && (info.Status == lifecycle.StatusPending || info.Status == lifecycle.StatusStarting) {
+			firstPending = name
+		}
+	}
+	return firstPending
+}
+
+// computeInitializedHealth builds the "initialized" /healthz entry. It is
+// only Healthy when iteration setup is done AND no component is still
+// transitioning through Pending/Starting (firstPending == ""). The error
+// message names the specific gate so operators can tell apart
+// "still in staged startup" from "leader election hasn't acquired the
+// lease yet (deployer pending)".
+func computeInitializedHealth(initialized bool, firstPending string) introspection.ComponentHealth {
+	healthy := initialized && firstPending == ""
+	if healthy {
+		return introspection.ComponentHealth{Healthy: true}
+	}
+	switch {
+	case !initialized:
+		return introspection.ComponentHealth{Healthy: false, Error: "controller still initializing"}
+	default:
+		return introspection.ComponentHealth{
+			Healthy: false,
+			Error:   fmt.Sprintf("waiting for components to start (e.g. %s still pending — leader election may not have acquired the lease yet)", firstPending),
+		}
+	}
 }
 
 // mergePluggableValidatorHealth adds a "pluggable-validators" entry to
