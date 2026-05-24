@@ -1569,6 +1569,29 @@ test-gateway-conformance:
         # to keep the conformance ones.
         for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(ingress-conformance|gateway-conformance)'); do
           kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
+
+          # Backend pod stdout (echo-server / GRPC echo / infra-backend-v{1,2,3}).
+          # Without these, mirror-style flakes like #47 are undebuggable:
+          # the spoa-hub metrics show whether the mirror plugin dispatched
+          # (and got a 2xx back), but the conformance test's
+          # `ExpectMirroredRequest` scans the *backend pod's stdout* via
+          # `kubectl logs` for a path-matching line. If the line is in the
+          # pod's log here but the test failed with "Couldn't find mirrored
+          # request", the bottleneck is kubelet's log-shipping pipeline,
+          # not the chart's data path. If the line is missing here too,
+          # the backend never received the request (and we look at the
+          # mirror plugin's network path next). Either way, having the
+          # final stdout snapshot is the data point that lets the
+          # investigation make a decision.
+          #
+          # `--prefix` annotates each line with `[pod/<name>]` so concat'd
+          # output stays disambiguable when a namespace has multiple
+          # backend pods. `--all-containers --ignore-errors` so a pod
+          # that's been deleted between the list and the fetch doesn't
+          # abort the loop.
+          kubectl -n "$ns" logs --prefix --all-containers=true --ignore-errors \
+            -l 'app in (echo,echo-v1,echo-v2,echo-v3,infra-backend-v1,infra-backend-v2,infra-backend-v3,grpc-infra-backend-v1,grpc-infra-backend-v2,web-backend,app-backend-v1,tcp-backend)' \
+            --tail=-1 > "$LOG_DIR/backend-pods-${ns}.log" 2>&1 || true
         done
 
         # MetalLB state — IPAddressPool exhaustion or speaker issues
@@ -1811,6 +1834,19 @@ test-ingress-conformance:
         # grep -E for the filter.
         for ns in $(kubectl get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^ingress-conformance'); do
           kubectl -n "$ns" describe pods > "$LOG_DIR/pods-describe-${ns}.log" 2>&1 || true
+
+          # Echo backend pod stdout. The upstream ingress-conformance
+          # suite scans the backend's stdout via `kubectl logs` for the
+          # request fingerprint that confirms a route correctly delivered
+          # traffic; when a scenario times out, the data point that
+          # disambiguates "backend never received the request" from
+          # "kubelet log-shipping lost the race against the 10s budget"
+          # is whether the line is in the post-fact stdout snapshot here.
+          # Same rationale as the gateway-conformance backend-logs
+          # capture (see #47).
+          kubectl -n "$ns" logs --prefix --all-containers=true --ignore-errors \
+            -l app.kubernetes.io/name=ingress-conformance-echo \
+            --tail=-1 > "$LOG_DIR/backend-pods-${ns}.log" 2>&1 || true
         done
       fi
   artifacts:

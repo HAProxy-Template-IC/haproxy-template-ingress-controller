@@ -19,6 +19,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	pvtestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
+	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
 // createEarlyHealthChecker is the health endpoint Kubernetes uses
@@ -122,6 +123,151 @@ func TestCreateEarlyHealthChecker(t *testing.T) {
 		assert.True(t, got["config"].Healthy)
 		assert.Empty(t, got["config"].Error,
 			"transitioning loaded must clear the wait message")
+	})
+
+	// The early checker is in use during stages 1-7 of runIteration —
+	// by definition the staged startup has NOT yet finished, otherwise
+	// setupInfrastructureServers would have installed the full checker
+	// on top. The "initialized" entry must therefore be Healthy=false
+	// regardless of configState's `initialized` field (the field is
+	// flipped at the very end of runIteration, after the full checker
+	// has replaced this one). This is the e2e suite's gate signal: as
+	// long as the early checker is serving /healthz, the controller
+	// is not yet ready to accept work.
+	t.Run("initialized entry is always unhealthy in the early checker", func(t *testing.T) {
+		state := &configState{}
+		state.SetLoaded()
+		// Even if some bug flipped initialized, the early checker
+		// must still report it false — the checker contract is
+		// "I'm in early-startup mode" by virtue of being installed.
+		state.SetInitialized()
+
+		got := createEarlyHealthChecker(state)()
+		entry, ok := got["initialized"]
+		require.True(t, ok,
+			"early checker must always include the 'initialized' entry so /healthz returns 503 during stages 1-7")
+		assert.False(t, entry.Healthy,
+			"early checker's 'initialized' entry must be Healthy=false regardless of state.IsInitialized()")
+		assert.NotEmpty(t, entry.Error,
+			"unhealthy state must carry an Error message so operators see the reason")
+	})
+}
+
+// computeInitializedHealth and collectComponentHealth together produce the
+// "initialized" entry that the e2e suite and Kubernetes readiness probes
+// gate on. The contract is non-trivial — get it wrong in either direction
+// and you break a different consumer:
+//
+//   - Too strict (followers report Healthy=false forever) → kubelet kills
+//     follower replicas in HA deployments, defeating the whole point of
+//     leader election.
+//   - Too loose (leader returns Healthy=true before leader-only components
+//     are running) → the e2e suite and downstream automation race against
+//     a controller that can't yet deploy config, producing intermittent
+//     "Gateway has no address" / "HTTPRoute has no status" failures.
+//
+// Pin the four canonical states:
+//
+//  1. Follower (leader-only components in StatusStandby, others Running)
+//     → Healthy=true. This is the load-bearing case for HA.
+//  2. Leader after startup completes (all components Running) → Healthy=true.
+//  3. Leader during the leader-acquisition window (leader-only components
+//     still in StatusPending) → Healthy=false with the pending component
+//     named verbatim, so CI logs show which component is stuck.
+//  4. state.IsInitialized() == false → Healthy=false with "still
+//     initializing" regardless of component state, so callers can tell
+//     "iteration setup not done" apart from "leader election pending".
+func TestBuildFullHealthChecker_InitializedGate(t *testing.T) {
+	t.Run("follower with leader-only components on Standby reports Healthy=true", func(t *testing.T) {
+		// On a follower replica, Registry.StartAll(ctx, false) marks
+		// leader-only components as StatusStandby. The "initialized"
+		// gate MUST treat Standby as terminal — otherwise the follower
+		// is permanently 503 and kubelet kills it.
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusRunning},
+			"discovery":  {Status: lifecycle.StatusRunning},
+			"deployer":   {Status: lifecycle.StatusStandby, LeaderOnly: true},
+			"scheduler":  {Status: lifecycle.StatusStandby, LeaderOnly: true},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		firstPending := collectComponentHealth(status, result)
+		init := computeInitializedHealth(true, firstPending)
+
+		assert.True(t, init.Healthy,
+			"follower with leader-only components on Standby must report Healthy=true — otherwise kubelet kills HA follower pods")
+		assert.Empty(t, init.Error,
+			"healthy state must not carry an error string")
+		assert.True(t, result["deployer"].Healthy,
+			"Standby leader-only components must individually report Healthy=true on followers")
+	})
+
+	t.Run("leader with all components Running reports Healthy=true", func(t *testing.T) {
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusRunning},
+			"discovery":  {Status: lifecycle.StatusRunning},
+			"deployer":   {Status: lifecycle.StatusRunning, LeaderOnly: true},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		firstPending := collectComponentHealth(status, result)
+		init := computeInitializedHealth(true, firstPending)
+
+		assert.True(t, init.Healthy)
+		assert.Empty(t, init.Error)
+	})
+
+	t.Run("leader with leader-only component still Pending reports Healthy=false with the component name", func(t *testing.T) {
+		// This is the race window the user pointed at: SetInitialized()
+		// can fire before StartLeaderOnlyComponents has transitioned
+		// the deployer/scheduler from StatusPending to StatusRunning.
+		// The "initialized" entry must reflect that so /healthz stays
+		// 503 until the leader is actually doing work.
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusRunning},
+			"deployer":   {Status: lifecycle.StatusPending, LeaderOnly: true},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		firstPending := collectComponentHealth(status, result)
+		init := computeInitializedHealth(true, firstPending)
+
+		assert.False(t, init.Healthy,
+			"leader with a leader-only component still Pending must report /healthz unhealthy — otherwise the e2e suite races against a not-yet-functional leader")
+		assert.Contains(t, init.Error, "deployer",
+			"error message must name the pending component so CI logs show which one is stuck")
+		assert.Contains(t, init.Error, "leader election",
+			"error message must mention leader election as a likely cause to aid debugging")
+	})
+
+	t.Run("Starting status also counts as not-yet-terminal", func(t *testing.T) {
+		// StatusStarting is the transient state between Pending and
+		// Running. It must be treated as not-terminal otherwise the
+		// "initialized" gate flips green during the startup chain.
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusStarting},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		firstPending := collectComponentHealth(status, result)
+		init := computeInitializedHealth(true, firstPending)
+
+		assert.False(t, init.Healthy)
+		assert.Contains(t, init.Error, "reconciler")
+	})
+
+	t.Run("state.IsInitialized()==false dominates regardless of component state", func(t *testing.T) {
+		// Even if every component is happy, "iteration setup not done"
+		// must beat "all components running" in the error message —
+		// otherwise operators chasing a stuck startup get a confusing
+		// "leader election may not have acquired the lease yet"
+		// pointer when the real cause is staged-startup not finished.
+		status := map[string]lifecycle.ComponentInfo{
+			"reconciler": {Status: lifecycle.StatusRunning},
+		}
+		result := map[string]introspection.ComponentHealth{}
+		firstPending := collectComponentHealth(status, result)
+		init := computeInitializedHealth(false, firstPending)
+
+		assert.False(t, init.Healthy)
+		assert.Equal(t, "controller still initializing", init.Error,
+			"the 'still initializing' message must win over 'pending component' so operators get an unambiguous gate name")
 	})
 }
 
