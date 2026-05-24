@@ -93,6 +93,25 @@ type Result struct {
 	// the engine's additionalDeclarations map.
 	Types map[string]reflect.Type
 
+	// Kinds maps the resource's user-defined name to the GVK.Kind
+	// string captured from cfg.Resources. Used by
+	// [BuildEngineDeclarations] to name the per-resource type
+	// declarations (`Gateway`, `HTTPRoute`, `Ingress`, …) at
+	// engine-declaration time so chart authors can write typed
+	// macro signatures (`(gw *Gateway)`, `(routes []*HTTPRoute)`)
+	// instead of `any`/`[]any`.
+	//
+	// The Kind is the canonical singular noun for the resource —
+	// K8s naming preserves acronyms (HTTPRoute, BackendTLSPolicy)
+	// which reads more naturally in chart macros than the
+	// PascalCase-of-resource-key form (Httproutes,
+	// Backendtlspolicies). Multiple watched resources sharing a
+	// Kind (e.g. `services` and `controller_services` both → Kind
+	// "Service") deduplicate to a single type declaration; the
+	// chart picks up the shared declaration regardless of which
+	// watched-resource key carries the schema.
+	Kinds map[string]string
+
 	// Errors records why a resource didn't get a typed view.
 	// Bootstrap is fail-closed (see Bootstrap doc): the first
 	// per-resource failure aborts the run, so Errors typically
@@ -127,6 +146,7 @@ func Bootstrap(ctx context.Context, cfg Config) (*Result, error) {
 
 	result := &Result{
 		Types:  make(map[string]reflect.Type, len(cfg.Resources)),
+		Kinds:  make(map[string]string, len(cfg.Resources)),
 		Errors: make(map[string]error, 0),
 	}
 
@@ -170,6 +190,7 @@ func Bootstrap(ctx context.Context, cfg Config) (*Result, error) {
 				res.Name, res.GVK, err)
 		}
 		result.Types[res.Name] = typ
+		result.Kinds[res.Name] = res.GVK.Kind
 	}
 
 	return result, nil

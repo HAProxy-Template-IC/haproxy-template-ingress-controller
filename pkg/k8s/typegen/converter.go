@@ -472,6 +472,19 @@ func (c *Converter) convertObject(schema *spec.Schema, path string, depth int) (
 // and empty-Properties early returns.
 func (c *Converter) collectObjectFields(schema *spec.Schema, names []string, path string, depth int) ([]reflect.StructField, bool, error) {
 	fields := make([]reflect.StructField, 0, len(names))
+	// requiredSet flags which JSON names appear in the schema's
+	// `required` list. Non-required fields get a `,omitempty` json
+	// tag so digStructField can normalise "field absent in source"
+	// to nil at render time, matching the untyped-map semantics
+	// every existing dig|fallback chart pattern relies on.
+	// Without this, the typed shape returns the type's zero value
+	// (`""`, `0`, `false`) for unpopulated optional fields, fallback
+	// doesn't fire (its input isn't nil), and chart logic that
+	// branches on "absent vs present" silently misbehaves.
+	requiredSet := make(map[string]struct{}, len(schema.Required))
+	for _, r := range schema.Required {
+		requiredSet[r] = struct{}{}
+	}
 	// seenGoNames detects collisions where multiple JSON property
 	// names produce the same Go identifier under goFieldName's
 	// capitalise-and-sanitise rule (e.g. "my-field" and "my_field"
@@ -502,10 +515,49 @@ func (c *Converter) collectObjectFields(schema *spec.Schema, names []string, pat
 			return nil, true, nil
 		}
 		seenGoNames[goName] = struct{}{}
+		// %q both for required and optional paths so property names
+		// containing double quotes or backslashes (legal in CRDs even
+		// if unlikely in K8s core APIs) produce well-formed struct
+		// tags. The previous %s form for the optional path could emit
+		// malformed tags that broke JSON marshalling AND the
+		// isStructFieldOmitempty check.
+		_, isRequired := requiredSet[name]
+		tag := fmt.Sprintf(`json:%q`, name)
+		if !isRequired {
+			tag = fmt.Sprintf(`json:%q`, name+",omitempty")
+			// Tristate fix (#52): wrap optional scalar types in
+			// pointers so the chart's dig|fallback pattern can
+			// distinguish "absent" (nil pointer) from "explicitly
+			// zero" (non-nil pointer to zero value). The classic
+			// breakage was the Gateway-API HTTPRouteWeight
+			// conformance test: a backendRef with weight=0 means
+			// "exclude this backend" per spec, but the chart's
+			// `dig(backendRef, "weight") | fallback(1)` couldn't
+			// tell it apart from a missing weight and defaulted
+			// to 1 — v3 backend got 1 entry in the weighted-
+			// multi-backend.map when it should have got 0.
+			// json.Unmarshal handles pointer types natively: missing
+			// key → nil pointer, explicit value → non-nil pointer.
+			// digStructField dereferences automatically so the chart
+			// keeps seeing plain int64/bool/float64 values.
+			//
+			// String fields stay non-pointer because the chart pattern
+			// `dig(x, "namespace") | fallback(gwNs)` wants "" to read
+			// back as nil (so the fallback substitutes the parent
+			// namespace). digStructField's existing omitempty + IsZero
+			// rule covers that case. Numeric/bool fields can't share
+			// that rule because 0 / false are legitimate explicit values.
+			// Complex shapes (struct, map, slice) keep their non-pointer
+			// type — IsZero on those means "no nested data" which is
+			// the same semantic as "absent" for chart purposes.
+			if needsTristatePointer(propType) {
+				propType = reflect.PointerTo(propType)
+			}
+		}
 		fields = append(fields, reflect.StructField{
 			Name: goName,
 			Type: propType,
-			Tag:  reflect.StructTag(fmt.Sprintf(`json:%q`, name)),
+			Tag:  reflect.StructTag(tag),
 		})
 	}
 	return fields, false, nil
@@ -586,6 +638,29 @@ func hasPreserveUnknown(schema *spec.Schema) bool {
 	}
 }
 
+// needsTristatePointer reports whether t is a scalar Kind that needs
+// pointer-wrapping when used as an optional struct field, so the chart's
+// `dig | fallback` pattern can distinguish "absent in source" from
+// "explicitly set to zero". Only numeric and boolean Kinds qualify —
+// string fields read back through digStructField's existing omitempty +
+// IsZero rule (chart wants "" to read as nil so fallback substitutes a
+// parent value, e.g. the namespace inheritance case); complex shapes
+// (struct, map, slice) reuse the same IsZero rule because "empty
+// collection" semantically equals "absent" for chart consumers.
+func needsTristatePointer(t reflect.Type) bool {
+	if t == nil || t.Kind() == reflect.Pointer {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
 // goFieldName lifts a JSON property name into an exported Go identifier
 // suitable for [reflect.StructField.Name]. The transformation is the
 // minimum needed for Scriggo's compile-time field lookup to find the
@@ -608,6 +683,14 @@ func hasPreserveUnknown(schema *spec.Schema) bool {
 // `apiVersion` → `ApiVersion`, `tlsConfig` → `TlsConfig`. Templates
 // write `gw.ApiVersion`.
 func goFieldName(name string) string {
+	return GoFieldName(name)
+}
+
+// GoFieldName is the exported form of goFieldName for callers outside
+// this package (e.g. pkg/controller/typebootstrap, which needs the
+// same identifier rule to compose the `resources` struct's Go field
+// names from watched-resource keys).
+func GoFieldName(name string) string {
 	if name == "" {
 		return "_"
 	}

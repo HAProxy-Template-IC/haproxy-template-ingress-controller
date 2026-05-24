@@ -89,7 +89,13 @@ func scriggoDig(obj any, keys ...string) any {
 }
 
 // digMapFast is the optimized path for map[string]any traversal.
-// Handles nested maps without reflection overhead.
+// Handles nested maps without reflection overhead. When an
+// intermediate value is something other than map[string]any /
+// map[string]string (e.g. a typegen-produced typed struct that the
+// chart stored as a value in a map[string]any wrapper), traversal
+// falls back to digReflect for the remaining keys — losing the
+// fast-path speed for this dig call but keeping the typed-struct
+// chart pattern working end-to-end.
 func digMapFast(m map[string]any, keys []string) any {
 	for i, key := range keys {
 		val, ok := m[key]
@@ -102,19 +108,36 @@ func digMapFast(m map[string]any, keys []string) any {
 			return val
 		}
 
-		// Try to continue traversal with nested map
+		// Try to continue traversal with nested map[string]any.
 		next, ok := val.(map[string]any)
 		if !ok {
-			// Check for map[string]string on last key
-			if strMap, ok := val.(map[string]string); ok {
-				// Only one key left, look it up
-				if i == len(keys)-2 {
-					if strVal, found := strMap[keys[i+1]]; found {
+			// map[string]string is a common K8s shape (labels,
+			// annotations, matchLabels). Handled here for any
+			// position in the chain, not just the last key, so
+			// dig() keeps working when chart code wraps a typed
+			// resource's labels into a multi-level path.
+			if strMap, isStrMap := val.(map[string]string); isStrMap {
+				if strVal, found := strMap[keys[i+1]]; found {
+					if i+1 == len(keys)-1 {
 						return strVal
 					}
+					// Beyond a map[string]string value the chain
+					// can't continue — strings have no further
+					// navigable fields. Drop to reflection so the
+					// shared traversal returns nil at the right
+					// boundary instead of pretending the path exists.
+					return digReflect(strVal, keys[i+2:])
 				}
+				return nil
 			}
-			return nil
+			// Typed structs, slices, primitives, or any other
+			// shape — fall back to reflection for the remaining
+			// keys. The chart's typegen-produced typed structs land
+			// here when the chart embeds them inside a
+			// map[string]any (e.g. `map[string]any{"backend":
+			// ingress.Spec.DefaultBackend}` then chart code does
+			// `dig(path, "backend", "service", "name")`).
+			return digReflect(val, keys[i+1:])
 		}
 		m = next
 	}
@@ -124,8 +147,8 @@ func digMapFast(m map[string]any, keys []string) any {
 // digReflect handles typed nil pointers and other edge cases with reflection.
 //
 // It also navigates *typed structs* — the shape pkg/k8s/typegen produces
-// and the chart's render-time wiring (RenderService.addTypedRenderContextEntries)
-// hands to templates via the top-level resource globals. Struct field
+// and the chart's render-time wiring (rendercontext.BuildResourcesValue)
+// hands to templates via the typed `resources` global. Struct field
 // lookup is by JSON tag so chart code stays identical between the
 // untyped map shape (`dig(gw, "metadata", "name")`) and the typed
 // struct shape (same call, same key strings). This is the property
@@ -157,6 +180,19 @@ func digReflect(obj any, keys []string) any {
 			}
 			current = val
 		default:
+			// Generic string-keyed-map fallback. Reached when the
+			// value is a `map[string]<T>` for some concrete T that
+			// isn't already handled by the explicit cases above
+			// (e.g. `map[string][]any` from group_by, or
+			// `map[string]int` from a custom counter). Without this,
+			// dig() falls through to digStructField on a map value
+			// and silently returns nil — which produced the chart's
+			// path-map-empty bug where `pathGroups | dig(pathKey)`
+			// returned nil for every key.
+			if next, ok := digGenericMap(current, key); ok {
+				current = next
+				continue
+			}
 			next, ok := digStructField(current, key)
 			if !ok {
 				return nil
@@ -166,6 +202,41 @@ func digReflect(obj any, keys []string) any {
 	}
 
 	return current
+}
+
+// digGenericMap looks key up in a generic string-keyed map of any
+// concrete value type — `map[string]<T>` where T is anything the
+// digReflect explicit cases don't already cover (e.g.
+// `map[string][]any` produced by group_by). The explicit cases for
+// `map[string]any` / `map[string]string` are fast paths; this is
+// the reflection-based fallback for the long tail.
+//
+// Returns (value, true) when the value is a map whose key type is
+// string and the key is present; (nil, true) when the key is
+// absent (string-keyed map, just missing this key — distinguished
+// from "wrong shape" so the caller knows to stop walking, not to
+// fall through to struct-field lookup); (nil, false) when the
+// value isn't a string-keyed map at all (caller should try the
+// next dispatch).
+func digGenericMap(obj any, key string) (any, bool) {
+	v := reflect.ValueOf(obj)
+	for v.Kind() == reflect.Interface || v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return nil, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Map {
+		return nil, false
+	}
+	if v.Type().Key().Kind() != reflect.String {
+		return nil, false
+	}
+	mv := v.MapIndex(reflect.ValueOf(key))
+	if !mv.IsValid() {
+		return nil, true
+	}
+	return mv.Interface(), true
 }
 
 // digStructField navigates ONE level into a typed struct (or
@@ -195,7 +266,8 @@ func digStructField(obj any, key string) (any, bool) {
 	if v.Kind() != reflect.Struct {
 		return nil, false
 	}
-	idx, ok := structFieldIndex(v.Type(), key)
+	t := v.Type()
+	idx, ok := structFieldIndex(t, key)
 	if !ok {
 		return nil, false
 	}
@@ -203,7 +275,74 @@ func digStructField(obj any, key string) (any, bool) {
 	if !field.IsValid() {
 		return nil, false
 	}
+	// Tristate transparency for pointer-wrapped scalars (issue #52
+	// fix): typegen emits *int64 / *bool / *float64 for optional
+	// numeric / bool fields so json.Unmarshal preserves the
+	// distinction between "absent from source" (nil pointer) and
+	// "explicitly zero" (non-nil pointer to zero value). Chart code
+	// reads back plain int64 / bool — dereference here and let the
+	// nil case fall through to the omitempty branch below so
+	// `dig | fallback` fires for absent, while explicit zero passes
+	// through as 0 / false.
+	if field.Kind() == reflect.Pointer && needsTristatePointerKind(field.Type().Elem().Kind()) {
+		if field.IsNil() {
+			return nil, false
+		}
+		return field.Elem().Interface(), true
+	}
+	// Optional + zero-value normalisation. The chart's universal
+	// `dig(obj, "field") | fallback(default)` pattern assumes
+	// "absent → nil → fallback fires", which holds for untyped
+	// maps (missing keys are nil) but NOT for typegen-produced
+	// typed structs, where an unpopulated optional string field
+	// is the zero value `""`, not nil — fallback then doesn't
+	// fire and downstream key-building (e.g. namespace/name
+	// composition) silently produces malformed keys.
+	//
+	// Strings, structs, slices and maps fall through here — they
+	// can't use the pointer-wrapped tristate path because the chart
+	// also reads them for "is this empty?" semantics that conflict
+	// with the explicit-zero case (a string field's "" already
+	// means "no value", an empty slice means "no items", etc.).
+	if isStructFieldOmitempty(t, idx) && field.IsZero() {
+		return nil, false
+	}
 	return field.Interface(), true
+}
+
+// needsTristatePointerKind mirrors typegen.needsTristatePointer's
+// scalar-kind rule for the digStructField dereference path. Kept
+// here (rather than importing typegen) so pkg/templating stays a
+// pure library — typegen lives one layer up. The two functions must
+// agree on which Kinds get the pointer treatment; a regression test
+// in pkg/k8s/typegen pins the typegen side and TestDigStructField_
+// PointerOptional pins the navigation side.
+func needsTristatePointerKind(k reflect.Kind) bool {
+	switch k {
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// isStructFieldOmitempty reports whether the struct field at the
+// given index has `,omitempty` in its json tag. Used by digStructField
+// to decide whether a zero value means "field absent" (return nil) or
+// "field explicitly zero" (return the zero value).
+func isStructFieldOmitempty(t reflect.Type, idx int) bool {
+	tag := t.Field(idx).Tag.Get("json")
+	if tag == "" {
+		return false
+	}
+	for _, opt := range strings.Split(tag, ",")[1:] {
+		if opt == "omitempty" {
+			return true
+		}
+	}
+	return false
 }
 
 // jsonNameCache caches per-type JSON-name → field-index maps. Without

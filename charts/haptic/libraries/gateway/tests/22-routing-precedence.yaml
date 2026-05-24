@@ -1037,3 +1037,83 @@ validationTests:
   # by the chart YAML's static structure and reviewed at PR time;
   # functional verification of the propagation lands in the integration
   # / conformance suite.
+
+  test-httproute-weight-zero-explicit-excludes:
+    description: |
+      Regression test for issue #52 (typegen tristate): a backendRef
+      with explicit weight=0 means "exclude this backend" per the
+      Gateway-API spec, NOT "default to 1". Pipeline 2549047264's
+      gateway-conformance 3/4 HTTPRouteWeight test failed because the
+      typed Gateway struct couldn't distinguish "weight absent"
+      (defaults to 1) from "weight explicitly 0" (excluded) — both
+      read back as int64(0) from the typed struct, the chart's
+      `dig(backendRef, "weight") | fallback(1)` defaulted both to 1,
+      and the weighted-multi-backend.map ended up with one entry for
+      the should-be-excluded backend.
+
+      Fix: typegen now emits `*int64` for optional integer fields
+      (typebootstrap.needsTristatePointer). json.Unmarshal stores nil
+      for missing keys and a non-nil pointer to the explicit value
+      otherwise; digStructField dereferences transparently so chart
+      code keeps reading plain int64 via dig().
+
+      Fixture: weights 70 / 30 / 0 — the third backend MUST NOT
+      appear in the rendered weighted-multi-backend.map.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: app-v1, namespace: default }
+          spec: { ports: [{ name: http, port: 80, targetPort: 8080 }] }
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: app-v2, namespace: default }
+          spec: { ports: [{ name: http, port: 80, targetPort: 8080 }] }
+        - apiVersion: v1
+          kind: Service
+          metadata: { name: app-v3-excluded, namespace: default }
+          spec: { ports: [{ name: http, port: 80, targetPort: 8080 }] }
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: weight-zero-excludes
+            namespace: default
+          spec:
+            parentRefs:
+              - name: gateway
+                namespace: default
+            hostnames:
+              - weight-zero.example.com
+            rules:
+              - matches:
+                  - path: { type: PathPrefix, value: /app }
+                backendRefs:
+                  - name: app-v1
+                    port: 80
+                    weight: 70
+                  - name: app-v2
+                    port: 80
+                    weight: 30
+                  - name: app-v3-excluded
+                    port: 80
+                    weight: 0
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy configuration must be syntactically valid
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "gtw_default_weight-zero-excludes_app-v1_80"
+        description: Backend with weight=70 must appear in the weighted-backend map
+      - type: contains
+        target: map:weighted-multi-backend.map
+        pattern: "gtw_default_weight-zero-excludes_app-v2_80"
+        description: Backend with weight=30 must appear
+      - type: not_contains
+        target: map:weighted-multi-backend.map
+        pattern: "app-v3-excluded"
+        description: |
+          Backend with weight=0 MUST NOT appear (Gateway-API spec:
+          weight=0 means excluded). Before the issue #52 fix the
+          typed struct couldn't distinguish weight=0 from weight
+          unset and a single phantom entry leaked into the map.

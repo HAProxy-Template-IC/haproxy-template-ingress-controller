@@ -83,7 +83,15 @@ func TestWrapInto_RoundTrip(t *testing.T) {
 	require.Equal(t, reflect.Struct, meta.Kind())
 	assert.Equal(t, "public", meta.FieldByName("Name").String())
 	assert.Equal(t, "ingress", meta.FieldByName("Namespace").String())
-	assert.Equal(t, int64(7), meta.FieldByName("Generation").Int())
+	// Generation is *int64 under the issue #52 tristate rules — optional
+	// numeric / bool fields get pointer-wrapped so json.Unmarshal can
+	// distinguish "absent" (nil pointer) from "explicit zero" (non-nil
+	// pointer to 0). The chart never observes the pointer because
+	// digStructField dereferences before returning.
+	genPtr := meta.FieldByName("Generation")
+	require.Equal(t, reflect.Pointer, genPtr.Kind())
+	require.False(t, genPtr.IsNil(), "generation present in fixture must round-trip non-nil")
+	assert.Equal(t, int64(7), genPtr.Elem().Int())
 	labels := meta.FieldByName("Labels")
 	require.Equal(t, reflect.Map, labels.Kind())
 	assert.Equal(t, "platform", labels.MapIndex(reflect.ValueOf("team")).String())
@@ -115,7 +123,13 @@ func TestWrapInto_MissingKeys(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "yes", v.FieldByName("Present").String())
 	assert.Equal(t, "", v.FieldByName("Absent").String())
-	assert.Equal(t, int64(0), v.FieldByName("AbsentInt").Int())
+	// AbsentInt is *int64 (issue #52 tristate). Missing key must
+	// round-trip as a nil pointer — this is the whole point of the
+	// pointer wrapping: it distinguishes "absent" (nil) from
+	// "explicit zero" (non-nil pointer to 0).
+	absentInt := v.FieldByName("AbsentInt")
+	require.Equal(t, reflect.Pointer, absentInt.Kind())
+	assert.True(t, absentInt.IsNil(), "missing optional int field must round-trip as nil pointer, not zero-value pointer")
 }
 
 // TestWrapInto_PreserveUnknownPassThrough is the round-trip equivalent

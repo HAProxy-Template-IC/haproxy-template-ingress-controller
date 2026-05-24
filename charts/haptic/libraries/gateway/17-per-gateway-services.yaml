@@ -40,18 +40,17 @@ templateSnippets:
       {{ render "util-gateway-pod-port-allocator" -}}
       {%- var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback("")) %}
       {%- var podSelector = extraContext | dig("haproxyPodSelector") %}
-      {%- if ctrlNs != "" && podSelector != nil && resources != nil && resources.gateways != nil %}
+      {%- if ctrlNs != "" && podSelector != nil %}
         {%- var allocations map[string]any = coalesce(shared.Get("gatewayPodPortAllocations"), map[string]any{}).(map[string]any) %}
         {%- var gwSvcsRaw, _ = shared.ComputeIfAbsent("gatewayStaticAddressServices", func() any { return map[string]any{} }) %}
         {%- var gwSvcs = gwSvcsRaw.(map[string]any) %}
         {%- for _, gw := range resources.gateways.List() %}
-          {%- var gwNs = ResourceNamespace(gw) %}
-          {%- var gwName = ResourceName(gw) %}
+          {%- var gwNs = gw.Metadata.Namespace %}
+          {%- var gwName = gw.Metadata.Name %}
           {#- Skip when spec.addresses is set — the existing static-
               addresses path emits one Service per IP. Mixing with a
               per-Gateway Service would collide on the Service name. -#}
-          {%- var addrs = dig(gw, "spec", "addresses") | toSlice() %}
-          {%- if len(addrs) == 0 && gwNs != "" && gwName != "" %}
+          {%- if len(gw.Spec.Addresses) == 0 && gwNs != "" && gwName != "" %}
             {%%
               // Walk the Gateway's listeners. The Service must expose
               // EVERY listener port (HTTPS + HTTP + TLS) — the
@@ -72,10 +71,10 @@ templateSnippets:
               var ports = []any{}
               var seenPort = map[int]bool{}
               var hasHTTPS = false
-              for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-                var lName = ListenerName(listener)
-                var lPort = toint(dig(listener, "port") | fallback(0))
-                var lProto = ListenerProtocol(listener)
+              for _, listener := range gw.Spec.Listeners {
+                var lName = listener.Name
+                var lPort = toint(listener.Port)
+                var lProto = listener.Protocol
                 if lName == "" || lPort <= 0 || seenPort[lPort] {
                   continue
                 }

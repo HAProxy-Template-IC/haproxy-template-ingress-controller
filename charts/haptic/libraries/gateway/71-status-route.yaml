@@ -40,7 +40,7 @@ templateSnippets:
         {%- var ourGateways = map[string]bool{} %}
         {%- for _, gw := range resources.gateways.List() %}
           {%%
-            var gwKey = GatewayKey(ResourceNamespace(gw), ResourceName(gw))
+            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
             ourGateways[gwKey] = true
           %%}
         {%- end %}
@@ -122,9 +122,9 @@ templateSnippets:
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
                 var lsObj = resources.listenersets.GetSingle(gwNamespace, gwName)
                 if lsObj != nil {
-                  var lsParentRef = dig(lsObj, "spec", "parentRef")
-                  var pName = tostring(dig(lsParentRef, "name") | fallback(""))
-                  var pNs = tostring(dig(lsParentRef, "namespace") | fallback(gwNamespace))
+                  var pName = lsObj.Spec.ParentRef.Name
+                  var pNs = lsObj.Spec.ParentRef.Namespace
+                  if pNs == "" { pNs = gwNamespace }
                   lsResolvedGw = resources.gateways.GetSingle(pNs, pName)
                 }
               }
@@ -240,19 +240,22 @@ templateSnippets:
                         if ml != nil {
                           var nsObj = resources.namespaces.GetSingle(nsStr)
                           if nsObj != nil {
-                            var nsLabels = dig(nsObj, "metadata", "labels")
-                            if nsLabels != nil {
-                              var labelMap = nsLabels.(map[string]any)
-                              var allMatch = true
-                              for k, v := range ml.(map[string]any) {
-                                var actual, ok = labelMap[k]
-                                if !ok || tostring(actual) != tostring(v) {
-                                  allMatch = false
-                                  break
-                                }
+                            // nsObj is typed *resources.namespaces.T —
+                            // Metadata.Labels is map[string]string
+                            // directly. ml (matchLabels) comes from a
+                            // polymorphic dig on listenerOwner (Gateway
+                            // or ListenerSet), so it remains `any` and
+                            // needs to_str_map normalisation.
+                            var selectorMap = to_str_map(ml)
+                            var allMatch = true
+                            for k, v := range selectorMap {
+                              var actual, ok = nsObj.Metadata.Labels[k]
+                              if !ok || actual != v {
+                                allMatch = false
+                                break
                               }
-                              nsOk = allMatch
                             }
+                            nsOk = allMatch
                           }
                         }
                       }
@@ -448,7 +451,7 @@ templateSnippets:
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, GatewayKey, ListenerProtocolOr -%}
-      {% macro GenerateTLSRouteStatusPatches(routes []any) %}
+      {% macro GenerateTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
         {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
         {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
             was retired and the API server returns 404 on patch attempts to
@@ -460,16 +463,16 @@ templateSnippets:
         {%- var ourGateways = map[string]bool{} %}
         {%- for _, gw := range resources.gateways.List() %}
           {%%
-            var gwKey = GatewayKey(ResourceNamespace(gw), ResourceName(gw))
+            var gwKey = GatewayKey(gw.Metadata.Namespace, gw.Metadata.Name)
             ourGateways[gwKey] = true
           %%}
         {%- end %}
 
         {%- for _, route := range routes %}
           {%%
-            var nsStr = ResourceNamespace(route)
-            var nameStr = ResourceName(route)
-            var generation = dig(route, "metadata", "generation") | fallback(0)
+            var nsStr = route.Metadata.Namespace
+            var nameStr = route.Metadata.Name
+            var generation = route.Metadata.Generation
             var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
 
             // ResolvedRefs computation — fail-fast on first invalid
@@ -478,7 +481,7 @@ templateSnippets:
             var allRefsResolved = true
             var refFailReason = ""
             var refFailMsg = ""
-            for _, rule := range dig(route, "spec", "rules") | toSlice() {
+            for _, rule := range route.Spec.Rules {
               for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
                 var svcName = dig(backendRef, "name") | fallback("") | tostring()
                 var svcNamespace = dig(backendRef, "namespace") | fallback(nsStr) | tostring()
@@ -546,11 +549,11 @@ templateSnippets:
                   // that ProtocolConflict applies to.
                   var portModes = map[int]map[string]bool{}
                   if gw != nil {
-                    for _, l := range dig(gw, "spec", "listeners") | toSlice() {
-                      var lProto = tostring(dig(l, "protocol") | fallback(""))
-                      if lProto == "TLS" {
-                        var lPort = toint(dig(l, "port") | fallback(0))
-                        var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+                    for _, l := range gw.Spec.Listeners {
+                      if l.Protocol == "TLS" {
+                        var lPort = toint(l.Port)
+                        var lMode = l.Tls.Mode
+                        if lMode == "" { lMode = "Terminate" }
                         if portModes[lPort] == nil {
                           portModes[lPort] = map[string]bool{}
                         }
@@ -567,8 +570,8 @@ templateSnippets:
                   var sawKindNs = false
                   var sawHostnameMismatch = false
                   if gw != nil {
-                    for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-                      var listenerName = dig(listener, "name") | fallback("") | tostring()
+                    for _, listener := range gw.Spec.Listeners {
+                      var listenerName = listener.Name
 
                       if sectionNameStr != "" && listenerName != sectionNameStr {
                         continue
@@ -576,7 +579,7 @@ templateSnippets:
                       if sectionNameStr != "" {
                         sawSectionMatch = true
                       }
-                      var listenerPort = toint(dig(listener, "port") | fallback(0))
+                      var listenerPort = toint(listener.Port)
                       if parentPort != 0 && listenerPort != parentPort {
                         continue
                       }
@@ -634,19 +637,22 @@ templateSnippets:
                         if ml != nil {
                           var nsObj = resources.namespaces.GetSingle(nsStr)
                           if nsObj != nil {
-                            var nsLabels = dig(nsObj, "metadata", "labels")
-                            if nsLabels != nil {
-                              var labelMap = nsLabels.(map[string]any)
-                              var allMatch = true
-                              for k, v := range ml.(map[string]any) {
-                                var actual, ok = labelMap[k]
-                                if !ok || tostring(actual) != tostring(v) {
-                                  allMatch = false
-                                  break
-                                }
+                            // nsObj is typed *resources.namespaces.T —
+                            // Metadata.Labels is map[string]string
+                            // directly. ml (matchLabels) comes from a
+                            // polymorphic dig on listenerOwner (Gateway
+                            // or ListenerSet), so it remains `any` and
+                            // needs to_str_map normalisation.
+                            var selectorMap = to_str_map(ml)
+                            var allMatch = true
+                            for k, v := range selectorMap {
+                              var actual, ok = nsObj.Metadata.Labels[k]
+                              if !ok || actual != v {
+                                allMatch = false
+                                break
                               }
-                              nsOk = allMatch
                             }
+                            nsOk = allMatch
                           }
                         }
                       }
@@ -656,7 +662,7 @@ templateSnippets:
                         continue
                       }
 
-                      var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                      var listenerHostname = listener.Hostname
                       if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
                         sawHostnameMismatch = true
                         continue
@@ -767,7 +773,7 @@ templateSnippets:
       -#}
       {%- import "util-generate-tlsroute-status-patches" for GenerateTLSRouteStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedTLSRouteStatusPatches(routes []any) %}
+      {% macro ShardedTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
         {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
         {%- if n <= 1 || len(routes) < 100 -%}
       {{ GenerateTLSRouteStatusPatches(routes) }}

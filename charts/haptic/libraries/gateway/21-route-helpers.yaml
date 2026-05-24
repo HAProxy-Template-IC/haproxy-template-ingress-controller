@@ -172,13 +172,21 @@ templateSnippets:
       {{- transitionTime(dig(resource, "status", "conditions"), conditionType, newStatus) -}}
       {%- end macro -%}
 
+      {#-
+        Listener entries come in as typegen-built structs in production
+        (gateway.Status.Listeners is a typed slice when the Gateway is
+        typed) but as map[string]any in fixture-only test paths. A
+        `.(map[string]any)` assertion would panic on the typed shape —
+        use dig() which handles both via JSON-tag lookup on structs
+        and direct key lookup on maps. Same applies to RouteParentTransitionTime
+        below.
+      -#}
       {%- macro ListenerTransitionTime(gateway any, listenerName string, conditionType string, newStatus string) string -%}
       {%- var listeners = dig(gateway, "status", "listeners") | toSlice() -%}
       {%- var found []any = nil -%}
       {%- for _, l := range listeners -%}
-        {%- var lm = l.(map[string]any) -%}
-        {%- if found == nil && tostring(lm["name"]) == listenerName -%}
-          {%- found = dig(lm, "conditions") | toSlice() -%}
+        {%- if found == nil && tostring(dig(l, "name") | fallback("")) == listenerName -%}
+          {%- found = dig(l, "conditions") | toSlice() -%}
         {%- end -%}
       {%- end -%}
       {{- transitionTime(found, conditionType, newStatus) -}}
@@ -188,8 +196,7 @@ templateSnippets:
       {%- var parents = dig(route, "status", "parents") | toSlice() -%}
       {%- var found []any = nil -%}
       {%- if parentIdx >= 0 && parentIdx < len(parents) -%}
-        {%- var pm = parents[parentIdx].(map[string]any) -%}
-        {%- found = dig(pm, "conditions") | toSlice() -%}
+        {%- found = dig(parents[parentIdx], "conditions") | toSlice() -%}
       {%- end -%}
       {{- transitionTime(found, conditionType, newStatus) -}}
       {%- end macro -%}

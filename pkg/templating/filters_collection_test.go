@@ -199,7 +199,7 @@ func TestScriggoShardSlice(t *testing.T) {
 		items       any
 		shardIndex  int
 		totalShards int
-		want        []any
+		want        any
 	}{
 		{name: "10 items, 3 shards, shard 0 (gets remainder)", items: tenItems, shardIndex: 0, totalShards: 3, want: []any{0, 1, 2, 3}},
 		{name: "10 items, 3 shards, shard 1", items: tenItems, shardIndex: 1, totalShards: 3, want: []any{4, 5, 6}},
@@ -214,7 +214,10 @@ func TestScriggoShardSlice(t *testing.T) {
 		{name: "non-slice items returns empty", items: 42, shardIndex: 0, totalShards: 3, want: []any{}},
 		{name: "more shards than items", items: []any{1, 2}, shardIndex: 0, totalShards: 4, want: []any{1}},
 		{name: "more shards than items, shard beyond", items: []any{1, 2}, shardIndex: 3, totalShards: 4, want: []any{}},
-		{name: "[]string converted via reflection", items: []string{"a", "b", "c", "d"}, shardIndex: 1, totalShards: 2, want: []any{"c", "d"}},
+		// scriggoShardSlice preserves the input slice's element type
+		// (the type-preserving behaviour AdaptiveFunc wraps). For
+		// []string input the result is []string, not []any.
+		{name: "[]string preserves slice element type", items: []string{"a", "b", "c", "d"}, shardIndex: 1, totalShards: 2, want: []string{"c", "d"}},
 	}
 
 	for _, tt := range tests {

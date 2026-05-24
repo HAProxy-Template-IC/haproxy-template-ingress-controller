@@ -184,10 +184,9 @@ templateSnippets:
           if secret == nil {
             continue
           }
-          var secretData = secret | dig("data")
-          var tlsCrtB64 = tostring(secretData | dig("tls.crt") | fallback(""))
-          var tlsKeyB64 = tostring(secretData | dig("tls.key") | fallback(""))
-          if secretData == nil || tlsCrtB64 == "" || tlsKeyB64 == "" {
+          var tlsCrtB64 = secret.Data["tls.crt"]
+          var tlsKeyB64 = secret.Data["tls.key"]
+          if tlsCrtB64 == "" || tlsKeyB64 == "" {
             continue
           }
           // Decode and verify the data really is PEM. The conformance
@@ -315,27 +314,28 @@ templateSnippets:
                 if cm == nil {
                   continue
                 }
-                var data = dig(cm, "data") | fallback(map[string]any{})
-                var dataMap = data.(map[string]any)
-                var caCrt, ok = dataMap["ca.crt"]
-                if ok && tostring(caCrt) != "" {
-                  parts = append(parts, tostring(caCrt))
+                // dig() works against both typed and untyped ConfigMap
+                // shapes. ConfigMap isn't in the offline schema bundle
+                // (only Secrets / Services / EndpointSlices / Ingresses /
+                // Namespaces are), so a typed cm.Data won't compile in
+                // offline test mode; dig() handles both.
+                var caCrt = tostring(dig(cm, "data", "ca.crt") | fallback(""))
+                if caCrt != "" {
+                  parts = append(parts, caCrt)
                 }
               } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
                 var sec = resources.secrets.GetSingle(gwNs, refName)
                 if sec == nil {
                   continue
                 }
-                var data = dig(sec, "data") | fallback(map[string]any{})
-                var dataMap = data.(map[string]any)
                 var b64 = ""
-                var caCrt, ok = dataMap["ca.crt"]
-                if ok && tostring(caCrt) != "" {
-                  b64 = tostring(caCrt)
+                var caCrt, ok = sec.Data["ca.crt"]
+                if ok && caCrt != "" {
+                  b64 = caCrt
                 } else {
-                  var tlsCrt, ok2 = dataMap["tls.crt"]
-                  if ok2 && tostring(tlsCrt) != "" {
-                    b64 = tostring(tlsCrt)
+                  var tlsCrt, ok2 = sec.Data["tls.crt"]
+                  if ok2 && tlsCrt != "" {
+                    b64 = tlsCrt
                   }
                 }
                 if b64 != "" {
@@ -392,16 +392,16 @@ templateSnippets:
             }
           }
           for _, ls := range resources.listenersets.List() {
-            var pRef = dig(ls, "spec", "parentRef")
-            if tostring(dig(pRef, "name") | fallback("")) != gwName {
+            if ls.Spec.ParentRef.Name != gwName {
               continue
             }
-            var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
-            var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+            var lsNs = ls.Metadata.Namespace
+            var pNs = ls.Spec.ParentRef.Namespace
+            if pNs == "" { pNs = lsNs }
             if pNs != gwNs {
               continue
             }
-            var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+            var lsName = ls.Metadata.Name
             var lsKey = lsNs + "/" + lsName
             var permitted = false
             var entryAny, hasEntry = lsStatuses[lsKey]
@@ -411,7 +411,7 @@ templateSnippets:
             if !permitted {
               continue
             }
-            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
+            for _, l := range ls.Spec.Listeners {
               allListeners = append(allListeners, l)
             }
           }
@@ -485,6 +485,69 @@ templateSnippets:
       {%- gf["clientCertVerifyHosts"] = clientCertVerifyHosts %}
       {%- gf["mtlsBlockedListeners"] = mtlsBlockedListeners %}
       {%- gf["gatewayListenerMTLSConfig"] = gatewayListenerMTLSConfig %}
+
+  # ============================================================================
+  # haproxy-service extra ports (gateway / listenerset contribution)
+  # ============================================================================
+  # base.yaml owns the chart's haproxy Service (k8sResources/haproxy-service)
+  # but stays at Level 0 of the library hierarchy — it cannot reference
+  # `resources.gateways` / `resources.listenersets` directly. To add
+  # the non-default listener ports to the Service surface, we populate
+  # `shared.extraServicePorts` here (gateway is Level 2 and has typed
+  # access to its own resources), and base.yaml's haproxy-service
+  # template reads from shared and appends. Gateways with
+  # spec.addresses set get their own dedicated LoadBalancer Service
+  # via the gateway-static-addresses k8sResources template — skip
+  # them here so we don't double-count.
+  features-140-gateway-service-extra-ports:
+    template: |
+      {%%
+        var _, _ = shared.ComputeIfAbsent("extraServicePorts", func() any {
+          var ports = []any{}
+          var seen = map[string]bool{}
+          for _, gw := range resources.gateways.List() {
+            if len(gw.Spec.Addresses) > 0 {
+              continue
+            }
+            for _, listener := range gw.Spec.Listeners {
+              var port = toint(listener.Port)
+              var protocol = listener.Protocol
+              if protocol == "" { protocol = "HTTP" }
+              if port <= 0 { continue }
+              var key = tostring(port) + "-" + toLower(protocol[0:1])
+              if seen[key] { continue }
+              seen[key] = true
+              ports = append(ports, map[string]any{
+                "name":       "gw-" + key,
+                "port":       port,
+                "targetPort": port,
+                "protocol":   "TCP",
+              })
+            }
+          }
+          for _, ls := range resources.listenersets.List() {
+            // Conservative: all declared listenersets contribute their
+            // ports to the Service surface; the routing-layer
+            // admission gate still applies separately.
+            for _, listener := range ls.Spec.Listeners {
+              var port = toint(listener.Port)
+              var protocol = listener.Protocol
+              if protocol == "" { protocol = "HTTP" }
+              if port <= 0 { continue }
+              var key = tostring(port) + "-" + toLower(protocol[0:1])
+              if seen[key] { continue }
+              seen[key] = true
+              ports = append(ports, map[string]any{
+                "name":       "gw-" + key,
+                "port":       port,
+                "targetPort": port,
+                "protocol":   "TCP",
+              })
+            }
+          }
+          return ports
+        })
+      %%}
 
   # ============================================================================
   # Route Analysis (Cached)
@@ -660,32 +723,28 @@ templateSnippets:
         }
       %%}
       {%- end macro %}
-      {%- if resources != nil && resources.gateways != nil %}
       {%- for _, gw := range resources.gateways.List() %}
       {%%
-        var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
-        var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+        var gwNs = gw.Metadata.Namespace
+        var gwName = gw.Metadata.Name
       %%}
-      {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+      {%- for _, listener := range gw.Spec.Listeners %}
       {{ applyListener(gwNs, gwName, listener) }}
       {%- end %}
       {%- end %}
-      {%- end %}
-      {%- if resources != nil && resources.listenersets != nil %}
       {%- for _, ls := range resources.listenersets.List() %}
       {%%
         // ListenerSets attach to a parent Gateway via spec.parentRef.
         // Inherit the parent's namespace + name so mTLS blocking
         // (keyed under the Gateway's identity in
         // features-110-gateway-frontend-mtls) applies consistently.
-        var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
-        var pRef = dig(ls, "spec", "parentRef")
-        var parentName = tostring(dig(pRef, "name") | fallback(""))
-        var parentNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+        var lsNs = ls.Metadata.Namespace
+        var parentName = ls.Spec.ParentRef.Name
+        var parentNs = ls.Spec.ParentRef.Namespace
+        if parentNs == "" { parentNs = lsNs }
       %%}
-      {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
+      {%- for _, listener := range ls.Spec.Listeners %}
       {{ applyListener(parentNs, parentName, listener) }}
-      {%- end %}
       {%- end %}
       {%- end %}
       {#- HTTPRoutes / GRPCRoutes contribute to needHTTPFrontend
@@ -696,22 +755,14 @@ templateSnippets:
           the frontend has to exist whenever at least one route is
           declared. The narrower bindHTTPDefault flag stays gated on
           actual listeners at the chart's default httpPort. -#}
-      {%- if resources != nil %}
-      {%- if resources.httproutes != nil %}
       {%%
         if len(resources.httproutes.List()) > 0 {
           gf["needHTTPFrontend"] = true
         }
-      %%}
-      {%- end %}
-      {%- if resources.grpcroutes != nil %}
-      {%%
         if len(resources.grpcroutes.List()) > 0 {
           gf["needHTTPFrontend"] = true
         }
       %%}
-      {%- end %}
-      {%- end %}
       {#- Ingress contribution: any cert registered via
           features-100-ingress-tls indicates an Ingress with spec.tls,
           which the chart routes through the chart-static https

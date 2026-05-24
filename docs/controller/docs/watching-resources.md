@@ -42,16 +42,18 @@ Use a mix: `store: full` for everything the templates iterate, `store: on-demand
 
 ## Typed Access in Templates
 
-Every entry is exposed to templates **two ways**:
+Every entry is exposed to templates **two equivalent ways** when a schema is loaded for the resource:
 
-1. As a store under `resources.<key>` — `.List()` / `.Fetch(...)` / `.GetSingle(...)` over untyped maps. Works for any watched resource regardless of schema availability.
-2. As a typed top-level global named `<key>` — a slice of the resource's strongly-typed struct, with field access via `.Metadata.Namespace`, `.Spec.X`, etc.
+1. As a store under `resources.<key>` — `.List()`, `.Fetch(...)`, and `.GetSingle(...)` return typed pointers (`[]*resources.<key>.T` / `*resources.<key>.T`).
+2. As a typed top-level global named `<key>` — a typed slice of the same shape (`[]*resources.<key>.T`).
 
-The typed shape comes from the resource's OpenAPI v3 schema. In production the controller fetches schemas live from the kube-apiserver. Offline (`controller validate`), schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`.
+Both surfaces share the same typed pointer; iterating either way yields `*resources.<key>.T` with strongly-typed `.Metadata.Namespace`, `.Spec.X`, etc. Without a schema, both surfaces fall back to `[]any` / `map[string]any` and the chart's `dig()`-based snippets work unchanged.
 
-A misspelled field name in a template fails when the controller boots (or when `validate` runs against a schema-dir), not at the next reconcile.
+The typed shape comes from the resource's OpenAPI v3 schema. In production the controller fetches schemas live from the kube-apiserver. Offline (`controller validate`), schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` directory bundles schemas for the chart's Gateway API CRDs, haptic CRDs, **and** the K8s built-ins it watches (Namespace, Service, Secret, EndpointSlice, Ingress) — `--schema-dir tests/schemas` unlocks typed access for every chart-watched resource.
 
-See [Typed Top-Level Globals](./templating.md#typed-top-level-globals) for the field-name convention, when to prefer typed vs untyped access, and the worked-example snippet.
+A misspelled field name in a template fails when the controller boots (or when `validate` runs against a schema-dir), not at the next reconcile. The `<key>.T` type expression also works in macro signatures, type-switch case clauses (`case *resources.<key>.T`), and slice types for sharded rendering.
+
+See [Typed Resource Access](./templating.md#typed-resource-access) for the field-name convention, type-switch dispatch pattern, when to prefer typed vs untyped access, and the worked-example snippet.
 
 ## Indexing (`indexBy`)
 

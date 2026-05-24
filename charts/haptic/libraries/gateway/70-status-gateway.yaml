@@ -19,7 +19,7 @@ templateSnippets:
       {%- import "util-bounded-k8s-name" for BoundedK8sName -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, ListenerProtocol, ListenerProtocolOr -%}
-      {% macro GenerateGatewayStatusPatches(gateways []any) %}
+      {% macro GenerateGatewayStatusPatches(gateways []*resources.gateways.T) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var rawAddresses = gf["addresses"].([]any) %}
 
@@ -127,24 +127,24 @@ templateSnippets:
               // guard. A TLSRoute parented to a listener whose port
               // mixes Passthrough + Terminate must not count.
               var mixedTLSPorts = map[int]bool{}
-              for _, l := range dig(gw, "spec", "listeners") | toSlice() {
-                var lProto = tostring(dig(l, "protocol") | fallback(""))
-                if lProto == "TLS" {
-                  var lPort = toint(dig(l, "port") | fallback(0))
-                  var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+              for _, l := range gw.Spec.Listeners {
+                if l.Protocol == "TLS" {
+                  var lPort = toint(l.Port)
+                  var lMode = l.Tls.Mode
+                  if lMode == "" { lMode = "Terminate" }
                   if mixedTLSPorts[lPort] {
                     continue
                   }
-                  for _, l2 := range dig(gw, "spec", "listeners") | toSlice() {
-                    var l2Proto = tostring(dig(l2, "protocol") | fallback(""))
-                    if l2Proto != "TLS" {
+                  for _, l2 := range gw.Spec.Listeners {
+                    if l2.Protocol != "TLS" {
                       continue
                     }
-                    var l2Port = toint(dig(l2, "port") | fallback(0))
+                    var l2Port = toint(l2.Port)
                     if l2Port != lPort {
                       continue
                     }
-                    var l2Mode = tostring(dig(l2, "tls", "mode") | fallback("Terminate"))
+                    var l2Mode = l2.Tls.Mode
+                    if l2Mode == "" { l2Mode = "Terminate" }
                     if l2Mode != lMode {
                       mixedTLSPorts[lPort] = true
                       break
@@ -153,8 +153,8 @@ templateSnippets:
                 }
               }
 
-              for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-                var listenerName = dig(listener, "name") | fallback("") | tostring()
+              for _, listener := range gw.Spec.Listeners {
+                var listenerName = listener.Name
 
                 // (2) sectionName filter
                 if section != "" && listenerName != section {
@@ -166,7 +166,7 @@ templateSnippets:
                 //       listeners with the same `spec.port`. Mismatched
                 //       routes get Accepted=False/NoMatchingParent.
                 var parentPort = toint(dig(parentRef, "port") | fallback(0))
-                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var listenerPort = toint(listener.Port)
                 if parentPort != 0 && listenerPort != parentPort {
                   continue
                 }
@@ -231,15 +231,21 @@ templateSnippets:
                   if nsObj == nil {
                     continue
                   }
-                  var nsLabels = dig(nsObj, "metadata", "labels")
+                  var nsLabels = nsObj.Metadata.Labels
                   if nsLabels == nil {
                     continue
                   }
-                  var nsMap = nsLabels.(map[string]any)
+                  // ml is typed map[string]string when listener comes
+                  // from gw.Spec.Listeners (typegen schema declares
+                  // matchLabels as additionalProperties:string),
+                  // map[string]any when listener originates from an
+                  // untyped path. to_str_map normalises both shapes
+                  // so the .([]map[string]any) assertion can't panic.
+                  var selMap = to_str_map(ml)
                   var allMatch = true
-                  for k, v := range ml.(map[string]any) {
-                    var actual, ok = nsMap[k]
-                    if !ok || tostring(actual) != tostring(v) {
+                  for k, v := range selMap {
+                    var actual, ok = nsLabels[k]
+                    if !ok || actual != v {
                       allMatch = false
                       break
                     }
@@ -254,7 +260,7 @@ templateSnippets:
                 }
 
                 // (5) hostname intersection
-                var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                var listenerHostname = listener.Hostname
                 // HostnamesIntersect returns "true"/"false" string —
                 // Scriggo macro return-type constraint, see macro doc.
                 if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
@@ -271,9 +277,9 @@ templateSnippets:
 
         {%- for _, gateway := range gateways %}
           {%%
-            var nsStr = ResourceNamespace(gateway)
-            var nameStr = ResourceName(gateway)
-            var generation = dig(gateway, "metadata", "generation") | fallback(0)
+            var nsStr = gateway.Metadata.Namespace
+            var nameStr = gateway.Metadata.Name
+            var generation = gateway.Metadata.Generation
 
             // SupportGatewayInfrastructurePropagation (Standard channel).
             //
@@ -305,26 +311,21 @@ templateSnippets:
             // library is enabled (templates/clusterrole.yaml), and the
             // resourceapplier accepts cross-namespace SSA without a local
             // gate — RBAC is the sole security boundary.
-            var infra = dig(gateway, "spec", "infrastructure")
+            // gateway is *resources.gateways.T (the macro signature
+            // declares the parameter typed); Spec.Infrastructure is a
+            // typed sub-struct with Labels / Annotations both typed
+            // map[string]string. Direct field access > dig() + shape
+            // normalisation, since the static type system already
+            // knows the shape. Ranging over an absent (nil) typed
+            // map[string]string is a no-op, so the chart doesn't
+            // need the previous `if infra != nil` guard.
             var infraLabels = map[string]any{}
             var infraAnnotations = map[string]any{}
-            if infra != nil {
-              var rawLabels = dig(infra, "labels")
-              if rawLabels != nil {
-                if mLbl, ok := rawLabels.(map[string]any); ok {
-                  for ilK, ilV := range mLbl {
-                    infraLabels[ilK] = tostring(ilV)
-                  }
-                }
-              }
-              var rawAnnotations = dig(infra, "annotations")
-              if rawAnnotations != nil {
-                if mAnn, ok := rawAnnotations.(map[string]any); ok {
-                  for iaK, iaV := range mAnn {
-                    infraAnnotations[iaK] = tostring(iaV)
-                  }
-                }
-              }
+            for ilK, ilV := range gateway.Spec.Infrastructure.Labels {
+              infraLabels[ilK] = ilV
+            }
+            for iaK, iaV := range gateway.Spec.Infrastructure.Annotations {
+              infraAnnotations[iaK] = iaV
             }
             // The gateway-name label is the discovery key the conformance
             // test lists by — it must be present even when the Gateway
@@ -384,7 +385,7 @@ templateSnippets:
             //     are supported AND realized by the LB. Empty when none
             //     are realized; full LB-discovered set when spec.addresses
             //     is unset (no per-Gateway pinning).
-            var gwSpecAddrs []any = dig(gateway, "spec", "addresses") | toSlice()
+            var gwSpecAddrs = gateway.Spec.Addresses
             var gwAcceptedStatus = "True"
             var gwAcceptedReason = "Accepted"
             var gwAcceptedMessage = "Gateway accepted"
@@ -402,8 +403,9 @@ templateSnippets:
               var validIPs = []any{}
               var nonIPCount = 0
               for _, addr := range gwSpecAddrs {
-                var addrType = tostring(dig(addr, "type") | fallback("IPAddress"))
-                var addrValue = tostring(dig(addr, "value") | fallback(""))
+                var addrType = addr.Type
+                if addrType == "" { addrType = "IPAddress" }
+                var addrValue = addr.Value
                 if addrType != "IPAddress" && addrType != "Hostname" && addrType != "NamedAddress" {
                   hasUnsupportedAddrType = true
                   continue
@@ -438,8 +440,8 @@ templateSnippets:
                 if ctrlNs != "" && podSelector != nil {
                   var svcPorts = []any{}
                   var seenPorts = map[int]bool{}
-                  for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-                    var lport = toint(dig(listener, "port") | fallback(0))
+                  for _, listener := range gateway.Spec.Listeners {
+                    var lport = toint(listener.Port)
                     if lport <= 0 || seenPorts[lport] {
                       continue
                     }
@@ -585,9 +587,8 @@ templateSnippets:
             var phase5CtrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
             if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
               var hasHTTPSListener = false
-              for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-                var lProto = ListenerProtocol(listener)
-                if lProto == "HTTPS" {
+              for _, listener := range gateway.Spec.Listeners {
+                if listener.Protocol == "HTTPS" {
                   hasHTTPSListener = true
                   break
                 }
@@ -680,11 +681,11 @@ templateSnippets:
             // SupportTLSRouteModeMixed is experimental and not
             // declared by the chart, so this guard always fires.
             var tlsPortModes = map[int]map[string]bool{}
-            for _, l := range dig(gateway, "spec", "listeners") | toSlice() {
-              var lProto = tostring(dig(l, "protocol") | fallback(""))
-              if lProto == "TLS" {
-                var lPort = toint(dig(l, "port") | fallback(0))
-                var lMode = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+            for _, l := range gateway.Spec.Listeners {
+              if l.Protocol == "TLS" {
+                var lPort = toint(l.Port)
+                var lMode = l.Tls.Mode
+                if lMode == "" { lMode = "Terminate" }
                 if tlsPortModes[lPort] == nil {
                   tlsPortModes[lPort] = map[string]bool{}
                 }
@@ -692,9 +693,10 @@ templateSnippets:
               }
             }
             var listenerData = []any{}
-            for _, listener := range dig(gateway, "spec", "listeners") | toSlice() {
-              var listenerName = dig(listener, "name") | fallback("") | tostring()
-              var protocol = dig(listener, "protocol") | fallback("HTTP") | tostring()
+            for _, listener := range gateway.Spec.Listeners {
+              var listenerName = listener.Name
+              var protocol = listener.Protocol
+              if protocol == "" { protocol = "HTTP" }
 
               // Default kinds the chart's data-plane supports per
               // listener protocol. The conformance suite treats this
@@ -816,9 +818,8 @@ templateSnippets:
                       hasInvalidCertRef = true
                       continue
                     }
-                    var sd = sec | dig("data")
-                    var crtB64 = tostring(sd | dig("tls.crt") | fallback(""))
-                    var keyB64 = tostring(sd | dig("tls.key") | fallback(""))
+                    var crtB64 = sec.Data["tls.crt"]
+                    var keyB64 = sec.Data["tls.key"]
                     if crtB64 == "" || keyB64 == "" {
                       hasInvalidCertRef = true
                     } else {
@@ -854,7 +855,7 @@ templateSnippets:
               var listenerAcceptedReason = "Accepted"
               var listenerAcceptedMessage = "Listener accepted"
               if protocol == "HTTPS" && resolvedRefsStatus == "True" {
-                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var listenerPort = toint(listener.Port)
                 var feValidation any = nil
                 var fe = dig(gateway, "spec", "tls", "frontend")
                 if fe != nil {
@@ -917,10 +918,13 @@ templateSnippets:
                           sawInvalidCARef = true
                           continue
                         }
-                        var data = dig(cm, "data") | fallback(map[string]any{})
-                        var dataMap = data.(map[string]any)
-                        var caCrt, ok = dataMap["ca.crt"]
-                        if !ok || tostring(caCrt) == "" {
+                        // dig() handles both typed map[string]string
+                        // (production with ConfigMap schema) and untyped
+                        // map[string]any (offline tests — ConfigMap not in
+                        // tests/schemas/). The previous .(map[string]any)
+                        // cast panicked on the typed shape.
+                        var caCrt = tostring(dig(cm, "data", "ca.crt") | fallback(""))
+                        if caCrt == "" {
                           sawInvalidCARef = true
                           continue
                         }
@@ -931,10 +935,10 @@ templateSnippets:
                           sawInvalidCARef = true
                           continue
                         }
-                        var data = dig(sec, "data") | fallback(map[string]any{})
-                        var dataMap = data.(map[string]any)
-                        var caCrt, ok = dataMap["ca.crt"]
-                        if !ok || tostring(caCrt) == "" {
+                        // sec is typed *resources.secrets.T —
+                        // sec.Data is map[string]string directly.
+                        var caCrt, ok = sec.Data["ca.crt"]
+                        if !ok || caCrt == "" {
                           sawInvalidCARef = true
                           continue
                         }
@@ -1010,7 +1014,7 @@ templateSnippets:
               // supportedKinds — it can't accept routes of any kind, so
               // reporting [TLSRoute] would be misleading.
               if protocol == "TLS" {
-                var listenerPort = toint(dig(listener, "port") | fallback(0))
+                var listenerPort = toint(listener.Port)
                 var pm = tlsPortModes[listenerPort]
                 if pm != nil && pm["Passthrough"] && pm["Terminate"] {
                   listenerAcceptedStatus = "False"
@@ -1202,11 +1206,11 @@ templateSnippets:
                   gwResolvedRefsReason = "InvalidClientCertificateRef"
                   gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " not found"
                 } else {
-                  var ccData = dig(ccSec, "data") | fallback(map[string]any{})
-                  var ccDataMap = ccData.(map[string]any)
-                  var ccCrt, hasCrt = ccDataMap["tls.crt"]
-                  var ccKey, hasKey = ccDataMap["tls.key"]
-                  if !hasCrt || !hasKey || tostring(ccCrt) == "" || tostring(ccKey) == "" {
+                  // ccSec is typed *resources.secrets.T — ccSec.Data is
+                  // map[string]string directly.
+                  var ccCrt, hasCrt = ccSec.Data["tls.crt"]
+                  var ccKey, hasKey = ccSec.Data["tls.key"]
+                  if !hasCrt || !hasKey || ccCrt == "" || ccKey == "" {
                     gwResolvedRefsStatus = "False"
                     gwResolvedRefsReason = "InvalidClientCertificateRef"
                     gwResolvedRefsMessage = "Backend clientCertificateRef Secret " + ccNs + "/" + ccName + " missing tls.crt or tls.key"
@@ -1299,12 +1303,12 @@ templateSnippets:
             }
             var attachedLSCount = 0
             for _, ls := range resources.listenersets.List() {
-              var pRef = dig(ls, "spec", "parentRef")
-              if tostring(dig(pRef, "name") | fallback("")) != nameStr {
+              if ls.Spec.ParentRef.Name != nameStr {
                 continue
               }
-              var lsNs = ResourceNamespace(ls)
-              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+              var lsNs = ls.Metadata.Namespace
+              var pNs = ls.Spec.ParentRef.Namespace
+              if pNs == "" { pNs = lsNs }
               if pNs != nsStr {
                 continue
               }
@@ -1325,9 +1329,9 @@ templateSnippets:
               // only when at least one entry is `accepted=true` (i.e.
               // not in conflict and not invalid). LSes with no cache
               // entry fall through to attached (cache miss = optimistic).
-              var lsName = ResourceName(ls)
+              var lsName = ls.Metadata.Name
               var lsKey = lsNs + "/" + lsName
-              var listenersTotal = len(toSlice(dig(ls, "spec", "listeners") | fallback([]any{})))
+              var listenersTotal = len(ls.Spec.Listeners)
               if listenersTotal == 0 {
                 continue
               }
@@ -1506,7 +1510,7 @@ templateSnippets:
       -#}
       {%- import "util-generate-gateway-status-patches" for GenerateGatewayStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedGatewayStatusPatches(gateways []any) %}
+      {% macro ShardedGatewayStatusPatches(gateways []*resources.gateways.T) %}
         {%- var n = toint(CalculateShardCount(len(gateways), 100)) -%}
         {%- if n <= 1 || len(gateways) < 100 -%}
       {{ GenerateGatewayStatusPatches(gateways) }}
@@ -1544,11 +1548,16 @@ templateSnippets:
           {{- ShardedGatewayStatusPatches(allGateways) -}}
         {%- end -%}
       {%- end %}
-      {%- var allHTTPRoutes = resources.httproutes.List() -%}
+      {#- ShardedRouteStatusPatches is polymorphic over route Kinds
+          (HTTPRoute, GRPCRoute) so its parameter stays []any.
+          Callers explicitly drop the typed-slice shape via toSlice()
+          here — the alternative would be splitting the macro per
+          Kind, which doesn't carry its weight for two callers. -#}
+      {%- var allHTTPRoutes = resources.httproutes.List() | toSlice() -%}
       {%- if len(allHTTPRoutes) > 0 -%}
         {{- ShardedRouteStatusPatches(allHTTPRoutes, "gateway.networking.k8s.io/v1", "HTTPRoute") -}}
       {%- end -%}
-      {%- var allGRPCRoutes = resources.grpcroutes.List() -%}
+      {%- var allGRPCRoutes = resources.grpcroutes.List() | toSlice() -%}
       {%- if len(allGRPCRoutes) > 0 -%}
         {{- ShardedRouteStatusPatches(allGRPCRoutes, "gateway.networking.k8s.io/v1", "GRPCRoute") -}}
       {%- end -%}
@@ -1628,15 +1637,15 @@ templateSnippets:
       %%}
       {%- for _, ls := range resources.listenersets.List() %}
         {%%
-          var lsNs = ResourceNamespace(ls)
-          var lsName = ResourceName(ls)
+          var lsNs = ls.Metadata.Namespace
+          var lsName = ls.Metadata.Name
           var lsKey = lsNs + "/" + lsName
-          var lsGen = dig(ls, "metadata", "generation") | fallback(0)
+          var lsGen = ls.Metadata.Generation
 
           // Resolve parent Gateway via spec.parentRef.
-          var parentRef = dig(ls, "spec", "parentRef")
-          var parentName = tostring(dig(parentRef, "name") | fallback(""))
-          var parentNs = tostring(dig(parentRef, "namespace") | fallback(lsNs))
+          var parentName = ls.Spec.ParentRef.Name
+          var parentNs = ls.Spec.ParentRef.Namespace
+          if parentNs == "" { parentNs = lsNs }
           var parentGw = resources.gateways.GetSingle(parentNs, parentName)
 
           var lsAccepted = "False"
@@ -1853,9 +1862,8 @@ templateSnippets:
                       refsOk = false
                       continue
                     }
-                    var sd = dig(sec, "data")
-                    var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
-                    var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
+                    var crtB64 = sec.Data["tls.crt"]
+                    var keyB64 = sec.Data["tls.key"]
                     if crtB64 == "" || keyB64 == "" {
                       refsOk = false
                       continue
@@ -2034,9 +2042,8 @@ templateSnippets:
                     hasInvalidCertRef = true
                     continue
                   }
-                  var sd = dig(sec, "data")
-                  var crtB64 = tostring(dig(sd, "tls.crt") | fallback(""))
-                  var keyB64 = tostring(dig(sd, "tls.key") | fallback(""))
+                  var crtB64 = sec.Data["tls.crt"]
+                  var keyB64 = sec.Data["tls.key"]
                   if crtB64 == "" || keyB64 == "" {
                     hasInvalidCertRef = true
                   } else {

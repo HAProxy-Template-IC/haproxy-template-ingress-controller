@@ -48,7 +48,7 @@ import (
 // site that did that previously had to be updated independently
 // when the contract grew (Phase 4 added currentConfig; Phase
 // 10–11 added typed globals); the helper bundles both.
-func BuildAdditionalDeclarations(_ *config.Config, result *typebootstrap.Result) map[string]any {
+func BuildAdditionalDeclarations(cfg *config.Config, result *typebootstrap.Result) map[string]any {
 	if result == nil {
 		panic("helpers: BuildAdditionalDeclarations requires non-nil Result " +
 			"— see the doc comment for why envelope-only fallback was removed")
@@ -56,7 +56,28 @@ func BuildAdditionalDeclarations(_ *config.Config, result *typebootstrap.Result)
 	decls := map[string]any{
 		"currentConfig": (*parserconfig.StructuredConfig)(nil),
 	}
-	for name, decl := range typebootstrap.BuildEngineDeclarations(result) {
+	// Surface every watched resource as a field on the `resources`
+	// declared struct, even ones typebootstrap had no schema for
+	// (core K8s types fetched without a CRD-style OpenAPI schema in
+	// the offline path). The engine-declared shape must match what
+	// rendercontext's addTypedResources populates at render time —
+	// any missing field would surface as a runtime "wrong type"
+	// error on bind. We pass them through as `extraResourceNames`;
+	// BuildEngineDeclarations falls them back to the untyped store
+	// shape (List/Fetch/GetSingle returning any / []any).
+	var extras []string
+	if cfg != nil {
+		for name := range cfg.WatchedResources {
+			if _, typed := result.Types[name]; typed {
+				continue
+			}
+			if _, failed := result.Errors[name]; failed {
+				continue
+			}
+			extras = append(extras, name)
+		}
+	}
+	for name, decl := range typebootstrap.BuildEngineDeclarations(result, extras...) {
 		decls[name] = decl
 	}
 	return decls

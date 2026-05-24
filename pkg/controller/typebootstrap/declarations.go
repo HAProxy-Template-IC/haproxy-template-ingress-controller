@@ -15,63 +15,209 @@
 package typebootstrap
 
 import (
+	"fmt"
 	"reflect"
+	"sort"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
 )
+
+// anyType is the canonical reflect.Type for an empty interface. Used
+// as the slice element / return type for watched resources whose
+// schema bootstrap failed — chart code still gets the same
+// `.List() / .GetSingle() / .Fetch()` shape, but the elements are
+// untyped `any` values that need `dig()` for navigation.
+var anyType = reflect.TypeOf((*any)(nil)).Elem()
+
+// keysArgType is the variadic `...any` parameter type used by Fetch
+// and GetSingle. Built once and reused by every per-resource func
+// type below.
+var keysArgType = reflect.SliceOf(anyType)
 
 // BuildEngineDeclarations turns a Bootstrap [Result] into the
 // `additionalDeclarations map[string]any` shape that
 // templating.NewScriggoWithDeclarations expects.
 //
-// The package-doc convention for typed runtime variables is a
-// typed-nil pointer (see pkg/templating/globals.go's buildScriggoGlobals
-// where every runtime variable like pathResolver, fileRegistry, etc.
-// is declared as `(*T)(nil)`). Scriggo reads the *type* off that nil
-// pointer at compile time and pairs it with the actual value the
-// caller passes via the render context. We follow the same pattern
-// for typed-watched-resource globals — there's a slice of pointers
-// to the generated type per watched resource, declared as
-// (*[]*Generated)(nil) here, populated by the StoreWrapper at render
-// time (Phase 5, not built yet).
+// The contract is a single top-level global named "resources" whose
+// type is a dynamically-built struct ([reflect.StructOf]). The outer
+// struct has one field per watched resource; each inner field is
+// itself a struct holding the chart-facing access surface:
 //
-// The slice-of-pointers shape mirrors what
-// pkg/k8s/typegen.WrapSlice produces from the StoreWrapper's
-// snapshot. Keeping the declared shape in lockstep with the
-// runtime-produced shape is what lets templates write
+//	resources struct {
+//	    Gateways *gatewayStore `json:"gateways"`
+//	    HTTPRoutes *httpRouteStore `json:"httproutes"`
+//	    ...
+//	}
 //
-//	{%- for _, gw := range resources.gateways.List() %}
-//	  {{ gw.Metadata.Namespace }}
-//	{%- end %}
+//	gatewayStore struct {
+//	    List      func() []*Gateway
+//	    Fetch     func(keys ...any) []*Gateway
+//	    GetSingle func(keys ...any) *Gateway
+//	}
 //
-// against the typed view.
+// Chart templates reach the typed-iteration path via
+// `resources.gateways.List()` and the indexed-lookup paths via
+// `resources.gateways.GetSingle(ns, name)` /
+// `resources.gateways.Fetch(...)`. The return values are typed
+// `*Gateway` / `[]*Gateway`, so Scriggo's type-checker validates
+// field access (`gw.Metadata.Namespace`) at engine boot.
 //
-// Resources that failed bootstrap (present in result.Errors but
-// absent from result.Types) are skipped — they fall back to the
-// generic `resources["<name>"]` map-based access that the existing
-// ResourceStore interface already provides. The chart still renders
-// for those; the typed shortcut just isn't available.
+// Resources whose schema didn't resolve (entry in [Result.Errors])
+// still get an inner store struct, with the same field names, but
+// the closure return types collapse to `[]any` / `any`. Chart code
+// reaches them with identical syntax — just no compile-time field
+// validation on the element shape.
 //
-// The returned map can be merged with other domain-specific
-// declarations by the caller before being handed to the engine.
-// Bootstrap doesn't claim ownership of the whole declarations map
-// — it only contributes its own typed-resource entries.
-func BuildEngineDeclarations(result *Result) map[string]any {
-	if result == nil {
+// The closure VALUES live in rendercontext: typebootstrap only
+// declares the *types*. Scriggo's typed-nil-pointer declaration
+// pattern (the outer `(*Resources)(nil)` here) carries the type
+// through engine compilation; the runtime binding fills in the
+// closures per render.
+//
+// Field naming: outer Go field name = PascalCase of the resource
+// key (`gateways` → `Gateways`); json tag = the lower-case wire-form
+// resource name, so the chart can write `resources.gateways` and
+// have the Scriggo json-tag selector fallback route the lowercase
+// access to the PascalCase field. Inner field names are
+// `List` / `Fetch` / `GetSingle` (no json tag — chart writes
+// PascalCase directly).
+//
+// `extraResourceNames` carries the watched-resource names that are
+// NOT in result.Types or result.Errors — typically core Kubernetes
+// types (Service, Secret, ConfigMap, Pod) for which the controller
+// has no typegen-derived schema available, but the chart still
+// watches them and templates still reach `resources.<name>`. These
+// names get untyped struct fields so the engine-declared shape stays
+// in lockstep with the runtime-populated value built by
+// rendercontext.
+//
+// Resources are listed in sorted order so the struct layout is
+// deterministic across boots.
+//
+// Returns a map with one entry keyed "resources". Empty input (no
+// watched resources at all) yields an empty map; callers should
+// merge without special-casing.
+func BuildEngineDeclarations(result *Result, extraResourceNames ...string) map[string]any {
+	seen := make(map[string]struct{})
+	if result != nil {
+		for name := range result.Types {
+			seen[name] = struct{}{}
+		}
+		for name := range result.Errors {
+			seen[name] = struct{}{}
+		}
+	}
+	for _, name := range extraResourceNames {
+		seen[name] = struct{}{}
+	}
+	if len(seen) == 0 {
 		return map[string]any{}
 	}
-	out := make(map[string]any, len(result.Types))
-	for name, t := range result.Types {
-		// Declared shape: *[]*Generated.
-		//   Outer *  — Scriggo's typed-nil-pointer convention for
-		//              runtime variables (see globals.go).
-		//   []*     — slice of pointers-to-Generated; what
-		//              WrapSlice produces at snapshot-load time.
-		//   *Gen    — pointer-to-Generated so range loops can
-		//              dot-access fields via field promotion;
-		//              templates write `gw.Metadata.Name` directly
-		//              without dereference syntax.
-		sliceType := reflect.SliceOf(reflect.PointerTo(t))
-		ptrType := reflect.PointerTo(sliceType)
-		out[name] = reflect.Zero(ptrType).Interface()
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
 	}
-	return out
+	sort.Strings(names)
+
+	fields := make([]reflect.StructField, 0, len(names))
+	for _, name := range names {
+		var elemType reflect.Type
+		if result != nil {
+			elemType = result.Types[name]
+		}
+		innerType := buildPerResourceStoreType(elemType)
+		fields = append(fields, reflect.StructField{
+			Name: typegen.GoFieldName(name),
+			Type: reflect.PointerTo(innerType),
+			Tag:  reflect.StructTag(fmt.Sprintf(`json:%q`, name)),
+		})
+	}
+
+	resourcesType := reflect.StructOf(fields)
+	// Per-resource types are reachable from chart macros via the
+	// selector-chain-as-type Scriggo extension:
+	//
+	//	{% macro Foo(g *resources.gateways.T) string %} ... {% end %}
+	//
+	// The `T` field on each store struct (see buildPerResourceStoreType)
+	// carries the resource's generated value type. Scriggo lifts the
+	// field's static type when the selector appears in a type-expression
+	// position. This keeps the type namespace localised under
+	// `resources` — no top-level type-name pollution.
+	return map[string]any{
+		"resources": reflect.Zero(reflect.PointerTo(resourcesType)).Interface(),
+	}
+}
+
+// BuildPerResourceStoreType is the exported entry point
+// rendercontext uses to build the same per-resource store struct
+// shape declared here. Keeping this in one place ensures the
+// engine-declared type and the render-time value type match
+// byte-for-byte (different types of the same shape compare unequal
+// to reflect, so any drift would surface as "wrong type" errors at
+// template bind time).
+//
+// When `elemType` is non-nil, the store struct's methods are typed
+// for `*elemType`. When nil, they fall back to untyped `any` /
+// `[]any` — used for watched resources whose schema bootstrap
+// failed.
+func BuildPerResourceStoreType(elemType reflect.Type) reflect.Type {
+	return buildPerResourceStoreType(elemType)
+}
+
+func buildPerResourceStoreType(elemType reflect.Type) reflect.Type {
+	var (
+		listReturn      reflect.Type
+		fetchReturn     reflect.Type
+		getSingleReturn reflect.Type
+		tFieldType      reflect.Type
+	)
+	if elemType != nil {
+		elemPtr := reflect.PointerTo(elemType)
+		listReturn = reflect.SliceOf(elemPtr)
+		fetchReturn = reflect.SliceOf(elemPtr)
+		getSingleReturn = elemPtr
+		// `T` carries the resource's generated value type so chart
+		// authors can reference it in macro signatures via the
+		// selector-chain-as-type Scriggo extension:
+		//
+		//	{% macro Foo(g *resources.gateways.T) %}{{ g.Metadata.Name }}{% end %}
+		//
+		// The field's RUNTIME value is the zero value of the type —
+		// never read at render time, only its static type matters.
+		// Per-render memory cost: ~size-of-Resource per watched
+		// resource (a few hundred bytes for typical K8s shapes;
+		// ~3 KB total for the chart's 12-ish typed resources).
+		tFieldType = elemType
+	} else {
+		listReturn = reflect.SliceOf(anyType)
+		fetchReturn = reflect.SliceOf(anyType)
+		getSingleReturn = anyType
+		// Resources without a schema still get a `T` field for
+		// uniformity, typed as `any`. Chart code that reaches for
+		// `*resources.<noSchema>.T` gets `*any` (pointer to
+		// interface), which Scriggo accepts but field access on it
+		// requires dig() — same degraded experience as the rest of
+		// the untyped fallback path.
+		tFieldType = anyType
+	}
+
+	listFunc := reflect.FuncOf(nil, []reflect.Type{listReturn}, false)
+	keysVariadic := reflect.FuncOf(
+		[]reflect.Type{keysArgType},
+		[]reflect.Type{fetchReturn},
+		true,
+	)
+	getSingleVariadic := reflect.FuncOf(
+		[]reflect.Type{keysArgType},
+		[]reflect.Type{getSingleReturn},
+		true,
+	)
+
+	return reflect.StructOf([]reflect.StructField{
+		{Name: "T", Type: tFieldType},
+		{Name: "List", Type: listFunc},
+		{Name: "Fetch", Type: keysVariadic},
+		{Name: "GetSingle", Type: getSingleVariadic},
+	})
 }

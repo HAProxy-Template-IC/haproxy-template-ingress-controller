@@ -217,11 +217,12 @@ Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are r
 version):
 
 ```scriggo
-{#- ingress.yaml or haproxytech.yaml (resource-specific):
-    extract the annotation safely with dig + fallback (ingress is `any`),
-    compute the per-pod value, and stash it on the per-server `serverOpts`
-    map that base.yaml hands every snippet. -#}
-{%- var podMaxconn = ingress | dig("metadata", "annotations", "haproxy.org/pod-maxconn") | fallback("") | tostring() %}
+{#- ingress.yaml or haproxytech.yaml (resource-specific): typed access when
+    the macro parameter is typed (`ingress *resources.ingresses.T`), or
+    dig + fallback when ingress arrived as `any` (polymorphic boundary).
+    Stash the per-pod value on the `serverOpts` map base.yaml hands every
+    snippet. -#}
+{%- var podMaxconn = ingress.Metadata.Annotations["haproxy.org/pod-maxconn"] | fallback("") | tostring() %}
 {%- if podMaxconn != "" %}
   {%- var perPod = calculate_per_pod_value(podMaxconn) %}
   {% serverOpts["podMaxconnValue"] = perPod -%}
@@ -239,9 +240,13 @@ version):
 Notes for readers coming from Jinja: Scriggo declares with `{% var %}`
 (or `:=`), terminates blocks with `{% end %}` (no `{% endif %}` /
 `{% endfor %}`), and has no `is defined` — use the Go `value, ok :=` idiom
-or `dig | fallback` for safe map access. Resource objects (`ingress`,
-`route`, …) come in as `any`, so reach into them with `dig(...)` rather than
-direct field access.
+or `dig | fallback` for safe map access. Resource objects arrive as
+typed pointers (`*resources.ingresses.T`, `*resources.httproutes.T`, …)
+when a schema is loaded for the kind; in that case use dot-field access
+(`ingress.Metadata.Annotations[...]`). Resources still come in as `any`
+at polymorphic boundaries (untyped macro parameter, `routeInfo["route"]`,
+`shared.Get(...)` returns); in those spots reach for `dig(...)` instead.
+See the "Typed Resource Access" section below for the full pattern set.
 
 **Why This Matters**: This separation allows Gateway API and Ingress resources to coexist without base.yaml needing to know which resource type it's processing. Resource-specific logic stays in resource-specific libraries.
 
@@ -631,20 +636,61 @@ templateSnippets:
       {%- endfor %}
 ```
 
-### Typed Top-Level Globals (Tier-2 typed-watched-resources)
+### Typed Resource Access (Tier-2 typed-watched-resources)
 
-Every `watchedResources` entry is **also** exposed to templates as a typed top-level global with the same name as the key. The typed global is a slice of the resource's strongly-typed struct produced by `pkg/k8s/typegen` from the resource's OpenAPI v3 schema. Field access is direct — no `dig()` needed:
+When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper *and* the typed top-level global named `<name>` return typed pointers. Field access is direct — no `dig()` needed:
 
 ```scriggo
-{#- Typed access — gw is *Gateway; fields resolve at engine compile time -#}
+{#- Either surface yields *resources.gateways.T; identical behaviour -#}
+{%- for _, gw := range resources.gateways.List() %}
+  # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}: {{ len(gw.Spec.Listeners) }} listeners
+{%- end %}
+
 {%- if gateways != nil %}
   {%- for _, gw := range gateways %}
-    # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}: {{ len(gw.Spec.Listeners) }} listeners
+    # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
   {%- end %}
 {%- end %}
 ```
 
-The `gateways != nil` guard is defensive: the engine always declares the typed global, but the runtime binding only fires when a store is registered (skipped in offline-validate paths that don't pre-register stores for some kinds).
+The `gateways != nil` guard on the top-level global is defensive: the engine always declares it, but the runtime binding only fires when a store is registered (skipped in offline-validate paths that don't pre-register stores for some kinds). The store wrapper (`resources.gateways.List()`) doesn't need the guard — it returns an empty typed slice when the store is absent.
+
+**Typed return types from store methods** (when a schema is loaded):
+
+| Call | Return type |
+|------|-------------|
+| `resources.<name>.List()` | `[]*resources.<name>.T` |
+| `resources.<name>.Fetch(keys...)` | `[]*resources.<name>.T` |
+| `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
+
+Without a schema, the same calls fall back to `[]any` / `map[string]any` as before.
+
+**`<name>.T` as a type expression.** It's usable in every type-expression position the Scriggo fork supports: macro parameters, var declarations, type assertions, slice types, and type-switch case clauses. This is what lets the chart's libraries push typed access end-to-end.
+
+```scriggo
+{#- Macro parameter typed against one kind -#}
+{% macro RenderGateway(gw *resources.gateways.T) %}
+  # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
+{% end %}
+
+{#- Type-switch dispatch at a polymorphic any boundary
+   (this is the canonical pattern — used in
+   `libraries/gateway/60-frontend.yaml` for HTTPRoute/GRPCRoute/TLSRoute) -#}
+{%- switch r := routeInfo["route"].(type) %}
+{%- case *resources.httproutes.T %}
+  # r is statically *resources.httproutes.T here
+  # {{ r.Metadata.Name }}: {{ len(r.Spec.Rules) }} rules
+{%- case *resources.grpcroutes.T %}
+  # {{ r.Metadata.Name }} (gRPC)
+{%- case *resources.tlsroutes.T %}
+  # {{ r.Metadata.Name }} (TLS passthrough)
+{%- end %}
+
+{#- Slice type for sharded parallel rendering -#}
+{% var shard []*resources.gateways.T = shard_slice(allGateways, i, n) %}
+```
+
+**`shard_slice` is type-preserving.** It's declared as an AdaptiveFunc — the static return type at each call site matches the input element type. `shard_slice([]*resources.gateways.T, i, n)` returns `[]*resources.gateways.T`, not `[]any`, so the downstream loop variable stays statically typed.
 
 **Field-name convention.** Go-PascalCase of the JSON tag, NO acronym preservation:
 
@@ -654,22 +700,37 @@ The `gateways != nil` guard is defensive: the engine always declares the typed g
 | `apiVersion`           | `ApiVersion`       |
 | `tls`                  | `Tls`              |
 | `ingressClassName`     | `IngressClassName` |
+| `matchLabels`          | `MatchLabels`      |
+| `clusterIP`            | `ClusterIp`        |
+| `loadBalancerIP`       | `LoadBalancerIp`   |
 | `kubernetes.io/foo`    | `Kubernetes_io_foo` (non-letter/digit → `_`) |
 
 The rule is canonicalised in `pkg/k8s/typegen/converter.go::goFieldName`. Templates write `gw.ApiVersion`, not `gw.APIVersion`. The reason for no acronym dictionary is in [ADR-0010](../docs/adr/0010-typed-watched-resources.md).
 
-**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end and is the regression canary for typed access generally — if it goes red, the offline validate path has drifted from the production renderer.
+**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end and is the regression canary for typed access generally — if it goes red, the offline validate path has drifted from the production renderer. For the polymorphic-dispatch pattern, see `libraries/gateway/60-frontend.yaml`'s route-emission switch.
 
 **Schema source.**
 
 - **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, K8s core resources via the apiserver's OpenAPI v3 endpoint.
-- **Offline (`controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` is the canonical bundle covering the chart's bundled libraries (Gateway API CRDs + haptic CRDs); the test script auto-wires it. Without `--schema-dir`, no resources receive typed support — the chart validates entirely through the untyped `resources["<name>"]` path; templates that reach for typed access fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
+- **Offline (`controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from `--schema-dir` / `HAPTIC_SCHEMA_DIR`. The repo's `tests/schemas/` is the canonical bundle covering both the Gateway API CRDs + haptic CRDs **and** the K8s built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress); all are CRD-wrapped so the offline GVK resolver picks up the (apiVersion, plural) mapping. The test script auto-wires it. `controller validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource — not just the CRDs. To refresh the bundle from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (`kubectl get --raw '/openapi/v3/...'` → `$ref`-inlined CRD-wrapped YAML). Without `--schema-dir`, no resources receive typed support — chart code that uses only `resources["<name>"]` / `dig()` validates fine; templates that reach for typed access fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
 
-**When to use which** (cross-references the same guidance in [`docs/controller/docs/templating.md`](../docs/controller/docs/templating.md#typed-top-level-globals)):
+**When to use which** (cross-references the same guidance in [`docs/controller/docs/templating.md`](../docs/controller/docs/templating.md#typed-resource-access)):
 
-- **Use typed globals** for new chart code that iterates resources of one type, and any code where compile-time field validation is worth the small Scriggo type-inference cost.
-- **Stick with `resources.X.List()` / `.Fetch()` / `.GetSingle()`** when feeding into helper macros typed as `any`, when navigating across multiple resource types via shared `dig()` patterns, or when needing `Fetch(...)` / `GetSingle(...)` index-keyed lookups (the typed slice exposes only iteration).
-- **`dig()` continues to work** on both typed structs and untyped maps. Mixing approaches (some snippets typed, some not) is the expected adoption pattern.
+- **Inside typed scopes** (typed for-range, typed macro parameter, type-switch case branch), use dot-field access (`gw.Metadata.Name`, `svc.Spec.Ports[i].Port`) — no `dig()`, no `tostring()`, no `fallback()` on already-typed primitives.
+- **Macros that take a single Kind** should use typed parameters: `(gws []*resources.gateways.T)`, `(ingresses []*resources.ingresses.T)`, `(route *resources.httproutes.T)`.
+- **Polymorphic macros** that handle multiple Kinds keep `[]any` parameters; consumers add `| toSlice()` at the call site if passing a typed slice.
+- **Reach for `dig()` only at genuine polymorphic boundaries.** The remaining call sites in the chart are: `routeInfo["route"]` (type-switch dispatch entry), `shared.Get(...)` returns, ConfigMap (no schema bundled), `listenerOwner any` (Gateway-or-ListenerSet shape), `allowedSelector` (polymorphic matchLabels). New `dig()` usage should be questioned at review.
+- **`dig()` continues to work** on both typed structs and untyped maps; mixing approaches across snippets is the expected adoption pattern.
+- **Optional fields normalise to nil.** A typegen-produced struct field whose schema entry is *not* in the OpenAPI `required` list carries a `json:"…,omitempty"` tag; `dig()` returns nil for such fields when the value is the type's zero value (`""`, `0`, `false`, empty slice). This makes the universal `dig(obj, "field") | fallback(default)` chart pattern behave identically across typed and untyped shapes — without it, an unpopulated optional string would return `""` (not nil), `fallback()` would skip, and downstream key composition would silently produce malformed strings. Required fields keep their zero values intact. Pinned by `TestDigContract_TypedPointer_NestedTLSCertificateRefs/absent_optional_field_normalised_to_nil`.
+
+**`to_str_map(value)` filter for label / matchLabels / annotation maps.** Typegen produces label / matchLabels / annotation fields as `map[string]string` (matching the K8s OpenAPI schema), while the untyped store path produces `map[string]any`. The `to_str_map(value)` filter normalises any string-keyed map (`map[string]string`, `map[string]any`, or a generic `map[string]<T>`) into a uniform `map[string]string` for template iteration; non-string values from a `map[string]any` input are coerced via `tostring()`. Use it instead of `.(map[string]any)` assertions on label-shaped fields — those panic against typed `map[string]string` from typegen.
+
+```scriggo
+{#- Works against both typed and untyped shapes -#}
+{%- for k, v := range route.Metadata.Labels | to_str_map() %}
+  # {{ k }}={{ v }}
+{%- end %}
+```
 
 ### Implementing Extension Points
 
@@ -1322,10 +1383,12 @@ Scriggo supports both function call syntax and pipe syntax:
 | `b64decode(s)` | Decode base64 | `b64decode("SGVsbG8=")` → `"Hello"` |
 | `keys(m)` | Sorted map keys | `keys(config)` → `[]string` |
 | `merge(m1, m2)` | Merge maps | `merge(base, overrides)` |
-| `dig(obj, keys...)` | Navigate nested maps | `dig(obj, "meta", "name")` |
+| `dig(obj, keys...)` | Navigate nested maps **and** typed structs (via JSON-tag → Go-field lookup); optional `omitempty` fields with zero values normalise to nil | `dig(obj, "meta", "name")` |
 | `fallback(v, default)` | Return default if nil | `fallback(obj.field, "")` |
 | `append(slice, item)` | Append to slice | `append(items, newItem)` |
 | `toSlice(v)` | Convert to []any | `toSlice(maybeNil)` |
+| `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) into `map[string]string` — use on labels / matchLabels / annotations | `route.Metadata.Labels \| to_str_map()` |
+| `shard_slice(items, idx, n)` | Type-preserving slice shard for parallel rendering (AdaptiveFunc; return element type matches input) | `shard_slice([]*resources.gateways.T, i, n)` |
 | `sort_by(slice, criteria)` | Sort by JSONPath | See sorting section |
 | `glob_match(names, pattern)` | Filter by glob | `glob_match(templates, "backend-*")` |
 | `first_seen(prefix, keys...)` | Deduplication helper | See deduplication section |
@@ -1500,10 +1563,10 @@ Your order has been shipped.
 
 ### Type Assertions
 
-When working with `interface{}` (any) values, you need type assertions to access fields or use type-specific operations:
+When working with `interface{}` (any) values, you need type assertions to access fields or use type-specific operations. **Note:** for watched-resource values the chart's preferred shape is typed access (`*resources.<name>.T`) — see the "Typed Resource Access" section above. The assertions below apply to genuinely-polymorphic values (`shared.Get(...)`, `globalFeatures[...]`, `routeInfo["route"]`, ConfigMap, etc.). For label / matchLabels / annotation values use `| to_str_map()` instead of `.(map[string]any)` — typegen builds those as `map[string]string`, which a `map[string]any` assertion would panic on.
 
 ```scriggo
-{#- Type assertions #}
+{#- Type assertions on genuinely-polymorphic values #}
 {%- var name = value.(string) %}
 {%- var items = value.([]any) %}
 {%- var config = value.(map[string]any) %}
@@ -1512,6 +1575,11 @@ When working with `interface{}` (any) values, you need type assertions to access
 {%- var name, ok = value.(string) %}
 {%- if ok %}
   {{ name }}
+{%- end %}
+
+{#- Typed pointer assertion at a polymorphic boundary -#}
+{%- if gw, ok := listenerOwner.(*resources.gateways.T); ok %}
+  # {{ gw.Metadata.Name }}
 {%- end %}
 ```
 

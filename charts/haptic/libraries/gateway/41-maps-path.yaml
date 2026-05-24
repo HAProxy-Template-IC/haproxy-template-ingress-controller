@@ -8,18 +8,18 @@ templateSnippets:
         This is the inner macro used by sharding.
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
-      {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups map[string]any, pathType string, suffix string) string %}
+      {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups any, pathType string, suffix string) string %}
       {%- for _, routeInfo := range sortedRoutes %}
         {%- var riHostname = routeInfo["hostname"] %}
-        {%- var riPath map[string]any = routeInfo["path"] %}
-        {%- var riPath_type = riPath["type"] %}
-        {%- var riPathValue = riPath["value"] %}
+        {%- var riPath any = routeInfo["path"] %}
+        {%- var riPath_type = tostring(riPath | dig("type")) %}
+        {%- var riPathValue = tostring(riPath | dig("value")) %}
         {%- var pathKey = riHostname + "|" + riPath_type + "|" + riPathValue %}
         {%- if first_seen("gateway_pathMap_" + pathType + suffix, pathKey) %}
-          {%- var routes []any = pathGroups[pathKey] %}
-          {%- var firstRoute map[string]any = routes[0] %}
-          {%- var frPath map[string]any = firstRoute["path"] %}
-          {%- var frPath_type = frPath["type"] %}
+          {%- var routes []any = pathGroups | dig(pathKey) | toSlice() %}
+          {%- var firstRoute any = routes[0] %}
+          {%- var frPath any = firstRoute | dig("path") %}
+          {%- var frPath_type = frPath | dig("type") %}
         {%- if frPath != nil && frPath_type == pathType %}
           {%- var routeIds = []any{} %}
           {%- for _, r := range routes %}
@@ -27,8 +27,8 @@ templateSnippets:
             {%- routeIds = append(routeIds, rid) %}
           {%- end %}
           {%- var routeIds_str = join(routeIds, "__") -%}
-          {%- var frHostname = firstRoute["hostname"] %}
-          {%- var frPath_val string = tostring(frPath["value"]) %}
+          {%- var frHostname = firstRoute | dig("hostname") %}
+          {%- var frPath_val string = tostring(frPath | dig("value")) %}
           {#- Skip the catch-all `/` entry only for PathPrefix routes —
               an Exact `/` route must still emit, otherwise requests
               to the bare root are unroutable. PathPrefix `/` matches
@@ -41,7 +41,7 @@ templateSnippets:
           {%- if suffix == "" && frPath_val == "/" && pathType == "PathPrefix" %}
             {%- continue %}
           {%- end %}
-          {%- var frResourceType = firstRoute["resource_type"] %}
+          {%- var frResourceType = firstRoute | dig("resource_type") %}
           {%- var routeTypeShort = frResourceType | replace("httproute", "http") | replace("grpcroute", "grpc") %}
           {%- var pathSuffix = suffix %}
           {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
@@ -70,7 +70,7 @@ templateSnippets:
 
       {%- var gatewayAnalysis = shared.Get("gatewayAnalysis").(map[string]any) %}
       {%- var sortedRoutes []any = gatewayAnalysis["sortedRoutes"] %}
-      {%- var pathGroups map[string]any = gatewayAnalysis["pathGroups"] %}
+      {%- var pathGroups any = gatewayAnalysis["pathGroups"] %}
 
       {%- var n = toint(CalculateShardCount(len(sortedRoutes), 100)) -%}
       {%- if n <= 1 || len(sortedRoutes) < 100 -%}
@@ -101,7 +101,20 @@ templateSnippets:
       {%- var backendRefs_slice = backendRefs | toSlice() %}
       {%- var firstBackend = backendRefs_slice[0] %}
       {%- var backend = map[string]any{"name": firstBackend | dig("name") | fallback(""), "port": firstBackend | dig("port") | fallback(80)} %}
-      {%- var matches []any = rule | dig("matches") | coalesce([]any{map[string]any{}}) %}
+      {#- Normalize typed slices via toSlice() before assigning to
+          `[]any`. dig() on a typed pointer returns the typed sub-
+          slice (e.g. `[]struct{...HTTPRouteMatch...}`); coalesce()
+          preserves it as `any`; assigning that to `[]any` fails
+          Scriggo's type conversion. toSlice() forces a reflection
+          copy into a fresh `[]any`. Then the empty-list case
+          synthesises the chart's "no matches → PathPrefix /"
+          default behaviour, which used to fall out of coalesce()
+          but no longer does because dig() never returns nil for
+          typed slices (it returns an empty typed slice). -#}
+      {%- var matches []any = rule | dig("matches") | toSlice() %}
+      {%- if len(matches) == 0 %}
+        {%- matches = []any{map[string]any{}} %}
+      {%- end %}
       {%- for _, match := range matches %}
       {%- var matchPath_type = match | dig("path", "type") | fallback("") %}
       {%- var matchPathValue = match | dig("path", "value") | fallback("/") %}
@@ -167,4 +180,4 @@ templateSnippets:
       {#- Generate regex path map entries for HTTPRoute with RegularExpression type -#}
       {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}
       # gateway/map-path-regex-gateway
-      {{ ShardedPathRegexMap(resources.httproutes.List()) }}
+      {{ ShardedPathRegexMap(resources.httproutes.List() | toSlice()) }}

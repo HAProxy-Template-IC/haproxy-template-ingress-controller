@@ -203,8 +203,10 @@ The most commonly needed helpers when writing HAPTIC templates. All can be calle
 | Helper | Purpose | Example |
 |--------|---------|---------|
 | `fallback(value, default)` | Return `default` if `value` is nil / empty / zero | `fallback(svc.port.number, 80)` |
-| `dig(obj, "k1", "k2", ...)` | Walk a nested map without nil-checking each level | `dig(ing, "metadata", "annotations")` |
+| `dig(obj, "k1", "k2", ...)` | Walk a nested map / typed struct without nil-checking each level (navigates JSON tags on typed structs) | `dig(ing, "metadata", "annotations")` |
 | `toSlice(v)` | Coerce `any` to `[]any` (safe to range over even if nil) | `for _, r := range toSlice(ing.spec.rules)` |
+| `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) to `map[string]string` — use on labels / matchLabels / annotations | `for k, v := range route.Metadata.Labels \| to_str_map()` |
+| `shard_slice(items, idx, n)` | Type-preserving split of a slice into `n` shards, returning shard `idx` — input element type is kept | `shard_slice(gateways, i, totalShards)` |
 | `tostring(v)`, `toint(v)`, `tofloat(v)` | Type conversions from `any` | `port = toint(annotation)` |
 | `len(v)` | Length of slice / map / string | `len(ing.spec.rules)` |
 | `keys(m)` | Sorted keys of a map | `for _, k := range keys(annotations)` |
@@ -312,50 +314,86 @@ Templates access watched resources through the `resources` variable. Each store 
 {% var secret = resources.secrets.GetSingle("default", "my-secret") %}
 ```
 
-### Typed Top-Level Globals
+### Typed Resource Access
 
-Every watched resource is **also** exposed as a typed top-level global with the same name as the `watchedResources` key. The typed global is a slice of the resource's strongly-typed struct, so field access is done directly:
+When a schema is loaded for a watched resource (live in production, or via `--schema-dir` offline), both the `resources.<name>` store wrapper **and** a top-level global named `<name>` return typed pointers instead of `map[string]any`. Field access goes through the strongly-typed struct, so a misspelled field is a compile-time error rather than a silently-`nil` `dig()`.
 
 ```go
 {# Typed access — fields resolve at engine compile time #}
-{%- for _, gw := range gateways %}
+{%- for _, gw := range resources.gateways.List() %}
   # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}: {{ len(gw.Spec.Listeners) }} listeners
 {%- end %}
 
-{# Equivalent untyped access via the resources map #}
-{%- for _, gw := range resources.gateways.List() %}
-  # {{ dig(gw, "metadata", "namespace") }}/{{ dig(gw, "metadata", "name") }}: ...
+{# Identical behaviour via the typed top-level global #}
+{%- for _, gw := range gateways %}
+  # {{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
 {%- end %}
 ```
 
-**Why typed access:** a misspelled field name (`gw.Metadata.Naamespace`) fails when the controller boots, not at the next reconcile against a live cluster. Cross-field-type bugs surface at template-compile time. `dig()` continues to navigate typed structs by JSON tag, so existing untyped code keeps working unchanged.
+**Typed return types.** With a schema loaded, every store method returns typed pointers:
 
-**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation:
+| Call | Return type |
+|------|-------------|
+| `resources.<name>.List()` | `[]*resources.<name>.T` |
+| `resources.<name>.Fetch(keys...)` | `[]*resources.<name>.T` |
+| `resources.<name>.GetSingle(keys...)` | `*resources.<name>.T` (nil if not found) |
 
-| JSON tag (source YAML)   | Typed field        |
-|--------------------------|--------------------|
-| `metadata`               | `Metadata`         |
-| `spec`                   | `Spec`             |
-| `apiVersion`             | `ApiVersion`       |
-| `tls`                    | `Tls`              |
-| `ingressClassName`       | `IngressClassName` |
+Without a schema (e.g. `controller validate` without `--schema-dir`), the same calls fall back to `[]any` / `map[string]any` exactly as before. The chart's `dig()`-based snippets work in either mode.
+
+**`<name>.T` is a usable type expression.** Macros, var declarations, type assertions, slice types, and type-switch case clauses all accept it:
+
+```go
+{# Macro parameter typed against one kind #}
+{% macro RenderGateway(gw *resources.gateways.T) %}
+  # gw.Metadata.Name is statically typed here
+  # {{ gw.Metadata.Name }}
+{% end %}
+
+{# Type-switch dispatch across multiple kinds (polymorphic `any` boundary) #}
+{%- switch r := routeInfo["route"].(type) %}
+{%- case *resources.httproutes.T %}
+  # r is statically *resources.httproutes.T inside this branch
+  # {{ r.Metadata.Name }}: {{ len(r.Spec.Rules) }} rules
+{%- case *resources.grpcroutes.T %}
+  # {{ r.Metadata.Name }} (gRPC)
+{%- case *resources.tlsroutes.T %}
+  # {{ r.Metadata.Name }} (TLS passthrough)
+{%- end %}
+
+{# Slice type for sharded parallel rendering #}
+{% var shard []*resources.gateways.T = shard_slice(allGateways, i, n) %}
+```
+
+The type-switch case-clause form is the canonical pattern for chart code that crosses a polymorphic `any` boundary — the chart's `gateway` library uses it inside `60-frontend.yaml` to dispatch on HTTPRoute / GRPCRoute / TLSRoute. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
+
+**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. The rule lives in `pkg/k8s/typegen/converter.go::goFieldName` and matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`, `LoadBalancerIP`) — those don't apply here.
+
+| JSON tag (source YAML)   | Typed field          |
+|--------------------------|----------------------|
+| `metadata`               | `Metadata`           |
+| `spec`                   | `Spec`               |
+| `apiVersion`             | `ApiVersion`         |
+| `tls`                    | `Tls`                |
+| `ingressClassName`       | `IngressClassName`   |
+| `matchLabels`            | `MatchLabels`        |
+| `clusterIP`              | `ClusterIp`          |
+| `loadBalancerIP`         | `LoadBalancerIp`     |
 | `kubernetes.io/foo`      | `Kubernetes_io_foo` (non-letter/digit → `_`) |
 
-The acronym rule is deliberate: there is no acronym dictionary to keep in sync. Templates write `gw.ApiVersion`, not `gw.APIVersion`.
+The no-acronym-dictionary choice is deliberate: there is no translation table to keep in sync. Templates write `gw.ApiVersion`, not `gw.APIVersion`.
 
-**Schema source.** Typed globals are generated from each resource's OpenAPI v3 schema:
+**Inside a typed scope** (typed for-range, typed macro parameter, type-switch case branch) use direct field access — no `dig()`, no `tostring()`, no `fallback()` on already-typed primitives. Reach for `dig()` only at genuine polymorphic boundaries (a `routeInfo["route"]` switch entry, an `any` macro parameter, a `shared.Get(...)` return, a ConfigMap with no schema bundled, a `listenerOwner` that may be a Gateway or a ListenerSet, etc.). Mixed-shape chart code — some snippets typed, some not — is the expected adoption pattern, and `dig()` navigates typed structs by JSON tag, so a snippet ported one at a time keeps working without churning its callers.
+
+**Optional fields normalise to nil through `dig()`.** A typegen-produced struct field whose schema entry is *not* in the OpenAPI `required` list carries a `json:"…,omitempty"` tag; `dig()` returns nil when such a field's value is the type's zero value (`""`, `0`, `false`, empty slice). The universal `dig(obj, "field") | fallback(default)` chart pattern therefore behaves identically across typed and untyped shapes — without the normalisation, an unpopulated optional string would return `""`, `fallback()` would skip, and downstream key composition would silently produce malformed strings. Required fields keep their zero values intact.
+
+**Schema source.** Typed shapes are generated from each resource's OpenAPI v3 schema:
 
 - **Production:** the controller fetches schemas live from the kube-apiserver — CRDs via their embedded `openAPIV3Schema`, K8s core resources via the apiserver's OpenAPI v3 endpoint.
-- **Offline (`controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 spec.Schema files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support and the chart validates entirely through the untyped `resources["<name>"]` path; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
+- **Offline (`controller validate` / chart `validationTests` / `scripts/test-templates.sh`):** schemas come from a directory passed via `--schema-dir` (or `HAPTIC_SCHEMA_DIR` env var). The directory accepts full CRD YAMLs (`kubectl get crd X -o yaml` output) and bare OpenAPI v3 spec.Schema files with an `x-kubernetes-group-version-kind` extension. Without `--schema-dir`, no resources receive typed support; templates that reach for typed access in that case fail at engine compile time with a clear "no schema for X" pointer back to `--schema-dir`.
 
-This repo's `tests/schemas/` is the canonical bundle that covers the chart's bundled libraries (Gateway API CRDs + haptic CRDs). The chart-test script auto-wires it; copy it into your own project's schema-dir if your config uses the bundled libraries.
+This repo's `tests/schemas/` bundles schemas for both the Gateway API CRDs / haptic CRDs *and* the K8s built-ins the chart watches (Namespace, Service, Secret, EndpointSlice, Ingress). All built-ins are CRD-wrapped so the offline GVK resolver picks up the (apiVersion, plural) mapping — `controller validate --schema-dir tests/schemas` therefore unlocks typed access for every chart-watched resource, not just the CRDs. The chart-test script auto-wires this directory; copy it into your own project's schema-dir if you reuse the bundled libraries. To refresh from a running cluster, run `scripts/fetch-k8s-openapi-schemas.sh` (queries `kubectl get --raw '/openapi/v3/...'`, inlines `$ref`s, emits CRD-wrapped YAML).
 
-**When to use which:**
-
-- **Use typed globals** for new chart code that iterates resources of one type, and any code where compile-time field validation is worth the small Scriggo type-inference cost.
-- **Stick with `resources.X.List()` / `.Fetch()` / `.GetSingle()`** when feeding into helper macros typed as `any`, when navigating across multiple resource types via shared `dig()` patterns, or when needing `Fetch(...)` / `GetSingle(...)` index-keyed lookups (the typed slice exposes only iteration).
-
-**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output), and acts as a regression canary for typed access generally.
+**Worked example.** `charts/haptic/libraries/gateway/05-typed-access-smoke.yaml` is the canonical single-snippet example — emits one HAProxy comment per Gateway using `gw.Metadata.Namespace` / `gw.Metadata.Name`. Its companion test `test-gateway-typed-access-smoke` pins the wiring end-to-end (engine declarations + runtime bindings + actual render output) and acts as a regression canary for typed access generally.
 
 See also: [ADR-0010 — Typed Watched Resources](../../adr/0010-typed-watched-resources.md) for the design rationale and the alternatives considered.
 

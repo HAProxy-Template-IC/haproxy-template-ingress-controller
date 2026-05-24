@@ -375,9 +375,9 @@ templateSnippets:
             resolvedPort = portNumber
             var svc = resources.services.GetSingle(namespace, serviceName)
             if svc != nil {
-              for _, sp := range svc | dig("spec", "ports") | toSlice() {
-                if toint(sp | dig("port") | fallback(0)) == portNumber {
-                  resolvedName = tostring(sp | dig("name") | fallback(""))
+              for _, sp := range svc.Spec.Ports {
+                if toint(sp.Port) == portNumber {
+                  resolvedName = sp.Name
                   break
                 }
               }
@@ -391,9 +391,9 @@ templateSnippets:
                 " not found (needed to resolve port name '" + portName + "')")
             }
             var found = false
-            for _, sp := range svc | dig("spec", "ports") | toSlice() {
-              if tostring(sp | dig("name") | fallback("")) == portName {
-                resolvedPort = toint(sp | dig("port") | fallback(0))
+            for _, sp := range svc.Spec.Ports {
+              if sp.Name == portName {
+                resolvedPort = toint(sp.Port)
                 resolvedName = portName
                 found = true
                 break
@@ -403,9 +403,9 @@ templateSnippets:
               // Build a list of the Service's actual port names so the operator
               // can spot typos at a glance in the controller logs.
               var available = []any{}
-              for _, sp := range svc | dig("spec", "ports") | toSlice() {
-                available = append(available, tostring(sp | dig("name") | fallback("")) +
-                  "(" + tostring(toint(sp | dig("port") | fallback(0))) + ")")
+              for _, sp := range svc.Spec.Ports {
+                available = append(available, sp.Name +
+                  "(" + tostring(toint(sp.Port)) + ")")
               }
               fail("ResolveServicePort: Service " + namespace + "/" + serviceName +
                 " has no port named '" + portName + "' (available: [" +
@@ -500,9 +500,9 @@ templateSnippets:
             if namespace != "" {
               var svc = resources.services.GetSingle(namespace, serviceName)
               if svc != nil {
-                for _, sp := range svc | dig("spec", "ports") | toSlice() {
-                  if toint(sp | dig("port") | fallback(0)) == port {
-                    pn = tostring(sp | dig("name") | fallback(""))
+                for _, sp := range svc.Spec.Ports {
+                  if toint(sp.Port) == port {
+                    pn = sp.Name
                     break
                   }
                 }
@@ -514,28 +514,31 @@ templateSnippets:
           var endpoints = []any{}
           for _, slice := range allSlices {
             // Resolve pod port from EndpointSlice's ports array
-            var slicePorts = slice | dig("ports") | toSlice()
+            var slicePorts = slice.Ports
             var resolvedPort = port  // Default: use service port
 
             if pn != "" {
               // Look up port by name
               for _, p := range slicePorts {
-                if tostring(p | dig("name") | fallback("")) == pn {
-                  resolvedPort = toint(p | dig("port") | fallback(port))
+                if p.Name == pn {
+                  resolvedPort = toint(p.Port)
+                  if resolvedPort == 0 { resolvedPort = port }
                   break
                 }
               }
             } else if len(slicePorts) == 1 {
               // Single port case: use it directly (common scenario)
-              resolvedPort = toint(slicePorts[0] | dig("port") | fallback(port))
+              resolvedPort = toint(slicePorts[0].Port)
+              if resolvedPort == 0 { resolvedPort = port }
             }
             // Note: If multiple ports exist but no name available,
             // we use the service port as fallback.
 
             // Collect addresses from this slice
-            for _, ep := range slice | dig("endpoints") | toSlice() {
-              for _, addr := range ep | dig("addresses") | toSlice() {
-                var name = ep | dig("targetRef", "name") | fallback(addr)
+            for _, ep := range slice.Endpoints {
+              for _, addr := range ep.Addresses {
+                var name = ep.TargetRef.Name
+                if name == "" { name = addr }
                 endpoints = append(endpoints, map[string]any{
                   "name": name, "address": addr, "port": resolvedPort,
                 })
@@ -654,27 +657,24 @@ templateSnippets:
         var addresses []any
         var seen = map[string]bool{}
         for _, svc := range resources.controller_services.List() {
-          var lbIngress = dig(svc, "status", "loadBalancer", "ingress")
-          if lbIngress != nil {
-            // Extract only ip/hostname to avoid SSA schema errors from
-            // fields like ipMode that may not exist in target resource schemas
-            for _, entry := range toSlice(lbIngress) {
-              var clean = map[string]any{}
-              var ip = dig(entry, "ip") | fallback("")
-              var hostname = dig(entry, "hostname") | fallback("")
-              if tostring(ip) != "" {
-                clean["ip"] = ip
-              }
-              if tostring(hostname) != "" {
-                clean["hostname"] = hostname
-              }
-              if len(clean) > 0 {
-                // Deduplicate by ip or hostname across services
-                var key = tostring(ip) + "/" + tostring(hostname)
-                if !seen[key] {
-                  seen[key] = true
-                  addresses = append(addresses, clean)
-                }
+          // Extract only ip/hostname to avoid SSA schema errors from
+          // fields like ipMode that may not exist in target resource schemas
+          for _, entry := range svc.Status.LoadBalancer.Ingress {
+            var clean = map[string]any{}
+            var ip = entry.Ip
+            var hostname = entry.Hostname
+            if ip != "" {
+              clean["ip"] = ip
+            }
+            if hostname != "" {
+              clean["hostname"] = hostname
+            }
+            if len(clean) > 0 {
+              // Deduplicate by ip or hostname across services
+              var key = ip + "/" + hostname
+              if !seen[key] {
+                seen[key] = true
+                addresses = append(addresses, clean)
               }
             }
           }
@@ -689,9 +689,7 @@ templateSnippets:
         // IPs in the same status block.
         if len(addresses) == 0 {
           for _, svc := range resources.controller_services.List() {
-            var clusterIPs = dig(svc, "spec", "clusterIPs") | toSlice()
-            for _, ip := range clusterIPs {
-              var ipStr = tostring(ip)
+            for _, ipStr := range svc.Spec.ClusterIPs {
               // "None" is a sentinel for headless services and is
               // never a routable IP. Skip empty values too.
               if ipStr != "" && ipStr != "None" {
@@ -1109,77 +1107,36 @@ k8sResources:
           ports = append(ports, built)
         }
 
-        // Dynamic gw-<port>-<proto> entries: mirror the deleted
-        // features-090-gateway-listener-ports-service snippet, but
-        // emit the entries directly into the Service we own rather
-        // than as a partial-SSA patch onto a chart-managed object.
-        // Skip ports already in the static set so they don't
-        // collide. Skip Gateways with spec.addresses set — those
-        // get their own dedicated LoadBalancer Service via the
-        // gateway-static-addresses k8sResources template.
-        var seen = map[string]bool{}
+        // Dynamic extra ports — extension point for higher-level
+        // libraries (gateway, ingress, …) to contribute ports
+        // discovered from their own watched resources. Each
+        // contributing library populates
+        // `shared.extraServicePorts` (a list of {name, port,
+        // targetPort, protocol} maps) from its own haproxyConfig
+        // render path; base.yaml merges them in here, skipping any
+        // port already claimed by the static set so collisions
+        // don't surface. shared.Get is used (not gf) because k8sResources
+        // templates render in their own context and don't bind gf
+        // locally — shared.Get is uniformly available on every
+        // render path. Absent value (no contributors) → toSlice
+        // returns []any{}, the loop is a no-op, base.yaml stays
+        // at Level 0 of the library hierarchy.
+        var extraPorts = shared.Get("extraServicePorts") | toSlice()
       %%}
-      {%- if resources != nil && resources.gateways != nil %}
-      {%- for _, gw := range resources.gateways.List() %}
+      {%- for _, extraPort := range extraPorts %}
       {%%
-        var gwAddrs = dig(gw, "spec", "addresses") | toSlice()
-        if len(gwAddrs) > 0 {
+        var port = toint(dig(extraPort, "port") | fallback(0))
+        if port <= 0 || seenPorts[port] {
           continue
         }
-        for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-          var port = toint(dig(listener, "port") | fallback(0))
-          var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
-          if port <= 0 || seenPorts[port] {
-            continue
-          }
-          var key = tostring(port) + "-" + toLower(protocol[0:1])
-          if seen[key] {
-            continue
-          }
-          seen[key] = true
-          seenPorts[port] = true
-          ports = append(ports, map[string]any{
-            "name":       "gw-" + key,
-            "port":       port,
-            "targetPort": port,
-            "protocol":   "TCP",
-          })
-        }
+        seenPorts[port] = true
+        ports = append(ports, map[string]any{
+          "name":       tostring(dig(extraPort, "name") | fallback("")),
+          "port":       port,
+          "targetPort": toint(dig(extraPort, "targetPort") | fallback(port)),
+          "protocol":   tostring(dig(extraPort, "protocol") | fallback("TCP")),
+        })
       %%}
-      {%- if resources.listenersets != nil %}
-      {%- for _, ls := range resources.listenersets.List() %}
-      {%%
-        // Conservative: we don't re-import the listenerset admission
-        // gate here (would add a knowledge dependency from base on
-        // gateway). All declared listenersets contribute their ports
-        // to the Service surface; the admission decision still
-        // applies at the routing layer. A future refactor can plumb
-        // the admitted set through extraContext for stricter gating.
-        var lsParents = dig(ls, "spec", "parentRef") | toSlice()
-        _ = lsParents
-        for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-          var port = toint(dig(listener, "port") | fallback(0))
-          var protocol = tostring(dig(listener, "protocol") | fallback("HTTP"))
-          if port <= 0 || seenPorts[port] {
-            continue
-          }
-          var key = tostring(port) + "-" + toLower(protocol[0:1])
-          if seen[key] {
-            continue
-          }
-          seen[key] = true
-          seenPorts[port] = true
-          ports = append(ports, map[string]any{
-            "name":       "gw-" + key,
-            "port":       port,
-            "targetPort": port,
-            "protocol":   "TCP",
-          })
-        }
-      %%}
-      {%- end %}
-      {%- end %}
-      {%- end %}
       {%- end %}
       {%%
         var labels = svcMap | dig("labels") | fallback(map[string]any{})

@@ -6,7 +6,9 @@ Accepted. Implementation: Tier-2 typed-watched-resources work merged in
 `feat: typed watched resources — Tier 2 (full stack)`
 (commit `17777895`); embedded-builtins offline source removed by
 `chore: drop builtin schemas, require --schema-dir for offline typed access`
-(this ADR).
+(this ADR). Typed-pointer return shape, type-switch case clauses, and
+K8s-built-in schemas added in the `investigate/dig-typed-pointer-contract`
+branch — see "Update 2026-05" below.
 
 ## Context
 
@@ -102,6 +104,8 @@ non-letter/digit characters mapped to `_`.
 | `apiVersion`           | `ApiVersion`       |
 | `tls`                  | `Tls`              |
 | `ingressClassName`     | `IngressClassName` |
+| `clusterIP`            | `ClusterIp`        |
+| `loadBalancerIP`       | `LoadBalancerIp`   |
 | `kubernetes.io/foo`    | `Kubernetes_io_foo` |
 
 No acronym dictionary is deliberate. K8s API conventions name things
@@ -110,6 +114,73 @@ maintaining a dictionary that mirrors the upstream conventions for
 every release is a cost we don't want to pay. The cost on the chart
 side is one extra rule for template authors to internalise; the win is
 zero ongoing maintenance.
+
+### Update 2026-05: typed pointers throughout, type-switch dispatch, K8s-built-ins schemas
+
+The original Decision section described the typed top-level global as
+the primary surface, with the untyped `resources["<name>"]` path kept
+for helper-macro compatibility. Subsequent work extended the typed
+surface end-to-end:
+
+- **`resources.<name>.List()` / `.Fetch(...)` / `.GetSingle(...)` now
+  return typed pointers when a schema is loaded** — `[]*resources.<name>.T`
+  for List/Fetch, `*resources.<name>.T` (or nil) for GetSingle. The
+  typed top-level global and the store wrapper expose the same typed
+  pointer; chart authors can call whichever API ergonomically fits the
+  surrounding code. Without a schema, both surfaces fall back to
+  `[]any` / `map[string]any` as before.
+- **`resources.<name>.T` is a usable type expression everywhere**:
+  macro parameters (`(gw *resources.gateways.T)`), var declarations,
+  type assertions, slice types (`[]*resources.gateways.T`), and
+  type-switch case clauses (`case *resources.httproutes.T`). The
+  case-clause form is the canonical pattern for chart code that
+  crosses a polymorphic `any` boundary — e.g. dispatching on
+  `routeInfo["route"]` to switch between HTTPRoute / GRPCRoute /
+  TLSRoute branches with statically-typed `r` inside each case.
+- **`shard_slice` is now an AdaptiveFunc** — the static return type at
+  each call site matches the input element type. Sharded parallel
+  rendering preserves typed access through the shard call.
+- **`tests/schemas/` now bundles schemas for K8s built-ins**
+  (Namespace, Service, Secret, EndpointSlice, Ingress) in addition to
+  the Gateway API + haptic CRDs. All are CRD-wrapped so the offline
+  GVK resolver picks up the (apiVersion, plural) mapping. The
+  `scripts/fetch-k8s-openapi-schemas.sh` helper refreshes them from a
+  running kind cluster via `kubectl get --raw '/openapi/v3/...'`. This
+  is what makes `controller validate --schema-dir tests/schemas`
+  unlock typed access for every chart-watched resource, not just the
+  Gateway API path. `.gitignore` no longer excludes `tests/schemas/`
+  — the directory is tracked.
+- **`dig()` was extended to navigate typed structs in all the cases
+  required by chart-side mixed-shape code**: the fast-path map
+  traversal falls through to a reflect-based path when an
+  intermediate value is a typed struct (root cause of the chart's
+  "empty backend name" bug before the fix); a generic
+  string-keyed-map fallback handles `map[string][]any` /
+  `map[string]int` / etc.; optional fields (`,omitempty`) with zero
+  values return nil so the universal `dig(...) | fallback(default)`
+  pattern behaves identically on typed and untyped shapes.
+- **`to_str_map(value)` filter** normalises any string-keyed map (the
+  typed `map[string]string` from typegen, the untyped `map[string]any`
+  from the store path, or a generic `map[string]<T>`) into a uniform
+  `map[string]string` for template iteration. This replaces ad-hoc
+  `.(map[string]any)` assertions on label / matchLabels / annotation
+  values, which panicked once typegen built those fields as
+  `map[string]string` matching the K8s OpenAPI schema.
+
+The Scriggo fork side carries the matching language extensions:
+selector-chain-as-type (`x.T` resolves to its value's static type in
+type-expression position, MR !91 in the scriggo fork), type-switch
+case-clause selector chains (`case *resources.<X>.T`, MR !96), and
+AdaptiveFunc native declarations for per-call-site return types.
+
+Net effect: the chart's libraries can now be expressed in
+end-to-end typed form. `dig()` stays first-class for genuine
+polymorphic boundaries — the `routeInfo["route"]` type-switch entry,
+`shared.Get(...)` returns, ConfigMaps without a bundled schema, the
+`listenerOwner` union (Gateway-or-ListenerSet), polymorphic
+`allowedSelector` matchLabels — but no longer carries the chart
+through field-by-field traversal of resources it already has typed
+access to.
 
 ## Alternatives considered
 
@@ -251,9 +322,9 @@ helper macros over `any`. Forced cutover doesn't carry its weight
 
 ## Related
 
-- `docs/controller/docs/templating.md#typed-top-level-globals` —
+- `docs/controller/docs/templating.md#typed-resource-access` —
   chart-author-facing reference for the field-name convention,
-  schema sources, and worked example.
+  schema sources, type-switch dispatch, and worked example.
 - `docs/controller/docs/watching-resources.md#typed-access-in-templates`
   — brief mention with a pointer to the templating reference.
 - `charts/CLAUDE.md` — chart-side dev context with the same guidance

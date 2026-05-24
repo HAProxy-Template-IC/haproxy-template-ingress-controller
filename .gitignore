@@ -89,4 +89,3 @@ debug-logs/
 # Claude Code working files
 .claude/
 plugins/
-tests/schemas/

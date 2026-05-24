@@ -91,14 +91,14 @@ templateSnippets:
         var ctrlNs = tostring(extraContext | dig("controllerNamespace") | fallback(""))
         var allTuples = []any{}
         for _, gw := range resources.gateways.List() {
-          var gwNs = ResourceNamespace(gw)
-          var gwName = ResourceName(gw)
-          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            if ListenerProtocol(listener) != "HTTPS" {
+          var gwNs = gw.Metadata.Namespace
+          var gwName = gw.Metadata.Name
+          for _, listener := range gw.Spec.Listeners {
+            if listener.Protocol != "HTTPS" {
               continue
             }
-            var lName = ListenerName(listener)
-            var lPort = toint(dig(listener, "port") | fallback(0))
+            var lName = listener.Name
+            var lPort = toint(listener.Port)
             if lName == "" || lPort <= 0 {
               continue
             }
@@ -117,15 +117,14 @@ templateSnippets:
         for _, tAny := range allTuples {
           var t = tAny.(map[string]any)
           var found = false
-          if ctrlNs != "" && resources != nil && resources.services != nil {
+          if ctrlNs != "" {
             var svcName = BoundedK8sName("gw", tostring(t["gwNs"]), tostring(t["gwName"]), "")
             var svc = resources.services.GetSingle(ctrlNs, svcName)
             if svc != nil {
               var lPort = toint(t["lPort"])
-              for _, pAny := range dig(svc, "spec", "ports") | toSlice() {
-                var pMap = pAny.(map[string]any)
-                if toint(pMap["port"]) == lPort {
-                  var tp = toint(pMap["targetPort"])
+              for _, sp := range svc.Spec.Ports {
+                if toint(sp.Port) == lPort {
+                  var tp = toint(sp.TargetPort)
                   if tp >= basePort {
                     result[tostring(t["key"])] = tp
                     usedPorts[tp] = true

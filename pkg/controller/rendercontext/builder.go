@@ -31,6 +31,7 @@
 package rendercontext
 
 import (
+	"fmt"
 	"log/slog"
 	"maps"
 	"reflect"
@@ -38,6 +39,7 @@ import (
 	"slices"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
@@ -188,34 +190,16 @@ type BuildResult struct {
 //	  "extraContext": map from config,
 //	}
 func (b *Builder) Build() *BuildResult {
-	// Create resources map with typed ResourceStore values. Each wrapper
-	// gets the IndexBy that the watcher used to build the underlying
-	// store; the wrapper uses it to build its per-render snapshot index
-	// so List/Fetch/GetSingle on one wrapper instance all observe the
-	// same store state (see StoreWrapper docs).
-	resources := make(map[string]templating.ResourceStore)
-	if b.stores != nil {
-		for resourceTypeName, store := range b.stores {
-			b.logger.Debug("wrapping store for rendering context",
-				"resource_type", resourceTypeName)
-			var indexBy []string
-			if wr, ok := b.config.WatchedResources[resourceTypeName]; ok {
-				indexBy = wr.IndexBy
-			}
-			resources[resourceTypeName] = &StoreWrapper{
-				Store:        store,
-				ResourceType: resourceTypeName,
-				Logger:       b.logger,
-				IndexBy:      indexBy,
-			}
-		}
-	}
-
 	// Create controller namespace with typed ResourceStore values. The
 	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent
 	// with a fixed IndexBy of ["metadata.namespace", "metadata.name"]
 	// (see pkg/controller/resourcewatcher/watcher.go) — mirror that here
 	// so the wrapper's snapshot index agrees with the underlying store.
+	//
+	// `resources` is no longer a map[string]ResourceStore. It is a
+	// dynamically-built struct value (see addTypedResources below); chart
+	// templates reach it via direct field access (`resources.gateways`)
+	// rather than the previous map+method shape (`resources.gateways.List()`).
 	controller := make(map[string]templating.ResourceStore)
 	if b.haproxyPodStore != nil {
 		b.logger.Debug("wrapping HAProxy pods store for rendering context")
@@ -244,13 +228,15 @@ func (b *Builder) Build() *BuildResult {
 	renderedResourceCollector := templating.NewRenderedResourceCollector()
 
 	b.logger.Debug("rendering context built",
-		"resource_count", len(resources),
+		"resource_count", len(b.typedResourceTypes),
 		"controller_fields", len(controller),
 		"snippet_count", len(snippetNames))
 
-	// Build final context
+	// Build final context. `resources` is populated below by
+	// addTypedResources — leaving it absent here lets that helper
+	// hand the dynamically-typed struct value into the map without a
+	// throwaway placeholder.
 	templateContext := map[string]any{
-		"resources":                 resources,
 		"controller":                controller,
 		"templateSnippets":          snippetNames,
 		"fileRegistry":              fileRegistry,
@@ -282,20 +268,11 @@ func (b *Builder) Build() *BuildResult {
 		templateContext["http"] = b.httpFetcher
 	}
 
-	// Add typed top-level globals for resources whose schemas
-	// resolved at boot (typebootstrap produced a generated Go
-	// type). Each entry wraps the matching store's snapshot in a
-	// *[]*<generated-struct> shape — same shape Scriggo type-checks
-	// the corresponding global declaration against (see
-	// pkg/controller/typebootstrap.BuildEngineDeclarations).
-	//
-	// Resources whose Wrap fails (a single resource emitting a
-	// shape inconsistent with the declared type — rare, would
-	// indicate a watcher regression) are logged at warn and the
-	// typed entry is omitted. Templates that compile against the
-	// declared shape will then see a nil typed view; chart authors
-	// fall back to the untyped resources["<name>"] for that one
-	// resource. The chart still renders.
+	// Populate the single `resources` top-level global with a
+	// dynamically-built struct value (see typebootstrap's
+	// BuildEngineDeclarations for the matching declaration shape).
+	// One field per watched resource — typed `[]*GeneratedT` when the
+	// schema resolved, untyped `[]any` when it didn't.
 	b.addTypedResources(templateContext)
 
 	// Merge extraContext variables into top-level context
@@ -314,55 +291,336 @@ func (b *Builder) Build() *BuildResult {
 	}
 }
 
-// addTypedResources populates the templateContext with one typed
-// entry per [Builder.typedResourceTypes] mapping that has a matching
-// underlying store registered. The entries are *[]*<generated-struct>
-// values mirroring what
-// [typebootstrap.BuildEngineDeclarations] declared.
+// addTypedResources populates ctx["resources"] with a single
+// dynamically-built struct value (matching the shape
+// [typebootstrap.BuildEngineDeclarations] declared at engine boot).
+// Each outer-struct field is a `*innerStore` pointer to a struct
+// whose `List` / `Fetch` / `GetSingle` fields are closures over the
+// underlying [stores.Store] for that resource.
 //
-// Method receiver rather than free function so the type-conversion
-// loop can read b.stores / b.logger without threading them as
-// arguments. Pulled out of Build() to keep that function under the
-// per-function statement budget.
+// The closures preserve the existing chart-facing API
+// (`resources.X.List()`, `resources.X.Fetch(ns, name)`,
+// `resources.X.GetSingle(ns, name)`) — with two improvements vs the
+// previous map-of-StoreWrapper design:
+//
+//   - Return types are typed (`*GeneratedT` / `[]*GeneratedT`) when
+//     the resource's schema resolved, so Scriggo type-checks chart
+//     field access at engine boot (`gw.Metadata.Namespace`).
+//   - The per-resource `indexBy` from the chart's
+//     `watchedResources` configuration is honoured by Fetch and
+//     GetSingle (closures delegate to the underlying StoreWrapper,
+//     which already knows the indexBy keys). EndpointSlice-by-label
+//     and ReferenceGrant-by-namespace lookups keep working without
+//     per-call-site JSONPath plumbing.
+//
+// Method receiver rather than free function so the closures can
+// capture `b.stores` / `b.config.WatchedResources` / `b.logger`
+// without threading them as arguments.
 func (b *Builder) addTypedResources(ctx map[string]any) {
-	if len(b.typedResourceTypes) == 0 || b.stores == nil {
-		return
-	}
-	for name, t := range b.typedResourceTypes {
-		store, ok := b.stores[name]
-		if !ok {
-			// The bootstrap produced a type for a resource the
-			// local controller doesn't watch. Skip silently —
-			// the unmatched type just doesn't show up in the
-			// render context. The engine's declared global for
-			// this name stays at its zero value (typed nil
-			// pointer); templates that range over it iterate
-			// zero items, which is the correct fail-open
-			// behaviour. Common in tests; would only happen in
-			// production if the watcher build raced ahead of
-			// the bootstrap, which the iteration ordering
-			// prevents.
-			continue
+	// Single source of truth — delegates to BuildResourcesValue so
+	// production renderer, testrunner, and any other consumer
+	// produce byte-identical struct shapes. No dual-shape: the
+	// engine no longer declares an untyped `resources` default
+	// (registerScriggoRuntimeVars dropped it) and consumers that
+	// previously relied on the map fallback must now go through
+	// helpers.BuildAdditionalDeclarations / supply their own
+	// typed declaration. watchedNames mirrors what
+	// typebootstrap.BuildEngineDeclarations iterated as extras —
+	// every WatchedResources entry gets a field on the resources
+	// struct, even those without a generated type.
+	var watchedNames []string
+	if b.config != nil {
+		watchedNames = make([]string, 0, len(b.config.WatchedResources))
+		for name := range b.config.WatchedResources {
+			watchedNames = append(watchedNames, name)
 		}
+	}
+	ctx["resources"] = BuildResourcesValue(
+		b.stores,
+		b.typedResourceTypes,
+		watchedNames,
+		func(name string) []string {
+			if b.config == nil {
+				return nil
+			}
+			if wr, ok := b.config.WatchedResources[name]; ok {
+				return wr.IndexBy
+			}
+			return nil
+		},
+		b.logger,
+	)
+}
 
-		items, err := store.List()
-		if err != nil {
-			b.logger.Warn("typed resource: store List failed; omitting typed view",
-				"resource", name, "error", err)
-			continue
-		}
-		typedSlice, err := typegen.WrapSlice(items, t)
-		if err != nil {
-			b.logger.Warn("typed resource: WrapSlice failed; omitting typed view",
-				"resource", name, "error", err)
-			continue
-		}
-		// Wrap the slice in a pointer for the *[]*T shape Scriggo
-		// expects (matches BuildEngineDeclarations's declaration).
-		holder := reflect.New(typedSlice.Type())
-		holder.Elem().Set(typedSlice)
-		ctx[name] = holder.Interface()
+// BuildResourcesValue constructs the typed-struct `resources`
+// runtime value the engine binds at template-run time. The shape
+// matches [typebootstrap.BuildEngineDeclarations] exactly:
+//
+//	*struct{ <PascalCased-name> *innerStore; … }
+//
+// with one field per watched resource. The inner store's List /
+// Fetch / GetSingle closures return typed pointers when a
+// generated type is available, untyped any otherwise — the OUTER
+// struct shape stays the same either way, so the runtime value
+// keeps binding cleanly against the engine declaration regardless
+// of whether typebootstrap produced types for any given resource.
+//
+// Production is fail-closed on typebootstrap failures (Bootstrap
+// aborts iteration startup; helpers.BuildAdditionalDeclarations
+// panics on nil Result), so every production engine declares the
+// typed struct and this function always produces a typed value.
+// There is no map fallback — callers that bypass the typed-engine
+// path (a unit test constructing templating.New(...) directly
+// without BuildAdditionalDeclarations) must build their own
+// map[string]templating.ResourceStore aligned with the engine's
+// default declaration in registerScriggoRuntimeVars; do not call
+// BuildResourcesValue from that path.
+//
+// Inputs:
+//
+//   - resourceStores: per-name [stores.Store] for the resources the
+//     local controller has live watchers for. Looked up by name; a
+//     watched-resource name with no entry gets a struct field whose
+//     closures collapse to empty results. Names in this map that are
+//     NOT in watchedNames are silently ignored (e.g. the auto-
+//     injected haproxy_pods store, which belongs in
+//     controller["haproxy_pods"], not `resources`).
+//   - typedTypes: per-name generated [reflect.Type] from
+//     typebootstrap. Looked up by name; an unset entry yields an
+//     untyped-closure field for that resource. Names not in
+//     watchedNames are ignored.
+//   - watchedNames: every watched-resource name from the config —
+//     SOLE iteration source. Must mirror what
+//     typebootstrap.BuildEngineDeclarations iterated when it built
+//     the engine-side declaration; any field-list drift trips
+//     Scriggo's "must have type assignable to struct {...}" bind-
+//     time panic.
+//   - indexByFor: returns the per-resource IndexBy slice the
+//     watcher used to build the underlying store; forwarded to the
+//     StoreWrapper so per-render snapshot indices align with the
+//     live store state.
+func BuildResourcesValue(
+	resourceStores map[string]stores.Store,
+	typedTypes map[string]reflect.Type,
+	watchedNames []string,
+	indexByFor func(name string) []string,
+	logger *slog.Logger,
+) any {
+	if indexByFor == nil {
+		indexByFor = func(string) []string { return nil }
 	}
+	// watchedNames is the SOLE iteration source — it must mirror what
+	// typebootstrap.BuildEngineDeclarations iterated when it built the
+	// engine-side struct declaration (which itself reduces to "one
+	// field per WatchedResource"; see BuildEngineDeclarations comment).
+	// Folding extra names in from resourceStores or typedTypes is a
+	// trap: provider.StoreNames() in production includes the
+	// auto-injected `haproxy_pods` store (it lives in
+	// controller["haproxy_pods"], NOT in `resources`), and including
+	// it here adds a phantom Haproxy_pods field that doesn't exist on
+	// the engine declaration — Scriggo then panics with
+	// "must have type assignable to struct {...}" at the first render.
+	// typedTypes is always a subset of watchedNames in production, so
+	// it adds nothing either. Dedupe watchedNames defensively for the
+	// callers that don't.
+	seen := make(map[string]struct{}, len(watchedNames))
+	for _, name := range watchedNames {
+		seen[name] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return reflect.New(reflect.StructOf(nil)).Interface()
+	}
+	resourceNames := make([]string, 0, len(seen))
+	for name := range seen {
+		resourceNames = append(resourceNames, name)
+	}
+	slices.Sort(resourceNames)
+
+	fields := make([]reflect.StructField, 0, len(resourceNames))
+	values := make([]reflect.Value, 0, len(resourceNames))
+	for _, name := range resourceNames {
+		elemType := typedTypes[name]
+		store := resourceStores[name]
+		var wrapper *StoreWrapper
+		if store != nil {
+			wrapper = &StoreWrapper{
+				Store:        store,
+				ResourceType: name,
+				Logger:       logger,
+				IndexBy:      indexByFor(name),
+			}
+		}
+		innerType := typebootstrap.BuildPerResourceStoreType(elemType)
+		innerValue := buildPerResourceStoreValue(innerType, wrapper, elemType, name, logger)
+		fields = append(fields, reflect.StructField{
+			Name: typegen.GoFieldName(name),
+			Type: reflect.PointerTo(innerType),
+			Tag:  reflect.StructTag(`json:"` + name + `"`),
+		})
+		values = append(values, innerValue)
+	}
+	resourcesType := reflect.StructOf(fields)
+	resources := reflect.New(resourcesType)
+	for i, v := range values {
+		resources.Elem().Field(i).Set(v)
+	}
+	return resources.Interface()
+}
+
+// buildPerResourceStoreValue returns a `*innerType` whose List /
+// Fetch / GetSingle fields are closures. The closures wrap the
+// underlying `*StoreWrapper` (already aware of the per-resource
+// indexBy) and adapt its `[]any` / `any` returns to the typed
+// `[]*T` / `*T` shape Scriggo declared at engine boot.
+//
+// When `elemType` is nil (schema bootstrap failed for this
+// resource) the closures pass through untyped values, so chart code
+// reaches the same access surface but loses compile-time field
+// validation on the element shape.
+//
+// When `wrapper` is nil (typebootstrap produced a type the local
+// controller doesn't watch) the closures return empty results — the
+// outer field exists so chart code that reaches it doesn't fail to
+// compile.
+func buildPerResourceStoreValue(
+	innerType reflect.Type,
+	wrapper *StoreWrapper,
+	elemType reflect.Type,
+	resourceName string,
+	logger *slog.Logger,
+) reflect.Value {
+	ptr := reflect.New(innerType)
+	elem := ptr.Elem()
+
+	listField := elem.FieldByName("List")
+	fetchField := elem.FieldByName("Fetch")
+	getSingleField := elem.FieldByName("GetSingle")
+
+	listReturnType := listField.Type().Out(0)
+	fetchReturnType := fetchField.Type().Out(0)
+	getSingleReturnType := getSingleField.Type().Out(0)
+
+	listField.Set(reflect.MakeFunc(listField.Type(), func(_ []reflect.Value) []reflect.Value {
+		if wrapper == nil {
+			return []reflect.Value{reflect.MakeSlice(listReturnType, 0, 0)}
+		}
+		items := wrapper.List()
+		return []reflect.Value{
+			adaptSliceForResource(items, listReturnType, elemType, resourceName, "List", logger),
+		}
+	}))
+
+	fetchField.Set(reflect.MakeFunc(fetchField.Type(), func(args []reflect.Value) []reflect.Value {
+		if wrapper == nil {
+			return []reflect.Value{reflect.MakeSlice(fetchReturnType, 0, 0)}
+		}
+		// Variadic Fetch: args[0] is the []any keys slice.
+		keys := args[0].Interface().([]any)
+		items := wrapper.Fetch(keys...)
+		return []reflect.Value{
+			adaptSliceForResource(items, fetchReturnType, elemType, resourceName, "Fetch", logger),
+		}
+	}))
+
+	getSingleField.Set(reflect.MakeFunc(getSingleField.Type(), func(args []reflect.Value) []reflect.Value {
+		if wrapper == nil {
+			return []reflect.Value{reflect.Zero(getSingleReturnType)}
+		}
+		keys := args[0].Interface().([]any)
+		item := wrapper.GetSingle(keys...)
+		return []reflect.Value{
+			adaptSingleForResource(item, getSingleReturnType, elemType, resourceName, logger),
+		}
+	}))
+
+	return ptr
+}
+
+// adaptSliceForResource converts `items []any` to the static return
+// type (`[]*T` typed or `[]any` untyped). For typed slices it runs
+// each item through `typegen.WrapInto` — that's the same path the
+// pre-pivot direct-WrapSlice approach used, just deferred to call
+// time so per-render List() picks up the freshest store snapshot.
+func adaptSliceForResource(
+	items []any,
+	returnType reflect.Type,
+	elemType reflect.Type,
+	resourceName, op string,
+	logger *slog.Logger,
+) reflect.Value {
+	if elemType == nil {
+		// Untyped fallback: return type is []any. Direct copy.
+		out := reflect.MakeSlice(returnType, len(items), len(items))
+		for i, item := range items {
+			if item == nil {
+				continue
+			}
+			out.Index(i).Set(reflect.ValueOf(item))
+		}
+		return out
+	}
+	// Typed: each item becomes *T via WrapInto. If WrapInto fails
+	// for a single item we log and skip that entry rather than
+	// abort the whole call — partial data is better than no
+	// data for a single bad shape.
+	out := reflect.MakeSlice(returnType, 0, len(items))
+	for _, item := range items {
+		ptr, err := wrapItemToPointer(item, elemType)
+		if err != nil {
+			logger.Warn("typed resource: WrapInto failed; skipping item",
+				"resource", resourceName, "op", op, "error", err)
+			continue
+		}
+		out = reflect.Append(out, ptr)
+	}
+	return out
+}
+
+// adaptSingleForResource wraps the wrapper's `any` return value into
+// the static return type (`*T` typed, or `any` untyped). Returns the
+// zero value of the return type for nil input.
+func adaptSingleForResource(
+	item any,
+	returnType reflect.Type,
+	elemType reflect.Type,
+	resourceName string,
+	logger *slog.Logger,
+) reflect.Value {
+	if item == nil {
+		return reflect.Zero(returnType)
+	}
+	if elemType == nil {
+		// Untyped fallback: return type is `any`. Reflect-wrap so
+		// the interface assignment goes through cleanly.
+		out := reflect.New(returnType).Elem()
+		out.Set(reflect.ValueOf(item))
+		return out
+	}
+	ptr, err := wrapItemToPointer(item, elemType)
+	if err != nil {
+		logger.Warn("typed resource: WrapInto failed; returning nil",
+			"resource", resourceName, "op", "GetSingle", "error", err)
+		return reflect.Zero(returnType)
+	}
+	return ptr
+}
+
+// wrapItemToPointer converts a single store item (typically
+// map[string]any from the dynamic client) into a typed `*elemType`
+// via typegen.WrapInto. Returns a reflect.Value wrapping the
+// pointer.
+func wrapItemToPointer(item any, elemType reflect.Type) (reflect.Value, error) {
+	m, ok := item.(map[string]any)
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("expected map[string]any, got %T", item)
+	}
+	v, err := typegen.WrapInto(m, elemType)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	ptr := reflect.New(elemType)
+	ptr.Elem().Set(v)
+	return ptr, nil
 }
 
 // SortSnippetNames sorts template snippet names alphabetically.

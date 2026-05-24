@@ -228,6 +228,32 @@ decl["templateSnippets"] = (*[]string)(nil)           // Not &[]string{}
 | `http` | `*HTTPFetcher` | HTTP store for fetching remote content |
 | `runtimeEnvironment` | `*RuntimeEnvironment` | Runtime environment info |
 
+### Typed Watched Resources
+
+In addition to `resources` (the untyped store map above), the engine declares **one typed top-level global per watched resource** when a schema is loaded. The declaration is built by `pkg/k8s/typegen` from each resource's OpenAPI v3 schema and exposed as `*[]*resources.<name>.T` — a nil pointer whose static type carries the generated struct.
+
+The store-wrapper return types are also typed when a schema is loaded: `resources.<name>.List()` returns `[]*resources.<name>.T`, `resources.<name>.Fetch(...)` returns `[]*resources.<name>.T`, and `resources.<name>.GetSingle(...)` returns `*resources.<name>.T` (nil if not found). Both surfaces share the same typed pointer — the top-level global and the store wrapper are interchangeable at the call site. Without a schema (e.g. `controller validate` without `--schema-dir`), both fall back to `[]any` / `map[string]any`.
+
+The `resources.<name>.T` form is a selector-chain-as-type expression: it resolves to the generated struct's static type wherever a type expression is expected (macro parameters, var declarations, type assertions, slice types, and type-switch case clauses). The case-clause form is the canonical pattern for chart code that dispatches across multiple Kinds at a polymorphic `any` boundary. See `docs/adr/0010-typed-watched-resources.md` for the design rationale and `docs/controller/docs/templating.md#typed-resource-access` for the chart-author-facing reference.
+
+#### Filter behaviour against typed shapes
+
+Three filter / function behaviours are load-bearing for the chart's mixed-shape adoption pattern:
+
+- **`dig()` navigates typed structs by JSON tag.** `digMapFast` falls through to `digReflect` when an intermediate value is a typed struct (root cause of an earlier "empty backend name" bug — fast-path returning nil instead of recursing into the struct). `digReflect` also has a generic string-keyed-map fallback for `map[string][]any`, `map[string]int`, and similar shapes. Optional fields (`json:"…,omitempty"`) with zero values normalise to nil so `dig(...) | fallback(default)` behaves identically across typed and untyped shapes.
+- **`to_str_map(value)`** normalises any string-keyed map (`map[string]string` from typegen-produced label / matchLabels / annotation fields, `map[string]any` from the untyped store path, or a generic `map[string]<T>`) into `map[string]string`. Non-string values from a `map[string]any` input are coerced via `tostring()`. Use this instead of `.(map[string]any)` assertions on label-shaped fields — those panic against the typed `map[string]string`.
+- **`shard_slice(items, idx, n)` is type-preserving.** Declared as a `native.AdaptiveFunc`, the static return type at each call site equals the input slice's static type. `shard_slice([]*resources.gateways.T, i, n)` returns `[]*resources.gateways.T` (not `[]any`), so chart code that shards typed slices for parallel rendering keeps typed access through the shard call.
+
+#### Scriggo fork extensions backing this
+
+The vendored Scriggo fork carries three language-level extensions that the typed surface relies on:
+
+- **Selector-chain-as-type** (`x.T` resolves to its value's static type in type-expression position; MR !91 in the scriggo fork). Multi-level chains supported, so `resources.gateways.T` works.
+- **Type-switch case-clause selector chain** (`case *resources.<X>.T`; MR !96). Lets a single `switch r := v.(type)` dispatch across multiple typegen-built types, with `r` statically typed inside each case branch.
+- **AdaptiveFunc native declarations.** Per-call-site return type from a closure on the argument types — used by `shard_slice` and any future filter that needs to be type-preserving.
+
+If a future template needs a new type-preserving filter, follow `scriggoShardSliceAdaptive`'s shape in `pkg/templating/filters_collection.go`.
+
 ### PathResolver and HAProxy Paths
 
 `PathResolver` returns relative paths (e.g. `maps/host.map`, `general/400.http`) so the same rendered config works in production *and* in the validation sandbox without text rewrites of every file reference. Templates that hand-roll absolute paths sidestep this — the resolver also exposes `BaseDir` if you need to construct one yourself.

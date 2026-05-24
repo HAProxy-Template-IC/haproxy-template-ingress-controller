@@ -560,22 +560,24 @@ func (m *mockResourceStore) GetSingle(keys ...any) any {
 }
 
 func TestScriggoEngine_DirectMethodCallsOnResourceStore(t *testing.T) {
-	// Test that templates can call methods directly on ResourceStore values
-	// using typed maps: resources.ingresses.List()
+	// Test that templates can call methods on the typed `resources` struct:
+	// `resources.ingresses.List()`. The engine no longer ships a default
+	// untyped `resources` declaration — callers wire one via
+	// `additionalDeclarations` (production goes through
+	// `pkg/controller/typebootstrap.BuildEngineDeclarations`; tests use
+	// the inline `typedResourcesDecl` helper for the same shape).
 	templates := map[string]string{
-		"list_test": `{%- for _, item := range resources["ingresses"].List() -%}
+		"list_test": `{%- for _, item := range resources.ingresses.List() -%}
 {{ item.(map[string]any)["name"] }}
 {%- end -%}`,
-		"get_test": `{%- var secret = resources["secrets"].GetSingle("default", "my-secret") -%}
+		"get_test": `{%- var secret = resources.secrets.GetSingle("default", "my-secret") -%}
 Secret: {{ secret.(map[string]any)["name"] }}`,
-		"fetch_test": `{%- for _, ep := range resources["endpoints"].Fetch("my-service") -%}
+		"fetch_test": `{%- for _, ep := range resources.endpoints.Fetch("my-service") -%}
 {{ ep.(map[string]any)["name"] }}
 {%- end -%}`,
 	}
 
 	entryPoints := []string{"list_test", "get_test", "fetch_test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err)
 
 	// Create mock stores with test data
 	ingressStore := &mockResourceStore{
@@ -594,15 +596,17 @@ Secret: {{ secret.(map[string]any)["name"] }}`,
 		},
 	}
 
-	// Create typed resources map
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 		"secrets":   secretStore,
 		"endpoints": endpointStore,
 	}
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	require.NoError(t, err)
 
 	templateCtx := map[string]any{
-		"resources":        resources,
+		"resources":        buildTypedResourcesValue(stores, names),
 		"templateSnippets": []string{},
 	}
 
@@ -670,8 +674,6 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 	}
 
 	entryPoints := []string{"dot_notation_test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err)
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
@@ -681,13 +683,15 @@ func TestScriggoEngine_DotNotationMethodCallsOnResourceStore(t *testing.T) {
 		},
 	}
 
-	// Create typed resources map
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 	}
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	require.NoError(t, err)
 
 	templateCtx := map[string]any{
-		"resources":        resources,
+		"resources":        buildTypedResourcesValue(stores, names),
 		"templateSnippets": []string{},
 	}
 
@@ -723,8 +727,6 @@ count={{ len(analysisMap["backends"].([]any)) }}`,
 	}
 
 	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err, "Failed to compile template with ComputeIfAbsent pattern")
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
@@ -741,12 +743,16 @@ count={{ len(analysisMap["backends"].([]any)) }}`,
 		},
 	}
 
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 	}
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	require.NoError(t, err, "Failed to compile template with ComputeIfAbsent pattern")
 
 	templateCtx := map[string]any{
-		"resources": resources,
+		"resources": buildTypedResourcesValue(stores, names),
+		"shared":    NewSharedContext(),
 	}
 
 	output, err := engine.Render(context.Background(), "test", templateCtx)
@@ -787,11 +793,6 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 	}
 
 	entryPoints := []string{"util-path-map-entry-ingress", "util-backend-name-ingress", "map-path-exact-ingress"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	if err != nil {
-		t.Logf("Compilation error: %v", err)
-	}
-	require.NoError(t, err, "Failed to compile templates with import/macro using resources")
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
@@ -800,13 +801,18 @@ Output: {{ PathMapEntryIngress([]string{"Exact"}, "") }}
 		},
 	}
 
-	// Create typed resources map
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 	}
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	if err != nil {
+		t.Logf("Compilation error: %v", err)
+	}
+	require.NoError(t, err, "Failed to compile templates with import/macro using resources")
 
 	templateCtx := map[string]any{
-		"resources":        resources,
+		"resources":        buildTypedResourcesValue(stores, names),
 		"templateSnippets": []string{},
 	}
 
@@ -861,8 +867,6 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 	// The controller compiles only entry points (haproxy.cfg, maps), not snippets
 	// Snippets like backends-* are discovered via render_glob
 	entryPoints := []string{"main"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err, "Failed to compile templates with macro + render_glob inherit_context")
 
 	// Create mock store with test data
 	ingressStore := &mockResourceStore{
@@ -872,13 +876,15 @@ func TestMacroWithRenderGlobInheritContext(t *testing.T) {
 		},
 	}
 
-	// Create typed resources map
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 	}
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(names...))
+	require.NoError(t, err, "Failed to compile templates with macro + render_glob inherit_context")
 
 	templateCtx := map[string]any{
-		"resources":        resources,
+		"resources":        buildTypedResourcesValue(stores, names),
 		"templateSnippets": []string{"backend-directives-100", "backend-directives-200"},
 	}
 
@@ -964,8 +970,6 @@ backend {{ BackendNameIngress(ingress, path) }}
 
 	// Compile only haproxy.cfg as entry point (like the real controller)
 	entryPoints := []string{"haproxy.cfg"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err, "Failed to compile templates")
 
 	// Create mock store with test data matching real structure
 	ingressStore := &mockResourceStore{
@@ -991,9 +995,12 @@ backend {{ BackendNameIngress(ingress, path) }}
 		},
 	}
 
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 	}
+	resourceNamesList := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(resourceNamesList...))
+	require.NoError(t, err, "Failed to compile templates")
 
 	// Generate templateSnippets list for glob_match
 	var snippetNames []string
@@ -1004,7 +1011,7 @@ backend {{ BackendNameIngress(ingress, path) }}
 	}
 
 	templateCtx := map[string]any{
-		"resources":        resources,
+		"resources":        buildTypedResourcesValue(stores, resourceNamesList),
 		"templateSnippets": snippetNames,
 	}
 
@@ -1063,8 +1070,6 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 		"path-regex.map",
 		"weighted-multi-backend.map",
 	}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err, "Failed to compile templates")
 
 	// Create mock stores with test data
 	ingressStore := &mockResourceStore{
@@ -1090,9 +1095,12 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 		},
 	}
 
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"ingresses": ingressStore,
 	}
+	resourceNamesList := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, entryPoints, nil, nil, nil, typedResourcesDecl(resourceNamesList...))
+	require.NoError(t, err, "Failed to compile templates")
 
 	// Generate templateSnippets list
 	var snippetNames []string
@@ -1112,7 +1120,7 @@ func TestMacroWithRenderGlobInheritContext_FullContext(t *testing.T) {
 
 	// Full context matching testrunner's buildRenderingContext
 	templateCtx := map[string]any{
-		"resources":        resources,
+		"resources":        buildTypedResourcesValue(stores, resourceNamesList),
 		"templateSnippets": snippetNames,
 		"pathResolver":     pathResolver,
 		"shared":           make(map[string]any),
@@ -1263,7 +1271,7 @@ func TestNestedLoopWithServicePortLookup(t *testing.T) {
 		getSingleResult: svc,
 	}
 
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"services": services,
 	}
 
@@ -1309,11 +1317,12 @@ Port {{ port }} name: {{ portName }}
 Count: {{ count }}`,
 	}
 
-	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, typedResourcesDecl(names...))
 	require.NoError(t, err)
 
 	templateCtx := map[string]any{
-		"resources": resources,
+		"resources": buildTypedResourcesValue(stores, names),
 	}
 
 	output, err := engine.Render(context.Background(), "main", templateCtx)
@@ -1350,7 +1359,7 @@ func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 		getSingleResult: svc,
 	}
 
-	resources := map[string]ResourceStore{
+	stores := map[string]ResourceStore{
 		"services": services,
 	}
 
@@ -1374,11 +1383,12 @@ func TestNestedLoopWithResourceStoreAccess(t *testing.T) {
 {{ count }}`,
 	}
 
-	engine, err := NewScriggo(templates, []string{"main"}, nil, nil, nil)
+	names := resourceNames(stores)
+	engine, err := NewScriggoWithDeclarations(templates, []string{"main"}, nil, nil, nil, typedResourcesDecl(names...))
 	require.NoError(t, err)
 
 	templateCtx := map[string]any{
-		"resources": resources,
+		"resources": buildTypedResourcesValue(stores, names),
 	}
 
 	output, err := engine.Render(context.Background(), "main", templateCtx)

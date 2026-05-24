@@ -17,6 +17,7 @@ package templating
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -286,38 +287,84 @@ func scriggoAppendAny(slice, item any) []any {
 //	{%- for _, item := range shard %}
 //	  ... process item in parallel shard ...
 //	{%- end %}
-func scriggoShardSlice(items any, shardIndex, totalShards int) []any {
-	// Convert items to slice
-	itemsSlice, ok := toSlice(items)
-	if !ok || len(itemsSlice) == 0 {
+func scriggoShardSlice(items any, shardIndex, totalShards int) any {
+	// Type-preserving implementation: when the input is a typed
+	// reflect.Slice, the returned shard has the same element type.
+	// Combined with the native.AdaptiveFunc wrapping below, this
+	// keeps the call expression's static return type aligned with
+	// the input slice's static type, so chart templates that iterate
+	// shard_slice's result get statically-typed loop variables.
+	rv := reflect.ValueOf(items)
+	if !rv.IsValid() || rv.Kind() != reflect.Slice {
+		// Non-slice input (or nil): degrade to []any with empty
+		// result. The static return type the AdaptiveFunc closure
+		// promises is whatever the static input type was — but the
+		// runtime value will fail to match a non-slice declaration.
+		// For correctness, return an empty typed slice when we can
+		// recover the type; otherwise an empty []any.
+		if rv.IsValid() && rv.Type().Kind() == reflect.Slice {
+			return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+		}
 		return []any{}
 	}
-
-	// If sharding is disabled or invalid, return full slice
+	totalItems := rv.Len()
+	if totalItems == 0 {
+		return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
+	}
+	// If sharding is disabled or invalid, return full slice.
 	if totalShards <= 1 || shardIndex >= totalShards || shardIndex < 0 {
-		return itemsSlice
+		return rv.Interface()
 	}
 
-	totalItems := len(itemsSlice)
 	baseSize := totalItems / totalShards
 	remainder := totalItems % totalShards
 
 	// Calculate start index: sum of previous shard sizes
-	// Shards 0..remainder-1 get baseSize+1 items each
-	// Shards remainder..totalShards-1 get baseSize items each
+	// Shards 0..remainder-1 get baseSize+1 items each.
+	// Shards remainder..totalShards-1 get baseSize items each.
 	start := shardIndex*baseSize + min(shardIndex, remainder)
 	end := start + baseSize
 	if shardIndex < remainder {
 		end++
 	}
 
-	// Ensure bounds are valid
+	// Ensure bounds are valid.
 	if start >= totalItems {
-		return []any{}
+		return reflect.MakeSlice(rv.Type(), 0, 0).Interface()
 	}
 	if end > totalItems {
 		end = totalItems
 	}
 
-	return itemsSlice[start:end]
+	// reflect.Value.Slice preserves the element type — the result is
+	// rv.Type() (same dynamic type as the input). That's what makes
+	// this filter type-preserving.
+	return rv.Slice(start, end).Interface()
+}
+
+// scriggoShardSliceAdaptive wraps scriggoShardSlice in a
+// native.AdaptiveFunc declaration so the static return type at each
+// call site equals the input slice's static type. The chart's
+// parallel-rendering paths (`go shard_slice(typed, i, n)`) preserve
+// the input element type through the call, letting macros downstream
+// use typed field access instead of reflection.
+//
+// Behaviour:
+//   - Impl: scriggoShardSlice — reflection-based, returns a value
+//     whose dynamic type matches the input slice's type.
+//   - ReturnType: identity on the first argument's static type.
+//   - Argument validation: Scriggo checks shardIndex / totalShards
+//     are int via the Impl's declared signature.
+var scriggoShardSliceAdaptive = native.AdaptiveFunc{
+	Impl: scriggoShardSlice,
+	ReturnType: func(argTypes []reflect.Type) (reflect.Type, error) {
+		if len(argTypes) == 0 || argTypes[0] == nil {
+			// No static type info — fall back to `any` so the call
+			// site keeps working even when the first argument is a
+			// bare untyped nil literal. The runtime Impl handles
+			// nil input by returning []any{}.
+			return reflect.TypeOf((*any)(nil)).Elem(), nil
+		}
+		return argTypes[0], nil
+	},
 }

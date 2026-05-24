@@ -36,7 +36,18 @@ pkg/k8s/
 │                      # HAProxyCRTListFile) plus SSL Secrets — for
 │                      # `kubectl describe`, GitOps diffs, and audit trails.
 │                      # Does NOT push to HAProxy pods; that's pkg/dataplane.
-└── leaderelection/    # Pure leader election component (no events)
+├── leaderelection/    # Pure leader election component (no events)
+├── typegen/           # OpenAPI v3 schema → reflect.Type conversion for the
+│                      # template engine's typed watched-resource globals.
+│                      # `converter.go::goFieldName` is the canonical
+│                      # Go-PascalCase rule (no acronym preservation).
+│                      # See ADR-0010 for design rationale.
+└── schemafetcher/     # Schema sources for typegen: ClusterFetcher (live
+                       # kube-apiserver), DirFetcher (offline --schema-dir
+                       # with CRD-wrapped YAML or bare OpenAPI v3 +
+                       # x-kubernetes-group-version-kind), MapFetcher (in
+                       # memory, tests). No embedded fallback in the
+                       # binary — see ADR-0010 Alternative 3.
 ```
 
 ## Key Concepts

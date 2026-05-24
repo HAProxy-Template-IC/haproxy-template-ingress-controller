@@ -15,6 +15,7 @@
 package rendercontext
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -108,7 +109,19 @@ func TestBuilder_Build_BasicContext(t *testing.T) {
 }
 
 func TestBuilder_Build_WithStores(t *testing.T) {
-	cfg := &config.Config{}
+	cfg := &config.Config{
+		// WatchedResources is the SOLE source of truth for which
+		// fields end up on the `resources` struct — mirrors what
+		// typebootstrap.BuildEngineDeclarations iterated. Tests
+		// must declare the names they want to assert on; stray
+		// stores not listed here are deliberately ignored (see
+		// BuildResourcesValue and the prod path comment in
+		// renderer.RenderService.buildRenderingContext).
+		WatchedResources: map[string]config.WatchedResource{
+			"ingresses": {},
+			"services":  {},
+		},
+	}
 	pathResolver := &templating.PathResolver{}
 	logger := testutil.NewTestLogger()
 
@@ -120,10 +133,71 @@ func TestBuilder_Build_WithStores(t *testing.T) {
 	builder := NewBuilder(cfg, pathResolver, logger, WithStores(storeMap))
 	ctx := builder.Build().Context
 
-	resources := ctx["resources"].(map[string]templating.ResourceStore)
-	require.Len(t, resources, 2)
-	assert.Contains(t, resources, "ingresses")
-	assert.Contains(t, resources, "services")
+	// The legacy map[string]templating.ResourceStore fallback was
+	// removed alongside the engine's default `resources` declaration
+	// (see filters_scriggo.go::registerScriggoRuntimeVars). Even
+	// without typed resource types, Build now emits the typed
+	// `*resources struct{...}` shape — every consumer goes through
+	// this single path, matching what the engine declaration
+	// produced by helpers.BuildAdditionalDeclarations expects.
+	resourcesVal := ctx["resources"]
+	require.NotNil(t, resourcesVal, "resources global must be populated")
+	rv := reflect.ValueOf(resourcesVal)
+	require.Equal(t, reflect.Ptr, rv.Kind(), "resources global is a pointer to the dynamic struct")
+	resourcesStruct := rv.Elem()
+	require.Equal(t, reflect.Struct, resourcesStruct.Kind())
+	require.Equal(t, 2, resourcesStruct.NumField(), "one field per watched resource")
+
+	fieldNames := make(map[string]bool, resourcesStruct.NumField())
+	for i := 0; i < resourcesStruct.NumField(); i++ {
+		fieldNames[resourcesStruct.Type().Field(i).Name] = true
+	}
+	assert.True(t, fieldNames["Ingresses"], "field name follows typegen.GoFieldName")
+	assert.True(t, fieldNames["Services"], "field name follows typegen.GoFieldName")
+}
+
+// TestBuilder_Build_WithTypedResources covers the typed path: when
+// typebootstrap has produced reflect.Types for some resources, the
+// builder emits the dynamic *Resources struct (one field per watched
+// resource) matching what BuildEngineDeclarations declared. This is
+// the chart-render path used in production.
+func TestBuilder_Build_WithTypedResources(t *testing.T) {
+	cfg := &config.Config{
+		WatchedResources: map[string]config.WatchedResource{
+			"ingresses": {},
+		},
+	}
+	pathResolver := &templating.PathResolver{}
+	logger := testutil.NewTestLogger()
+
+	storeMap := map[string]stores.Store{
+		"ingresses": &storetest.MockStore{},
+	}
+	typedTypes := map[string]reflect.Type{
+		"ingresses": reflect.StructOf([]reflect.StructField{
+			{Name: "Metadata", Type: reflect.StructOf([]reflect.StructField{
+				{Name: "Name", Type: reflect.TypeOf("")},
+			})},
+		}),
+	}
+
+	builder := NewBuilder(cfg, pathResolver, logger,
+		WithStores(storeMap),
+		WithTypedResources(typedTypes),
+	)
+	ctx := builder.Build().Context
+
+	resourcesVal := ctx["resources"]
+	require.NotNil(t, resourcesVal, "resources global must be populated")
+	rv := reflect.ValueOf(resourcesVal)
+	require.Equal(t, reflect.Ptr, rv.Kind(),
+		"resources global is a pointer to the dynamic struct")
+	resourcesStruct := rv.Elem()
+	require.Equal(t, reflect.Struct, resourcesStruct.Kind())
+	require.Equal(t, 1, resourcesStruct.NumField(),
+		"one field per watched resource")
+	assert.Equal(t, "Ingresses", resourcesStruct.Type().Field(0).Name,
+		"field name follows Go-PascalCase rule (typegen.GoFieldName)")
 }
 
 func TestBuilder_Build_WithHAProxyPodStore(t *testing.T) {

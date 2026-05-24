@@ -38,14 +38,15 @@ templateSnippets:
         }
       %%}
       {%- var catchallEntries = []any{} %}
-      {%- for _, gw := range resources.gateways.List() | toSlice() %}
-        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) %}
-        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) %}
+      {%- for _, gw := range resources.gateways.List() %}
+        {%- var gwNs = gw.Metadata.Namespace %}
+        {%- var gwName = gw.Metadata.Name %}
         {%- var gwHasCatchall = false %}
-        {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-          {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+        {%- for _, listener := range gw.Spec.Listeners %}
+          {%- var protocol = listener.Protocol %}
+          {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
           {%- if protocol == "HTTPS" || protocol == "TLS" %}
-            {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+            {%- var lh = listener.Hostname %}
             {%- if classifyHostname(lh) %}
               {%- gwHasCatchall = true %}
             {%- end %}
@@ -54,12 +55,13 @@ templateSnippets:
         {#- Walk accepted ListenerSet listeners on this Gateway too so
             the misdirected-listener detection covers ListenerSet-claimed
             HTTPS hostnames. -#}
-        {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+        {%- for _, ls := range resources.listenersets.List() %}
           {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-            {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-              {%- var protocol = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+            {%- for _, listener := range ls.Spec.Listeners %}
+              {%- var protocol = listener.Protocol %}
+              {%- if protocol == "" %}{%- protocol = "HTTP" %}{%- end %}
               {%- if protocol == "HTTPS" || protocol == "TLS" %}
-                {%- var lh = listener | dig("hostname") | fallback("") | tostring() %}
+                {%- var lh = listener.Hostname %}
                 {%- if classifyHostname(lh) %}
                   {%- gwHasCatchall = true %}
                 {%- end %}
@@ -132,211 +134,287 @@ templateSnippets:
       {%- if len(sortedRoutes) > 0 %}
       # Advanced route matching (method/header/query)
       {%- for _, routeInfo := range sortedRoutes %}
-        {%- var riMatch map[string]any = routeInfo["match"] %}
-        {%- var riRoute map[string]any = routeInfo["route"] %}
-        {%- var riRouteMeta = riRoute | dig("metadata") %}
-        {%- var riResourceType = routeInfo["resource_type"] %}
-        {%- var riIsGrpc bool = routeInfo["is_grpc"] %}
+        {#- Pivot to type-switch dispatch (ADR-0010 type-switch
+            restructure): instead of reading pre-flattened
+            `routeInfo["match"]` / `routeInfo["path"]` slots as `any`
+            and dig()-ing into them, we type-switch on the typed
+            `routeInfo["route"]` parent pointer and re-derive the
+            match via typed `r.Spec.Rules[ruleIdx].Matches[matchIdx]`
+            access. Per-Kind field shapes (HTTPRoute.Spec.Rules vs
+            GRPCRoute.Spec.Rules) get compile-time validated by
+            Scriggo's type checker, and field renames on the
+            generated struct surface as build errors instead of
+            silent dig()-returned-nil at render time.
+
+            Per-Kind code extracts the few primitives the common
+            emission block below needs (pathType, pathValue, method,
+            headers, queryParams, grpc method) into untyped scalars
+            so the emission stays DRY. Inside each case the access
+            is fully typed; everything after the switch is
+            stringly-typed value handling, which is the right shape
+            because HAProxy config emission is text. -#}
         {%- var riRouteId = routeInfo["routeId"] %}
         {%- var riConflictGroup = routeInfo["conflictGroup"] %}
-        {%- var riRuleIdx = routeInfo["ruleIdx"] %}
-        {%- var riPath map[string]any = routeInfo["path"] %}
-        {#- Detect "path-only" rules — those with no method/header/query/grpc
-            sub-matchers. The Gateway API spec requires evaluating rules in
-            order of specificity, falling through to less-specific rules
-            when a more-specific rule's sub-matchers don't all pass. The
-            existing gw_routeId scope check (set by the path-map step to the
-            most-specific path's rule IDs) blocks fallback across paths
-            within the same HTTPRoute, so a path-only catch-all loses to a
-            failed-but-more-specific sibling. We give path-only rules a
-            relaxed scope check (gw_routeId begins with this HTTPRoute's
-            prefix) plus a direct path predicate, restoring spec-compliant
-            fallback semantics without altering the strict scope check for
-            rules that already gate on their own sub-matchers. #}
-        {%- var riHeaders_check = riMatch["headers"] %}
-        {%- var riParams_check = riMatch["queryParams"] %}
-        {%- var riMethod_check = riMatch["method"] %}
-        {%- var grpcMethodCheck = riMatch["method"] %}
-        {%- var isPathOnly = (riMethod_check == nil || riResourceType != "httproute") && riHeaders_check == nil && riParams_check == nil && (!riIsGrpc || grpcMethodCheck == nil) %}
-        {#- Early exit: skip if another matcher already won #}
-        {%- var conditions = []any{"!{ var(txn.gw_rule_id) -m found }"} %}
+        {%- var riRuleIdx int = routeInfo["ruleIdx"] %}
+        {%- var riMatchIdx int = routeInfo["matchIdx"] %}
 
-        {%- if isPathOnly %}
-          {#- Path-only fallback: scope to this HTTPRoute (any rule of it
-              must have been the path-map winner), plus the rule's path
-              must match the request directly. -#}
-          {%- var riNsScope = riRouteMeta | dig("namespace") | fallback("") | tostring() %}
-          {%- var riNameScope = riRouteMeta | dig("name") | fallback("") | tostring() %}
-          {%- var httprouteScope = riNsScope + "_" + riNameScope + "_" %}
-          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + httprouteScope + "\" }") %}
-          {#- Direct path match for safety so different paths within the
-              same HTTPRoute don't cross-match. -#}
-          {%- if riPath != nil %}
-            {%- var pathOnlyType = tostring(riPath["type"]) %}
-            {%- var pathOnlyValue = tostring(riPath["value"]) %}
-            {%- if pathOnlyType == "Exact" %}
-              {%- conditions = append(conditions, "{ path \"" + pathOnlyValue + "\" }") %}
-            {%- else if pathOnlyType == "RegularExpression" %}
-              {%- var escapedPathOnly = replace(pathOnlyValue, "$", "\\$") %}
-              {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
-            {%- else %}
-              {#- PathPrefix (default). Per Gateway API spec, PathPrefix
-                  matches whole segments — `/v2` matches `/v2`, `/v2/`,
-                  `/v2/foo`, but NOT `/v2example`. HAProxy's plain
-                  `path_beg` is byte-prefix (no boundary) and matches
-                  the last case incorrectly; `path_dir` does a segment
-                  match but it matches a directory ANYWHERE in the
-                  path (so `/v2` would match `/foo/v2/example`). The
-                  spec requires anchoring at the START of the path.
+        {#- Per-Kind extracted values (defaulted before the switch
+            so the emission block below can assume they are set). -#}
+        {%- var riKind = "" %}
+        {%- var riNs = "" %}
+        {%- var riName = "" %}
+        {%- var riIsGrpc = false %}
+        {%- var pathType = "PathPrefix" %}
+        {%- var pathValue = "/" %}
+        {%- var hasMethod = false %}
+        {%- var riMethod = "" %}
+        {%- var headerSpecs = []any{} %}
+        {%- var paramSpecs = []any{} %}
+        {%- var hasGrpcMethod = false %}
+        {%- var grpcService = "" %}
+        {%- var grpcMethodName = "" %}
+        {%- var grpcType = "Exact" %}
 
-                  Use a regex anchored to ^ that matches either the
-                  exact prefix or the prefix followed by a slash:
-
-                      ^<prefix>(/|$)
-
-                  Special case: bare `/` (root) matches every path —
-                  emit a trivial path_beg "/" condition that's cheaper
-                  than a regex and still always satisfied. -#}
-              {%- if pathOnlyValue == "/" || pathOnlyValue == "" %}
-                {%- conditions = append(conditions, "{ path_beg \"/\" }") %}
-              {%- else %}
-                {%- var pathPrefixValue = pathOnlyValue %}
-                {%- if hasSuffix(pathPrefixValue, "/") %}
-                  {%- pathPrefixValue = pathPrefixValue[:len(pathPrefixValue)-1] %}
-                {%- end %}
-                {%- var escaped = sanitize_regex(pathPrefixValue) %}
-                {#- HAProxy expands $VAR / ${VAR} in config strings; the
-                    documented escape for a literal dollar is `\$`. -#}
-                {%- conditions = append(conditions, "{ path -m reg \"^" + escaped + "(/|\\$)\" }") %}
+        {%- switch r := routeInfo["route"].(type) %}
+        {%- case *resources.httproutes.T %}
+          {%- riKind = "HTTPRoute" %}
+          {%- riNs = r.Metadata.Namespace %}
+          {%- riName = r.Metadata.Name %}
+          {%- if riRuleIdx >= 0 && riRuleIdx < len(r.Spec.Rules) %}
+            {%- var rule = r.Spec.Rules[riRuleIdx] %}
+            {%- if riMatchIdx >= 0 && riMatchIdx < len(rule.Matches) %}
+              {%- var match = rule.Matches[riMatchIdx] %}
+              {#- Typed access: match.Path.Type / .Value / .Method /
+                  .Headers / .QueryParams resolve at engine compile
+                  time; a typo here is a build error. -#}
+              {%- if match.Path.Type != "" %}{%- pathType = match.Path.Type %}{%- end %}
+              {%- if match.Path.Value != "" %}{%- pathValue = match.Path.Value %}{%- end %}
+              {%- if match.Method != "" %}
+                {%- hasMethod = true %}
+                {%- riMethod = match.Method %}
+              {%- end %}
+              {%- for _, h := range match.Headers %}
+                {#- HTTPHeaderMatch.type defaults to "Exact" when
+                    omitted (Gateway-API spec). The chart sees the
+                    HTTPRoute as authored — server-side CRD apply
+                    defaults the field, but the chart-validation
+                    harness doesn't, and conformance fixtures omit
+                    `type:` to exercise the spec default. Normalize
+                    here so the emission block treats both forms
+                    identically. -#}
+                {%- var hType = h.Type %}
+                {%- if hType == "" %}{%- hType = "Exact" %}{%- end %}
+                {%- headerSpecs = append(headerSpecs, map[string]any{
+                  "type": hType, "name": h.Name, "value": h.Value,
+                }) %}
+              {%- end %}
+              {%- for _, p := range match.QueryParams %}
+                {%- var pType = p.Type %}
+                {%- if pType == "" %}{%- pType = "Exact" %}{%- end %}
+                {%- paramSpecs = append(paramSpecs, map[string]any{
+                  "type": pType, "name": p.Name, "value": p.Value,
+                }) %}
               {%- end %}
             {%- end %}
           {%- end %}
+        {%- case *resources.grpcroutes.T %}
+          {%- riKind = "GRPCRoute" %}
+          {%- riIsGrpc = true %}
+          {%- riNs = r.Metadata.Namespace %}
+          {%- riName = r.Metadata.Name %}
+          {#- GRPCRoute uses a synthesized PathPrefix "/" at
+              analysis time (see 20-route-analysis.yaml's GRPCRoute
+              loop) — the gRPC method matchers narrow within that
+              prefix. The path defaults remain PathPrefix / for
+              GRPCRoutes, which is exactly what's already
+              initialised above. -#}
+          {%- if riRuleIdx >= 0 && riRuleIdx < len(r.Spec.Rules) %}
+            {%- var rule = r.Spec.Rules[riRuleIdx] %}
+            {%- if riMatchIdx >= 0 && riMatchIdx < len(rule.Matches) %}
+              {%- var match = rule.Matches[riMatchIdx] %}
+              {%- if match.Method.Service != "" %}
+                {%- hasGrpcMethod = true %}
+                {%- grpcService = match.Method.Service %}
+                {%- grpcMethodName = match.Method.Method %}
+                {%- if match.Method.Type != "" %}{%- grpcType = match.Method.Type %}{%- end %}
+              {%- end %}
+              {%- for _, h := range match.Headers %}
+                {%- var hType = h.Type %}
+                {%- if hType == "" %}{%- hType = "Exact" %}{%- end %}
+                {%- headerSpecs = append(headerSpecs, map[string]any{
+                  "type": hType, "name": h.Name, "value": h.Value,
+                }) %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+
+        {#- Detect "path-only" rules — those with no method/header/
+            query/grpc sub-matchers. The Gateway API spec requires
+            evaluating rules in order of specificity, falling
+            through to less-specific rules when a more-specific
+            rule's sub-matchers don't all pass. The existing
+            gw_routeId scope check (set by the path-map step to the
+            most-specific path's rule IDs) blocks fallback across
+            paths within the same HTTPRoute, so a path-only catch-
+            all loses to a failed-but-more-specific sibling. We give
+            path-only rules a relaxed scope check (gw_routeId begins
+            with this HTTPRoute's prefix) plus a direct path
+            predicate, restoring spec-compliant fallback semantics
+            without altering the strict scope check for rules that
+            already gate on their own sub-matchers. -#}
+        {%- var isPathOnly = !hasMethod && len(headerSpecs) == 0 && len(paramSpecs) == 0 && !hasGrpcMethod %}
+        {#- Early exit: skip if another matcher already won -#}
+        {%- var conditions = []any{"!{ var(txn.gw_rule_id) -m found }"} %}
+
+        {%- if isPathOnly %}
+          {#- Path-only fallback: scope to this HTTPRoute (any rule
+              of it must have been the path-map winner), plus the
+              rule's path must match the request directly. -#}
+          {%- var httprouteScope = riNs + "_" + riName + "_" %}
+          {%- conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + httprouteScope + "\" }") %}
+          {%- if pathType == "Exact" %}
+            {%- conditions = append(conditions, "{ path \"" + pathValue + "\" }") %}
+          {%- else if pathType == "RegularExpression" %}
+            {%- var escapedPathOnly = replace(pathValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ path -m reg \"" + escapedPathOnly + "\" }") %}
+          {%- else %}
+            {#- PathPrefix (default). Per Gateway API spec, PathPrefix
+                matches whole segments — `/v2` matches `/v2`, `/v2/`,
+                `/v2/foo`, but NOT `/v2example`. HAProxy's plain
+                `path_beg` is byte-prefix (no boundary) and matches
+                the last case incorrectly; `path_dir` does a segment
+                match but it matches a directory ANYWHERE in the
+                path (so `/v2` would match `/foo/v2/example`). The
+                spec requires anchoring at the START of the path.
+
+                Use a regex anchored to ^ that matches either the
+                exact prefix or the prefix followed by a slash:
+
+                    ^<prefix>(/|$)
+
+                Special case: bare `/` (root) matches every path —
+                emit a trivial path_beg "/" condition that's cheaper
+                than a regex and still always satisfied. -#}
+            {%- if pathValue == "/" || pathValue == "" %}
+              {%- conditions = append(conditions, "{ path_beg \"/\" }") %}
+            {%- else %}
+              {%- var pathPrefixValue = pathValue %}
+              {%- if hasSuffix(pathPrefixValue, "/") %}
+                {%- pathPrefixValue = pathPrefixValue[:len(pathPrefixValue)-1] %}
+              {%- end %}
+              {%- var escaped = sanitize_regex(pathPrefixValue) %}
+              {#- HAProxy expands $VAR / ${VAR} in config strings; the
+                  documented escape for a literal dollar is `\$`. -#}
+              {%- conditions = append(conditions, "{ path -m reg \"^" + escaped + "(/|\\$)\" }") %}
+            {%- end %}
+          {%- end %}
         {%- else %}
-          {#- Rule has sub-matchers — keep the strict same-path conflictGroup
-              check; the sub-matchers' own predicates already narrow the rule
-              to its declared path. -#}
+          {#- Rule has sub-matchers — keep the strict same-path
+              conflictGroup check; the sub-matchers' own predicates
+              already narrow the rule to its declared path. -#}
           {%- conditions = append(conditions, "{ var(req.gw_routeId) -m str \"" + riConflictGroup + "\" }") %}
         {%- end %}
 
-        {#- Method matcher (HTTPRoute only) #}
-        {%- var riMethod = riMatch["method"] %}
-        {%- if riMethod != nil && riResourceType == "httproute" %}
-          {%- conditions = append(conditions, "{ method " + (riMethod) + " }") %}
+        {#- Method matcher (HTTPRoute only) -#}
+        {%- if hasMethod && riKind == "HTTPRoute" %}
+          {%- conditions = append(conditions, "{ method " + riMethod + " }") %}
         {%- end %}
 
-        {#- Header matchers. Gateway-API spec: HTTPHeaderMatch.type
-            defaults to "Exact" when omitted. The chart sees the
-            HTTPRoute as authored — a server-side CRD apply DOES default
-            the field, but our chart-validation harness doesn't, and the
-            conformance suite's fixtures omit `type:` to exercise the
-            spec default. Treat empty / missing type as "Exact" so both
-            forms produce the same HAProxy predicate. #}
-        {%- var riHeaders = riMatch["headers"] %}
-        {%- for _, header := range riHeaders | toSlice() %}
-          {%- var headerType = tostring(header["type"] | fallback("Exact")) %}
-          {%- var headerName = header["name"] %}
-          {%- var headerValue = header["value"] %}
-          {%- if headerType == "Exact" %}
-            {%- conditions = append(conditions, "{ req.hdr(" + headerName + ") \"" + headerValue + "\" }") %}
-          {%- else if headerType == "RegularExpression" %}
-            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
-            {%- var escapedHeaderValue = replace(headerValue, "$", "\\$") %}
-            {%- conditions = append(conditions, "{ req.hdr(" + headerName + ") -m reg \"" + escapedHeaderValue + "\" }") %}
+        {#- Header matchers — defaults already normalised inside the
+            type-switch above. -#}
+        {%- for _, hSpec := range headerSpecs %}
+          {%- var hm map[string]any = hSpec %}
+          {%- var hType = tostring(hm["type"]) %}
+          {%- var hName = tostring(hm["name"]) %}
+          {%- var hValue = tostring(hm["value"]) %}
+          {%- if hType == "Exact" %}
+            {%- conditions = append(conditions, "{ req.hdr(" + hName + ") \"" + hValue + "\" }") %}
+          {%- else if hType == "RegularExpression" %}
+            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) -#}
+            {%- var escapedHeaderValue = replace(hValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ req.hdr(" + hName + ") -m reg \"" + escapedHeaderValue + "\" }") %}
           {%- end %}
         {%- end %}
 
-        {#- Query parameter matchers (HTTPRoute only). Same spec default
-            as headers: QueryParamMatch.type → "Exact" when omitted. #}
-        {%- var riParams = riMatch["queryParams"] %}
-        {%- for _, param := range riParams | toSlice() %}
-          {%- var paramType = tostring(param["type"] | fallback("Exact")) %}
-          {%- var paramName = param["name"] %}
-          {%- var paramValue = param["value"] %}
-          {%- if paramType == "Exact" %}
-            {%- conditions = append(conditions, "{ urlp(" + paramName + ") \"" + paramValue + "\" }") %}
-          {%- else if paramType == "RegularExpression" %}
-            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
-            {%- var escapedParamValue = replace(paramValue, "$", "\\$") %}
-            {%- conditions = append(conditions, "{ urlp(" + paramName + ") -m reg \"" + escapedParamValue + "\" }") %}
+        {#- Query parameter matchers (HTTPRoute only). -#}
+        {%- for _, pSpec := range paramSpecs %}
+          {%- var pm map[string]any = pSpec %}
+          {%- var pType = tostring(pm["type"]) %}
+          {%- var pName = tostring(pm["name"]) %}
+          {%- var pValue = tostring(pm["value"]) %}
+          {%- if pType == "Exact" %}
+            {%- conditions = append(conditions, "{ urlp(" + pName + ") \"" + pValue + "\" }") %}
+          {%- else if pType == "RegularExpression" %}
+            {#- Escape $ as \$ for HAProxy config (prevents env var expansion) -#}
+            {%- var escapedParamValue = replace(pValue, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ urlp(" + pName + ") -m reg \"" + escapedParamValue + "\" }") %}
           {%- end %}
         {%- end %}
 
-        {#- GRPCRoute method matcher #}
-        {%- var grpcMethod = riMatch["method"] %}
-        {%- if riIsGrpc && grpcMethod != nil %}
-          {%- var grpcMethod_map map[string]any = grpcMethod %}
-          {%- var grpcService = grpcMethod_map["service"] %}
-          {%- if grpcService != nil %}
-            {%- var grpcPath = "/" + (grpcService) %}
-            {%- var grpcMethod_name = grpcMethod_map["method"] %}
-            {%- if grpcMethod_name != nil %}
-              {%- grpcPath = grpcPath + "/" + (grpcMethod_name) %}
-            {%- end %}
-            {#- Match against the request URL path. For HTTP/2 (which is
-                what GRPCRoute requires per the Gateway API spec, plus
-                what HAProxy emits via ALPN h2 on chart-static HTTPS
-                frontends and via the http_frontend_h2c plumbing on
-                plaintext h2c), HAProxy parses the `:path` pseudo-header
-                and exposes it through the `path` sample fetch — NOT
-                through `req.hdr(:path)`, which targets regular HTTP/1.1
-                headers and yields an empty string for the pseudo-header.
-                Using `req.hdr(:path)` here meant every gRPC method
-                matcher silently never fired and the request fell
-                through to default_backend (404), which broke
-                test-grpcroute-https-listener-alpn-h2 and the upstream
-                GRPCExactMethodMatching / GRPCRouteHeaderMatching /
-                GRPCRouteListenerHostnameMatching / GRPCRouteNamedRule /
-                GRPCRouteWeight conformance suites. #}
-            {#- GRPCMethodMatch.type defaults to "Exact" when omitted
-                (Gateway-API spec). Same defaulting fix as headers/
-                queryParams above. #}
-            {%- var grpcType = tostring(grpcMethod_map["type"] | fallback("Exact")) %}
-            {%- if grpcType == "Exact" %}
-              {%- conditions = append(conditions, "{ path \"" + grpcPath + "\" }") %}
-            {%- else if grpcType == "RegularExpression" %}
-              {#- Escape $ as \$ for HAProxy config (prevents env var expansion) #}
-              {%- var escapedGrpcPath = replace(grpcPath, "$", "\\$") %}
-              {%- conditions = append(conditions, "{ path -m reg \"" + escapedGrpcPath + "\" }") %}
-            {%- end %}
+        {#- GRPCRoute method matcher. Match against the request URL
+            path. For HTTP/2 (which is what GRPCRoute requires per
+            the Gateway API spec, plus what HAProxy emits via ALPN
+            h2 on chart-static HTTPS frontends and via the
+            http_frontend_h2c plumbing on plaintext h2c), HAProxy
+            parses the `:path` pseudo-header and exposes it through
+            the `path` sample fetch — NOT through `req.hdr(:path)`,
+            which targets regular HTTP/1.1 headers and yields an
+            empty string for the pseudo-header. Using
+            `req.hdr(:path)` here meant every gRPC method matcher
+            silently never fired and the request fell through to
+            default_backend (404), which broke
+            test-grpcroute-https-listener-alpn-h2 and the upstream
+            GRPCExactMethodMatching / GRPCRouteHeaderMatching /
+            GRPCRouteListenerHostnameMatching / GRPCRouteNamedRule /
+            GRPCRouteWeight conformance suites. -#}
+        {%- if hasGrpcMethod %}
+          {%- var grpcPath = "/" + grpcService %}
+          {%- if grpcMethodName != "" %}
+            {%- grpcPath = grpcPath + "/" + grpcMethodName %}
+          {%- end %}
+          {%- if grpcType == "Exact" %}
+            {%- conditions = append(conditions, "{ path \"" + grpcPath + "\" }") %}
+          {%- else if grpcType == "RegularExpression" %}
+            {%- var escapedGrpcPath = replace(grpcPath, "$", "\\$") %}
+            {%- conditions = append(conditions, "{ path -m reg \"" + escapedGrpcPath + "\" }") %}
           {%- end %}
         {%- end %}
 
-        {#- Set txn.gw_rule_id to mark this rule as winner #}
+        {#- Set txn.gw_rule_id to mark this rule as winner -#}
         {%- if len(conditions) > 0 %}
-          {#- Build matcher type description for provenance comment #}
+          {#- Build matcher type description for provenance comment -#}
           {%- var descParts = []any{} %}
-          {%- if riMethod != nil && riResourceType == "httproute" %}
-            {%- descParts = append(descParts, "method " + (riMethod)) %}
+          {%- if hasMethod && riKind == "HTTPRoute" %}
+            {%- descParts = append(descParts, "method " + riMethod) %}
           {%- end %}
-          {%- if riHeaders != nil %}
-            {%- descParts = append(descParts, len(toSlice(riHeaders)) + " headers") %}
+          {%- if len(headerSpecs) > 0 %}
+            {%- descParts = append(descParts, tostring(len(headerSpecs)) + " headers") %}
           {%- end %}
-          {%- if riParams != nil %}
-            {%- descParts = append(descParts, len(toSlice(riParams)) + " query params") %}
+          {%- if len(paramSpecs) > 0 %}
+            {%- descParts = append(descParts, tostring(len(paramSpecs)) + " query params") %}
           {%- end %}
-          {%- if riIsGrpc && grpcMethod != nil %}
+          {%- if hasGrpcMethod %}
             {%- descParts = append(descParts, "gRPC method") %}
           {%- end %}
           {%- var matcherDesc = "path-only" %}
           {%- if len(descParts) > 0 %}{%- matcherDesc = join(descParts, ", ") %}{%- end %}
-          {%- var riNs = riRouteMeta | dig("namespace") | fallback("") %}
-          {%- var riName = riRouteMeta | dig("name") | fallback("") %}
-      # Rule: {{ riResourceType | title() }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
+      # Rule: {{ riKind }} {{ riNs }}/{{ riName }} rule[{{ riRuleIdx }}] - {{ matcherDesc }}
       http-request set-var(txn.gw_rule_id) str({{ riRouteId }}) if {{ join(conditions, " ") }}
-          {#- Debug headers if enabled #}
+          {#- Debug headers if enabled -#}
           {%- if debug | fallback(false) %}
-            {#- Build detailed match reason #}
+            {#- Build detailed match reason -#}
             {%- var matchTypes = []any{} %}
-            {%- if riMethod != nil && riResourceType == "httproute" %}
+            {%- if hasMethod && riKind == "HTTPRoute" %}
               {%- matchTypes = append(matchTypes, "method") %}
             {%- end %}
-            {%- if riHeaders != nil %}
+            {%- if len(headerSpecs) > 0 %}
               {%- matchTypes = append(matchTypes, "header") %}
             {%- end %}
-            {%- if riParams != nil %}
+            {%- if len(paramSpecs) > 0 %}
               {%- matchTypes = append(matchTypes, "query") %}
             {%- end %}
-            {%- if riIsGrpc && grpcMethod != nil %}
+            {%- if hasGrpcMethod %}
               {%- matchTypes = append(matchTypes, "grpc-method") %}
             {%- end %}
             {%- var matchTypes_str = "advanced" %}
@@ -365,7 +443,14 @@ templateSnippets:
       {%- if len(gatewayAllRoutes) > 0 %}
       # Set txn.path_match for backend selection based on txn.gw_rule_id
       {% for _, routeInfo := range gatewayAllRoutes -%}
-        {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | fallback([]any{}) %}
+        {#- toSlice() normalises the typed []struct{...HTTPRouteBackendRef...}
+            (rule.BackendRefs on the typed parent route, reached via the
+            polymorphic routeInfo["rule"] slot + dig fallthrough into
+            typed structs) into []any so the chart's downstream
+            iteration / append patterns work uniformly. The pre-typed-
+            access `| fallback([]any{})` relied on dig() returning nil
+            for typed-struct intermediates, which it no longer does. -#}
+        {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | toSlice() %}
         {%- if len(backendRefs) > 0 %}
           {#- Filter to backendRefs the chart can route to. Per Gateway API
               spec, a backendRef is "valid" only when:
@@ -382,7 +467,7 @@ templateSnippets:
           {%- var routeNs = tostring(routeInfo | dig("route", "metadata", "namespace") | fallback("")) %}
           {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
           {%- for _, ref := range backendRefs %}
-            {%- var refMap map[string]any = ref %}
+            {%- var refMap any = ref %}
             {%- var refGroup = refMap | dig("group") | fallback("") | tostring() %}
             {%- var refKind = refMap | dig("kind") | fallback("Service") | tostring() %}
             {%- if (refGroup == "" || refGroup == "core") && refKind == "Service" %}
@@ -423,8 +508,8 @@ templateSnippets:
             {%- qualifier = "BACKEND:gw-invalid-backend" %}
           {%- else if len(validRefs) == 1 %}
             {#- Single valid backend: BACKEND qualifier #}
-            {%- var backendRef map[string]any = validRefs[0] %}
-            {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef["name"]) + "_" + (backendRef["port"]) %}
+            {%- var backendRef any = validRefs[0] %}
+            {%- var backendName = "gtw_" + (routeInfo | dig("route", "metadata", "namespace")) + "_" + (routeInfo | dig("route", "metadata", "name")) + "_" + (backendRef | dig("name")) + "_" + (backendRef | dig("port")) %}
             {%- qualifier = "BACKEND:" + backendName %}
           {%- else %}
             {#- Multiple valid backends: MULTIBACKEND qualifier. Note: a
@@ -438,7 +523,7 @@ templateSnippets:
                 is handled correctly above. -#}
             {%- var totalWeight = 0 %}
             {%- for _, ref := range validRefs %}
-              {%- var refMap map[string]any = ref %}
+              {%- var refMap any = ref %}
               {%- var weight = refMap | dig("weight") | fallback(1) %}
               {%- totalWeight = totalWeight + (weight) %}
             {%- end %}

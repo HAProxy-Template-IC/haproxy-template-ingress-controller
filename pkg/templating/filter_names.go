@@ -155,6 +155,23 @@ const (
 	// Syntax: toSlice(value) - returns []any.
 	FuncToSlice = "toSlice"
 
+	// FuncToStrMap normalises any string-keyed map (map[string]string
+	// from typegen-produced fields like metadata.labels / matchLabels,
+	// or map[string]any from the untyped store path) into a uniform
+	// map[string]string for template iteration. Returns nil for nil
+	// input. Non-string values from a map[string]any input are
+	// coerced via tostring().
+	//
+	// Motivation: chart code that did `value.(map[string]any)` on a
+	// label / matchLabels field panicked once the typed-watched-
+	// resources path landed, because typegen builds those fields as
+	// `map[string]string` (matching the K8s OpenAPI schema). A
+	// shape-agnostic conversion at the call site keeps chart code
+	// from having to branch per shape.
+	//
+	// Syntax: to_str_map(value) - returns map[string]string.
+	FuncToStrMap = "to_str_map"
+
 	// FuncAppendAny appends an item to a slice, handling any types.
 	// Syntax: append(slice, item) - returns []any
 	// If slice is nil, creates a new slice with the item.

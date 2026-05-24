@@ -25,23 +25,25 @@ templateSnippets:
         {%- for _, p := range seenInitial %}
           {%- seen[p] = true %}
         {%- end %}
-        {%- for _, gw := range resources.gateways.List() | toSlice() %}
-          {%- for _, listener := range gw | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-            {%- var lProto = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+        {%- for _, gw := range resources.gateways.List() %}
+          {%- for _, listener := range gw.Spec.Listeners %}
+            {%- var lProto = listener.Protocol %}
+            {%- if lProto == "" %}{%- lProto = "HTTP" %}{%- end %}
             {%- if lProto == protocol %}
-              {%- var port = toint(listener | dig("port") | fallback(0)) %}
+              {%- var port = toint(listener.Port) %}
               {%- if port > 0 && !seen[port] %}
                 {%- seen[port] = true %}
       bind *:{{ port }}{{ sslOptionsSuffix }}
               {%- end %}
             {%- end %}
           {%- end %}
-          {%- for _, ls := range resources.listenersets.List() | toSlice() %}
+          {%- for _, ls := range resources.listenersets.List() %}
             {%- if hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
-              {%- for _, listener := range ls | dig("spec", "listeners") | fallback([]any{}) | toSlice() %}
-                {%- var lProto = listener | dig("protocol") | fallback("HTTP") | tostring() %}
+              {%- for _, listener := range ls.Spec.Listeners %}
+                {%- var lProto = listener.Protocol %}
+                {%- if lProto == "" %}{%- lProto = "HTTP" %}{%- end %}
                 {%- if lProto == protocol %}
-                  {%- var port = toint(listener | dig("port") | fallback(0)) %}
+                  {%- var port = toint(listener.Port) %}
                   {%- if port > 0 && !seen[port] %}
                     {%- seen[port] = true %}
       bind *:{{ port }}{{ sslOptionsSuffix }}

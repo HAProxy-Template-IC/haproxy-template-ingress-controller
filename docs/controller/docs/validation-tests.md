@@ -244,9 +244,18 @@ haptic-controller validate -f config.yaml --output yaml
 
 # Parallelism (0=auto-detect CPUs, 1=sequential)
 haptic-controller validate -f config.yaml --workers 4
+
+# Typed watched-resource access (needed when templates use *resources.X.T
+# field access). Point at a directory of CRD YAMLs / OpenAPI v3 schemas;
+# the repo bundles its Gateway API + haptic CRDs + K8s built-in schemas
+# under tests/schemas/, which the chart-test script auto-wires.
+haptic-controller validate -f config.yaml --schema-dir tests/schemas
+# Equivalent: HAPTIC_SCHEMA_DIR=tests/schemas haptic-controller validate ...
 ```
 
 The `haptic-controller validate` command shells out to the `haproxy` binary on your `PATH` for the semantic validation phase. Install HAProxy locally (e.g. via your package manager) so that step can run; otherwise only the syntax phase is exercised.
+
+If a template reaches for typed watched-resource access (`resources.gateways.List()` returning `[]*resources.gateways.T`, or a `case *resources.httproutes.T` type-switch branch) and no `--schema-dir` was supplied, validation fails at engine compile time with a clear "no schema for X" pointer back to the flag. Charts that stick to the untyped `resources["<name>"]` / `dig()` path validate fine without the flag.
 
 Exit code 0 means all tests passed.
 

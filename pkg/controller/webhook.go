@@ -241,11 +241,12 @@ func createDryRunValidator(
 		Capabilities:       capabilities,
 		HTTPStoreComponent: httpStoreComponent,
 		// TypedResourceTypes mirrors the reconciliation RenderService
-		// so dry-run renders bind the same `*[]*T` typed globals as
+		// so dry-run renders bind the same typed `resources` global as
 		// production. Without it, the engine compile succeeds (the
-		// declarations are present) but the render-time
-		// addTypedRenderContextEntries would emit nothing and the
-		// templates iterate empty.
+		// declarations are present) but rendercontext.BuildResourcesValue
+		// would fall back to the untyped map shape and chart code that
+		// reaches typed access (`resources.<name>.List()` etc.) would
+		// compile-fail under the typed engine declaration.
 		TypedResourceTypes: engineWiring.TypedResourceTypes,
 	})
 
