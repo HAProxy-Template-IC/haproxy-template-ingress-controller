@@ -453,11 +453,12 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		return ctx, err
 	}
 
-	// HAPTIC_E2E_PROFILE selects which embedded values file to install
-	// with. The conformance profile strips out the HTTP-store demo
-	// and other dev-loop fixtures that don't belong in conformance
-	// runs — see ConformanceValuesYAML's doc comment for the
-	// rationale. Default (empty / "dev") uses the full dev-values.
+	// HAPTIC_E2E_PROFILE selects which embedded values file to
+	// install with. Default uses E2EValuesYAML (the e2e suite has
+	// parallel-ingress-create timing requirements that diverge
+	// from the dev loop — see its doc comment). The conformance
+	// profile strips out the HTTP-store demo and other dev-loop
+	// fixtures that don't belong in conformance runs.
 	profile := os.Getenv("HAPTIC_E2E_PROFILE")
 	var valuesBytes []byte
 	switch profile {
@@ -465,7 +466,7 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		valuesBytes = devassets.ConformanceValuesYAML
 		fmt.Fprintln(os.Stderr, "e2e: using conformance values profile")
 	default:
-		valuesBytes = devassets.DevValuesYAML
+		valuesBytes = devassets.E2EValuesYAML
 	}
 	// Write the chosen values bytes to a temp file so helm can consume them.
 	valuesFile, err := os.CreateTemp("", "haptic-e2e-values-*.yaml")

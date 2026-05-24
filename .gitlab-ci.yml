@@ -5,6 +5,10 @@ stages:
   - integration
   - deploy
 
+# Triggers the documented zero-jobs-MR workaround. This MR (!995) is
+# chart-comment-only; `**/*.yaml` is in `.rules-code` but the pipeline
+# came back empty anyway, same shape as !980's gap.
+
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:
   rules:

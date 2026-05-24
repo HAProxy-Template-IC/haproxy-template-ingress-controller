@@ -204,43 +204,79 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 	// `--max-time 5` bounds each curl so reload-window connection
 	// drops produce `000` quickly rather than hanging the whole
 	// burst on the slowest one.
-	cmdScript := fmt.Sprintf(
-		`seq 1 %d | xargs -P 10 -I{} curl -s --max-time 5 -o /dev/null -w "%%{http_code}\n" `+
-			`-H "Host: %s" http://haptic-haproxy.haptic.svc/`,
-		total, host)
+	runOnce := func() rateLimitBurstResult {
+		cmdScript := fmt.Sprintf(
+			`seq 1 %d | xargs -P 10 -I{} curl -s --max-time 5 -o /dev/null -w "%%{http_code}\n" `+
+				`-H "Host: %s" http://haptic-haproxy.haptic.svc/`,
+			total, host)
 
-	podName := fmt.Sprintf("ratelimit-burst-%d", time.Now().UnixNano())
-	cmd := exec.CommandContext(ctx, "kubectl",
-		"--kubeconfig", kubeconfigPath,
-		"-n", namespace,
-		"run", podName,
-		"--rm", "-i",
-		"--restart=Never",
-		"--image=alpine/curl:latest",
-		"--quiet",
-		"--command", "--",
-		"sh", "-c", cmdScript,
-	)
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("rate-limit burst pod failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errBuf.String())
-	}
-	elapsed := time.Since(start)
-
-	result := rateLimitBurstResult{
-		requested: total,
-		duration:  elapsed,
-		byCode:    map[string]int{},
-	}
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		code := strings.TrimSpace(line)
-		if code == "" {
-			continue
+		podName := fmt.Sprintf("ratelimit-burst-%d", time.Now().UnixNano())
+		cmd := exec.CommandContext(ctx, "kubectl",
+			"--kubeconfig", kubeconfigPath,
+			"-n", namespace,
+			"run", podName,
+			"--rm", "-i",
+			"--restart=Never",
+			"--image=alpine/curl:latest",
+			"--quiet",
+			"--command", "--",
+			"sh", "-c", cmdScript,
+		)
+		var out, errBuf bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errBuf
+		start := time.Now()
+		runErr := cmd.Run()
+		elapsed := time.Since(start)
+		// Don't fatal on non-zero exit. xargs returns 123 whenever any
+		// curl invocation exited non-zero (e.g. 7 on connection refused
+		// or 28 on --max-time hit) — both of which the test wants to
+		// observe as `000` in the byCode distribution, not as a fatal
+		// pod-run error. The byCode-based check in the caller is what
+		// distinguishes "rate-limit not engaging" from "reload-window
+		// connection drops".
+		if runErr != nil {
+			t.Logf("rate-limit burst pod returned non-zero (individual curls failed): %v\nstderr: %s", runErr, errBuf.String())
 		}
-		result.byCode[code]++
+
+		result := rateLimitBurstResult{
+			requested: total,
+			duration:  elapsed,
+			byCode:    map[string]int{},
+		}
+		for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+			code := strings.TrimSpace(line)
+			if code == "" {
+				continue
+			}
+			result.byCode[code]++
+		}
+		return result
 	}
-	return result
+
+	// Burst once; retry once after a 1s gap if the result looks like
+	// reload-window churn (no 429s, fewer than half the curls landed).
+	// The parallel-test e2e suite drives haproxy reloads every ~1-2s as
+	// other tests create / delete ingresses; a single burst that races a
+	// reload window produces all-000 codes (each curl `--max-time 5`'s
+	// out before the new worker binds the socket). Two bursts with a 1s
+	// gap clear that race for the vast majority of cases without
+	// changing the chart's reload cadence. A sustained 0×429 across both
+	// bursts is a real test failure the caller fatals on.
+	result := runOnce()
+	if result.byCode["429"] > 0 {
+		return result
+	}
+	landed := result.byCode["200"] + result.byCode["429"]
+	if landed > total/2 {
+		// Burst landed cleanly but no 429 — real failure, don't retry.
+		return result
+	}
+	t.Logf("rate-limit burst attempt 1 looks like reload-window churn (%s); retrying once after 1s", result)
+	select {
+	case <-time.After(1 * time.Second):
+	case <-ctx.Done():
+		return result
+	}
+	return runOnce()
 }
