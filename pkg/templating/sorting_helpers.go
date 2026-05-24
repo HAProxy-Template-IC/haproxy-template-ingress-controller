@@ -86,12 +86,23 @@ func navigateJSONPath(item any, path string) any {
 }
 
 // getField retrieves a field from a map or struct.
+//
+// Field-name resolution mirrors [scriggoDig] / [digStructField] so
+// JSONPath expressions like "$.match.method" walk a typed struct's
+// JSON tags (typegen-produced `json:"match"`, `json:"method"`) instead
+// of using the segment as a literal Go field name (`Match`, `Method` —
+// would never match the lowercase JSONPath segment via FieldByName).
+// Without this, sort_by criteria over typed resources silently extract
+// nil and every route ends up with equal sort keys — the route-
+// precedence regression that surfaced as gateway-conformance
+// HTTPRouteHeaderMatching / QueryParamMatching / RewriteHost failures.
 func getField(item any, fieldName string) any {
 	if item == nil {
 		return nil
 	}
 
-	// Try map access first
+	// Try map access first (fast path for untyped maps and the
+	// typegen-produced map[string]string label / annotation fields).
 	if m, ok := convertToMap(item); ok {
 		if val, exists := m[fieldName]; exists {
 			return val
@@ -99,16 +110,40 @@ func getField(item any, fieldName string) any {
 		return nil
 	}
 
-	// Try struct field access via reflection
+	// Try struct field access via reflection, matching the JSON tag —
+	// not the Go field name — so the same lowercase JSONPath segments
+	// work uniformly across typed and untyped shapes.
 	val := reflect.ValueOf(item)
-	if val.Kind() == reflect.Pointer {
+	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return nil
+		}
 		val = val.Elem()
 	}
 
 	if val.Kind() == reflect.Struct {
-		field := val.FieldByName(fieldName)
-		if field.IsValid() {
-			return field.Interface()
+		t := val.Type()
+		if idx, ok := structFieldIndex(t, fieldName); ok {
+			field := val.Field(idx)
+			if field.IsValid() {
+				// Omitempty + zero-value normalisation mirroring
+				// digStructField: a typegen-produced struct field
+				// tagged `json:"…,omitempty"` whose value equals the
+				// type's zero value is treated as absent. Without
+				// this, the sort_by `:exists` modifier sees every
+				// optional field as present (the field always
+				// exists in the Go type even when the resource
+				// didn't set it), and precedence between method-
+				// having rules and catch-all rules collapses —
+				// observed as the e2e TestHTTPRoutePrecedence/
+				// plain_GET_routes_to_v2 failure: plain-GET hit a
+				// catch-all rule that should have lost to a
+				// GET-only rule on $.match.method:exists:desc.
+				if isStructFieldOmitempty(t, idx) && field.IsZero() {
+					return nil
+				}
+				return field.Interface()
+			}
 		}
 	}
 

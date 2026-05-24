@@ -17,12 +17,13 @@ package renderer
 import (
 	"context"
 	"log/slog"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
@@ -211,18 +212,41 @@ func TestRenderService_Render_SimpleConfig(t *testing.T) {
 func TestRenderService_Render_WithStores(t *testing.T) {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{
+			// Use the dot-notation typed-struct access pattern — the engine no longer
+			// declares an untyped `resources` map; production wiring produces a typed
+			// `*resources struct{Ingresses *innerStore; …}` (see
+			// rendercontext.BuildResourcesValue / typebootstrap.BuildEngineDeclarations).
 			Template: `global
-{% for _, ing := range resources["ingresses"].List() %}
+{% for _, ing := range resources.ingresses.List() %}
 # ingress: {{ ing }}
 {% end %}
 `,
 		},
+		WatchedResources: map[string]config.WatchedResource{
+			// Declared so RenderService.buildRenderingContext emits an
+			// `Ingresses` field on the runtime resources struct. The
+			// test only exercises List(); IndexBy isn't needed here.
+			"ingresses": {
+				APIVersion: "networking.k8s.io/v1",
+				Resources:  "ingresses",
+			},
+		},
 		Dataplane: testDataplaneConfig(),
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	// Declare `resources` to match the typed-struct shape that
+	// RenderService.buildRenderingContext produces via
+	// rendercontext.BuildResourcesValue. typebootstrap.BuildEngineDeclarations
+	// with an empty Result + extras emits the same per-resource store struct
+	// shape (List/Fetch/GetSingle returning []any / any) that the runtime value
+	// fills closures for.
+	decls := typebootstrap.BuildEngineDeclarations(&typebootstrap.Result{}, "ingresses")
+	engine, err := templating.NewScriggoWithDeclarations(
 		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
-		nil, nil, nil)
+		[]string{"haproxy.cfg"},
+		nil, nil, nil,
+		decls,
+	)
 	require.NoError(t, err)
 
 	svc := NewRenderService(&RenderServiceConfig{
@@ -450,16 +474,28 @@ func TestRenderService_buildRenderingContext_PropagatesIndexBy(t *testing.T) {
 	require.NotNil(t, statusPatches, "statusPatchCollector must be wired so filters_status.go can capture mutations")
 	require.NotNil(t, renderedResources, "renderedResourceCollector must be wired so k8sResources templates can emit owned resources")
 
-	resources, ok := renderCtx["resources"].(map[string]templating.ResourceStore)
-	require.True(t, ok, "renderCtx[\"resources\"] must be map[string]ResourceStore")
-
-	ing, ok := resources["ingresses"].(*rendercontext.StoreWrapper)
-	require.True(t, ok, "ingresses wrapper must be *StoreWrapper")
-	assert.Equal(t, indexBy, ing.IndexBy,
-		"StoreWrapper must carry the IndexBy from config.WatchedResources so Fetch/GetSingle stay on the per-render snapshot")
-
-	tls, ok := resources["tlsroutes"].(*rendercontext.StoreWrapper)
-	require.True(t, ok, "tlsroutes wrapper must be *StoreWrapper")
-	assert.Nil(t, tls.IndexBy,
-		"a store present without a matching WatchedResources entry has no IndexBy hint, so the wrapper must accept that gracefully")
+	// BuildResourcesValue produces the typed `resources` struct
+	// with one field per cfg.WatchedResources entry — and ONLY per
+	// WatchedResources entry. Stores outside WatchedResources (the
+	// auto-injected haproxy_pods store, leftover provider entries,
+	// etc.) are deliberately ignored; production lives in
+	// controller["haproxy_pods"] for haproxy-pods and any drift here
+	// adds a phantom field that mismatches what
+	// typebootstrap.BuildEngineDeclarations declared, tripping
+	// Scriggo's "must have type assignable to struct {...}" panic at
+	// the first render.
+	rv := reflect.ValueOf(renderCtx["resources"])
+	require.Equal(t, reflect.Ptr, rv.Kind(),
+		"renderCtx[\"resources\"] must be a *struct (typed-resources path); the map fallback was removed alongside the dead untyped engine path")
+	resourcesStruct := rv.Elem()
+	require.Equal(t, reflect.Struct, resourcesStruct.Kind())
+	gotFields := make(map[string]bool, resourcesStruct.NumField())
+	for i := 0; i < resourcesStruct.NumField(); i++ {
+		gotFields[resourcesStruct.Type().Field(i).Name] = true
+	}
+	assert.True(t, gotFields["Ingresses"], "Ingresses field must be present (watched in cfg)")
+	assert.False(t, gotFields["Tlsroutes"],
+		"Tlsroutes must NOT be present — the fixture's store entry isn't in cfg.WatchedResources, "+
+			"so leaking it would mismatch the engine declaration and panic Scriggo at render time "+
+			"(this is exactly the helm-defaults CI failure mode that motivated the watchedNames-only contract)")
 }

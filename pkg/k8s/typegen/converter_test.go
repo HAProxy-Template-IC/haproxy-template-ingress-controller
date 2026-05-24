@@ -59,6 +59,12 @@ func TestConverter_ObjectMeta(t *testing.T) {
 	schema := &spec.Schema{
 		SchemaProps: spec.SchemaProps{
 			Type: spec.StringOrArray{"object"},
+			// `name` is marked required → tag emitted without omitempty.
+			// The other three properties are optional → tags carry
+			// omitempty so digStructField normalises zero values back
+			// to nil (matching the untyped-map "missing key = nil"
+			// semantic the chart relies on).
+			Required: []string{"name"},
 			Properties: map[string]spec.Schema{
 				"name": {SchemaProps: spec.SchemaProps{Type: spec.StringOrArray{"string"}}},
 				"namespace": {SchemaProps: spec.SchemaProps{
@@ -85,25 +91,50 @@ func TestConverter_ObjectMeta(t *testing.T) {
 	// Field order is deterministic (sorted) — exercise that too,
 	// because the chart's reflection-based access doesn't care but
 	// memoised consumers do.
+	//
+	// Generation is reflect.Pointer (Kind, not Int64) because optional
+	// integer / bool / float fields get pointer-wrapped for the issue
+	// #52 tristate fix: chart's `dig | fallback` couldn't distinguish
+	// "missing" from "explicitly zero" without it (HTTPRouteWeight
+	// conformance gating on backendRef.weight=0 being treated as
+	// excluded, not defaulted to 1). digStructField dereferences these
+	// pointers automatically so chart code keeps reading back plain
+	// int64 / bool values via dig().
 	wantFields := []struct {
 		name string
 		kind reflect.Kind
+		// elemKind is non-zero when the field is pointer-wrapped —
+		// asserts the value type behind the pointer.
+		elemKind reflect.Kind
 	}{
-		{"Generation", reflect.Int64},
-		{"Labels", reflect.Map},
-		{"Name", reflect.String},
-		{"Namespace", reflect.String},
+		{"Generation", reflect.Pointer, reflect.Int64},
+		{"Labels", reflect.Map, 0},
+		{"Name", reflect.String, 0},
+		{"Namespace", reflect.String, 0},
 	}
 	require.Equal(t, len(wantFields), got.NumField())
 	for i, wf := range wantFields {
-		assert.Equal(t, wf.name, got.Field(i).Name, "field index %d", i)
-		assert.Equal(t, wf.kind, got.Field(i).Type.Kind(), "field %q", wf.name)
+		f := got.Field(i)
+		assert.Equal(t, wf.name, f.Name, "field index %d", i)
+		assert.Equal(t, wf.kind, f.Type.Kind(), "field %q kind", wf.name)
+		if wf.elemKind != 0 {
+			assert.Equal(t, wf.elemKind, f.Type.Elem().Kind(), "field %q elem kind", wf.name)
+		}
 	}
 
-	// JSON tag is preserved so encoding/json can later unmarshal an
-	// unstructured map[string]any into the generated type.
+	// Required field → tag without omitempty. encoding/json still
+	// reads/writes by name; the absence of omitempty is a marker
+	// digStructField uses to decide whether to surface a zero value.
 	nameField, _ := got.FieldByName("Name")
 	assert.Equal(t, `json:"name"`, string(nameField.Tag))
+
+	// Optional field → tag with omitempty so dig() normalises absent
+	// values back to nil. Without this, `dig(obj, "namespace") |
+	// fallback(parentNs)` returns "" (the zero value), fallback
+	// doesn't fire, and downstream key composition silently produces
+	// malformed strings like "/<name>" instead of "<parent>/<name>".
+	nsField, _ := got.FieldByName("Namespace")
+	assert.Equal(t, `json:"namespace,omitempty"`, string(nsField.Tag))
 }
 
 // TestConverter_FreeFormMap covers the two AdditionalProperties shapes

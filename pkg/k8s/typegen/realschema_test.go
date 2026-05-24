@@ -110,7 +110,11 @@ func TestRealGatewaySchema(t *testing.T) {
 		meta := assertFieldType(t, gwType, "Metadata", reflect.Struct)
 		assertField(t, meta, "Namespace", reflect.String)
 		assertField(t, meta, "Name", reflect.String)
-		assertField(t, meta, "Generation", reflect.Int64) // int64 regardless of format keyword
+		// Generation is *int64 (pointer-wrapped) — optional numeric
+		// fields get the tristate treatment for issue #52. The chart
+		// never observes the pointer because digStructField
+		// transparently dereferences before returning.
+		assertPointerField(t, meta, "Generation", reflect.Int64)
 		labels := assertFieldType(t, meta, "Labels", reflect.Map)
 		assert.Equal(t, reflect.String, labels.Key().Kind())
 		assert.Equal(t, reflect.String, labels.Elem().Kind(),
@@ -122,6 +126,9 @@ func TestRealGatewaySchema(t *testing.T) {
 		listeners := assertFieldType(t, specT, "Listeners", reflect.Slice)
 		listenerT := listeners.Elem()
 		require.Equal(t, reflect.Struct, listenerT.Kind())
+		// Port stays int64 (not *int64) because the Gateway API
+		// Listener schema marks port as required — only OPTIONAL
+		// numeric / bool fields get the tristate pointer wrap.
 		for _, f := range []struct {
 			name string
 			kind reflect.Kind
@@ -175,6 +182,7 @@ func assertGatewayRoundTrip(t *testing.T, v reflect.Value) {
 	assert.Equal(t, "haptic", specV.FieldByName("GatewayClassName").String())
 	lis := specV.FieldByName("Listeners")
 	require.Equal(t, 2, lis.Len())
+	// Port stays int64 (required field, no tristate wrapping).
 	assert.Equal(t, "http", lis.Index(0).FieldByName("Name").String())
 	assert.Equal(t, int64(80), lis.Index(0).FieldByName("Port").Int())
 	assert.Equal(t, "*.example.com", lis.Index(0).FieldByName("Hostname").String())
@@ -189,6 +197,17 @@ func assertField(t *testing.T, parent reflect.Type, name string, want reflect.Ki
 	f, ok := parent.FieldByName(name)
 	require.True(t, ok, "field %q must exist on %s", name, parent)
 	assert.Equal(t, want, f.Type.Kind(), "field %q kind", name)
+}
+
+// assertPointerField is the tristate-aware variant of assertField for
+// optional numeric / bool fields that typegen pointer-wraps (issue #52).
+// Checks both the outer Kind (Pointer) and the underlying value Kind.
+func assertPointerField(t *testing.T, parent reflect.Type, name string, wantElem reflect.Kind) {
+	t.Helper()
+	f, ok := parent.FieldByName(name)
+	require.True(t, ok, "field %q must exist on %s", name, parent)
+	require.Equal(t, reflect.Pointer, f.Type.Kind(), "field %q kind", name)
+	assert.Equal(t, wantElem, f.Type.Elem().Kind(), "field %q elem kind", name)
 }
 
 func assertFieldType(t *testing.T, parent reflect.Type, name string, want reflect.Kind) reflect.Type {

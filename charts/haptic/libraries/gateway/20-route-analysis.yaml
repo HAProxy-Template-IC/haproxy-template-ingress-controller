@@ -88,8 +88,8 @@ templateSnippets:
           var out = map[string][]any{}
 
           for _, gw := range resources.gateways.List() {
-            var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback(""))
-            var gwName = tostring(dig(gw, "metadata", "name") | fallback(""))
+            var gwNs = gw.Metadata.Namespace
+            var gwName = gw.Metadata.Name
             var gwKey = gwNs + "/" + gwName
 
             // Determine the Gateway allowedListeners gate once per
@@ -119,12 +119,12 @@ templateSnippets:
             // deterministic across renders.
             var attachedSets = []any{}
             for _, ls := range resources.listenersets.List() {
-              var pRef = dig(ls, "spec", "parentRef")
-              if tostring(dig(pRef, "name") | fallback("")) != gwName {
+              if ls.Spec.ParentRef.Name != gwName {
                 continue
               }
-              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
-              var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs))
+              var lsNs = ls.Metadata.Namespace
+              var pNs = ls.Spec.ParentRef.Namespace
+              if pNs == "" { pNs = lsNs }
               if pNs != gwNs {
                 continue
               }
@@ -171,11 +171,22 @@ templateSnippets:
             // Gateway own listeners come first; they always pass the
             // parent gate (no ListenerSet involved), so _accepted=true.
             for li, l := range dig(gw, "spec", "listeners") | toSlice() {
-              var lc = map[string]any{}
-              if m, ok := l.(map[string]any); ok {
-                for k, v := range m {
-                  lc[k] = v
-                }
+              // In production `l` is a typed Gateway listener struct
+              // (typegen-produced from the Gateway OpenAPI); in offline
+              // tests it's map[string]any. The original l.(map[string]any)
+              // assertion silently produced an empty lc for the typed
+              // shape — downstream port/protocol/hostname lookups then
+              // resolved to zero values and ALL listeners were skipped.
+              // dig() walks both shapes via JSON-tag struct lookup; copy
+              // the known Gateway-API listener fields so downstream
+              // bracket-access keeps working uniformly.
+              var lc = map[string]any{
+                "name":          dig(l, "name"),
+                "hostname":      dig(l, "hostname"),
+                "port":          dig(l, "port"),
+                "protocol":      dig(l, "protocol"),
+                "tls":           dig(l, "tls"),
+                "allowedRoutes": dig(l, "allowedRoutes"),
               }
               lc["__sourceKind"] = "Gateway"
               lc["__sourceNs"] = gwNs
@@ -208,21 +219,21 @@ templateSnippets:
                   if nsObj == nil {
                     permitted = false
                   } else {
-                    var nsLabels = dig(nsObj, "metadata", "labels")
-                    if nsLabels == nil {
-                      permitted = false
-                    } else {
-                      var nsMap = nsLabels.(map[string]any)
-                      var allMatch = true
-                      for k, v := range allowedSelector.(map[string]any) {
-                        var actual, ok = nsMap[k]
-                        if !ok || tostring(actual) != tostring(v) {
-                          allMatch = false
-                          break
-                        }
+                    // nsObj is typed *resources.namespaces.T — labels
+                    // are map[string]string directly. allowedSelector
+                    // is the listener's matchLabels, polymorphic via
+                    // the Gateway-or-ListenerSet listenerOwner above,
+                    // so it stays `any` and goes through to_str_map.
+                    var selMap = to_str_map(allowedSelector)
+                    var allMatch = true
+                    for k, v := range selMap {
+                      var actual, ok = nsObj.Metadata.Labels[k]
+                      if !ok || actual != v {
+                        allMatch = false
+                        break
                       }
-                      permitted = allMatch
                     }
+                    permitted = allMatch
                   }
                 }
               default:
@@ -251,20 +262,15 @@ templateSnippets:
               // NotAllowed flows via _accepted=false). They are flagged
               // _accepted=false so routing/binding loops skip them.
               for li, l := range dig(ls, "spec", "listeners") | toSlice() {
-                // Avoid copying listener fields into a fresh map — the
-                // copy loop's iteration variable seems to leak into the
-                // surrounding scope's map literal evaluation under
-                // Scriggo, breaking later reads of `_source.name`. We
-                // instead use the listener map directly and stash our
-                // metadata under `__source_*` keys (unlikely to clash
-                // with Gateway API listener fields).
-                var lcSrc = map[string]any{}
-                if m, ok := l.(map[string]any); ok {
-                  lcSrc = m
-                }
-                var lc = map[string]any{}
-                for k, v := range lcSrc {
-                  lc[k] = v
+                // Same typed-vs-untyped concern as the Gateway loop
+                // above; field-by-field dig() copies work in both modes.
+                var lc = map[string]any{
+                  "name":          dig(l, "name"),
+                  "hostname":      dig(l, "hostname"),
+                  "port":          dig(l, "port"),
+                  "protocol":      dig(l, "protocol"),
+                  "tls":           dig(l, "tls"),
+                  "allowedRoutes": dig(l, "allowedRoutes"),
                 }
                 lc["__sourceKind"] = "ListenerSet"
                 lc["__sourceNs"] = lsNs
@@ -437,21 +443,22 @@ templateSnippets:
               {%- if allowedSelector != nil -%}
                 {%- var nsObj = resources.namespaces.GetSingle(lsNs) -%}
                 {%- if nsObj != nil -%}
-                  {%- var nsLabels = dig(nsObj, "metadata", "labels") -%}
-                  {%- if nsLabels != nil -%}
-                    {%- var nsMap = nsLabels.(map[string]any) -%}
-                    {%- var selMap = allowedSelector.(map[string]any) -%}
-                    {%- var allMatch = "true" -%}
-                    {%- for k, v := range selMap -%}
-                      {%- var actual, ok = nsMap[k] -%}
-                      {%- if !ok -%}
-                        {%- allMatch = "false" -%}
-                      {%- else if tostring(actual) != tostring(v) -%}
-                        {%- allMatch = "false" -%}
-                      {%- end -%}
+                  {#- nsObj is typed *resources.namespaces.T — labels
+                      are map[string]string directly. allowedSelector
+                      comes from a polymorphic dig on listenerOwner
+                      (Gateway or ListenerSet), so it stays `any` and
+                      needs to_str_map normalisation. -#}
+                  {%- var selMap = to_str_map(allowedSelector) -%}
+                  {%- var allMatch = "true" -%}
+                  {%- for k, v := range selMap -%}
+                    {%- var actual, ok = nsObj.Metadata.Labels[k] -%}
+                    {%- if !ok -%}
+                      {%- allMatch = "false" -%}
+                    {%- else if actual != v -%}
+                      {%- allMatch = "false" -%}
                     {%- end -%}
-                    {%- permitted = allMatch -%}
                   {%- end -%}
+                  {%- permitted = allMatch -%}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -513,21 +520,22 @@ templateSnippets:
           {%- if allowedSelector != nil -%}
             {%- var nsObj = resources.namespaces.GetSingle(routeNs) -%}
             {%- if nsObj != nil -%}
-              {%- var nsLabels = dig(nsObj, "metadata", "labels") -%}
-              {%- if nsLabels != nil -%}
-                {%- var nsMap = nsLabels.(map[string]any) -%}
-                {%- var selMap = allowedSelector.(map[string]any) -%}
-                {%- var allMatch = "true" -%}
-                {%- for k, v := range selMap -%}
-                  {%- var actual, ok = nsMap[k] -%}
-                  {%- if !ok -%}
-                    {%- allMatch = "false" -%}
-                  {%- else if tostring(actual) != tostring(v) -%}
-                    {%- allMatch = "false" -%}
-                  {%- end -%}
+              {#- nsObj is typed *resources.namespaces.T — labels are
+                  map[string]string directly. allowedSelector is the
+                  listener's matchLabels (polymorphic from Gateway-or-
+                  ListenerSet listenerOwner above), so it stays `any`
+                  and needs to_str_map. -#}
+              {%- var selMap = to_str_map(allowedSelector) -%}
+              {%- var allMatch = "true" -%}
+              {%- for k, v := range selMap -%}
+                {%- var actual, ok = nsObj.Metadata.Labels[k] -%}
+                {%- if !ok -%}
+                  {%- allMatch = "false" -%}
+                {%- else if actual != v -%}
+                  {%- allMatch = "false" -%}
                 {%- end -%}
-                {%- result = allMatch -%}
               {%- end -%}
+              {%- result = allMatch -%}
             {%- end -%}
           {%- end -%}
         {%- end -%}
@@ -578,11 +586,11 @@ templateSnippets:
               spec.hostnames must NOT route to a `*.wildcard.io` listener,
               because `*.wildcard.io` doesn't match the bare `wildcard.io`).
               Routes with no surviving intersection produce no entries. -#}
-          {%- var routeHostnames = route | dig("spec", "hostnames") | toSlice() %}
-          {%- var parentRefs = dig(route, "spec", "parentRefs") | toSlice() %}
+          {%- var routeHostnames = route.Spec.Hostnames %}
+          {%- var parentRefs = route.Spec.ParentRefs %}
           {%- var effectiveHosts = map[string]bool{} %}
           {%- var resolvedGwCount = 0 %}
-          {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
+          {%- var routeNs = route.Metadata.Namespace %}
           {%- for _, parentRef := range parentRefs %}
             {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
             {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
@@ -675,10 +683,10 @@ templateSnippets:
                     }
                   }
                 %%}
-                {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-                  {%- var listenerName = ListenerName(listener) %}
+                {%- for _, listener := range gw.Spec.Listeners %}
+                  {%- var listenerName = listener.Name %}
                   {%- if section == "" || section == listenerName %}
-                    {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                    {%- var listenerPort = toint(listener.Port) %}
                     {#- parentRef.port pin: per Gateway API spec, attach
                         only to listeners on the named port. -#}
                     {#- Listener-level admission gate: prPort pin AND
@@ -723,11 +731,11 @@ templateSnippets:
                         {%- for _, rh := range routeHostnames %}
                           {%- var rhStr = tostring(rh) %}
                           {%- var ownedBySibling = false %}
-                          {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                          {%- for _, sibling := range gw.Spec.Listeners %}
                             {%- if !ownedBySibling %}
-                              {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                              {%- var sibName = sibling.Name %}
                               {%- if sibName != listenerName %}
-                                {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                {%- var sibHost = sibling.Hostname %}
                                 {%- if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank %}
                                   {%- ownedBySibling = true %}
                                 {%- end %}
@@ -767,11 +775,11 @@ templateSnippets:
                                 pattern when a more-specific subdomain sibling
                                 merely intersected it. -#}
                             {%- var ownedBySibling = false %}
-                            {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                            {%- for _, sibling := range gw.Spec.Listeners %}
                               {%- if !ownedBySibling %}
-                                {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                {%- var sibName = sibling.Name %}
                                 {%- if sibName != listenerName %}
-                                  {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                  {%- var sibHost = sibling.Hostname %}
                                   {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > currentRank %}
                                     {%- ownedBySibling = true %}
                                   {%- end %}
@@ -803,16 +811,16 @@ templateSnippets:
               {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
               {%- var ls = resources.listenersets.GetSingle(lsNs, lsName) %}
               {%- if ls != nil %}
-                {%- var lsParentRef = dig(ls, "spec", "parentRef") %}
-                {%- var gwName = tostring(dig(lsParentRef, "name") | fallback("")) %}
-                {%- var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs)) %}
+                {%- var gwName = ls.Spec.ParentRef.Name %}
+                {%- var gwNs = ls.Spec.ParentRef.Namespace %}
+                {%- if gwNs == "" %}{%- gwNs = lsNs %}{%- end %}
                 {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
                 {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
                   {%- resolvedGwCount = resolvedGwCount + 1 %}
-                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = ListenerName(listener) %}
+                  {%- for _, listener := range ls.Spec.Listeners %}
+                    {%- var listenerName = listener.Name %}
                     {%- if section == "" || section == listenerName %}
-                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                      {%- var listenerPort = toint(listener.Port) %}
                       {#- Listener-level admission gate (LS branch):
                           prPort pin AND allowedRoutes.namespaces.
                           Listener owner is the LS itself, so
@@ -847,11 +855,11 @@ templateSnippets:
                                   spec.listeners, not the parent Gateway. -#}
                               {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
                               {%- var lsOwnedBySibling = false %}
-                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
+                              {%- for _, sibling := range ls.Spec.Listeners %}
                                 {%- if !lsOwnedBySibling %}
-                                  {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                  {%- var sibName = sibling.Name %}
                                   {%- if sibName != listenerName %}
-                                    {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                    {%- var sibHost = sibling.Hostname %}
                                     {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
                                       {%- lsOwnedBySibling = true %}
                                     {%- end %}
@@ -904,15 +912,27 @@ templateSnippets:
                 {%- matchesList = []any{map[string]any{"path": map[string]any{"type": "PathPrefix", "value": "/"}}} %}
               {%- end %}
 
-              {%- for _, match := range matchesList %}
+              {%- for matchIdx, match := range matchesList %}
                 {%- var pathValue = match | dig("path") | coalesce(map[string]any{"type": "PathPrefix", "value": "/"}) %}
                 {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
-                {%- var pathKey = hostname + "|" + (pathValue["type"]) + "|" + (pathValue["value"]) %}
+                {%- var pathKey = hostname + "|" + tostring(pathValue | dig("type")) + "|" + tostring(pathValue | dig("value")) %}
+                {#- routeInfo additive shape:
+                    - `route` (typed *T) + `ruleIdx` / `matchIdx` are the
+                      single source of truth — consumers use type switch
+                      on `route` and re-derive sub-fields via typed
+                      `r.Spec.Rules[ruleIdx].Matches[matchIdx]` access.
+                    - `match` / `rule` / `path` / `filters` / `resource_type`
+                      are LEGACY slots kept during the type-switch
+                      migration; new consumers should NOT read them.
+                      Their presence costs an `any` slot per routeInfo
+                      entry but avoids a flag-day rewrite of every
+                      consumer at once. Track removal in ADR-0010. -#}
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
                   "rule": rule,
                   "ruleIdx": ruleIdx,
+                  "matchIdx": matchIdx,
                   "match": match,
                   "path": pathValue,
                   "filters": filtersList,
@@ -934,11 +954,11 @@ templateSnippets:
           {#- Same listener-intersection treatment as HTTPRoutes above —
               see the HTTPRoute branch's comment for the full case
               breakdown. -#}
-          {%- var routeHostnames = route | dig("spec", "hostnames") | toSlice() %}
-          {%- var parentRefs = dig(route, "spec", "parentRefs") | toSlice() %}
+          {%- var routeHostnames = route.Spec.Hostnames %}
+          {%- var parentRefs = route.Spec.ParentRefs %}
           {%- var effectiveHosts = map[string]bool{} %}
           {%- var resolvedGwCount = 0 %}
-          {%- var routeNs = tostring(dig(route, "metadata", "namespace") | fallback("")) %}
+          {%- var routeNs = route.Metadata.Namespace %}
           {%- for _, parentRef := range parentRefs %}
             {%- var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io")) %}
             {%- var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway")) %}
@@ -1031,10 +1051,10 @@ templateSnippets:
                     }
                   }
                 %%}
-                {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
-                  {%- var listenerName = ListenerName(listener) %}
+                {%- for _, listener := range gw.Spec.Listeners %}
+                  {%- var listenerName = listener.Name %}
                   {%- if section == "" || section == listenerName %}
-                    {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                    {%- var listenerPort = toint(listener.Port) %}
                     {#- parentRef.port pin: per Gateway API spec, attach
                         only to listeners on the named port. -#}
                     {#- Listener-level admission gate: prPort pin AND
@@ -1079,11 +1099,11 @@ templateSnippets:
                         {%- for _, rh := range routeHostnames %}
                           {%- var rhStr = tostring(rh) %}
                           {%- var ownedBySibling = false %}
-                          {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                          {%- for _, sibling := range gw.Spec.Listeners %}
                             {%- if !ownedBySibling %}
-                              {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                              {%- var sibName = sibling.Name %}
                               {%- if sibName != listenerName %}
-                                {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                {%- var sibHost = sibling.Hostname %}
                                 {%- if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank %}
                                   {%- ownedBySibling = true %}
                                 {%- end %}
@@ -1123,11 +1143,11 @@ templateSnippets:
                                 pattern when a more-specific subdomain sibling
                                 merely intersected it. -#}
                             {%- var ownedBySibling = false %}
-                            {%- for _, sibling := range dig(gw, "spec", "listeners") | toSlice() %}
+                            {%- for _, sibling := range gw.Spec.Listeners %}
                               {%- if !ownedBySibling %}
-                                {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                {%- var sibName = sibling.Name %}
                                 {%- if sibName != listenerName %}
-                                  {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                  {%- var sibHost = sibling.Hostname %}
                                   {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > currentRank %}
                                     {%- ownedBySibling = true %}
                                   {%- end %}
@@ -1152,16 +1172,16 @@ templateSnippets:
               {%- var prPort = toint(dig(parentRef, "port") | fallback(0)) %}
               {%- var ls = resources.listenersets.GetSingle(lsNs, lsName) %}
               {%- if ls != nil %}
-                {%- var lsParentRef = dig(ls, "spec", "parentRef") %}
-                {%- var gwName = tostring(dig(lsParentRef, "name") | fallback("")) %}
-                {%- var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs)) %}
+                {%- var gwName = ls.Spec.ParentRef.Name %}
+                {%- var gwNs = ls.Spec.ParentRef.Namespace %}
+                {%- if gwNs == "" %}{%- gwNs = lsNs %}{%- end %}
                 {%- var gw = resources.gateways.GetSingle(gwNs, gwName) %}
                 {%- if gw != nil && hasPrefix(IsListenerSetAdmitted(gw, ls), "true") %}
                   {%- resolvedGwCount = resolvedGwCount + 1 %}
-                  {%- for _, listener := range dig(ls, "spec", "listeners") | toSlice() %}
-                    {%- var listenerName = ListenerName(listener) %}
+                  {%- for _, listener := range ls.Spec.Listeners %}
+                    {%- var listenerName = listener.Name %}
                     {%- if section == "" || section == listenerName %}
-                      {%- var listenerPort = toint(dig(listener, "port") | fallback(0)) %}
+                      {%- var listenerPort = toint(listener.Port) %}
                       {#- Listener-level admission gate (LS branch):
                           prPort pin AND allowedRoutes.namespaces.
                           Listener owner is the LS itself, so
@@ -1196,11 +1216,11 @@ templateSnippets:
                                   spec.listeners, not the parent Gateway. -#}
                               {%- var lsCurrentRank = toint(HostnameRank(listenerHostname)) %}
                               {%- var lsOwnedBySibling = false %}
-                              {%- for _, sibling := range dig(ls, "spec", "listeners") | toSlice() %}
+                              {%- for _, sibling := range ls.Spec.Listeners %}
                                 {%- if !lsOwnedBySibling %}
-                                  {%- var sibName = tostring(dig(sibling, "name") | fallback("")) %}
+                                  {%- var sibName = sibling.Name %}
                                   {%- if sibName != listenerName %}
-                                    {%- var sibHost = tostring(dig(sibling, "hostname") | fallback("")) %}
+                                    {%- var sibHost = sibling.Hostname %}
                                     {%- if sibHost != "" && HostnameSinglePairIntersection(sibHost, inter) == inter && toint(HostnameRank(sibHost)) > lsCurrentRank %}
                                       {%- lsOwnedBySibling = true %}
                                     {%- end %}
@@ -1245,7 +1265,7 @@ templateSnippets:
                 {%- matchesList = []any{map[string]any{"method": map[string]any{}}} %}
               {%- end %}
 
-              {%- for _, match := range matchesList %}
+              {%- for matchIdx, match := range matchesList %}
                 {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
                 {#- GRPCRoute spec has no path matcher: an attached
                     GRPCRoute claims every path under the listener
@@ -1266,12 +1286,13 @@ templateSnippets:
                     GRPCRouteNamedRule / GRPCRouteWeight conformance
                     tests, plus the e2e TestGRPCOverTLS regression. -#}
                 {%- var grpcPath = map[string]any{"type": "PathPrefix", "value": "/"} %}
-                {%- var pathKey = hostname + "|" + (grpcPath["type"]) + "|" + (grpcPath["value"]) %}
+                {%- var pathKey = hostname + "|" + tostring(grpcPath | dig("type")) + "|" + tostring(grpcPath | dig("value")) %}
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
                   "rule": rule,
                   "ruleIdx": ruleIdx,
+                  "matchIdx": matchIdx,
                   "match": match,
                   "path": grpcPath,
                   "filters": filtersList,
@@ -1300,15 +1321,15 @@ templateSnippets:
             {%- var firstConditions = "" %}
             {%- var firstRoute = routes[0] %}
             {%- var firstMatch = firstRoute["match"] %}
-            {%- var firstMethod = firstMatch["method"] %}
+            {%- var firstMethod = firstMatch | dig("method") %}
             {%- if firstMethod != nil %}
-              {%- firstConditions = firstConditions + "method:" + (firstMethod) %}
+              {%- firstConditions = firstConditions + "method:" + tostring(firstMethod) %}
             {%- end %}
-            {%- for idx, header := range firstMatch["headers"] | toSlice() %}
-              {%- firstConditions = firstConditions + ";header:" + (header["name"]) + "=" + (header["value"]) %}
+            {%- for idx, header := range firstMatch | dig("headers") | toSlice() %}
+              {%- firstConditions = firstConditions + ";header:" + tostring(header | dig("name")) + "=" + tostring(header | dig("value")) %}
             {%- end %}
-            {%- for idx, param := range firstMatch["queryParams"] | toSlice() %}
-              {%- firstConditions = firstConditions + ";param:" + (param["name"]) + "=" + (param["value"]) %}
+            {%- for idx, param := range firstMatch | dig("queryParams") | toSlice() %}
+              {%- firstConditions = firstConditions + ";param:" + tostring(param | dig("name")) + "=" + tostring(param | dig("value")) %}
             {%- end %}
 
             {#- Check if any other route has different conditions #}
@@ -1316,15 +1337,15 @@ templateSnippets:
               {%- var routeConditions = "" %}
               {%- var r = routes[i] %}
               {%- var routeMatch = r["match"] %}
-              {%- var routeMethod = routeMatch["method"] %}
+              {%- var routeMethod = routeMatch | dig("method") %}
               {%- if routeMethod != nil %}
-                {%- routeConditions = routeConditions + "method:" + (routeMethod) %}
+                {%- routeConditions = routeConditions + "method:" + tostring(routeMethod) %}
               {%- end %}
-              {%- for idx, header := range routeMatch["headers"] | toSlice() %}
-                {%- routeConditions = routeConditions + ";header:" + (header["name"]) + "=" + (header["value"]) %}
+              {%- for idx, header := range routeMatch | dig("headers") | toSlice() %}
+                {%- routeConditions = routeConditions + ";header:" + tostring(header | dig("name")) + "=" + tostring(header | dig("value")) %}
               {%- end %}
-              {%- for idx, param := range routeMatch["queryParams"] | toSlice() %}
-                {%- routeConditions = routeConditions + ";param:" + (param["name"]) + "=" + (param["value"]) %}
+              {%- for idx, param := range routeMatch | dig("queryParams") | toSlice() %}
+                {%- routeConditions = routeConditions + ";param:" + tostring(param | dig("name")) + "=" + tostring(param | dig("value")) %}
               {%- end %}
 
               {%- if firstConditions != routeConditions %}
@@ -1408,7 +1429,7 @@ templateSnippets:
           {%- var filters []any = route["filters"] %}
           {%- var perRouteMirrors = 0 %}
           {%- for _, filter := range filters %}
-            {%- var filterType = filter["type"] %}
+            {%- var filterType = filter | dig("type") %}
             {%- if filterType == "RequestHeaderModifier" %}
               {%- hasRequestHeader = true %}
             {%- else if filterType == "ResponseHeaderModifier" %}

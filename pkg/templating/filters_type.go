@@ -30,6 +30,24 @@ func scriggoToString(v any) string {
 	if v == nil {
 		return ""
 	}
+	// Typegen tristate (issue #52): optional numeric / bool fields
+	// surface as *int64 / *bool through direct typed access. Most
+	// chart sites flow through digStructField (which dereferences),
+	// but a few direct accesses like `gateway.Metadata.Generation`
+	// hand the raw pointer to coercion filters — dereference here so
+	// `tostring(gateway.Metadata.Generation)` keeps producing "5" and
+	// not "0xc0000a1c08".
+	if d, ok := derefTristateScalar(v); ok {
+		v = d
+		// derefTristateScalar returns (nil, true) for a nil pointer.
+		// Without this guard, fmt.Sprint(nil) emits "<nil>" — chart
+		// code reading `tostring(gateway.Metadata.<optional-int>)` on
+		// an absent field would get "<nil>" instead of "" (matching
+		// the nil-fast-path at the top of this function).
+		if v == nil {
+			return ""
+		}
+	}
 	switch val := v.(type) {
 	case string:
 		return val
@@ -46,6 +64,40 @@ func scriggoToString(v any) string {
 	}
 }
 
+// derefTristateScalar unwraps the pointer types typegen emits for
+// optional scalar fields (issue #52). Returns (deref'd value, true)
+// when v is a non-nil pointer to a scalar; (nil, true) when v is a
+// nil pointer of the same kind (so callers treat it like an absent
+// untyped value); (v, false) for everything else. Mirrors
+// digStructField's dereference rule so direct typed-access call
+// sites stay drop-in compatible with the chart's existing patterns.
+//
+// The covered set must stay in lockstep with
+// typegen.needsTristatePointer / filters_navigation.needsTristate
+// PointerKind. Today the converter only emits *int64 / *bool /
+// *float64 in practice (typeInteger / typeBoolean / typeNumber map
+// to those base types), but the kind-based gating in both helpers
+// also accepts other int / uint / float widths — if a future schema
+// path produces them, the deref must still unwrap so coercion
+// filters don't accidentally fmt-print a pointer.
+func derefTristateScalar(v any) (any, bool) {
+	if v == nil {
+		return nil, false
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Pointer {
+		return v, false
+	}
+	elemKind := rv.Type().Elem().Kind()
+	if !needsTristatePointerKind(elemKind) {
+		return v, false
+	}
+	if rv.IsNil() {
+		return nil, true
+	}
+	return rv.Elem().Interface(), true
+}
+
 // scriggoToInt converts a value to int.
 //
 // Usage in Scriggo templates:
@@ -54,6 +106,13 @@ func scriggoToString(v any) string {
 func scriggoToInt(v any) int {
 	if v == nil {
 		return 0
+	}
+	// Tristate dereference for typegen-emitted pointer scalars.
+	if d, ok := derefTristateScalar(v); ok {
+		v = d
+		if v == nil {
+			return 0
+		}
 	}
 	switch val := v.(type) {
 	case int:
@@ -81,6 +140,13 @@ func scriggoToInt(v any) int {
 func scriggoToFloat(v any) (float64, error) {
 	if v == nil {
 		return 0, nil
+	}
+	// Tristate dereference for typegen-emitted pointer scalars.
+	if d, ok := derefTristateScalar(v); ok {
+		v = d
+		if v == nil {
+			return 0, nil
+		}
 	}
 	switch val := v.(type) {
 	case float64:
@@ -136,6 +202,60 @@ func scriggoToSlice(items any) []any {
 		return []any{}
 	}
 	result, _ := toSlice(items)
+	return result
+}
+
+// scriggoToStrMap normalises any string-keyed map to map[string]string.
+// Built to handle both typegen-produced `map[string]string` fields
+// (metadata.labels, matchLabels, etc.) and the untyped store path's
+// `map[string]any`. Chart sites that previously asserted
+// `.(map[string]any)` on a label / selector value panicked when the
+// typed-watched-resources path produced `map[string]string`; this
+// function gives them a single shape to iterate.
+//
+// Returns nil for nil input. Non-string values from a map[string]any
+// input are coerced via fmt.Sprint to mirror existing chart
+// `tostring()` usage. Reflection fallback handles any other
+// string-keyed map type (e.g. `map[string]int` from a counter).
+func scriggoToStrMap(items any) map[string]string {
+	if items == nil {
+		return nil
+	}
+	switch v := items.(type) {
+	case map[string]string:
+		return v
+	case map[string]any:
+		result := make(map[string]string, len(v))
+		for k, val := range v {
+			if val == nil {
+				result[k] = ""
+				continue
+			}
+			result[k] = fmt.Sprint(val)
+		}
+		return result
+	}
+	rv := reflect.ValueOf(items)
+	if rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
+		return nil
+	}
+	result := make(map[string]string, rv.Len())
+	for iter := rv.MapRange(); iter.Next(); {
+		k := iter.Key().String()
+		v := iter.Value()
+		if v.Kind() == reflect.Interface {
+			v = v.Elem()
+		}
+		if !v.IsValid() {
+			result[k] = ""
+			continue
+		}
+		if v.Kind() == reflect.String {
+			result[k] = v.String()
+			continue
+		}
+		result[k] = fmt.Sprint(v.Interface())
+	}
 	return result
 }
 

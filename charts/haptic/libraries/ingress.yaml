@@ -51,7 +51,6 @@ templateSnippets:
         first writer wins is fine because all flags are booleans.
       -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- if resources != nil && resources.ingresses != nil %}
       {%- for _, ingress := range resources.ingresses.List() %}
       {%%
         gf["bindHTTPDefault"] = true
@@ -68,7 +67,6 @@ templateSnippets:
           gf["needHTTPSTermination"] = true
         }
       %%}
-      {%- end %}
       {%- end %}
 
   features-100-ingress-tls:
@@ -96,14 +94,18 @@ templateSnippets:
 
             // Fetch Secret and extract cert+key
             var secret = resources.secrets.GetSingle(namespace, secretName)
-            var secretData = secret | dig("data")
-            var tlsCrt = secretData | dig("tls.crt")
-            var tlsKey = secretData | dig("tls.key")
-            if secretData == nil || tlsCrt == nil || tlsKey == nil {
+            if secret == nil {
+              continue
+            }
+            var tlsCrt, hasCrt = secret.Data["tls.crt"]
+            var tlsKey, hasKey = secret.Data["tls.key"]
+            if !hasCrt || !hasKey {
               continue
             }
 
-            // Combine cert and key into single PEM (HAProxy format)
+            // Combine cert and key into single PEM (HAProxy format).
+            // Pipe form discards the b64decode error return, matching the
+            // pre-typing behaviour.
             var combinedPem = (tlsCrt | b64decode()) + "\n" + (tlsKey | b64decode())
 
             // Register certificate file dynamically using file_registry
@@ -123,7 +125,12 @@ templateSnippets:
             var tlsCert = map[string]any{
               "secret_namespace": namespace,
               "secret_name": secretName,
-              "sni_patterns": tls | dig("hosts") | fallback([]any{}),
+              {#- toSlice() normalises the typed []string from
+                  Ingress.Spec.Tls[i].Hosts into []any so downstream
+                  ssl.yaml consumers (which assert .([]any) on a
+                  polymorphic tlsCertificates slice) don't trip on
+                  the typed-slice shape. -#}
+              "sni_patterns": tls | dig("hosts") | toSlice() | fallback([]any{}),
               "sanitized_filename": sanitizedFilename,
             }
             gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)
@@ -176,9 +183,9 @@ templateSnippets:
         if portName == "" && toint(portNumber) > 0 {
           var svc = resources.services.GetSingle(namespace, serviceName)
           if svc != nil {
-            for _, sp := range svc | dig("spec", "ports") | toSlice() {
-              if toint(sp | dig("port") | fallback(0)) == toint(portNumber) {
-                portName = tostring(sp | dig("name") | fallback(""))
+            for _, sp := range svc.Spec.Ports {
+              if toint(sp.Port) == toint(portNumber) {
+                portName = sp.Name
                 break
               }
             }
@@ -200,7 +207,7 @@ templateSnippets:
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
 
-      {% macro PathMapEntryIngressShard(ingresses []any, pathTypes []string, suffix string) string %}
+      {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
         {%- for _, ingress := range ingresses -%}
           {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) -%}
           {%- var matchCount = 0 -%}
@@ -294,7 +301,7 @@ templateSnippets:
       {%- import "util-backend-servers" for BackendServers -%}
       {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
-      {% macro GenerateIngressBackends(ingresses []any) string %}
+      {% macro GenerateIngressBackends(ingresses []*resources.ingresses.T) string %}
         {%- for _, ingress := range ingresses -%}
           {%- var ns = ingress | dig("metadata", "namespace") | fallback("") -%}
           {%- var name = ingress | dig("metadata", "name") | fallback("") -%}
@@ -358,7 +365,7 @@ templateSnippets:
       {#- Sharded backend generator for Ingress resources -#}
       {%- import "util-generate-backends-ingress" for GenerateIngressBackends -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedIngressBackends(ingresses []any) string %}
+      {% macro ShardedIngressBackends(ingresses []*resources.ingresses.T) string %}
         {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
         {%- if n <= 1 || len(ingresses) < 100 -%}
       {{ GenerateIngressBackends(ingresses) }}
@@ -382,12 +389,12 @@ templateSnippets:
     template: |
       {#- Macro to generate host map entries for Ingress resources -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
-      {%- macro GenerateIngressHostMap(ingresses []any) -%}
+      {%- macro GenerateIngressHostMap(ingresses []*resources.ingresses.T) -%}
       {%- for _, ingress := range ingresses -%}
-      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
+      {%- var rules = ingress.Spec.Rules %}
       {%- var rulesWithHttp = selectattr(rules, "http") %}
       {%- if len(rulesWithHttp) > 0 %}
-      # Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ len(rulesWithHttp) }} hosts)
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ len(rulesWithHttp) }} hosts)
       {% for _, rule := range rulesWithHttp %}
       {%- var hostKey = MapKeyForHost(rule | dig("host")) %}
       {{ hostKey }} {{ hostKey }}
@@ -401,7 +408,7 @@ templateSnippets:
       {#- Sharded host map generator for Ingress resources -#}
       {%- import "util-generate-host-map-ingress" for GenerateIngressHostMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {%- macro ShardedIngressHostMap(ingresses []any) -%}
+      {%- macro ShardedIngressHostMap(ingresses []*resources.ingresses.T) -%}
       {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
       {%- if n <= 1 || len(ingresses) < 100 -%}
       {{ GenerateIngressHostMap(ingresses) }}
@@ -509,8 +516,8 @@ templateSnippets:
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
         {%- if defaultBackend != nil && dig(defaultBackend, "service") != nil -%}
-          {%- var ts = dig(ingress, "metadata", "creationTimestamp") | fallback("") -%}
-          {%- var rules = toSlice(fallback(dig(ingress, "spec", "rules"), []any{})) -%}
+          {%- var ts = ingress.Metadata.CreationTimestamp -%}
+          {%- var rules = ingress.Spec.Rules -%}
           {%- if len(rules) == 0 -%}
             {%- candidates = append(candidates, map[string]any{"hostKey": "", "ingress": ingress, "ts": ts}) -%}
           {%- else -%}
@@ -553,15 +560,15 @@ templateSnippets:
 
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex)
       -#}
-      {% macro GenerateIngressStatusPatches(ingresses []any) %}
+      {% macro GenerateIngressStatusPatches(ingresses []*resources.ingresses.T) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
         {%- var addresses = gf["addresses"] %}
         {%- for _, ingress := range ingresses %}
           {%%
-            var namespace = dig(ingress, "metadata", "namespace") | fallback("")
-            var name = dig(ingress, "metadata", "name") | fallback("")
+            var namespace = ingress.Metadata.Namespace
+            var name = ingress.Metadata.Name
 
-            statusPatch(tostring(namespace), tostring(name),
+            statusPatch(namespace, name,
               "networking.k8s.io/v1", "Ingress",
               map[string]interface{}{
                 "deployed": map[string]interface{}{
@@ -589,7 +596,7 @@ templateSnippets:
       -#}
       {%- import "util-generate-ingress-status-patches" for GenerateIngressStatusPatches -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {% macro ShardedIngressStatusPatches(ingresses []any) %}
+      {% macro ShardedIngressStatusPatches(ingresses []*resources.ingresses.T) %}
         {%- var n = toint(CalculateShardCount(len(ingresses), 100)) -%}
         {%- if n <= 1 || len(ingresses) < 100 -%}
       {{ GenerateIngressStatusPatches(ingresses) }}

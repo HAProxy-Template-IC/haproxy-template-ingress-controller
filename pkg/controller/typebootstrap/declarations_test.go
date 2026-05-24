@@ -29,10 +29,15 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-func TestBuildEngineDeclarations_ShapeIsSliceOfPointers(t *testing.T) {
-	// A minimal Result with one known type — we don't care what
-	// the type *contains*, only that BuildEngineDeclarations wraps
-	// it in the *[]*Generated shape the StoreWrapper will populate.
+// TestBuildEngineDeclarations_ResourcesStructShape pins the
+// engine-declaration contract: a single top-level `resources` global
+// whose type is a dynamically-built struct, one field per watched
+// resource. Each field is a pointer to a per-resource store struct
+// holding the chart-facing access surface (T, List, Fetch, GetSingle).
+// The chart's macros and snippets reach typed access via
+// `resources.<name>.List()` and `resources.<name>.T` — see
+// `charts/CLAUDE.md` for the chart-author convention.
+func TestBuildEngineDeclarations_ResourcesStructShape(t *testing.T) {
 	t1 := reflect.StructOf([]reflect.StructField{
 		{Name: "Name", Type: reflect.TypeOf("")},
 	})
@@ -41,60 +46,88 @@ func TestBuildEngineDeclarations_ShapeIsSliceOfPointers(t *testing.T) {
 	})
 	decls := BuildEngineDeclarations(&Result{
 		Types: map[string]reflect.Type{"a": t1, "b": t2},
+		Kinds: map[string]string{"a": "A", "b": "B"},
 	})
-	require.Len(t, decls, 2)
 
-	for name, declared := range decls {
-		// Each declared value is a typed-nil pointer (Scriggo's
-		// runtime-variable convention). reflect.TypeOf returns
-		// the static type — peel back through *T → []*T → *T
-		// to confirm the shape.
-		typ := reflect.TypeOf(declared)
-		require.Equal(t, reflect.Ptr, typ.Kind(), "%q: outer must be a pointer", name)
-		slice := typ.Elem()
-		require.Equal(t, reflect.Slice, slice.Kind(), "%q: inner must be a slice", name)
-		elem := slice.Elem()
-		require.Equal(t, reflect.Ptr, elem.Kind(), "%q: slice element must be a pointer", name)
-		assert.Equal(t, reflect.Struct, elem.Elem().Kind(), "%q: pointee must be the generated struct", name)
+	// Single top-level entry: "resources". Per-resource entries are
+	// fields on the struct, not top-level globals.
+	require.Len(t, decls, 1)
+	resourcesDecl, ok := decls["resources"]
+	require.True(t, ok, "single 'resources' declaration expected")
+
+	// Declared shape: *Resources (typed-nil pointer to the dynamic
+	// struct). Scriggo's package-scope mechanism derefs the outer
+	// pointer so chart code sees the struct value directly.
+	typ := reflect.TypeOf(resourcesDecl)
+	require.Equal(t, reflect.Ptr, typ.Kind(), "outer must be a pointer")
+	resourcesType := typ.Elem()
+	require.Equal(t, reflect.Struct, resourcesType.Kind(), "pointer must point at a struct")
+	require.Equal(t, 2, resourcesType.NumField(),
+		"one field per watched resource")
+
+	// Each field is *TypedStore_<resource> with the expected shape.
+	for i := 0; i < resourcesType.NumField(); i++ {
+		f := resourcesType.Field(i)
+		require.Equal(t, reflect.Ptr, f.Type.Kind(), "%q: field must be a pointer", f.Name)
+		store := f.Type.Elem()
+		require.Equal(t, reflect.Struct, store.Kind(), "%q: pointee must be a struct", f.Name)
+
+		// Per-store struct fields: T, List, Fetch, GetSingle. T
+		// carries the generated value type (used in macro signatures
+		// via the selector-chain-as-type Scriggo extension); the
+		// others are func-typed for runtime invocation.
+		require.NotEqual(t, -1, fieldIndexByName(store, "T"), "%q: missing T field", f.Name)
+		require.NotEqual(t, -1, fieldIndexByName(store, "List"), "%q: missing List field", f.Name)
+		require.NotEqual(t, -1, fieldIndexByName(store, "Fetch"), "%q: missing Fetch field", f.Name)
+		require.NotEqual(t, -1, fieldIndexByName(store, "GetSingle"), "%q: missing GetSingle field", f.Name)
 	}
 }
 
-// TestBuildEngineDeclarations_SkipsErrors documents that failed
-// resources don't end up in the declarations map. The chart's
-// generic `resources["<name>"]` access still works for those — the
-// typed shortcut just isn't available, matching the fail-open
-// contract of Bootstrap.
-func TestBuildEngineDeclarations_SkipsErrors(t *testing.T) {
+// TestBuildEngineDeclarations_UntypedFallbackForFailedSchemas covers
+// the resources whose schema bootstrap failed. They still get a
+// struct field (so chart code that reaches `resources.<name>` doesn't
+// fail to compile) but the per-method closures collapse to `any` /
+// `[]any` return types.
+func TestBuildEngineDeclarations_UntypedFallbackForFailedSchemas(t *testing.T) {
 	t1 := reflect.StructOf([]reflect.StructField{{Name: "F", Type: reflect.TypeOf("")}})
 	decls := BuildEngineDeclarations(&Result{
-		Types: map[string]reflect.Type{"good": t1},
-		// "broken" appears in Errors but NOT in Types — the
-		// Bootstrap fail-open semantics.
+		Types:  map[string]reflect.Type{"good": t1},
+		Kinds:  map[string]string{"good": "Good"},
+		Errors: map[string]error{"broken": assert.AnError},
 	})
-	_, ok := decls["good"]
-	assert.True(t, ok)
-	_, ok = decls["broken"]
-	assert.False(t, ok)
+	require.Len(t, decls, 1)
+	resourcesDecl := decls["resources"]
+	resourcesType := reflect.TypeOf(resourcesDecl).Elem()
+	require.Equal(t, 2, resourcesType.NumField(),
+		"both successful and failed-schema resources surface as fields")
+
+	// The failed-schema field's store has []any / any return types
+	// instead of typed slices / pointers. We don't pin the exact
+	// types here — the contract is "doesn't compile to typed access"
+	// rather than "this specific shape" — but verify the T field
+	// exists with the any-fallback type.
+	for i := 0; i < resourcesType.NumField(); i++ {
+		f := resourcesType.Field(i)
+		store := f.Type.Elem()
+		tIdx := fieldIndexByName(store, "T")
+		require.NotEqual(t, -1, tIdx, "%q: missing T field", f.Name)
+	}
 }
 
 func TestBuildEngineDeclarations_NilResult(t *testing.T) {
-	// Defensive: a caller that hands us a nil Result shouldn't get
-	// a nil-pointer panic. Realistic case: Bootstrap returns an
-	// outer error before constructing the Result, the caller forgets
-	// to gate the call. Return an empty map so the engine still
-	// gets a usable declarations argument.
+	// Defensive: a nil Result returns an empty declarations map so
+	// the engine still gets a usable argument.
 	got := BuildEngineDeclarations(nil)
 	assert.NotNil(t, got)
 	assert.Empty(t, got)
 }
 
-// TestBootstrap_EndToEndThroughEngine is the keystone integration:
-// Bootstrap → BuildEngineDeclarations → NewScriggoWithDeclarations,
-// then a template that accesses the typed shape compiles. This
-// proves the package's API actually composes into the templating
-// engine's contract without any further glue — the only seam
-// pkg/controller will need to wire at Phase 4 is the K8s clients,
-// not the type plumbing.
+// TestBootstrap_EndToEndThroughEngine is the keystone integration
+// after the typebootstrap shape rewrite: Bootstrap →
+// BuildEngineDeclarations → NewScriggoWithDeclarations, then a
+// template that uses the chart-facing access pattern
+// `resources.<name>.List()` compiles. This pins that the
+// engine-declared shape and the runtime population stay in lockstep.
 func TestBootstrap_EndToEndThroughEngine(t *testing.T) {
 	fetcher := schemafetcher.NewMapFetcher(map[schema.GroupVersionKind]*spec.Schema{
 		{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "Gateway"}: {
@@ -125,14 +158,12 @@ func TestBootstrap_EndToEndThroughEngine(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, result.Errors)
 
-	// Templates compile against the typed shape: ranging over the
-	// declared `gateways` slice and accessing the per-element
-	// Metadata.Name field. The keystone property — typoed paths
-	// fail at engine construction — is covered by pkg/templating's
-	// own dynamic_globals_test.go; here we just confirm the
-	// successful-build path.
+	// Template compiles against `resources.gateways.List()` — the
+	// chart-facing access shape. Field access on each loop variable
+	// goes through the typed bytecode path (g.Metadata.Name), not
+	// reflection.
 	templates := map[string]string{
-		"main": `{%- for _, g := range gateways %}{{ g.Metadata.Name }}
+		"main": `{%- for _, g := range resources.gateways.List() %}{{ g.Metadata.Name }}
 {% end -%}`,
 	}
 	engine, err := templating.NewScriggoWithDeclarations(
@@ -142,24 +173,50 @@ func TestBootstrap_EndToEndThroughEngine(t *testing.T) {
 	require.NoError(t, err,
 		"the engine must accept Bootstrap's declarations without further glue")
 
-	// Populate a typed slice and run the template to confirm the
-	// runtime shape matches what BuildEngineDeclarations declared.
-	// This is what the StoreWrapper rewrite (Phase 5, not built
-	// yet) will do at snapshot-load time.
+	// Populate the resources struct at runtime: build a per-resource
+	// store value with a List closure returning a single Gateway,
+	// stash it as the `resources` global value, and render the
+	// template. Mirrors what rendercontext.addTypedResources does in
+	// production (just without the StoreWrapper layer).
 	gwType := result.Types["gateways"]
 	sliceType := reflect.SliceOf(reflect.PointerTo(gwType))
-	slice := reflect.MakeSlice(sliceType, 2, 2)
-	for i, name := range []string{"a", "b"} {
-		gw := reflect.New(gwType)
-		gw.Elem().FieldByName("Metadata").FieldByName("Name").SetString(name)
-		slice.Index(i).Set(gw)
-	}
-	holder := reflect.New(sliceType)
-	holder.Elem().Set(slice)
+
+	gw := reflect.New(gwType)
+	gw.Elem().FieldByName("Metadata").FieldByName("Name").SetString("a")
+	listResult := reflect.MakeSlice(sliceType, 1, 1)
+	listResult.Index(0).Set(gw)
+
+	// Build the inner per-resource store struct's value. The shape
+	// (List/Fetch/GetSingle closures + T field) matches what
+	// rendercontext builds at render time.
+	innerType := BuildPerResourceStoreType(gwType)
+	innerVal := reflect.New(innerType).Elem()
+	listFuncType := innerVal.FieldByName("List").Type()
+	innerVal.FieldByName("List").Set(reflect.MakeFunc(listFuncType, func(_ []reflect.Value) []reflect.Value {
+		return []reflect.Value{listResult}
+	}))
+	// Fetch and GetSingle aren't called by this template; leave their
+	// zero values (nil closures) — Scriggo doesn't invoke them.
+
+	// Wire the inner store into the outer Resources struct value.
+	resourcesType := reflect.TypeOf(BuildEngineDeclarations(result)["resources"]).Elem()
+	resourcesPtr := reflect.New(resourcesType)
+	resourcesPtr.Elem().Field(0).Set(innerVal.Addr())
 
 	out, err := engine.Render(context.Background(), "main", map[string]any{
-		"gateways": holder.Interface(),
+		"resources": resourcesPtr.Interface(),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "a\nb\n", strings.TrimLeft(out, "\n"))
+	assert.Equal(t, "a\n", strings.TrimLeft(out, "\n"))
+}
+
+// fieldIndexByName returns the index of the named field on t, or -1
+// if absent. Helper used by the declaration-shape assertions above.
+func fieldIndexByName(t reflect.Type, name string) int {
+	for i := 0; i < t.NumField(); i++ {
+		if t.Field(i).Name == name {
+			return i
+		}
+	}
+	return -1
 }

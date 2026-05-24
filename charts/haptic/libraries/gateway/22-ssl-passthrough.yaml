@@ -39,10 +39,10 @@ templateSnippets:
             }
             if !hasPassthrough { continue }
 
-            var ns = route | dig("metadata", "namespace") | fallback("")
-            var routeName = route | dig("metadata", "name") | fallback("")
+            var ns = route.Metadata.Namespace
+            var routeName = route.Metadata.Name
           %%}
-          {%- for _, host := range route | dig("spec", "hostnames") | toSlice() %}
+          {%- for _, host := range route.Spec.Hostnames %}
             {%- if first_seen("gateway_ssl_passthrough_hosts", host) %}
               {%- sslData["backends"] = append(sslData["backends"].([]any), map[string]any{
                 "name": "ssl-passthrough-" + ns + "-" + routeName,
@@ -65,10 +65,10 @@ templateSnippets:
             for a given rule. -#}
         {%- for _, route := range resources.tlsroutes.List() %}
           {%%
-            var nsStr = tostring(route | dig("metadata", "namespace") | fallback(""))
-            var nameStr = tostring(route | dig("metadata", "name") | fallback(""))
-            var routeHostnames = route | dig("spec", "hostnames") | toSlice()
-            var rules = route | dig("spec", "rules") | toSlice()
+            var nsStr = route.Metadata.Namespace
+            var nameStr = route.Metadata.Name
+            var routeHostnames = route.Spec.Hostnames
+            var rules = route.Spec.Rules
           %%}
           {%- for ruleIdx, rule := range rules %}
             {%%
@@ -122,7 +122,7 @@ templateSnippets:
               // claims a given SNI wins.
               var sniMeta = map[string]any{}
             %%}
-            {%- for _, parentRef := range route | dig("spec", "parentRefs") | toSlice() %}
+            {%- for _, parentRef := range route.Spec.ParentRefs %}
               {%%
                 var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
                 var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
@@ -143,21 +143,23 @@ templateSnippets:
                 // Passthrough and Terminate siblings yields no accepted
                 // listeners on that port (parity with status patches).
                 var portModes = map[int]map[string]bool{}
-                for _, l := range dig(gw, "spec", "listeners") | toSlice() {
-                  if ListenerProtocol(l) == "TLS" {
-                    var lp = toint(dig(l, "port") | fallback(0))
-                    var lm = tostring(dig(l, "tls", "mode") | fallback("Terminate"))
+                for _, l := range gw.Spec.Listeners {
+                  if l.Protocol == "TLS" {
+                    var lp = toint(l.Port)
+                    var lm = l.Tls.Mode
+                    if lm == "" { lm = "Terminate" }
                     if portModes[lp] == nil { portModes[lp] = map[string]bool{} }
                     portModes[lp][lm] = true
                   }
                 }
               %%}
-              {%- for _, listener := range dig(gw, "spec", "listeners") | toSlice() %}
+              {%- for _, listener := range gw.Spec.Listeners %}
                 {%%
                   var lName = ListenerName(listener)
                   var lProto = ListenerProtocol(listener)
-                  var lPort = toint(dig(listener, "port") | fallback(0))
-                  var lMode = tostring(dig(listener, "tls", "mode") | fallback("Terminate"))
+                  var lPort = toint(listener.Port)
+                  var lMode = listener.Tls.Mode
+                  if lMode == "" { lMode = "Terminate" }
                   var lHost = ListenerHostname(listener)
 
                   var skipListener = false
@@ -207,20 +209,18 @@ templateSnippets:
                   case "All":
                     nsOk = true
                   case "Selector":
-                    var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
-                    if ml != nil {
+                    var selectorMap = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
+                    if selectorMap != nil {
                       var nsObj = resources.namespaces.GetSingle(nsStr)
                       if nsObj != nil {
-                        var nsLabels = dig(nsObj, "metadata", "labels")
-                        if nsLabels != nil {
-                          var labelMap = nsLabels.(map[string]any)
-                          var allMatch = true
-                          for k, v := range ml.(map[string]any) {
-                            var actual, ok = labelMap[k]
-                            if !ok || tostring(actual) != tostring(v) { allMatch = false; break }
-                          }
-                          nsOk = allMatch
+                        // nsObj is typed *resources.namespaces.T —
+                        // Metadata.Labels is map[string]string directly.
+                        var allMatch = true
+                        for k, v := range selectorMap {
+                          var actual, ok = nsObj.Metadata.Labels[k]
+                          if !ok || actual != v { allMatch = false; break }
                         }
+                        nsOk = allMatch
                       }
                     }
                   }
@@ -293,7 +293,7 @@ templateSnippets:
                 // Re-derive the route name on the spot — `nameStr` from
                 // the enclosing scope was being clobbered by an inner
                 // for-range; this freshly-resolved value is correct.
-                entry["route"] = tostring(route | dig("metadata", "name") | fallback(""))
+                entry["route"] = route.Metadata.Name
                 entry["route_type"] = "tlsroute"
                 entry["rule_idx"] = ruleIdx
                 // Listener-frontend metadata for the new

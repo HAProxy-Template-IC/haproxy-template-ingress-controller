@@ -36,12 +36,11 @@ templateSnippets:
         Thread-safe: Yes (statusPatch uses StatusPatchCollector with mutex).
       -#}
       {%- import "util-condition-transition-time" for TopLevelTransitionTime -%}
-      {% macro GenerateGatewayClassStatusPatches(gatewayClasses []any) %}
+      {% macro GenerateGatewayClassStatusPatches(gatewayClasses []*resources.gatewayclasses.T) %}
         {%- for _, gc := range gatewayClasses %}
           {%%
-            var name = dig(gc, "metadata", "name") | fallback("")
-            var generation = dig(gc, "metadata", "generation") | fallback(0)
-            var nameStr = tostring(name)
+            var nameStr = gc.Metadata.Name
+            var generation = gc.Metadata.Generation
 
             // Validate optional parametersRef. Empty / unset → accepted.
             // Mismatched group or kind → InvalidParameters.

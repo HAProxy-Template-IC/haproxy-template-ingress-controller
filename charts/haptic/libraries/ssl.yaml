@@ -234,7 +234,7 @@ templateSnippets:
       {%- var defaultCertFilename = "default.pem" -%}
       {%- var gatewayDefaultCandidates = []any{} -%}
       {%- for _, tlsCert := range tlsCerts -%}
-        {%- var tc map[string]any = tlsCert -%}
+        {%- var tc any = tlsCert -%}
         {%- if dig(tc, "is_gateway_default") | fallback(false) -%}
           {%- gatewayDefaultCandidates = append(gatewayDefaultCandidates, tc) -%}
         {%- end -%}
@@ -275,11 +275,11 @@ templateSnippets:
          line per group — the same cert can appear multiple times
          in a crt-list with different options, which is supported. #}
       {%- for _, tlsCert := range tlsCerts -%}
-        {%- var tc map[string]any = tlsCert -%}
+        {%- var tc any = tlsCert -%}
         {# Use sanitized_filename from the registration (set by ingress.yaml/gateway.yaml) #}
         {# This ensures the crt-list references the actual filename on disk after HAProxy sanitization #}
-        {%- var certFilename = tc["sanitized_filename"] | fallback(tc["secret_namespace"] + "_" + tc["secret_name"] + ".pem") -%}
-        {%- var snis []any = coalesce(tc["sni_patterns"], []any{}).([]any) -%}
+        {%- var certFilename = tc | dig("sanitized_filename") | fallback(tostring(tc | dig("secret_namespace")) + "_" + tostring(tc | dig("secret_name")) + ".pem") -%}
+        {%- var snis []any = coalesce(tc | dig("sni_patterns"), []any{}).([]any) -%}
 
         {# Group SNIs by client-cert verify config. Empty key = no verify. #}
         {%- var snisByConfig = map[string][]any{} -%}
@@ -363,9 +363,9 @@ templateSnippets:
       {%- var hostsByCode = map[string][]any{} -%}
       {%- var seenByCode = map[string]map[string]bool{} -%}
       {%- for _, entry := range redirectHosts -%}
-        {%- var e map[string]any = entry -%}
-        {%- var code = tostring(e["code"]) -%}
-        {%- var host = tostring(e["host"]) -%}
+        {%- var e any = entry -%}
+        {%- var code = tostring(e | dig("code")) -%}
+        {%- var host = tostring(e | dig("host")) -%}
         {%- if seenByCode[code] == nil -%}
           {%- seenByCode[code] = map[string]bool{} -%}
           {%- hostsByCode[code] = []any{} -%}
@@ -410,8 +410,8 @@ templateSnippets:
       {# Determine distinct redirect codes from registered hosts #}
       {%- var codes = map[string]bool{} -%}
       {%- for _, entry := range redirectHosts -%}
-        {%- var e map[string]any = entry -%}
-        {%- codes[tostring(e["code"])] = true -%}
+        {%- var e any = entry -%}
+        {%- codes[tostring(e | dig("code"))] = true -%}
       {%- end -%}
 
       {# Emit one redirect rule per code #}
@@ -675,15 +675,15 @@ templateSnippets:
              routing the SNI here would point at a non-existent
              backend. The reject ACLs above already cover them. #}
           {% for _, backend := range passthroughBackends -%}
-          {%- var b map[string]any = backend %}
-          {%- var bMode = tostring(b["mode"] | fallback("Passthrough")) %}
+          {%- var b any = backend %}
+          {%- var bMode = tostring(b | dig("mode") | fallback("Passthrough")) %}
           {%- var bInvalid = tostring(b | dig("invalid") | fallback("false")) == "true" %}
           {%- if bMode == "Passthrough" && !bInvalid %}
-          {%- var sni = tostring(b["sni"]) %}
+          {%- var sni = tostring(b | dig("sni")) %}
           {%- if hasPrefix(sni, "*.") %}
-          use_backend {{ b["name"] }} if { req_ssl_sni -m end {{ sni[1:] }} }
+          use_backend {{ b | dig("name") }} if { req_ssl_sni -m end {{ sni[1:] }} }
           {%- else %}
-          use_backend {{ b["name"] }} if { req_ssl_sni -m str {{ sni }} }
+          use_backend {{ b | dig("name") }} if { req_ssl_sni -m str {{ sni }} }
           {%- end %}
           {%- end %}
           {%- end %}
@@ -830,13 +830,13 @@ sslCertificates:
       {%- if secret == nil -%}
       {{ fail("TLS Secret not found: " + certNamespace + "/" + certName + ". Ensure the Secret exists and is watched.") }}
       {%- end -%}
-      {%- var secretMap map[string]any = secret -%}
-      {%- var secretData map[string]any = secretMap["data"] -%}
-      {%- if secretData == nil || secretData["tls.crt"] == nil || secretData["tls.key"] == nil -%}
+      {%- var crtB64, hasCrt = secret.Data["tls.crt"] -%}
+      {%- var keyB64, hasKey = secret.Data["tls.key"] -%}
+      {%- if !hasCrt || !hasKey -%}
       {{ fail("Invalid TLS Secret " + certNamespace + "/" + certName + ": missing tls.crt or tls.key fields. Ensure the Secret is of type kubernetes.io/tls.") }}
       {%- end -%}
-      {{- b64decode(secretData["tls.crt"]) -}}
-      {{- b64decode(secretData["tls.key"]) -}}
+      {{- b64decode(crtB64) -}}
+      {{- b64decode(keyB64) -}}
 
 # Validation tests for SSL functionality
 validationTests:

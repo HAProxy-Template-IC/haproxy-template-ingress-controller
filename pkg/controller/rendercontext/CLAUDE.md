@@ -56,7 +56,7 @@ marked "optional"):
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `resources` | `map[string]templating.ResourceStore` (`*StoreWrapper` per entry) | Wrapped Kubernetes resource stores |
+| `resources` | `map[string]templating.ResourceStore` (`*StoreWrapper` per entry) | Wrapped Kubernetes resource stores. When a schema is loaded for an entry, the wrapper's `.List() / .Fetch(...) / .GetSingle(...)` methods return typed pointers (`[]*resources.<name>.T` / `*resources.<name>.T`) sourced from the same typegen-built `reflect.Type` the engine uses for the typed top-level global. The schema-derived `IndexBy` is also propagated into the wrapper for typed `Fetch` lookups. |
 | `controller` | `map[string]templating.ResourceStore` | Controller-managed stores; currently `controller["haproxy_pods"]` only |
 | `templateSnippets` | `[]string` | Snippet names sorted alphabetically |
 | `fileRegistry` | `*FileRegistry` | Dynamic file registration during render |

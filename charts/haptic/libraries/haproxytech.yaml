@@ -643,7 +643,7 @@ templateSnippets:
           {%- end %}
           {%- var caSecret = resources.secrets.GetSingle(caNs, caName) %}
           {%- if caSecret != nil %}
-            {%- var caContent = caSecret | dig("data", "ca.crt") | fallback("") | b64decode() %}
+            {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
             {%- if caContent != "" %}
               {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
               {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
@@ -669,8 +669,8 @@ templateSnippets:
           {%- end %}
           {%- var crtSecret = resources.secrets.GetSingle(crtNs, crtName) %}
           {%- if crtSecret != nil %}
-            {%- var tlsCrt = crtSecret | dig("data", "tls.crt") | fallback("") | b64decode() %}
-            {%- var tlsKey = crtSecret | dig("data", "tls.key") | fallback("") | b64decode() %}
+            {%- var tlsCrt = crtSecret.Data["tls.crt"] | b64decode() %}
+            {%- var tlsKey = crtSecret.Data["tls.key"] | b64decode() %}
             {%- if tlsCrt != "" && tlsKey != "" %}
               {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}

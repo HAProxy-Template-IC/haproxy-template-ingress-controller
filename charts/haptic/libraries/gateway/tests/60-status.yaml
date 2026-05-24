@@ -408,3 +408,90 @@ validationTests:
         target: haproxy.cfg
         pattern: "backend gtw_default_grpc-route"
         description: Must generate backend for GRPCRoute
+
+  test-gateway-status-listeners-typed-shape:
+    description: |
+      Regression test for MR !987: when a Gateway arrives with .status.listeners
+      already populated (the typical state after the first reconcile), the
+      production renderer wraps it into a typed *resources.gateways.T whose
+      Status.Listeners is a typegen-built struct slice. Earlier macros in
+      util-condition-transition-time did `.(map[string]any)` on each listener
+      entry and panicked on the typed shape:
+
+        interface conversion: interface {} is struct { AttachedRoutes int64; ... }, not map[string]interface {}
+
+      That panic deadlocked the leader-only Coordinator, crashed every leader
+      reconciliation, and surfaced as ALL gateway-conformance + e2e-TLS jobs
+      failing (pipeline 2548908046).
+
+      This test exercises the exact production path: a Gateway with
+      pre-populated .status.listeners drives Programmed/ResolvedRefs/Accepted
+      conditions through ListenerTransitionTime; the fixture matches what the
+      kube-apiserver returns after the first reconcile, so the dig() path
+      through typed structs is the same one production hits.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haproxy
+          spec:
+            controllerName: "haproxy.org/haptic"
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: typed-status-gw
+            namespace: default
+            generation: 2
+          spec:
+            gatewayClassName: haproxy
+            listeners:
+              - name: http
+                protocol: HTTP
+                port: 80
+          status:
+            # Pre-populated status: the production kube-apiserver returns
+            # this shape after the first reconcile; the renderer wraps it
+            # into a typed struct, and the chart's ListenerTransitionTime
+            # macro must handle that without panicking on a map[string]any
+            # assertion.
+            conditions:
+              - type: Accepted
+                status: "True"
+                reason: Accepted
+                message: Gateway accepted
+                observedGeneration: 1
+                lastTransitionTime: "2026-05-24T00:00:00Z"
+            listeners:
+              - name: http
+                attachedRoutes: 0
+                supportedKinds:
+                  - group: gateway.networking.k8s.io
+                    kind: HTTPRoute
+                conditions:
+                  - type: Accepted
+                    status: "True"
+                    reason: Accepted
+                    message: Listener accepted
+                    observedGeneration: 1
+                    lastTransitionTime: "2026-05-24T00:00:00Z"
+                  - type: Programmed
+                    status: "True"
+                    reason: Programmed
+                    message: Listener programmed
+                    observedGeneration: 1
+                    lastTransitionTime: "2026-05-24T00:00:00Z"
+                  - type: ResolvedRefs
+                    status: "True"
+                    reason: ResolvedRefs
+                    message: All references resolved
+                    observedGeneration: 1
+                    lastTransitionTime: "2026-05-24T00:00:00Z"
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must render without typed-shape panics
+      - type: contains
+        target: status-patches
+        pattern: "typed-status-gw"
+        description: Status patch must be emitted for the Gateway (proves the patches loop did not panic)

@@ -1,48 +1,35 @@
 templateSnippets:
   # ----------------------------------------------------------------------------
-  # frontend-extra-001-typed-access-smoke
+  # global-settings-001-typed-access-smoke
   #
-  # End-to-end proof that the typed `gateways` top-level global wires
-  # through the offline validate path AND the production renderer.
-  #
-  # Emits one HAProxy comment per Gateway using compile-time typed field
-  # access (gw.Metadata.Namespace, gw.Metadata.Name) — the property the
-  # Tier-2 typed-watched-resources work hinges on:
+  # End-to-end proof that the typed `resources.<name>` access path
+  # wires through the offline validate path AND the production
+  # renderer. Emits one HAProxy comment per Gateway using compile-time
+  # typed field access (gw.Metadata.Namespace, gw.Metadata.Name) —
+  # the property the typed-watched-resources work hinges on:
   #
   #   - Engine compile-time: a misspelled field (`gw.Metadata.Naamespace`)
-  #     fails when the controller boots, not at the next reconcile against
-  #     a live cluster. Without this snippet exercising the typed path,
-  #     no chart code does, and a regression in typebootstrap could ship
-  #     unnoticed.
+  #     fails when the controller boots, not at the next reconcile
+  #     against a live cluster. Without this snippet exercising the
+  #     typed path, no chart code does, and a regression in
+  #     typebootstrap could ship unnoticed.
   #
-  #   - Render time: the `gateways` global value (a *[]*<generated>
-  #     wrapped from the store's snapshot via typegen.WrapSlice) is what
-  #     Scriggo ranges over here. A drift between
-  #     BuildEngineDeclarations's declared shape and addTypedResources's
-  #     runtime shape would surface as a render-time type mismatch.
+  #   - Render time: the iteration variable `gw` is `*<Generated Gateway>`,
+  #     produced by the closure that the rendercontext builder binds
+  #     to `resources.gateways.List`. A drift between
+  #     BuildEngineDeclarations's declared shape and the runtime
+  #     closure-return shape would surface as a render-time type
+  #     mismatch.
   #
-  # HAProxy treats `#` lines as comments — the snippet is functionally a
-  # no-op in production, and the test below asserts on the comment text.
-  #
-  # The `gateways != nil` guard is defensive — typebootstrap always
-  # declares the typed global, either with the real schema-derived
-  # type (cluster fetcher succeeded via the CRD path or the OpenAPI
-  # v3 fallback) or with the universal envelope shape from
-  # `typegen.EnvelopeType` when both paths fail. The envelope still
-  # has Metadata.{Name,Namespace} as typed strings, so this snippet
-  # remains compilable in either path. The guard handles the
-  # unlikely case where addTypedRenderContextEntries doesn't bind a
-  # runtime value (no store registered yet during early iteration
-  # startup).
-  # ----------------------------------------------------------------------------
-  # Hooked into `global-settings-*` rather than `frontend-extra-*`
+  # HAProxy treats `#` lines as comments — the snippet is functionally
+  # a no-op in production, and the test below asserts on the comment
+  # text. Hooked into `global-settings-*` rather than `frontend-extra-*`
   # because the latter is render_glob'd 4× (HTTP frontend, HTTPS
   # frontend in base + ssl). Global section is rendered once, keeping
   # production output to one comment per Gateway.
+  # ----------------------------------------------------------------------------
   global-settings-001-typed-access-smoke:
     template: |
-      {%- if gateways != nil %}
-        {%- for _, gw := range gateways %}
+      {%- for _, gw := range resources.gateways.List() %}
       # typed-access-smoke: ns={{ gw.Metadata.Namespace }} name={{ gw.Metadata.Name }}
-        {%- end %}
       {%- end %}

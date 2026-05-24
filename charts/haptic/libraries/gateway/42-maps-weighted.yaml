@@ -74,8 +74,8 @@ templateSnippets:
           default_backend (404). -#}
       {%- import "util-sharded-weighted-backend-map-gateway" for ShardedWeightedBackendMap %}
       # gateway/map-weighted-backend-gateway
-      {{ ShardedWeightedBackendMap(resources.httproutes.List()) }}
-      {{ ShardedWeightedBackendMap(resources.grpcroutes.List()) }}
+      {{ ShardedWeightedBackendMap(resources.httproutes.List() | toSlice()) }}
+      {{ ShardedWeightedBackendMap(resources.grpcroutes.List() | toSlice()) }}
 
   # Frontend-extra: HTTPS misdirected-request detection (Gateway API
   # SupportGatewayHTTPSListenerDetectMisdirectedRequests).

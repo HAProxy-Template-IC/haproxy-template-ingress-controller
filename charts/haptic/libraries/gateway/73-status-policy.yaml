@@ -3,12 +3,12 @@ templateSnippets:
     template: |
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName -%}
-      {% macro GenerateBackendTLSPolicyStatusPatches(policies []any, controllerName string) %}
+      {% macro GenerateBackendTLSPolicyStatusPatches(policies []*resources.backendtlspolicies.T, controllerName string) %}
         {%- for _, policy := range policies %}
           {%%
-            var policyNs = ResourceNamespace(policy)
-            var policyName = ResourceName(policy)
-            var generation = dig(policy, "metadata", "generation") | fallback(0)
+            var policyNs = policy.Metadata.Namespace
+            var policyName = policy.Metadata.Name
+            var generation = policy.Metadata.Generation
             var apiVersion = "gateway.networking.k8s.io/v1"
             var kind = "BackendTLSPolicy"
 
@@ -45,25 +45,28 @@ templateSnippets:
                 if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                   var cm = resources.configmaps.GetSingle(policyNs, refName)
                   if cm != nil {
-                    var data = dig(cm, "data") | fallback(map[string]any{})
-                    var dataMap = data.(map[string]any)
-                    var caCrt, ok = dataMap["ca.crt"]
-                    if ok && tostring(caCrt) != "" {
+                    // dig() handles both typed map[string]string (production,
+                    // when ConfigMap schema is loaded) and untyped
+                    // map[string]any (offline test mode, no ConfigMap
+                    // schema in tests/schemas/). The pre-conversion code
+                    // did `data.(map[string]any)` which panics on the
+                    // typed shape — same class of bug as
+                    // util-condition-transition-time.
+                    var caCrt = tostring(dig(cm, "data", "ca.crt") | fallback(""))
+                    if caCrt != "" {
                       hasValid = true
                     }
                   }
                 } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
                   var sec = resources.secrets.GetSingle(policyNs, refName)
                   if sec != nil {
-                    var data = dig(sec, "data") | fallback(map[string]any{})
-                    var dataMap = data.(map[string]any)
-                    var caCrt, ok = dataMap["ca.crt"]
-                    if ok && tostring(caCrt) != "" {
+                    var caCrt, ok = sec.Data["ca.crt"]
+                    if ok && caCrt != "" {
                       hasValid = true
                     }
                     if !ok {
-                      var tlsCrt, ok2 = dataMap["tls.crt"]
-                      if ok2 && tostring(tlsCrt) != "" {
+                      var tlsCrt, ok2 = sec.Data["tls.crt"]
+                      if ok2 && tlsCrt != "" {
                         hasValid = true
                       }
                     }
@@ -117,25 +120,25 @@ templateSnippets:
             var acceptedReason = "Accepted"
             var acceptedMsg = "Policy accepted"
             var policyKey = policyNs + "/" + policyName
-            var policyTs = tostring(dig(policy, "metadata", "creationTimestamp") | fallback(""))
-            for _, tr := range dig(policy, "spec", "targetRefs") | toSlice() {
-              var trGroup = tostring(dig(tr, "group") | fallback(""))
-              var trKind = tostring(dig(tr, "kind") | fallback(""))
-              var trName = tostring(dig(tr, "name") | fallback(""))
-              var trSec = tostring(dig(tr, "sectionName") | fallback(""))
+            var policyTs = policy.Metadata.CreationTimestamp
+            for _, tr := range policy.Spec.TargetRefs {
+              var trGroup = tr.Group
+              var trKind = tr.Kind
+              var trName = tr.Name
+              var trSec = tr.SectionName
               for _, other := range resources.backendtlspolicies.List() {
-                var otherNs = ResourceNamespace(other)
-                var otherName = ResourceName(other)
+                var otherNs = other.Metadata.Namespace
+                var otherName = other.Metadata.Name
                 var otherKey = otherNs + "/" + otherName
                 if otherKey == policyKey || otherNs != policyNs {
                   continue
                 }
-                var otherTs = tostring(dig(other, "metadata", "creationTimestamp") | fallback(""))
-                for _, otr := range dig(other, "spec", "targetRefs") | toSlice() {
-                  var otrGroup = tostring(dig(otr, "group") | fallback(""))
-                  var otrKind = tostring(dig(otr, "kind") | fallback(""))
-                  var otrName = tostring(dig(otr, "name") | fallback(""))
-                  var otrSec = tostring(dig(otr, "sectionName") | fallback(""))
+                var otherTs = other.Metadata.CreationTimestamp
+                for _, otr := range other.Spec.TargetRefs {
+                  var otrGroup = otr.Group
+                  var otrKind = otr.Kind
+                  var otrName = otr.Name
+                  var otrSec = otr.SectionName
                   if otrGroup == trGroup && otrKind == trKind && otrName == trName && otrSec == trSec {
                     // Same (g, k, n, sec). The earlier policy wins.
                     var thisIsLoser = false

@@ -1187,7 +1187,7 @@ templateSnippets:
             # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
-          {%- var caBundleB64 = secret | dig("data", "ca.crt") | fallback("") | tostring() %}
+          {%- var caBundleB64 = secret.Data["ca.crt"] %}
           {%- if caBundleB64 == "" %}
             # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
             {%- continue %}

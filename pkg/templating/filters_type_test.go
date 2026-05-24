@@ -47,6 +47,33 @@ func TestScriggoToString(t *testing.T) {
 			assert.Equal(t, tt.want, scriggoToString(tt.in))
 		})
 	}
+
+	// Tristate-pointer cases (issue #52): typegen emits *int64 / *bool
+	// for optional scalar fields, direct typed access hands the raw
+	// pointer to tostring(). Each pointer kind must (a) dereference
+	// non-nil pointers to their scalar value and (b) treat a nil
+	// pointer as the empty string — matching the function's nil
+	// fast-path semantics.
+	gitarFindings := "after derefTristateScalar unwraps a nil pointer, scriggoToString must return \"\" not fmt.Sprint(nil)=\"<nil>\""
+	t.Run("tristate "+gitarFindings, func(t *testing.T) {
+		i := int64(42)
+		assert.Equal(t, "42", scriggoToString(&i))
+		var nilI64 *int64
+		assert.Equal(t, "", scriggoToString(nilI64))
+		var nilBool *bool
+		assert.Equal(t, "", scriggoToString(nilBool))
+		b := true
+		assert.Equal(t, "true", scriggoToString(&b))
+		// Widths beyond the in-practice typegen output set
+		// (needsTristatePointer permits these; derefTristateScalar
+		// must too).
+		var nilU32 *uint32
+		assert.Equal(t, "", scriggoToString(nilU32))
+		u := uint64(99)
+		assert.Equal(t, "99", scriggoToString(&u))
+		f := float32(2.5)
+		assert.Equal(t, "2.5", scriggoToString(&f))
+	})
 }
 
 func TestScriggoToInt(t *testing.T) {

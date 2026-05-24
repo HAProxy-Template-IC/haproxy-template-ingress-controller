@@ -542,7 +542,7 @@ templateSnippets:
           {%- end %}
           {%- var caSecret = resources.secrets.GetSingle(caNs, caName) %}
           {%- if caSecret != nil %}
-            {%- var caContent = caSecret | dig("data", "ca.crt") | fallback("") | b64decode() %}
+            {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
             {%- if caContent != "" %}
               {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
               {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
@@ -568,8 +568,8 @@ templateSnippets:
           {%- end %}
           {%- var crtSecret = resources.secrets.GetSingle(crtNs, crtName) %}
           {%- if crtSecret != nil %}
-            {%- var tlsCrt = crtSecret | dig("data", "tls.crt") | fallback("") | b64decode() %}
-            {%- var tlsKey = crtSecret | dig("data", "tls.key") | fallback("") | b64decode() %}
+            {%- var tlsCrt = crtSecret.Data["tls.crt"] | b64decode() %}
+            {%- var tlsKey = crtSecret.Data["tls.key"] | b64decode() %}
             {%- if tlsCrt != "" && tlsKey != "" %}
               {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
               {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
@@ -1153,7 +1153,7 @@ templateSnippets:
             # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
             {%- continue %}
           {%- end %}
-          {%- var caBundleB64 = secret | dig("data", "ca.crt") | fallback("") | tostring() %}
+          {%- var caBundleB64 = secret.Data["ca.crt"] %}
           {%- if caBundleB64 == "" %}
             # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
             {%- continue %}
@@ -1394,14 +1394,27 @@ templateSnippets:
       {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
       {#- Pre-seed `seen` with the six headers spoa-hub.yaml already
           captures, so we don't emit a duplicate `hdr_*` arg for one
-          of them. Lower-cased because we dedupe on toLower(name). -#}
+          of them. The dedup check below normalises to underscore-form
+          (`replace(toLower(name), "-", "_")`), so the pre-seed keys
+          MUST also use underscore-form — otherwise an Ingress
+          annotation `auth-headers-request: X-Forwarded-Uri` produces
+          argName `x_forwarded_uri`, the lookup misses the
+          `x-forwarded-uri` pre-seed entry, and the chart emits a
+          duplicate `hdr_x_forwarded_uri` arg.
+
+          HAProxy 3.0 rejects SPOE notify frames with duplicate arg
+          names ("Failed to parse frame: Tag" from the spoa-hub spop
+          parser); HAProxy 3.1+ tolerates them. That asymmetry was the
+          root cause of pipeline 2549047264's test-e2e [3.0]
+          TestIngressAuthHeadersFail failure (3.1/3.2/3.3 all passed
+          the same fixture). -#}
       {%- var seen = map[string]bool{} -%}
       {%- seen["authorization"] = true -%}
       {%- seen["cookie"] = true -%}
-      {%- seen["x-forwarded-for"] = true -%}
-      {%- seen["x-forwarded-proto"] = true -%}
-      {%- seen["x-forwarded-host"] = true -%}
-      {%- seen["x-forwarded-uri"] = true -%}
+      {%- seen["x_forwarded_for"] = true -%}
+      {%- seen["x_forwarded_proto"] = true -%}
+      {%- seen["x_forwarded_host"] = true -%}
+      {%- seen["x_forwarded_uri"] = true -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var authHeaders = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/auth-headers-request") | fallback("") | tostring() -%}
         {%- if authHeaders != "" -%}
@@ -3303,6 +3316,88 @@ validationTests:
         target: file:spoe.conf
         pattern: "hdr_x_request_id=req\\.hdr\\([^)]+\\) .*hdr_x_request_id=req\\.hdr"
         description: Only one hdr_x_request_id capture must appear on the SPOE args line; first writer wins
+
+  test-haproxy-ingress-external-auth-headers-request-overlaps-builtin:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: |
+      Regression test for the HAProxy 3.0 SPOE-frame-parse failure
+      that surfaced as pipeline 2549047264's test-e2e [3.0]
+      TestIngressAuthHeadersFail. An Ingress annotation
+      `auth-headers-request: X-Forwarded-Uri` overlaps a header the
+      base spoe-hub library already captures (`hdr_x_forwarded_uri=
+      req.hdr(X-Forwarded-Uri)` is hardcoded in
+      spoe-message-check-auth-body). The auto-extend snippet was
+      supposed to dedup against those built-ins, but the pre-seeded
+      `seen` map used dash-form keys (`x-forwarded-uri`) while the
+      check uses underscore-form (`replace(toLower(name), "-", "_")`
+      → `x_forwarded_uri`). The two never matched and the SPOE args
+      line ended up with the header captured twice.
+
+      HAProxy 3.0's SPOE notify-frame parser rejects duplicate arg
+      names (spop returns "Failed to parse frame: Tag"); 3.1+ tolerates
+      them silently, which is why only the 3.0 e2e shard failed.
+
+      Fixture: an Ingress with `auth-headers-request: X-Forwarded-Uri`
+      (one of the six built-in captures). The rendered spoe.conf args
+      line must mention `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)`
+      exactly ONCE.
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports: [{ port: 80 }]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: overlaps-builtin
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-request: "X-Forwarded-Uri"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: overlaps.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must remain valid
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: "hdr_x_forwarded_uri=req\\.hdr\\(X-Forwarded-Uri\\).*hdr_x_forwarded_uri=req\\.hdr"
+        description: |
+          The built-in `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)`
+          arg must not be re-emitted by the auto-extend snippet —
+          duplicate arg names trip HAProxy 3.0's SPOE frame parser.
+      - type: contains
+        target: file:spoe.conf
+        pattern: "hdr_x_forwarded_uri=req\\.hdr\\(X-Forwarded-Uri\\)"
+        description: The built-in arg must still appear (sanity check on the negative above)
 
   test-haproxy-ingress-external-auth-headers-succeed-fail:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'

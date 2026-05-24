@@ -52,20 +52,20 @@ templateSnippets:
             if ls == nil {
               continue
             }
-            var lsParentRef = dig(ls, "spec", "parentRef")
-            var gwName = tostring(dig(lsParentRef, "name") | fallback(""))
-            var gwNs = tostring(dig(lsParentRef, "namespace") | fallback(lsNs))
+            var gwName = ls.Spec.ParentRef.Name
+            var gwNs = ls.Spec.ParentRef.Namespace
+            if gwNs == "" { gwNs = lsNs }
             var gw = resources.gateways.GetSingle(gwNs, gwName)
             if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
               continue
             }
             resolvedGwCount = resolvedGwCount + 1
-            for _, listener := range dig(ls, "spec", "listeners") | toSlice() {
-              var listenerName = ListenerName(listener)
+            for _, listener := range ls.Spec.Listeners {
+              var listenerName = listener.Name
               if section != "" && section != listenerName {
                 continue
               }
-              var listenerPort = toint(dig(listener, "port") | fallback(0))
+              var listenerPort = toint(listener.Port)
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
@@ -106,12 +106,12 @@ templateSnippets:
             continue
           }
           resolvedGwCount = resolvedGwCount + 1
-          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            var listenerName = ListenerName(listener)
+          for _, listener := range gw.Spec.Listeners {
+            var listenerName = listener.Name
             if section != "" && section != listenerName {
               continue
             }
-            var listenerPort = toint(dig(listener, "port") | fallback(0))
+            var listenerPort = toint(listener.Port)
             if prPort != 0 && prPort != listenerPort {
               continue
             }
@@ -135,12 +135,12 @@ templateSnippets:
               for _, rh := range routeHostnames {
                 var rhStr = tostring(rh)
                 var ownedBySibling = false
-                for _, sibling := range dig(gw, "spec", "listeners") | toSlice() {
-                  var sibName = ListenerName(sibling)
+                for _, sibling := range gw.Spec.Listeners {
+                  var sibName = sibling.Name
                   if sibName == listenerName {
                     continue
                   }
-                  var sibHost = ListenerHostname(sibling)
+                  var sibHost = sibling.Hostname
                   if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank {
                     ownedBySibling = true
                     break
@@ -214,8 +214,8 @@ templateSnippets:
       {#- Generate host map entries for Gateway API routes #}
       {%- import "util-sharded-host-map-gateway" for ShardedHostMap %}
       # gateway/map-host-gateway
-      {{- ShardedHostMap(resources.httproutes.List(), "HTTPRoute") -}}
-      {{- ShardedHostMap(resources.grpcroutes.List(), "GRPCRoute") -}}
+      {{- ShardedHostMap(resources.httproutes.List() | toSlice(), "HTTPRoute") -}}
+      {{- ShardedHostMap(resources.grpcroutes.List() | toSlice(), "GRPCRoute") -}}
 
   map-host-regex-500-gateway:
     template: |
@@ -250,8 +250,8 @@ templateSnippets:
         var seen = map[string]bool{}
         var suffixEntries = []any{}
         for _, gw := range resources.gateways.List() {
-          for _, listener := range dig(gw, "spec", "listeners") | toSlice() {
-            var h = ListenerHostname(listener)
+          for _, listener := range gw.Spec.Listeners {
+            var h = listener.Hostname
             if !hasPrefix(h, "*.") {
               continue
             }

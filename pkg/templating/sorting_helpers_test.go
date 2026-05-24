@@ -95,7 +95,23 @@ func TestGetField(t *testing.T) {
 		Name string
 		Age  int
 	}
+	// typegenLike mirrors the shape typegen produces for K8s resources:
+	// PascalCase Go field names with lowercase JSON tags. Sort criteria
+	// like `$.match.method` carry lowercase JSONPath segments, so getField
+	// must resolve them via the JSON tag — not the Go field name — when
+	// the underlying value is a typed struct. Without this, every typed-
+	// resource sort key extracts nil and route precedence collapses
+	// (gateway-conformance HTTPRouteHeaderMatching / QueryParamMatching /
+	// RewriteHost regression, pipeline 2549008743).
+	type typegenLike struct {
+		Match  map[string]any `json:"match,omitempty"`
+		Method string         `json:"method,omitempty"`
+	}
 	mapData := map[string]any{"name": "alice", "age": 42}
+	typedItem := typegenLike{
+		Match:  map[string]any{"k": "v"},
+		Method: "GET",
+	}
 
 	tests := []struct {
 		name      string
@@ -111,6 +127,31 @@ func TestGetField(t *testing.T) {
 		{name: "struct field missing", item: structType{Name: "bob"}, fieldName: "Missing", want: nil},
 		{name: "pointer to struct", item: &structType{Name: "carol", Age: 25}, fieldName: "Name", want: "carol"},
 		{name: "string is not addressable", item: "hello", fieldName: "Name", want: nil},
+		// JSON-tag resolution — the typegen-shaped case sort_by needs.
+		{name: "typed struct by JSON tag (lowercase)", item: typedItem, fieldName: "method", want: "GET"},
+		{name: "typed struct nested map by JSON tag", item: typedItem, fieldName: "match", want: map[string]any{"k": "v"}},
+		{name: "typed struct still resolvable by Go field name", item: typedItem, fieldName: "Method", want: "GET"},
+		{name: "pointer-to-typed-struct by JSON tag", item: &typedItem, fieldName: "method", want: "GET"},
+		// Omitempty zero-value normalisation: optional field with the
+		// type's zero value reads back as nil, so sort_by's :exists
+		// modifier correctly distinguishes "field present" from
+		// "field unset" on typegen-produced structs. Without this,
+		// every typed route would appear to "have" a method/headers/
+		// queryParams etc. and route precedence collapses (e2e
+		// TestHTTPRoutePrecedence/plain_GET_routes_to_v2 — catch-all
+		// rule incorrectly beat the GET-only rule).
+		{
+			name:      "typed struct omitempty zero string reads as nil",
+			item:      typegenLike{Match: map[string]any{"k": "v"}}, // Method left zero
+			fieldName: "method",
+			want:      nil,
+		},
+		{
+			name:      "typed struct omitempty zero nested-map reads as nil",
+			item:      typegenLike{Method: "GET"}, // Match left zero
+			fieldName: "match",
+			want:      nil,
+		},
 	}
 
 	for _, tt := range tests {

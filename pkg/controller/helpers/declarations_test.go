@@ -27,7 +27,8 @@ import (
 
 // TestBuildAdditionalDeclarations_WithResult covers the happy path
 // every production engine constructor takes: typebootstrap ran,
-// each typed resource gets a *[]*<Generated> global, currentConfig
+// the typed resources surface as fields on the single `resources`
+// struct (not per-resource top-level globals), and currentConfig
 // is present unchanged.
 func TestBuildAdditionalDeclarations_WithResult(t *testing.T) {
 	gwType := reflect.StructOf([]reflect.StructField{
@@ -37,6 +38,7 @@ func TestBuildAdditionalDeclarations_WithResult(t *testing.T) {
 	})
 	result := &typebootstrap.Result{
 		Types:  map[string]reflect.Type{"gateways": gwType},
+		Kinds:  map[string]string{"gateways": "Gateway"},
 		Errors: map[string]error{},
 	}
 
@@ -44,20 +46,28 @@ func TestBuildAdditionalDeclarations_WithResult(t *testing.T) {
 
 	require.Contains(t, decls, "currentConfig",
 		"static currentConfig declaration must be present in every consumer path")
-	require.Contains(t, decls, "gateways",
-		"typed-resource declaration must surface for every successful typebootstrap entry")
+	require.Contains(t, decls, "resources",
+		"single 'resources' declaration must surface from BuildEngineDeclarations")
 
-	// The declared shape MUST match what addTypedRenderContextEntries
-	// produces at render time — a *[]*<gwType> — otherwise Scriggo's
-	// runtime variable lookup mismatches the engine's compile-time
-	// declaration.
-	gwDecl := decls["gateways"]
-	rv := reflect.ValueOf(gwDecl)
+	// The declared shape MUST match what rendercontext.addTypedResources
+	// populates at render time — a *Resources struct with one field per
+	// watched resource — otherwise Scriggo's runtime variable lookup
+	// mismatches the engine's compile-time declaration.
+	resourcesDecl := decls["resources"]
+	rv := reflect.ValueOf(resourcesDecl)
 	require.Equal(t, reflect.Ptr, rv.Type().Kind(),
-		"declared globals must be pointer-to-slice for Scriggo's typed-nil-pointer convention")
-	require.Equal(t, reflect.Slice, rv.Type().Elem().Kind())
-	assert.Equal(t, reflect.Ptr, rv.Type().Elem().Elem().Kind(),
-		"slice element must be pointer-to-generated-type")
+		"resources is a typed-nil pointer to the dynamic struct")
+	resourcesType := rv.Type().Elem()
+	require.Equal(t, reflect.Struct, resourcesType.Kind(),
+		"resources points at the dynamic per-resource struct")
+	require.Equal(t, 1, resourcesType.NumField(),
+		"one field per watched resource (gateways here)")
+	// Field is *innerStore for the per-resource access surface.
+	gwField := resourcesType.Field(0)
+	require.Equal(t, reflect.Ptr, gwField.Type.Kind(),
+		"per-resource field is a pointer")
+	assert.Equal(t, reflect.Struct, gwField.Type.Elem().Kind(),
+		"per-resource field points at the closure-bearing store struct")
 }
 
 // TestBuildAdditionalDeclarations_NilResultPanics pins the

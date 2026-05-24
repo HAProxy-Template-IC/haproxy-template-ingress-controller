@@ -292,48 +292,51 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 	// Add path resolver for file path resolution in templates
 	renderContext["pathResolver"] = s.pathResolver
 
-	// Build resources map from stores. Each wrapper gets the IndexBy
-	// the watcher used to build the underlying store; the wrapper uses
-	// it to build its per-render snapshot index so List/Fetch/GetSingle
-	// on one wrapper instance all observe the same store state. Without
-	// IndexBy, Fetch/GetSingle fall back to a live store read that can
-	// observe a state diverging from List() — the root cause of the
-	// conformance-suite flakes tracked in issue #45 (parallel resource
-	// creation racing the chart's per-render reads).
-	resources := make(map[string]templating.ResourceStore)
+	// Build the resources runtime value. Production must produce a
+	// value whose struct type matches what typebootstrap.BuildEngineDeclarations
+	// declared at engine-construction time — drift here trips Scriggo's
+	// "variable initializer 'resources' must have type assignable to …"
+	// panic at the FIRST template run, killing reconciliation outright.
+	// rendercontext.BuildResourcesValue is the single source of truth for
+	// the shape, shared with testrunner so production and validate go
+	// through the same construction path. Each StoreWrapper inside picks
+	// up the IndexBy the watcher used to build the underlying store so
+	// per-render snapshot indices align with the live store state
+	// (without IndexBy, Fetch / GetSingle fall back to a live store read
+	// that can observe a state diverging from List() — the root cause of
+	// the conformance-suite flakes tracked in issue #45 (parallel
+	// resource creation racing the chart's per-render reads)).
+	storesByName := make(map[string]stores.Store, len(provider.StoreNames()))
 	for _, name := range provider.StoreNames() {
-		store := provider.GetStore(name)
-		if store != nil {
-			var indexBy []string
-			if wr, ok := s.config.WatchedResources[name]; ok {
-				indexBy = wr.IndexBy
-			}
-			wrapper := &rendercontext.StoreWrapper{
-				Store:        store,
-				ResourceType: name,
-				Logger:       s.logger,
-				IndexBy:      indexBy,
-			}
-			resources[name] = wrapper
+		if store := provider.GetStore(name); store != nil {
+			storesByName[name] = store
 		}
 	}
-	renderContext["resources"] = resources
-
-	// Typed top-level resource globals. One entry per resource
-	// whose schema resolved at iteration start (typebootstrap
-	// produced a generated Go type) AND whose store is present
-	// in this provider. Coexists with the untyped resources map
-	// above — chart templates can adopt the typed shape per
-	// snippet without breaking the existing path.
-	//
-	// Schema-side failures (typebootstrap couldn't generate a
-	// type for a resource) skip silently — that resource doesn't
-	// show up in s.typedResourceTypes, no typed entry is emitted.
-	// Wrap-side failures (the runtime data doesn't match the
-	// declared shape — a watcher regression) log at warn and
-	// omit the entry; templates compiled against that global see
-	// a typed-nil pointer, which iterates as empty.
-	addTypedRenderContextEntries(renderContext, provider, s.typedResourceTypes, s.logger)
+	// watchedNames mirrors the keys typebootstrap.BuildEngineDeclarations
+	// iterated (via helpers.BuildAdditionalDeclarations: result.Types ∪
+	// result.Errors ∪ extras-from-WatchedResources). Including the full
+	// watched-resource set keeps the runtime resources struct's field
+	// list byte-identical to the engine declaration's, even for
+	// resources without a local store or generated type — Scriggo
+	// requires the runtime variable's type to match the declared type
+	// exactly, mismatches panic with
+	// "must have type assignable to struct {...}".
+	watchedNames := make([]string, 0, len(s.config.WatchedResources))
+	for name := range s.config.WatchedResources {
+		watchedNames = append(watchedNames, name)
+	}
+	renderContext["resources"] = rendercontext.BuildResourcesValue(
+		storesByName,
+		s.typedResourceTypes,
+		watchedNames,
+		func(name string) []string {
+			if wr, ok := s.config.WatchedResources[name]; ok {
+				return wr.IndexBy
+			}
+			return nil
+		},
+		s.logger,
+	)
 
 	// Add controller context with typed ResourceStore map. The
 	// haproxy-pods watcher is auto-injected by ResourceWatcherComponent

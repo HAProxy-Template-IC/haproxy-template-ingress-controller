@@ -82,11 +82,11 @@ Always check with `errors.As`; the wrapped `.Cause` carries the underlying Scrig
 
 ### Filters (pipe syntax, `{{ v | filter(args) }}`)
 
-`b64decode`, `glob_match`, `group_by`, `indent`, `sort_by` (supports `:desc`, `:exists`, `| length` modifiers), `debug`, `toJSON`, `strip`/`trim`.
+`b64decode`, `glob_match`, `group_by`, `indent`, `sort_by` (supports `:desc`, `:exists`, `| length` modifiers), `debug`, `toJSON`, `strip`/`trim`, `to_str_map` (normalises any string-keyed map — typed `map[string]string`, untyped `map[string]any`, or generic `map[string]<T>` — into `map[string]string` for uniform iteration over labels / matchLabels / annotations).
 
 ### Functions (call syntax, `{{ fn(args) }}`)
 
-Selection: `fallback`, `coalesce`, `fail`, `merge`, `keys`, `sort_strings`, `sanitize_regex`, `semver_gte`, `toLower`, `tostring`, plus Scriggo's standard library.
+Selection: `fallback`, `coalesce`, `fail`, `merge`, `keys`, `sort_strings`, `sanitize_regex`, `semver_gte`, `toLower`, `tostring`, `dig` (navigates nested maps **and** typed structs via JSON-tag → Go-field lookup), `shard_slice` (type-preserving slice shard via a `native.AdaptiveFunc` — return type at each call site matches the input element type), plus Scriggo's standard library.
 
 Canonical reference: `pkg/templating/filter_names.go`.
 
@@ -96,7 +96,7 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 
 | Variable | Type | Purpose |
 |----------|------|---------|
-| `resources` | `*map[string]ResourceStore` | Watched Kubernetes resources (`.List`, `.Fetch`, `.GetSingle`) |
+| `resources` | `*map[string]ResourceStore` | Watched Kubernetes resources (`.List`, `.Fetch`, `.GetSingle`); when a schema is loaded for an entry, the wrapper returns typed pointers (`[]*resources.<name>.T` / `*resources.<name>.T`) |
 | `controller` | `*map[string]ResourceStore` | Controller-managed stores; currently `controller["haproxy_pods"]` only |
 | `pathResolver` | `*PathResolver` | `pathResolver.GetPath(name, kind)` for map / SSL / file / crt-list paths |
 | `fileRegistry` | `*FileRegistrar` | Templates can register dynamically generated auxiliary files via this |
@@ -107,8 +107,9 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 | `http` | `*HTTPFetcher` | `http.Fetch(url, opts)` for HTTP resources |
 | `runtimeEnvironment` | `*RuntimeEnvironment` | Runtime info (`GOMAXPROCS`, etc.) |
 | `extraContext` | `*map[string]any` | User-defined variables from `templatingSettings.extraContext` |
+| typed-resource globals | `*[]*resources.<name>.T` | One per `watchedResources` entry when a schema is loaded — same name as the watched-resource key (e.g. `gateways`, `httproutes`). The `resources.<name>.T` selector chain is also a usable type expression in macro signatures, type assertions, and type-switch case clauses. |
 
-Callers can inject additional per-render declarations through `templating.NewScriggoWithDeclarations` — for example, the renderer and template validator both add `currentConfig` (`*parserconfig.StructuredConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`.
+Callers can inject additional per-render declarations through `templating.NewScriggoWithDeclarations` — for example, the renderer and template validator both add `currentConfig` (`*parserconfig.StructuredConfig`, nil on first deployment) so slot-preserving templates can guard with `{% if !isNil(currentConfig) %}`. The typegen-derived typed globals are injected via the same mechanism — `pkg/k8s/typegen` builds the `reflect.Type` declarations the engine merges in before compile.
 
 To add a new runtime variable, declare it in `buildScriggoGlobals` with a nil pointer of the right type, then pass the value via the render context map — there's a walkthrough in `pkg/templating/CLAUDE.md`.
 

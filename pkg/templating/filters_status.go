@@ -83,7 +83,17 @@ func scriggoStatusPatch(env native.Env, namespace, name, apiVersion, kind string
 //
 //	{% var cond = condition("Accepted", "True", "Accepted", "Route accepted", 5, "2025-01-01T00:00:00Z") %}
 func scriggoCondition(condType, status, reason, message string, observedGeneration any, lastTransitionTime string) map[string]any {
-	// Normalize observedGeneration to int64 (JSON numbers from K8s come as float64)
+	// Normalize observedGeneration to int64. Source can be:
+	//   - int / int64 / float64: legacy untyped path + chart-built literals
+	//   - *int64 / *int / *int32 / *float64: typegen tristate (issue #52)
+	//     — optional numeric fields like ObjectMeta.Generation pointer-
+	//     wrap so the chart's `dig | fallback` pattern can distinguish
+	//     absent from explicit zero. Direct typed access like
+	//     `gateway.Metadata.Generation` hands the raw pointer here;
+	//     derefTristateScalar unwraps it the same way digStructField does.
+	if d, ok := derefTristateScalar(observedGeneration); ok {
+		observedGeneration = d
+	}
 	var gen int64
 	switch v := observedGeneration.(type) {
 	case int:

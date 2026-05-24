@@ -27,6 +27,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -372,7 +373,18 @@ backend {{ svcMeta["namespace"] }}-{{ svcMeta["name"] }}
 	templates := map[string]string{
 		"haproxy.cfg": config.HAProxyConfig.Template,
 	}
-	engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+	// Declare `resources` to match the typed-struct shape that
+	// testrunner.buildRenderingContext produces via
+	// rendercontext.BuildResourcesValue. The engine no longer ships an
+	// untyped `resources` default — every consumer must supply the
+	// typed declaration (production uses helpers.BuildAdditionalDeclarations).
+	decls := typebootstrap.BuildEngineDeclarations(&typebootstrap.Result{}, "services")
+	engine, err := templating.NewScriggoWithDeclarations(
+		templates,
+		[]string{"haproxy.cfg"},
+		nil, nil, nil,
+		decls,
+	)
 	require.NoError(t, err)
 
 	// Convert CRD spec to internal config format

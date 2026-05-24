@@ -103,15 +103,15 @@ templateSnippets:
         var winningPolicyTs = ""
         var winningPolicyKey = ""
         for _, pol := range resources.backendtlspolicies.List() {
-          var polNs = tostring(dig(pol, "metadata", "namespace") | fallback(""))
+          var polNs = pol.Metadata.Namespace
           if polNs != tostring(routeNs) {
             continue
           }
-          for _, tr := range dig(pol, "spec", "targetRefs") | toSlice() {
-            var trGroup = tostring(dig(tr, "group") | fallback(""))
-            var trKind = tostring(dig(tr, "kind") | fallback(""))
-            var trName = tostring(dig(tr, "name") | fallback(""))
-            var trSec = tostring(dig(tr, "sectionName") | fallback(""))
+          for _, tr := range pol.Spec.TargetRefs {
+            var trGroup = tr.Group
+            var trKind = tr.Kind
+            var trName = tr.Name
+            var trSec = tr.SectionName
             if (trGroup != "" && trGroup != "core") || trKind != "Service" {
               continue
             }
@@ -122,8 +122,8 @@ templateSnippets:
               continue
             }
             // Conflict tiebreak — earliest creationTimestamp wins.
-            var polTs = tostring(dig(pol, "metadata", "creationTimestamp") | fallback(""))
-            var polKey = polNs + "/" + tostring(dig(pol, "metadata", "name") | fallback(""))
+            var polTs = pol.Metadata.CreationTimestamp
+            var polKey = polNs + "/" + pol.Metadata.Name
             if winningPolicy == nil {
               winningPolicy = pol
               winningPolicyTs = polTs
@@ -153,26 +153,33 @@ templateSnippets:
               if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                 var cm = resources.configmaps.GetSingle(tostring(routeNs), refName)
                 if cm != nil {
-                  var data = dig(cm, "data") | fallback(map[string]any{})
-                  var dataMap = data.(map[string]any)
+                  // ConfigMap stays untyped (no ConfigMap schema bundled);
+                  // dig(cm,"data") returns the map[string]any from the
+                  // untyped store path.
+                  var dataMap = to_str_map(dig(cm, "data"))
                   var caCrt, ok = dataMap["ca.crt"]
-                  if ok && tostring(caCrt) != "" {
-                    caBundleParts = append(caBundleParts, tostring(caCrt))
+                  if ok && caCrt != "" {
+                    caBundleParts = append(caBundleParts, caCrt)
                   }
                 }
               } else if (refGroup == "" || refGroup == "core") && refKind == "Secret" {
                 var sec = resources.secrets.GetSingle(tostring(routeNs), refName)
                 if sec != nil {
-                  var data = dig(sec, "data") | fallback(map[string]any{})
-                  var dataMap = data.(map[string]any)
+                  // sec is typed *resources.secrets.T from the bundled
+                  // core/v1 Secret schema — sec.Data is map[string]string
+                  // directly (typegen materialises K8s Secret.data as
+                  // string-to-string per the OpenAPI shape). The previous
+                  // `.(map[string]any)` assertion was a leftover from
+                  // the untyped era.
+                  var dataMap = sec.Data
                   var caCrt, ok = dataMap["ca.crt"]
                   var b64 = ""
-                  if ok && tostring(caCrt) != "" {
-                    b64 = tostring(caCrt)
+                  if ok && caCrt != "" {
+                    b64 = caCrt
                   } else {
                     var tlsCrt, ok2 = dataMap["tls.crt"]
-                    if ok2 && tostring(tlsCrt) != "" {
-                      b64 = tostring(tlsCrt)
+                    if ok2 && tlsCrt != "" {
+                      b64 = tlsCrt
                     }
                   }
                   if b64 != "" {
@@ -240,15 +247,16 @@ templateSnippets:
           if sec == nil {
             continue
           }
-          var data = dig(sec, "data") | fallback(map[string]any{})
-          var dataMap = data.(map[string]any)
+          // sec is typed *resources.secrets.T — sec.Data is
+          // map[string]string directly (no assertion needed).
+          var dataMap = sec.Data
           var crtB64, ok1 = dataMap["tls.crt"]
           var keyB64, ok2 = dataMap["tls.key"]
-          if !ok1 || !ok2 || tostring(crtB64) == "" || tostring(keyB64) == "" {
+          if !ok1 || !ok2 || crtB64 == "" || keyB64 == "" {
             continue
           }
-          var crtPem, e1 = b64decode(tostring(crtB64))
-          var keyPem, e2 = b64decode(tostring(keyB64))
+          var crtPem, e1 = b64decode(crtB64)
+          var keyPem, e2 = b64decode(keyB64)
           if e1 != nil || e2 != nil {
             continue
           }
@@ -396,8 +404,8 @@ templateSnippets:
           preventing race conditions on the shared map. -#}
       {{- render "util-gateway-analysis" -}}
       # gateway/backends-gateway
-      {{ ShardedGatewayBackends(resources.httproutes.List(), "", "gatewayBackends_http") }}
-      {{- ShardedGatewayBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
+      {{ ShardedGatewayBackends(resources.httproutes.List() | toSlice(), "", "gatewayBackends_http") }}
+      {{- ShardedGatewayBackends(resources.grpcroutes.List() | toSlice(), "h2", "gatewayBackends_grpc") -}}
 
   backends-501-gateway-invalid:
     template: |

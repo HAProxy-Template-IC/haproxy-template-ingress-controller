@@ -74,7 +74,18 @@ func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions ma
 // but the VALUE is provided at runtime via template.Run(vars).
 func registerScriggoRuntimeVars(decl native.Declarations) {
 	decl["pathResolver"] = (*PathResolver)(nil)
-	decl["resources"] = (*map[string]ResourceStore)(nil)
+	// `resources` is deliberately NOT declared here. Every engine
+	// consumer in this codebase goes through
+	// helpers.BuildAdditionalDeclarations + typebootstrap, which
+	// declares the typed `*<struct>` shape. There is no untyped
+	// fallback — the previous dual-shape (`(*map[string]ResourceStore)(nil)`
+	// as a default) created drift between the engine's static
+	// declaration and the runtime value (rendercontext built one
+	// shape, the engine declared another, Scriggo's variable
+	// binding tripped). Callers that bypass the typed-engine path
+	// (unit tests) must supply their own `resources` declaration
+	// via additionalDeclarations OR avoid templates that touch
+	// `resources` at all.
 	decl["controller"] = (*map[string]ResourceStore)(nil)
 	decl["templateSnippets"] = (*[]string)(nil)
 	decl["fileRegistry"] = (*FileRegistrar)(nil)
@@ -148,8 +159,13 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 
 	// Slice manipulation functions
 	decl[FuncToSlice] = scriggoToSlice
+	decl[FuncToStrMap] = scriggoToStrMap
 	decl[FuncAppendAny] = scriggoAppendAny
-	decl[FuncShardSlice] = scriggoShardSlice
+	// shard_slice is declared as an AdaptiveFunc so the call's static
+	// return type preserves the input slice's element type — enabling
+	// typed loop variables (and typed field access) on the resulting
+	// shard, instead of degrading every consumer to []any-with-dig().
+	decl[FuncShardSlice] = scriggoShardSliceAdaptive
 
 	// Path utility functions
 	decl[FuncBasename] = scriggoBasename
