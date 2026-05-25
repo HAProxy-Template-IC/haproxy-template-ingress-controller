@@ -159,11 +159,25 @@ func (c *DataplaneClient) GetSSLCertificateContent(ctx context.Context, name str
 	return "__NO_FINGERPRINT__", nil
 }
 
-// CreateSSLCertificate creates a new SSL certificate using multipart form-data.
-// Returns the reload ID if a reload was triggered (empty string if not) and any error.
-// The name parameter can use dots (e.g., "example.com.pem"), which will be sanitized
-// automatically before calling the API.
-// Works with all HAProxy DataPlane API versions (v3.0+).
+// CreateSSLCertificate creates a new SSL certificate using multipart form-data,
+// always sending skip_reload=true. Symmetric with UpdateSSLCertificate's
+// existing skip_reload plumbing (added in 77c760c2 "skip_reload=true on
+// aux-file UPDATEs"); the asymmetry on CREATE was an oversight, since the
+// DPAPI's POST /storage/ssl_certificates endpoint declares skip_reload as a
+// query parameter (unlike POST /storage/maps and /storage/general, where the
+// spec doesn't expose it).
+//
+// Without this, every cert CREATE during PhasePreConfig triggers a DPAPI
+// auto-reload that validates the CURRENT haproxy.cfg against the new on-disk
+// cert. The reload normally succeeds (the new cert is just-written real
+// content), but a parallel reconciliation cycle landing between the cert
+// CREATE's reload and the orchestrator's PhaseConfig push can race against
+// stale-cfg state — same shape as the UPDATE bug the May fix closed.
+//
+// Returns the reload ID if a reload was triggered (always empty under
+// skip_reload=true) and any error. The name parameter can use dots (e.g.,
+// "example.com.pem"), which will be sanitized automatically before calling
+// the API. Works with all HAProxy DataPlane API versions (v3.0+).
 func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, content string) (string, error) {
 	// Sanitize the name for the API (e.g., "example.com.pem" -> "example_com.pem")
 	sanitizedName := SanitizeSSLCertName(name)
@@ -173,27 +187,28 @@ func (c *DataplaneClient) CreateSSLCertificate(ctx context.Context, name, conten
 		return "", fmt.Errorf("building payload for SSL certificate '%s': %w", name, err)
 	}
 
+	skipReload := true
 	resp, err := c.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v33.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v32.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 		V31: func(c *v31.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v31.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 		V30: func(c *v30.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v30.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v32ee.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 		V31EE: func(c *v31ee.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v31ee.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 		V30EE: func(c *v30ee.Client) (*http.Response, error) {
-			return c.CreateStorageSSLCertificateWithBody(ctx, nil, contentType, body)
+			return c.CreateStorageSSLCertificateWithBody(ctx, &v30ee.CreateStorageSSLCertificateParams{SkipReload: &skipReload}, contentType, body)
 		},
 	})
 
