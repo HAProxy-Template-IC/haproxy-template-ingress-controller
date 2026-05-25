@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	pb "sigs.k8s.io/gateway-api/conformance/echo-basic/grpcechoserver"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/grpcclient"
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
@@ -107,6 +109,20 @@ func TestGRPCOverTLS(t *testing.T) {
 				Timeout:         60 * time.Second,
 				Multiplier:      1.5,
 			}
+			// lastDialErr / lastCallErr / lastGotMethod survive the
+			// poll loop so the failure path can report what the
+			// final attempt saw. A non-nil callErr with the
+			// chart's gRPC catch-all signature (`code = Unimplemented`,
+			// `desc` from the `grpc-message: Unimplemented` header
+			// the chart returns from default_backend) is the
+			// fingerprint of "request reached HAProxy and got
+			// routed to default_backend instead of the route's
+			// backend" — distinct from dial errors (HAProxy
+			// unreachable) and method mismatches (routed to the
+			// wrong backend that happens to also speak gRPC). See
+			// issue #48.
+			var lastDialErr, lastCallErr error
+			var lastGotMethod string
 			err := testutil.WaitForConditionWithDescription(ctx, waitCfg,
 				"GRPCRoute Echo() reaches the right backend",
 				func(ctx context.Context) (bool, error) {
@@ -114,6 +130,9 @@ func TestGRPCOverTLS(t *testing.T) {
 					defer cancel()
 					conn, dialErr := grpcclient.New(t).Dial(dialCtx, host)
 					if dialErr != nil {
+						lastDialErr = dialErr
+						lastCallErr = nil
+						lastGotMethod = ""
 						return false, nil
 					}
 					defer func() { _ = conn.Close() }()
@@ -122,7 +141,10 @@ func TestGRPCOverTLS(t *testing.T) {
 					callCtx, callCancel := context.WithTimeout(ctx, 5*time.Second)
 					defer callCancel()
 					resp, callErr := cli.Echo(callCtx, &pb.EchoRequest{})
+					lastDialErr = nil
+					lastCallErr = callErr
 					if callErr != nil {
+						lastGotMethod = ""
 						return false, nil
 					}
 					// echo-basic populates
@@ -132,10 +154,48 @@ func TestGRPCOverTLS(t *testing.T) {
 					// right backend without rewriting the method
 					// (TLS-terminated h2 forwards the original
 					// :path header).
-					return resp.GetAssertions().GetFullyQualifiedMethod() == wantSuffix, nil
+					lastGotMethod = resp.GetAssertions().GetFullyQualifiedMethod()
+					return lastGotMethod == wantSuffix, nil
 				})
 			if err != nil {
-				t.Fatalf("Echo() RPC never reached the GRPCRoute backend with method %q: %v", wantSuffix, err)
+				// Differential probe at timeout: same host + path
+				// over HTTP/1.1 instead of h2 (the HTTPS bind
+				// advertises both via ALPN). If h1 reaches the
+				// GRPCRoute backend while h2 does not, the chart's
+				// host/path-map setup is fine and the failure is
+				// h2-specific (issue #48's working hypothesis:
+				// HAProxy 3.1 + h2 + TLS-terminate + req.hdr(Host)
+				// returns empty, so txn.host_match is empty and
+				// the path-map lookup misses). If h1 also lands on
+				// default_backend, the issue is not h2-specific —
+				// either the host map / path map never staged, or
+				// there's a different routing bug for this path
+				// shape.
+				h1Resp, h1Err := httpclient.New(t).
+					HTTPS(host, wantSuffix).
+					WithMethod("POST").
+					WithHeader("Content-Type", "application/grpc").
+					Do(ctx)
+				h1Diag := "(probe failed before response)"
+				if h1Err != nil {
+					h1Diag = fmt.Sprintf("dial/transport error: %v", h1Err)
+				} else if h1Resp != nil {
+					grpcStatus := h1Resp.Header.Get("grpc-status")
+					echoMethod := ""
+					if h1Resp.Echo != nil {
+						echoMethod = h1Resp.Echo.Path
+					}
+					h1Diag = fmt.Sprintf("status=%d, grpc-status=%q, echo-path=%q",
+						h1Resp.Status, grpcStatus, echoMethod)
+				}
+				t.Fatalf("Echo() RPC never reached the GRPCRoute backend with method %q (poll budget=%v): "+
+					"last dial err=%v; last call err=%v; last method seen=%q; "+
+					"h1 differential probe: %s; "+
+					"poll err=%v",
+					wantSuffix, waitCfg.Timeout,
+					lastDialErr, lastCallErr, lastGotMethod,
+					h1Diag,
+					err)
 			}
 			return ctx
 		}).
