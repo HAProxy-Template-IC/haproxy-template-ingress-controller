@@ -187,6 +187,21 @@ func TestIngressConformance(t *testing.T) {
 	if override := os.Getenv("INGRESS_CONFORMANCE_FEATURES_DIR"); override != "" {
 		workDir = override
 	}
+	// Sharded runs (SHARD_ID + SHARD_COUNT set by GitLab CI's `parallel:`
+	// keyword) generate a per-shard `features/` dir at runtime from the
+	// baked-in one and point the binary at it. See prepareShardedFeatures
+	// for the assignment strategy. We do this BEFORE the directory-exists
+	// check below so that check validates the shard's view, not the
+	// (unsharded) source.
+	shardID, shardCount, sharded, err := shardEnv()
+	require.NoError(t, err, "parse SHARD_ID/SHARD_COUNT env")
+	if sharded {
+		shardDir := t.TempDir()
+		err := prepareShardedFeatures(workDir, shardDir, shardID, shardCount)
+		require.NoErrorf(t, err, "prepare shard %d/%d features", shardID, shardCount)
+		t.Logf("[conformance] shard %d/%d: rewrote features into %s", shardID, shardCount, shardDir)
+		workDir = shardDir
+	}
 	// The upstream binary's feature loader uses paths like
 	// `features/default_backend.feature` resolved relative to its CWD.
 	// Verify the directory we'd run it from actually has those features

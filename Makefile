@@ -252,26 +252,26 @@ test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sib
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")
 
-test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite as a sibling container on the kind network
-	@echo "Running Ingress conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."
-	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
-	@echo "      and left it running (KEEP_CLUSTER=true is the default)."
+build-ingress-conformance-image: ## Build the ingress-conformance test image (clone upstream, apply patches, compile, docker build)
+	@echo "Building ingress-conformance test image $(INGRESS_CONFORMANCE_IMAGE)..."
 	@echo "Note: upstream kubernetes-sigs/ingress-controller-conformance is dormant"
 	@echo "      (last commit 2023-08-28, no releases). Pinned to SHA:"
 	@echo "      $(INGRESS_CONFORMANCE_SHA). We do NOT auto-follow master."
 	@echo "Environment variables:"
-	@echo "  TEST_RUN_PATTERN - Run a subset of conformance scenarios matching the pattern"
-	@echo "                     (forwarded as -test.run); empty = full suite."
 	@echo "  INGRESS_CONFORMANCE_IMAGE - Image tag for the test image"
 	@echo "                              (default: $(INGRESS_CONFORMANCE_IMAGE))"
 	@echo "  INGRESS_CONFORMANCE_REPO  - Upstream git repo URL"
 	@echo "                              (default: $(INGRESS_CONFORMANCE_REPO))"
 	@echo "  INGRESS_CONFORMANCE_SHA   - Upstream commit SHA to build"
 	@echo "                              (default: $(INGRESS_CONFORMANCE_SHA))"
-	@echo "  CONFORMANCE_KIND_NETWORK  - Docker network for the test container"
-	@echo "                              (default: $(CONFORMANCE_KIND_NETWORK))"
-	@echo "  CONFORMANCE_KIND_CLUSTER  - kind cluster name"
-	@echo "                              (default: $(CONFORMANCE_KIND_CLUSTER))"
+	@echo "  CONFORMANCE_KIND_CLUSTER  - kind cluster name (default: $(CONFORMANCE_KIND_CLUSTER))"
+	@echo "                              Only used when CONFORMANCE_BAKE_KUBECONFIG=1."
+	@echo "  CONFORMANCE_BAKE_KUBECONFIG - When =1, bake the kind cluster's kubeconfig"
+	@echo "                              into the image (legacy local-dev shape). Default"
+	@echo "                              =0: image carries no kubeconfig and the runner"
+	@echo "                              must bind-mount one at /etc/kubeconfig. CI sets"
+	@echo "                              =0 because the cluster doesn't exist at"
+	@echo "                              image-build time."
 	@# Architecture: identical to test-gateway-conformance. Two binaries
 	@# get baked into a distroless image: our Go test wrapper (built with
 	@# the ingress_conformance tag, exec's the upstream and parses its
@@ -280,6 +280,12 @@ test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite a
 	@# upstream's own Makefile builds it). The container runs as a
 	@# sibling on the kind docker network so it can reach the apiserver
 	@# by its docker-DNS hostname.
+	@#
+	@# Split out from test-ingress-conformance so CI can build once per
+	@# pipeline and share the image across the parallel:N shards instead
+	@# of every shard re-cloning, re-patching, and re-compiling upstream
+	@# (~150s wasted per extra shard). Local `make test-ingress-conformance`
+	@# still triggers a build via the dependency edge below.
 	@echo "Building wrapper binary (ingress_conformance tag)..."
 	CGO_ENABLED=0 $(GO) test -mod=mod -tags=ingress_conformance -c -o /tmp/haptic-ingress-conformance.test ./tests/conformance/
 	@echo "Cloning upstream at $(INGRESS_CONFORMANCE_SHA)..."
@@ -303,7 +309,6 @@ test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite a
 	@# go.mod, not haptic's — that's exactly what we want for the pin
 	@# to be honored end-to-end.
 	cd /tmp/haptic-ingress-conformance-upstream && CGO_ENABLED=0 $(GO) test -c -trimpath -ldflags="-buildid= -w" -o /tmp/ingress-controller-conformance .
-	@echo "Resolving kind apiserver kubeconfig (--internal, for container-network DNS)..."
 	@echo "Packaging into $(INGRESS_CONFORMANCE_IMAGE)..."
 	@rm -rf /tmp/haptic-ingress-conformance-build
 	@mkdir -p /tmp/haptic-ingress-conformance-build
@@ -311,13 +316,68 @@ test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite a
 	cp /tmp/ingress-controller-conformance /tmp/haptic-ingress-conformance-build/
 	cp -r /tmp/haptic-ingress-conformance-upstream/features /tmp/haptic-ingress-conformance-build/features
 	cp Dockerfile.ingress-conformance-test /tmp/haptic-ingress-conformance-build/Dockerfile
-	kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-ingress-conformance-build/kubeconfig
+	@# Kubeconfig handling. Local `make test-ingress-conformance` runs
+	@# right after `make test-e2e`, so the kind cluster exists and we
+	@# can bake its kubeconfig — same shape as
+	@# Dockerfile.conformance-test. CI builds this image in a separate,
+	@# earlier job (before the cluster exists), so it sets
+	@# CONFORMANCE_BAKE_KUBECONFIG=0 and the test job mounts a
+	@# kubeconfig into the container at run time. The Dockerfile's
+	@# `COPY kubeconfig /etc/kubeconfig` would otherwise fail the build
+	@# when the file isn't present; we materialise an empty stub so the
+	@# COPY succeeds and let runtime overrides supersede it.
+	@if [ "$(CONFORMANCE_BAKE_KUBECONFIG)" = "1" ]; then \
+	  echo "Baking kubeconfig for kind cluster $(CONFORMANCE_KIND_CLUSTER)..."; \
+	  kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-ingress-conformance-build/kubeconfig; \
+	else \
+	  echo "Skipping kubeconfig bake (CONFORMANCE_BAKE_KUBECONFIG!=1); runner must mount one."; \
+	  : > /tmp/haptic-ingress-conformance-build/kubeconfig; \
+	fi
 	docker build -t $(INGRESS_CONFORMANCE_IMAGE) /tmp/haptic-ingress-conformance-build
 	@rm -rf /tmp/haptic-ingress-conformance-build /tmp/haptic-ingress-conformance-upstream
+
+test-ingress-conformance: ## Run upstream Kubernetes Ingress conformance suite as a sibling container on the kind network
+	@echo "Running Ingress conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."
+	@echo "Note: this expects 'make test-e2e' to have provisioned the kind cluster"
+	@echo "      and left it running (KEEP_CLUSTER=true is the default)."
+	@echo "Environment variables:"
+	@echo "  TEST_RUN_PATTERN - Run a subset of conformance scenarios matching the pattern"
+	@echo "                     (forwarded as -test.run); empty = full suite."
+	@echo "  SHARD_ID / SHARD_COUNT - Run only the assigned slice of the suite. Set by"
+	@echo "                     GitLab CI's parallel:N keyword (CI_NODE_INDEX/CI_NODE_TOTAL)."
+	@echo "                     Local dev: unset = full suite (the default)."
+	@echo "  CONFORMANCE_IMAGE_PREBUILT - When =1, skip the build chain. The image must"
+	@echo "                     already be tagged $(INGRESS_CONFORMANCE_IMAGE) locally"
+	@echo "                     (CI pulls + retags from the registry before this target)."
+	@echo "  CONFORMANCE_KIND_NETWORK  - Docker network for the test container"
+	@echo "                              (default: $(CONFORMANCE_KIND_NETWORK))"
+	@echo "  CONFORMANCE_KIND_CLUSTER  - kind cluster name"
+	@echo "                              (default: $(CONFORMANCE_KIND_CLUSTER))"
+	@if [ "$(CONFORMANCE_IMAGE_PREBUILT)" != "1" ]; then \
+	  echo "Building $(INGRESS_CONFORMANCE_IMAGE) locally (set CONFORMANCE_IMAGE_PREBUILT=1 to skip)..."; \
+	  $(MAKE) build-ingress-conformance-image CONFORMANCE_BAKE_KUBECONFIG=1; \
+	else \
+	  echo "Layering kind kubeconfig onto prebuilt $(INGRESS_CONFORMANCE_IMAGE)..."; \
+	  : "# Bind-mounts don't cross the DinD boundary (the host path"; \
+	  : "# resolves on the GitLab job's filesystem, not the DinD daemon's"; \
+	  : "# — see Dockerfile.ingress-conformance-test header). The CI"; \
+	  : "# build job builds with an empty kubeconfig stub because the"; \
+	  : "# kind cluster doesn't exist yet at that point; here we layer"; \
+	  : "# the real kubeconfig on top with a single COPY (cached base"; \
+	  : "# image = sub-second rebuild)."; \
+	  rm -rf /tmp/haptic-ingress-conformance-rebake; \
+	  mkdir -p /tmp/haptic-ingress-conformance-rebake; \
+	  kind get kubeconfig --internal --name=$(CONFORMANCE_KIND_CLUSTER) > /tmp/haptic-ingress-conformance-rebake/kubeconfig; \
+	  printf 'FROM %s\nCOPY kubeconfig /etc/kubeconfig\n' "$(INGRESS_CONFORMANCE_IMAGE)" > /tmp/haptic-ingress-conformance-rebake/Dockerfile; \
+	  docker build -t $(INGRESS_CONFORMANCE_IMAGE) /tmp/haptic-ingress-conformance-rebake; \
+	  rm -rf /tmp/haptic-ingress-conformance-rebake; \
+	fi
 	@echo "Running conformance suite..."
 	docker run \
 		--rm \
 		--network $(CONFORMANCE_KIND_NETWORK) \
+		$(if $(SHARD_ID),-e SHARD_ID=$(SHARD_ID)) \
+		$(if $(SHARD_COUNT),-e SHARD_COUNT=$(SHARD_COUNT)) \
 		$(INGRESS_CONFORMANCE_IMAGE) \
 		-test.v -test.timeout=$(CONFORMANCE_TIMEOUT) \
 		$(if $(TEST_RUN_PATTERN),-test.run "$(TEST_RUN_PATTERN)")

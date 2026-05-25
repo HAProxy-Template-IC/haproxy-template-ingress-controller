@@ -533,6 +533,54 @@ build-snapshot:
     SNAPSHOT_TAG: "ci-${CI_PIPELINE_ID}"
     CREATE_DEFAULT_TAG: "false"
 
+# Pre-build the ingress-conformance test image once per pipeline.
+# `test-ingress-conformance` runs with `parallel: 4`; without this job
+# every shard would re-clone the upstream repo, re-apply our two
+# vendored patches, and re-`go test -c` the upstream binary — ~150s of
+# duplicated work × 4 shards. Build once, push to the pipeline-scoped
+# registry tag, the test job pulls.
+#
+# The image carries an empty kubeconfig stub (CONFORMANCE_BAKE_KUBECONFIG=0
+# in the make target) because the kind cluster doesn't exist yet at
+# build time — the test job creates it later and bind-mounts the real
+# kubeconfig into the container at /etc/kubeconfig.
+build-ingress-conformance-image:
+  stage: build
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
+  extends:
+    - .docker-dind
+  interruptible: true
+  variables:
+    # Pin to the same HAProxy version test-ingress-conformance uses.
+    # The image itself is HAProxy-version-agnostic (it doesn't link
+    # against HAProxy); the tag suffix just mirrors the conformance
+    # job's variable so the two stay in lockstep when we revisit the
+    # matrix.
+    HAPROXY_VERSION: "3.3"
+    INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.3"
+  needs:
+    - compute-ci-image-tag
+    - job: build-ci
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes:
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - charts/**/*
+        - scripts/**/*
+        - .gitlab-ci.yml
+        - Makefile
+        - Dockerfile.ingress-conformance-test
+        - tests/conformance/patches/**
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - make build-ingress-conformance-image CONFORMANCE_BAKE_KUBECONFIG=0
+    - docker push ${INGRESS_CONFORMANCE_IMAGE}
+
 # Publish snapshot images from main branch (multi-arch, for users)
 # Produces images with tags: main-<short-sha>-haproxy<version>
 publish-main-snapshot:
@@ -1673,12 +1721,17 @@ test-gateway-conformance:
 # Upstream is dormant (last commit 2023-08-28). The Makefile pins the
 # commit SHA; this job inherits that pin. We don't auto-follow master.
 #
-# Single shard, no `parallel:` — the upstream suite is ~12-15 scenarios
-# across 5 feature files, ~3-5 minutes against a warm cluster.
-# Sharding would have 0-2 scenarios per shard and waste the per-shard
-# cluster bootstrap (3-4 min). If the suite ever grows enough to need
-# sharding, the partition has to be per-feature-file (the upstream
-# binary has no `-run`-equivalent), not per-scenario.
+# Sharded 4 ways via `parallel:`. Each shard runs in its own
+# kind cluster on its own runner and exercises a non-overlapping
+# subset of the upstream features: the `path_rules` feature (dominant
+# at ~10 min unsharded — 16 scenarios serial) is split scenario-wise
+# round-robin, the other 4 features bin-pack one per shard. The
+# splitter and its coverage invariant live in
+# tests/conformance/ingress_sharding.go (+ _test.go). Sharding is
+# safe here in a way it wasn't for the reverted in-process
+# parallel-features patch (commit 9f119efc) because each shard has
+# its own haproxy.cfg via its own kind cluster + haptic install —
+# no cross-feature collisions in one config.
 #
 # HAProxy version pinned for the same reason as Gateway API conformance:
 # the chart's Ingress surface is HAProxy-version-agnostic, the matrix
@@ -1689,11 +1742,13 @@ test-ingress-conformance:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
   extends:
     - .docker-dind
-  # ~3-5 min suite + 3-4 min cluster bootstrap + image build = comfortable
-  # margin at 20 min. If real durations creep up, investigate before
-  # raising — slow conformance runs are a regression signal, not a
-  # tuning knob.
+  # Per-shard timeout. The unsharded job was budgeted at 20 min for
+  # ~17 min observed; per-shard runtime is dominated by the kind+helm
+  # bootstrap (~2 min) plus ~4 min for the sharded suite — same 20 min
+  # margin still applies and the integration-stage gating is the max
+  # across shards, not the sum.
   timeout: 20 minutes
+  parallel: 4
   interruptible: true
   variables:
     CTRL_NAMESPACE: haptic
@@ -1703,23 +1758,37 @@ test-ingress-conformance:
     # Pin to the most-recent supported HAProxy version. Matches the
     # default in versions.env / charts/haptic/values.yaml.
     HAPROXY_VERSION: "3.3"
+    INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.3"
   needs:
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
     - job: build-spoa-image-snapshot
+    - job: build-ingress-conformance-image
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: never
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
+        # Keep in lockstep with build-ingress-conformance-image's
+        # `changes:` list — test depends on build, so test's trigger
+        # set must be a subset of build's or GitLab refuses the
+        # pipeline ("needs: build-... does not exist in the pipeline").
+        # Easiest enforcement: identical lists. Adding Makefile and
+        # tests/conformance/patches/** here so a patch-only or
+        # Makefile-only change actually exercises the test (pipeline
+        # 2550972533 quietly skipped the test job because the patch
+        # commit matched none of the original paths).
         - "**/*.go"
         - go.mod
         - go.sum
         - charts/**/*
         - scripts/**/*
         - .gitlab-ci.yml
+        - Makefile
+        - Dockerfile.ingress-conformance-test
+        - tests/conformance/patches/**
   before_script:
     # Reuse the test-e2e prep: pull controller + spoa-hub snapshots
     # built earlier in the same pipeline, retag locally so the kind
@@ -1733,6 +1802,10 @@ test-ingress-conformance:
       SPOA_IMAGE="${CI_REGISTRY_IMAGE}/spoa-hub:${SPOA_TAG}"
       docker pull ${SPOA_IMAGE}
       docker tag ${SPOA_IMAGE} registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:main-latest
+    # Pull the pre-built conformance test image (built once per
+    # pipeline by build-ingress-conformance-image). The Makefile
+    # consumes $INGRESS_CONFORMANCE_IMAGE directly — no need to retag.
+    - docker pull ${INGRESS_CONFORMANCE_IMAGE}
   script:
     # Bring up the conformance cluster — HAPTIC_E2E_PROFILE=conformance
     # selects the trimmed values file (no HTTP-store demo blocklist URL,
@@ -1743,12 +1816,25 @@ test-ingress-conformance:
     # retry burst the gateway suite did when the chart's blocklist URL
     # was unreachable during cluster bring-up.
     - HAPTIC_E2E_PROFILE=conformance TEST_RUN_PATTERN="^$" make test-e2e
-    - make test-ingress-conformance
+    # SHARD_ID / SHARD_COUNT come from GitLab CI's `parallel: 4`
+    # keyword (CI_NODE_INDEX is 1-based, CI_NODE_TOTAL=4). The Go
+    # wrapper consumes them via shardEnv() and runs only this shard's
+    # slice of the feature files. CONFORMANCE_IMAGE_PREBUILT=1 short-
+    # circuits the Makefile's local build chain.
+    - |
+      echo "Ingress-conformance shard ${CI_NODE_INDEX}/${CI_NODE_TOTAL}"
+      SHARD_ID=${CI_NODE_INDEX} SHARD_COUNT=${CI_NODE_TOTAL} \
+        CONFORMANCE_IMAGE_PREBUILT=1 \
+        make test-ingress-conformance
   after_script:
     - |
       if [ "$CI_JOB_STATUS" = "failed" ]; then
-        LOG_DIR="debug-logs/_ingress-conformance"
-        echo "Ingress conformance failed — extracting cluster diagnostics to ${LOG_DIR}..."
+        # Per-shard subdir so 4 parallel jobs don't clobber each
+        # other's diagnostics (GitLab aggregates artifacts from all
+        # shards into the same MR artifact tab). Same shape as the
+        # gateway-conformance after_script subdir.
+        LOG_DIR="debug-logs/_ingress-conformance/shard-${CI_NODE_INDEX:-1}-of-${CI_NODE_TOTAL:-1}"
+        echo "Ingress conformance shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} failed — extracting cluster diagnostics to ${LOG_DIR}..."
         mkdir -p "$LOG_DIR"
 
         export KUBECONFIG=/tmp/haproxy-e2e-kubeconfig
