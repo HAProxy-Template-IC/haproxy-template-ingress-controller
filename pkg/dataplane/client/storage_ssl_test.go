@@ -225,3 +225,35 @@ func TestUpdateSSLCertificate_SendsSkipReload(t *testing.T) {
 	assert.Contains(t, capturedQuery, "skip_reload=true",
 		"UpdateSSLCertificate must always send skip_reload=true; got query %q", capturedQuery)
 }
+
+// TestCreateSSLCertificate_SendsSkipReload is the CREATE-side companion to
+// TestUpdateSSLCertificate_SendsSkipReload. The DPAPI POST endpoint declares
+// skip_reload as a query parameter (unlike POST /storage/maps and
+// /storage/general where the spec omits it); CreateSSLCertificate must
+// pass skip_reload=true so the cert lands on disk without triggering an
+// auto-reload that races the orchestrator's main config sync.
+func TestCreateSSLCertificate_SendsSkipReload(t *testing.T) {
+	var capturedQuery string
+	server := newMockServer(t, mockServerConfig{
+		handlers: map[string]http.HandlerFunc{
+			"/services/haproxy/storage/ssl_certificates": func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				capturedQuery = r.URL.RawQuery
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"storage_name":"new.pem"}`))
+			},
+		},
+	})
+	defer server.Close()
+
+	client := newTestClient(t, server)
+
+	_, err := client.CreateSSLCertificate(context.Background(), "new.pem", "-----BEGIN CERTIFICATE-----\n")
+	require.NoError(t, err)
+
+	assert.Contains(t, capturedQuery, "skip_reload=true",
+		"CreateSSLCertificate must always send skip_reload=true; got query %q", capturedQuery)
+}
