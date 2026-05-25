@@ -386,6 +386,55 @@ func TestHandleReconciliationFailed_RenderPhase(t *testing.T) {
 	assert.Equal(t, 1, completedEvent.AppliedCount)
 }
 
+// TestHandleReconciliationFailed_ValidationPhase: validation failures get
+// their own StatusPatchPhaseValidateFailed variant — distinct from
+// renderFailed (templating produced no output) and deployFailed (deploy
+// attempted and rolled back). See issue #44.
+func TestHandleReconciliationFailed_ValidationPhase(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"validateFailed": {"conditions": []any{map[string]any{"type": "Accepted", "status": "False"}}},
+	})
+	comp.handleReconciliationFailed(context.Background(), events.NewReconciliationFailedEvent("validation error", "validation", patches))
+
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseValidateFailed, completedEvent.Phase)
+	assert.Equal(t, 1, completedEvent.AppliedCount)
+}
+
+// TestHandleReconciliationFailed_UnknownPhaseFallsBackToDeployFailed: phases
+// other than "render" and "validation" — including the existing "deploy"
+// and any future labels not yet wired through — fall through to the
+// deployFailed variant. This preserves the historical contract for the
+// Coordinator's "deploy" emissions while keeping the door open for new
+// phases without changing this mapping.
+func TestHandleReconciliationFailed_UnknownPhaseFallsBackToDeployFailed(t *testing.T) {
+	bus := testutil.NewTestBus()
+	fakeClient := newFakeDynamicClientWithPatchSuccess()
+	comp := newTestComponent(bus, fakeClient, newTestResolver())
+
+	eventChan := bus.Subscribe("test", 50)
+	bus.Start()
+
+	setLeader(comp)
+
+	patches := newTestPatches(map[string]map[string]any{
+		"deployFailed": {"conditions": []any{map[string]any{"type": "Programmed", "status": "False"}}},
+	})
+	comp.handleReconciliationFailed(context.Background(), events.NewReconciliationFailedEvent("err", "", patches))
+
+	completedEvent := testutil.WaitForEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, events.StatusPatchPhaseDeployFailed, completedEvent.Phase)
+}
+
 // TestHandleReconciliationFailed_SkipsWithoutPatches: a failure event without
 // patches (e.g. failure before any successful render) is silently ignored —
 // there's nothing to apply.

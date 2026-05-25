@@ -305,13 +305,30 @@ func (c *Component) handleDeploymentSkipped(ctx context.Context, event *events.D
 // render — failure paths don't produce fresh patches, so a "last good"
 // snapshot is the only thing the chart's failure variants can apply against.
 // May be nil on early bootstrap failures, in which case the apply is skipped.
+//
+// Phase mapping (event.Phase → StatusPatchPhase):
+//
+//	"render"     → StatusPatchPhaseRenderFailed     (templating produced no output)
+//	"validation" → StatusPatchPhaseValidateFailed   (rendered, but rejected pre-deploy)
+//	anything else (including "deploy" and "") → StatusPatchPhaseDeployFailed
+//
+// validation gets its own variant rather than collapsing into renderFailed
+// or deployFailed: the chart's failure-variant templates can keep emitting
+// the same payload for renderFailed and validateFailed until a use case
+// motivates differentiation, but the phase label downstream stays accurate.
+// See issue #44.
 func (c *Component) handleReconciliationFailed(ctx context.Context, event *events.ReconciliationFailedEvent) {
 	if !c.leaderRLocked() || len(event.StatusPatches) == 0 {
 		return
 	}
-	phase := events.StatusPatchPhaseDeployFailed
-	if event.Phase == "render" {
+	var phase events.StatusPatchPhase
+	switch event.Phase {
+	case "render":
 		phase = events.StatusPatchPhaseRenderFailed
+	case "validation":
+		phase = events.StatusPatchPhaseValidateFailed
+	default:
+		phase = events.StatusPatchPhaseDeployFailed
 	}
 	c.applyVariant(ctx, event.StatusPatches, phase)
 }
