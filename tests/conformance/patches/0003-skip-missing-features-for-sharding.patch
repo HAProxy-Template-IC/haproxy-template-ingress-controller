@@ -1,0 +1,41 @@
+Make testFeature a no-op when the .feature file is missing.
+
+Required by haptic's downstream sharding harness
+(tests/conformance/ingress_sharding.go), which materialises only the
+subset of upstream feature files this shard owns into a per-shard
+features/ dir, then runs the upstream binary against it. Without this
+patch the upstream TestSuite iterates over its hardcoded `features`
+map of paths, calls godog.TestSuite{}.Run() for each, and any missing
+file produces "feature path X is not available" + exit code != 0 —
+which fails the whole suite even though every scenario that DID run
+on this shard passed.
+
+Treating a missing path as a no-op preserves the semantic the
+hardcoded `features` map encodes (run every feature the binary knows
+about) for the unsharded path (all files present) while allowing
+sharded callers to omit non-owned files. Same conditional approach
+upstream itself would need if it ever grew support for partitioned
+runs.
+
+Apply with `git apply` from the upstream checkout root. Pinned to
+commit d920ed36a0076e169a9a329a850844ab3a695ae8 — bumping that SHA in
+the Makefile may require re-resolving this patch.
+
+--- a/conformance_test.go
++++ b/conformance_test.go
+@@ -131,6 +131,15 @@ func TestSuite(t *testing.T) {
+ }
+
+ func testFeature(feature string, scenarioInitializer func(*godog.ScenarioContext)) error {
++	// Sharded runs (driven by external orchestration that materialises
++	// only the feature files this shard owns) may omit some files from
++	// the hardcoded `features` map. Treat a missing path as a no-op
++	// rather than failing the whole suite on "feature path not
++	// available" — vendored downstream by the haptic ingress-conformance
++	// sharding harness (tests/conformance/ingress_sharding.go).
++	if _, err := os.Stat(feature); os.IsNotExist(err) {
++		return nil
++	}
+ 	var testOutput io.Writer
+ 	// default output is stdout
+ 	testOutput = os.Stdout

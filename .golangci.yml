@@ -214,6 +214,18 @@ linters:
         linters:
           - gosec
         path: tests/integration/
+      # Same rationale as tests/integration/ — paths are built from
+      # filepath.Join on a parent dir we just os.ReadDir'd, not from
+      # external input. Used by the ingress-conformance feature
+      # splitter (tests/conformance/ingress_sharding.go).
+      - text: "G304: Potential file inclusion via variable"
+        linters:
+          - gosec
+        path: tests/conformance/
+      - text: "G703: Path traversal via taint analysis"
+        linters:
+          - gosec
+        path: tests/conformance/
 
       # Allow TODO comments in example code
       - path: examples/
