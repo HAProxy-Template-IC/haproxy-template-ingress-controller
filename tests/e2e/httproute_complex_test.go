@@ -93,35 +93,21 @@ func TestHTTPRoutePrecedence(t *testing.T) {
 			httpclient.New(t).GET(host, "/?debug=true").
 				WithHeader("X-Version", "v2").
 				WithHeader("X-Environment", "prod").
-				ExpectMatching(t, "rule 2 (most specific) routes to v2 backend",
-					func(resp *httpclient.Response) bool {
-						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment == "v2"
-					})
+				ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("medium rule (GET + X-Version=v1) wins over catch-all", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			httpclient.New(t).GET(host, "/").
 				WithHeader("X-Version", "v1").
-				ExpectMatching(t, "rule 0 (explicit v1 header) routes to default backend",
-					func(resp *httpclient.Response) bool {
-						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment != "v2"
-					})
+				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Assess("plain GET routes to v2 (rule 3, low specificity)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").
-				ExpectMatching(t, "rule 3 (GET catch-all) routes to v2 backend",
-					func(resp *httpclient.Response) bool {
-						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment == "v2"
-					})
+			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("POST falls all the way through to catch-all", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			httpclient.New(t).GET(host, "/").WithMethod("POST").
-				ExpectMatching(t, "rule 1 (catch-all) routes POST to default backend",
-					func(resp *httpclient.Response) bool {
-						return resp.Status == 200 && resp.Echo != nil && resp.Echo.Environment != "v2"
-					})
+			httpclient.New(t).GET(host, "/").WithMethod("POST").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
@@ -165,42 +151,30 @@ func TestHTTPRouteCombined(t *testing.T) {
 			return ctx
 		}).
 		Assess("all matchers satisfied → v2", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api?token=secret123").
+			httpclient.New(t).GET(host, "/api?token=secret123").
 				WithMethod("POST").
 				WithHeader("Content-Type", "application/json").
-				ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment != "v2" {
-				t.Fatalf("expected v2 backend with all matchers satisfied")
-			}
+				ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("token regex mismatch → catch-all default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api?token=wrongtoken").
+			httpclient.New(t).GET(host, "/api?token=wrongtoken").
 				WithMethod("POST").
 				WithHeader("Content-Type", "application/json").
-				ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend (token regex didn't match)")
-			}
+				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Assess("wrong content-type → catch-all default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api?token=secret123").
+			httpclient.New(t).GET(host, "/api?token=secret123").
 				WithMethod("POST").
 				WithHeader("Content-Type", "text/plain").
-				ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend (Content-Type didn't match)")
-			}
+				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Assess("wrong method → catch-all default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api?token=secret123").
+			httpclient.New(t).GET(host, "/api?token=secret123").
 				WithHeader("Content-Type", "application/json").
-				ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend (GET instead of POST)")
-			}
+				ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
