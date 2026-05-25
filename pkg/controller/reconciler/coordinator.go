@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
@@ -189,23 +188,6 @@ func (c *Coordinator) handlePipelineSuccess(
 	// If a subsequent render fails, StatusApplier can apply renderFailed variants
 	// using the most recent successful patches.
 	c.lastStatusPatches = result.StatusPatches
-
-	// Diagnostic: count occurrences of the external-auth deny line and its
-	// companions in the rendered config. Greppable from CI logs as
-	// `auth_render_audit` to disambiguate "renderer dropped the line" from
-	// "fine-grained sync removed it" when TestIngressAuthHeadersFail fails
-	// (issue: deny_status 401 missing from deployed haproxy.cfg while
-	// redirect/set-vars survive). Cheap: three substring counts on a
-	// ~141 KB string. Remove once the failure mode is identified.
-	c.logger.Info("auth_render_audit",
-		"deny_401", strings.Count(result.HAProxyConfig, "http-request deny deny_status 401"),
-		"redirect_authsignin", strings.Count(result.HAProxyConfig, "http-request redirect location %[var(txn.auth_signin)]"),
-		"setvar_authurl", strings.Count(result.HAProxyConfig, "http-request set-var(txn.auth_url)"),
-		"send_spoe_auth", strings.Count(result.HAProxyConfig, "send-spoe-group spoa-hub check-auth-group"),
-		"config_bytes", len(result.HAProxyConfig),
-		"checksum", result.ContentChecksum,
-		"trigger", triggerEvent.Reason,
-	)
 
 	// Publish TemplateRenderedEvent for DeploymentScheduler
 	// Config uses relative paths that work everywhere with `default-path origin`
