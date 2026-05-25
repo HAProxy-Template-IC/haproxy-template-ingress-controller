@@ -24,8 +24,17 @@ const (
 	// StatusPatchPhaseDeployed is applied after successful HAProxy deployment.
 	StatusPatchPhaseDeployed StatusPatchPhase = "deployed"
 
-	// StatusPatchPhaseRenderFailed is applied when template rendering fails.
+	// StatusPatchPhaseRenderFailed is applied when template rendering fails
+	// before any output is produced.
 	StatusPatchPhaseRenderFailed StatusPatchPhase = "renderFailed"
+
+	// StatusPatchPhaseValidateFailed is applied when the rendered config
+	// passed templating but was rejected by validation (syntax, schema, or
+	// semantic checks) before any deploy attempt. Distinct from
+	// renderFailed (no output produced) and deployFailed (deploy attempted
+	// and rolled back). Chart templates may emit the same payload as
+	// renderFailed until validation failures need a distinct surface.
+	StatusPatchPhaseValidateFailed StatusPatchPhase = "validateFailed"
 
 	// StatusPatchPhaseDeployFailed is applied when HAProxy deployment fails.
 	StatusPatchPhaseDeployFailed StatusPatchPhase = "deployFailed"
