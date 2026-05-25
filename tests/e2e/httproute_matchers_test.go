@@ -120,25 +120,11 @@ func TestHTTPRouteMethods(t *testing.T) {
 			return ctx
 		}).
 		Assess("GET /api routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment != "v2" {
-				envStr := ""
-				if resp.Echo != nil {
-					envStr = resp.Echo.Environment
-				}
-				t.Fatalf("expected GET /api → v2 backend, got Environment=%q", envStr)
-			}
+			httpclient.New(t).GET(host, "/api").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("POST /api routes to default backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api").WithMethod("POST").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				envStr := ""
-				if resp.Echo != nil {
-					envStr = resp.Echo.Environment
-				}
-				t.Fatalf("expected POST /api → default backend, got Environment=%q", envStr)
-			}
+			httpclient.New(t).GET(host, "/api").WithMethod("POST").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
@@ -179,18 +165,12 @@ func TestHTTPRouteHeaders(t *testing.T) {
 			return ctx
 		}).
 		Assess("Request with X-Api-Version: v2 routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api").
-				WithHeader("X-Api-Version", "v2").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment != "v2" {
-				t.Fatalf("expected v2 backend with header match")
-			}
+			httpclient.New(t).GET(host, "/api").
+				WithHeader("X-Api-Version", "v2").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("Request without header falls through to default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend without header match")
-			}
+			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()
@@ -229,17 +209,11 @@ func TestHTTPRouteQuery(t *testing.T) {
 			return ctx
 		}).
 		Assess("Request with ?version=beta routes to v2 backend", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/api?version=beta").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment != "v2" {
-				t.Fatalf("expected v2 backend with query match")
-			}
+			httpclient.New(t).GET(host, "/api?version=beta").ExpectEchoEnvironment(t, "v2")
 			return ctx
 		}).
 		Assess("Request without query falls through to default", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			resp := httpclient.New(t).GET(host, "/").ExpectOK(t)
-			if resp.Echo == nil || resp.Echo.Environment == "v2" {
-				t.Fatalf("expected default backend without query match")
-			}
+			httpclient.New(t).GET(host, "/").ExpectEchoEnvironment(t, "")
 			return ctx
 		}).
 		Feature()

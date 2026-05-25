@@ -304,6 +304,58 @@ func (r *Request) ExpectEchoHeader(t *testing.T, name, want string) *Response {
 	return resp
 }
 
+// ExpectEchoEnvironment asserts that the upstream backend (echo-server) was
+// started with ENVIRONMENT=want, retrying under the client's wait budget.
+// The dev-env echo-server pods use ENVIRONMENT="" (the default v1 pod) or
+// ENVIRONMENT="v2" (the v2 pod) to distinguish backends for routing tests;
+// passing "" verifies routing landed on the default backend.
+//
+// Polling on the echo'd Environment (rather than ExpectOK followed by a
+// manual resp.Echo.Environment check) closes the route-readiness race:
+// during HTTPRoute provisioning HAProxy can return 200 from a partial
+// rule state (e.g. the host map is populated before req.gw_routeId is
+// set to the compound rule-id needed for -m str matches), so a request
+// that races ahead lands on a catch-all rule and gets the wrong backend.
+// ExpectOK accepts the wrong-backend 200; ExpectEchoEnvironment retries
+// until the backend matches.
+func (r *Request) ExpectEchoEnvironment(t *testing.T, want string) *Response {
+	t.Helper()
+	resp, err := r.poll(t, fmt.Sprintf("%s %s echo'd Environment=%q", r.method, r.url(), want),
+		func(resp *Response) bool {
+			if resp.Status != http.StatusOK || resp.Echo == nil {
+				return false
+			}
+			return resp.Echo.Environment == want
+		})
+	if err != nil {
+		t.Fatalf("ExpectEchoEnvironment(%q): %v", want, err)
+	}
+	return resp
+}
+
+// ExpectEchoPath asserts that the upstream backend (echo-server) received
+// the request at path `want`, retrying under the client's wait budget.
+// Used by URL-rewriting tests to verify the post-rewrite path that
+// reached the backend, not the path the client sent.
+//
+// Same race rationale as ExpectEchoEnvironment: ExpectOK can accept a 200
+// returned before the rewrite rule is live, so polling on the echo'd path
+// is the correct shape.
+func (r *Request) ExpectEchoPath(t *testing.T, want string) *Response {
+	t.Helper()
+	resp, err := r.poll(t, fmt.Sprintf("%s %s echo'd Path=%q", r.method, r.url(), want),
+		func(resp *Response) bool {
+			if resp.Status != http.StatusOK || resp.Echo == nil {
+				return false
+			}
+			return resp.Echo.Path == want
+		})
+	if err != nil {
+		t.Fatalf("ExpectEchoPath(%q): %v", want, err)
+	}
+	return resp
+}
+
 // ExpectMatching asserts the response satisfies a caller-supplied predicate,
 // retrying under the client's wait budget. Use this when a single assertion
 // depends on multiple response signals being simultaneously consistent (e.g.

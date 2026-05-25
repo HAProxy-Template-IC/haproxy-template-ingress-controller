@@ -39,25 +39,13 @@ func TestIngressPathRewrite(t *testing.T) {
 			{
 				Name: "/api/v1/test rewrites to /test at the backend",
 				Check: func(t *testing.T, host string) {
-					resp := httpclient.New(t).GET(host, "/api/v1/test").ExpectOK(t)
-					if resp.Echo == nil {
-						t.Fatalf("expected echo-server JSON, got %d bytes", len(resp.Body))
-					}
-					if resp.Echo.Path != "/test" {
-						t.Fatalf("expected backend to see /test, got %q", resp.Echo.Path)
-					}
+					httpclient.New(t).GET(host, "/api/v1/test").ExpectEchoPath(t, "/test")
 				},
 			},
 			{
 				Name: "/api/v1/users rewrites to /users at the backend",
 				Check: func(t *testing.T, host string) {
-					resp := httpclient.New(t).GET(host, "/api/v1/users").ExpectOK(t)
-					if resp.Echo == nil {
-						t.Fatalf("expected echo-server JSON, got %d bytes", len(resp.Body))
-					}
-					if resp.Echo.Path != "/users" {
-						t.Fatalf("expected backend to see /users, got %q", resp.Echo.Path)
-					}
+					httpclient.New(t).GET(host, "/api/v1/users").ExpectEchoPath(t, "/users")
 				},
 			},
 		},
