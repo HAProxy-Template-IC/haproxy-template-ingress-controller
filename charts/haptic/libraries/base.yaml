@@ -71,18 +71,14 @@ templateSnippets:
           Small host lists use compact inline form: { var(txn.host) -m str host1 host2 ... }
           Large host lists (>30) use file-based matching to avoid HAProxy's 64-word-per-line limit.
       -#}
-      {% macro HostMatchCondition(hosts []any) string %}
+      {% macro HostMatchCondition(hosts []string) string %}
         {%%
-          var strHosts = []any{}
-          for _, host := range hosts {
-            strHosts = append(strHosts, tostring(host))
-          }
-          if len(strHosts) <= 30 {
+          if len(hosts) <= 30 {
             // Compact inline form — stays under HAProxy's 64-word-per-line limit
-            show "{ var(txn.host) -m str " + join(strHosts, " ") + " }"
+            show "{ var(txn.host) -m str " + join(hosts, " ") + " }"
           } else {
             // File-based matching: register a host list file and use -f flag
-            var content = join(strHosts, "\n") + "\n"
+            var content = join(hosts, "\n") + "\n"
             var filename = "host-match-" + md5(content) + ".lst"
             var path, err = fileRegistry.Register("file", filename, content)
             if err != nil {

@@ -148,14 +148,17 @@ func TestScriggoAppendAny(t *testing.T) {
 		name  string
 		slice any
 		item  any
-		want  []any
+		want  any
 	}{
-		{name: "nil slice creates new", slice: nil, item: "first", want: []any{"first"}},
+		{name: "nil slice creates new []any", slice: nil, item: "first", want: []any{"first"}},
 		{name: "[]any append", slice: []any{"a", "b"}, item: "c", want: []any{"a", "b", "c"}},
 		{name: "[]any with mixed types", slice: []any{"a", 1}, item: true, want: []any{"a", 1, true}},
-		{name: "non-[]any slice resets to single item", slice: []string{"a", "b"}, item: "c", want: []any{"c"}},
-		{name: "non-slice resets to single item", slice: 42, item: "x", want: []any{"x"}},
+		{name: "[]string append preserves element type", slice: []string{"a", "b"}, item: "c", want: []string{"a", "b", "c"}},
+		{name: "[]int append preserves element type", slice: []int{1, 2}, item: 3, want: []int{1, 2, 3}},
+		{name: "non-slice resets to []any{item}", slice: 42, item: "x", want: []any{"x"}},
 		{name: "empty []any append", slice: []any{}, item: "x", want: []any{"x"}},
+		{name: "empty []string append preserves type", slice: []string{}, item: "x", want: []string{"x"}},
+		{name: "convertible item to slice element type", slice: []int{1}, item: int32(2), want: []int{1, 2}},
 	}
 
 	for _, tt := range tests {
@@ -163,6 +166,28 @@ func TestScriggoAppendAny(t *testing.T) {
 			assert.Equal(t, tt.want, scriggoAppendAny(tt.slice, tt.item))
 		})
 	}
+}
+
+// TestScriggoAppendAnyTypeMismatchPanics pins the contract that an
+// item incompatible with the typed slice's element type panics
+// (rather than silently widening to []any). The widening behaviour
+// would break the AdaptiveFunc's static-type promise — `ReturnType`
+// declares the call returns `[]T`, so the runtime must too. The
+// panic surfaces a real chart bug at the boundary instead of
+// producing a downstream runtime type mismatch.
+func TestScriggoAppendAnyTypeMismatchPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic on type-mismatched append")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("expected string panic, got %T: %v", r, r)
+		}
+		assert.Contains(t, msg, "cannot append string to []int")
+	}()
+	scriggoAppendAny([]int{1, 2}, "x")
 }
 
 func TestWriteToBuilder(t *testing.T) {
