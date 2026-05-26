@@ -358,6 +358,76 @@ func TestScriggoNamespace(t *testing.T) {
 	})
 }
 
+func TestScriggoDigString(t *testing.T) {
+	annotations := map[string]any{"haproxy.org/foo": "bar", "empty": ""}
+	metadata := map[string]any{"namespace": "default", "annotations": annotations}
+	obj := map[string]any{"metadata": metadata}
+
+	tests := []struct {
+		name       string
+		obj        any
+		defaultStr string
+		keys       []string
+		want       string
+	}{
+		{
+			name:       "present string returns as-is",
+			obj:        obj,
+			defaultStr: "",
+			keys:       []string{"metadata", "annotations", "haproxy.org/foo"},
+			want:       "bar",
+		},
+		{
+			name:       "missing path returns default",
+			obj:        obj,
+			defaultStr: "fallback-value",
+			keys:       []string{"metadata", "annotations", "missing"},
+			want:       "fallback-value",
+		},
+		{
+			name:       "empty string value bypasses default (matches dig|fallback|tostring semantics)",
+			obj:        obj,
+			defaultStr: "would-not-fire",
+			keys:       []string{"metadata", "annotations", "empty"},
+			want:       "",
+		},
+		{
+			name:       "nil obj returns default",
+			obj:        nil,
+			defaultStr: "default-on-nil",
+			keys:       []string{"metadata", "name"},
+			want:       "default-on-nil",
+		},
+		{
+			name:       "no keys returns tostring of obj when non-nil",
+			obj:        "raw",
+			defaultStr: "",
+			keys:       nil,
+			want:       "raw",
+		},
+		{
+			name:       "non-string scalar coerced via tostring",
+			obj:        map[string]any{"port": 8080},
+			defaultStr: "",
+			keys:       []string{"port"},
+			want:       "8080",
+		},
+		{
+			name:       "tristate-pointer optional field with nil pointer normalises to default",
+			obj:        map[string]any{"gen": (*int64)(nil)},
+			defaultStr: "",
+			keys:       []string{"gen"},
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, scriggoDigString(tt.obj, tt.defaultStr, tt.keys...))
+		})
+	}
+}
+
 func TestScriggoCoalesce(t *testing.T) {
 	tests := []struct {
 		name string
