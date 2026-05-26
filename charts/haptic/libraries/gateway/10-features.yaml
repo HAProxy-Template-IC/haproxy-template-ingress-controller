@@ -62,29 +62,30 @@ templateSnippets:
         var _, _ = shared.ComputeIfAbsent("gatewayCertAggregates", func() any {
           var certAggregates = map[string]map[string]any{}
           for _, gateway := range resources.gateways.List() {
-            var gwSpec = gateway | dig("spec")
-            if gwSpec == nil {
-              continue
-            }
             var nsStr = ResourceNamespace(gateway)
-            for _, listener := range gwSpec | dig("listeners") | toSlice() {
-              var listenerTls = listener | dig("tls")
-              var tlsMode = listenerTls | dig("mode") | fallback("")
+            for _, listener := range gateway.Spec.Listeners {
+              var tlsMode = listener.Tls.Mode
               // Gateway API: tls.mode defaults to Terminate when
               // unspecified. Skip only when explicitly set to a
               // non-Terminate value (Passthrough is handled
               // separately by the SSL passthrough feature).
-              if listenerTls == nil || (tlsMode != "" && tlsMode != "Terminate") {
+              if tlsMode != "" && tlsMode != "Terminate" {
                 continue
               }
-              for _, certRef := range listenerTls | dig("certificateRefs") | toSlice() {
-                var certKind = certRef | dig("kind") | fallback("Secret")
+              for _, certRef := range listener.Tls.CertificateRefs {
+                var certKind = certRef.Kind
+                if certKind == "" {
+                  certKind = "Secret"
+                }
                 if certKind != "Secret" {
                   continue
                 }
-                var certName = certRef | dig("name") | fallback("")
-                var certNamespace = certRef | dig("namespace") | fallback(nsStr)
-                var refNsStr = tostring(certNamespace)
+                var certName = certRef.Name
+                var certNamespace = certRef.Namespace
+                if certNamespace == "" {
+                  certNamespace = nsStr
+                }
+                var refNsStr = certNamespace
                 // Cross-namespace gate. Same-namespace refs are always
                 // permitted (no grant needed); cross-ns refs without a
                 // matching ReferenceGrant are skipped (the listener-status
@@ -93,11 +94,11 @@ templateSnippets:
                 if refNsStr != nsStr {
                   if ReferenceGrantPermitted(
                     "gateway.networking.k8s.io", "Gateway", nsStr,
-                    "", "Secret", refNsStr, tostring(certName)) != "true" {
+                    "", "Secret", refNsStr, certName) != "true" {
                     continue
                   }
                 }
-                var secretKey = refNsStr + "/" + tostring(certName)
+                var secretKey = refNsStr + "/" + certName
                 var existing = certAggregates[secretKey]
                 if existing == nil {
                   certAggregates[secretKey] = map[string]any{
@@ -119,7 +120,7 @@ templateSnippets:
                 }
                 // Track ports the cert is bound to, so the bind-decision
                 // pass downstream knows which listener ports to enable.
-                var listenerPort = toint(listener | dig("port") | fallback(0))
+                var listenerPort = toint(listener.Port)
                 if listenerPort > 0 {
                   existing["listener_ports"] = append(existing["listener_ports"].([]any), listenerPort)
                 }
