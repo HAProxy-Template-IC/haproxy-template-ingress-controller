@@ -1490,12 +1490,24 @@ networkPolicy:
   egress:
     # Allow DNS resolution (required for service discovery)
     allowDNS: true
-    # Kubernetes API Server access (required for watching resources)
-    # Configure based on your cluster setup
+    # Kubernetes API Server access (required for watching resources).
+    #
+    # IPv4 + IPv6 catch-all. K8s NetworkPolicy `ipBlock.cidr` is
+    # single-family, so a dual-stack or IPv6-only cluster needs the
+    # `::/0` entry below to reach an apiserver dialed via IPv6 — the
+    # IPv4 `0.0.0.0/0` does not cover it. Mirror this shape in
+    # `ingress.webhook` for the inbound direction.
+    #
+    # Operators tightening for production replace these defaults with
+    # narrower CIDRs (typically the node network).
     kubernetesApi:
-      # For kind/standard clusters
-      # Adjust this CIDR based on your cluster
-      - cidr: 0.0.0.0/0 # Allow all by default, restrict in production
+      - cidr: 0.0.0.0/0
+        ports:
+          - port: 443
+            protocol: TCP
+          - port: 6443
+            protocol: TCP
+      - cidr: "::/0"
         ports:
           - port: 443
             protocol: TCP
@@ -1563,15 +1575,34 @@ networkPolicy:
       from:
         - podSelector: {}
           # Port is defined in haproxy.ports.dataplane (referenced in template)
-    # Allow Kubernetes API server to call webhook
-    # IMPORTANT: Enable this when webhook is enabled with NetworkPolicy
+    # Allow Kubernetes API server to call webhook.
+    #
+    # IMPORTANT: this rule uses ipBlock — NOT podSelector/namespaceSelector.
+    # The kube-apiserver runs as a host-network process (k3s embedded, kubeadm
+    # static-pod control plane, etc.) and the connection it opens to the
+    # webhook pod has no pod identity from the CNI's NetworkPolicy
+    # enforcement layer. `podSelector: {}` and `namespaceSelector: {}` only
+    # match pod-network traffic and silently exclude the apiserver, which
+    # surfaces in the cluster as `failed to call webhook ...
+    # 502 Bad Gateway` from `proxy error ... while dialing <pod-ip>:9443`.
+    #
+    # Both `0.0.0.0/0` and `::/0` are present because NetworkPolicy
+    # `ipBlock.cidr` is single-family — IPv4 catch-all does not cover
+    # IPv6 apiserver dials on dual-stack or IPv6-only clusters. The
+    # outbound `egress.kubernetesApi` mirrors this shape for the same
+    # reason.
+    #
+    # Operators who need a tighter rule for production replace the
+    # defaults with narrower CIDRs (e.g. the node network) — the webhook
+    # still enforces TLS + Kubernetes AdmissionReview shape, so
+    # source-address exposure is not the security boundary.
     webhook:
       enabled: true # Automatically enabled when webhook.enabled is true
-      # Allow from all sources (API server nodes)
-      # The Kubernetes API server needs to reach the webhook endpoint
       from:
-        - podSelector: {}
-        - namespaceSelector: {}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+        - ipBlock:
+            cidr: "::/0"
     # Additional custom ingress rules
     additionalRules: []
 
