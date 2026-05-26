@@ -808,6 +808,30 @@ validationTests:
 
       - type: contains
         target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.gw_mirror_timeout_ms_1\) int\(50000\) if'
+        description: |
+          Per-dispatch timeout (`arg_timeout_ms` plugin v0.5.0+) derived from
+          the chart-wide `timeout server` (default 50000ms). Without this set-var
+          a mirror dispatch falls back to the plugin's uniform default — that
+          shape silently dropped mirrors against in-cluster Services that were
+          still cold-starting (DNS / kube-proxy propagation race), which is
+          what `HTTPRouteRequestMultipleMirrors` conformance flakes turned out
+          to be in haproxy-haptic CI (the failing dispatches all hit exactly
+          the prior 200ms uniform timeout boundary).
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'http-request set-var\(txn\.gw_mirror_retries_1\) int\(3\) if'
+        description: |
+          Per-dispatch retry budget (`arg_retries` plugin v0.5.0+) matches
+          HAProxy's built-in `retries 3` default, so a mirror dispatch absorbs
+          the same transient connection failures (TCP RST / connection
+          refused) a primary backend request would. The plugin retries only on
+          `is_connect()` / `is_timeout()` — never on HTTP 4xx/5xx, which come
+          back as Ok(resp).
+
+      - type: contains
+        target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if'
         description: send-spoe-group fires the mirror-1 NOTIFY after the set-var pair (per-index group name; SPOE only processes each group once per stream)
 
@@ -820,6 +844,17 @@ validationTests:
         target: file:spoe.conf
         pattern: 'arg_target=var\(txn\.gw_mirror_target_1\)'
         description: spoe-message arg_target reads from the indexed var the frontend filter sets
+
+      - type: contains
+        target: file:spoe.conf
+        pattern: 'arg_timeout_ms=var\(txn\.gw_mirror_timeout_ms_1\) arg_retries=var\(txn\.gw_mirror_retries_1\)'
+        description: |
+          spoe-message body wires the new v0.5.0 plugin args from the
+          per-index frontend-filter set-vars. Without this pair the mirror
+          plugin (v0.5.0+) falls back to its plugin-config defaults — defeating
+          the per-route customisation the chart-side filter just computed.
+          Older plugin versions (≤ v0.4.0) ignore unknown args, so emitting
+          this pair is safe across rolling upgrades.
 
   test-httproute-request-mirror-percent:
     description: |
