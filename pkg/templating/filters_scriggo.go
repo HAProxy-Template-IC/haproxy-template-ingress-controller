@@ -161,7 +161,13 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	// Slice manipulation functions
 	decl[FuncToSlice] = scriggoToSlice
 	decl[FuncToStrMap] = scriggoToStrMap
-	decl[FuncAppendAny] = scriggoAppendAny
+	// append is declared as an AdaptiveFunc so a typed `[]T` slice
+	// round-trips through `append(slice, item)` as `[]T` rather than
+	// being widened to `[]any`. Lets chart code build typed slices
+	// from typed-access loops (e.g., `hosts []string` from
+	// `ingress.Spec.Rules[i].Host`) and pass them to typed-param
+	// macros without an intermediate conversion.
+	decl[FuncAppendAny] = scriggoAppendAdaptive
 	// shard_slice is declared as an AdaptiveFunc so the call's static
 	// return type preserves the input slice's element type — enabling
 	// typed loop variables (and typed field access) on the resulting

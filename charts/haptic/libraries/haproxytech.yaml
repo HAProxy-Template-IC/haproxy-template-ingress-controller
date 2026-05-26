@@ -79,10 +79,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var corsEnabled = ingress | dig_string("", "metadata", "annotations", "haproxy.org/cors-enable") %}
           {%- if corsEnabled == "true" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- var origin = ingress | dig_string("*", "metadata", "annotations", "haproxy.org/cors-allow-origin") %}
             {%- var methods = ingress | dig_string("GET, POST", "metadata", "annotations", "haproxy.org/cors-allow-methods") %}
@@ -182,10 +181,9 @@ templateSnippets:
             {%- if !codeValid %}
               {{- fail("Invalid value '" + code + "' for annotation 'haproxy.org/request-redirect-code' on Ingress '" + key + "'. Valid values: 301, 302, 303, 307, 308") -}}
             {%- end %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # haproxytech/frontend-filters-haproxytech-redirects (for {{ key }})
@@ -206,10 +204,9 @@ templateSnippets:
           {%- var reqCapture = ingress | dig_string("", "metadata", "annotations", "haproxy.org/request-capture") %}
           {%- var captureLen = ingress | dig_string("128", "metadata", "annotations", "haproxy.org/request-capture-len") %}
           {%- if srcIpHeader != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # haproxytech/frontend-filters-haproxytech-logging (src-ip-header for {{ key }})

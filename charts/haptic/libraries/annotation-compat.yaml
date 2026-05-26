@@ -153,10 +153,9 @@ templateSnippets:
       {%- macro EmitAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string, commentLabel string) %}
         {%- var enabled = ingress | dig_string("", "metadata", "annotations", enabledAnn) %}
         {%- if enabled == "true" %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
             {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
@@ -204,10 +203,9 @@ templateSnippets:
       {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
         {%- var corsEnabled = ingress | dig_string("", "metadata", "annotations", enabledAnn) %}
         {%- if corsEnabled == "true" %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
             {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
@@ -249,10 +247,9 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationSSLRedirect(ingress *resources.ingresses.T, code string, commentLabel string) %}
-        {%- var hosts = []any{} %}
-        {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-          {%- var h = rule | dig("host") %}
-          {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+        {%- var hosts = []string{} %}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
         {%- end %}
         {%- if len(hosts) > 0 %}
           {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
@@ -282,10 +279,9 @@ templateSnippets:
         {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
         {%- var name = ingress | dig_string("", "metadata", "name") %}
         {%- var key = ns + "/" + name %}
-        {%- var hosts = []any{} %}
-        {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-          {%- var h = rule | dig("host") %}
-          {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+        {%- var hosts = []string{} %}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
         {%- end %}
         {%- var allowlist = ingress | dig_string("", "metadata", "annotations", allowAnnotation) %}
         {%- var denylist = ingress | dig_string("", "metadata", "annotations", denyAnnotation) %}

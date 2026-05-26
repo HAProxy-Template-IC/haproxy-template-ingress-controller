@@ -818,10 +818,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var reqHeaders = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/custom-request-headers") %}
           {%- var respHeaders = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/custom-response-headers") %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
             {%- if reqHeaders != "" %}
@@ -876,10 +875,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var appRoot = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/app-root") %}
           {%- if appRoot != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # nginx-ingress/app-root ({{ key }})
@@ -909,10 +907,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var url = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/permanent-redirect") %}
           {%- if url != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # nginx-ingress/permanent-redirect ({{ key }})
@@ -942,10 +939,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var url = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/temporal-redirect") %}
           {%- if url != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # nginx-ingress/temporal-redirect ({{ key }})
@@ -988,11 +984,10 @@ templateSnippets:
           {%- var name = ingress | dig_string("", "metadata", "name") %}
           {%- var key = ns + "/" + name %}
             {#- Extract hosts and find the first backend name from this canary ingress -#}
-            {%- var hosts = []any{} %}
+            {%- var hosts = []string{} %}
             {%- var canaryBackend = "" %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
               {%- if canaryBackend == "" %}
                 {%- var http = rule | dig("http") %}
                 {%- if http != nil %}
@@ -1051,10 +1046,9 @@ templateSnippets:
         {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
         {%- var name = ingress | dig_string("", "metadata", "name") %}
         {%- var key = ns + "/" + name %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
             {%- var errorPage = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-error-page") %}

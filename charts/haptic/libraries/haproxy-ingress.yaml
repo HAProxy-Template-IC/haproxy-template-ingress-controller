@@ -735,10 +735,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var forwardfor = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/forwardfor") %}
           {%- if forwardfor != "" && forwardfor != "ignore" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # haproxy-ingress/forwardfor ({{ key }})
@@ -854,10 +853,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var appRoot = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/app-root") %}
           {%- if appRoot != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # haproxy-ingress/app-root ({{ key }})
@@ -887,10 +885,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var redirectTo = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/redirect-to") %}
           {%- if redirectTo != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- var code = ingress | dig_string("302", "metadata", "annotations", "haproxy-ingress.github.io/redirect-to-code") %}
             {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
@@ -956,10 +953,9 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var headersStr = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/headers") %}
           {%- if headersStr != "" %}
-            {%- var hosts = []any{} %}
-            {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-              {%- var h = rule | dig("host") %}
-              {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # haproxy-ingress/headers ({{ key }})
@@ -1027,10 +1023,9 @@ templateSnippets:
         {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
         {%- var name = ingress | dig_string("", "metadata", "name") %}
         {%- var key = ns + "/" + name %}
-          {%- var hosts = []any{} %}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var h = rule | dig("host") %}
-            {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
             {%- var errorPage = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-tls-error-page") %}
