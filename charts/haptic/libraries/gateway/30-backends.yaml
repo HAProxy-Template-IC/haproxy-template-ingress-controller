@@ -26,8 +26,8 @@ templateSnippets:
           name) and incorrectly route traffic. The route-matcher path
           below detects all-invalid rules and routes them to
           gw-invalid-backend (HTTP 500) instead. -#}
-      {%- var refGroup = backendRef | dig("group") | fallback("") | tostring() -%}
-      {%- var refKind = backendRef | dig("kind") | fallback("Service") | tostring() -%}
+      {%- var refGroup = backendRef | dig_string("", "group") -%}
+      {%- var refKind = backendRef | dig_string("Service", "kind") -%}
       {%- if (refGroup != "" && refGroup != "core") || refKind != "Service" -%}
         {%- continue -%}
       {%- end -%}
@@ -60,7 +60,7 @@ templateSnippets:
         {%- if svc != nil -%}
           {%- for _, p := range svc | dig("spec", "ports") | toSlice() -%}
             {%- if (p | dig("port") | toint()) == toint(backendPort) -%}
-              {%- var ap = p | dig("appProtocol") | fallback("") | tostring() -%}
+              {%- var ap = p | dig_string("", "appProtocol") -%}
               {%- if ap == "kubernetes.io/h2c" -%}
                 {%- resolvedProtoFlag = "h2" -%}
               {%- end -%}
@@ -303,8 +303,8 @@ templateSnippets:
         {%- for _, rl := range route | dig("spec", "rules") | toSlice() %}
           {%- var rlTimeouts = rl | dig("timeouts") %}
           {%- if rlTimeouts != nil %}
-            {%- var rlReq = rlTimeouts | dig("request") | fallback("") | tostring() %}
-            {%- var rlBeReq = rlTimeouts | dig("backendRequest") | fallback("") | tostring() %}
+            {%- var rlReq = rlTimeouts | dig_string("", "request") %}
+            {%- var rlBeReq = rlTimeouts | dig_string("", "backendRequest") %}
             {%- var tval = rlReq %}
             {%- if tval == "" || tval == "0s" %}{%- tval = rlBeReq %}{%- end %}
             {%- if tval != "" && tval != "0s" %}
@@ -336,7 +336,7 @@ templateSnippets:
         {%- var ruleIdxBe = 0 %}
         {%- for _, rl := range route | dig("spec", "rules") | toSlice() %}
           {%- for _, bRef := range rl | dig("backendRefs") | toSlice() %}
-            {%- if (bRef | dig("name") | fallback("") | tostring()) == backendName -%}
+            {%- if (bRef | dig_string("", "name")) == backendName -%}
             {%- if (toint(bRef | dig("port") | fallback(0))) == toint(backendPort) %}
               {%- var ruleRouteIdBe = tostring(routeNs) + "_" + tostring(routeName) + "_" + tostring(ruleIdxBe) %}
               {%- for _, bf := range bRef | dig("filters") | fallback([]any{}) %}

@@ -741,7 +741,7 @@ templateSnippets:
 
   global-settings-200-process:
     template: |
-      {%- var processModel = extraContext | dig("processModel") | fallback("daemon") | tostring() -%}
+      {%- var processModel = extraContext | dig_string("daemon", "processModel") -%}
       {{ processModel }}
       {%- var nbthread = extraContext | dig("nbthread") | fallback(0) | toint() -%}
       {%- if nbthread > 0 %}
@@ -789,8 +789,8 @@ templateSnippets:
       timeout connect {{ extraContext | dig("timeout_connect") | fallback("5000") }}
       timeout client {{ extraContext | dig("timeout_client") | fallback("50000") }}
       timeout server {{ extraContext | dig("timeout_server") | fallback("50000") }}
-      {%- var tHttpReq = extraContext | dig("timeout_http_request") | fallback("") | tostring() -%}
-      {%- var tKeepAlive = extraContext | dig("timeout_http_keep_alive") | fallback("") | tostring() -%}
+      {%- var tHttpReq = extraContext | dig_string("", "timeout_http_request") -%}
+      {%- var tKeepAlive = extraContext | dig_string("", "timeout_http_keep_alive") -%}
       {%- if tHttpReq != "" %}
       timeout http-request {{ tHttpReq }}
       {%- end -%}
@@ -853,8 +853,8 @@ templateSnippets:
       {%- var defaultBackendSvc = extraContext | dig("defaultBackendService") | fallback(nil) -%}
       {%- if defaultBackendSvc != nil %}
       {%%
-        var dbNamespace = defaultBackendSvc | dig("namespace") | fallback("") | tostring()
-        var dbName = defaultBackendSvc | dig("name") | fallback("") | tostring()
+        var dbNamespace = defaultBackendSvc | dig_string("", "namespace")
+        var dbName = defaultBackendSvc | dig_string("", "name")
       %%}
       {%- var resolvedParts = split(ResolveServicePort(dbNamespace, dbName, defaultBackendSvc | dig("port")), " ") -%}
       {%- var dbPort = toint(resolvedParts[0]) -%}
@@ -887,7 +887,7 @@ templateSnippets:
     template: |
       {%- var peersConfig = extraContext | dig("peers") | fallback(nil) -%}
       {%- if peersConfig != nil %}
-      peers {{ peersConfig | dig("name") | fallback("localinstance") | tostring() }}
+      peers {{ peersConfig | dig_string("localinstance", "name") }}
           peer "${HOSTNAME}" 127.0.0.1:{{ peersConfig | dig("port") | fallback(10000) | tostring() }}
       {%- end %}
 

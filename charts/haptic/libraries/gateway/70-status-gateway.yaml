@@ -109,14 +109,14 @@ templateSnippets:
               // Default group/kind for parentRef is gateway.networking.k8s.io/Gateway.
               // Skip any parentRef that targets something else (e.g. Mesh
               // Service ref); those don't apply to Gateway listener counts.
-              var prGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
-              var prKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
+              var prGroup = dig_string(parentRef, "gateway.networking.k8s.io", "group")
+              var prKind = dig_string(parentRef, "Gateway", "kind")
               if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
                 continue
               }
-              var gwNs = dig(parentRef, "namespace") | fallback(routeNs) | tostring()
-              var gwName = dig(parentRef, "name") | fallback("") | tostring()
-              var section = dig(parentRef, "sectionName") | fallback("") | tostring()
+              var gwNs = dig_string(parentRef, routeNs, "namespace")
+              var gwName = dig_string(parentRef, "", "name")
+              var section = dig_string(parentRef, "", "sectionName")
 
               var gw = resources.gateways.GetSingle(gwNs, gwName)
               if gw == nil {
@@ -195,8 +195,8 @@ templateSnippets:
                 if allowedKindsRaw != nil {
                   var kindOk = false
                   for _, ak := range toSlice(allowedKindsRaw) {
-                    var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
-                    var akKind = dig(ak, "kind") | fallback("") | tostring()
+                    var akGroup = dig_string(ak, "gateway.networking.k8s.io", "group")
+                    var akKind = dig_string(ak, "", "kind")
                     if akGroup == "gateway.networking.k8s.io" && akKind == routeKind {
                       kindOk = true
                       break
@@ -208,7 +208,7 @@ templateSnippets:
                 }
 
                 // (4) allowedRoutes.namespaces.from — Same | All | Selector
-                var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                var fromMode = dig_string(listener, "Same", "allowedRoutes", "namespaces", "from")
                 switch fromMode {
                 case "Same":
                   if routeNs != gwNs {
@@ -735,8 +735,8 @@ templateSnippets:
                 supportedKinds = defaultKinds
               } else {
                 for _, reqEntry := range toSlice(requestedKinds) {
-                  var reqGroup = dig(reqEntry, "group") | fallback("gateway.networking.k8s.io") | tostring()
-                  var reqKind = dig(reqEntry, "kind") | fallback("") | tostring()
+                  var reqGroup = dig_string(reqEntry, "gateway.networking.k8s.io", "group")
+                  var reqKind = dig_string(reqEntry, "", "kind")
                   var matched = false
                   for _, def := range defaultKinds {
                     if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
@@ -785,8 +785,8 @@ templateSnippets:
                 var listenerTls = listener | dig("tls")
                 if listenerTls != nil {
                   for _, ref := range listenerTls | dig("certificateRefs") | toSlice() {
-                    var refGroup = dig(ref, "group") | fallback("") | tostring()
-                    var refKind = dig(ref, "kind") | fallback("Secret") | tostring()
+                    var refGroup = dig_string(ref, "", "group")
+                    var refKind = dig_string(ref, "Secret", "kind")
                     if refGroup != "" && refGroup != "core" {
                       hasInvalidCertRef = true
                       continue
@@ -795,8 +795,8 @@ templateSnippets:
                       hasInvalidCertRef = true
                       continue
                     }
-                    var refName = dig(ref, "name") | fallback("") | tostring()
-                    var refNs = dig(ref, "namespace") | fallback(nsStr) | tostring()
+                    var refName = dig_string(ref, "", "name")
+                    var refNs = dig_string(ref, nsStr, "namespace")
                     if refName == "" {
                       hasInvalidCertRef = true
                       continue

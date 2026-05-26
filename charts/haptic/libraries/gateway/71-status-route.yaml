@@ -34,7 +34,7 @@ templateSnippets:
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, GatewayKey -%}
       {% macro GenerateRouteStatusPatches(routes []any, apiVersion string, kind string) %}
-        {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
+        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
 
         {#- Build a set of our gateway keys for quick lookup -#}
         {%- var ourGateways = map[string]bool{} %}
@@ -67,10 +67,10 @@ templateSnippets:
             var refFailMsg = ""
             for _, rule := range dig(route, "spec", "rules") | toSlice() {
               for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
-                var svcName = dig(backendRef, "name") | fallback("") | tostring()
-                var svcNamespace = dig(backendRef, "namespace") | fallback(nsStr) | tostring()
-                var group = dig(backendRef, "group") | fallback("") | tostring()
-                var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
+                var svcName = dig_string(backendRef, "", "name")
+                var svcNamespace = dig_string(backendRef, nsStr, "namespace")
+                var group = dig_string(backendRef, "", "group")
+                var refKind = dig_string(backendRef, "Service", "kind")
 
                 if !((group == "" || group == "core") && refKind == "Service") {
                   allRefsResolved = false
@@ -107,10 +107,10 @@ templateSnippets:
             var parents = []any{}
             var parentIdx = 0
             for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-              var gwGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
-              var gwKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
-              var gwNamespace = dig(parentRef, "namespace") | fallback(nsStr) | tostring()
-              var gwName = dig(parentRef, "name") | fallback("") | tostring()
+              var gwGroup = dig_string(parentRef, "gateway.networking.k8s.io", "group")
+              var gwKind = dig_string(parentRef, "Gateway", "kind")
+              var gwNamespace = dig_string(parentRef, nsStr, "namespace")
+              var gwName = dig_string(parentRef, "", "name")
 
               // ListenerSet parentRef → resolve to its parent Gateway
               // for the listener-attach evaluation, but emit the
@@ -191,7 +191,7 @@ templateSnippets:
                   var sawHostnameMismatch = false
                   if listenerOwner != nil {
                     for _, listener := range dig(listenerOwner, "spec", "listeners") | toSlice() {
-                      var listenerName = dig(listener, "name") | fallback("") | tostring()
+                      var listenerName = dig_string(listener, "", "name")
 
                       if sectionNameStr != "" && listenerName != sectionNameStr {
                         continue
@@ -218,8 +218,8 @@ templateSnippets:
                       if allowedKindsRaw != nil {
                         kindOk = false
                         for _, ak := range toSlice(allowedKindsRaw) {
-                          var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
-                          var akKind = dig(ak, "kind") | fallback("") | tostring()
+                          var akGroup = dig_string(ak, "gateway.networking.k8s.io", "group")
+                          var akKind = dig_string(ak, "", "kind")
                           if akGroup == "gateway.networking.k8s.io" && akKind == kind {
                             kindOk = true
                             break
@@ -229,7 +229,7 @@ templateSnippets:
 
                       // Namespace filter
                       var nsOk = false
-                      var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                      var fromMode = dig_string(listener, "Same", "allowedRoutes", "namespaces", "from")
                       switch fromMode {
                       case "Same":
                         nsOk = nsStr == gwNamespace
@@ -266,7 +266,7 @@ templateSnippets:
                       }
 
                       // Hostname intersection
-                      var listenerHostname = dig(listener, "hostname") | fallback("") | tostring()
+                      var listenerHostname = dig_string(listener, "", "hostname")
                       if HostnamesIntersect(listenerHostname, routeHostnames) != "true" {
                         sawHostnameMismatch = true
                         continue
@@ -452,7 +452,7 @@ templateSnippets:
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- import "util-resource-helpers" for ResourceNamespace, ResourceName, GatewayKey, ListenerProtocolOr -%}
       {% macro GenerateTLSRouteStatusPatches(routes []*resources.tlsroutes.T) %}
-        {%- var controllerName = extraContext | dig("controllerName") | fallback("") | tostring() %}
+        {%- var controllerName = extraContext | dig_string("", "controllerName") %}
         {#- TLSRoute is v1 in Gateway API v1.5+ — the v1alpha2 served-version
             was retired and the API server returns 404 on patch attempts to
             gateway.networking.k8s.io/v1alpha2. Use v1 to match the
@@ -483,10 +483,10 @@ templateSnippets:
             var refFailMsg = ""
             for _, rule := range route.Spec.Rules {
               for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
-                var svcName = dig(backendRef, "name") | fallback("") | tostring()
-                var svcNamespace = dig(backendRef, "namespace") | fallback(nsStr) | tostring()
-                var group = dig(backendRef, "group") | fallback("") | tostring()
-                var refKind = dig(backendRef, "kind") | fallback("Service") | tostring()
+                var svcName = dig_string(backendRef, "", "name")
+                var svcNamespace = dig_string(backendRef, nsStr, "namespace")
+                var group = dig_string(backendRef, "", "group")
+                var refKind = dig_string(backendRef, "Service", "kind")
 
                 if !((group == "" || group == "core") && refKind == "Service") {
                   allRefsResolved = false
@@ -520,10 +520,10 @@ templateSnippets:
             var parents = []any{}
             var parentIdx = 0
             for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-              var gwGroup = dig(parentRef, "group") | fallback("gateway.networking.k8s.io") | tostring()
-              var gwKind = dig(parentRef, "kind") | fallback("Gateway") | tostring()
-              var gwNamespace = dig(parentRef, "namespace") | fallback(nsStr) | tostring()
-              var gwName = dig(parentRef, "name") | fallback("") | tostring()
+              var gwGroup = dig_string(parentRef, "gateway.networking.k8s.io", "group")
+              var gwKind = dig_string(parentRef, "Gateway", "kind")
+              var gwNamespace = dig_string(parentRef, nsStr, "namespace")
+              var gwName = dig_string(parentRef, "", "name")
 
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
                 var gwKey = gwNamespace + "/" + gwName
@@ -616,8 +616,8 @@ templateSnippets:
                       if allowedKindsRaw != nil {
                         kindOk = false
                         for _, ak := range toSlice(allowedKindsRaw) {
-                          var akGroup = dig(ak, "group") | fallback("gateway.networking.k8s.io") | tostring()
-                          var akKind = dig(ak, "kind") | fallback("") | tostring()
+                          var akGroup = dig_string(ak, "gateway.networking.k8s.io", "group")
+                          var akKind = dig_string(ak, "", "kind")
                           if akGroup == "gateway.networking.k8s.io" && akKind == kind {
                             kindOk = true
                             break
@@ -626,7 +626,7 @@ templateSnippets:
                       }
 
                       var nsOk = false
-                      var fromMode = dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same") | tostring()
+                      var fromMode = dig_string(listener, "Same", "allowedRoutes", "namespaces", "from")
                       switch fromMode {
                       case "Same":
                         nsOk = nsStr == gwNamespace

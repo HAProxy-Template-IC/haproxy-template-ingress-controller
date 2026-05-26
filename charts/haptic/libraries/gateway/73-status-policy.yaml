@@ -20,7 +20,7 @@ templateSnippets:
             if caRefs == nil {
               caRefs = []any{}
             }
-            var wkca = dig(validation, "wellKnownCACertificates") | fallback("") | tostring()
+            var wkca = dig_string(validation, "", "wellKnownCACertificates")
 
             var resolvedStatus = "True"
             var resolvedReason = "ResolvedRefs"
@@ -288,6 +288,6 @@ templateSnippets:
       {%- import "util-generate-backendtlspolicy-status-patches" for GenerateBackendTLSPolicyStatusPatches %}
       {%- var allPolicies = resources.backendtlspolicies.List() -%}
       {%- if len(allPolicies) > 0 -%}
-        {%- var controllerName = extraContext | dig("controllerName") | fallback("haproxy.org/haptic") | tostring() -%}
+        {%- var controllerName = extraContext | dig_string("haproxy.org/haptic", "controllerName") -%}
         {{- GenerateBackendTLSPolicyStatusPatches(allPolicies, controllerName) -}}
       {%- end -%}

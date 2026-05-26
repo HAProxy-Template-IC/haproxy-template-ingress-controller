@@ -49,8 +49,8 @@ templateSnippets:
             var acceptedReason = "Accepted"
             var acceptedMessage = "GatewayClass accepted by haproxy-haptic controller"
             if paramsRef != nil {
-              var pGroup = dig(paramsRef, "group") | fallback("") | tostring()
-              var pKind = dig(paramsRef, "kind") | fallback("") | tostring()
+              var pGroup = dig_string(paramsRef, "", "group")
+              var pKind = dig_string(paramsRef, "", "kind")
               if pGroup != "haproxy-haptic.org" || pKind != "HAProxyTemplateConfig" {
                 acceptedStatus = "False"
                 acceptedReason = "InvalidParameters"
