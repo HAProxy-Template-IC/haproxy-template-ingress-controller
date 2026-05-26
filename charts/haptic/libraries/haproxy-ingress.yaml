@@ -87,38 +87,29 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
       {%- if pathTypeAnnotation == "regex" -%}
       {%- if isFirst %}
       # haproxy-ingress/map-path-regex-haproxy-ingress
       {%- isFirst = false %}
       {%- end %}
       {#- Count regex paths for this ingress -#}
-      {%- var allPaths = []any{} %}
-      {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
-      {%- for _, rule := range rules %}
-      {%- var http = rule | dig("http") %}
-      {%- if http != nil %}
-        {%- var paths = http | dig("paths") | fallback([]any{}) %}
-        {%- for _, path := range paths %}
-        {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-          {%- allPaths = append(allPaths, path) %}
+      {%- var regexPathCount = 0 %}
+      {%- for _, rule := range ingress.Spec.Rules %}
+        {%- for _, path := range rule.Http.Paths %}
+        {%- if path.PathType == "ImplementationSpecific" %}
+          {%- regexPathCount++ %}
         {%- end %}
         {%- end %}
       {%- end %}
-      {%- end %}
-      {%- if len(allPaths) > 0 %}
-      # Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ len(allPaths) }} regex paths)
-        {%- for _, rule := range rules %}
-        {%- var http = rule | dig("http") %}
-        {%- if http != nil %}
-          {%- var paths = http | dig("paths") | fallback([]any{}) %}
-          {%- for _, path := range paths %}
-          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule | dig("host")) }}{{ path | dig("path") | fallback("") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+      {%- if regexPathCount > 0 %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ regexPathCount }} regex paths)
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
-        {%- end %}
         {%- end %}
       {%- end %}
       {%- end %}
@@ -148,23 +139,18 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
       {%- if pathTypeAnnotation == "exact" -%}
       {%- if isFirst %}
       # haproxy-ingress/map-path-exact-haproxy-ingress
       {%- isFirst = false %}
       {%- end %}
-        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
-        {%- for _, rule := range rules %}
-        {%- var http = rule | dig("http") %}
-        {%- if http != nil %}
-          {%- var paths = http | dig("paths") | fallback([]any{}) %}
-          {%- for _, path := range paths %}
-          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule | dig("host")) }}{{ path | dig("path") | fallback("") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
-        {%- end %}
         {%- end %}
       {%- end %}
       {%- end %}
@@ -193,28 +179,23 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
       {%- if pathTypeAnnotation == "prefix" -%}
       {%- if isFirst %}
       # haproxy-ingress/map-path-prefix-haproxy-ingress
       {%- isFirst = false %}
       {%- end %}
-        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
-        {%- for _, rule := range rules %}
-        {%- var http = rule | dig("http") %}
-        {%- if http != nil %}
-          {%- var paths = http | dig("paths") | fallback([]any{}) %}
-          {%- for _, path := range paths %}
-          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-            {%- var pathValue = path | dig_string("", "path") %}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+            {%- var pathValue = path.Path %}
             {#- Ensure path ends with / for prefix matching -#}
             {%- if pathValue != "" && !hasSuffix(pathValue, "/") %}
               {%- pathValue = pathValue + "/" %}
             {%- end %}
-      {{ MapKeyForHost(rule | dig("host")) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+      {{ MapKeyForHost(rule.Host) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
-        {%- end %}
         {%- end %}
       {%- end %}
       {%- end %}
@@ -246,23 +227,18 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var isFirst = true %}
       {%- for _, ingress := range resources.ingresses.List() %}
-      {%- var pathTypeAnnotation = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/path-type") | fallback("") %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
       {%- if pathTypeAnnotation == "begin" -%}
       {%- if isFirst %}
       # haproxy-ingress/map-pfxexact-haproxy-ingress (begin)
       {%- isFirst = false %}
       {%- end %}
-        {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) %}
-        {%- for _, rule := range rules %}
-        {%- var http = rule | dig("http") %}
-        {%- if http != nil %}
-          {%- var paths = http | dig("paths") | fallback([]any{}) %}
-          {%- for _, path := range paths %}
-          {%- if (path | dig("pathType")) == "ImplementationSpecific" %}
-      {{ MapKeyForHost(rule | dig("host")) }}{{ path | dig("path") | fallback("") }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end %}
           {%- end %}
-        {%- end %}
         {%- end %}
       {%- end %}
       {%- end %}
@@ -2467,6 +2443,64 @@ validationTests:
         description: |
           The leading `*` from the wildcard host MUST NOT appear in
           the regex pattern (would make it an invalid regex).
+
+  test-haproxy-ingress-path-type-regex-rule-without-http:
+    description: |
+      HAProxy-Ingress path-type=regex with a rule that has no `http` block
+      must not panic or emit any map row for that rule. Regression test
+      for the typed-traversal migration (!1017) — `rule.Http.Paths` is
+      accessed directly, and an absent `http:` in the source YAML must
+      surface as an empty slice (loop emits nothing), not a nil-deref
+      panic.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mixed-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mixed-ingress
+            annotations:
+              haproxy-ingress.github.io/path-type: "regex"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              # Rule with no http block — must be tolerated.
+              - host: nohttp.example.com
+              # Rule with http block — must still emit its path.
+              - host: hashttp.example.com
+                http:
+                  paths:
+                    - path: /api/v[0-9]+/.*
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: mixed-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid (no panic during render)
+      - type: contains
+        target: "map:path-regex.map"
+        pattern: '(?m)^hashttp\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_mixed-ingress_svc_mixed-service_80$'
+        description: |
+          The rule with an http block must still emit its row even when
+          a sibling rule has no http block.
+      - type: not_contains
+        target: "map:path-regex.map"
+        pattern: 'nohttp\.example\.com'
+        description: |
+          The rule without an http block must not contribute any map
+          entry (its empty Paths slice produces zero iterations).
 
   # ============================================================================
   # Phase 4: Session Affinity Tests
