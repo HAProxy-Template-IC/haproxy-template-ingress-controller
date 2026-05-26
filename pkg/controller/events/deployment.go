@@ -147,6 +147,23 @@ type DeploymentCompletedEvent struct {
 	// triggered this deployment.
 	StatusPatches []templating.StatusPatch
 
+	// ContentChecksum is the checksum of the config + auxiliary files THIS
+	// deployment actually pushed to the data plane. Threaded through
+	// unchanged from the DeploymentScheduledEvent so the DeploymentScheduler
+	// can update its lastDeployedConfigHash from a value that's tied to the
+	// completing deployment, not from the latest render (which a parallel
+	// reconcile may have overwritten while this deployment was in flight).
+	//
+	// Without this, the scheduler reads s.lastContentChecksum at completion
+	// time and mis-records the in-flight render's checksum as "what was just
+	// deployed" — silently making future deployments with the same hash
+	// hit the unchanged-skip branch and never reach HAProxy. Symptom in CI:
+	// a freshly-added Ingress's redirect/auth directive never appears in
+	// the live haproxy.cfg even though the controller did render it.
+	//
+	// Empty string for the zero-endpoint code path (nothing was deployed).
+	ContentChecksum string
+
 	// Correlation embeds correlation tracking for event tracing.
 	Correlation
 }
@@ -175,6 +192,12 @@ type DeploymentResult struct {
 	// DeploymentScheduledEvent and surfaced on DeploymentCompletedEvent for
 	// the StatusApplier to consume.
 	StatusPatches []templating.StatusPatch
+
+	// ContentChecksum is the checksum of the config + auxiliary files
+	// THIS deployment pushed (forwarded from DeploymentScheduledEvent).
+	// See DeploymentCompletedEvent.ContentChecksum for the full rationale.
+	// Empty when no deployment occurred (zero-endpoint path).
+	ContentChecksum string
 }
 
 // NewDeploymentCompletedEvent creates a new DeploymentCompletedEvent.
@@ -217,6 +240,7 @@ func NewDeploymentCompletedEvent(result *DeploymentResult, opts ...CorrelationOp
 		OperationBreakdown: breakdownCopy,
 		BackendDiffFields:  result.BackendDiffFields,
 		StatusPatches:      slices.Clone(result.StatusPatches),
+		ContentChecksum:    result.ContentChecksum,
 		timestamped:        newTimestamped(),
 		Correlation:        newCorrelation(opts...),
 	}

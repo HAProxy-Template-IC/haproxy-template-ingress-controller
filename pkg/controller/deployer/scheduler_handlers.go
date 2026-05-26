@@ -264,12 +264,30 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 // This marks the deployment as complete, updates the deployment end time,
 // caches the deployed config hash for optimization, and processes any
 // pending deployment via scheduleOrQueue.
-func (s *DeploymentScheduler) handleDeploymentCompleted(_ *events.DeploymentCompletedEvent) {
-	// Cache the deployed content checksum for future comparison (skip unchanged deployments)
+//
+// The "deployed config hash" must come from event.ContentChecksum — the
+// hash threaded through the DeploymentScheduledEvent that triggered this
+// deployment — NOT from s.lastContentChecksum (the latest render's hash).
+// A reconcile that lands between deployment-start and deployment-complete
+// overwrites s.lastContentChecksum with the newer render, and using that
+// value here mis-records THIS deployment's checksum as the newer one. The
+// next reconcile that produces the newer hash then matches lastDeployedConfigHash
+// and incorrectly skips deployment — the newer render's content (e.g. a
+// fresh Ingress's redirect directive) never reaches HAProxy. See CI
+// pipeline 2551671212 / TestIngressHaproxyRedirectTo for a real
+// reproduction.
+func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.DeploymentCompletedEvent) {
+	// Cache the deployed content checksum for future comparison (skip unchanged deployments).
+	// Empty ContentChecksum means the zero-endpoint code path — nothing deployed, don't
+	// touch the cache (otherwise we'd record "" as "last deployed" and force the next
+	// real deployment to run, which is the safer side of the failure mode but is also
+	// a needless deploy).
 	s.mu.Lock()
-	s.lastDeployedConfigHash = s.lastContentChecksum
-	s.lastDeployedPodSetHash = computePodSetHash(s.currentEndpoints)
-	s.lastDeployedTime = time.Now()
+	if event.ContentChecksum != "" {
+		s.lastDeployedConfigHash = event.ContentChecksum
+		s.lastDeployedPodSetHash = computePodSetHash(s.currentEndpoints)
+		s.lastDeployedTime = time.Now()
+	}
 	s.mu.Unlock()
 
 	s.schedulerMutex.Lock()

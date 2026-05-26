@@ -151,6 +151,8 @@ func (c *Component) deployToEndpoints(
 		// Forward the status patches anyway so the StatusApplier can still write the
 		// "deployed" variant if appropriate (the zero-endpoint guard in StatusApplier
 		// will skip the apply, but the data is on the event for consistency).
+		// ContentChecksum stays empty — nothing was deployed, so the scheduler
+		// must not record this as a successful deploy.
 		c.eventBus.Publish(events.NewDeploymentCompletedEvent(
 			&events.DeploymentResult{StatusPatches: statusPatches},
 			events.WithCorrelation(correlationID, correlationID),
@@ -215,10 +217,12 @@ func (c *Component) deployToEndpoints(
 		"duration_ms", totalDurationMs,
 		"correlation_id", correlationID)
 
-	// Publish DeploymentCompletedEvent with correlation. StatusPatches are
-	// forwarded unchanged from the DeploymentScheduledEvent so the StatusApplier
-	// applies the patches that match THIS deployment's config (no side-channel,
-	// no stale-LATEST race).
+	// Publish DeploymentCompletedEvent with correlation. StatusPatches and
+	// ContentChecksum are forwarded unchanged from the DeploymentScheduledEvent
+	// so downstream consumers (StatusApplier, DeploymentScheduler's
+	// lastDeployedConfigHash cache) describe what THIS deployment carried —
+	// not what the latest in-memory render happens to hold at completion
+	// time (which an intervening reconcile may have changed).
 	c.eventBus.Publish(events.NewDeploymentCompletedEvent(
 		&events.DeploymentResult{
 			Total:              len(endpoints),
@@ -228,6 +232,7 @@ func (c *Component) deployToEndpoints(
 			ReloadsTriggered:   int(state.reloadsTriggered),
 			TotalAPIOperations: int(state.totalOperations),
 			StatusPatches:      statusPatches,
+			ContentChecksum:    contentChecksum,
 			OperationBreakdown: state.operationBreakdown,
 			BackendDiffFields:  state.backendDiffFields,
 		},
