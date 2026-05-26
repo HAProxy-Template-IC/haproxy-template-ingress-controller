@@ -695,7 +695,12 @@ publish-chart-snapshot:
         - charts/haptic/libraries/base.yaml
         - charts/haptic/libraries/ssl.yaml
         - charts/haptic/libraries/ingress.yaml
-        - charts/haptic/libraries/gateway.yaml
+        # `gateway` is a split-library directory (per ADR-0008); the
+        # legacy `gateway.yaml` file no longer exists. The glob covers
+        # every fragment and any future tests/ subdir, so chart-only
+        # MRs that touch the gateway library trigger the SPOA build
+        # that `test-e2e` / conformance hard-`needs:`.
+        - charts/haptic/libraries/gateway/**/*
         - charts/haptic/libraries/haproxytech.yaml
         - charts/haptic/libraries/haproxy-ingress.yaml
         - charts/haptic/libraries/nginx-ingress.yaml

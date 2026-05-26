@@ -314,12 +314,7 @@ templateSnippets:
                 if cm == nil {
                   continue
                 }
-                // dig() works against both typed and untyped ConfigMap
-                // shapes. ConfigMap isn't in the offline schema bundle
-                // (only Secrets / Services / EndpointSlices / Ingresses /
-                // Namespaces are), so a typed cm.Data won't compile in
-                // offline test mode; dig() handles both.
-                var caCrt = tostring(dig(cm, "data", "ca.crt") | fallback(""))
+                var caCrt = cm.Data["ca.crt"]
                 if caCrt != "" {
                   parts = append(parts, caCrt)
                 }

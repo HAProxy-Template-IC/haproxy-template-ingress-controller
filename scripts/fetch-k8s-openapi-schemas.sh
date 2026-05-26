@@ -36,6 +36,7 @@ RESOURCES=(
   "core_v1_namespaces:/openapi/v3/api/v1:io.k8s.api.core.v1.Namespace::namespaces:Namespace:Cluster"
   "core_v1_services:/openapi/v3/api/v1:io.k8s.api.core.v1.Service::services:Service:Namespaced"
   "core_v1_secrets:/openapi/v3/api/v1:io.k8s.api.core.v1.Secret::secrets:Secret:Namespaced"
+  "core_v1_configmaps:/openapi/v3/api/v1:io.k8s.api.core.v1.ConfigMap::configmaps:ConfigMap:Namespaced"
   "networking_k8s_io_v1_ingresses:/openapi/v3/apis/networking.k8s.io/v1:io.k8s.api.networking.v1.Ingress:networking.k8s.io:ingresses:Ingress:Namespaced"
   "discovery_k8s_io_v1_endpointslices:/openapi/v3/apis/discovery.k8s.io/v1:io.k8s.api.discovery.v1.EndpointSlice:discovery.k8s.io:endpointslices:EndpointSlice:Namespaced"
 )

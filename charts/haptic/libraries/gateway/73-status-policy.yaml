@@ -45,14 +45,7 @@ templateSnippets:
                 if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                   var cm = resources.configmaps.GetSingle(policyNs, refName)
                   if cm != nil {
-                    // dig() handles both typed map[string]string (production,
-                    // when ConfigMap schema is loaded) and untyped
-                    // map[string]any (offline test mode, no ConfigMap
-                    // schema in tests/schemas/). The pre-conversion code
-                    // did `data.(map[string]any)` which panics on the
-                    // typed shape — same class of bug as
-                    // util-condition-transition-time.
-                    var caCrt = tostring(dig(cm, "data", "ca.crt") | fallback(""))
+                    var caCrt = cm.Data["ca.crt"]
                     if caCrt != "" {
                       hasValid = true
                     }

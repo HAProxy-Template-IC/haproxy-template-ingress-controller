@@ -918,12 +918,7 @@ templateSnippets:
                           sawInvalidCARef = true
                           continue
                         }
-                        // dig() handles both typed map[string]string
-                        // (production with ConfigMap schema) and untyped
-                        // map[string]any (offline tests — ConfigMap not in
-                        // tests/schemas/). The previous .(map[string]any)
-                        // cast panicked on the typed shape.
-                        var caCrt = tostring(dig(cm, "data", "ca.crt") | fallback(""))
+                        var caCrt = cm.Data["ca.crt"]
                         if caCrt == "" {
                           sawInvalidCARef = true
                           continue
