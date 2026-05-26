@@ -474,9 +474,10 @@ func (c *Component) deployToSingleEndpoint(
 		return nil, fmt.Errorf("sync failed: %w", err)
 	}
 
-	// Update version cache with post-sync state (including content checksum)
-	if result.PostSyncVersion > 0 && parsedConfig != nil {
-		c.versionCache.set(endpoint.URL, result.PostSyncVersion, parsedConfig, contentChecksum)
+	// Update version cache with post-sync state (including content checksum).
+	cachedParsed := pickCachedParsedConfig(result, parsedConfig)
+	if result.PostSyncVersion > 0 && cachedParsed != nil {
+		c.versionCache.set(endpoint.URL, result.PostSyncVersion, cachedParsed, contentChecksum)
 	}
 
 	c.logger.Debug("sync completed for endpoint",
@@ -487,6 +488,7 @@ func (c *Component) deployToSingleEndpoint(
 		"used_preparsed_config", parsedConfig != nil,
 		"cache_hit", cachedConfig != nil,
 		"post_sync_version", result.PostSyncVersion,
+		"cached_actual_post_sync", result.PostSyncParsedConfig != nil,
 		"duration", result.Duration)
 
 	return result, nil
