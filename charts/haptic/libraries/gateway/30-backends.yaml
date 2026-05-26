@@ -153,12 +153,8 @@ templateSnippets:
               if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                 var cm = resources.configmaps.GetSingle(tostring(routeNs), refName)
                 if cm != nil {
-                  // ConfigMap stays untyped (no ConfigMap schema bundled);
-                  // dig(cm,"data") returns the map[string]any from the
-                  // untyped store path.
-                  var dataMap = to_str_map(dig(cm, "data"))
-                  var caCrt, ok = dataMap["ca.crt"]
-                  if ok && caCrt != "" {
+                  var caCrt = cm.Data["ca.crt"]
+                  if caCrt != "" {
                     caBundleParts = append(caBundleParts, caCrt)
                   }
                 }
