@@ -209,13 +209,24 @@ templateSnippets:
       {%- end -%}
       {%- end macro -%}
 
+      {#- Per-Kind typed wrappers — same shape as the other Sharded* (c)
+          splits: keep `ShardedHostMap` as the polymorphic helper,
+          expose typed entry points so the call site is compile-time-
+          kind-checked. -#}
+      {%- macro ShardedHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
+      {{ ShardedHostMap(routes | toSlice(), "HTTPRoute") }}
+      {%- end macro -%}
+      {%- macro ShardedGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
+      {{ ShardedHostMap(routes | toSlice(), "GRPCRoute") }}
+      {%- end macro -%}
+
   map-host-500-gateway:
     template: |
       {#- Generate host map entries for Gateway API routes #}
-      {%- import "util-sharded-host-map-gateway" for ShardedHostMap %}
+      {%- import "util-sharded-host-map-gateway" for ShardedHTTPRouteHostMap, ShardedGRPCRouteHostMap %}
       # gateway/map-host-gateway
-      {{- ShardedHostMap(resources.httproutes.List() | toSlice(), "HTTPRoute") -}}
-      {{- ShardedHostMap(resources.grpcroutes.List() | toSlice(), "GRPCRoute") -}}
+      {{- ShardedHTTPRouteHostMap(resources.httproutes.List()) -}}
+      {{- ShardedGRPCRouteHostMap(resources.grpcroutes.List()) -}}
 
   map-host-regex-500-gateway:
     template: |

@@ -411,6 +411,19 @@ templateSnippets:
         {%- end -%}
       {% end %}
 
+      {#- Per-Kind typed wrappers around ShardedRouteStatusPatches.
+          Audit recommendation (c): keep the polymorphic helper, expose
+          typed entry points so callers don't need `| toSlice()` and
+          the call site is compile-time-kind-checked. `apiVersion` /
+          `kind` baked into each wrapper since they're constant per
+          Kind. -#}
+      {%- macro ShardedHTTPRouteStatusPatches(routes []*resources.httproutes.T) -%}
+      {{ ShardedRouteStatusPatches(routes | toSlice(), "gateway.networking.k8s.io/v1", "HTTPRoute") }}
+      {%- end macro -%}
+      {%- macro ShardedGRPCRouteStatusPatches(routes []*resources.grpcroutes.T) -%}
+      {{ ShardedRouteStatusPatches(routes | toSlice(), "gateway.networking.k8s.io/v1", "GRPCRoute") }}
+      {%- end macro -%}
+
   util-generate-tlsroute-status-patches:
     template: |
       {#-

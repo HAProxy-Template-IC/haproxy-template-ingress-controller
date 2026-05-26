@@ -391,17 +391,29 @@ templateSnippets:
       {%- end -%}
       {%- end macro -%}
 
+      {#- Per-Kind typed wrappers around ShardedGatewayBackends. Audit
+          recommendation (c) — keep the polymorphic `[]any` macro as
+          the internal helper, but expose per-Kind entry points so
+          call sites get compile-time type checking instead of a
+          silent `| toSlice()`. Each wrapper is a 1-line forward. -#}
+      {%- macro ShardedHTTPRouteBackends(routes []*resources.httproutes.T, protoFlag string, dedupCategory string) -%}
+      {{ ShardedGatewayBackends(routes | toSlice(), protoFlag, dedupCategory) }}
+      {%- end macro -%}
+      {%- macro ShardedGRPCRouteBackends(routes []*resources.grpcroutes.T, protoFlag string, dedupCategory string) -%}
+      {{ ShardedGatewayBackends(routes | toSlice(), protoFlag, dedupCategory) }}
+      {%- end macro -%}
+
   backends-500-gateway:
     template: |
       {#- Generate backend definitions from HTTPRoute and GRPCRoute resources -#}
-      {%- import "util-sharded-gateway-backends" for ShardedGatewayBackends -%}
+      {%- import "util-sharded-gateway-backends" for ShardedHTTPRouteBackends, ShardedGRPCRouteBackends -%}
       {#- Pre-cache gateway analysis during haproxy.cfg render (sequential).
           This ensures the cache is populated BEFORE map files render in parallel,
           preventing race conditions on the shared map. -#}
       {{- render "util-gateway-analysis" -}}
       # gateway/backends-gateway
-      {{ ShardedGatewayBackends(resources.httproutes.List() | toSlice(), "", "gatewayBackends_http") }}
-      {{- ShardedGatewayBackends(resources.grpcroutes.List() | toSlice(), "h2", "gatewayBackends_grpc") -}}
+      {{ ShardedHTTPRouteBackends(resources.httproutes.List(), "", "gatewayBackends_http") }}
+      {{- ShardedGRPCRouteBackends(resources.grpcroutes.List(), "h2", "gatewayBackends_grpc") -}}
 
   backends-501-gateway-invalid:
     template: |
