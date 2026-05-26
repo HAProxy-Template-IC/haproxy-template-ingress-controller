@@ -175,3 +175,102 @@ validationTests:
         description: |
           Pinned Gateway gets the existing per-IP Service from the
           static-addresses path, untouched by phase 3.
+
+
+  test-k8s-haproxy-service-gateway-listener-ports:
+    description: |
+      Gateway listeners on non-default ports must add corresponding `gw-<port>-<proto>`
+      port entries to the haproxy-service Service. Without these, kube-proxy
+      doesn't route LoadBalancer-IP traffic on those ports to the haproxy pod —
+      the upstream `HTTPRouteListenerPortMatching` conformance test failed in CI
+      precisely because port 80 worked (default Service port) but 8080/8090
+      timed out (no Service port → no kube-proxy DNAT).
+
+      Lives in the gateway library (not base) because the assertion fixtures
+      reference Gateway / GatewayClass watchedResources — those only exist
+      when the gateway library is loaded. base.yaml's `k8sResources.haproxy-service`
+      template is what produces the rendered Service; this test exercises the
+      cross-library interaction with gateway-supplied listener metadata.
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: multi-port-gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: l-80
+                port: 80
+                protocol: HTTP
+              - name: l-8080
+                port: 8080
+                protocol: HTTP
+              - name: l-8090
+                port: 8090
+                protocol: HTTP
+    extraContext:
+      haproxyService:
+        type: LoadBalancer
+        labels:
+          app.kubernetes.io/component: loadbalancer
+        selector:
+          app.kubernetes.io/component: loadbalancer
+        annotations: {}
+        loadBalancerIP: ""
+        loadBalancerClass: ""
+        loadBalancerSourceRanges: []
+        externalTrafficPolicy: ""
+        internalTrafficPolicy: ""
+        healthCheckNodePort: 0
+        publishNotReadyAddresses: false
+        ports:
+          - name: http
+            port: 80
+            targetPort: http
+            protocol: TCP
+          - name: https
+            port: 443
+            targetPort: https
+            protocol: TCP
+          - name: stats
+            port: 8404
+            targetPort: stats
+            protocol: TCP
+    assertions:
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: http\n"
+        description: Default http port (80) still emitted
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: gw-8080-h"
+        description: |
+          Gateway listener on port 8080 (HTTP) adds gw-8080-h port entry.
+          Without this kube-proxy can't DNAT LB-IP:8080 → haproxy-pod:8080
+          and the conformance suite's HTTPRouteListenerPortMatching test
+          fails with `context deadline exceeded`.
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "name: gw-8090-h"
+        description: Gateway listener on port 8090 (HTTP) adds gw-8090-h port entry
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"
+        description: gw-8080-h Service port maps to port 8080
+
+      - type: contains
+        target: "k8s:haproxy-service"
+        pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"
+        description: gw-8090-h Service port maps to port 8090

@@ -218,18 +218,20 @@ templateSnippets:
         {%- end %}
       {%- end %}
 
-  # Pod-port → listener-port map. base.yaml's `frontend-routing-logic`
-  # uses this to translate dst_port (the pod port HAProxy is bound on)
-  # back to the listener port that the chart's host.map and
-  # path-prefix.map keys are scoped by. Without it, a request landing
-  # on phase 4's per-Gateway bind (e.g. pod port 18002 for a Gateway
-  # listener port 8443) would look up `<host>:18002` and miss the
-  # `<host>:8443` map entry the chart emitted.
+  # Pod-port → listener-port map. The companion snippet
+  # `frontend-routing-listener-port-100-gateway` (below) plugs this map
+  # into base.yaml's listener-port translation extension point, so a
+  # request landing on phase 4's per-Gateway bind (e.g. pod port 18002
+  # for a Gateway listener port 8443) is translated back to the
+  # listener port that the chart's host.map and path-prefix.map keys
+  # are scoped by. Without this translation, the host lookup would
+  # try `<host>:18002` and miss the `<host>:8443` entry the chart
+  # emitted.
   #
-  # Schema: `<podPort> <listenerPort>` per line. The frontend's
-  # routing logic reads it via `map(...)`; entries absent from the
-  # map cause the lookup to fall through to `dst_port` itself, which
-  # is the right behaviour for chart-static binds.
+  # Schema: `<podPort> <listenerPort>` per line. The override snippet
+  # reads it via `map(...)`; entries absent from the map cause the
+  # lookup to fall through to base.yaml's default (`listener_port =
+  # dst_port`), which is the right behaviour for chart-static binds.
   features-170-pod-listener-port-map:
     template: |
       {{ render "util-gateway-pod-port-allocator" -}}
@@ -253,13 +255,15 @@ templateSnippets:
       {%- end %}
       {#- The DataPlane API rejects empty file uploads with 422
           "data in body is required" (cannot register a 0-byte body),
-          but base.yaml's frontend-routing-logic references this map
-          unconditionally — so we always need a registered file. Emit
-          a single comment line when there are no allocations: HAProxy
-          treats `# ...` as a comment, the map stays effectively empty,
-          and the `map(...) -m found` predicate falls through to the
-          dst_port-passes-through-unchanged branch on every lookup
-          (the right behaviour for chart-static binds). -#}
+          but the companion `frontend-routing-listener-port-100-gateway`
+          snippet below references this map unconditionally whenever
+          the gateway library is loaded — so we always need a
+          registered file. Emit a single comment line when there are
+          no allocations: HAProxy treats `# ...` as a comment, the map
+          stays effectively empty, and the `map(...) -m found`
+          predicate falls through to base.yaml's default
+          (`listener_port = dst_port`) on every lookup — the right
+          behaviour for chart-static binds. -#}
       {%- var content = "" %}
       {%- if len(lines) > 0 %}
         {%- content = (lines | toStringSlice() | join("\n")) + "\n" %}
@@ -270,3 +274,14 @@ templateSnippets:
       {%- if regErr != nil %}
         {{ fail("failed to register pod-listener-port.map: " + tostring(regErr)) }}
       {%- end %}
+
+  # base.yaml exposes a `frontend-routing-listener-port-*` extension
+  # point so it can stay resource-agnostic (Level 0): base sets
+  # `txn.listener_port = txn.dst_port` by default, and resource
+  # libraries that introduce a pod-port → listener-port mapping plug
+  # the translation in here. Without the gateway library, base's
+  # default holds and `pod-listener-port.map` is never referenced.
+  frontend-routing-listener-port-100-gateway:
+    template: |-
+      {%- var mapPath = func(name string) string { p, _ := pathResolver.GetPath(name, "map"); return p } -%}
+      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }

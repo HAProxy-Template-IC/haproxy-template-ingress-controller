@@ -195,3 +195,76 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?m)^\s+# gw-pod-port: default/gw-only:https:443 = 25000$'
         description: Custom base 25000 used as starting allocation.
+
+  test-gateway-listener-port-override-stands-alone:
+    description: |
+      Regression: base.yaml's `frontend-routing-listener-port-*` extension
+      point must place the gateway override's first directive on its own
+      line. The Scriggo `{{- … }}` form strips ALL adjacent whitespace
+      INCLUDING newlines (see `charts/CLAUDE.md` "Whitespace Control"),
+      which fuses the preceding comment with the rendered snippet's first
+      output line — HAProxy then parses the directive as part of the
+      comment and silently drops it. Symptom: `txn.listener_port` never
+      gets remapped from pod port (e.g. 18003) back to the user-facing
+      listener port (e.g. 443), and Gateway-API HTTPRoute RequestRedirect
+      filters emit Location headers with the pod port. Caught in
+      conformance shard 2/4 (HTTPRouteRedirectPortAndScheme).
+
+      This test asserts both:
+        - the override directive appears on a line by itself (not fused)
+        - no comment line ends with the directive (the fused form)
+    fixtures:
+      gatewayclasses:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GatewayClass
+          metadata:
+            name: haptic
+          spec:
+            controllerName: haproxy.org/haptic
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw
+            namespace: default
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: https-443
+                port: 443
+                protocol: HTTPS
+                tls:
+                  mode: Terminate
+                  certificateRefs:
+                    - name: tls-cert
+                      namespace: default
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            name: tls-cert
+            namespace: default
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy must parse the override directive (won't if fused into a comment)
+
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+http-request set-var\(txn\.listener_port\) var\(txn\.dst_port\),map\([^)]*pod-listener-port\.map\) if \{ var\(txn\.dst_port\),map\([^)]*pod-listener-port\.map\) -m found \}$'
+        description: |
+          The gateway override directive must appear at the start of its
+          own line (after optional indentation) and end the line. `(?m)^`
+          + `$` anchors verify both — neither holds when the directive is
+          fused into the trailing portion of a comment.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '#[^\n]*http-request set-var\(txn\.listener_port\)'
+        description: |
+          No `# … http-request set-var(txn.listener_port) …` line — the
+          fused-into-comment form that HAProxy silently parses as a
+          comment, dropping the directive.

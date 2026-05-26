@@ -133,24 +133,32 @@ templateSnippets:
       http-request set-var(txn.host_match) var(txn.host),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),regsub(^[^.]*,,),map({{ mapPath("host.map") }},'') if { var(txn.host_match) -m len 0 }
       http-request set-var(txn.host_match) var(txn.host),map_reg({{ mapPath("host-regex.map") }},'') if { var(txn.host_match) -m len 0 }
-      # Per-Gateway pod-port translation: phase 4's per-Gateway HTTPS
-      # binds listen on allocated pod ports (e.g. 18002) but the chart
-      # emits host/path map entries and redirect-filter port logic
-      # keyed by the original listener port (e.g. 8443). The
-      # pod-listener-port.map (populated by `features-170-pod-listener-
-      # port-map` from phase 1's allocator) maps pod port → listener
-      # port for each per-Gateway allocation. We translate
-      # unconditionally and stash the result in `txn.listener_port`
-      # so every downstream consumer (host.map fallback below,
-      # frontend-filters-500-gateway-redirect, any future port-aware
-      # logic) sees the correct user-facing listener port regardless
-      # of which bind the connection physically landed on. dst_port
-      # passes through unchanged for chart-static / non-allocated
-      # binds (the map lookup falls back to dst_port when the entry
-      # is absent).
+      # Listener-port translation:
+      # txn.listener_port is the user-facing listener port the request
+      # arrived on, used by host.map fallback below and by any
+      # port-aware filter (e.g. redirect-port logic). For chart-static
+      # binds this equals dst_port; that is the default below.
+      #
+      # Resource libraries that introduce a pod-port → listener-port
+      # mapping (e.g. Gateway API's per-Gateway HTTPS binds, which
+      # listen on allocated pod ports like 18002 while the chart's
+      # host/path map entries are keyed by the original listener port
+      # like 8443) plug a translation into the
+      # `frontend-routing-listener-port-*` extension point. Without
+      # such a library, no map files are referenced and dst_port
+      # passes through unchanged. base.yaml itself never names any
+      # resource-library map.
       http-request set-var(txn.dst_port) dst_port
-      http-request set-var(txn.listener_port) var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) if { var(txn.dst_port),map({{ mapPath("pod-listener-port.map") }}) -m found }
-      http-request set-var(txn.listener_port) var(txn.dst_port) if !{ var(txn.listener_port) -m found }
+      http-request set-var(txn.listener_port) var(txn.dst_port)
+      {#- Extension point: resource libraries may override txn.listener_port
+          based on bind metadata (e.g. pod-port → user-facing-port maps).
+          render_glob output is emitted on a fresh line — the leading
+          newline below is load-bearing because the comment + render_glob
+          form would otherwise fuse with the next snippet's first line.
+          See `charts/CLAUDE.md` "Whitespace Control" for the
+          `{{- … -}}` trim-across-line-boundaries semantics. -#}
+
+      {{ render_glob "frontend-routing-listener-port-*" }}
       # Per-listener-port fallback: when no hostname-based lookup
       # matched, isolate routes by the inbound listener port.
       # Resource libraries that emit listeners on non-default ports
@@ -1463,98 +1471,6 @@ validationTests:
         target: "k8s:haproxy-service"
         pattern: "name: http\n"
         description: Default http port still emitted alongside the extras
-
-  test-k8s-haproxy-service-gateway-listener-ports:
-    description: |
-      Gateway listeners on non-default ports must add corresponding `gw-<port>-<proto>`
-      port entries to the haproxy-service Service. Without these, kube-proxy
-      doesn't route LoadBalancer-IP traffic on those ports to the haproxy pod —
-      the upstream `HTTPRouteListenerPortMatching` conformance test failed in CI
-      precisely because port 80 worked (default Service port) but 8080/8090
-      timed out (no Service port → no kube-proxy DNAT).
-    fixtures:
-      gatewayclasses:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: GatewayClass
-          metadata:
-            name: haptic
-          spec:
-            controllerName: haproxy.org/haptic
-      gateways:
-        - apiVersion: gateway.networking.k8s.io/v1
-          kind: Gateway
-          metadata:
-            name: multi-port-gw
-            namespace: default
-          spec:
-            gatewayClassName: haptic
-            listeners:
-              - name: l-80
-                port: 80
-                protocol: HTTP
-              - name: l-8080
-                port: 8080
-                protocol: HTTP
-              - name: l-8090
-                port: 8090
-                protocol: HTTP
-    extraContext:
-      haproxyService:
-        type: LoadBalancer
-        labels:
-          app.kubernetes.io/component: loadbalancer
-        selector:
-          app.kubernetes.io/component: loadbalancer
-        annotations: {}
-        loadBalancerIP: ""
-        loadBalancerClass: ""
-        loadBalancerSourceRanges: []
-        externalTrafficPolicy: ""
-        internalTrafficPolicy: ""
-        healthCheckNodePort: 0
-        publishNotReadyAddresses: false
-        ports:
-          - name: http
-            port: 80
-            targetPort: http
-            protocol: TCP
-          - name: https
-            port: 443
-            targetPort: https
-            protocol: TCP
-          - name: stats
-            port: 8404
-            targetPort: stats
-            protocol: TCP
-    assertions:
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: http\n"
-        description: Default http port (80) still emitted
-
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: gw-8080-h"
-        description: |
-          Gateway listener on port 8080 (HTTP) adds gw-8080-h port entry.
-          Without this kube-proxy can't DNAT LB-IP:8080 → haproxy-pod:8080
-          and the conformance suite's HTTPRouteListenerPortMatching test
-          fails with `context deadline exceeded`.
-
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "name: gw-8090-h"
-        description: Gateway listener on port 8090 (HTTP) adds gw-8090-h port entry
-
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"
-        description: gw-8080-h Service port maps to port 8080
-
-      - type: contains
-        target: "k8s:haproxy-service"
-        pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"
-        description: gw-8090-h Service port maps to port 8090
 
   test-address-discovery:
     description: Address discovery reads LoadBalancer status from controller service
