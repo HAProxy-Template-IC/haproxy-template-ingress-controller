@@ -783,28 +783,12 @@ templateSnippets:
           }
         }
       %%}
-      {#- HTTPS-Passthrough path: sslPassthroughBackends carries an
-          entry per listener that wants TLS-passthrough. The ssl-tcp
-          frontend binds httpsPort and routes by SNI; we treat any
-          passthrough backend as evidence we need the chart-static
-          httpsPort bind on that frontend (and the corresponding
-          loopback-fed https frontend on the unix socket). The
-          frontends-500-ssl-tcp snippet itself gates further on
-          len(passthroughBackends) > 0, so this lights up both
-          flags consistently with that gate.
-
-          Note: TLS-Passthrough alone does NOT set
-          `needHTTPSTermination` — a port that hosts only TLS
-          listeners and no HTTPS terminating listeners must reject
-          SNIs that no route claims (closes the upstream
-          `TLSRouteHostnameIntersection` "should not reach backend",
-          `TLSRouteInvalidBackendRefNonexistent`, and
-          `TLSRouteInvalidBackendRefUnknownKind` conformance subtests
-          where the test expects a TCP RST, not the 404 the chart
-          would otherwise serve via the ssl-loopback fall-through). -#}
-      {%%
-        if len(gf["sslPassthroughBackends"].([]any)) > 0 {
-          gf["bindHTTPSDefault"] = true
-          gf["needHTTPSFrontend"] = true
-        }
-      %%}
+      {#- HTTPS-Passthrough bind decisions moved to ssl.yaml's
+          `features-140-ssl-passthrough-binds`: `sslPassthroughBackends`
+          is cross-library shared state owned by ssl.yaml (any of
+          gateway, haproxy-ingress, nginx-ingress can populate it),
+          so the consequent bind-decision lives next to the consumer
+          (frontends-500-ssl-tcp) rather than in this Level-2 library.
+          Without that move, an ingress-only chart with annotation-driven
+          ssl-passthrough never saw `bindHTTPSDefault` lit, and the
+          TCP frontend silently failed to bind. -#}

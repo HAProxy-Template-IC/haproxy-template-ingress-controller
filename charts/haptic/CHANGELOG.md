@@ -9,6 +9,13 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `base.yaml` no longer references gateway-library state, restoring Level-0 architecture. Two violations had crept in:
+  - **`pod-listener-port.map`**: base.yaml's `util-routing-prefix` unconditionally referenced this map in the frontend routing logic, but the registrar (`features-170-pod-listener-port-map`) lives in the gateway library (only loaded when `gateway.networking.k8s.io/v1/GatewayClass` is present on the cluster). On a cluster without Gateway API CRDs, render failed at the auxiliary-set check ("rendered config references map files missing from the desired auxiliary set: pod-listener-port.map"). base.yaml now sets `txn.listener_port = txn.dst_port` by default and exposes a `frontend-routing-listener-port-*` extension point; gateway's new `frontend-routing-listener-port-100-gateway` snippet plugs in the pod-port → user-facing-port translation when the library is loaded. No map files are referenced when gateway is off.
+  - **`bindHTTPSDefault` from `sslPassthroughBackends`**: `gateway/10-features.yaml` carried the cross-library propagation (any registered passthrough backend → bind on httpsPort), even though `sslPassthroughBackends` is shared state owned by ssl.yaml and populated by ingress libraries too (haproxy-ingress, nginx-ingress). Without gateway loaded, an annotation-driven `haproxy-ingress.github.io/ssl-passthrough: "true"` Ingress would register the passthrough backend but `bindHTTPSDefault` never lit, so `frontend ssl-tcp` silently didn't bind. The bind decision moved to ssl.yaml's new `features-140-ssl-passthrough-binds` (Level 1, next to the `sslPassthroughBackends` state and the `frontend ssl-tcp` consumer). Behaviour with gateway loaded is unchanged.
+- Moved `test-k8s-haproxy-service-gateway-listener-ports` from `base.yaml` to `gateway/tests/17-per-gateway-services.yaml`. The test references `gateways` / `gatewayclasses` fixtures which only exist when the gateway library is loaded; living in base meant it ran (and failed at "resource type not found in watched resources") against any non-gateway render.
+
 ### Added
 
 - ClusterRole now grants `apiextensions.k8s.io/customresourcedefinitions get/list/watch` so the controller's typebootstrap (which materialises typed top-level globals from each watched resource's OpenAPI schema) can resolve schemas via the CRD path. The OpenAPI v3 endpoint fallback works without this permission, but the CRD path gives higher-fidelity schemas (preserves x-kubernetes-preserve-unknown-fields subtrees); both are tried at controller boot. RBAC narrowed to read-only verbs only.

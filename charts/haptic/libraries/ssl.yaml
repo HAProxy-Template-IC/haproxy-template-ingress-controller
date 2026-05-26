@@ -182,6 +182,50 @@ templateSnippets:
         {%- gf["needHTTPSFrontend"] = false -%}
       {%- end -%}
 
+  features-140-ssl-passthrough-binds:
+    template: |
+      {#-
+        SSL Passthrough Bind Decision
+
+        Runs at priority 140 — after features-100-* (resource libraries
+        register their passthrough backends via the
+        `sslPassthroughBackends` shared list ssl.yaml owns) and before
+        features-150-ssl-crtlist.
+
+        sslPassthroughBackends carries an entry per listener that wants
+        TLS-passthrough. frontends-500-ssl-tcp (in ssl.yaml) binds
+        `*:httpsPort` and routes by SNI; we treat any passthrough backend
+        as evidence we need the chart-static httpsPort bind on that
+        frontend (and the corresponding loopback-fed `https` frontend on
+        the unix socket). frontends-500-ssl-tcp itself gates further on
+        `len(passthroughBackends) > 0`, so this lights up both flags
+        consistently with that gate.
+
+        Lives here (Level 1) rather than in gateway/haproxy-ingress/
+        nginx-ingress (Level 2 / Level 3) because `sslPassthroughBackends`
+        is ssl.yaml's shared state and the consumer (ssl-tcp frontend)
+        is ssl.yaml's too — the bind decision belongs next to both. A
+        chart with annotation-driven ssl-passthrough but no Gateway API
+        previously saw `bindHTTPSDefault` stay false and the ssl-tcp
+        frontend silently skipped.
+
+        Note: TLS-Passthrough alone does NOT set `needHTTPSTermination` —
+        a port that hosts only TLS listeners and no HTTPS terminating
+        listeners must reject SNIs that no route claims (closes the
+        upstream `TLSRouteHostnameIntersection` "should not reach
+        backend", `TLSRouteInvalidBackendRefNonexistent`, and
+        `TLSRouteInvalidBackendRefUnknownKind` conformance subtests
+        where the test expects a TCP RST, not the 404 the chart would
+        otherwise serve via the ssl-loopback fall-through).
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%%
+        if len(gf["sslPassthroughBackends"].([]any)) > 0 {
+          gf["bindHTTPSDefault"] = true
+          gf["needHTTPSFrontend"] = true
+        }
+      %%}
+
   features-150-ssl-crtlist:
     template: |
       {%- import "util-crtlist-line" for CrtListLine -%}
