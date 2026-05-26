@@ -74,19 +74,19 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- for _, ingress := range resources.ingresses.List() %}
         {%%
-          var tlsList = ingress | dig("spec", "tls")
-          if tlsList == nil {
+          var tlsList = ingress.Spec.Tls
+          if len(tlsList) == 0 {
             continue
           }
         %%}
         {%- for _, tls := range tlsList %}
           {%%
-            var secretName = tls | dig("secretName")
-            if secretName == nil {
+            var secretName = tls.SecretName
+            if secretName == "" {
               continue
             }
             // Unique key for this secret (namespace + name)
-            var namespace = ingress | dig("metadata", "namespace") | fallback("")
+            var namespace = ingress.Metadata.Namespace
             if !first_seen("ingress_tls", namespace, secretName) {
               continue
             }
@@ -130,7 +130,7 @@ templateSnippets:
                   polymorphic tlsCertificates slice) don't trip on
                   the typed-slice shape. No `| fallback([]any{})` —
                   scriggoToSlice already returns []any{} for nil input. -#}
-              "sni_patterns": tls | dig("hosts") | toSlice(),
+              "sni_patterns": tls.Hosts | toSlice(),
               "sanitized_filename": sanitizedFilename,
             }
             gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)
@@ -173,8 +173,8 @@ templateSnippets:
     template: |
       {#- Generates backend name: <ns>_<ingress>_svc_<svc>_<port-name> (matches production format) -#}
       {% macro BackendNameIngress(ingress *resources.ingresses.T, path any) string %}{%%
-        var namespace = tostring(ingress | dig("metadata", "namespace") | fallback(""))
-        var name = tostring(ingress | dig("metadata", "name") | fallback(""))
+        var namespace = ingress.Metadata.Namespace
+        var name = ingress.Metadata.Name
         var serviceName = tostring(path | dig("backend", "service", "name") | fallback(""))
         var portName = tostring(path | dig("backend", "service", "port", "name") | fallback(""))
         var portNumber = path | dig("backend", "service", "port", "number") | fallback(0)
@@ -209,49 +209,38 @@ templateSnippets:
 
       {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
         {%- for _, ingress := range ingresses -%}
-          {%- var rules = ingress | dig("spec", "rules") | fallback([]any{}) -%}
           {%- var matchCount = 0 -%}
           {#- Count matching paths -#}
-          {%- for _, rule := range rules -%}
-            {%- var http = rule | dig("http") -%}
-            {%- if http != nil -%}
-              {%- for _, path := range http | dig("paths") | fallback([]any{}) -%}
-                {%- var pathValue = path | dig("path") -%}
-                {%- if pathValue != nil -%}
-                  {%- var pathType = path | dig("pathType") | fallback("") -%}
-                  {%- for _, checkType := range pathTypes -%}
-                    {%- if pathType == checkType -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
-                  {%- end -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- if path.Path != "" -%}
+                {%- for _, checkType := range pathTypes -%}
+                  {%- if path.PathType == checkType -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
           {%- if matchCount > 0 -%}
-      {{ "\n" }}# Ingress: {{ ingress | dig("metadata", "namespace") | fallback("") }}/{{ ingress | dig("metadata", "name") | fallback("") }} ({{ matchCount }} paths)
-            {%- for _, rule := range rules -%}
-              {%- var http = rule | dig("http") -%}
-              {%- if http != nil -%}
-                {%- for _, path := range http | dig("paths") | fallback([]any{}) -%}
-                  {%- var pathValue = path | dig("path") -%}
-                  {%- if pathValue != nil -%}
-                    {%- var pathType = path | dig("pathType") | fallback("") -%}
-                    {%- for _, checkType := range pathTypes -%}
-                      {%- if pathType == checkType -%}
-                        {%- var pathStr = pathValue | tostring() -%}
-                        {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
-                        {%- var actualSuffix = suffix -%}
-                        {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
-                        {#- For pfxexact (Prefix-boundary check, suffix=""), strip the
-                           trailing slash so /foo/ Prefix's boundary entry is /foo
-                           and request /foo hits it. For Exact (also suffix=""),
-                           DO NOT strip — K8s spec says Exact is character-wise
-                           exact, so /foo/ must NOT match request /foo (upstream
-                           conformance scenario: "An Ingress with a trailing
-                           slashes in an exact path rule should not match
-                           requests without a trailing slash"). -#}
-                        {%- if pathType != "Exact" && suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
-      {{ "\n" }}{{ MapKeyForHost(rule | dig("host")) }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
-                      {%- end -%}
+      {{ "\n" }}# Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ matchCount }} paths)
+            {%- for _, rule := range ingress.Spec.Rules -%}
+              {%- for _, path := range rule.Http.Paths -%}
+                {%- if path.Path != "" -%}
+                  {%- for _, checkType := range pathTypes -%}
+                    {%- if path.PathType == checkType -%}
+                      {%- var pathStr = path.Path -%}
+                      {%- if suffix == "" && pathStr == "/" -%}{%- continue -%}{%- end -%}
+                      {%- var actualSuffix = suffix -%}
+                      {%- if suffix == "/" && hasSuffix(pathStr, "/") -%}{%- actualSuffix = "" -%}{%- end -%}
+                      {#- For pfxexact (Prefix-boundary check, suffix=""), strip the
+                         trailing slash so /foo/ Prefix's boundary entry is /foo
+                         and request /foo hits it. For Exact (also suffix=""),
+                         DO NOT strip — K8s spec says Exact is character-wise
+                         exact, so /foo/ must NOT match request /foo (upstream
+                         conformance scenario: "An Ingress with a trailing
+                         slashes in an exact path rule should not match
+                         requests without a trailing slash"). -#}
+                      {%- if path.PathType != "Exact" && suffix == "" && len(pathStr) > 1 && hasSuffix(pathStr, "/") -%}{%- pathStr = pathStr[:len(pathStr)-1] -%}{%- end -%}
+      {{ "\n" }}{{ MapKeyForHost(rule.Host) }}{{ pathStr }}{{ actualSuffix }} BACKEND:{{ BackendNameIngress(ingress, path) }}
                     {%- end -%}
                   {%- end -%}
                 {%- end -%}
@@ -303,14 +292,13 @@ templateSnippets:
       {%- import "util-service-port-resolution" for ResolveServicePort -%}
       {% macro GenerateIngressBackends(ingresses []*resources.ingresses.T) string %}
         {%- for _, ingress := range ingresses -%}
-          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") -%}
-          {%- var name = ingress | dig("metadata", "name") | fallback("") -%}
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) -%}
-            {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) -%}
-              {%- var svc = path | dig("backend", "service") -%}
-              {%- if svc != nil -%}
-                {%- var svcName = svc | dig("name") | fallback("") -%}
-                {%- var resolvedParts = split(ResolveServicePort(tostring(ns), tostring(svcName), svc | dig("port")), " ") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- for _, path := range rule.Http.Paths -%}
+              {%- var svcName = path.Backend.Service.Name -%}
+              {%- if svcName != "" -%}
+                {%- var resolvedParts = split(ResolveServicePort(ns, svcName, path.Backend.Service.Port), " ") -%}
                 {%- var port = toint(resolvedParts[0]) -%}
                 {%- var portName = resolvedParts[1] -%}
                 {%- var portId = portName -%}
@@ -323,7 +311,7 @@ templateSnippets:
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
         default-server check{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(tostring(svcName), 0, port, nil, portName, backendKey, tostring(ns)) | indent(2, true) }}
+        {{ BackendServers(svcName, 0, port, nil, portName, backendKey, ns) | indent(2, true) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -334,27 +322,23 @@ templateSnippets:
              service+port as a rule backend doesn't produce a duplicate
              `backend` stanza. The synthesized path lets BackendNameIngress
              produce a stable, ingress-scoped backend name. -#}
-          {%- var defaultBackend = ingress | dig("spec", "defaultBackend") -%}
-          {%- if defaultBackend != nil -%}
-            {%- var dbSvc = defaultBackend | dig("service") -%}
-            {%- if dbSvc != nil -%}
-              {%- var path = map[string]any{"backend": defaultBackend} -%}
-              {%- var svcName = dbSvc | dig("name") | fallback("") -%}
-              {%- var resolvedParts = split(ResolveServicePort(tostring(ns), tostring(svcName), dbSvc | dig("port")), " ") -%}
-              {%- var port = toint(resolvedParts[0]) -%}
-              {%- var portName = resolvedParts[1] -%}
-              {%- var portId = portName -%}
-              {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
-              {%- if first_seen("ingress_backend", ns, name, svcName, portId) -%}
-      # Default backend for: Ingress {{ ns }}/{{ name }} → Service {{ svcName }}:{{ port }}
-                {%- var backendKey = BackendNameIngress(ingress, path) %}
+          {%- var dbSvcName = ingress.Spec.DefaultBackend.Service.Name -%}
+          {%- if dbSvcName != "" -%}
+            {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} -%}
+            {%- var resolvedParts = split(ResolveServicePort(ns, dbSvcName, ingress.Spec.DefaultBackend.Service.Port), " ") -%}
+            {%- var port = toint(resolvedParts[0]) -%}
+            {%- var portName = resolvedParts[1] -%}
+            {%- var portId = portName -%}
+            {%- if portId == "" -%}{%- portId = tostring(port) -%}{%- end -%}
+            {%- if first_seen("ingress_backend", ns, name, dbSvcName, portId) -%}
+      # Default backend for: Ingress {{ ns }}/{{ name }} → Service {{ dbSvcName }}:{{ port }}
+              {%- var backendKey = BackendNameIngress(ingress, path) %}
       backend {{ backendKey }}
           guid {{ make_guid("be", backendKey) }}
-                {%- var serverOpts = map[string]any{"flags": []any{}} -%}
-                {{- render_glob "backend-directives-*" inherit_context }}
+              {%- var serverOpts = map[string]any{"flags": []any{}} -%}
+              {{- render_glob "backend-directives-*" inherit_context }}
         default-server check{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(tostring(svcName), 0, port, nil, portName, backendKey, tostring(ns)) | indent(2, true) }}
-              {%- end -%}
+        {{ BackendServers(dbSvcName, 0, port, nil, portName, backendKey, ns) | indent(2, true) }}
             {%- end -%}
           {%- end -%}
         {%- end %}
