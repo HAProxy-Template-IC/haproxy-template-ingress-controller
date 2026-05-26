@@ -150,7 +150,7 @@ templateSnippets:
         or the ingress has no hosts.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
-      {%- macro EmitAnnotationHSTS(ingress any, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string, commentLabel string) %}
+      {%- macro EmitAnnotationHSTS(ingress *resources.ingresses.T, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string, commentLabel string) %}
         {%- var enabled = ingress | dig_string("", "metadata", "annotations", enabledAnn) %}
         {%- if enabled == "true" %}
           {%- var hosts = []any{} %}
@@ -201,7 +201,7 @@ templateSnippets:
         in haproxytech.yaml directly — does NOT use this macro.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
-      {%- macro EmitAnnotationCORS(ingress any, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
+      {%- macro EmitAnnotationCORS(ingress *resources.ingresses.T, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
         {%- var corsEnabled = ingress | dig_string("", "metadata", "annotations", enabledAnn) %}
         {%- if corsEnabled == "true" %}
           {%- var hosts = []any{} %}
@@ -248,7 +248,7 @@ templateSnippets:
         and 308 based on `force-ssl-redirect`.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
-      {%- macro EmitAnnotationSSLRedirect(ingress any, code string, commentLabel string) %}
+      {%- macro EmitAnnotationSSLRedirect(ingress *resources.ingresses.T, code string, commentLabel string) %}
         {%- var hosts = []any{} %}
         {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
           {%- var h = rule | dig("host") %}
@@ -278,7 +278,7 @@ templateSnippets:
         No-op when the ingress has no hosts or neither annotation is set.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
-      {%- macro EmitAnnotationAccessControl(ingress any, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
+      {%- macro EmitAnnotationAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
         {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
         {%- var name = ingress | dig_string("", "metadata", "name") %}
         {%- var key = ns + "/" + name %}
