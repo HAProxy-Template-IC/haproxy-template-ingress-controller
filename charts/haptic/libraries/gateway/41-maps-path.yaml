@@ -143,13 +143,17 @@ templateSnippets:
       {#- Sharded regex path map generator for HTTPRoute -#}
       {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {%- macro ShardedPathRegexMap(routes []any) -%}
+      {#- ShardedPathRegexMap is single-Kind (HTTPRoute only — GRPCRoute
+          has no path-regex matchType). Per audit (c), type the
+          parameter directly since there's no polymorphism to factor
+          out into wrappers. -#}
+      {%- macro ShardedPathRegexMap(routes []*resources.httproutes.T) -%}
       {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
       {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GeneratePathRegexMap(routes) }}
+      {{ GeneratePathRegexMap(routes | toSlice()) }}
       {%- else -%}
       {%- for i := 0; i < n; i++ -%}
-      {{ go GeneratePathRegexMap(shard_slice(routes, i, n)) }}
+      {{ go GeneratePathRegexMap(shard_slice(routes, i, n) | toSlice()) }}
       {%- end -%}
       {%- end -%}
       {%- end macro -%}
@@ -180,4 +184,4 @@ templateSnippets:
       {#- Generate regex path map entries for HTTPRoute with RegularExpression type -#}
       {%- import "util-sharded-path-regex-map-gateway" for ShardedPathRegexMap %}
       # gateway/map-path-regex-gateway
-      {{ ShardedPathRegexMap(resources.httproutes.List() | toSlice()) }}
+      {{ ShardedPathRegexMap(resources.httproutes.List()) }}

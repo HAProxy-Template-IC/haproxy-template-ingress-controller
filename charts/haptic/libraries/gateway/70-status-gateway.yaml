@@ -1534,7 +1534,7 @@ templateSnippets:
           - features-075-address-discovery (provides gf["addresses"])
       -#}
       {%- import "util-sharded-gateway-status-patches" for ShardedGatewayStatusPatches -%}
-      {%- import "util-sharded-route-status-patches" for ShardedRouteStatusPatches -%}
+      {%- import "util-sharded-route-status-patches" for ShardedHTTPRouteStatusPatches, ShardedGRPCRouteStatusPatches -%}
       {%- import "util-sharded-tlsroute-status-patches" for ShardedTLSRouteStatusPatches -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- if gf["addresses"] != nil %}
@@ -1543,18 +1543,18 @@ templateSnippets:
           {{- ShardedGatewayStatusPatches(allGateways) -}}
         {%- end -%}
       {%- end %}
-      {#- ShardedRouteStatusPatches is polymorphic over route Kinds
-          (HTTPRoute, GRPCRoute) so its parameter stays []any.
-          Callers explicitly drop the typed-slice shape via toSlice()
-          here — the alternative would be splitting the macro per
-          Kind, which doesn't carry its weight for two callers. -#}
-      {%- var allHTTPRoutes = resources.httproutes.List() | toSlice() -%}
+      {#- Per-Kind typed wrappers (Sharded{HTTPRoute,GRPCRoute,TLSRoute}
+          StatusPatches) — the internal `ShardedRouteStatusPatches`
+          helper stays polymorphic over `[]any` but call sites now pass
+          typed slices directly, so the compiler catches a route-Kind
+          mismatch at the call site instead of a runtime drop. -#}
+      {%- var allHTTPRoutes = resources.httproutes.List() -%}
       {%- if len(allHTTPRoutes) > 0 -%}
-        {{- ShardedRouteStatusPatches(allHTTPRoutes, "gateway.networking.k8s.io/v1", "HTTPRoute") -}}
+        {{- ShardedHTTPRouteStatusPatches(allHTTPRoutes) -}}
       {%- end -%}
-      {%- var allGRPCRoutes = resources.grpcroutes.List() | toSlice() -%}
+      {%- var allGRPCRoutes = resources.grpcroutes.List() -%}
       {%- if len(allGRPCRoutes) > 0 -%}
-        {{- ShardedRouteStatusPatches(allGRPCRoutes, "gateway.networking.k8s.io/v1", "GRPCRoute") -}}
+        {{- ShardedGRPCRouteStatusPatches(allGRPCRoutes) -}}
       {%- end -%}
       {%- var allTLSRoutes = resources.tlsroutes.List() -%}
       {%- if len(allTLSRoutes) > 0 -%}

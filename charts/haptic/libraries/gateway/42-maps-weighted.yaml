@@ -58,6 +58,15 @@ templateSnippets:
       {%- end -%}
       {%- end macro -%}
 
+      {#- Per-Kind typed wrappers — (c) split. Polymorphic helper stays,
+          callers use kind-typed entry points. -#}
+      {%- macro ShardedHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
+      {{ ShardedWeightedBackendMap(routes | toSlice()) }}
+      {%- end macro -%}
+      {%- macro ShardedGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
+      {{ ShardedWeightedBackendMap(routes | toSlice()) }}
+      {%- end macro -%}
+
   map-weighted-backend-500-gateway:
     template: |
       {#- Generate weighted backend map entries for HTTPRoute and
@@ -72,10 +81,10 @@ templateSnippets:
           MULTIBACKEND lookup at runtime returned an empty
           backend_name and the request fell through to
           default_backend (404). -#}
-      {%- import "util-sharded-weighted-backend-map-gateway" for ShardedWeightedBackendMap %}
+      {%- import "util-sharded-weighted-backend-map-gateway" for ShardedHTTPRouteWeightedBackendMap, ShardedGRPCRouteWeightedBackendMap %}
       # gateway/map-weighted-backend-gateway
-      {{ ShardedWeightedBackendMap(resources.httproutes.List() | toSlice()) }}
-      {{ ShardedWeightedBackendMap(resources.grpcroutes.List() | toSlice()) }}
+      {{ ShardedHTTPRouteWeightedBackendMap(resources.httproutes.List()) }}
+      {{ ShardedGRPCRouteWeightedBackendMap(resources.grpcroutes.List()) }}
 
   # Frontend-extra: HTTPS misdirected-request detection (Gateway API
   # SupportGatewayHTTPSListenerDetectMisdirectedRequests).
