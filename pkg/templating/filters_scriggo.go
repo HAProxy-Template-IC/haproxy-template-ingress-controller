@@ -147,6 +147,7 @@ func registerScriggoCustomFunctions(decl native.Declarations) {
 	decl[FuncSanitizeRegex] = scriggoSanitizeRegex
 	decl[FuncTitle] = scriggoTitle
 	decl[FuncDig] = scriggoDig
+	decl[FuncDigString] = scriggoDigString
 	decl[FuncIsNil] = scriggoIsNil
 	decl[FuncToStringSlice] = scriggoToStringSlice
 	decl[FuncJoin] = scriggoJoin

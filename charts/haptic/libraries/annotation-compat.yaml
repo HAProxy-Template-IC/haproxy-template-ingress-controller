@@ -60,10 +60,10 @@ templateSnippets:
       {%- import "util-service-port-resolution" for ResolveServicePort %}
       {%- macro BuildAnnotationSSLPassthrough(sslData map[string]any, annotationKey string, namePrefix string, firstSeenKey string) %}
         {%- for _, ingress := range resources.ingresses.List() %}
-          {%- var passthrough = ingress | dig("metadata", "annotations", annotationKey) | fallback("") | tostring() %}
+          {%- var passthrough = ingress | dig_string("", "metadata", "annotations", annotationKey) %}
           {%- if passthrough == "true" %}
-            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
+            {%- var name = ingress | dig_string("", "metadata", "name") %}
             {#- Find the first usable path's service to pair with each
                 host. The same service is used for every host on this
                 ingress (matches the prior consumer's "first path wins"
@@ -75,7 +75,7 @@ templateSnippets:
               {%- if svcName == "" %}
                 {%- for _, path := range rule | dig("http", "paths") | fallback([]any{}) %}
                   {%- if svcName == "" %}
-                    {%- var n = path | dig("backend", "service", "name") | fallback("") | tostring() %}
+                    {%- var n = path | dig_string("", "backend", "service", "name") %}
                     {%- if n != "" %}
                       {%- var resolvedParts = split(ResolveServicePort(tostring(ns), n, path | dig("backend", "service", "port")), " ") %}
                       {%- svcName = n %}
@@ -151,7 +151,7 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationHSTS(ingress any, enabledAnn string, maxAgeAnn string, subdomainsAnn string, preloadAnn string, defaultMaxAge string, commentLabel string) %}
-        {%- var enabled = ingress | dig("metadata", "annotations", enabledAnn) | fallback("") | tostring() %}
+        {%- var enabled = ingress | dig_string("", "metadata", "annotations", enabledAnn) %}
         {%- if enabled == "true" %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
@@ -159,12 +159,12 @@ templateSnippets:
             {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
-            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
+            {%- var name = ingress | dig_string("", "metadata", "name") %}
             {%- var key = ns + "/" + name %}
-            {%- var maxAge = ingress | dig("metadata", "annotations", maxAgeAnn) | fallback(defaultMaxAge) | tostring() %}
-            {%- var includeSubdomains = ingress | dig("metadata", "annotations", subdomainsAnn) | fallback("") | tostring() %}
-            {%- var preload = ingress | dig("metadata", "annotations", preloadAnn) | fallback("") | tostring() %}
+            {%- var maxAge = ingress | dig_string(defaultMaxAge, "metadata", "annotations", maxAgeAnn) %}
+            {%- var includeSubdomains = ingress | dig_string("", "metadata", "annotations", subdomainsAnn) %}
+            {%- var preload = ingress | dig_string("", "metadata", "annotations", preloadAnn) %}
             {%- var hstsValue = "max-age=" + maxAge %}
             {%- if includeSubdomains == "true" %}{%- hstsValue = hstsValue + "; includeSubDomains" %}{%- end %}
             {%- if preload == "true" %}{%- hstsValue = hstsValue + "; preload" %}{%- end %}
@@ -202,7 +202,7 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationCORS(ingress any, prefix string, enabledAnn string, defaultMaxAge string, commentLabel string) %}
-        {%- var corsEnabled = ingress | dig("metadata", "annotations", enabledAnn) | fallback("") | tostring() %}
+        {%- var corsEnabled = ingress | dig_string("", "metadata", "annotations", enabledAnn) %}
         {%- if corsEnabled == "true" %}
           {%- var hosts = []any{} %}
           {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
@@ -210,15 +210,15 @@ templateSnippets:
             {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
-            {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-            {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+            {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
+            {%- var name = ingress | dig_string("", "metadata", "name") %}
             {%- var key = ns + "/" + name %}
-            {%- var origin = ingress | dig("metadata", "annotations", prefix + "/cors-allow-origin") | fallback("*") | tostring() %}
-            {%- var methods = ingress | dig("metadata", "annotations", prefix + "/cors-allow-methods") | fallback("GET, PUT, POST, DELETE, PATCH, OPTIONS") | tostring() %}
-            {%- var headers = ingress | dig("metadata", "annotations", prefix + "/cors-allow-headers") | fallback("DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization") | tostring() %}
-            {%- var credentials = ingress | dig("metadata", "annotations", prefix + "/cors-allow-credentials") | fallback("") | tostring() %}
-            {%- var exposeHeaders = ingress | dig("metadata", "annotations", prefix + "/cors-expose-headers") | fallback("") | tostring() %}
-            {%- var maxAge = ingress | dig("metadata", "annotations", prefix + "/cors-max-age") | fallback(defaultMaxAge) | tostring() %}
+            {%- var origin = ingress | dig_string("*", "metadata", "annotations", prefix + "/cors-allow-origin") %}
+            {%- var methods = ingress | dig_string("GET, PUT, POST, DELETE, PATCH, OPTIONS", "metadata", "annotations", prefix + "/cors-allow-methods") %}
+            {%- var headers = ingress | dig_string("DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization", "metadata", "annotations", prefix + "/cors-allow-headers") %}
+            {%- var credentials = ingress | dig_string("", "metadata", "annotations", prefix + "/cors-allow-credentials") %}
+            {%- var exposeHeaders = ingress | dig_string("", "metadata", "annotations", prefix + "/cors-expose-headers") %}
+            {%- var maxAge = ingress | dig_string(defaultMaxAge, "metadata", "annotations", prefix + "/cors-max-age") %}
             {%- var cond = HostMatchCondition(hosts) %}
       # {{ commentLabel }} ({{ key }})
       http-response add-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
@@ -255,8 +255,8 @@ templateSnippets:
           {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
         {%- end %}
         {%- if len(hosts) > 0 %}
-          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+          {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
+          {%- var name = ingress | dig_string("", "metadata", "name") %}
       # {{ commentLabel }} ({{ ns }}/{{ name }})
       http-request redirect scheme https code {{ code }} if !{ ssl_fc } {{ HostMatchCondition(hosts) }}
         {%- end %}
@@ -279,16 +279,16 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
       {%- macro EmitAnnotationAccessControl(ingress any, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
-        {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() %}
-        {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() %}
+        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
+        {%- var name = ingress | dig_string("", "metadata", "name") %}
         {%- var key = ns + "/" + name %}
         {%- var hosts = []any{} %}
         {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
           {%- var h = rule | dig("host") %}
           {%- if h != nil %}{%- hosts = append(hosts, h) %}{%- end %}
         {%- end %}
-        {%- var allowlist = ingress | dig("metadata", "annotations", allowAnnotation) | fallback("") | tostring() %}
-        {%- var denylist = ingress | dig("metadata", "annotations", denyAnnotation) | fallback("") | tostring() %}
+        {%- var allowlist = ingress | dig_string("", "metadata", "annotations", allowAnnotation) %}
+        {%- var denylist = ingress | dig_string("", "metadata", "annotations", denyAnnotation) %}
         {%- if allowlist != "" && len(hosts) > 0 %}
           {%- var aclName = aclPrefix + "_allowlist_" + ns + "_" + name %}
       # {{ replace(allowCommentFmt, "{KEY}", key) }}

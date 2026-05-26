@@ -126,6 +126,14 @@ const (
 	// Available in: Scriggo only.
 	FuncDig = "dig"
 
+	// FuncDigString fuses the very common dig + fallback + tostring chain
+	// used at the chart's polymorphic-value boundaries (annotation lookups,
+	// metadata extraction from any-typed values, etc.) into one filter.
+	// Syntax: obj | dig_string(defaultStr, keys...) returns string.
+	// Equivalent to: obj | dig(keys...) | fallback(defaultStr) | tostring().
+	// Available in: Scriggo only.
+	FuncDigString = "dig_string"
+
 	// FuncToStringSlice converts []any to []string.
 	// Available in: Scriggo only.
 	FuncToStringSlice = "toStringSlice"

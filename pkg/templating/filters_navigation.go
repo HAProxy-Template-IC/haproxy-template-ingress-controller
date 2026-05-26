@@ -64,6 +64,33 @@ func scriggoFail(env native.Env, msg string) string {
 	return "" // Never reached - env.Stop() halts execution
 }
 
+// scriggoDigString fuses dig + fallback + tostring into a single filter
+// for the chart's most common polymorphic-value pattern: extracting a
+// string field from a typegen-typed-or-untyped value with a default.
+// The original 3-stage chain — dig(...) | fallback(default) | tostring()
+// — appears 370+ times across the chart libraries (108 in
+// haproxy-ingress.yaml, 84 in nginx-ingress.yaml, 73 in haproxytech.yaml,
+// dozens more elsewhere); collapsing it removes most of that boilerplate.
+//
+// Semantics match the chain it replaces: dig(obj, keys...) navigates the
+// nested structure (typed struct via JSON tag, or untyped map), and a nil
+// result triggers defaultStr. A non-nil result is coerced via
+// scriggoToString — which transparently handles the typegen tristate
+// `*int64` / `*bool` pointers so chart code calling dig_string on an
+// optional scalar field keeps producing "5" rather than a pointer string.
+//
+// Usage in Scriggo templates:
+//
+//	{{ ingress | dig_string("", "metadata", "annotations", "haproxy.org/foo") }}
+//	{{ route | dig_string("default", "metadata", "name") }}
+func scriggoDigString(obj any, defaultStr string, keys ...string) string {
+	v := scriggoDig(obj, keys...)
+	if v == nil {
+		return defaultStr
+	}
+	return scriggoToString(v)
+}
+
 // scriggoDig navigates nested maps using a sequence of keys.
 // Returns nil if any key along the path is missing or the value is nil.
 // This is a Ruby-style dig function for cleaner nested access.
