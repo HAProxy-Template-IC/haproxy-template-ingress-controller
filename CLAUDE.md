@@ -8,6 +8,29 @@ Event-driven Kubernetes operator that manages HAProxy configurations through tem
 
 Architecture documentation: `docs/controller/docs/development/design.md`
 
+## Resource-Agnostic Design (RULE #1)
+
+**The Go code must be agnostic to every Kubernetes resource an operator may want to watch.** This is HAPTIC's reason for existing as a separate project; it must hold across every design decision.
+
+**The litmus test.** If an operator switched their setup from Gateway/Ingress to a custom CRD, they should only need to touch HAPTIC templates and config — **no Go code**. Writing templates for the operator's CRD must be just as comfortable as writing them for Ingress or Gateway API resources. **There must be no preferential treatment for well-known resources.**
+
+**What this rules out in Go:**
+
+- Pre-generated wrappers, helpers, or filters bound to specific kinds (`Service`, `Ingress`, `Gateway`, `HTTPRoute`, `BackendTLSPolicy`, etc.).
+- Function signatures that *encode* a resource path even when the body is technically generic (e.g. `listenerTransitionTime(gateway, listenerName, status)` is wrong — `gateway.status.listeners[byName].conditions` is baked into the parameters).
+- "Chart-render-time runtime context" types whose field names embed specific resource knowledge — e.g. `GlobalFeatures.TLSCertificates`, `SSLPassthroughBackend`, `GatewayListenerMTLSConfig`. These look generic at a glance but only make sense for charts that watch Secrets and Gateways. A different operator's chart wouldn't use them.
+- Anything that requires controller-side build-time knowledge of the resource set. Schemas arrive from the kube-apiserver (live) or `--schema-dir` (offline) at runtime.
+
+**What stays acceptable:**
+
+- Generic engine utilities operating on the dig/typed-struct surface: `dig`, `dig_string`, `fallback`, `toSlice`, `to_str_map`, `tostring`, etc.
+- Typed access to *any* watched resource via `pkg/k8s/typegen`, because typegen consumes the schema at runtime; it knows nothing about which resources will be there until the controller starts.
+- Resource shape stored as `map[string]any` plus the cost of `.(map[string]any)` casts in chart code — this is the price of generality, accept it rather than carving Go-side exceptions for the bundled chart's specific resources.
+
+**Sweep rule.** If you touch one resource-coupled helper anywhere in `pkg/`, sweep ALL helpers in that package and remove every other one too. The rule is per-package, not per-helper. See `pkg/templating/CLAUDE.md` for the in-engine version.
+
+**Corollary on the chart side.** Resource-specific behaviour lives in resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, etc.), never in `base.yaml`. Vendor annotation libraries (`haproxy-ingress.yaml`, `nginx-ingress.yaml`, etc.) follow the same pattern. See `charts/CLAUDE.md` for the chart-side version.
+
 ## Coding Standards
 
 ### Go Idioms
