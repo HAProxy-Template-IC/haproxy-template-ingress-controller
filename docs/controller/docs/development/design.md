@@ -61,6 +61,9 @@ Templates declared under `spec.k8sResources` produce one or more Kubernetes reso
 
 ## Design Principles
 
+**Resource-Agnostic Engine**
+The Go code must be agnostic to every Kubernetes resource an operator may watch. If an operator decided to use some CRD instead of Gateway or Ingress resources, they should only need to touch HAPTIC templates and config — **no Go code**. Writing templates for an arbitrary CRD must be just as comfortable as for Ingress or Gateway API resources, with **no preferential treatment for well-known resources**. Resource shape comes from the kube-apiserver (live) or `--schema-dir` (offline) at runtime; the controller never bakes in a fixed list of supported kinds. This applies to all Go-side machinery — engine filters, runtime-context types, generated wrappers, helpers — and to chart-side scaffolding that crosses the Go/template boundary. The corollary on the chart side: resource-specific behavior lives in resource-specific template libraries (`ingress.yaml`, `gateway/*.yaml`, vendor annotation libs), never in `base.yaml`.
+
 **Fail-Safe Operation**
 Invalid configurations are rejected before reaching production. The validation phase catches syntax errors, semantic issues, and configuration conflicts. If validation fails, the current production configuration remains unchanged.
 

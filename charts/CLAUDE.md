@@ -194,7 +194,11 @@ templateSnippets:
 
 **Critical Rule**: Libraries should ONLY provide `templateSnippets`, not override `haproxyConfig`. The base template calls your snippets via `{% include %}`.
 
-**CRITICAL ARCHITECTURE RULE - base.yaml MUST Be Resource-Agnostic**:
+**CRITICAL ARCHITECTURE RULE - base.yaml MUST Be Resource-Agnostic** (RULE #1, chart-side):
+
+This is the chart-side mirror of the project-wide rule in the root `CLAUDE.md` ("Resource-Agnostic Design (RULE #1)"). The litmus test for the whole project: **if an operator decided to use some CRD instead of Gateway or Ingress resources, they should only need to touch HAPTIC templates and config — no Go code. Writing templates for the operator's CRD must be just as comfortable as for Ingress or Gateway API resources. There must be no preferential treatment for well-known resources.**
+
+The Go-side guarantee (engine ignores all resource specifics; schemas come from the apiserver at runtime) puts the burden of resource-aware behaviour entirely on chart-side libraries — and the chart in turn must keep that burden out of `base.yaml`.
 
 **base.yaml MUST be completely resource-agnostic**. It must NOT access:
 
@@ -202,6 +206,8 @@ templateSnippets:
 - `httproute.metadata.*`, `httproute.spec.*`
 - `grpcroute.metadata.*`, `grpcroute.spec.*`
 - Any other resource-specific fields or annotations
+
+The bundled resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, `haproxy-ingress.yaml`, `nginx-ingress.yaml`) are illustrative implementations of the pattern; an operator using a different CRD writes their own library file alongside, and `base.yaml` consumes its output through the same shared-context seam without modification.
 
 Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are responsible for:
 

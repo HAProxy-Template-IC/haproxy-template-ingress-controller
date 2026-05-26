@@ -2,6 +2,29 @@
 
 Development context for working with packages in this directory.
 
+## Resource-Agnostic Engine (RULE #1)
+
+**Every package under `pkg/` must be agnostic to the Kubernetes resources an operator chooses to watch.** No package may bake in Gateway/Ingress/HTTPRoute/Service/Secret knowledge or be more comfortable to use against those well-known kinds than against an arbitrary CRD.
+
+**The litmus test.** If an operator decided to use some CRD instead of Gateway or Ingress resources, they should only need to touch HAPTIC templates and config — no Go code in `pkg/`. Writing templates for the operator's CRD must be just as comfortable as for Ingress or Gateway API resources. **There must be no preferential treatment for well-known resources.**
+
+**Concrete prohibitions:**
+
+- Filters, helpers, or types in `pkg/templating` keyed on specific kinds (`scriggoGatewayListenerStatus`, `scriggoIngressBackendName`, etc.).
+- Code-generated per-resource wrappers in `pkg/k8s` or anywhere else. Resource shape comes from the runtime schema source (`pkg/k8s/typegen` consuming the live apiserver or `--schema-dir`), so the controller never knows the resource set at build time.
+- "Chart-render-time runtime context" types whose fields encode chart-specific resource concepts (e.g. `GlobalFeatures.TLSCertificates`, `SSLPassthroughBackend`, `GatewayListenerMTLSConfig`). These look generic at a glance but a chart watching different resources would never instantiate them.
+- Anything that splits resources into first-class (typed Go shapes) and second-class (only `map[string]any`) citizens. They're all second-class from the engine's perspective; the schema makes them all typed equally if one is provided.
+
+**Acceptable Go surface area:**
+
+- Generic engine utilities on the dig / typed-struct interface.
+- Schema-driven type generation that operates uniformly on any input schema.
+- Map/`any`-shaped runtime context, including the `shared.Get(...).(map[string]any)` cast cost in chart code. This is the price of generality — accept it.
+
+**Sweep rule.** Touch one resource-coupled helper in a package, sweep them all. The rule is per-package, not per-helper. See `pkg/templating/CLAUDE.md` for the in-engine version.
+
+See root `CLAUDE.md` ("Resource-Agnostic Design (RULE #1)") for the project-wide statement and `charts/CLAUDE.md` for the chart-side corollary (resource-specific behaviour lives in resource-specific template libraries, never in `base.yaml`).
+
 ## Package Architecture
 
 The codebase follows clean architecture with clear separation of concerns:

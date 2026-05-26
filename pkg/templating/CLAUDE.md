@@ -33,9 +33,11 @@ This is a **pure library** with zero dependencies on other pkg/ packages. It cou
 
 Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standard library.
 
-### Resource-Agnostic Functions
+### Resource-Agnostic Functions (RULE #1)
 
 **CRITICAL**: Template functions MUST be resource-agnostic. This is a generic templatable ingress controller where **no Kubernetes resource gets preferential treatment**.
+
+**Litmus test.** If an operator decided to use some CRD instead of Gateway or Ingress resources, they should only need to touch HAPTIC templates and config — no Go code. Writing templates for the operator's CRD must be just as comfortable as for Ingress or Gateway API resources. The same litmus applies to every filter, helper, type, and global in this package: if it would only feel ergonomic for the chart's bundled well-known resources, redesign or reject.
 
 **DO NOT add functions that:**
 
@@ -43,6 +45,7 @@ Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`) and standa
 - Provide shortcuts for specific resource fields (e.g., `lookup_port_name(service, port)`)
 - Assume knowledge of any particular resource schema
 - Take an argument that *encodes* a resource path even if the function body is technically generic (e.g. `listenerTransitionTime(gateway, listenerName, type, status)` is wrong — the `gateway` + `listenerName` parameters embed `.status.listeners[byName].conditions` knowledge in the function signature)
+- Add typed Go structs for "chart-render-time runtime context" whose fields encode chart-specific resource concepts (e.g. `GlobalFeatures.TLSCertificates`, `SSLPassthroughBackend`, `GatewayListenerMTLSConfig`). These look generic at a glance but a chart watching different CRDs would never use them — that's preferential treatment in disguise. Keep `shared.Get(...)` and the chart-runtime context as `map[string]any`; the `.(map[string]any)` cast cost in chart code is the price of generality. Acceptable generic alternatives if the cast noise becomes intolerable: (a) chart YAML declares its own runtime-shape schemas which typegen consumes uniformly, (b) a generic engine filter that reduces cast verbosity without committing to specific shapes.
 
 **Sweep when refactoring:** if you touch one resource-coupled helper, sweep ALL helpers in the package — `filters_status.go`, `filters_navigation.go`, etc. — and remove every other one too. The principle is per-package, not per-helper.
 

@@ -567,15 +567,23 @@ build-ingress-conformance-image:
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
+        # Narrow chart-side trigger to chart-impl files only (mirrors
+        # .rules-spoa-chart). Doc-only chart changes (CLAUDE.md,
+        # README.md, CHANGELOG.md) historically matched `charts/**/*`
+        # and dragged this build + test-ingress-conformance into the
+        # pipeline; meanwhile `build-spoa-image-snapshot` (which
+        # test-ingress-conformance hard-needs:) didn't match doc
+        # changes, so GitLab refused the pipeline with
+        # "build-spoa-image-snapshot does not exist".
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**/*
         - scripts/**/*
         - .gitlab-ci.yml
         - Makefile
         - Dockerfile.ingress-conformance-test
         - tests/conformance/patches/**
+    - !reference [.rules-spoa-chart, rules]
   script:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     - make build-ingress-conformance-image CONFORMANCE_BAKE_KUBECONFIG=0
@@ -1286,9 +1294,13 @@ test-acceptance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**/*
         - scripts/**/*
         - .gitlab-ci.yml
+    # Narrowed from `charts/**/*` to .rules-spoa-chart so doc-only chart
+    # edits (CLAUDE.md / README.md) don't drag in the integration suite
+    # — and so this job's trigger stays in lockstep with the
+    # `build-spoa-image-snapshot` it hard-needs:.
+    - !reference [.rules-spoa-chart, rules]
   before_script:
     - |
       # Pull pre-built controller image from the matrix-build job and tag
@@ -1488,9 +1500,11 @@ test-gateway-conformance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**/*
         - scripts/**/*
         - .gitlab-ci.yml
+    # Narrowed chart-side trigger — see .test-e2e-base for the
+    # rationale (must stay in lockstep with build-spoa-image-snapshot).
+    - !reference [.rules-spoa-chart, rules]
   before_script:
     # Reuse the test-e2e prep: pull the controller + spoa-hub snapshots
     # built earlier in the same pipeline, retag locally so the
@@ -1788,12 +1802,15 @@ test-ingress-conformance:
         - "**/*.go"
         - go.mod
         - go.sum
-        - charts/**/*
         - scripts/**/*
         - .gitlab-ci.yml
         - Makefile
         - Dockerfile.ingress-conformance-test
         - tests/conformance/patches/**
+    # Narrowed chart-side trigger — see build-ingress-conformance-image
+    # above (must stay in lockstep) and .test-e2e-base for the wider
+    # rationale.
+    - !reference [.rules-spoa-chart, rules]
   before_script:
     # Reuse the test-e2e prep: pull controller + spoa-hub snapshots
     # built earlier in the same pipeline, retag locally so the kind
@@ -1962,7 +1979,12 @@ test-helm-defaults:
       when: never
     - if: $CI_COMMIT_TAG
       when: never
-    - !reference [.rules-helm, rules]
+    # Was `.rules-helm` (charts/**/*); narrowed to .rules-spoa-chart so
+    # doc-only chart edits don't drag this job in, and the trigger set
+    # stays in lockstep with build-spoa-image-snapshot (hard-needs:).
+    - !reference [.rules-spoa-chart, rules]
+    - changes:
+        - .gitlab-ci.yml
   timeout: 15 minutes
   interruptible: true
   needs:
