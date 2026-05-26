@@ -914,7 +914,7 @@ templateSnippets:
 
               {%- for matchIdx, match := range matchesList %}
                 {%- var pathValue = match | dig("path") | coalesce(map[string]any{"type": "PathPrefix", "value": "/"}) %}
-                {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
+                {%- var filtersList = rule | dig("filters") | toSlice() %}
                 {%- var pathKey = hostname + "|" + tostring(pathValue | dig("type")) + "|" + tostring(pathValue | dig("value")) %}
                 {#- routeInfo additive shape:
                     - `route` (typed *T) + `ruleIdx` / `matchIdx` are the
@@ -1266,7 +1266,7 @@ templateSnippets:
               {%- end %}
 
               {%- for matchIdx, match := range matchesList %}
-                {%- var filtersList = rule | dig("filters") | toSlice() | coalesce([]any{}) %}
+                {%- var filtersList = rule | dig("filters") | toSlice() %}
                 {#- GRPCRoute spec has no path matcher: an attached
                     GRPCRoute claims every path under the listener
                     hostname, with the gRPC method matchers (this
