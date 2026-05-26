@@ -262,12 +262,12 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#timeout
       -#}
       {%- if ingress != nil %}
-        {%- var tConnect = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/timeout-connect") %}
-        {%- var tServer = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/timeout-server") %}
-        {%- var tQueue = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/timeout-queue") %}
-        {%- var tTunnel = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/timeout-tunnel") %}
-        {%- var tHttpReq = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/timeout-http-request") %}
-        {%- var tKeepAlive = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/timeout-keep-alive") %}
+        {%- var tConnect = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-connect"] %}
+        {%- var tServer = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-server"] %}
+        {%- var tQueue = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-queue"] %}
+        {%- var tTunnel = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-tunnel"] %}
+        {%- var tHttpReq = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-http-request"] %}
+        {%- var tKeepAlive = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-keep-alive"] %}
         {%- var hasTimeout = tConnect != "" || tServer != "" || tQueue != "" || tTunnel != "" || tHttpReq != "" || tKeepAlive != "" %}
         {%- if hasTimeout %}
       # haproxy-ingress/backend-directives-timeouts
@@ -303,10 +303,10 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#balance-algorithm
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var lb = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/balance-algorithm") %}
+        {%- var lb = ingress.Metadata.Annotations["haproxy-ingress.github.io/balance-algorithm"] %}
         {%- if lb != "" %}
           {%- var valid = []string{"roundrobin", "leastconn", "source", "uri", "hdr", "random", "rdp-cookie"} %}
           {%- var isValid = false %}
@@ -332,12 +332,12 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#maxconn-server
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var maxconn = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/maxconn-server") %}
-        {%- var maxqueue = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/maxqueue-server") %}
-        {%- var limitConn = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/limit-connections") %}
+        {%- var maxconn = ingress.Metadata.Annotations["haproxy-ingress.github.io/maxconn-server"] %}
+        {%- var maxqueue = ingress.Metadata.Annotations["haproxy-ingress.github.io/maxqueue-server"] %}
+        {%- var limitConn = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-connections"] %}
         {%- if maxconn != "" %}
           {%- var val = toint(maxconn) %}
           {%- if val <= 0 %}
@@ -377,14 +377,14 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#health-check
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var checkInterval = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/backend-check-interval") %}
-        {%- var checkUri = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/health-check-uri") %}
-        {%- var checkPort = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/health-check-port") %}
-        {%- var fallCount = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/health-check-fall-count") %}
-        {%- var riseCount = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/health-check-rise-count") %}
+        {%- var checkInterval = ingress.Metadata.Annotations["haproxy-ingress.github.io/backend-check-interval"] %}
+        {%- var checkUri = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-uri"] %}
+        {%- var checkPort = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-port"] %}
+        {%- var fallCount = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-fall-count"] %}
+        {%- var riseCount = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-rise-count"] %}
         {%- var hasHealthCheck = checkUri != "" || checkInterval != "" || checkPort != "" || fallCount != "" || riseCount != "" %}
         {%- if hasHealthCheck %}
       # haproxy-ingress/backend-directives-health-checks
@@ -429,10 +429,10 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-protocol
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var pp = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/proxy-protocol") %}
+        {%- var pp = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-protocol"] %}
         {%- if pp != "" %}
           {%- if pp == "v1" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy") %}
@@ -464,18 +464,18 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#secure-backends
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
 
         {#- secure-backends -#}
-        {%- var secureBackends = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/secure-backends") %}
+        {%- var secureBackends = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-backends"] %}
         {%- if secureBackends == "true" %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
         {%- end %}
 
         {#- backend-protocol -#}
-        {%- var backendProto = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/backend-protocol") %}
+        {%- var backendProto = ingress.Metadata.Annotations["haproxy-ingress.github.io/backend-protocol"] %}
         {%- if backendProto != "" %}
           {%- if backendProto == "h1" %}
             {#- HTTP/1.1 is default, no flag needed -#}
@@ -491,7 +491,7 @@ templateSnippets:
         {%- end %}
 
         {#- secure-sni -#}
-        {%- var secureSni = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/secure-sni") %}
+        {%- var secureSni = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-sni"] %}
         {%- if secureSni != "" %}
           {%- if secureSni == "sni" || secureSni == "host" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni req.hdr(host)") %}
@@ -501,13 +501,13 @@ templateSnippets:
         {%- end %}
 
         {#- secure-verify-hostname -#}
-        {%- var verifyHostname = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/secure-verify-hostname") %}
+        {%- var verifyHostname = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-verify-hostname"] %}
         {%- if verifyHostname != "" %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verifyhost " + verifyHostname) %}
         {%- end %}
 
         {#- secure-verify-ca-secret -#}
-        {%- var caSec = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/secure-verify-ca-secret") %}
+        {%- var caSec = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-verify-ca-secret"] %}
         {%- if caSec != "" %}
           {%- var caNs = ns %}
           {%- var caName = caSec %}
@@ -533,7 +533,7 @@ templateSnippets:
         {%- end %}
 
         {#- secure-crt-secret -#}
-        {%- var crtSec = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/secure-crt-secret") %}
+        {%- var crtSec = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-crt-secret"] %}
         {%- if crtSec != "" %}
           {%- var crtNs = ns %}
           {%- var crtName = crtSec %}
@@ -573,10 +573,10 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#initial-weight
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var weight = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/initial-weight") %}
+        {%- var weight = ingress.Metadata.Annotations["haproxy-ingress.github.io/initial-weight"] %}
         {%- if weight != "" %}
           {%- var val = toint(weight) %}
           {%- if val < 0 || val > 256 %}
@@ -611,18 +611,18 @@ templateSnippets:
           cookie <name> <strategy> [indirect] [nocache] [dynamic] [domain <domain>] [attr "SameSite=<value>"]
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var affinity = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/affinity") %}
+        {%- var affinity = ingress.Metadata.Annotations["haproxy-ingress.github.io/affinity"] %}
         {%- if affinity == "cookie" %}
           {%- var cookieName = ingress | dig_string("INGRESSCOOKIE", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-name") %}
           {%- var strategy = ingress | dig_string("insert", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-strategy") %}
           {%- var dynamic = ingress | dig_string("true", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-dynamic") %}
-          {%- var keywords = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-keywords") %}
-          {%- var domain = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-domain") %}
-          {%- var sameSite = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-same-site") %}
-          {%- var preserve = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-preserve") %}
+          {%- var keywords = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-keywords"] %}
+          {%- var domain = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-domain"] %}
+          {%- var sameSite = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-same-site"] %}
+          {%- var preserve = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-preserve"] %}
 
           {#- Validate strategy -#}
           {%- if strategy != "insert" && strategy != "rewrite" && strategy != "prefix" %}
@@ -680,7 +680,7 @@ templateSnippets:
         Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#config-backend
       -#}
       {%- if ingress != nil %}
-        {%- var snippet = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/config-backend") | fallback("") %}
+        {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-backend"] %}
         {%- if snippet != "" %}
       # haproxy-ingress/config-backend
       {{ snippet }}
@@ -706,10 +706,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var forwardfor = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/forwardfor") %}
+          {%- var forwardfor = ingress.Metadata.Annotations["haproxy-ingress.github.io/forwardfor"] %}
           {%- if forwardfor != "" && forwardfor != "ignore" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -771,7 +771,7 @@ templateSnippets:
       -#}
       {%- import "util-emit-annotation-ssl-redirect" for EmitAnnotationSSLRedirect -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var sslRedirect = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect") %}
+        {%- var sslRedirect = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect"] %}
         {%- if sslRedirect == "true" %}
           {%- var code = ingress | dig_string("302", "metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect-code") %}
           {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
@@ -824,10 +824,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var appRoot = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/app-root") %}
+          {%- var appRoot = ingress.Metadata.Annotations["haproxy-ingress.github.io/app-root"] %}
           {%- if appRoot != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -856,10 +856,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var redirectTo = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/redirect-to") %}
+          {%- var redirectTo = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to"] %}
           {%- if redirectTo != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -924,10 +924,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var headersStr = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/headers") %}
+          {%- var headersStr = ingress.Metadata.Annotations["haproxy-ingress.github.io/headers"] %}
           {%- if headersStr != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -996,16 +996,16 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- var hosts = []string{} %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
-            {%- var errorPage = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-tls-error-page") %}
-            {%- var certHeader = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-tls-cert-header") %}
+            {%- var errorPage = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-error-page"] %}
+            {%- var certHeader = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-cert-header"] %}
             {%- var cond = HostMatchCondition(hosts) %}
             {%- if errorPage != "" %}
               {#- Inline URL guard: this snippet renders via the
@@ -1084,10 +1084,10 @@ templateSnippets:
       -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var secretRef = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-tls-secret") %}
+        {%- var secretRef = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-secret"] %}
         {%- if secretRef != "" %}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-          {%- var name = ingress | dig_string("", "metadata", "name") %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
           {%- var verifyClient = ingress | dig_string("on", "metadata", "annotations", "haproxy-ingress.github.io/auth-tls-verify-client") | toLower() %}
           {%- if verifyClient == "off" %}
             {%- continue %}
@@ -1145,8 +1145,8 @@ templateSnippets:
           {%- end -%}
           {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
 
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var host = rule | dig_string("", "host") %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = rule.Host %}
             {%- if host == "" %}
               {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
             {%- end %}
@@ -1195,10 +1195,10 @@ templateSnippets:
           Example: admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei4...
       -#}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var authSecret = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-secret") %}
+        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] %}
         {%- if authSecret != "" %}
           {#- Parse secret reference (supports "ns/name" or just "name") -#}
           {%- var secretNs = ns %}
@@ -1261,10 +1261,10 @@ templateSnippets:
           frontend-spoe-filters-100-external-auth and base.yaml's
           resource_id extraction at the end of frontend-routing-logic. -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authUrl = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-url") -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
         {%- if authUrl != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
         {%- end -%}
       {%- end -%}
@@ -1281,10 +1281,10 @@ templateSnippets:
   map-auth-signin-500-haproxy-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authSignin = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-signin") -%}
+        {%- var authSignin = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-signin"] -%}
         {%- if authSignin != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
         {%- end -%}
       {%- end -%}
@@ -1305,10 +1305,10 @@ templateSnippets:
   map-auth-method-500-haproxy-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authMethod = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-method") -%}
+        {%- var authMethod = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-method"] -%}
         {%- if authMethod != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
         {%- end -%}
       {%- end -%}
@@ -1336,10 +1336,10 @@ templateSnippets:
   map-auth-forward-headers-500-haproxy-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authHeaders = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-headers-request") -%}
+        {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authHeaders }}
         {%- end -%}
       {%- end -%}
@@ -1387,10 +1387,10 @@ templateSnippets:
       {%- seen["x_forwarded_host"] = true -%}
       {%- seen["x_forwarded_uri"] = true -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authHeaders = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-headers-request") -%}
+        {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
         {%- if authHeaders != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var ingressName = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
           {%- for _, h := range split(authHeaders, ",") -%}
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
@@ -1430,8 +1430,8 @@ templateSnippets:
   map-auth-extract-headers-500-haproxy-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var passHeaders = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") -%}
-        {%- var failHeaders = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
+        {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}
         {%- var union = passHeaders -%}
         {%- if passHeaders != "" && failHeaders != "" -%}
           {%- union = passHeaders + ", " + failHeaders -%}
@@ -1439,8 +1439,8 @@ templateSnippets:
           {%- union = failHeaders -%}
         {%- end -%}
         {%- if union != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ union }}
         {%- end -%}
       {%- end -%}
@@ -1472,10 +1472,10 @@ templateSnippets:
       {%- var pairs []any = []any{} -%}
       {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var passHeaders = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-headers-succeed") -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
         {%- if passHeaders != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var ingressName = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
           {%- for _, h := range split(passHeaders, ",") -%}
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
@@ -1544,10 +1544,10 @@ templateSnippets:
       {%- var pairs []any = []any{} -%}
       {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var failHeaders = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-headers-fail") -%}
+        {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}
         {%- if failHeaders != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var ingressName = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
           {%- for _, h := range split(failHeaders, ",") -%}
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
@@ -1605,11 +1605,11 @@ templateSnippets:
           value, waf-mode without waf, invalid mode) still apply because
           they run at render time regardless of map keying. -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-        {%- var name = ingress | dig_string("", "metadata", "name") -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
         {%- var key = ns + "/" + name -%}
-        {%- var waf = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/waf") -%}
-        {%- var mode = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/waf-mode") -%}
+        {%- var waf = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf"] -%}
+        {%- var mode = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf-mode"] -%}
         {#- waf-mode without waf is a no-op upstream; loud here per the
             chart-wide fail-loud convention so operators don't silently
             drop into shadow mode. -#}
@@ -1646,10 +1646,10 @@ templateSnippets:
           http-request auth realm "<realm>" unless { http_auth(<userlist>) }
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var authSecret = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/auth-secret") %}
+        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] %}
         {%- if authSecret != "" %}
           {%- var authRealm = ingress | dig_string("Restricted", "metadata", "annotations", "haproxy-ingress.github.io/auth-realm") %}
           {#- Parse secret reference (supports "ns/name" or just "name") -#}
