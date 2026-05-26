@@ -348,9 +348,23 @@ func (b *Builder) addTypedResources(ctx map[string]any) {
 			}
 			return nil
 		},
+		func(name string) bool {
+			if b.config == nil {
+				return false
+			}
+			if wr, ok := b.config.WatchedResources[name]; ok {
+				return wr.Store == storeKindOnDemand
+			}
+			return false
+		},
 		b.logger,
 	)
 }
+
+// storeKindOnDemand is the WatchedResource.Store value that selects
+// the CachedStore backend; mirrors pkg/k8s/types.StoreTypeCached.String()
+// without importing the heavier types package.
+const storeKindOnDemand = "on-demand"
 
 // BuildResourcesValue constructs the typed-struct `resources`
 // runtime value the engine binds at template-run time. The shape
@@ -399,15 +413,25 @@ func (b *Builder) addTypedResources(ctx map[string]any) {
 //     watcher used to build the underlying store; forwarded to the
 //     StoreWrapper so per-render snapshot indices align with the
 //     live store state.
+//   - lazyFor: returns whether the per-resource wrapper should use
+//     LazySnapshot mode. True when the WatchedResource config has
+//     `store: on-demand` (CachedStore-backed) — see StoreWrapper's
+//     LazySnapshot field documentation for the semantics. A nil
+//     callback or one that always returns false keeps the historical
+//     eager-snapshot behaviour for every resource.
 func BuildResourcesValue(
 	resourceStores map[string]stores.Store,
 	typedTypes map[string]reflect.Type,
 	watchedNames []string,
 	indexByFor func(name string) []string,
+	lazyFor func(name string) bool,
 	logger *slog.Logger,
 ) any {
 	if indexByFor == nil {
 		indexByFor = func(string) []string { return nil }
+	}
+	if lazyFor == nil {
+		lazyFor = func(string) bool { return false }
 	}
 	// watchedNames is the SOLE iteration source — it must mirror what
 	// typebootstrap.BuildEngineDeclarations iterated when it built the
@@ -448,6 +472,7 @@ func BuildResourcesValue(
 				ResourceType: name,
 				Logger:       logger,
 				IndexBy:      indexByFor(name),
+				LazySnapshot: lazyFor(name),
 			}
 		}
 		innerType := typebootstrap.BuildPerResourceStoreType(elemType)

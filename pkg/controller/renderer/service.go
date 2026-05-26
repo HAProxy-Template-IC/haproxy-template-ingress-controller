@@ -335,6 +335,12 @@ func (s *RenderService) buildRenderingContext(ctx context.Context, provider stor
 			}
 			return nil
 		},
+		func(name string) bool {
+			if wr, ok := s.config.WatchedResources[name]; ok {
+				return wr.Store == "on-demand"
+			}
+			return false
+		},
 		s.logger,
 	)
 
