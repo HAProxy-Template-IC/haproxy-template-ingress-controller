@@ -59,15 +59,18 @@ Metrics Endpoint:
 
 {{- if and $controller.templateLibraries.gateway.enabled (not (.Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass")) }}
 
-⚠️  WARNING: Gateway API library is enabled but Gateway API CRDs are not installed.
+ℹ️  Gateway API library was requested (controller.templateLibraries.gateway.enabled=true, the chart default), but Gateway API CRDs are not installed on this cluster — so the library was NOT loaded by `haptic.mergeLibraries` (the `_helm_load.enable` predicate in `libraries/gateway/_index.yaml` requires both the values flag AND the `gateway.networking.k8s.io/v1/GatewayClass` API to be present). The controller will not watch HTTPRoute/GRPCRoute resources.
 
-The controller will not watch HTTPRoute/GRPCRoute resources.
+If you don't intend to use Gateway API on this cluster, silence this notice by setting:
 
-To fix this, install Gateway API CRDs:
+  controller:
+    templateLibraries:
+      gateway:
+        enabled: false
+
+If you DO want Gateway API support, install the CRDs and re-run `helm upgrade`:
 
   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
-
-Then restart or reinstall this Helm release.
 {{- end }}
 
 {{- with .Values.networkPolicy }}
