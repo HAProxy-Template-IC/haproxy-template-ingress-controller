@@ -55,8 +55,7 @@ templateSnippets:
       {%%
         gf["bindHTTPDefault"] = true
         gf["needHTTPFrontend"] = true
-        var tlsList = ingress | dig("spec", "tls") | toSlice()
-        if len(tlsList) > 0 {
+        if len(ingress.Spec.Tls) > 0 {
           gf["bindHTTPSDefault"] = true
           gf["needHTTPSFrontend"] = true
           // Ingress with spec.tls has HTTPS termination (the chart's
@@ -129,8 +128,9 @@ templateSnippets:
                   Ingress.Spec.Tls[i].Hosts into []any so downstream
                   ssl.yaml consumers (which assert .([]any) on a
                   polymorphic tlsCertificates slice) don't trip on
-                  the typed-slice shape. -#}
-              "sni_patterns": tls | dig("hosts") | toSlice() | fallback([]any{}),
+                  the typed-slice shape. No `| fallback([]any{})` —
+                  scriggoToSlice already returns []any{} for nil input. -#}
+              "sni_patterns": tls | dig("hosts") | toSlice(),
               "sanitized_filename": sanitizedFilename,
             }
             gf["tlsCertificates"] = append(gf["tlsCertificates"].([]any), tlsCert)

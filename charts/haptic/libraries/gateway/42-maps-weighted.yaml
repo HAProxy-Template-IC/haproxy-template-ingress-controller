@@ -7,7 +7,7 @@ templateSnippets:
       {%- for _, route := range routes %}
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
-      {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
+      {%- var rules = route | dig("spec", "rules") | toSlice() %}
       {%- var weightedEntries = []any{} %}
       {%- var ruleIdx = 0 %}
       {%- for _, rule := range rules %}

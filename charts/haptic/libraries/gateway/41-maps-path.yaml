@@ -92,7 +92,7 @@ templateSnippets:
       {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
       {%- var routeName = route | dig("metadata", "name") | fallback("") %}
       {%- var hostnames = route | dig("spec", "hostnames") | toSlice() | coalesce([]any{""}) %}
-      {%- var rules = route | dig("spec", "rules") | toSlice() | coalesce([]any{}) %}
+      {%- var rules = route | dig("spec", "rules") | toSlice() %}
       {%- var regexEntries = []any{} %}
       {%- for _, hostname := range hostnames %}
       {%- for _, rule := range rules %}
