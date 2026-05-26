@@ -106,7 +106,7 @@ templateSnippets:
           frontend handles the protocol either way. Operators can force tcp
           on 3.1+ by setting spoaHub.haproxy.modeSpop: false. -#}
       {%- var modeSpopRequested = extraContext | dig("spoaHub", "modeSpop") | fallback(true) | tostring() %}
-      {%- var hapVersion = extraContext | dig("haproxyVersion") | fallback("") | tostring() %}
+      {%- var hapVersion = extraContext | dig_string("", "haproxyVersion") %}
       {%- var spopSupported = semver_gte(hapVersion, "3.1") %}
       backend spoa-hub
           mode {%- if modeSpopRequested == "true" && spopSupported %} spop{%- else %} tcp{%- end %}
@@ -157,9 +157,9 @@ templateSnippets:
           var byKey = map[string]any{}
           var hasHaproxyIngressWaf = false
           for _, ingress := range resources.ingresses.List() {
-            var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring()
-            var name = ingress | dig("metadata", "name") | fallback("") | tostring()
-            var snippet = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/modsecurity-snippet") | fallback("") | tostring()
+            var ns = ingress | dig_string("", "metadata", "namespace")
+            var name = ingress | dig_string("", "metadata", "name")
+            var snippet = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/modsecurity-snippet")
             if snippet != "" {
               if strings_contains(snippet, "\"\"\"") {
                 fail("Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
@@ -173,7 +173,7 @@ templateSnippets:
                 "ns": ns, "name": name, "snippet": snippet,
               }
             }
-            var waf = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf") | fallback("") | tostring()
+            var waf = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/waf")
             if waf != "" {
               hasHaproxyIngressWaf = true
             }
@@ -213,7 +213,7 @@ templateSnippets:
     template: |
       {%- var hub = extraContext | dig("spoaHub", "hub") | fallback(map[string]any{}) -%}
       {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
-      {%- var socketPath = extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") | tostring() -%}
+      {%- var socketPath = extraContext | dig_string("/run/spoa/hub.sock", "spoaHub", "socketPath") -%}
 
       {#- Coraza-relevant annotation scan (cached, single-pass — see
           util-coraza-scan). Used here for: (1) appending modsec-snippets
@@ -245,10 +245,10 @@ templateSnippets:
             {#- has_haproxy_ingress_waf is true and modsec-snippets is empty —
                 find the offending Ingress to point at in the error message. -#}
             {%- for _, ingress := range resources.ingresses.List() -%}
-              {%- var w = ingress | dig("metadata", "annotations", "haproxy-ingress.github.io/waf") | fallback("") | tostring() -%}
+              {%- var w = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/waf") -%}
               {%- if w != "" -%}
-                {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
-                {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+                {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
+                {%- var name = ingress | dig_string("", "metadata", "name") -%}
                 {{- fail("Ingress " + ns + "/" + name + " sets annotation 'haproxy-ingress.github.io/waf' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
               {%- end -%}
             {%- end -%}
@@ -344,7 +344,7 @@ templateSnippets:
           {%- end -%}
         {%- end -%}
         {%- var pDependsOn = p | dig("dependsOn") | fallback([]any{}) | toSlice() -%}
-        {%- var pParams = p | dig("params") | fallback("") | tostring() -%}
+        {%- var pParams = p | dig_string("", "params") -%}
 
       [[plugins]]
       name = "{{ pName }}"
@@ -377,7 +377,7 @@ templateSnippets:
               on another Ingress's traffic) must move the shared rules
               into the chart-level `spoaHub.plugins.coraza.directives`
               values key. -#}
-          {%- corazaDirectives = p | dig("directives") | fallback("") | tostring() %}
+          {%- corazaDirectives = p | dig_string("", "directives") %}
       directives = """
       {{ corazaDirectives | trimSpace() }}
       """
@@ -732,8 +732,8 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-request" %}
-      {%- var dispatchMode = extraContext | dig("coraza", "dispatch", "mode") | fallback("opt-in") | tostring() %}
-      {%- var defaultEnforcement = extraContext | dig("coraza", "dispatch", "defaultEnforcement") | fallback("deny") | tostring() %}
+      {%- var dispatchMode = extraContext | dig_string("opt-in", "coraza", "dispatch", "mode") %}
+      {%- var defaultEnforcement = extraContext | dig_string("deny", "coraza", "dispatch", "defaultEnforcement") %}
       {%- if dispatchMode != "opt-in" && dispatchMode != "default-on" %}
         {%- fail("Invalid value for controller.templatingSettings.extraContext.coraza.dispatch.mode: '" + dispatchMode + "'; must be 'opt-in' or 'default-on'.") %}
       {%- end %}
@@ -813,14 +813,14 @@ templateSnippets:
           longer part of the key, so host-less Ingress rules are fine
           (the routing chain still resolves them to a resource_id). -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var v = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/enable-modsecurity") | fallback("") | tostring() -%}
+        {%- var v = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/enable-modsecurity") -%}
         {%- if v == "false" -%}
-          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
-          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
+          {%- var name = ingress | dig_string("", "metadata", "name") -%}
       {{ "\n" }}{{ ns }}/{{ name }} 1
         {%- else if v != "" && v != "true" -%}
-          {%- var ns = ingress | dig("metadata", "namespace") | fallback("") | tostring() -%}
-          {%- var name = ingress | dig("metadata", "name") | fallback("") | tostring() -%}
+          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
+          {%- var name = ingress | dig_string("", "metadata", "name") -%}
           {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".") -}}
         {%- end -%}
       {%- end -%}

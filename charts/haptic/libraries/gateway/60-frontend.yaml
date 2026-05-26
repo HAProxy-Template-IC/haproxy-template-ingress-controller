@@ -468,8 +468,8 @@ templateSnippets:
           {%- var routeKind = tostring(routeInfo | dig("route", "kind") | fallback("HTTPRoute")) %}
           {%- for _, ref := range backendRefs %}
             {%- var refMap any = ref %}
-            {%- var refGroup = refMap | dig("group") | fallback("") | tostring() %}
-            {%- var refKind = refMap | dig("kind") | fallback("Service") | tostring() %}
+            {%- var refGroup = refMap | dig_string("", "group") %}
+            {%- var refKind = refMap | dig_string("Service", "kind") %}
             {%- if (refGroup == "" || refGroup == "core") && refKind == "Service" %}
               {%- var refName = tostring(refMap | dig("name") | fallback("")) %}
               {%- var refNs = tostring(refMap | dig("namespace") | fallback(routeNs)) %}
@@ -893,8 +893,8 @@ templateSnippets:
                 {%- if pathType == "ReplaceFullPath" %}
                   {%- pathExpr = (pathMod | dig("replaceFullPath") | tostring()) %}
                 {%- else if pathType == "ReplacePrefixMatch" %}
-                  {%- var matchPrefix = routeInfo | dig("path", "value") | fallback("/") | tostring() %}
-                  {%- var replacementPrefix = (pathMod | dig("replacePrefixMatch") | fallback("") | tostring()) %}
+                  {%- var matchPrefix = routeInfo | dig_string("/", "path", "value") %}
+                  {%- var replacementPrefix = (pathMod | dig_string("", "replacePrefixMatch")) %}
                   {#- regsub uses POSIX ERE: anchor at start, escape the
                       matched prefix's regex metachars. The replacement has
                       no metachars (Gateway API enforces a path literal). -#}
@@ -1155,7 +1155,7 @@ templateSnippets:
           {%- if mirror == nil %}{%- continue %}{%- end %}
           {%- var backendRef = mirror | dig("backendRef") %}
           {%- if backendRef == nil %}{%- continue %}{%- end %}
-          {%- var bName = backendRef | dig("name") | fallback("") | tostring() %}
+          {%- var bName = backendRef | dig_string("", "name") %}
           {%- if bName == "" %}{%- continue %}{%- end %}
           {%- mirrorIdx = mirrorIdx + 1 %}
           {%- var bNs = backendRef | dig("namespace") | fallback(routeInfo | dig("namespace")) | tostring() %}
@@ -1182,8 +1182,8 @@ templateSnippets:
           {%- if svc != nil %}
             {%- for _, p := range svc | dig("spec", "ports") | toSlice() %}
               {%- if (p | dig("port") | toint()) == toint(bPort) %}
-                {%- var ap = p | dig("appProtocol") | fallback("") | tostring() %}
-                {%- var pn = p | dig("name") | fallback("") | tostring() %}
+                {%- var ap = p | dig_string("", "appProtocol") %}
+                {%- var pn = p | dig_string("", "name") %}
                 {%- if ap == "https" || ap == "kubernetes.io/https" || pn == "https" %}
                   {%- bScheme = "https" %}
                 {%- end %}
