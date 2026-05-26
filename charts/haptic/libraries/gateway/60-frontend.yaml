@@ -1228,8 +1228,25 @@ templateSnippets:
           {%- if percent < 100 %}
       http-request set-var(txn.gw_mirror_sample_{{ mirrorIdx }}) rand(100) if {{ cond }}
           {%- end %}
+      {#- Per-dispatch timeout + retry budget. Sourced from the
+          chart-wide `timeout server` and a sensible retry default
+          (matches HAProxy's built-in `retries 3`) so a mirror
+          dispatch waits as long as a normal backend request would,
+          rather than being capped by a uniform plugin default. The
+          plugin (haproxy-spoa-hub-plugin-mirror v0.5.0+) reads
+          `arg_timeout_ms` / `arg_retries` from the SPOE frame; older
+          plugin versions ignore unknown args, so emitting these
+          unconditionally is safe across rolling upgrades. The
+          generous default closes the gateway-conformance
+          `HTTPRouteRequestMultipleMirrors` flake (kube-proxy
+          iptables / CoreDNS propagation cold-start race against
+          freshly-created in-cluster Services). -#}
+          {%- var timeoutMs = toint(extraContext | dig("timeout_server") | fallback("50000")) %}
+          {%- var retriesCount = toint(extraContext | dig("retries") | fallback("3")) %}
       http-request set-var(txn.gw_mirror_target_{{ mirrorIdx }}) str({{ target }}) if {{ cond }}{{ sampleCond }}
       http-request set-var(txn.gw_mirror_scheme_{{ mirrorIdx }}) str({{ bScheme }}) if {{ cond }}{{ sampleCond }}
+      http-request set-var(txn.gw_mirror_timeout_ms_{{ mirrorIdx }}) int({{ timeoutMs }}) if {{ cond }}{{ sampleCond }}
+      http-request set-var(txn.gw_mirror_retries_{{ mirrorIdx }}) int({{ retriesCount }}) if {{ cond }}{{ sampleCond }}
       http-request send-spoe-group spoa-hub mirror-{{ mirrorIdx }}-group if {{ cond }}{{ sampleCond }}
         {%- end %}
       {%- end %}

@@ -643,6 +643,20 @@ templateSnippets:
   #     consuming frontend (the gateway library forces this on any
   #     frontend with a RequestMirror filter); without it, PUT/POST
   #     bodies arrive empty here and the mirror sees zero-byte requests.
+  #   - arg_timeout_ms / arg_retries (plugin v0.5.0+) — per-dispatch
+  #     overrides for the HTTP-roundtrip timeout and connection-error
+  #     retry budget. Sourced from `var(txn.gw_mirror_timeout_ms_<i>)`
+  #     and `var(txn.gw_mirror_retries_<i>)`, which the gateway
+  #     library's frontend-filter snippet computes from the primary
+  #     backend's chart-wide `timeout server` / `retries` (so a mirror
+  #     dispatch matches the operator's per-route expectations
+  #     instead of using a uniform plugin default). The plugin
+  #     treats arg_timeout_ms=0 as absent (falls back to plugin
+  #     default — guards against a misconfigured chart emitting a
+  #     literal 0ms-timeout footgun) and arg_retries=0 as an
+  #     explicit "no retries" override. Older plugin versions
+  #     (≤ v0.4.0) ignore unknown args, so emitting these on a stale
+  #     image is safe — it just doesn't take effect.
   #
   # The mirror plugin never writes back into HAProxy variables; the
   # ack is fire-and-forget. No `output_var` configuration needed.
@@ -664,7 +678,7 @@ templateSnippets:
     template: |-
       {%- var idx = replace(msg, "mirror-", "") -%}
       spoe-message {{ msg }}
-          args arg_target=var(txn.gw_mirror_target_{{ idx }}) arg_scheme=var(txn.gw_mirror_scheme_{{ idx }}) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body
+          args arg_target=var(txn.gw_mirror_target_{{ idx }}) arg_scheme=var(txn.gw_mirror_scheme_{{ idx }}) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body arg_timeout_ms=var(txn.gw_mirror_timeout_ms_{{ idx }}) arg_retries=var(txn.gw_mirror_retries_{{ idx }})
 
   frontend-filters-100-spoa-hub:
     template: |-

@@ -1924,7 +1924,18 @@ spoaHub:
       #     long-running plugin mirroring to many distinct backends.
       #     0 disables idle reuse entirely.
       params: |
-        timeout_ms = 200
+        # timeout_ms: omitted on purpose. The plugin default (60_000ms in
+        # v0.5.0+) is the safety net for SPOE messages that don't carry
+        # `arg_timeout_ms`; the gateway library's
+        # `frontend-filters-550-gateway-mirror` snippet emits
+        # `arg_timeout_ms=var(txn.gw_mirror_timeout_ms_<i>)` per-dispatch
+        # derived from the chart-wide `timeout server`, so the relevant
+        # value is per-route, not plugin-wide. A tight plugin-wide
+        # `timeout_ms` here would only mask the per-dispatch value when
+        # the SPOE arg is absent for some other reason — counter-
+        # productive. Operators who want a tight uniform mirror timeout
+        # should set `controller.config.haproxy.timeouts.server` (which
+        # the per-dispatch derivation reads from), not this knob.
         max_body_bytes = 1048576
         request_concurrency = 1024
         verify_tls = false
