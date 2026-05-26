@@ -183,6 +183,31 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 	return results, nil
 }
 
+// ListCached returns only resources currently warm in the LRU cache —
+// no API fetches. Used by callers that want to prime a per-render
+// snapshot with whatever's free, without paying for the full
+// store-wide List() fan-out. The slice may be a small subset of
+// what's in the cluster (the LRU is `MaxCacheSize` entries; unaccessed
+// references contribute nothing). Expired entries are skipped.
+//
+// Callers that need cluster-wide iteration should still call List(),
+// accepting the WARN and per-reference API fetch cost.
+func (s *CachedStore) ListCached() ([]any, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	results := make([]any, 0, s.cache.Len())
+	now := time.Now()
+	for _, cacheKey := range s.cache.Keys() {
+		entry, ok := s.cache.Peek(cacheKey)
+		if !ok || now.After(entry.expiresAt) {
+			continue
+		}
+		results = append(results, entry.resource)
+	}
+	return results, nil
+}
+
 // List returns all resources in the store.
 func (s *CachedStore) List() ([]any, error) {
 	s.mu.RLock()

@@ -71,13 +71,44 @@ func toString(v any) string {
 // the rendered config with an http_auth pointing at a userlist that no
 // snippet emitted. HAProxy then rejects the config at admission time.
 //
-// On first access of any kind we call Store.List() once and build an
-// in-memory composite-key index using the configured IndexBy JSONPath
+// On first access we call Store.List() once and build an in-memory
+// composite-key index using the configured IndexBy JSONPath
 // expressions. List() returns the snapshot; Fetch()/GetSingle() resolve
 // against the in-memory index, with the same exact-match-vs-prefix-scan
 // semantics MemoryStore.Get(...) offers. The wrapper is constructed
 // fresh per Render() in rendercontext.Builder, so the cache lifetime
 // is naturally one render.
+//
+// LazySnapshot mode (CachedStore-backed resources, typically Secrets):
+// the eager Store.List() defeats the whole point of CachedStore —
+// listing a CachedStore fans out into one API fetch per cached
+// reference (see pkg/k8s/store/cached.go's "Listing cached store
+// causes individual API lookups" WARN). For wrappers whose
+// WatchedResources[name].Store == "on-demand", set LazySnapshot=true:
+//
+//  1. Snapshot is primed at first access from the underlying store's
+//     CachedList() (only the LRU's warm entries — no API fetches).
+//     If the store doesn't expose CachedList(), the snapshot starts
+//     empty.
+//  2. Fetch/GetSingle look up the snapshot index first. On miss they
+//     call Store.Get(stringKeys...) for that single key, add the
+//     result back into the snapshot + index, and return it. The
+//     snapshot grows as the render touches keys; a key looked up
+//     twice in the same render costs at most one API fetch (LRU
+//     warm thereafter).
+//  3. List() returns the snapshot as-is — the partial set the
+//     render has assembled. No surprise full-cluster fetch, no
+//     warning. Operators who set `store: on-demand` are opting out
+//     of full-cluster iteration; templates that need to scan every
+//     instance of a kind should use the default `store: full`.
+//
+// Per-render consistency: a key looked up via Fetch/GetSingle and
+// then iterated via List() returns the same value (both served
+// from the snapshot). The narrow weakening vs eager mode is that
+// List() doesn't include uncached items the render never asked
+// for — for the canonical "many Secrets, only a few touched" use
+// case (Secrets is the whole reason `store: on-demand` exists),
+// that's the contract, not a bug.
 //
 // If IndexBy is empty (e.g., a wrapper constructed for a store whose
 // indexing config wasn't passed through), we still snapshot for List()
@@ -95,29 +126,50 @@ type StoreWrapper struct {
 	// to index resources. Required for snapshot-served Fetch/GetSingle.
 	IndexBy []string
 
+	// LazySnapshot defers the eager Store.List() until List() is
+	// actually called. Set when the underlying store is a CachedStore
+	// (WatchedResources[name].Store == "on-demand"). See type doc.
+	LazySnapshot bool
+
 	cacheMu       sync.Mutex
 	loaded        bool
+	indexer       *indexer.Indexer // lazy mode: used to extract keys from items added incrementally
 	snapshot      []any
 	snapshotByKey map[string][]any // composite key (parts joined by "/") → matching items
 }
 
-// loadSnapshot pins the per-instance snapshot on first access. Caller
-// must hold cacheMu.
+// cachedLister is an optional interface implemented by stores that can
+// return their in-memory cache contents without triggering API fetches.
+// LazySnapshot wrappers use it to prime the snapshot cheaply at first
+// access. CachedStore implements it; MemoryStore doesn't need to
+// because eager mode is always cheap there.
+type cachedLister interface {
+	ListCached() ([]any, error)
+}
+
+// loadSnapshot pins the per-instance snapshot on first access. In
+// eager mode, calls Store.List() and indexes everything. In lazy mode,
+// primes from the underlying store's ListCached() (LRU-only, no API
+// fetches) and leaves room for incremental growth via addToSnapshot.
+// Caller must hold cacheMu.
 func (w *StoreWrapper) loadSnapshot() {
 	if w.loaded {
 		return
 	}
 	w.loaded = true
 
-	items, err := w.Store.List()
-	if err != nil {
-		w.Logger.Warn("failed to list resources for snapshot",
-			"resource_type", w.ResourceType, "error", err)
-		items = []any{}
-	}
-	w.snapshot = items
-
-	if len(w.IndexBy) == 0 {
+	if len(w.IndexBy) > 0 {
+		idx, err := indexer.New(indexer.Config{IndexBy: w.IndexBy})
+		if err != nil {
+			w.Logger.Warn("failed to build snapshot indexer; Fetch/GetSingle will bypass the snapshot",
+				"resource_type", w.ResourceType,
+				"index_by", w.IndexBy,
+				"error", err)
+		} else {
+			w.indexer = idx
+			w.snapshotByKey = map[string][]any{}
+		}
+	} else {
 		// No indexing config: List() works against the snapshot, but
 		// Fetch/GetSingle have to fall back to direct store calls
 		// (which can observe a state that diverges from the snapshot).
@@ -125,39 +177,86 @@ func (w *StoreWrapper) loadSnapshot() {
 		// this branch is a safety net, not a normal path.
 		w.Logger.Warn("StoreWrapper has no IndexBy; Fetch/GetSingle will bypass the snapshot",
 			"resource_type", w.ResourceType)
-		return
 	}
 
-	idx, err := indexer.New(indexer.Config{IndexBy: w.IndexBy})
-	if err != nil {
-		w.Logger.Warn("failed to build snapshot indexer; Fetch/GetSingle will bypass the snapshot",
-			"resource_type", w.ResourceType,
-			"index_by", w.IndexBy,
-			"error", err)
-		return
-	}
-
-	w.snapshotByKey = make(map[string][]any, len(items))
-	for _, item := range items {
-		keys, err := idx.ExtractKeys(item)
-		if err != nil {
-			// Item appears in List() but isn't reachable via keyed
-			// lookup. Mirrors what would happen if the underlying
-			// store had also failed to extract keys.
-			w.Logger.Warn("failed to extract snapshot index keys for item",
-				"resource_type", w.ResourceType, "error", err)
-			continue
+	var items []any
+	if w.LazySnapshot {
+		// Lazy mode: prime from whatever's warm in the store's cache
+		// without triggering API fetches. CachedStore implements
+		// cachedLister; other stores fall through to an empty
+		// initial snapshot.
+		if cl, ok := w.Store.(cachedLister); ok {
+			cached, err := cl.ListCached()
+			if err != nil {
+				w.Logger.Warn("failed to list cached resources for snapshot prime",
+					"resource_type", w.ResourceType, "error", err)
+			} else {
+				items = cached
+			}
 		}
-		composite := strings.Join(keys, "/")
-		w.snapshotByKey[composite] = append(w.snapshotByKey[composite], item)
+	} else {
+		// Eager mode: full Store.List() on first access. For
+		// MemoryStore this is cheap; for CachedStore the operator
+		// configured `store: on-demand` to avoid exactly this path
+		// (see LazySnapshot above).
+		listed, err := w.Store.List()
+		if err != nil {
+			w.Logger.Warn("failed to list resources for snapshot",
+				"resource_type", w.ResourceType, "error", err)
+		} else {
+			items = listed
+		}
+	}
+
+	w.snapshot = items
+	if w.snapshotByKey == nil {
+		return
+	}
+	for _, item := range items {
+		w.indexItemLocked(item)
+	}
+}
+
+// indexItemLocked extracts index keys from item and appends it to the
+// snapshot index. Caller must hold cacheMu. No-op when the indexer
+// isn't available (no IndexBy or indexer build failed).
+func (w *StoreWrapper) indexItemLocked(item any) {
+	if w.indexer == nil || w.snapshotByKey == nil {
+		return
+	}
+	keys, err := w.indexer.ExtractKeys(item)
+	if err != nil {
+		// Item appears but isn't reachable via keyed lookup.
+		// Mirrors what would happen if the underlying store had
+		// also failed to extract keys.
+		w.Logger.Warn("failed to extract snapshot index keys for item",
+			"resource_type", w.ResourceType, "error", err)
+		return
+	}
+	composite := strings.Join(keys, "/")
+	w.snapshotByKey[composite] = append(w.snapshotByKey[composite], item)
+}
+
+// addToSnapshotLocked appends items fetched on-demand into the
+// snapshot and updates the keyed index. Used by the lazy-mode
+// per-key fetch path. Caller must hold cacheMu.
+func (w *StoreWrapper) addToSnapshotLocked(items []any) {
+	for _, item := range items {
+		w.snapshot = append(w.snapshot, item)
+		w.indexItemLocked(item)
 	}
 }
 
 // List returns all resources from the per-render snapshot.
 //
-// First call lazily loads the snapshot via Store.List(). Subsequent calls
-// return the same slice — every read in one render observes the same
-// store state.
+// First call lazily loads the snapshot. In eager mode the snapshot
+// covers everything in the underlying store. In lazy mode it covers
+// (initial: LRU-warm entries) + (incrementally: any keys touched via
+// Fetch/GetSingle during this render). Subsequent calls return the
+// same slice — every read in one render observes the same view, and
+// keys looked up after List() will GROW the snapshot but won't change
+// what earlier List() snippets already saw (sliced references are
+// stable; new entries land past the original length).
 func (w *StoreWrapper) List() []any {
 	w.cacheMu.Lock()
 	defer w.cacheMu.Unlock()
@@ -175,10 +274,20 @@ func (w *StoreWrapper) List() []any {
 // When the snapshot was indexed (IndexBy was set and the indexer built
 // cleanly), exact-match (full key set) hits the in-memory map and
 // partial-match (prefix) does a small scan — same shape as
-// MemoryStore.Get. When the snapshot wasn't indexed, falls back to
+// MemoryStore.Get.
+//
+// In LazySnapshot mode, an exact-match miss falls through to a single
+// Store.Get(stringKeys...) call (LRU-cached for CachedStore); the
+// fetched items are added to the snapshot + index so subsequent
+// lookups (and any later List()) see them. Partial-match misses
+// don't trigger a fetch — there's no general way to enumerate "all
+// keys with this prefix" without doing the very full-list we're
+// avoiding, so prefix scans see only items already in the snapshot.
+//
+// When the snapshot wasn't indexed (no IndexBy), falls back to
 // Store.Get(stringKeys...) — that path can disagree with the snapshot
-// returned by List(), but the wrapper logged a warning when the snapshot
-// was loaded so operators can see why.
+// returned by List(), but the wrapper logged a warning when the
+// snapshot was loaded so operators can see why.
 func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 	w.cacheMu.Lock()
 	defer w.cacheMu.Unlock()
@@ -205,18 +314,70 @@ func (w *StoreWrapper) get(stringKeys []string, op string) []any {
 		return items
 	}
 
-	if len(stringKeys) == len(w.IndexBy) {
+	exactMatch := len(stringKeys) == len(w.IndexBy)
+
+	if exactMatch {
 		composite := strings.Join(stringKeys, "/")
-		items := w.snapshotByKey[composite]
-		w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact)",
+		if items, ok := w.snapshotByKey[composite]; ok {
+			w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact)",
+				"resource_type", w.ResourceType,
+				"op", op,
+				"keys", stringKeys,
+				"found_count", len(items))
+			return items
+		}
+
+		if w.LazySnapshot {
+			// Snapshot miss in lazy mode: fetch this single key
+			// from the underlying store (one API call max,
+			// LRU-cached for CachedStore) and fold the result into
+			// the snapshot so later reads — including List() — see
+			// it.
+			items, err := w.Store.Get(stringKeys...)
+			if err != nil {
+				w.Logger.Warn("failed to fetch single key for lazy snapshot",
+					"resource_type", w.ResourceType,
+					"op", op,
+					"keys", stringKeys,
+					"error", err)
+				return []any{}
+			}
+			w.addToSnapshotLocked(items)
+			// Negative-cache the absent-key case so a template that
+			// references the same missing key N times (e.g. iterates
+			// Ingresses that all carry the same dangling
+			// auth-tls-secret ref) doesn't fire N Store.Get calls.
+			// addToSnapshotLocked is a no-op when items is empty —
+			// leaving snapshotByKey[composite] absent and the
+			// `ok` check on the next visit failing — so we
+			// materialise an empty bucket explicitly. In the
+			// non-empty case indexItemLocked already populated
+			// the bucket via its own key extraction, so this
+			// conditional avoids clobbering it.
+			if _, indexed := w.snapshotByKey[composite]; !indexed {
+				w.snapshotByKey[composite] = []any{}
+			}
+			w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (lazy fetch)",
+				"resource_type", w.ResourceType,
+				"op", op,
+				"keys", stringKeys,
+				"found_count", len(items))
+			return items
+		}
+
+		// Eager mode: snapshot is authoritative. Miss → empty.
+		w.Logger.Log(context.Background(), logging.LevelTrace, "store get called (snapshot, exact miss)",
 			"resource_type", w.ResourceType,
 			"op", op,
 			"keys", stringKeys,
-			"found_count", len(items))
-		return items
+			"found_count", 0)
+		return nil
 	}
 
-	// Partial-match prefix scan over the snapshot index.
+	// Partial-match prefix scan over the snapshot index. In lazy mode
+	// this only returns items already in the snapshot — we can't
+	// enumerate "all cluster items with this prefix" without paying
+	// the full-list cost the lazy mode exists to avoid.
 	prefix := strings.Join(stringKeys, "/") + "/"
 	var results []any
 	for k, items := range w.snapshotByKey {
