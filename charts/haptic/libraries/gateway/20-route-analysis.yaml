@@ -416,7 +416,7 @@ templateSnippets:
              {ListenerSet, lsNs} to {Gateway, gwName}.
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
-      {%- macro IsListenerSetAdmitted(gw any, ls any) -%}
+      {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls *resources.listenersets.T) -%}
         {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) -%}
         {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) -%}
         {%- var pRef = dig(ls, "spec", "parentRef") -%}

@@ -172,7 +172,7 @@ templateSnippets:
   util-backend-name-ingress:
     template: |
       {#- Generates backend name: <ns>_<ingress>_svc_<svc>_<port-name> (matches production format) -#}
-      {% macro BackendNameIngress(ingress any, path any) string %}{%%
+      {% macro BackendNameIngress(ingress *resources.ingresses.T, path any) string %}{%%
         var namespace = tostring(ingress | dig("metadata", "namespace") | fallback(""))
         var name = tostring(ingress | dig("metadata", "name") | fallback(""))
         var serviceName = tostring(path | dig("backend", "service", "name") | fallback(""))
@@ -533,10 +533,18 @@ templateSnippets:
         {%- for _, cand := range sorted -%}
           {%- var hostKey = tostring(cand["hostKey"]) -%}
           {%- if first_seen("ingress_default_host", hostKey) -%}
-            {%- var ingress = cand["ingress"] -%}
+            {#- Explicit type assertion: cand is map[string]any so
+                cand["ingress"] is statically `any`; without the
+                `.(*resources.ingresses.T)` cast, BackendNameIngress's
+                typed parameter would force Scriggo into an implicit
+                `any → *T` conversion at the call site that empirically
+                broke TestIngressAuthHeadersFail on MR !1010 (bisect-
+                confirmed). The explicit assertion takes the standard
+                Scriggo emit path instead. -#}
+            {%- var ingress = cand["ingress"].(*resources.ingresses.T) -%}
             {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
             {%- var path = map[string]any{"backend": defaultBackend} %}
-      # Ingress: {{ dig(ingress, "metadata", "namespace") | fallback("") }}/{{ dig(ingress, "metadata", "name") | fallback("") }} (defaultBackend → "{{ hostKey }}/")
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} (defaultBackend → "{{ hostKey }}/")
       {{ hostKey }}/ BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end -%}
         {%- end -%}
