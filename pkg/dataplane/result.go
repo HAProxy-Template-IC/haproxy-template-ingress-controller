@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
 )
 
 const (
@@ -74,6 +76,21 @@ type SyncResult struct {
 	// redundant GetRawConfiguration() + parse on subsequent syncs when the
 	// pod's version hasn't changed. Zero means version was not captured.
 	PostSyncVersion int64
+
+	// PostSyncParsedConfig is the pod's actual configuration AFTER the sync
+	// completed, fetched and parsed from the dataplane API. Set only when
+	// AppliedOperations is non-empty AND the post-sync fetch+parse
+	// succeeded; nil otherwise (no-changes paths, or fetch/parse failure —
+	// callers fall back to the desired config in those cases).
+	//
+	// Callers should cache this in preference to their input desired config:
+	// incremental dataplane patches don't guarantee byte-identity with the
+	// caller's intent (different starting baselines across pods produce
+	// logically-equivalent-but-byte-different end states). Caching the
+	// actual post-sync state lets subsequent drift checks compare apples to
+	// apples — the comparator sees pod-actual vs desired, not
+	// desired vs desired.
+	PostSyncParsedConfig *parserconfig.StructuredConfig
 }
 
 // UsedRawPush returns true if raw configuration push was used instead of fine-grained sync.

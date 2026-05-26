@@ -160,13 +160,30 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 }
 
 // sync implements the complete sync workflow with automatic fallback.
-func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *SyncOptions, auxFiles *AuxiliaryFiles) (*SyncResult, error) {
+func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *SyncOptions, auxFiles *AuxiliaryFiles) (result *SyncResult, err error) {
 	startTime := time.Now()
 
+	// Cache the pod's actual post-sync state for the caller. Without this,
+	// the deployer's version-cache would store the caller's desired intent
+	// instead of what the dataplane API actually wrote — and two pods that
+	// reached "logically desired" from different starting baselines (e.g. a
+	// rolling Deployment where pod A is synced twice and pod B is synced
+	// once) would end up with byte-different on-disk configs that the next
+	// drift check would never detect (cache says "you're at desired", live
+	// pod says "I'm at something close-but-not-equal"). Only fetch when ops
+	// were actually applied — no-changes paths already left the pod where
+	// the existing cache says it is.
+	defer func() {
+		if err != nil || result == nil || len(result.AppliedOperations) == 0 {
+			return
+		}
+		o.populatePostSyncParsedConfig(ctx, result)
+	}()
+
 	// Step 1: Fetch current configuration (with optional version cache optimization)
-	currentConfigStr, preParsedCurrent, preCachedVersion, err := o.fetchCurrentConfig(ctx, opts)
-	if err != nil {
-		return nil, err
+	currentConfigStr, preParsedCurrent, preCachedVersion, fetchErr := o.fetchCurrentConfig(ctx, opts)
+	if fetchErr != nil {
+		return nil, fetchErr
 	}
 
 	// Step 2-4: Parse and compare configurations
@@ -191,30 +208,8 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 		return result, nil
 	}
 
-	// Step 6: Fetch current config version to determine if raw push should be used
-	// Reuse pre-cached version if we already called GetVersion() during cache check
-	var version int64
-	if preCachedVersion > 0 {
-		version = preCachedVersion
-	} else {
-		versionRetryConfig := client.RetryConfig{
-			MaxAttempts: 3,
-			RetryIf:     client.IsConnectionError(),
-			Backoff:     client.BackoffExponential,
-			BaseDelay:   100 * time.Millisecond,
-			Logger:      o.logger.With("operation", "fetch_version"),
-		}
-
-		var versionErr error
-		version, versionErr = client.WithRetry(ctx, versionRetryConfig, func(attempt int) (int64, error) {
-			return o.client.GetVersion(ctx)
-		})
-		if versionErr != nil {
-			o.logger.Warn("Failed to get config version, skipping version-based raw push decision",
-				"error", versionErr)
-			version = -1
-		}
-	}
+	// Step 6: Resolve current config version (reused across raw-push gating below).
+	version := o.resolveCurrentVersion(ctx, preCachedVersion)
 
 	// Step 7: Check if raw push should be used instead of fine-grained sync
 	// Priority: version=1 > threshold exceeded > fine-grained sync
@@ -263,6 +258,61 @@ func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *Syn
 	}
 
 	return result, err
+}
+
+// resolveCurrentVersion returns the pod's current config version. Reuses
+// the pre-cached value when fetchCurrentConfig already called GetVersion()
+// during cache validation, otherwise issues a retried GetVersion call.
+// Returns -1 on persistent failure (the caller then skips the
+// version-based raw-push gating heuristic — a sync still proceeds, just
+// via the fine-grained path).
+func (o *orchestrator) resolveCurrentVersion(ctx context.Context, preCachedVersion int64) int64 {
+	if preCachedVersion > 0 {
+		return preCachedVersion
+	}
+	retry := client.RetryConfig{
+		MaxAttempts: 3,
+		RetryIf:     client.IsConnectionError(),
+		Backoff:     client.BackoffExponential,
+		BaseDelay:   100 * time.Millisecond,
+		Logger:      o.logger.With("operation", "fetch_version"),
+	}
+	version, err := client.WithRetry(ctx, retry, func(attempt int) (int64, error) {
+		return o.client.GetVersion(ctx)
+	})
+	if err != nil {
+		o.logger.Warn("Failed to get config version, skipping version-based raw push decision",
+			"error", err)
+		return -1
+	}
+	return version
+}
+
+// populatePostSyncParsedConfig fetches the pod's actual configuration after a
+// successful sync and parses it into result.PostSyncParsedConfig.
+//
+// Best-effort: a failed fetch or parse is logged at Debug and leaves the
+// field nil. Callers that fall back to the input desired config still get
+// correct behaviour for that reconcile — they just don't get the
+// cross-pod-drift detection improvement this method enables. We don't
+// fail the sync over a post-sync read error; the actual config change has
+// already committed by the time we get here.
+func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result *SyncResult) {
+	rawConfig, err := o.client.GetRawConfiguration(ctx)
+	if err != nil {
+		o.logger.Debug("Failed to fetch post-sync config for caller's cache (proceeding without)",
+			"endpoint", o.client.Endpoint.URL,
+			"error", err)
+		return
+	}
+	parsed, err := o.parser.ParseFromString(rawConfig)
+	if err != nil {
+		o.logger.Debug("Failed to parse post-sync config for caller's cache (proceeding without)",
+			"endpoint", o.client.Endpoint.URL,
+			"error", err)
+		return
+	}
+	result.PostSyncParsedConfig = parsed
 }
 
 // diff generates a diff without applying any changes.
