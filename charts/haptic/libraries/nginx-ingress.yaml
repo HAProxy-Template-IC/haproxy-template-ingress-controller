@@ -80,13 +80,13 @@ templateSnippets:
           dynamic-cookie-key <sha256-of-ns/name>
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var affinity = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/affinity") %}
+        {%- var affinity = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/affinity"] %}
         {%- if affinity == "cookie" %}
           {%- var cookieName = ingress | dig_string("INGRESSCOOKIE", "metadata", "annotations", "nginx.ingress.kubernetes.io/session-cookie-name") %}
-          {%- var cookiePath = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/session-cookie-path") %}
+          {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-path"] %}
           {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
           {%- if cookiePath != "" %}
             {#- HAProxy's `cookie` directive does not accept a bare `path`
@@ -124,9 +124,9 @@ templateSnippets:
           timeout server <val>s
       -#}
       {%- if ingress != nil %}
-        {%- var connectTimeout = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/proxy-connect-timeout") %}
-        {%- var readTimeout = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/proxy-read-timeout") %}
-        {%- var sendTimeout = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/proxy-send-timeout") %}
+        {%- var connectTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-connect-timeout"] %}
+        {%- var readTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"] %}
+        {%- var sendTimeout = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"] %}
         {%- var hasTimeout = connectTimeout != "" || readTimeout != "" || sendTimeout != "" %}
         {%- if hasTimeout %}
       # nginx-ingress/backend-directives-timeouts
@@ -171,10 +171,10 @@ templateSnippets:
           balance <algorithm>
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var lb = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/load-balance") %}
+        {%- var lb = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/load-balance"] %}
         {%- if lb != "" %}
           {%- var algo = "" %}
           {%- if lb == "round_robin" %}
@@ -210,10 +210,10 @@ templateSnippets:
           http-request deny deny_status 413 if { req.body_size gt <bytes> }
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var bodySize = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/proxy-body-size") %}
+        {%- var bodySize = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"] %}
         {%- if bodySize != "" %}
           {%- var bytes = 0 %}
           {%- var sizeLen = len(bodySize) %}
@@ -253,10 +253,10 @@ templateSnippets:
         AJP and FCGI are not supported in HAProxy and will fail with an error.
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var proto = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/backend-protocol") %}
+        {%- var proto = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/backend-protocol"] %}
         {%- if proto != "" %}
           {%- if proto == "HTTP" %}
             {#- HTTP/1.1 is default, no flag needed -#}
@@ -292,7 +292,7 @@ templateSnippets:
           (appends send-proxy-v2 to server options)
       -#}
       {%- if ingress != nil %}
-        {%- var pp = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/use-proxy-protocol") %}
+        {%- var pp = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/use-proxy-protocol"] %}
         {%- if pp == "true" %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2") %}
         {%- end %}
@@ -314,10 +314,10 @@ templateSnippets:
           http-request replace-path (.*) <translated-value>
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var rewrite = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/rewrite-target") %}
+        {%- var rewrite = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/rewrite-target"] %}
         {%- if rewrite != "" %}
           {#- Translate $1..$9 capture groups to \1..\9 -#}
           {%- rewrite = replace(rewrite, "$1", "\\1") %}
@@ -361,10 +361,10 @@ templateSnippets:
   map-auth-url-500-nginx-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authUrl = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-url") -%}
+        {%- var authUrl = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-url"] -%}
         {%- if authUrl != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
         {%- end -%}
       {%- end -%}
@@ -386,10 +386,10 @@ templateSnippets:
   map-auth-signin-500-nginx-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authSignin = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-signin") -%}
+        {%- var authSignin = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-signin"] -%}
         {%- if authSignin != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
         {%- end -%}
       {%- end -%}
@@ -411,10 +411,10 @@ templateSnippets:
   map-auth-method-500-nginx-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var authMethod = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-method") -%}
+        {%- var authMethod = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-method"] -%}
         {%- if authMethod != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
         {%- end -%}
       {%- end -%}
@@ -440,10 +440,10 @@ templateSnippets:
   map-auth-extract-headers-500-nginx-ingress:
     template: |-
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var passHeaders = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-response-headers") -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-response-headers"] -%}
         {%- if passHeaders != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} {{ passHeaders }}
         {%- end -%}
       {%- end -%}
@@ -470,10 +470,10 @@ templateSnippets:
       {%- var pairs []any = []any{} -%}
       {%- var seen = map[string]bool{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var passHeaders = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-response-headers") -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-response-headers"] -%}
         {%- if passHeaders != "" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var ingressName = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
           {%- for _, h := range split(passHeaders, ",") -%}
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
@@ -514,15 +514,15 @@ templateSnippets:
           http-request auth realm "<realm>" unless { http_auth(ni_auth_<secretNs>_<secretName>) }
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var authType = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-type") %}
+        {%- var authType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] %}
         {%- if authType != "" %}
           {%- if authType != "basic" %}
             {{- fail("Unsupported auth-type '" + authType + "' for annotation 'nginx.ingress.kubernetes.io/auth-type' on Ingress '" + key + "'. Only 'basic' is supported.") -}}
           {%- end %}
-          {%- var authSecret = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-secret") %}
+          {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
           {%- if authSecret != "" %}
             {%- var authRealm = ingress | dig_string("Restricted", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-realm") %}
             {%- var secretNs = ns %}
@@ -583,11 +583,11 @@ templateSnippets:
           http-request deny deny_status 429 if { sc_conn_cur(0) gt <connections> }
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var limitRps = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/limit-rps") %}
-        {%- var limitConn = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/limit-connections") %}
+        {%- var limitRps = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rps"] %}
+        {%- var limitConn = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-connections"] %}
         {%- if limitRps != "" %}
           {%- if limitConn != "" %}
       # nginx-ingress/rate-limiting ({{ key }}) - limit-rps takes precedence; limit-connections ignored (HAProxy supports one stick-table per backend)
@@ -629,10 +629,10 @@ templateSnippets:
           hash-type consistent
       -#}
       {%- if ingress != nil %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var hashBy = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/upstream-hash-by") %}
+        {%- var hashBy = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/upstream-hash-by"] %}
         {%- if hashBy != "" %}
           {%- var expr = "" %}
           {%- if hashBy == "$request_uri" %}
@@ -669,7 +669,7 @@ templateSnippets:
         Allows injecting raw HAProxy directives into the backend.
       -#}
       {%- if ingress != nil %}
-        {%- var snippet = ingress | dig("metadata", "annotations", "nginx.ingress.kubernetes.io/configuration-snippet") | fallback("") %}
+        {%- var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/configuration-snippet"] %}
         {%- if snippet != "" %}
       # nginx-ingress/configuration-snippet
       {{ snippet }}
@@ -724,8 +724,8 @@ templateSnippets:
       -#}
       {%- import "util-emit-annotation-ssl-redirect" for EmitAnnotationSSLRedirect -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var sslRedirect = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/ssl-redirect") %}
-        {%- var forceSslRedirect = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/force-ssl-redirect") %}
+        {%- var sslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] %}
+        {%- var forceSslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"] %}
         {%- var code = "" %}
         {%- if forceSslRedirect == "true" %}
           {%- code = "308" %}
@@ -813,11 +813,11 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var reqHeaders = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/custom-request-headers") %}
-          {%- var respHeaders = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/custom-response-headers") %}
+          {%- var reqHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-request-headers"] %}
+          {%- var respHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-response-headers"] %}
           {%- var hosts = []string{} %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
@@ -870,10 +870,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var appRoot = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/app-root") %}
+          {%- var appRoot = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/app-root"] %}
           {%- if appRoot != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -902,10 +902,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var url = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/permanent-redirect") %}
+          {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
           {%- if url != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -934,10 +934,10 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-          {%- var url = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/temporal-redirect") %}
+          {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
           {%- if url != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -978,10 +978,10 @@ templateSnippets:
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- import "util-backend-name-ingress" for BackendNameIngress -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var isCanary = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary") %}
+        {%- var isCanary = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] %}
         {%- if isCanary == "true" %}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-          {%- var name = ingress | dig_string("", "metadata", "name") %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
           {%- var key = ns + "/" + name %}
             {#- Extract hosts and find the first backend name from this canary ingress -#}
             {%- var hosts = []string{} %}
@@ -1000,11 +1000,11 @@ templateSnippets:
             {%- end %}
             {%- if len(hosts) > 0 && canaryBackend != "" %}
               {%- var cond = HostMatchCondition(hosts) %}
-              {%- var canaryHeader = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary-by-header") %}
-              {%- var canaryHeaderValue = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary-by-header-value") %}
-              {%- var canaryHeaderPattern = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary-by-header-pattern") %}
-              {%- var canaryCookie = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary-by-cookie") %}
-              {%- var canaryWeight = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/canary-weight") %}
+              {%- var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"] %}
+              {%- var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"] %}
+              {%- var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"] %}
+              {%- var canaryCookie = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-cookie"] %}
+              {%- var canaryWeight = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-weight"] %}
       # nginx-ingress/canary ({{ key }})
               {%- if canaryHeader != "" %}
                 {%- if canaryHeaderPattern != "" %}
@@ -1043,16 +1043,16 @@ templateSnippets:
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
           {%- var hosts = []string{} %}
           {%- for _, rule := range ingress.Spec.Rules %}
             {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
           {%- end %}
           {%- if len(hosts) > 0 %}
-            {%- var errorPage = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-error-page") %}
-            {%- var passCert = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream") %}
+            {%- var errorPage = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-error-page"] %}
+            {%- var passCert = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] %}
             {%- var cond = HostMatchCondition(hosts) %}
             {%- if errorPage != "" %}
               {#- Inline URL guard: this snippet renders via the
@@ -1163,10 +1163,10 @@ templateSnippets:
       -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var secretRef = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-secret") %}
+        {%- var secretRef = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] %}
         {%- if secretRef != "" %}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-          {%- var name = ingress | dig_string("", "metadata", "name") %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
           {%- var verifyClient = ingress | dig_string("on", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-verify-client") | toLower() %}
           {%- if verifyClient == "off" %}
             {%- continue %}
@@ -1213,8 +1213,8 @@ templateSnippets:
           {%- end -%}
           {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
 
-          {%- for _, rule := range ingress | dig("spec", "rules") | fallback([]any{}) %}
-            {%- var host = rule | dig_string("", "host") %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = rule.Host %}
             {%- if host == "" %}
               {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
             {%- end %}
@@ -1267,12 +1267,12 @@ templateSnippets:
             user <username> password '<hash>'
       -#}
       {%- for _, ingress := range resources.ingresses.List() %}
-        {%- var ns = ingress | dig_string("", "metadata", "namespace") %}
-        {%- var name = ingress | dig_string("", "metadata", "name") %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var authType = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-type") %}
+        {%- var authType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-type"] %}
         {%- if authType == "basic" %}
-          {%- var authSecret = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-secret") %}
+          {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
           {%- if authSecret != "" %}
             {%- var secretNs = ns %}
             {%- var secretName = authSecret %}
