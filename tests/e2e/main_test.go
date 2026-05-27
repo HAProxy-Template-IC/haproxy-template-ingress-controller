@@ -118,6 +118,9 @@ func TestMain(m *testing.M) {
 		phase("load-controller-image", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return loadControllerImage(ctx)
 		}),
+		phase("preload-upstream-fixture-images", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
+			return preloadUpstreamFixtureImages(ctx)
+		}),
 		phase("ensure-namespaces", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return ctx, ensureNamespaces(ctx)
 		}),
@@ -292,26 +295,114 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 // loadControllerImage loads haptic:test into the kind cluster so the helm
 // install can find it (the chart sets imagePullPolicy: Never via dev-values).
 // Skipped when SKIP_CLUSTER_CREATE=true (CI does its own load).
-//
-// We avoid `kind load docker-image` because it stages the image as a tar
-// in $TMPDIR and then docker saves into that path — which fails when
-// dockerd runs under systemd with PrivateTmp=yes (the daemon and the
-// caller see different /tmp namespaces). Instead, pipe `docker save`
-// straight into `ctr image import` inside the kind control-plane
-// container. Same effect, no host temp files.
 func loadControllerImage(ctx context.Context) (context.Context, error) {
 	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
 		return ctx, nil
 	}
+	return ctx, loadDockerImageIntoKind(ctx, ControllerImageName)
+}
 
-	saveCmd := exec.CommandContext(ctx, "docker", "save", ControllerImageName)
+// upstreamFixtureImages is the list of public images the test fixtures
+// pull from upstream registries (Docker Hub etc.). Pre-loading them into
+// the kind cluster sidesteps two pain points hit during local dev:
+//
+//   - Docker Hub anonymous-pull rate limits. The kind containerd has its
+//     own image cache, isolated from the host docker daemon, so the host
+//     `docker pull` doesn't help — kind re-pulls on its own. With many
+//     parallel tests creating fresh per-namespace pods, the cluster's
+//     IP burns through its 100-per-6-hours allowance quickly and pods
+//     start landing in `ImagePullBackOff`.
+//   - Cold-cache slowness on first test run after `kind delete` /
+//     `KEEP_CLUSTER=false`. Even when rate-limit-free, the per-pod
+//     pull adds tens of seconds per test that creates a fixture.
+//
+// Each entry must already be available in the host's docker image
+// cache when the e2e suite starts. The chart's docker-build-test
+// target pulls `haproxytech/haproxy-debian:<HAPROXY_VERSION>` as part
+// of the controller image build; the other fixture images come from
+// `make docker-pull-test-images` which CI runs ahead of the e2e job.
+// Locally, running the suite once warms the host cache (or just
+// `docker pull <image>` for each entry).
+//
+// If `docker save` fails for an entry — image not in the host's
+// daemon — the preload phase logs a warning and continues. The pod
+// that needs that image will then go through the normal pull-from-
+// upstream path and either succeed or `ImagePullBackOff`; the test
+// failure will point at the missing image more clearly than a silent
+// preload skip would.
+var upstreamFixtureImages = []string{
+	"ealen/echo-server:latest",     // NewEchoServerBackend (most per-test backends)
+	"nginx:alpine",                  // auth-server, blocklist-server, ad-hoc HTTPS demo backend
+	"haproxytech/haproxy-debian",    // chart's HAProxy + haproxy_demo_backend + haproxy_mtls_backend
+}
+
+// preloadUpstreamFixtureImages copies each upstream fixture image
+// from the host docker daemon into the kind cluster's containerd
+// store, so test fixtures using `imagePullPolicy: IfNotPresent`
+// (the e2e default) find the image locally and skip the upstream
+// pull entirely.
+//
+// Best-effort: a single image failing to load (missing on host,
+// docker save error) logs a warning and continues. The caller's
+// fixture will surface a clear ImagePullBackOff on the affected
+// pod if the image was actually needed.
+//
+// Skipped when SKIP_CLUSTER_CREATE=true — CI flows that manage
+// their own image loading (or run on a registry-mirror-equipped
+// cluster) shouldn't pay the cost.
+func preloadUpstreamFixtureImages(ctx context.Context) (context.Context, error) {
+	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
+		return ctx, nil
+	}
+	for _, image := range upstreamFixtureImages {
+		// Resolve haproxytech/haproxy-debian to a specific tag — the
+		// chart pins HAPROXY_VERSION, so we preload the matching tag.
+		// Without a tag, `docker save` would refuse (refers to no
+		// loaded image). The chart's image-tag matching logic is in
+		// charts/haptic/templates/_image.tpl; we mirror its shape
+		// here just enough to pick the right upstream tag.
+		ref := resolveImageRef(image)
+		if err := loadDockerImageIntoKind(ctx, ref); err != nil {
+			fmt.Fprintf(os.Stderr, "[e2e] preload %s: %v (continuing — test fixtures using this image will fall back to pulling from upstream)\n", ref, err)
+		}
+	}
+	return ctx, nil
+}
+
+// resolveImageRef turns a possibly-untagged image name into a
+// concrete reference. Bare `haproxytech/haproxy-debian` (no tag)
+// becomes `haproxytech/haproxy-debian:<HAPROXY_VERSION>` so the
+// preload picks up the same tag the chart's HAProxy deployment
+// references.
+func resolveImageRef(image string) string {
+	if image == "haproxytech/haproxy-debian" {
+		v := os.Getenv("HAPROXY_VERSION")
+		if v == "" {
+			v = "3.2" // matches versions.env DEFAULT_HAPROXY at time of writing
+		}
+		return image + ":" + v
+	}
+	return image
+}
+
+// loadDockerImageIntoKind streams `docker save <ref>` into
+// `docker exec <kind-node> ctr image import -`, the same pattern
+// loadControllerImage uses for the controller image.
+//
+// We avoid `kind load docker-image` because it stages the image as a
+// tar in $TMPDIR and then docker saves into that path — which fails
+// when dockerd runs under systemd with PrivateTmp=yes (the daemon
+// and the caller see different /tmp namespaces). Piping straight
+// through is the same effect with no host temp files.
+func loadDockerImageIntoKind(ctx context.Context, ref string) error {
+	saveCmd := exec.CommandContext(ctx, "docker", "save", ref)
 	importCmd := exec.CommandContext(ctx, "docker", "exec", "-i",
 		ClusterName+"-control-plane",
 		"ctr", "--namespace=k8s.io", "images", "import", "-")
 
 	pipe, err := saveCmd.StdoutPipe()
 	if err != nil {
-		return ctx, fmt.Errorf("pipe docker save: %w", err)
+		return fmt.Errorf("pipe docker save: %w", err)
 	}
 	importCmd.Stdin = pipe
 	importCmd.Stdout = os.Stderr
@@ -319,16 +410,16 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 	saveCmd.Stderr = os.Stderr
 
 	if err := importCmd.Start(); err != nil {
-		return ctx, fmt.Errorf("start ctr import: %w", err)
+		return fmt.Errorf("start ctr import: %w", err)
 	}
 	if err := saveCmd.Run(); err != nil {
 		_ = importCmd.Wait()
-		return ctx, fmt.Errorf("docker save %s: %w", ControllerImageName, err)
+		return fmt.Errorf("docker save %s: %w", ref, err)
 	}
 	if err := importCmd.Wait(); err != nil {
-		return ctx, fmt.Errorf("ctr image import: %w", err)
+		return fmt.Errorf("ctr image import: %w", err)
 	}
-	return ctx, nil
+	return nil
 }
 
 // installCRDs applies the chart's CRD manifests. We do this separately
