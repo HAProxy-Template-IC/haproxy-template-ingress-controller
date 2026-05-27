@@ -177,7 +177,7 @@ templateSnippets:
       {%- var sortedAggKeys = sort_strings(aggKeys) %}
       {%- for _, secretKey := range sortedAggKeys %}
         {%%
-          var agg = certAggregates[tostring(secretKey)]
+          var agg = certAggregates[secretKey]
           var certNamespace = tostring(agg["secret_namespace"])
           var certName = tostring(agg["secret_name"])
 

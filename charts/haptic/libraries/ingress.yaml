@@ -109,7 +109,7 @@ templateSnippets:
 
             // Register certificate file dynamically using file_registry
             // The filename is sanitized by PathResolver (dots replaced with underscores, etc.)
-            var certFilename = tostring(namespace) + "_" + tostring(secretName) + ".pem"
+            var certFilename = namespace + "_" + secretName + ".pem"
             var certPath, certRegErr = fileRegistry.Register("cert", certFilename, combinedPem)
             if certRegErr != nil {
               fail("failed to register certificate " + certFilename + ": " + tostring(certRegErr))
@@ -506,7 +506,7 @@ templateSnippets:
             {%- candidates = append(candidates, map[string]any{"hostKey": "", "ingress": ingress, "ts": ts}) -%}
           {%- else -%}
             {%- for _, rule := range rules -%}
-              {%- var hostKey = tostring(MapKeyForHost(dig(rule, "host"))) -%}
+              {%- var hostKey = MapKeyForHost(dig(rule, "host")) -%}
               {%- candidates = append(candidates, map[string]any{"hostKey": hostKey, "ingress": ingress, "ts": ts}) -%}
             {%- end -%}
           {%- end -%}

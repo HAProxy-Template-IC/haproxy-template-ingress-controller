@@ -30,11 +30,11 @@ templateSnippets:
           var certKey = ResolveCertRefKey(listener, gwNs)  // "" if no certRefs
       -#}
       {%- macro ResourceNamespace(r any) string -%}
-      {{- tostring(dig(r, "metadata", "namespace") | fallback("")) -}}
+      {{- dig(r, "metadata", "namespace") | fallback("") -}}
       {%- end macro -%}
 
       {%- macro ResourceName(r any) string -%}
-      {{- tostring(dig(r, "metadata", "name") | fallback("")) -}}
+      {{- dig(r, "metadata", "name") | fallback("") -}}
       {%- end macro -%}
 
       {%- macro GatewayKey(ns string, name string) string -%}
@@ -46,7 +46,7 @@ templateSnippets:
       {%- end macro -%}
 
       {%- macro ListenerProtocol(listener any) string -%}
-      {{- tostring(dig(listener, "protocol") | fallback("")) -}}
+      {{- dig(listener, "protocol") | fallback("") -}}
       {%- end macro -%}
 
       {#- ListenerProtocolOr — like ListenerProtocol but with a caller-supplied
@@ -55,15 +55,15 @@ templateSnippets:
           Gateway API default), "" when missing should be distinguished from
           any concrete value. -#}
       {%- macro ListenerProtocolOr(listener any, defaultProto string) string -%}
-      {{- tostring(dig(listener, "protocol") | fallback(defaultProto)) -}}
+      {{- dig(listener, "protocol") | fallback(defaultProto) -}}
       {%- end macro -%}
 
       {%- macro ListenerName(listener any) string -%}
-      {{- tostring(dig(listener, "name") | fallback("")) -}}
+      {{- dig(listener, "name") | fallback("") -}}
       {%- end macro -%}
 
       {%- macro ListenerHostname(listener any) string -%}
-      {{- tostring(dig(listener, "hostname") | fallback("")) -}}
+      {{- dig(listener, "hostname") | fallback("") -}}
       {%- end macro -%}
 
       {#- ResolveCertRefKey — extract the first cert ref as "<crNs>/<crName>".
