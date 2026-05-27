@@ -308,7 +308,7 @@ templateSnippets:
           listener hostname, default frontend validation) was answering
           handshakes without client-cert verification. -#}
       {%- var defaultCfg = clientCertVerifyHosts["*"] -%}
-      {%- var crtlistLines = []any{tostring(CrtListLine(tostring(defaultCertFilename), defaultCfg, ""))} -%}
+      {%- var crtlistLines = []any{CrtListLine(defaultCertFilename, defaultCfg, "")} -%}
 
       {# Generate entries for each registered TLS certificate.
          Per-host client-cert verification (driven by the ingress
@@ -359,7 +359,7 @@ templateSnippets:
             {%- cfg = configForKey[key] -%}
           {%- end -%}
           {%- var sniList = groupSnis | toStringSlice() | join(" ") -%}
-          {%- var line = tostring(CrtListLine(tostring(certFilename), cfg, sniList)) -%}
+          {%- var line = CrtListLine(tostring(certFilename), cfg, sniList) -%}
           {%- crtlistLines = append(crtlistLines, line) -%}
         {%- end -%}
       {%- end -%}
