@@ -71,19 +71,19 @@ templateSnippets:
             {%- var svcName = "" %}
             {%- var svcPort = 0 %}
             {%- var svcPortName = "" %}
-            {%- for _, rule := range ingress.Spec.Rules %}
-              {%- if svcName == "" %}
-                {%- for _, path := range rule.Http.Paths %}
-                  {%- if svcName == "" %}
-                    {%- var n = path.Backend.Service.Name %}
-                    {%- if n != "" %}
-                      {%- var resolvedParts = split(ResolveServicePort(tostring(ns), n, path.Backend.Service.Port), " ") %}
-                      {%- svcName = n %}
-                      {%- svcPort = toint(resolvedParts[0]) %}
-                      {%- svcPortName = resolvedParts[1] %}
-                    {%- end %}
-                  {%- end %}
-                {%- end %}
+            {#- First-service-found scan. The outer rule loop's body
+                uses only path-level fields — flatten via `[*]`. The
+                literal-desugar `break` exits the (single) loop on
+                the first hit, faster than the original "no-op once
+                svcName is set" pattern. -#}
+            {%- for _, path := range ingress.Spec.Rules[*].Http.Paths %}
+              {%- var n = path.Backend.Service.Name %}
+              {%- if n != "" %}
+                {%- var resolvedParts = split(ResolveServicePort(tostring(ns), n, path.Backend.Service.Port), " ") %}
+                {%- svcName = n %}
+                {%- svcPort = toint(resolvedParts[0]) %}
+                {%- svcPortName = resolvedParts[1] %}
+                {%- break %}
               {%- end %}
             {%- end %}
             {%- if svcName != "" %}

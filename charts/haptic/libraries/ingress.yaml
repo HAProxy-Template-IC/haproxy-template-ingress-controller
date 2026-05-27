@@ -210,13 +210,12 @@ templateSnippets:
       {% macro PathMapEntryIngressShard(ingresses []*resources.ingresses.T, pathTypes []string, suffix string) string %}
         {%- for _, ingress := range ingresses -%}
           {%- var matchCount = 0 -%}
-          {#- Count matching paths -#}
-          {%- for _, rule := range ingress.Spec.Rules -%}
-            {%- for _, path := range rule.Http.Paths -%}
-              {%- if path.Path != "" -%}
-                {%- for _, checkType := range pathTypes -%}
-                  {%- if path.PathType == checkType -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
-                {%- end -%}
+          {#- Count matching paths. The outer rule loop's body uses
+              only path-level fields — flatten via `[*]`. -#}
+          {%- for _, path := range ingress.Spec.Rules[*].Http.Paths -%}
+            {%- if path.Path != "" -%}
+              {%- for _, checkType := range pathTypes -%}
+                {%- if path.PathType == checkType -%}{%- matchCount = matchCount + 1 -%}{%- end -%}
               {%- end -%}
             {%- end -%}
           {%- end -%}
