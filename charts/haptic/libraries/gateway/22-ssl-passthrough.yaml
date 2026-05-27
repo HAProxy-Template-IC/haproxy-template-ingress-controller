@@ -25,12 +25,11 @@ templateSnippets:
         {%- for _, route := range resources.httproutes.List() %}
           {%%
             var hasPassthrough = false
-            for _, rule := range route | dig("spec", "rules") | toSlice() {
-              for _, filter := range rule | dig("filters") | toSlice() {
-                var filterType = filter | dig("type") | fallback("")
-                if filterType == "ExtensionRef" {
-                  var kind = filter | dig("extensionRef", "kind") | fallback("")
-                  var name = filter | dig("extensionRef", "name") | fallback("")
+            for _, rule := range route.Spec.Rules {
+              for _, filter := range rule.Filters {
+                if filter.Type == "ExtensionRef" {
+                  var kind = filter.ExtensionRef.Kind
+                  var name = filter.ExtensionRef.Name
                   if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
                     hasPassthrough = true
                   }
@@ -91,11 +90,13 @@ templateSnippets:
               // (the spec mandates the connection be refused, not
               // routed elsewhere).
               var ruleResolved = true
-              for _, br := range rule | dig("backendRefs") | toSlice() {
-                var brName = tostring(dig(br, "name") | fallback(""))
-                var brNs = tostring(dig(br, "namespace") | fallback(nsStr))
-                var brGroup = tostring(dig(br, "group") | fallback(""))
-                var brKind = tostring(dig(br, "kind") | fallback("Service"))
+              for _, br := range rule.BackendRefs {
+                var brName = br.Name
+                var brNs = br.Namespace
+                if brNs == "" { brNs = nsStr }
+                var brGroup = br.Group
+                var brKind = br.Kind
+                if brKind == "" { brKind = "Service" }
                 if !((brGroup == "" || brGroup == "core") && brKind == "Service") {
                   ruleResolved = false
                   break
@@ -124,12 +125,15 @@ templateSnippets:
             %%}
             {%- for _, parentRef := range route.Spec.ParentRefs %}
               {%%
-                var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
-                var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
-                var prNs = tostring(dig(parentRef, "namespace") | fallback(nsStr))
-                var prName = tostring(dig(parentRef, "name") | fallback(""))
-                var prSection = tostring(dig(parentRef, "sectionName") | fallback(""))
-                var prPort = toint(dig(parentRef, "port") | fallback(0))
+                var prGroup = parentRef.Group
+                if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
+                var prKind = parentRef.Kind
+                if prKind == "" { prKind = "Gateway" }
+                var prNs = parentRef.Namespace
+                if prNs == "" { prNs = nsStr }
+                var prName = parentRef.Name
+                var prSection = parentRef.SectionName
+                var prPort = toint(parentRef.Port)
               %%}
               {%- if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" %}
                 {%- continue %}
@@ -187,13 +191,12 @@ templateSnippets:
                   // allowedRoutes.kinds intersection: when omitted, the
                   // protocol-default kinds apply (TLS → TLSRoute).
                   var kindOk = true
-                  var akr = dig(listener, "allowedRoutes", "kinds")
-                  if akr != nil {
+                  if len(listener.AllowedRoutes.Kinds) > 0 {
                     kindOk = false
-                    for _, ak := range toSlice(akr) {
-                      var akG = tostring(dig(ak, "group") | fallback("gateway.networking.k8s.io"))
-                      var akK = tostring(dig(ak, "kind") | fallback(""))
-                      if akG == "gateway.networking.k8s.io" && akK == "TLSRoute" {
+                    for _, ak := range listener.AllowedRoutes.Kinds {
+                      var akG = ak.Group
+                      if akG == "" { akG = "gateway.networking.k8s.io" }
+                      if akG == "gateway.networking.k8s.io" && ak.Kind == "TLSRoute" {
                         kindOk = true
                         break
                       }
@@ -202,7 +205,8 @@ templateSnippets:
 
                   // allowedRoutes.namespaces gating.
                   var nsOk = false
-                  var fromMode = tostring(dig(listener, "allowedRoutes", "namespaces", "from") | fallback("Same"))
+                  var fromMode = listener.AllowedRoutes.Namespaces.From
+                  if fromMode == "" { fromMode = "Same" }
                   switch fromMode {
                   case "Same":
                     nsOk = (nsStr == prNs)
