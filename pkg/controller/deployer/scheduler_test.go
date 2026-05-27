@@ -325,9 +325,10 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler.schedulerMutex.Unlock()
 
 	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
-		Total:      2,
-		Succeeded:  2,
-		DurationMs: 100,
+		Total:            2,
+		Succeeded:        2,
+		DurationMs:       100,
+		ReloadsTriggered: 2, // arms the rate-limit clock; see test below for the no-reload path
 	})
 
 	scheduler.handleDeploymentCompleted(event)
@@ -337,6 +338,47 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 
 	assert.Equal(t, phaseIdle, scheduler.state.phase)
 	assert.False(t, scheduler.state.lastDeploymentEndTime.IsZero())
+}
+
+// TestDeploymentScheduler_HandleDeploymentCompleted_RuntimeOnlyKeepsClockUnarmed
+// pins the optimisation that lets back-to-back runtime-API-only deploys fire
+// without waiting for minDeploymentInterval.
+//
+// The rate limit exists to throttle HAProxy reload thrash. A deploy that took
+// the runtime-optimised path (skip_reload=true, server IP / state changes via
+// runtime socket only) does NOT reload HAProxy, so the rate limit has nothing
+// to protect against. Without this carve-out, a rolling restart's two
+// back-to-back EndpointSlice updates (new pod Ready, old pod terminating)
+// would land their second deploy minDeploymentInterval seconds late —
+// keeping HAProxy pointed at the dying pod for the duration of that
+// window. tests/e2e/ingress_rolling_restart_test.go is the end-to-end
+// reproducer for that hang.
+func TestDeploymentScheduler_HandleDeploymentCompleted_RuntimeOnlyKeepsClockUnarmed(t *testing.T) {
+	bus := testutil.NewTestBus()
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 2*time.Second, 30*time.Second)
+
+	scheduler.schedulerMutex.Lock()
+	scheduler.state.phase = phaseDeploying
+	scheduler.schedulerMutex.Unlock()
+
+	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total:            2,
+		Succeeded:        2,
+		DurationMs:       100,
+		ReloadsTriggered: 0, // runtime-only deploy — every instance took the no-reload path
+	})
+
+	scheduler.handleDeploymentCompleted(event)
+
+	scheduler.schedulerMutex.Lock()
+	defer scheduler.schedulerMutex.Unlock()
+
+	assert.Equal(t, phaseIdle, scheduler.state.phase)
+	assert.True(t, scheduler.state.lastDeploymentEndTime.IsZero(),
+		"runtime-only deploy must not arm the rate-limit clock — the rate limit exists "+
+			"to throttle reload churn, and a runtime-API push doesn't cause any. Leaving "+
+			"the clock unarmed lets the next deploy (e.g. removing a terminating pod) "+
+			"fire immediately without waiting for minDeploymentInterval.")
 }
 
 func TestDeploymentScheduler_HandleConfigPublished(t *testing.T) {

@@ -292,11 +292,38 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 
 	s.schedulerMutex.Lock()
 
-	// Transition to idle and record completion time
+	// Transition to idle and record completion time. The rate-limit
+	// clock (minDeploymentInterval) exists to throttle HAProxy reload
+	// churn — back-to-back reloads thrash worker processes and stack
+	// up "Proxy stopped" log spam — but it has nothing to protect
+	// against for runtime-API-only deploys (skip_reload=true: server
+	// IP / state / weight changes pushed via the runtime socket).
+	// Those are cheap, atomic operations that the chart explicitly
+	// optimised for via the SRV slot pre-allocation pattern.
+	//
+	// Applying the same rate limit to runtime-only deploys delays
+	// safety-critical updates by up to minDeploymentInterval seconds.
+	// In the rolling-restart case, K8s fires the
+	// "new-pod-Ready" and "old-pod-terminating" EndpointSlice updates
+	// within ~1s of each other; the first deploy enables the new SRV
+	// slot, the second deploy disables the dying one. If the rate
+	// limit holds back the second deploy, HAProxy keeps dispatching
+	// to a pod whose user-space app has already started shutting
+	// down — exactly the hang window
+	// tests/e2e/ingress_rolling_restart_test.go is designed to
+	// detect.
+	//
+	// So only start the rate-limit clock when this deploy actually
+	// reloaded HAProxy. event.ReloadsTriggered counts how many
+	// HAProxy instances ran a reload as part of this deploy; zero
+	// means every instance took the runtime-only path
+	// (orchestrator.tryRuntimeOptimizedPath in pkg/dataplane).
 	s.state.phase = phaseIdle
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeCorrelationID = ""
-	s.state.lastDeploymentEndTime = time.Now()
+	if event.ReloadsTriggered > 0 {
+		s.state.lastDeploymentEndTime = time.Now()
+	}
 
 	// Check if there's a pending deployment to process
 	pending := s.state.pending
