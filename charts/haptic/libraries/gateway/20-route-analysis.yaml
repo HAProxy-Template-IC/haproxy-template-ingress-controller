@@ -170,23 +170,14 @@ templateSnippets:
 
             // Gateway own listeners come first; they always pass the
             // parent gate (no ListenerSet involved), so _accepted=true.
-            for li, l := range dig(gw, "spec", "listeners") | toSlice() {
-              // In production `l` is a typed Gateway listener struct
-              // (typegen-produced from the Gateway OpenAPI); in offline
-              // tests it's map[string]any. The original l.(map[string]any)
-              // assertion silently produced an empty lc for the typed
-              // shape — downstream port/protocol/hostname lookups then
-              // resolved to zero values and ALL listeners were skipped.
-              // dig() walks both shapes via JSON-tag struct lookup; copy
-              // the known Gateway-API listener fields so downstream
-              // bracket-access keeps working uniformly.
+            for li, l := range gw.Spec.Listeners {
               var lc = map[string]any{
-                "name":          dig(l, "name"),
-                "hostname":      dig(l, "hostname"),
-                "port":          dig(l, "port"),
-                "protocol":      dig(l, "protocol"),
-                "tls":           dig(l, "tls"),
-                "allowedRoutes": dig(l, "allowedRoutes"),
+                "name":          l.Name,
+                "hostname":      l.Hostname,
+                "port":          l.Port,
+                "protocol":      l.Protocol,
+                "tls":           l.Tls,
+                "allowedRoutes": l.AllowedRoutes,
               }
               lc["__sourceKind"] = "Gateway"
               lc["__sourceNs"] = gwNs
