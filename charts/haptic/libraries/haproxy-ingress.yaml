@@ -95,11 +95,9 @@ templateSnippets:
       {%- end %}
       {#- Count regex paths for this ingress -#}
       {%- var regexPathCount = 0 %}
-      {%- for _, rule := range ingress.Spec.Rules %}
-        {%- for _, path := range rule.Http.Paths %}
+      {%- for _, path := range ingress.Spec.Rules[*].Http.Paths %}
         {%- if path.PathType == "ImplementationSpecific" %}
           {%- regexPathCount++ %}
-        {%- end %}
         {%- end %}
       {%- end %}
       {%- if regexPathCount > 0 %}
