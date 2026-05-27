@@ -15,12 +15,9 @@ templateSnippets:
             // Validate caCertificateRefs / wellKnownCACertificates.
             // Per spec, exactly one must be set; caCertificateRefs takes
             // precedence if both are present.
-            var validation = dig(policy, "spec", "validation")
-            var caRefs []any = dig(validation, "caCertificateRefs") | toSlice()
-            if caRefs == nil {
-              caRefs = []any{}
-            }
-            var wkca = dig_string(validation, "", "wellKnownCACertificates")
+            var validation = policy.Spec.Validation
+            var caRefs = validation.CaCertificateRefs
+            var wkca = validation.WellKnownCACertificates
 
             var resolvedStatus = "True"
             var resolvedReason = "ResolvedRefs"
@@ -39,9 +36,9 @@ templateSnippets:
               var hasValid = false
               var hasInvalidGroupKind = false
               for _, ref := range caRefs {
-                var refGroup = tostring(dig(ref, "group") | fallback(""))
-                var refKind = tostring(dig(ref, "kind") | fallback(""))
-                var refName = tostring(dig(ref, "name") | fallback(""))
+                var refGroup = ref.Group
+                var refKind = ref.Kind
+                var refName = ref.Name
                 if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                   var cm = resources.configmaps.GetSingle(policyNs, refName)
                   if cm != nil {
@@ -181,9 +178,9 @@ templateSnippets:
             // Service so the policy is observable in status.
             var ancestorSet = map[string]bool{}
             var ancestors = []any{}
-            for _, tr := range dig(policy, "spec", "targetRefs") | toSlice() {
-              var trKind = tostring(dig(tr, "kind") | fallback(""))
-              var trName = tostring(dig(tr, "name") | fallback(""))
+            for _, tr := range policy.Spec.TargetRefs {
+              var trKind = tr.Kind
+              var trName = tr.Name
               if trKind != "Service" {
                 continue
               }
@@ -193,10 +190,11 @@ templateSnippets:
                   continue
                 }
                 var refsHit = false
-                for _, rule := range dig(route, "spec", "rules") | toSlice() {
-                  for _, br := range dig(rule, "backendRefs") | toSlice() {
-                    var brName = tostring(dig(br, "name") | fallback(""))
-                    var brKind = tostring(dig(br, "kind") | fallback("Service"))
+                for _, rule := range route.Spec.Rules {
+                  for _, br := range rule.BackendRefs {
+                    var brName = br.Name
+                    var brKind = br.Kind
+                    if brKind == "" { brKind = "Service" }
                     if brKind == "Service" && brName == trName {
                       refsHit = true
                       break
@@ -209,14 +207,17 @@ templateSnippets:
                 if !refsHit {
                   continue
                 }
-                for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-                  var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
-                  var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+                for _, parentRef := range route.Spec.ParentRefs {
+                  var prGroup = parentRef.Group
+                  if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
+                  var prKind = parentRef.Kind
+                  if prKind == "" { prKind = "Gateway" }
                   if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
                     continue
                   }
-                  var gwName = tostring(dig(parentRef, "name") | fallback(""))
-                  var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
+                  var gwName = parentRef.Name
+                  var gwNs = parentRef.Namespace
+                  if gwNs == "" { gwNs = routeNs }
                   var ancKey = "Gateway/" + gwNs + "/" + gwName
                   if ancestorSet[ancKey] {
                     continue
@@ -227,7 +228,7 @@ templateSnippets:
                     "kind":  "Gateway",
                     "name":  gwName,
                   }
-                  if dig(parentRef, "namespace") != nil {
+                  if parentRef.Namespace != "" {
                     aref["namespace"] = gwNs
                   }
                   ancestors = append(ancestors, map[string]any{
@@ -244,10 +245,10 @@ templateSnippets:
               }
             }
             if len(ancestors) == 0 {
-              for _, tr := range dig(policy, "spec", "targetRefs") | toSlice() {
-                var trGroup = tostring(dig(tr, "group") | fallback(""))
-                var trKind = tostring(dig(tr, "kind") | fallback(""))
-                var trName = tostring(dig(tr, "name") | fallback(""))
+              for _, tr := range policy.Spec.TargetRefs {
+                var trGroup = tr.Group
+                var trKind = tr.Kind
+                var trName = tr.Name
                 ancestors = append(ancestors, map[string]any{
                   "ancestorRef": map[string]any{
                     "group":     trGroup,
