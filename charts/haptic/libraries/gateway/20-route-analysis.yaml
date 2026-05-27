@@ -417,21 +417,23 @@ templateSnippets:
       -#}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
       {%- macro IsListenerSetAdmitted(gw *resources.gateways.T, ls *resources.listenersets.T) -%}
-        {%- var gwNs = tostring(dig(gw, "metadata", "namespace") | fallback("")) -%}
-        {%- var gwName = tostring(dig(gw, "metadata", "name") | fallback("")) -%}
-        {%- var pRef = dig(ls, "spec", "parentRef") -%}
+        {%- var gwNs = gw.Metadata.Namespace -%}
+        {%- var gwName = gw.Metadata.Name -%}
+        {%- var pRef = ls.Spec.ParentRef -%}
         {%- var result = "false" -%}
-        {%- if tostring(dig(pRef, "name") | fallback("")) == gwName -%}
-          {%- var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback("")) -%}
-          {%- var pNs = tostring(dig(pRef, "namespace") | fallback(lsNs)) -%}
+        {%- if pRef.Name == gwName -%}
+          {%- var lsNs = ls.Metadata.Namespace -%}
+          {%- var pNs = pRef.Namespace -%}
+          {%- if pNs == "" %}{%- pNs = lsNs %}{%- end -%}
           {%- if pNs == gwNs -%}
-            {%- var allowed = dig(gw, "spec", "allowedListeners") -%}
-            {%- var allowedFrom = "None" -%}
-            {%- var allowedSelector any = nil -%}
-            {%- if allowed != nil -%}
-              {%- allowedFrom = tostring(dig(allowed, "namespaces", "from") | fallback("None")) -%}
-              {%- allowedSelector = dig(allowed, "namespaces", "selector", "matchLabels") -%}
-            {%- end -%}
+            {#- AllowedListeners is optional; an absent block leaves the
+                typed sub-fields at zero values, which we treat as
+                default-deny (`allowedFrom = "None"`). When the user
+                supplies `namespaces` without `from`, the CRD's
+                OpenAPI default ("None") populates From at admission. -#}
+            {%- var allowedFrom = gw.Spec.AllowedListeners.Namespaces.From -%}
+            {%- if allowedFrom == "" %}{%- allowedFrom = "None" %}{%- end -%}
+            {%- var allowedSelector = gw.Spec.AllowedListeners.Namespaces.Selector.MatchLabels -%}
             {%- var permitted = "false" -%}
             {%- if allowedFrom == "All" -%}
               {%- permitted = "true" -%}
@@ -440,17 +442,14 @@ templateSnippets:
                 {%- permitted = "true" -%}
               {%- end -%}
             {%- else if allowedFrom == "Selector" -%}
-              {%- if allowedSelector != nil -%}
+              {%- if len(allowedSelector) > 0 -%}
                 {%- var nsObj = resources.namespaces.GetSingle(lsNs) -%}
                 {%- if nsObj != nil -%}
-                  {#- nsObj is typed *resources.namespaces.T — labels
-                      are map[string]string directly. allowedSelector
-                      comes from a polymorphic dig on listenerOwner
-                      (Gateway or ListenerSet), so it stays `any` and
-                      needs to_str_map normalisation. -#}
-                  {%- var selMap = to_str_map(allowedSelector) -%}
+                  {#- Both nsObj.Metadata.Labels and allowedSelector are
+                      typed map[string]string from typegen — direct
+                      iteration, no to_str_map normalisation needed. -#}
                   {%- var allMatch = "true" -%}
-                  {%- for k, v := range selMap -%}
+                  {%- for k, v := range allowedSelector -%}
                     {%- var actual, ok = nsObj.Metadata.Labels[k] -%}
                     {%- if !ok -%}
                       {%- allMatch = "false" -%}
