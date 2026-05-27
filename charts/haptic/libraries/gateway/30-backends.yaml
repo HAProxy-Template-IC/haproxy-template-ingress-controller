@@ -58,10 +58,9 @@ templateSnippets:
       {%- if protoFlag == "" -%}
         {%- var svc = resources.services.GetSingle(backendNs, tostring(backendName)) -%}
         {%- if svc != nil -%}
-          {%- for _, p := range svc | dig("spec", "ports") | toSlice() -%}
-            {%- if (p | dig("port") | toint()) == toint(backendPort) -%}
-              {%- var ap = p | dig_string("", "appProtocol") -%}
-              {%- if ap == "kubernetes.io/h2c" -%}
+          {%- for _, p := range svc.Spec.Ports -%}
+            {%- if toint(p.Port) == toint(backendPort) -%}
+              {%- if p.AppProtocol == "kubernetes.io/h2c" -%}
                 {%- resolvedProtoFlag = "h2" -%}
               {%- end -%}
             {%- end -%}
@@ -92,14 +91,14 @@ templateSnippets:
         if protoFlag == "" {
           var svcLookup = resources.services.GetSingle(tostring(routeNs), tostring(backendName))
           if svcLookup != nil {
-            for _, p := range svcLookup | dig("spec", "ports") | toSlice() {
-              if (p | dig("port") | toint()) == toint(backendPort) {
-                portNameForBackend = tostring(p | dig("name") | fallback(""))
+            for _, p := range svcLookup.Spec.Ports {
+              if toint(p.Port) == toint(backendPort) {
+                portNameForBackend = p.Name
               }
             }
           }
         }
-        var winningPolicy any = nil
+        var winningPolicy *resources.backendtlspolicies.T = nil
         var winningPolicyTs = ""
         var winningPolicyKey = ""
         for _, pol := range resources.backendtlspolicies.List() {
@@ -141,15 +140,13 @@ templateSnippets:
           }
         }
         if winningPolicy != nil {
-          var validation = dig(winningPolicy, "spec", "validation")
-          btlsHostname = tostring(dig(validation, "hostname") | fallback(""))
-          var caRefs []any = dig(validation, "caCertificateRefs") | toSlice()
+          var validation = winningPolicy.Spec.Validation
+          btlsHostname = validation.Hostname
           var caBundleParts = []any{}
-          if caRefs != nil {
-            for _, ref := range caRefs {
-              var refGroup = tostring(dig(ref, "group") | fallback(""))
-              var refKind = tostring(dig(ref, "kind") | fallback(""))
-              var refName = tostring(dig(ref, "name") | fallback(""))
+          for _, ref := range validation.CaCertificateRefs {
+            var refGroup = ref.Group
+            var refKind = ref.Kind
+            var refName = ref.Name
               if (refGroup == "" || refGroup == "core") && refKind == "ConfigMap" {
                 var cm = resources.configmaps.GetSingle(tostring(routeNs), refName)
                 if cm != nil {
@@ -187,11 +184,10 @@ templateSnippets:
                 }
               }
             }
-          }
-          var wkca = tostring(dig(validation, "wellKnownCACertificates") | fallback(""))
+          var wkca = validation.WellKnownCACertificates
           if len(caBundleParts) > 0 {
             var caBundle = join(caBundleParts, "\n")
-            var policyName = tostring(dig(winningPolicy, "metadata", "name") | fallback(""))
+            var policyName = winningPolicy.Metadata.Name
             var caFilename = "btls-" + tostring(routeNs) + "-" + policyName + ".crt"
             var resolvedPath, fileErr = fileRegistry.Register("file", caFilename, caBundle)
             if fileErr == nil {
@@ -228,14 +224,20 @@ templateSnippets:
           if gw == nil {
             continue
           }
-          var ccRef = dig(gw, "spec", "tls", "backend", "clientCertificateRef")
-          if ccRef == nil {
+          var ccRef = gw.Spec.Tls.Backend.ClientCertificateRef
+          if ccRef.Name == "" {
+            // Optional struct fields default to the zero value;
+            // an empty Name is the clearest "no ref configured"
+            // signal. (Same proxy used by ingress.yaml's
+            // defaultBackend block.)
             continue
           }
-          var refGroup = tostring(dig(ccRef, "group") | fallback(""))
-          var refKind = tostring(dig(ccRef, "kind") | fallback("Secret"))
-          var refName = tostring(dig(ccRef, "name") | fallback(""))
-          var refNs = tostring(dig(ccRef, "namespace") | fallback(gwNs))
+          var refGroup = ccRef.Group
+          var refKind = ccRef.Kind
+          if refKind == "" { refKind = "Secret" }
+          var refName = ccRef.Name
+          var refNs = ccRef.Namespace
+          if refNs == "" { refNs = gwNs }
           if (refGroup != "" && refGroup != "core") || refKind != "Secret" || refName == "" {
             continue
           }
