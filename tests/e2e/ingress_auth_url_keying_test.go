@@ -55,6 +55,7 @@ import (
 // `<host>/api/users`. Exact-match map() can never hit. After the fix,
 // keying by `<ns>/<name>` makes the path dimension irrelevant.
 func TestIngressAuthURLPrefixSubpath(t *testing.T) {
+	t.Parallel()
 	const (
 		host    = "auth-prefix-subpath.localdev.me"
 		subpath = "/api/users"
@@ -97,6 +98,7 @@ func TestIngressAuthURLPrefixSubpath(t *testing.T) {
 // fix, the test should pass because the route's owning resource id is
 // stable regardless of which concrete subdomain the request used.
 func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
+	t.Parallel()
 	const (
 		wildcardHost = "*.auth-wild.localdev.me"
 		concreteHost = "api.auth-wild.localdev.me"
@@ -141,6 +143,7 @@ func TestIngressAuthURLWildcardHostSubpath(t *testing.T) {
 // the path entirely — wildcard hosts, regex paths, prefix subpaths all
 // resolve to the same resource_id and the auth-url lookup hits.
 func TestIngressAuthURLRegexPath(t *testing.T) {
+	t.Parallel()
 	const (
 		host        = "auth-regex.localdev.me"
 		regexPath   = "/api/v[0-9]+/.*"

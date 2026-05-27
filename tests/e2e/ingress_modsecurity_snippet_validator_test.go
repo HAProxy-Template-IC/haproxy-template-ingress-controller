@@ -46,6 +46,7 @@ import (
 // behaviour and belong to the enforcement test in
 // `ingress_modsecurity_snippet_test.go`.
 func TestIngressModSecuritySnippetRejectedByAdmission(t *testing.T) {
+	t.Parallel()
 	const host = "ingress-modsec-rejected.localdev.me"
 
 	feature := features.New("Ingress: nginx.ingress.kubernetes.io/modsecurity-snippet rejected when SecLang is malformed").
