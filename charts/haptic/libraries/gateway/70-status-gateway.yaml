@@ -191,13 +191,12 @@ templateSnippets:
                 // (3) allowedRoutes.kinds — if specified, the route's
                 //     group/kind must be in the list. Default group is
                 //     gateway.networking.k8s.io.
-                var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
-                if allowedKindsRaw != nil {
+                if len(listener.AllowedRoutes.Kinds) > 0 {
                   var kindOk = false
-                  for _, ak := range toSlice(allowedKindsRaw) {
-                    var akGroup = dig_string(ak, "gateway.networking.k8s.io", "group")
-                    var akKind = dig_string(ak, "", "kind")
-                    if akGroup == "gateway.networking.k8s.io" && akKind == routeKind {
+                  for _, ak := range listener.AllowedRoutes.Kinds {
+                    var akGroup = ak.Group
+                    if akGroup == "" { akGroup = "gateway.networking.k8s.io" }
+                    if akGroup == "gateway.networking.k8s.io" && ak.Kind == routeKind {
                       kindOk = true
                       break
                     }
@@ -208,7 +207,8 @@ templateSnippets:
                 }
 
                 // (4) allowedRoutes.namespaces.from — Same | All | Selector
-                var fromMode = dig_string(listener, "Same", "allowedRoutes", "namespaces", "from")
+                var fromMode = listener.AllowedRoutes.Namespaces.From
+                if fromMode == "" { fromMode = "Same" }
                 switch fromMode {
                 case "Same":
                   if routeNs != gwNs {
@@ -223,8 +223,8 @@ templateSnippets:
                   // test exercises it; if/when one does, this falls
                   // through and the predicate fails — which is the safe
                   // default for an unrecognised label-selector shape).
-                  var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
-                  if ml == nil {
+                  var ml = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
+                  if len(ml) == 0 {
                     continue
                   }
                   var nsObj = resources.namespaces.GetSingle(routeNs)
@@ -728,15 +728,15 @@ templateSnippets:
               // anything was filtered out, ResolvedRefs goes False with
               // reason InvalidRouteKinds (per the Gateway API spec for
               // listener-status conditions).
-              var requestedKinds = dig(listener, "allowedRoutes", "kinds")
               var supportedKinds = []any{}
               var hasInvalidKind = false
-              if requestedKinds == nil {
+              if len(listener.AllowedRoutes.Kinds) == 0 {
                 supportedKinds = defaultKinds
               } else {
-                for _, reqEntry := range toSlice(requestedKinds) {
-                  var reqGroup = dig_string(reqEntry, "gateway.networking.k8s.io", "group")
-                  var reqKind = dig_string(reqEntry, "", "kind")
+                for _, reqEntry := range listener.AllowedRoutes.Kinds {
+                  var reqGroup = reqEntry.Group
+                  if reqGroup == "" { reqGroup = "gateway.networking.k8s.io" }
+                  var reqKind = reqEntry.Kind
                   var matched = false
                   for _, def := range defaultKinds {
                     if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
@@ -782,21 +782,21 @@ templateSnippets:
               var hasInvalidCertRef = false
               var hasRefNotPermitted = false
               if protocol == "HTTPS" || protocol == "TLS" {
-                var listenerTls = listener | dig("tls")
-                if listenerTls != nil {
-                  for _, ref := range listenerTls | dig("certificateRefs") | toSlice() {
-                    var refGroup = dig_string(ref, "", "group")
-                    var refKind = dig_string(ref, "Secret", "kind")
-                    if refGroup != "" && refGroup != "core" {
-                      hasInvalidCertRef = true
-                      continue
-                    }
-                    if refKind != "Secret" {
-                      hasInvalidCertRef = true
-                      continue
-                    }
-                    var refName = dig_string(ref, "", "name")
-                    var refNs = dig_string(ref, nsStr, "namespace")
+                for _, ref := range listener.Tls.CertificateRefs {
+                  var refGroup = ref.Group
+                  var refKind = ref.Kind
+                  if refKind == "" { refKind = "Secret" }
+                  if refGroup != "" && refGroup != "core" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  if refKind != "Secret" {
+                    hasInvalidCertRef = true
+                    continue
+                  }
+                  var refName = ref.Name
+                  var refNs = ref.Namespace
+                  if refNs == "" { refNs = nsStr }
                     if refName == "" {
                       hasInvalidCertRef = true
                       continue
@@ -833,8 +833,6 @@ templateSnippets:
                     }
                   }
                 }
-              }
-
               // Validate frontend client-cert validation refs for HTTPS
               // listeners. Implements the listener-status side of
               // GatewayFrontendInvalidDefaultClientCertificateValidation:
