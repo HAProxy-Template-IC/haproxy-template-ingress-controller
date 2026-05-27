@@ -277,13 +277,6 @@ spec:
               haproxy:
                 config_file: {{ $dataplaneConfig.configFile }}
                 haproxy_bin: {{ $haproxyBin }}
-                {{- if $dataplane.validateConfig }}
-                # validate_cmd: Use -dr to skip DNS resolution failures during config validation
-                # This prevents config rejection when DNS is temporarily unavailable
-                validate_cmd: {{ $haproxyBin }} -dr -c -f %s
-                {{- else }}
-                validate_cmd: /bin/true
-                {{- end }}
                 master_worker_mode: true
                 master_runtime: /etc/haproxy/haproxy-master.sock
                 reload:
@@ -291,9 +284,26 @@ spec:
                   reload_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
                   restart_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
                   reload_strategy: custom
+                  # The dataplane API reads validate_cmd from haproxy.reload, NOT
+                  # from haproxy directly. Placing it at the top-level haproxy
+                  # block parses into an unused struct field with omitempty and
+                  # silently drops on re-serialize — making
+                  # haproxy.dataplane.validateConfig=false a no-op and leaving
+                  # the default haproxy -c running on every endpoint push.
+                  {{- if $dataplane.validateConfig }}
+                  # -dr skips DNS resolution failures during validation so the
+                  # config isn't rejected when DNS is temporarily unavailable.
+                  validate_cmd: {{ $haproxyBin }} -dr -c -f %s
+                  {{- else }}
+                  validate_cmd: /bin/true
+                  {{- end }}
               log_targets:
                 - log_to: stdout
                   log_level: trace
+                  log_format: text
+                  {{- with $dataplane.aclFormat }}
+                  acl_format: {{ . | quote }}
+                  {{- end }}
                   log_types:
                   - access
                   - app
