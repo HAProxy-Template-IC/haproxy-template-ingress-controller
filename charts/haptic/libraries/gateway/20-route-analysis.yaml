@@ -117,7 +117,7 @@ templateSnippets:
             // Sort the ListenerSets attached to this Gateway by
             // (creationTimestamp, namespace, name) so precedence is
             // deterministic across renders.
-            var attachedSets = []any{}
+            var attachedSets = []*resources.listenersets.T{}
             for _, ls := range resources.listenersets.List() {
               if ls.Spec.ParentRef.Name != gwName {
                 continue
@@ -137,10 +137,10 @@ templateSnippets:
               for j := i + 1; j < len(attachedSets); j++ {
                 var a = attachedSets[i]
                 var b = attachedSets[j]
-                var aTs = tostring(dig(a, "metadata", "creationTimestamp") | fallback(""))
-                var bTs = tostring(dig(b, "metadata", "creationTimestamp") | fallback(""))
-                var aKey = tostring(dig(a, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(a, "metadata", "name") | fallback(""))
-                var bKey = tostring(dig(b, "metadata", "namespace") | fallback("")) + "/" + tostring(dig(b, "metadata", "name") | fallback(""))
+                var aTs = a.Metadata.CreationTimestamp
+                var bTs = b.Metadata.CreationTimestamp
+                var aKey = a.Metadata.Namespace + "/" + a.Metadata.Name
+                var bKey = b.Metadata.Namespace + "/" + b.Metadata.Name
                 var swap = false
                 if aTs == bTs {
                   if aKey > bKey {
@@ -198,8 +198,8 @@ templateSnippets:
 
             // ListenerSet listeners, in precedence order.
             for _, ls := range attachedSets {
-              var lsNs = tostring(dig(ls, "metadata", "namespace") | fallback(""))
-              var lsName = tostring(dig(ls, "metadata", "name") | fallback(""))
+              var lsNs = ls.Metadata.Namespace
+              var lsName = ls.Metadata.Name
               var lsKey = lsNs + "/" + lsName
 
               // Parent acceptance gate.
@@ -261,16 +261,14 @@ templateSnippets:
               // for the per-listener status output (Programmed=False/
               // NotAllowed flows via _accepted=false). They are flagged
               // _accepted=false so routing/binding loops skip them.
-              for li, l := range dig(ls, "spec", "listeners") | toSlice() {
-                // Same typed-vs-untyped concern as the Gateway loop
-                // above; field-by-field dig() copies work in both modes.
+              for li, l := range ls.Spec.Listeners {
                 var lc = map[string]any{
-                  "name":          dig(l, "name"),
-                  "hostname":      dig(l, "hostname"),
-                  "port":          dig(l, "port"),
-                  "protocol":      dig(l, "protocol"),
-                  "tls":           dig(l, "tls"),
-                  "allowedRoutes": dig(l, "allowedRoutes"),
+                  "name":          l.Name,
+                  "hostname":      l.Hostname,
+                  "port":          l.Port,
+                  "protocol":      l.Protocol,
+                  "tls":           l.Tls,
+                  "allowedRoutes": l.AllowedRoutes,
                 }
                 lc["__sourceKind"] = "ListenerSet"
                 lc["__sourceNs"] = lsNs
