@@ -98,6 +98,11 @@ controller:
 
 # HAProxy Service - expose externally via NodePort for dev/testing
 haproxy:
+  # Enable per-request μs duration in the dataplane API access log
+  # (%{us}T at the end). Lets developers attribute publish-step latency
+  # without a re-run. Production keeps the default empty acl_format.
+  dataplane:
+    aclFormat: '%h %l %u %t "%m %U%q %H" %>s %b "%{Referer}i" "%{User-agent}i" %{us}T'
   service:
     type: NodePort
     # Explicit NodePorts must be set to match kind extraPortMappings

@@ -385,6 +385,7 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 | `haproxy.dataplane.extraEnv` | list | `[]` | Extra env vars for the dataplane sidecar; `GOMAXPROCS` here overrides the auto-calculation from CPU/memory limits |
 | `haproxy.dataplane.validateConfig` | bool | `false` | Run a server-side `haproxy -c` against each transaction. The controller already validates locally, so server-side validation is redundant; enable for double-validation when extra safety is required |
 | `haproxy.dataplane.debugSocketPath` | string | `""` | Unix socket path for runtime profiling of the dataplane sidecar (sets `debug_socket_path` in `dataplaneapi.yaml`) |
+| `haproxy.dataplane.aclFormat` | string | `""` | Apache Common Log Format override for the dataplane API access log. Empty leaves the dataplane API's built-in default in place; set this to a format with timing fields (e.g. `%{us}T` microseconds, `%D` milliseconds) to surface per-request publish-step latency in the access log |
 
 Dataplane API credentials moved to the top-level `credentials.dataplane.*` section — see [Credentials](#credentials) above.
 

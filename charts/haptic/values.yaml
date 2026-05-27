@@ -1155,6 +1155,14 @@ haproxy:
     # Commands: "pprof cpu start /tmp/cpu.prof 30", "pprof mem /tmp/mem.prof",
     #           "pprof web start 6060 300", "goroutines", "stack"
     debugSocketPath: ""
+    # Apache Common Log Format override for the dataplane API access log.
+    # Empty string keeps the dataplane API's built-in default. Set this to a
+    # format that includes timing fields (e.g. %{us}T microseconds, %D
+    # milliseconds) when investigating publish-step latency:
+    #   aclFormat: '%h %l %u %t "%m %U%q %H" %>s %b "%{Referer}i" "%{User-agent}i" %{us}T'
+    # Tests opt in to the timing-augmented format via their values overrides;
+    # production keeps the default to avoid changing existing log shapes.
+    aclFormat: ""
   # Extra environment variables for HAProxy container
   # Example:
   #   extraEnv:

@@ -61,9 +61,15 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
 			"logs", "-l", LabelSelectorController, "--all-containers", "--tail=500")
 
+		// --prefix tags each line with [pod/<name> container/<name>] so the
+		// haproxy / dataplane / spoa-hub containers can be told apart when
+		// reading back the dump. Without it, all three containers'
+		// stdout collapses into one un-attributable stream — investigating
+		// publish-step latency or dataplane errors requires re-running the
+		// test just to know which container said what.
 		dumpCommand(t, dumpDir, "haproxy-logs.txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
-			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--tail=500")
+			"logs", "-l", LabelSelectorHAProxy, "--all-containers", "--prefix", "--tail=500")
 
 		dumpCommand(t, dumpDir, "backend-fixtures-logs.txt",
 			"kubectl", "--kubeconfig", kubeconfigPath, "-n", SharedFixturesNamespace,

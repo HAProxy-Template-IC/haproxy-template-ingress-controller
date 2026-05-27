@@ -625,11 +625,21 @@ dump_debug_info() {
     echo ""
 
     echo "=== Controller Logs ==="
-    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=controller" --tail=100 2>/dev/null || true
+    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=controller" --all-containers --prefix --tail=100 2>/dev/null || true
     echo ""
 
-    echo "=== HAProxy Logs ==="
-    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --tail=100 2>/dev/null || true
+    # --all-containers + --prefix so dataplane and spoa-hub stdout are visible
+    # and tagged with their container; default kubectl logs only emits the
+    # first container's output, which is haproxy — masking dataplane crashes.
+    # --previous gets stdout from the last terminated instance of crashlooping
+    # containers (the current instance might still be starting / not have
+    # written anything yet when the smoke test gives up).
+    echo "=== HAProxy Pod Logs (current) ==="
+    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --tail=200 2>/dev/null || true
+    echo ""
+
+    echo "=== HAProxy Pod Logs (previous, for crashlooping containers) ==="
+    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --previous --tail=200 2>/dev/null || true
     echo ""
 
     echo "=== Certificates ==="
