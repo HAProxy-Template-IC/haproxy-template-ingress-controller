@@ -531,9 +531,8 @@ templateSnippets:
                       // next reconciliation, the watcher will have it.
                       var svc = resources.services.GetSingle(ctrlNs, svcName)
                       if svc != nil {
-                        for _, ing := range dig(svc, "status", "loadBalancer", "ingress") | toSlice() {
-                          var realIP = tostring(dig(ing, "ip") | fallback(""))
-                          if realIP == ipStr {
+                        for _, ing := range svc.Status.LoadBalancer.Ingress {
+                          if ing.Ip == ipStr {
                             realizedIPs[ipStr] = true
                           }
                         }
