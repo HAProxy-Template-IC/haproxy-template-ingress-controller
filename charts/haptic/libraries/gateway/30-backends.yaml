@@ -480,23 +480,26 @@ templateSnippets:
             exactly one `backend gtw_tls_...` block per (route, ruleIdx). -#}
         {%- if first_seen("gateway_ssl_passthrough_backends", tostring(biName)) %}
           {%- if biRouteType == "httproute" %}
-            {#- Get the actual HTTPRoute resource to extract service details #}
+            {#- Get the actual HTTPRoute resource to extract service
+                details. Flatten via `[*]`: outer rule loop only
+                accessed rule.BackendRefs; the `if !generated`
+                re-check at the rule level is no longer needed since
+                the inner break exits the (single) desugared loop. -#}
             {%- var route = resources.httproutes.GetSingle(biNamespace, biRoute) %}
             {%- var generated = false %}
-            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
-              {%- if !generated %}
-                {%- for _, backendRef := range rule | dig("backendRefs") | toSlice() %}
-                  {%- if !generated %}
-                    {%- var refName = backendRef | dig("name") | fallback("") %}
-                    {%- var refPort = backendRef | dig("port") | fallback(80) %}
+            {%- if route != nil %}
+              {%- for _, backendRef := range route.Spec.Rules[*].BackendRefs %}
+                {%- if !generated %}
+                  {%- var refName = backendRef.Name %}
+                  {%- var refPort = toint(backendRef.Port) %}
+                  {%- if refPort == 0 %}{%- refPort = 80 %}{%- end %}
       # gateway/backends-gateway-ssl-passthrough
 
       backend {{ biName }}
           guid {{ make_guid("be", biName) }}
           mode tcp
           {{ BackendServers(refName, 10, refPort, nil, nil, biName, tostring(biNamespace)) | indent(4, false) }}
-                    {%- generated = true %}
-                  {%- end %}
+                  {%- generated = true %}
                 {%- end %}
               {%- end %}
             {%- end %}
@@ -506,15 +509,17 @@ templateSnippets:
             {%- var route = resources.tlsroutes.GetSingle(biNamespace, biRoute) %}
             {%- if route != nil %}
               {%- var ruleIdx = toint(backendInfo["rule_idx"]) %}
-              {%- var rules = route | dig("spec", "rules") | toSlice() %}
+              {%- var rules = route.Spec.Rules %}
               {%- if ruleIdx < len(rules) %}
                 {%- var rule = rules[ruleIdx] %}
                 {%- var generated = false %}
-                {%- for _, backendRef := range rule | dig("backendRefs") | toSlice() %}
+                {%- for _, backendRef := range rule.BackendRefs %}
                   {%- if !generated %}
-                    {%- var refName = tostring(backendRef | dig("name") | fallback("")) %}
-                    {%- var refPort = toint(backendRef | dig("port") | fallback(443)) %}
-                    {%- var refNs = tostring(backendRef | dig("namespace") | fallback(biNamespace)) %}
+                    {%- var refName = backendRef.Name %}
+                    {%- var refPort = toint(backendRef.Port) %}
+                    {%- if refPort == 0 %}{%- refPort = 443 %}{%- end %}
+                    {%- var refNs = backendRef.Namespace %}
+                    {%- if refNs == "" %}{%- refNs = tostring(biNamespace) %}{%- end %}
       # gateway/backends-gateway-ssl-passthrough (tlsroute)
 
       backend {{ biName }}

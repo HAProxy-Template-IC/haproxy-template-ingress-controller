@@ -555,6 +555,7 @@ templateSnippets:
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank %}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted, IsRouteAllowedOnListener %}
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname %}
+      {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked %}
       {%- macro AnalyzeRoutes(result map[string]any) %}
         {%- var allRoutes = []any{} %}
 
@@ -607,77 +608,11 @@ templateSnippets:
                     features-110-gateway-frontend-mtls performs but
                     against the live resource stores rather than
                     consuming pre-populated state. -#}
-                {%- var gwMtlsBlocked = map[string]bool{} %}
-                {%%
-                  // Outer presence check uses dig() to distinguish
-                  // "TLS frontend block absent" (skip entirely) from
-                  // "present but with all zero values" (process and
-                  // potentially block listeners). Typed access alone
-                  // can't observe absence — it always yields the
-                  // struct's zero value.
-                  if dig(gw, "spec", "tls", "frontend") != nil {
-                    var defaultValidation any = nil
-                    if dig(gw, "spec", "tls", "frontend", "default", "validation") != nil {
-                      defaultValidation = gw.Spec.Tls.Frontend.Default.Validation
-                    }
-                    var perPortValidations = map[int]any{}
-                    for _, pp := range gw.Spec.Tls.Frontend.PerPort {
-                      var p = toint(pp.Port)
-                      if p > 0 && dig(pp, "tls", "validation") != nil {
-                        perPortValidations[p] = pp.Tls.Validation
-                      }
-                    }
-                    var resolveValidation = func(validation any) bool {
-                      var refs = dig(validation, "caCertificateRefs") | toSlice()
-                      if len(refs) == 0 {
-                        return false
-                      }
-                      var found = false
-                      for _, ref := range refs {
-                        var refKind = tostring(dig(ref, "kind") | fallback(""))
-                        var refGroup = tostring(dig(ref, "group") | fallback(""))
-                        var refName = tostring(dig(ref, "name") | fallback(""))
-                        var refNs = tostring(dig(ref, "namespace") | fallback(gwNs))
-                        if refName == "" {
-                          continue
-                        }
-                        if refGroup != "" && refGroup != "core" {
-                          continue
-                        }
-                        if refKind == "ConfigMap" {
-                          if resources.configmaps.GetSingle(refNs, refName) != nil {
-                            found = true
-                            break
-                          }
-                        } else if refKind == "Secret" {
-                          if resources.secrets.GetSingle(refNs, refName) != nil {
-                            found = true
-                            break
-                          }
-                        }
-                      }
-                      return found
-                    }
-                    for _, l := range gw.Spec.Listeners {
-                      var lProto = l.Protocol
-                      if lProto != "HTTPS" && lProto != "TLS" {
-                        continue
-                      }
-                      var lPort = toint(l.Port)
-                      var lName = l.Name
-                      var validation any = perPortValidations[lPort]
-                      if validation == nil {
-                        validation = defaultValidation
-                      }
-                      if validation == nil {
-                        continue
-                      }
-                      if !resolveValidation(validation) {
-                        gwMtlsBlocked[lName] = true
-                      }
-                    }
-                  }
-                %%}
+                {{ ComputeGwMtlsBlocked(gw) }}
+                {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
+                      "gwMtlsBlocked:"+gwNs+"/"+gwName,
+                      func() any { return map[string]bool{} }) -%}
+                {%- var gwMtlsBlocked = gwMtlsBlockedAny.(map[string]bool) %}
                 {%- for _, listener := range gw.Spec.Listeners %}
                   {%- var listenerName = listener.Name %}
                   {%- if section == "" || section == listenerName %}
@@ -982,77 +917,11 @@ templateSnippets:
                     features-110-gateway-frontend-mtls performs but
                     against the live resource stores rather than
                     consuming pre-populated state. -#}
-                {%- var gwMtlsBlocked = map[string]bool{} %}
-                {%%
-                  // Outer presence check uses dig() to distinguish
-                  // "TLS frontend block absent" (skip entirely) from
-                  // "present but with all zero values" (process and
-                  // potentially block listeners). Typed access alone
-                  // can't observe absence — it always yields the
-                  // struct's zero value.
-                  if dig(gw, "spec", "tls", "frontend") != nil {
-                    var defaultValidation any = nil
-                    if dig(gw, "spec", "tls", "frontend", "default", "validation") != nil {
-                      defaultValidation = gw.Spec.Tls.Frontend.Default.Validation
-                    }
-                    var perPortValidations = map[int]any{}
-                    for _, pp := range gw.Spec.Tls.Frontend.PerPort {
-                      var p = toint(pp.Port)
-                      if p > 0 && dig(pp, "tls", "validation") != nil {
-                        perPortValidations[p] = pp.Tls.Validation
-                      }
-                    }
-                    var resolveValidation = func(validation any) bool {
-                      var refs = dig(validation, "caCertificateRefs") | toSlice()
-                      if len(refs) == 0 {
-                        return false
-                      }
-                      var found = false
-                      for _, ref := range refs {
-                        var refKind = tostring(dig(ref, "kind") | fallback(""))
-                        var refGroup = tostring(dig(ref, "group") | fallback(""))
-                        var refName = tostring(dig(ref, "name") | fallback(""))
-                        var refNs = tostring(dig(ref, "namespace") | fallback(gwNs))
-                        if refName == "" {
-                          continue
-                        }
-                        if refGroup != "" && refGroup != "core" {
-                          continue
-                        }
-                        if refKind == "ConfigMap" {
-                          if resources.configmaps.GetSingle(refNs, refName) != nil {
-                            found = true
-                            break
-                          }
-                        } else if refKind == "Secret" {
-                          if resources.secrets.GetSingle(refNs, refName) != nil {
-                            found = true
-                            break
-                          }
-                        }
-                      }
-                      return found
-                    }
-                    for _, l := range gw.Spec.Listeners {
-                      var lProto = l.Protocol
-                      if lProto != "HTTPS" && lProto != "TLS" {
-                        continue
-                      }
-                      var lPort = toint(l.Port)
-                      var lName = l.Name
-                      var validation any = perPortValidations[lPort]
-                      if validation == nil {
-                        validation = defaultValidation
-                      }
-                      if validation == nil {
-                        continue
-                      }
-                      if !resolveValidation(validation) {
-                        gwMtlsBlocked[lName] = true
-                      }
-                    }
-                  }
-                %%}
+                {{ ComputeGwMtlsBlocked(gw) }}
+                {%- var gwMtlsBlockedAny, _ = shared.ComputeIfAbsent(
+                      "gwMtlsBlocked:"+gwNs+"/"+gwName,
+                      func() any { return map[string]bool{} }) -%}
+                {%- var gwMtlsBlocked = gwMtlsBlockedAny.(map[string]bool) %}
                 {%- for _, listener := range gw.Spec.Listeners %}
                   {%- var listenerName = listener.Name %}
                   {%- if section == "" || section == listenerName %}
