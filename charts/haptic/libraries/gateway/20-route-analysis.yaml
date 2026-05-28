@@ -840,10 +840,6 @@ templateSnippets:
               {%- var iterCount = matchCount %}
               {%- if iterCount == 0 %}{%- iterCount = 1 %}{%- end %}
               {%- for matchIdx := 0; matchIdx < iterCount; matchIdx++ %}
-                {#- Precomputed scalars feed sort_by below — avoids
-                    JSONPath dig'ing into `$.match.*` / `$.path.*`
-                    polymorphic slots. The legacy "path" / "resource_type"
-                    slots are still emitted (41-maps-path consumers). -#}
                 {%- var pathType = "PathPrefix" %}
                 {%- var pathValue = "/" %}
                 {%- var hasMethod = false %}
@@ -857,22 +853,12 @@ templateSnippets:
                   {%- headerCount = len(match.Headers) %}
                   {%- queryParamCount = len(match.QueryParams) %}
                 {%- end %}
-                {%- var pathSlot = map[string]any{"type": pathType, "value": pathValue} %}
                 {%- var pathKey = hostname + "|" + pathType + "|" + pathValue %}
-                {#- routeInfo shape:
-                    - `route` (typed *T) + `ruleIdx` / `matchIdx` are the
-                      single source of truth — consumers type-switch on
-                      `route` and re-derive sub-fields via typed
-                      `r.Spec.Rules[ruleIdx].Matches[matchIdx]` access.
-                    - `path` / `resource_type` / `hostname` are
-                      keep-alive slots for 41-maps-path's
-                      PathMapEntryGatewayShard consumer. Slot removal
-                      tracked in the AnalyzeRoutes restructure track
-                      (after PathMapEntryGatewayShard is migrated to
-                      type-switch too).
-                    - `pathType`/`pathValueLen`/`hasMethod`/`headerCount`/
-                      `queryParamCount` are precomputed sort scalars
-                      consumed only by sort_by below. -#}
+                {#- routeInfo: typed route pointer + ruleIdx/matchIdx as
+                    the single source of truth; sort scalars
+                    (pathType/pathValueLen/hasMethod/headerCount/
+                    queryParamCount) precomputed here so sort_by avoids
+                    dig'ing into typed sub-structs at sort time. -#}
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
@@ -1201,15 +1187,11 @@ templateSnippets:
             serialisation of the matcher set; two routes with
             identical sets share a key and don't conflict. -#}
         {%%
-          {#- buildConditions(routeInfo) re-derives the matcher set
-              from the typed route + ruleIdx/matchIdx (per ADR-0010)
-              rather than reading the legacy routeInfo["match"]
-              slot, so removing that slot later is a pure
-              AnalyzeRoutes-internal change. Two siblings (one per
-              Kind) so the typed match struct's per-Kind shape is
-              preserved (HTTPRouteMatch has a string Method,
+          {#- buildConditions(routeInfo) reads the matcher set from
+              the typed route + ruleIdx/matchIdx (per ADR-0010).
+              Two sibling cases — HTTPRouteMatch has a string Method;
               GRPCRouteMatch has a struct Method that we serialise
-              into a comparable string here). -#}
+              Type/Service/Method into a comparable string here. -#}
           var buildConditions = func(ri any) string {
             var rm = ri.(map[string]any)
             var ruleIdx = toint(rm["ruleIdx"])
@@ -1347,10 +1329,9 @@ templateSnippets:
         {%- var routeMirrorCount = 0 %}
         {%%
           // Type-switch on routeInfo["route"] to read filters via the
-          // typed rule struct rather than the legacy routeInfo
-          // ["filters"] slot — sets up the slot's eventual removal.
-          // Filter type strings (RequestHeaderModifier / etc.) match
-          // the schema's enum values for both Kinds.
+          // typed rule struct. Filter type strings
+          // (RequestHeaderModifier / etc.) match the schema's enum
+          // values for both Kinds.
           for _, route := range finalAllRoutes {
             var rm = route.(map[string]any)
             var ruleIdx = toint(rm["ruleIdx"])

@@ -137,21 +137,14 @@ templateSnippets:
         {#- Pivot to type-switch dispatch (ADR-0010 type-switch
             restructure): instead of reading pre-flattened
             `routeInfo["match"]` / `routeInfo["path"]` slots as `any`
-            and dig()-ing into them, we type-switch on the typed
-            `routeInfo["route"]` parent pointer and re-derive the
-            match via typed `r.Spec.Rules[ruleIdx].Matches[matchIdx]`
-            access. Per-Kind field shapes (HTTPRoute.Spec.Rules vs
-            GRPCRoute.Spec.Rules) get compile-time validated by
-            Scriggo's type checker, and field renames on the
-            generated struct surface as build errors instead of
-            silent dig()-returned-nil at render time.
-
-            Per-Kind code extracts the few primitives the common
-            emission block below needs (pathType, pathValue, method,
-            headers, queryParams, grpc method) into untyped scalars
-            so the emission stays DRY. Inside each case the access
-            is fully typed; everything after the switch is
-            stringly-typed value handling, which is the right shape
+            type-switch on routeInfo["route"] and re-derive the
+            match via typed `r.Spec.Rules[ruleIdx].Matches[matchIdx]`.
+            Per-Kind field shapes get compile-time validated; field
+            renames surface as build errors. Each case extracts the
+            primitives the common emission block needs into untyped
+            scalars so the emission stays DRY — everything after the
+            switch is stringly-typed value handling, which is the
+            right shape
             because HAProxy config emission is text. -#}
         {%- var riRouteId = routeInfo["routeId"] %}
         {%- var riConflictGroup = routeInfo["conflictGroup"] %}
@@ -450,9 +443,8 @@ templateSnippets:
             iteration / append patterns work uniformly. The pre-typed-
             access `| fallback([]any{})` relied on dig() returning nil
             for typed-struct intermediates, which it no longer does. -#}
-        {#- Extract typed rule.BackendRefs via type-switch on
-            routeInfo["route"] — replaces the legacy routeInfo
-            ["rule"] slot read. -#}
+        {#- Extract rule.BackendRefs via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var backendRefs []any = nil %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -564,17 +556,13 @@ templateSnippets:
       {%- if gaVal == nil %}{% return %}{% end %}
       {%- var ga = gaVal.(map[string]any) %}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- HTTPRoute-only filter: skip via typed route assertion
-            (replaces the legacy routeInfo["resource_type"] string
-            check; same gate, no slot dependency). -#}
+        {#- HTTPRoute-only filter: skip non-HTTPRoute via typed
+            assertion on routeInfo["route"]. -#}
         {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
         {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
-        {#- Extract typed rule.Filters via type-switch on routeInfo
-            ["route"] — replaces the legacy routeInfo["filters"]
-            slot read. Per-Kind iteration unifies the polymorphic
-            cross-Kind filter slice the chart used to ship as the
-            slot value. -#}
+        {#- Extract rule.Filters via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -771,11 +759,8 @@ templateSnippets:
       {%- if ga["hasRequestHeader_filter"] %}
       # gateway/frontend-filters-gateway-request-header
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract typed rule.Filters via type-switch on routeInfo
-            ["route"] — replaces the legacy routeInfo["filters"]
-            slot read. Per-Kind iteration unifies the polymorphic
-            cross-Kind filter slice the chart used to ship as the
-            slot value. -#}
+        {#- Extract rule.Filters via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -836,11 +821,8 @@ templateSnippets:
       {%- if ga["hasResponseHeader_filter"] %}
       # gateway/frontend-filters-gateway-response-header
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract typed rule.Filters via type-switch on routeInfo
-            ["route"] — replaces the legacy routeInfo["filters"]
-            slot read. Per-Kind iteration unifies the polymorphic
-            cross-Kind filter slice the chart used to ship as the
-            slot value. -#}
+        {#- Extract rule.Filters via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -936,11 +918,8 @@ templateSnippets:
       http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
       http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract typed rule.Filters via type-switch on routeInfo
-            ["route"] — replaces the legacy routeInfo["filters"]
-            slot read. Per-Kind iteration unifies the polymorphic
-            cross-Kind filter slice the chart used to ship as the
-            slot value. -#}
+        {#- Extract rule.Filters via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -1129,11 +1108,8 @@ templateSnippets:
       {%- if ga["hasUrlrewrite_filter"] %}
       # gateway/frontend-filters-gateway-urlrewrite
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- Extract typed rule.Filters via type-switch on routeInfo
-            ["route"] — replaces the legacy routeInfo["filters"]
-            slot read. Per-Kind iteration unifies the polymorphic
-            cross-Kind filter slice the chart used to ship as the
-            slot value. -#}
+        {#- Extract rule.Filters via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
@@ -1286,9 +1262,8 @@ templateSnippets:
       {%- if ga["hasMirror_filter"] %}
       # gateway/frontend-filters-gateway-mirror
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {#- HTTPRoute-only filter: skip via typed route assertion
-            (replaces the legacy routeInfo["resource_type"] string
-            check; same gate, no slot dependency). -#}
+        {#- HTTPRoute-only filter: skip non-HTTPRoute via typed
+            assertion on routeInfo["route"]. -#}
         {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
         {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
@@ -1302,11 +1277,8 @@ templateSnippets:
             match the message names in spoaHub.plugins.mirror.messages
             (mirror-1, mirror-2, ...). -#}
         {%- var mirrorIdx = 0 %}
-        {#- Extract typed rule.Filters via type-switch on routeInfo
-            ["route"] — replaces the legacy routeInfo["filters"]
-            slot read. Per-Kind iteration unifies the polymorphic
-            cross-Kind filter slice the chart used to ship as the
-            slot value. -#}
+        {#- Extract rule.Filters via per-Kind type-switch on
+            routeInfo["route"]. -#}
         {%- var filters = []any{} %}
         {%%
           var rm = routeInfo.(map[string]any)
