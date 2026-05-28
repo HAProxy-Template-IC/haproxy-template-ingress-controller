@@ -1,34 +1,34 @@
 templateSnippets:
-  util-generate-weighted-backend-map-gateway:
+  util-generate-httproute-weighted-backend-map-gateway:
     template: |
-      {#- Macro to generate weighted backend map entries for HTTPRoute -#}
+      {#- Generate weighted backend map entries for HTTPRoute.
+          Typed sibling — formerly GenerateWeightedBackendMap with a
+          polymorphic `routes []any` parameter. -#}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
-      {%- macro GenerateWeightedBackendMap(routes []any) -%}
+      {%- macro GenerateHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
-      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
-      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
-      {%- var rules = route | dig("spec", "rules") | toSlice() %}
+      {%- var routeNs = route.Metadata.Namespace %}
+      {%- var routeName = route.Metadata.Name %}
       {%- var weightedEntries = []any{} %}
       {%- var ruleIdx = 0 %}
-      {%- for _, rule := range rules %}
-        {%- var backendRefs = rule | dig("backendRefs") %}
-        {%- if backendRefs != nil %}
-          {%- var refsSlice = backendRefs | toSlice() %}
-          {%- if len(refsSlice) > 1 %}
-            {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
-            {%- var cumulative = 0 %}
-            {%- for _, backendRef := range refsSlice %}
-              {%- var backend = map[string]any{"name": backendRef | dig("name") | fallback(""), "port": backendRef | dig("port") | fallback(80)} %}
-              {%- var weight = backendRef | dig("weight") | fallback(1) %}
-              {%- for i := cumulative; i < cumulative + weight; i++ %}
-                {%- weightedEntries = append(weightedEntries, map[string]any{
-                  "index": i,
-                  "routeKey": routeKey,
-                  "backend": backend,
-                }) %}
-              {%- end %}
-              {%- cumulative = cumulative + weight %}
+      {%- for _, rule := range route.Spec.Rules %}
+        {%- if len(rule.BackendRefs) > 1 %}
+          {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
+          {%- var cumulative = 0 %}
+          {%- for _, backendRef := range rule.BackendRefs %}
+            {%- var backendPort = toint(backendRef.Port) %}
+            {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end %}
+            {%- var backend = map[string]any{"name": backendRef.Name, "port": backendPort} %}
+            {%- var weight = toint(backendRef.Weight) %}
+            {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
+            {%- for i := cumulative; i < cumulative + weight; i++ %}
+              {%- weightedEntries = append(weightedEntries, map[string]any{
+                "index": i,
+                "routeKey": routeKey,
+                "backend": backend,
+              }) %}
             {%- end %}
+            {%- cumulative = cumulative + weight %}
           {%- end %}
         {%- end %}
         {%- ruleIdx = ruleIdx + 1 %}
@@ -42,29 +42,78 @@ templateSnippets:
       {%- end %}
       {%- end macro -%}
 
-  util-sharded-weighted-backend-map-gateway:
+  util-generate-grpcroute-weighted-backend-map-gateway:
     template: |
-      {#- Sharded weighted backend map generator for HTTPRoute -#}
-      {%- import "util-generate-weighted-backend-map-gateway" for GenerateWeightedBackendMap -%}
-      {%- import "util-macros" for CalculateShardCount -%}
-      {%- macro ShardedWeightedBackendMap(routes []any) -%}
-      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-      {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateWeightedBackendMap(routes) }}
-      {%- else -%}
-      {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateWeightedBackendMap(shard_slice(routes, i, n)) }}
-      {%- end -%}
-      {%- end -%}
+      {#- Generate weighted backend map entries for GRPCRoute.
+          Typed sibling of GenerateHTTPRouteWeightedBackendMap; body
+          differs only in the `route` slice type. -#}
+      {%- import "util-backend-name-gateway" for BackendNameGateway -%}
+      {%- macro GenerateGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
+      {%- for _, route := range routes %}
+      {%- var routeNs = route.Metadata.Namespace %}
+      {%- var routeName = route.Metadata.Name %}
+      {%- var weightedEntries = []any{} %}
+      {%- var ruleIdx = 0 %}
+      {%- for _, rule := range route.Spec.Rules %}
+        {%- if len(rule.BackendRefs) > 1 %}
+          {%- var routeKey = routeNs + "_" + routeName + "_" + ruleIdx %}
+          {%- var cumulative = 0 %}
+          {%- for _, backendRef := range rule.BackendRefs %}
+            {%- var backendPort = toint(backendRef.Port) %}
+            {%- if backendPort == 0 %}{%- backendPort = 80 %}{%- end %}
+            {%- var backend = map[string]any{"name": backendRef.Name, "port": backendPort} %}
+            {%- var weight = toint(backendRef.Weight) %}
+            {%- if weight == 0 && dig(backendRef, "weight") == nil %}{%- weight = 1 %}{%- end %}
+            {%- for i := cumulative; i < cumulative + weight; i++ %}
+              {%- weightedEntries = append(weightedEntries, map[string]any{
+                "index": i,
+                "routeKey": routeKey,
+                "backend": backend,
+              }) %}
+            {%- end %}
+            {%- cumulative = cumulative + weight %}
+          {%- end %}
+        {%- end %}
+        {%- ruleIdx = ruleIdx + 1 %}
+      {%- end %}
+      {%- if len(weightedEntries) > 0 %}
+      # GRPCRoute: {{ routeNs }}/{{ routeName }} (weighted rules)
+      {% for _, entry := range weightedEntries -%}
+      {{ entry["index"] }}:{{ entry["routeKey"] }} {{ BackendNameGateway(route, entry["backend"]) }}
+      {% end -%}
+      {%- end %}
+      {%- end %}
       {%- end macro -%}
 
-      {#- Per-Kind typed wrappers — (c) split. Polymorphic helper stays,
-          callers use kind-typed entry points. -#}
+  util-sharded-weighted-backend-map-gateway:
+    template: |
+      {#- Per-Kind typed sharded weighted-backend-map wrappers.
+          Each calls its Kind-specific Generate macro with the typed
+          slice directly — no polymorphic indirection. -#}
+      {%- import "util-generate-httproute-weighted-backend-map-gateway" for GenerateHTTPRouteWeightedBackendMap -%}
+      {%- import "util-generate-grpcroute-weighted-backend-map-gateway" for GenerateGRPCRouteWeightedBackendMap -%}
+      {%- import "util-macros" for CalculateShardCount -%}
+
       {%- macro ShardedHTTPRouteWeightedBackendMap(routes []*resources.httproutes.T) -%}
-      {{ ShardedWeightedBackendMap(routes | toSlice()) }}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateHTTPRouteWeightedBackendMap(routes) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateHTTPRouteWeightedBackendMap(shard_slice(routes, i, n)) }}
+          {%- end -%}
+        {%- end -%}
       {%- end macro -%}
+
       {%- macro ShardedGRPCRouteWeightedBackendMap(routes []*resources.grpcroutes.T) -%}
-      {{ ShardedWeightedBackendMap(routes | toSlice()) }}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateGRPCRouteWeightedBackendMap(routes) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateGRPCRouteWeightedBackendMap(shard_slice(routes, i, n)) }}
+          {%- end -%}
+        {%- end -%}
       {%- end macro -%}
 
   map-weighted-backend-500-gateway:

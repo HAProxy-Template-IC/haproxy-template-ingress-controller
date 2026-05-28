@@ -84,34 +84,35 @@ templateSnippets:
 
   util-generate-path-regex-map-gateway:
     template: |
-      {#- Macro to generate regex path map entries for HTTPRoute -#}
+      {#- Generate regex path map entries for HTTPRoute.
+
+          HTTPRoute-only: GRPCRoute has no path-regex matchType, so this
+          macro takes typed `[]*resources.httproutes.T` directly. No
+          GRPCRoute sibling. -#}
       {%- import "util-backend-name-gateway" for BackendNameGateway -%}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
-      {%- macro GeneratePathRegexMap(routes []any) -%}
+      {%- macro GeneratePathRegexMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
-      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
-      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
-      {%- var hostnames = route | dig("spec", "hostnames") | toSlice() | coalesce([]any{""}) %}
-      {%- var rules = route | dig("spec", "rules") | toSlice() %}
+      {%- var routeNs = route.Metadata.Namespace %}
+      {%- var routeName = route.Metadata.Name %}
+      {#- Coerce to []any: the per-rule loop body assigns hostnames
+          into the polymorphic regexEntries map, and the downstream
+          MapKeyForHost macro takes `any`. The fallback `[""]` covers
+          the "route has no hostnames" case. -#}
+      {%- var hostnames = route.Spec.Hostnames | toSlice() | coalesce([]any{""}) %}
       {%- var regexEntries = []any{} %}
       {%- for _, hostname := range hostnames %}
-      {%- for _, rule := range rules %}
-      {%- var backendRefs = rule | dig("backendRefs") %}
-      {%- if backendRefs != nil %}
-      {%- var backendRefs_slice = backendRefs | toSlice() %}
-      {%- var firstBackend = backendRefs_slice[0] %}
-      {%- var backend = map[string]any{"name": firstBackend | dig("name") | fallback(""), "port": firstBackend | dig("port") | fallback(80)} %}
-      {#- Normalize typed slices via toSlice() before assigning to
-          `[]any`. dig() on a typed pointer returns the typed sub-
-          slice (e.g. `[]struct{...HTTPRouteMatch...}`); coalesce()
-          preserves it as `any`; assigning that to `[]any` fails
-          Scriggo's type conversion. toSlice() forces a reflection
-          copy into a fresh `[]any`. Then the empty-list case
-          synthesises the chart's "no matches → PathPrefix /"
-          default behaviour, which used to fall out of coalesce()
-          but no longer does because dig() never returns nil for
-          typed slices (it returns an empty typed slice). -#}
-      {%- var matches []any = rule | dig("matches") | toSlice() %}
+      {%- for _, rule := range route.Spec.Rules %}
+      {%- if len(rule.BackendRefs) > 0 %}
+      {%- var firstBackend = rule.BackendRefs[0] %}
+      {%- var firstBackendPort = toint(firstBackend.Port) %}
+      {%- if firstBackendPort == 0 %}{%- firstBackendPort = 80 %}{%- end %}
+      {%- var backend = map[string]any{"name": firstBackend.Name, "port": firstBackendPort} %}
+      {#- The empty-matches case synthesises the chart's "no matches
+          → PathPrefix /" default. With typed rule.Matches we iterate
+          the slice directly; if empty, we still need one synthetic
+          entry so the inner regex check has something to skip past. -#}
+      {%- var matches []any = rule.Matches | toSlice() %}
       {%- if len(matches) == 0 %}
         {%- matches = []any{map[string]any{}} %}
       {%- end %}
@@ -140,20 +141,16 @@ templateSnippets:
 
   util-sharded-path-regex-map-gateway:
     template: |
-      {#- Sharded regex path map generator for HTTPRoute -#}
+      {#- Sharded regex path map generator for HTTPRoute. -#}
       {%- import "util-generate-path-regex-map-gateway" for GeneratePathRegexMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {#- ShardedPathRegexMap is single-Kind (HTTPRoute only — GRPCRoute
-          has no path-regex matchType). Per audit (c), type the
-          parameter directly since there's no polymorphism to factor
-          out into wrappers. -#}
       {%- macro ShardedPathRegexMap(routes []*resources.httproutes.T) -%}
       {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
       {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GeneratePathRegexMap(routes | toSlice()) }}
+      {{ GeneratePathRegexMap(routes) }}
       {%- else -%}
       {%- for i := 0; i < n; i++ -%}
-      {{ go GeneratePathRegexMap(shard_slice(routes, i, n) | toSlice()) }}
+      {{ go GeneratePathRegexMap(shard_slice(routes, i, n)) }}
       {%- end -%}
       {%- end -%}
       {%- end macro -%}
