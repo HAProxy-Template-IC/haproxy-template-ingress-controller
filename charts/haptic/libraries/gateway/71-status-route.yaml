@@ -532,11 +532,14 @@ templateSnippets:
 
             var parents = []any{}
             var parentIdx = 0
-            for _, parentRef := range dig(route, "spec", "parentRefs") | toSlice() {
-              var gwGroup = dig_string(parentRef, "gateway.networking.k8s.io", "group")
-              var gwKind = dig_string(parentRef, "Gateway", "kind")
-              var gwNamespace = dig_string(parentRef, nsStr, "namespace")
-              var gwName = dig_string(parentRef, "", "name")
+            for _, parentRef := range route.Spec.ParentRefs {
+              var gwGroup = parentRef.Group
+              if gwGroup == "" { gwGroup = "gateway.networking.k8s.io" }
+              var gwKind = parentRef.Kind
+              if gwKind == "" { gwKind = "Gateway" }
+              var gwNamespace = parentRef.Namespace
+              if gwNamespace == "" { gwNamespace = nsStr }
+              var gwName = parentRef.Name
 
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "Gateway" {
                 var gwKey = gwNamespace + "/" + gwName
@@ -546,16 +549,23 @@ templateSnippets:
                     "kind":  "Gateway",
                     "name":  gwName,
                   }
+                  // dig() preserves the "namespace specified in spec"
+                  // round-trip for status reflection — typed access
+                  // alone would collapse absent and "" into the same
+                  // zero value (omitempty + empty string both look
+                  // identical).
                   if dig(parentRef, "namespace") != nil {
                     parentRefStatus["namespace"] = gwNamespace
                   }
-                  var sectionName = dig(parentRef, "sectionName")
+                  // sectionName is also optional; same dig()-for-
+                  // presence pattern preserves the spec/status
+                  // round-trip behaviour.
                   var sectionNameStr = ""
-                  if sectionName != nil {
-                    parentRefStatus["sectionName"] = tostring(sectionName)
-                    sectionNameStr = tostring(sectionName)
+                  if dig(parentRef, "sectionName") != nil {
+                    sectionNameStr = parentRef.SectionName
+                    parentRefStatus["sectionName"] = sectionNameStr
                   }
-                  var parentPort = toint(dig(parentRef, "port") | fallback(0))
+                  var parentPort = toint(parentRef.Port)
 
                   var gw = resources.gateways.GetSingle(gwNamespace, gwName)
                   // Pre-compute mixed-mode map so we can flag listeners
@@ -623,15 +633,20 @@ templateSnippets:
                         continue
                       }
 
-                      // allowedRoutes.kinds intersection
+                      // allowedRoutes.kinds intersection. Typed
+                      // iteration over the optional slice is a no-op
+                      // when absent (l.AllowedRoutes.Kinds is nil
+                      // zero-value); dig() outer guard preserves the
+                      // "kinds absent → permit all" semantic by
+                      // skipping the kindOk = false initialisation
+                      // when the field was never specified.
                       var kindOk = true
-                      var allowedKindsRaw = dig(listener, "allowedRoutes", "kinds")
-                      if allowedKindsRaw != nil {
+                      if dig(listener, "allowedRoutes", "kinds") != nil {
                         kindOk = false
-                        for _, ak := range toSlice(allowedKindsRaw) {
-                          var akGroup = dig_string(ak, "gateway.networking.k8s.io", "group")
-                          var akKind = dig_string(ak, "", "kind")
-                          if akGroup == "gateway.networking.k8s.io" && akKind == kind {
+                        for _, ak := range listener.AllowedRoutes.Kinds {
+                          var akGroup = ak.Group
+                          if akGroup == "" { akGroup = "gateway.networking.k8s.io" }
+                          if akGroup == "gateway.networking.k8s.io" && ak.Kind == kind {
                             kindOk = true
                             break
                           }
@@ -639,24 +654,22 @@ templateSnippets:
                       }
 
                       var nsOk = false
-                      var fromMode = dig_string(listener, "Same", "allowedRoutes", "namespaces", "from")
+                      var fromMode = listener.AllowedRoutes.Namespaces.From
+                      if fromMode == "" { fromMode = "Same" }
                       switch fromMode {
                       case "Same":
                         nsOk = nsStr == gwNamespace
                       case "All":
                         nsOk = true
                       case "Selector":
-                        var ml = dig(listener, "allowedRoutes", "namespaces", "selector", "matchLabels")
-                        if ml != nil {
+                        // listener is typed *Gateway.Listeners[i] in
+                        // this typed-route path — MatchLabels is
+                        // map[string]string directly, no to_str_map
+                        // normalisation needed.
+                        var selectorMap = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
+                        if len(selectorMap) > 0 {
                           var nsObj = resources.namespaces.GetSingle(nsStr)
                           if nsObj != nil {
-                            // nsObj is typed *resources.namespaces.T —
-                            // Metadata.Labels is map[string]string
-                            // directly. ml (matchLabels) comes from a
-                            // polymorphic dig on listenerOwner (Gateway
-                            // or ListenerSet), so it remains `any` and
-                            // needs to_str_map normalisation.
-                            var selectorMap = to_str_map(ml)
                             var allMatch = true
                             for k, v := range selectorMap {
                               var actual, ok = nsObj.Metadata.Labels[k]

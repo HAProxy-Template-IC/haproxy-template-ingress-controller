@@ -372,3 +372,119 @@ templateSnippets:
           {{ permitted -}}
         {%- end -%}
       {%- end macro -%}
+
+  util-gw-mtls-blocked:
+    template: |
+      {#-
+        ComputeGwMtlsBlocked — populate the set of mTLS-blocked listener
+        names for a Gateway.
+
+        A listener is "blocked" when its applicable TLS-frontend
+        validation block (per-port override or default) has CA refs
+        that can't be resolved against the live store. Routes attached
+        to such listeners must not be served — otherwise the chart's
+        HTTPS frontend would happily route them via a SIBLING Gateway's
+        bind, closing the
+        GatewayFrontendInvalidDefaultClientCertificateValidation
+        conformance gap. The check matches the resolvability test
+        features-110-gateway-frontend-mtls performs but reads the live
+        resource stores rather than consuming pre-populated state, so
+        the route-analysis pass doesn't depend on
+        features-110-gateway-frontend-mtls having run first (it
+        doesn't, when map files render in their own context).
+
+        Memoizes per-Gateway via shared.ComputeIfAbsent — the walk runs
+        once per Gateway regardless of how many routes attach to it.
+
+        Usage:
+          {%- import "util-gw-mtls-blocked" for ComputeGwMtlsBlocked,
+                GetGwMtlsBlockedKey -%}
+          {{ ComputeGwMtlsBlocked(gw) }}
+          {%- var blockedAny, _ = shared.ComputeIfAbsent(
+                GetGwMtlsBlockedKey(gw),
+                func() any { return map[string]bool{} }) -%}
+          {%- var gwMtlsBlocked = blockedAny.(map[string]bool) %}
+
+        The double-ComputeIfAbsent at the call site is the chart's
+        established render-to-populate + getter-to-fetch idiom (see
+        util-gateway-analysis for the same pattern). The fetch
+        closure is a no-op for cached entries; the macro guarantees
+        the entry is present.
+      -#}
+      {%- macro GetGwMtlsBlockedKey(gw *resources.gateways.T) string -%}
+        gwMtlsBlocked:{{ gw.Metadata.Namespace }}/{{ gw.Metadata.Name }}
+      {%- end macro -%}
+
+      {%- macro ComputeGwMtlsBlocked(gw *resources.gateways.T) -%}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gwMtlsBlocked:"+gw.Metadata.Namespace+"/"+gw.Metadata.Name, func() any {
+          var blocked = map[string]bool{}
+          // Outer presence check uses dig() to distinguish "TLS
+          // frontend block absent" (skip entirely) from "present
+          // but with all zero values" (process and potentially
+          // block listeners). Typed access alone can't observe
+          // absence — it always yields the struct's zero value.
+          if dig(gw, "spec", "tls", "frontend") == nil {
+            return blocked
+          }
+          var gwNs = gw.Metadata.Namespace
+          var defaultValidation any = nil
+          if dig(gw, "spec", "tls", "frontend", "default", "validation") != nil {
+            defaultValidation = gw.Spec.Tls.Frontend.Default.Validation
+          }
+          var perPortValidations = map[int]any{}
+          for _, pp := range gw.Spec.Tls.Frontend.PerPort {
+            var p = toint(pp.Port)
+            if p > 0 && dig(pp, "tls", "validation") != nil {
+              perPortValidations[p] = pp.Tls.Validation
+            }
+          }
+          var resolveValidation = func(validation any) bool {
+            var refs = dig(validation, "caCertificateRefs") | toSlice()
+            if len(refs) == 0 {
+              return false
+            }
+            for _, ref := range refs {
+              var refKind = tostring(dig(ref, "kind") | fallback(""))
+              var refGroup = tostring(dig(ref, "group") | fallback(""))
+              var refName = tostring(dig(ref, "name") | fallback(""))
+              var refNs = tostring(dig(ref, "namespace") | fallback(gwNs))
+              if refName == "" {
+                continue
+              }
+              if refGroup != "" && refGroup != "core" {
+                continue
+              }
+              if refKind == "ConfigMap" {
+                if resources.configmaps.GetSingle(refNs, refName) != nil {
+                  return true
+                }
+              } else if refKind == "Secret" {
+                if resources.secrets.GetSingle(refNs, refName) != nil {
+                  return true
+                }
+              }
+            }
+            return false
+          }
+          for _, l := range gw.Spec.Listeners {
+            var lProto = l.Protocol
+            if lProto != "HTTPS" && lProto != "TLS" {
+              continue
+            }
+            var lName = l.Name
+            var validation any = perPortValidations[toint(l.Port)]
+            if validation == nil {
+              validation = defaultValidation
+            }
+            if validation == nil {
+              continue
+            }
+            if !resolveValidation(validation) {
+              blocked[lName] = true
+            }
+          }
+          return blocked
+        })
+      %%}
+      {%- end macro -%}
