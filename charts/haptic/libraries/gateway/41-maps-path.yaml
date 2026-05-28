@@ -5,13 +5,10 @@ templateSnippets:
         Gateway Path Map Entry Shard Processor
 
         Generates map file entries for a slice of sorted routes
-        (already pre-grouped by pathKey in AnalyzeRoutes).
-
-        Per the AnalyzeRoutes restructure track: reads
-        routeInfo["pathKey"] / ["pathType"] / ["pathValue"] /
-        ["hostname"] precomputed scalars instead of dig'ing into the
-        legacy routeInfo["path"] / ["resource_type"] slots. Route
-        Kind is derived via type-switch on routeInfo["route"].
+        (pre-grouped by pathKey in AnalyzeRoutes). Reads the
+        precomputed scalars routeInfo emits — pathKey / pathType /
+        pathValue / hostname — and derives the route Kind via
+        type-switch on routeInfo["route"].
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups any, pathType string, suffix string) string %}
@@ -43,9 +40,8 @@ templateSnippets:
           {%- if suffix == "" && frPath_val == "/" && pathType == "PathPrefix" %}
             {%- continue %}
           {%- end %}
-          {#- Derive route Kind discriminator via type-switch on the
-              typed route pointer (replaces the legacy
-              routeInfo["resource_type"] slot read). -#}
+          {#- Route Kind discriminator. HTTPRoute is the default;
+              GRPCRoute is the only non-default branch. -#}
           {%- var routeTypeShort = "http" %}
           {%- switch firstRoute["route"].(type) %}
           {%- case *resources.grpcroutes.T %}
