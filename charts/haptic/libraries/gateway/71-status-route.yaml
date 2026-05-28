@@ -118,7 +118,7 @@ templateSnippets:
               // readers see the route as attached to the LS (the
               // upstream `ListenerSetHTTPRouting` test asserts
               // `expected ParentReference.Kind to be ListenerSet`).
-              var lsResolvedGw any = nil
+              var lsResolvedGw *resources.gateways.T = nil
               if gwGroup == "gateway.networking.k8s.io" && gwKind == "ListenerSet" {
                 var lsObj = resources.listenersets.GetSingle(gwNamespace, gwName)
                 if lsObj != nil {
@@ -137,9 +137,7 @@ templateSnippets:
                   // Use resolved Gateway's identity for ourGateways
                   // membership check — ourGateways is keyed by the
                   // backing Gateway, not by ListenerSet.
-                  var pName = tostring(dig(lsResolvedGw, "metadata", "name") | fallback(""))
-                  var pNs = tostring(dig(lsResolvedGw, "metadata", "namespace") | fallback(""))
-                  gwKey = pNs + "/" + pName
+                  gwKey = lsResolvedGw.Metadata.Namespace + "/" + lsResolvedGw.Metadata.Name
                 }
                 if ourGateways[gwKey] {
                   var parentRefStatus = map[string]any{
