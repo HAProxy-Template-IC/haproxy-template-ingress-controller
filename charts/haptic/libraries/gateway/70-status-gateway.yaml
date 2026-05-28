@@ -1554,10 +1554,12 @@ templateSnippets:
         {%- end -%}
       {%- end %}
       {#- Per-Kind typed wrappers (Sharded{HTTPRoute,GRPCRoute,TLSRoute}
-          StatusPatches) — the internal `ShardedRouteStatusPatches`
-          helper stays polymorphic over `[]any` but call sites now pass
-          typed slices directly, so the compiler catches a route-Kind
-          mismatch at the call site instead of a runtime drop. -#}
+          StatusPatches). The Sharded wrappers each call a Kind-specific
+          Generate macro (GenerateHTTPRouteStatusPatches /
+          GenerateGRPCRouteStatusPatches / GenerateTLSRouteStatusPatches)
+          with a typed `[]*resources.<kind>.T` slice — no `[]any` widening
+          anywhere in the pipeline, kind mismatches surface at the call
+          site instead of as a runtime drop. -#}
       {%- var allHTTPRoutes = resources.httproutes.List() -%}
       {%- if len(allHTTPRoutes) > 0 -%}
         {{- ShardedHTTPRouteStatusPatches(allHTTPRoutes) -}}
