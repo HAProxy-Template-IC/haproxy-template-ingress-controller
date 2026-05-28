@@ -450,7 +450,28 @@ templateSnippets:
             iteration / append patterns work uniformly. The pre-typed-
             access `| fallback([]any{})` relied on dig() returning nil
             for typed-struct intermediates, which it no longer does. -#}
-        {%- var backendRefs []any = routeInfo | dig("rule", "backendRefs") | toSlice() %}
+        {#- Extract typed rule.BackendRefs via type-switch on
+            routeInfo["route"] — replaces the legacy routeInfo
+            ["rule"] slot read. -#}
+        {%- var backendRefs []any = nil %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, br := range r.Spec.Rules[ruleIdx].BackendRefs {
+                backendRefs = append(backendRefs, br)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, br := range r.Spec.Rules[ruleIdx].BackendRefs {
+                backendRefs = append(backendRefs, br)
+              }
+            }
+          }
+        %%}
         {%- if len(backendRefs) > 0 %}
           {#- Filter to backendRefs the chart can route to. Per Gateway API
               spec, a backendRef is "valid" only when:
@@ -545,7 +566,31 @@ templateSnippets:
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
         {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
-        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+        {#- Extract typed rule.Filters via type-switch on routeInfo
+            ["route"] — replaces the legacy routeInfo["filters"]
+            slot read. Per-Kind iteration unifies the polymorphic
+            cross-Kind filter slice the chart used to ship as the
+            slot value. -#}
+        {%- var filters = []any{} %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          }
+        %%}
+        {%- for _, filter := range filters %}
           {%- if (filter | dig("type")) != "CORS" %}{%- continue %}{%- end %}
           {%- var cors = filter | dig("cors") %}
           {%- if cors == nil %}{%- continue %}{%- end %}
@@ -722,7 +767,31 @@ templateSnippets:
       {%- if ga["hasRequestHeader_filter"] %}
       # gateway/frontend-filters-gateway-request-header
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+        {#- Extract typed rule.Filters via type-switch on routeInfo
+            ["route"] — replaces the legacy routeInfo["filters"]
+            slot read. Per-Kind iteration unifies the polymorphic
+            cross-Kind filter slice the chart used to ship as the
+            slot value. -#}
+        {%- var filters = []any{} %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          }
+        %%}
+        {%- for _, filter := range filters %}
           {%- if (filter | dig("type")) == "RequestHeaderModifier" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
             {%- var cond = RouteIdCondition(routeId) %}
@@ -763,7 +832,31 @@ templateSnippets:
       {%- if ga["hasResponseHeader_filter"] %}
       # gateway/frontend-filters-gateway-response-header
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+        {#- Extract typed rule.Filters via type-switch on routeInfo
+            ["route"] — replaces the legacy routeInfo["filters"]
+            slot read. Per-Kind iteration unifies the polymorphic
+            cross-Kind filter slice the chart used to ship as the
+            slot value. -#}
+        {%- var filters = []any{} %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          }
+        %%}
+        {%- for _, filter := range filters %}
           {%- if (filter | dig("type")) == "ResponseHeaderModifier" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
             {%- var cond = RouteIdCondition(routeId) %}
@@ -839,7 +932,31 @@ templateSnippets:
       http-request set-var(txn.gw_request_scheme) str(http) if !{ ssl_fc }
       http-request set-var(txn.gw_request_scheme) str(https) if { ssl_fc }
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+        {#- Extract typed rule.Filters via type-switch on routeInfo
+            ["route"] — replaces the legacy routeInfo["filters"]
+            slot read. Per-Kind iteration unifies the polymorphic
+            cross-Kind filter slice the chart used to ship as the
+            slot value. -#}
+        {%- var filters = []any{} %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          }
+        %%}
+        {%- for _, filter := range filters %}
           {%- if (filter | dig("type")) == "RequestRedirect" && (routeInfo | dig("resource_type")) == "httproute" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
             {%- var cond = RouteIdCondition(routeId) %}
@@ -1006,7 +1123,31 @@ templateSnippets:
       {%- if ga["hasUrlrewrite_filter"] %}
       # gateway/frontend-filters-gateway-urlrewrite
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+        {#- Extract typed rule.Filters via type-switch on routeInfo
+            ["route"] — replaces the legacy routeInfo["filters"]
+            slot read. Per-Kind iteration unifies the polymorphic
+            cross-Kind filter slice the chart used to ship as the
+            slot value. -#}
+        {%- var filters = []any{} %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          }
+        %%}
+        {%- for _, filter := range filters %}
           {%- if (filter | dig("type")) == "URLRewrite" && (routeInfo | dig("resource_type")) == "httproute" %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
             {%- var cond = RouteIdCondition(routeId) %}
@@ -1149,7 +1290,31 @@ templateSnippets:
             match the message names in spoaHub.plugins.mirror.messages
             (mirror-1, mirror-2, ...). -#}
         {%- var mirrorIdx = 0 %}
-        {%- for _, filter := range routeInfo | dig("filters") | fallback([]any{}) %}
+        {#- Extract typed rule.Filters via type-switch on routeInfo
+            ["route"] — replaces the legacy routeInfo["filters"]
+            slot read. Per-Kind iteration unifies the polymorphic
+            cross-Kind filter slice the chart used to ship as the
+            slot value. -#}
+        {%- var filters = []any{} %}
+        {%%
+          var rm = routeInfo.(map[string]any)
+          var ruleIdx = toint(rm["ruleIdx"])
+          switch r := rm["route"].(type) {
+          case *resources.httproutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          case *resources.grpcroutes.T:
+            if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+              for _, f := range r.Spec.Rules[ruleIdx].Filters {
+                filters = append(filters, f)
+              }
+            }
+          }
+        %%}
+        {%- for _, filter := range filters %}
           {%- if (filter | dig("type")) != "RequestMirror" %}{%- continue %}{%- end %}
           {%- var mirror = filter | dig("requestMirror") %}
           {%- if mirror == nil %}{%- continue %}{%- end %}
