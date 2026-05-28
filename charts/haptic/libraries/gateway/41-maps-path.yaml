@@ -4,31 +4,33 @@ templateSnippets:
       {#-
         Gateway Path Map Entry Shard Processor
 
-        Purpose: Generates map file entries for a slice of sorted routes.
-        This is the inner macro used by sharding.
+        Generates map file entries for a slice of sorted routes
+        (already pre-grouped by pathKey in AnalyzeRoutes).
+
+        Per the AnalyzeRoutes restructure track: reads
+        routeInfo["pathKey"] / ["pathType"] / ["pathValue"] /
+        ["hostname"] precomputed scalars instead of dig'ing into the
+        legacy routeInfo["path"] / ["resource_type"] slots. Route
+        Kind is derived via type-switch on routeInfo["route"].
       -#}
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {% macro PathMapEntryGatewayShard(sortedRoutes []any, pathGroups any, pathType string, suffix string) string %}
       {%- for _, routeInfo := range sortedRoutes %}
-        {%- var riHostname = routeInfo["hostname"] %}
-        {%- var riPath any = routeInfo["path"] %}
-        {%- var riPath_type = tostring(riPath | dig("type")) %}
-        {%- var riPathValue = tostring(riPath | dig("value")) %}
-        {%- var pathKey = riHostname + "|" + riPath_type + "|" + riPathValue %}
+        {%- var pathKey = tostring(routeInfo["pathKey"]) %}
         {%- if first_seen("gateway_pathMap_" + pathType + suffix, pathKey) %}
           {%- var routes []any = pathGroups | dig(pathKey) | toSlice() %}
-          {%- var firstRoute any = routes[0] %}
-          {%- var frPath any = firstRoute | dig("path") %}
-          {%- var frPath_type = frPath | dig("type") %}
-        {%- if frPath != nil && frPath_type == pathType %}
+          {%- var firstRoute = routes[0].(map[string]any) %}
+          {%- var frPath_type = tostring(firstRoute["pathType"]) %}
+        {%- if frPath_type == pathType %}
           {%- var routeIds = []any{} %}
           {%- for _, r := range routes %}
-            {%- var rid string = r["routeId"] %}
+            {%- var ri = r.(map[string]any) %}
+            {%- var rid string = ri["routeId"] %}
             {%- routeIds = append(routeIds, rid) %}
           {%- end %}
           {%- var routeIds_str = join(routeIds, "__") -%}
-          {%- var frHostname = firstRoute | dig("hostname") %}
-          {%- var frPath_val string = tostring(frPath | dig("value")) %}
+          {%- var frHostname = tostring(firstRoute["hostname"]) %}
+          {%- var frPath_val = tostring(firstRoute["pathValue"]) %}
           {#- Skip the catch-all `/` entry only for PathPrefix routes —
               an Exact `/` route must still emit, otherwise requests
               to the bare root are unroutable. PathPrefix `/` matches
@@ -41,8 +43,14 @@ templateSnippets:
           {%- if suffix == "" && frPath_val == "/" && pathType == "PathPrefix" %}
             {%- continue %}
           {%- end %}
-          {%- var frResourceType = firstRoute | dig("resource_type") %}
-          {%- var routeTypeShort = frResourceType | replace("httproute", "http") | replace("grpcroute", "grpc") %}
+          {#- Derive route Kind discriminator via type-switch on the
+              typed route pointer (replaces the legacy
+              routeInfo["resource_type"] slot read). -#}
+          {%- var routeTypeShort = "http" %}
+          {%- switch firstRoute["route"].(type) %}
+          {%- case *resources.grpcroutes.T %}
+            {%- routeTypeShort = "grpc" %}
+          {%- end %}
           {%- var pathSuffix = suffix %}
           {%- if suffix == "/" && hasSuffix(frPath_val, "/") %}
             {%- pathSuffix = "" %}

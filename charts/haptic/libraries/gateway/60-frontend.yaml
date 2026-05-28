@@ -564,7 +564,11 @@ templateSnippets:
       {%- if gaVal == nil %}{% return %}{% end %}
       {%- var ga = gaVal.(map[string]any) %}
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
+        {#- HTTPRoute-only filter: skip via typed route assertion
+            (replaces the legacy routeInfo["resource_type"] string
+            check; same gate, no slot dependency). -#}
+        {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
+        {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
         {#- Extract typed rule.Filters via type-switch on routeInfo
             ["route"] — replaces the legacy routeInfo["filters"]
@@ -957,7 +961,8 @@ templateSnippets:
           }
         %%}
         {%- for _, filter := range filters %}
-          {%- if (filter | dig("type")) == "RequestRedirect" && (routeInfo | dig("resource_type")) == "httproute" %}
+          {%- var _, isHTTPRouteForRedirect = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
+          {%- if (filter | dig("type")) == "RequestRedirect" && isHTTPRouteForRedirect %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
             {%- var cond = RouteIdCondition(routeId) %}
             {%- var redir = filter | dig("requestRedirect") %}
@@ -1010,7 +1015,8 @@ templateSnippets:
                 {%- if pathType == "ReplaceFullPath" %}
                   {%- pathExpr = (pathMod | dig("replaceFullPath") | tostring()) %}
                 {%- else if pathType == "ReplacePrefixMatch" %}
-                  {%- var matchPrefix = routeInfo | dig_string("/", "path", "value") %}
+                  {%- var matchPrefix = tostring(routeInfo.(map[string]any)["pathValue"]) %}
+                  {%- if matchPrefix == "" %}{%- matchPrefix = "/" %}{%- end %}
                   {%- var replacementPrefix = (pathMod | dig_string("", "replacePrefixMatch")) %}
                   {#- regsub uses POSIX ERE: anchor at start, escape the
                       matched prefix's regex metachars. The replacement has
@@ -1148,7 +1154,8 @@ templateSnippets:
           }
         %%}
         {%- for _, filter := range filters %}
-          {%- if (filter | dig("type")) == "URLRewrite" && (routeInfo | dig("resource_type")) == "httproute" %}
+          {%- var _, isHTTPRouteForRewrite = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
+          {%- if (filter | dig("type")) == "URLRewrite" && isHTTPRouteForRewrite %}
             {%- var routeId = routeInfo | dig("routeId") | tostring() %}
             {%- var cond = RouteIdCondition(routeId) %}
             {%- var rw = filter | dig("urlRewrite") %}
@@ -1166,7 +1173,8 @@ templateSnippets:
                 {%- if pathType == "ReplaceFullPath" %}
       http-request set-path "{{ pathMod | dig("replaceFullPath") }}" if {{ cond }}
                 {%- else if pathType == "ReplacePrefixMatch" %}
-                  {%- var origPrefix = routeInfo | dig("path", "value") | tostring() %}
+                  {%- var origPrefix = tostring(routeInfo.(map[string]any)["pathValue"]) %}
+                  {%- if origPrefix == "" %}{%- origPrefix = "/" %}{%- end %}
                   {#- Strip a trailing slash from origPrefix so "/foo/" matches
                       the same paths as "/foo" — Gateway API treats them
                       equivalently for prefix purposes. -#}
@@ -1278,7 +1286,11 @@ templateSnippets:
       {%- if ga["hasMirror_filter"] %}
       # gateway/frontend-filters-gateway-mirror
       {%- for _, routeInfo := range ga["allRoutes"] | toSlice() %}
-        {%- if (routeInfo | dig("resource_type")) != "httproute" %}{%- continue %}{%- end %}
+        {#- HTTPRoute-only filter: skip via typed route assertion
+            (replaces the legacy routeInfo["resource_type"] string
+            check; same gate, no slot dependency). -#}
+        {%- var _, isHTTPRoute = routeInfo.(map[string]any)["route"].(*resources.httproutes.T) %}
+        {%- if !isHTTPRoute %}{%- continue %}{%- end %}
         {%- var routeId = routeInfo | dig("routeId") | tostring() %}
         {%- var cond = RouteIdCondition(routeId) %}
         {#- Per-route mirror counter: HAProxy SPOE processes each
