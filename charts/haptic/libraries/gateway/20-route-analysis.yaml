@@ -618,15 +618,22 @@ templateSnippets:
                     consuming pre-populated state. -#}
                 {%- var gwMtlsBlocked = map[string]bool{} %}
                 {%%
-                  var gwTlsFrontend = dig(gw, "spec", "tls", "frontend")
-                  if gwTlsFrontend != nil {
-                    var defaultValidation = dig(gwTlsFrontend, "default", "validation")
+                  // Outer presence check uses dig() to distinguish
+                  // "TLS frontend block absent" (skip entirely) from
+                  // "present but with all zero values" (process and
+                  // potentially block listeners). Typed access alone
+                  // can't observe absence — it always yields the
+                  // struct's zero value.
+                  if dig(gw, "spec", "tls", "frontend") != nil {
+                    var defaultValidation any = nil
+                    if dig(gw, "spec", "tls", "frontend", "default", "validation") != nil {
+                      defaultValidation = gw.Spec.Tls.Frontend.Default.Validation
+                    }
                     var perPortValidations = map[int]any{}
-                    for _, pp := range dig(gwTlsFrontend, "perPort") | toSlice() {
-                      var p = toint(dig(pp, "port") | fallback(0))
-                      var v = dig(pp, "tls", "validation")
-                      if p > 0 && v != nil {
-                        perPortValidations[p] = v
+                    for _, pp := range gw.Spec.Tls.Frontend.PerPort {
+                      var p = toint(pp.Port)
+                      if p > 0 && dig(pp, "tls", "validation") != nil {
+                        perPortValidations[p] = pp.Tls.Validation
                       }
                     }
                     var resolveValidation = func(validation any) bool {
@@ -660,14 +667,14 @@ templateSnippets:
                       }
                       return found
                     }
-                    for _, l := range dig(gw, "spec", "listeners") | toSlice() {
-                      var lProto = tostring(dig(l, "protocol") | fallback(""))
+                    for _, l := range gw.Spec.Listeners {
+                      var lProto = l.Protocol
                       if lProto != "HTTPS" && lProto != "TLS" {
                         continue
                       }
-                      var lPort = toint(dig(l, "port") | fallback(0))
-                      var lName = tostring(dig(l, "name") | fallback(""))
-                      var validation = perPortValidations[lPort]
+                      var lPort = toint(l.Port)
+                      var lName = l.Name
+                      var validation any = perPortValidations[lPort]
                       if validation == nil {
                         validation = defaultValidation
                       }
@@ -986,15 +993,22 @@ templateSnippets:
                     consuming pre-populated state. -#}
                 {%- var gwMtlsBlocked = map[string]bool{} %}
                 {%%
-                  var gwTlsFrontend = dig(gw, "spec", "tls", "frontend")
-                  if gwTlsFrontend != nil {
-                    var defaultValidation = dig(gwTlsFrontend, "default", "validation")
+                  // Outer presence check uses dig() to distinguish
+                  // "TLS frontend block absent" (skip entirely) from
+                  // "present but with all zero values" (process and
+                  // potentially block listeners). Typed access alone
+                  // can't observe absence — it always yields the
+                  // struct's zero value.
+                  if dig(gw, "spec", "tls", "frontend") != nil {
+                    var defaultValidation any = nil
+                    if dig(gw, "spec", "tls", "frontend", "default", "validation") != nil {
+                      defaultValidation = gw.Spec.Tls.Frontend.Default.Validation
+                    }
                     var perPortValidations = map[int]any{}
-                    for _, pp := range dig(gwTlsFrontend, "perPort") | toSlice() {
-                      var p = toint(dig(pp, "port") | fallback(0))
-                      var v = dig(pp, "tls", "validation")
-                      if p > 0 && v != nil {
-                        perPortValidations[p] = v
+                    for _, pp := range gw.Spec.Tls.Frontend.PerPort {
+                      var p = toint(pp.Port)
+                      if p > 0 && dig(pp, "tls", "validation") != nil {
+                        perPortValidations[p] = pp.Tls.Validation
                       }
                     }
                     var resolveValidation = func(validation any) bool {
@@ -1028,14 +1042,14 @@ templateSnippets:
                       }
                       return found
                     }
-                    for _, l := range dig(gw, "spec", "listeners") | toSlice() {
-                      var lProto = tostring(dig(l, "protocol") | fallback(""))
+                    for _, l := range gw.Spec.Listeners {
+                      var lProto = l.Protocol
                       if lProto != "HTTPS" && lProto != "TLS" {
                         continue
                       }
-                      var lPort = toint(dig(l, "port") | fallback(0))
-                      var lName = tostring(dig(l, "name") | fallback(""))
-                      var validation = perPortValidations[lPort]
+                      var lPort = toint(l.Port)
+                      var lName = l.Name
+                      var validation any = perPortValidations[lPort]
                       if validation == nil {
                         validation = defaultValidation
                       }

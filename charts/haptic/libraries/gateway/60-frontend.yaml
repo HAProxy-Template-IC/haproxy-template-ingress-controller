@@ -1180,11 +1180,9 @@ templateSnippets:
           {%- var bScheme = "http" %}
           {%- var svc = resources.services.GetSingle(bNs, tostring(bName)) %}
           {%- if svc != nil %}
-            {%- for _, p := range svc | dig("spec", "ports") | toSlice() %}
-              {%- if (p | dig("port") | toint()) == toint(bPort) %}
-                {%- var ap = p | dig_string("", "appProtocol") %}
-                {%- var pn = p | dig_string("", "name") %}
-                {%- if ap == "https" || ap == "kubernetes.io/https" || pn == "https" %}
+            {%- for _, p := range svc.Spec.Ports %}
+              {%- if toint(p.Port) == toint(bPort) %}
+                {%- if p.AppProtocol == "https" || p.AppProtocol == "kubernetes.io/https" || p.Name == "https" %}
                   {%- bScheme = "https" %}
                 {%- end %}
               {%- end %}
