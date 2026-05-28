@@ -835,45 +835,62 @@ templateSnippets:
             {%- hostnames = append(hostnames, h) %}
           {%- end %}
           {%- for _, hostname := range hostnames %}
-            {%- var ruleIdx = 0 %}
-            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
-              {%- var matchesList = rule | dig("matches") | toSlice() %}
-              {%- if len(matchesList) == 0 %}
-                {%- matchesList = []any{map[string]any{"path": map[string]any{"type": "PathPrefix", "value": "/"}}} %}
-              {%- end %}
-
-              {%- for matchIdx, match := range matchesList %}
-                {%- var pathValue = match | dig("path") | coalesce(map[string]any{"type": "PathPrefix", "value": "/"}) %}
-                {%- var filtersList = rule | dig("filters") | toSlice() %}
-                {%- var pathKey = hostname + "|" + tostring(pathValue | dig("type")) + "|" + tostring(pathValue | dig("value")) %}
-                {#- routeInfo additive shape:
+            {%- for ruleIdx, rule := range route.Spec.Rules %}
+              {%- var matchCount = len(rule.Matches) %}
+              {%- var iterCount = matchCount %}
+              {%- if iterCount == 0 %}{%- iterCount = 1 %}{%- end %}
+              {%- for matchIdx := 0; matchIdx < iterCount; matchIdx++ %}
+                {#- Precomputed scalars feed sort_by below — avoids
+                    JSONPath dig'ing into `$.match.*` / `$.path.*`
+                    polymorphic slots. The legacy "path" / "resource_type"
+                    slots are still emitted (41-maps-path consumers). -#}
+                {%- var pathType = "PathPrefix" %}
+                {%- var pathValue = "/" %}
+                {%- var hasMethod = false %}
+                {%- var headerCount = 0 %}
+                {%- var queryParamCount = 0 %}
+                {%- if matchCount > 0 %}
+                  {%- var match = rule.Matches[matchIdx] %}
+                  {%- if match.Path.Type != "" %}{%- pathType = match.Path.Type %}{%- end %}
+                  {%- if match.Path.Value != "" %}{%- pathValue = match.Path.Value %}{%- end %}
+                  {%- hasMethod = match.Method != "" %}
+                  {%- headerCount = len(match.Headers) %}
+                  {%- queryParamCount = len(match.QueryParams) %}
+                {%- end %}
+                {%- var pathSlot = map[string]any{"type": pathType, "value": pathValue} %}
+                {%- var pathKey = hostname + "|" + pathType + "|" + pathValue %}
+                {#- routeInfo shape:
                     - `route` (typed *T) + `ruleIdx` / `matchIdx` are the
-                      single source of truth — consumers use type switch
-                      on `route` and re-derive sub-fields via typed
+                      single source of truth — consumers type-switch on
+                      `route` and re-derive sub-fields via typed
                       `r.Spec.Rules[ruleIdx].Matches[matchIdx]` access.
-                    - `match` / `rule` / `path` / `filters` / `resource_type`
-                      are LEGACY slots kept during the type-switch
-                      migration; new consumers should NOT read them.
-                      Their presence costs an `any` slot per routeInfo
-                      entry but avoids a flag-day rewrite of every
-                      consumer at once. Track removal in ADR-0010. -#}
+                    - `path` / `resource_type` / `hostname` are
+                      keep-alive slots for 41-maps-path's
+                      PathMapEntryGatewayShard consumer. Slot removal
+                      tracked in the AnalyzeRoutes restructure track
+                      (after PathMapEntryGatewayShard is migrated to
+                      type-switch too).
+                    - `pathType`/`pathValueLen`/`hasMethod`/`headerCount`/
+                      `queryParamCount` are precomputed sort scalars
+                      consumed only by sort_by below. -#}
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
                   "rule": rule,
                   "ruleIdx": ruleIdx,
                   "matchIdx": matchIdx,
-                  "match": match,
-                  "path": pathValue,
-                  "filters": filtersList,
-                  "is_grpc": false,
+                  "path": pathSlot,
+                  "filters": rule.Filters,
                   "resource_type": "httproute",
                   "pathKey": pathKey,
+                  "pathType": pathType,
+                  "pathValueLen": len(pathValue),
+                  "hasMethod": hasMethod,
+                  "headerCount": headerCount,
+                  "queryParamCount": queryParamCount,
                 } %}
                 {%- allRoutes = append(allRoutes, routeInfo) %}
               {%- end %}
-              {#- Increment rule counter after processing all matches for this rule #}
-              {%- ruleIdx = ruleIdx + 1 %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -1129,52 +1146,51 @@ templateSnippets:
             {%- hostnames = append(hostnames, h) %}
           {%- end %}
           {%- for _, hostname := range hostnames %}
-            {%- var ruleIdx = 0 %}
-            {%- for _, rule := range route | dig("spec", "rules") | toSlice() %}
-              {%- var matchesList = rule | dig("matches") | toSlice() %}
-              {%- if len(matchesList) == 0 %}
-                {%- matchesList = []any{map[string]any{"method": map[string]any{}}} %}
-              {%- end %}
-
-              {%- for matchIdx, match := range matchesList %}
-                {%- var filtersList = rule | dig("filters") | toSlice() %}
-                {#- GRPCRoute spec has no path matcher: an attached
-                    GRPCRoute claims every path under the listener
-                    hostname, with the gRPC method matchers (this
-                    rule's match.method block) narrowing within. Use
-                    PathPrefix "/" so the synthetic path emits into
-                    the prefix map (matching every request URL)
-                    instead of the exact map (which would only match
-                    requests with exactly path="/" — never the case
-                    for gRPC, whose requests carry the method as the
-                    URL path: `/<service>/<method>`). Without this,
-                    gw_routeId stays unset for gRPC traffic, the
-                    GRPCRoute rule's gw_routeId scope check fails,
-                    and the request falls through to default_backend
-                    (404). Closes the upstream
-                    GRPCExactMethodMatching / GRPCRouteHeaderMatching
-                    / GRPCRouteListenerHostnameMatching /
-                    GRPCRouteNamedRule / GRPCRouteWeight conformance
-                    tests, plus the e2e TestGRPCOverTLS regression. -#}
+            {%- for ruleIdx, rule := range route.Spec.Rules %}
+              {%- var matchCount = len(rule.Matches) %}
+              {%- var iterCount = matchCount %}
+              {%- if iterCount == 0 %}{%- iterCount = 1 %}{%- end %}
+              {%- for matchIdx := 0; matchIdx < iterCount; matchIdx++ %}
+                {#- Precomputed sort scalars + per-match metadata.
+                    GRPCRoute has no path matcher of its own (per
+                    spec, gRPC method matchers narrow within the
+                    listener-claimed hostname tree); the synthetic
+                    PathPrefix "/" emits into the prefix map so
+                    gw_routeId fires for every request URL. Without
+                    that, the GRPCRoute rule's scope check fails and
+                    the request falls through to default_backend
+                    (404). Closes the upstream GRPCExactMethod-
+                    Matching / GRPCRouteHeaderMatching /
+                    GRPCRouteListenerHostnameMatching / GRPCRouteNamed-
+                    Rule / GRPCRouteWeight conformance tests, plus
+                    the e2e TestGRPCOverTLS regression. -#}
+                {%- var hasMethod = false %}
+                {%- var headerCount = 0 %}
+                {%- if matchCount > 0 %}
+                  {%- var match = rule.Matches[matchIdx] %}
+                  {%- hasMethod = (match.Method.Service != "" || match.Method.Method != "") %}
+                  {%- headerCount = len(match.Headers) %}
+                {%- end %}
                 {%- var grpcPath = map[string]any{"type": "PathPrefix", "value": "/"} %}
-                {%- var pathKey = hostname + "|" + tostring(grpcPath | dig("type")) + "|" + tostring(grpcPath | dig("value")) %}
+                {%- var pathKey = hostname + "|PathPrefix|/" %}
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
                   "rule": rule,
                   "ruleIdx": ruleIdx,
                   "matchIdx": matchIdx,
-                  "match": match,
                   "path": grpcPath,
-                  "filters": filtersList,
-                  "is_grpc": true,
+                  "filters": rule.Filters,
                   "resource_type": "grpcroute",
                   "pathKey": pathKey,
+                  "pathType": "PathPrefix",
+                  "pathValueLen": 1,
+                  "hasMethod": hasMethod,
+                  "headerCount": headerCount,
+                  "queryParamCount": 0,
                 } %}
                 {%- allRoutes = append(allRoutes, routeInfo) %}
               {%- end %}
-              {#- Increment rule counter after processing all matches for this rule #}
-              {%- ruleIdx = ruleIdx + 1 %}
             {%- end %}
           {%- end %}
         {%- end %}
@@ -1299,12 +1315,17 @@ templateSnippets:
           {%- end %}
         {%- end %}
 
+        {#- Sort by precomputed scalars (set during routeInfo emission)
+            rather than dig'ing into the legacy `$.match.*` / `$.path.*`
+            polymorphic slots. The :desc modifier on the bool /
+            length-based criteria gives the existing
+            most-specific-first ordering. -#}
         {%- var sortedRoutes = finalAllRoutes | sort_by([]string{
-          "$.path.type",
-          "$.path.value | length:desc",
-          "$.match.method:exists:desc",
-          "$.match.headers | length:desc",
-          "$.match.queryParams | length:desc",
+          "$.pathType",
+          "$.pathValueLen:desc",
+          "$.hasMethod:desc",
+          "$.headerCount:desc",
+          "$.queryParamCount:desc",
           "$.route.metadata.creationTimestamp",
           "$.route.metadata.namespace ~ '/' ~ $.route.metadata.name",
           "$.ruleIdx",
