@@ -273,7 +273,10 @@ templateSnippets:
               {%- if secret != nil %}
       # haproxytech/global-top-haproxytech-ingress-auth
       userlist {{ userlistName }}
-                {% var secretData = secret | dig("data") | fallback(map[string]any{}) -%}
+                {#- secret is `any` from shared.ComputeIfAbsent; type-assert
+                    back to the typed pointer the closure returned so the
+                    .Data access compiles. -#}
+                {% var secretData = secret.(*resources.secrets.T).Data -%}
                 {%- var hashRegex = extraContext | dig_string("^.*$", "password_hash_validation_regex") %}
                 {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "password_hash_validation_error_message") %}
                 {%- for _, username := range keys(secretData) %}

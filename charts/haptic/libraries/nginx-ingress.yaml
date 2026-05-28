@@ -1299,7 +1299,10 @@ templateSnippets:
                 return resources.secrets.GetSingle(secretNs, secretName)
               }) %}
               {%- if secret != nil %}
-                {%- var authData = secret | dig("data", "auth") | fallback("") | b64decode() | tostring() %}
+                {#- secret is `any` from shared.ComputeIfAbsent; type-assert
+                    to the typed pointer the closure returned so .Data
+                    field access compiles. -#}
+                {%- var authData = secret.(*resources.secrets.T).Data["auth"] | b64decode() | tostring() %}
                 {%- if authData != "" %}
       # nginx-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}

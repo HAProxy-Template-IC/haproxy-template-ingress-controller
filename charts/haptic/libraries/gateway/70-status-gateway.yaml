@@ -604,8 +604,8 @@ templateSnippets:
                 var perGwSvcName = BoundedK8sName("gw", nsStr, nameStr, "")
                 var perGwSvc = resources.services.GetSingle(phase5CtrlNs, perGwSvcName)
                 if perGwSvc != nil {
-                  for _, ing := range dig(perGwSvc, "status", "loadBalancer", "ingress") | toSlice() {
-                    var ipStr = tostring(dig(ing, "ip") | fallback(""))
+                  for _, ing := range perGwSvc.Status.LoadBalancer.Ingress {
+                    var ipStr = ing.Ip
                     if ipStr != "" {
                       gwEffectiveAddresses = append(gwEffectiveAddresses, map[string]any{
                         "type":  "IPAddress",
@@ -854,14 +854,19 @@ templateSnippets:
               if protocol == "HTTPS" && resolvedRefsStatus == "True" {
                 var listenerPort = toint(listener.Port)
                 var feValidation any = nil
-                var fe = dig(gateway, "spec", "tls", "frontend")
-                if fe != nil {
-                  feValidation = dig(fe, "default", "validation")
-                  for _, pp := range dig(fe, "perPort") | toSlice() {
-                    if toint(dig(pp, "port") | fallback(0)) == listenerPort {
-                      var ppV = dig(pp, "tls", "validation")
-                      if ppV != nil {
-                        feValidation = ppV
+                // dig() outer presence check distinguishes "TLS frontend
+                // block absent" from "present but zero" — the former
+                // short-circuits, the latter falls through with a nil
+                // feValidation so downstream validation-resolvability
+                // checks no-op.
+                if dig(gateway, "spec", "tls", "frontend") != nil {
+                  if dig(gateway, "spec", "tls", "frontend", "default", "validation") != nil {
+                    feValidation = gateway.Spec.Tls.Frontend.Default.Validation
+                  }
+                  for _, pp := range gateway.Spec.Tls.Frontend.PerPort {
+                    if toint(pp.Port) == listenerPort {
+                      if dig(pp, "tls", "validation") != nil {
+                        feValidation = pp.Tls.Validation
                       }
                       break
                     }
@@ -1175,12 +1180,14 @@ templateSnippets:
             // The chart's util-generate-backends-gateway resolves this
             // ref at backend-emit time; we replay the same checks here
             // so the Gateway status reflects the same resolution.
-            var ccRef = dig(gateway, "spec", "tls", "backend", "clientCertificateRef")
-            if ccRef != nil && gwResolvedRefsStatus == "True" {
-              var ccGroup = tostring(dig(ccRef, "group") | fallback(""))
-              var ccKind = tostring(dig(ccRef, "kind") | fallback("Secret"))
-              var ccName = tostring(dig(ccRef, "name") | fallback(""))
-              var ccNs = tostring(dig(ccRef, "namespace") | fallback(nsStr))
+            if dig(gateway, "spec", "tls", "backend", "clientCertificateRef") != nil && gwResolvedRefsStatus == "True" {
+              var ccRef = gateway.Spec.Tls.Backend.ClientCertificateRef
+              var ccGroup = ccRef.Group
+              var ccKind = ccRef.Kind
+              if ccKind == "" { ccKind = "Secret" }
+              var ccName = ccRef.Name
+              var ccNs = ccRef.Namespace
+              if ccNs == "" { ccNs = nsStr }
               if (ccGroup != "" && ccGroup != "core") || ccKind != "Secret" || ccName == "" {
                 gwResolvedRefsStatus = "False"
                 gwResolvedRefsReason = "InvalidClientCertificateRef"
@@ -1244,16 +1251,22 @@ templateSnippets:
             // Removed (not appended) when every relevant validation
             // mode is AllowValidOnly / unset.
             var insecureFallback = false
-            var defaultMode = tostring(dig(gateway, "spec", "tls", "frontend", "default", "validation", "mode") | fallback(""))
-            if defaultMode == "AllowInsecureFallback" {
-              insecureFallback = true
-            }
-            if !insecureFallback {
-              for _, perPort := range dig(gateway, "spec", "tls", "frontend", "perPort") | toSlice() {
-                var ppMode = tostring(dig(perPort, "tls", "validation", "mode") | fallback(""))
-                if ppMode == "AllowInsecureFallback" {
-                  insecureFallback = true
-                  break
+            // dig() outer presence guard for consistency with the
+            // earlier mTLS-resolvability blocks in this file (line
+            // 862) and 10-features.yaml (line 269). Typed access on
+            // absent optionals returns zero values rather than
+            // panicking (typegen wraps only scalars in pointers), so
+            // the guard is performance/style — not a correctness fix.
+            if dig(gateway, "spec", "tls", "frontend") != nil {
+              if gateway.Spec.Tls.Frontend.Default.Validation.Mode == "AllowInsecureFallback" {
+                insecureFallback = true
+              }
+              if !insecureFallback {
+                for _, perPort := range gateway.Spec.Tls.Frontend.PerPort {
+                  if perPort.Tls.Validation.Mode == "AllowInsecureFallback" {
+                    insecureFallback = true
+                    break
+                  }
                 }
               }
             }
@@ -1658,8 +1671,8 @@ templateSnippets:
           // some listeners on the LS but not others).
           var lsListenersByName = map[string]any{}
           var listenerNamesInLS = []any{}
-          for _, l := range dig(ls, "spec", "listeners") | toSlice() {
-            var ln = tostring(dig(l, "name") | fallback(""))
+          for _, l := range ls.Spec.Listeners {
+            var ln = l.Name
             listenerNamesInLS = append(listenerNamesInLS, ln)
             lsListenersByName[ln] = l
           }
@@ -1785,9 +1798,10 @@ templateSnippets:
             // supportedKinds / attachedRoutes / Programmed details
             // that don't matter at the top level.
             var listenerHasValidRefs = map[string]bool{}
-            for _, l := range dig(ls, "spec", "listeners") | toSlice() {
-              var lname = tostring(dig(l, "name") | fallback(""))
-              var lprotocol = tostring(dig(l, "protocol") | fallback("HTTP"))
+            for _, l := range ls.Spec.Listeners {
+              var lname = l.Name
+              var lprotocol = l.Protocol
+              if lprotocol == "" { lprotocol = "HTTP" }
               var refsOk = true
               // Kind validity (allowedRoutes.kinds intersection).
               var defKinds = []any{}
@@ -1804,72 +1818,72 @@ templateSnippets:
               case "UDP":
                 defKinds = []any{map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"}}
               }
-              var requestedKinds = dig(l, "allowedRoutes", "kinds")
-              if requestedKinds != nil {
-                for _, reqEntry := range toSlice(requestedKinds) {
-                  var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
-                  var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
-                  var matched = false
-                  for _, def := range defKinds {
-                    if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
-                      matched = true
-                      break
-                    }
-                  }
-                  if !matched {
-                    refsOk = false
+              // Drop the explicit `requestedKinds != nil` gate; typed
+              // iteration over the optional slice is a no-op when
+              // absent (l.AllowedRoutes.Kinds is nil zero-value).
+              for _, reqEntry := range l.AllowedRoutes.Kinds {
+                var reqGroup = reqEntry.Group
+                if reqGroup == "" { reqGroup = "gateway.networking.k8s.io" }
+                var reqKind = reqEntry.Kind
+                var matched = false
+                for _, def := range defKinds {
+                  if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
+                    matched = true
                     break
                   }
+                }
+                if !matched {
+                  refsOk = false
+                  break
                 }
               }
               // Cert ref validity (cross-ns RG check + Secret
               // resolution + PEM check, source kind="ListenerSet").
               if refsOk && (lprotocol == "HTTPS" || lprotocol == "TLS") {
-                var listenerTls = dig(l, "tls")
-                if listenerTls != nil {
-                  for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
-                    var refGroup = tostring(dig(ref, "group") | fallback(""))
-                    var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
-                    if (refGroup != "" && refGroup != "core") || refKind != "Secret" {
+                for _, ref := range l.Tls.CertificateRefs {
+                  var refGroup = ref.Group
+                  var refKind = ref.Kind
+                  if refKind == "" { refKind = "Secret" }
+                  if (refGroup != "" && refGroup != "core") || refKind != "Secret" {
+                    refsOk = false
+                    continue
+                  }
+                  var refName = ref.Name
+                  var refNs = ref.Namespace
+                  if refNs == "" { refNs = lsNs }
+                  if refName == "" {
+                    refsOk = false
+                    continue
+                  }
+                  if refNs != lsNs {
+                    var rgOk = ReferenceGrantPermitted(
+                      "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                      "", "Secret", refNs, refName)
+                    if rgOk != "true" {
                       refsOk = false
                       continue
                     }
-                    var refName = tostring(dig(ref, "name") | fallback(""))
-                    var refNs = tostring(dig(ref, "namespace") | fallback(lsNs))
-                    if refName == "" {
-                      refsOk = false
-                      continue
-                    }
-                    if refNs != lsNs {
-                      var rgOk = ReferenceGrantPermitted(
-                        "gateway.networking.k8s.io", "ListenerSet", lsNs,
-                        "", "Secret", refNs, refName)
-                      if rgOk != "true" {
-                        refsOk = false
-                        continue
-                      }
-                    }
-                    var sec = resources.secrets.GetSingle(refNs, refName)
-                    if sec == nil {
-                      refsOk = false
-                      continue
-                    }
-                    var crtB64 = sec.Data["tls.crt"]
-                    var keyB64 = sec.Data["tls.key"]
-                    if crtB64 == "" || keyB64 == "" {
-                      refsOk = false
-                      continue
-                    }
-                    var crt, crtErr = b64decode(crtB64)
-                    var key, keyErr = b64decode(keyB64)
-                    if crtErr != nil || keyErr != nil {
-                      refsOk = false
-                      continue
-                    }
-                    if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
-                      refsOk = false
-                      continue
-                    }
+                  }
+                  var sec = resources.secrets.GetSingle(refNs, refName)
+                  if sec == nil {
+                    refsOk = false
+                    continue
+                  }
+                  var crtB64 = sec.Data["tls.crt"]
+                  var keyB64 = sec.Data["tls.key"]
+                  if crtB64 == "" || keyB64 == "" {
+                    refsOk = false
+                    continue
+                  }
+                  var crt, crtErr = b64decode(crtB64)
+                  var key, keyErr = b64decode(keyB64)
+                  if crtErr != nil || keyErr != nil {
+                    refsOk = false
+                    continue
+                  }
+                  if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
+                    refsOk = false
+                    continue
                   }
                 }
               }
@@ -1946,9 +1960,10 @@ templateSnippets:
           // condition per listener (post-reload signal).
           var renderedListeners = []any{}
           var deployedListeners = []any{}
-          for _, l := range dig(ls, "spec", "listeners") | toSlice() {
-            var listenerName = tostring(dig(l, "name") | fallback(""))
-            var protocol = tostring(dig(l, "protocol") | fallback("HTTP"))
+          for _, l := range ls.Spec.Listeners {
+            var listenerName = l.Name
+            var protocol = l.Protocol
+            if protocol == "" { protocol = "HTTP" }
 
             // supportedKinds
             var defaultKinds = []any{}
@@ -1971,15 +1986,19 @@ templateSnippets:
                 map[string]any{"group": "gateway.networking.k8s.io", "kind": "UDPRoute"},
               }
             }
-            var requestedKinds = dig(l, "allowedRoutes", "kinds")
+            // dig() outer presence guard keeps the "absent kinds →
+            // defaultKinds" branch distinct from "empty list kinds →
+            // empty supportedKinds"; typed access collapses both
+            // into a nil-or-empty slice.
             var supportedKinds = []any{}
             var hasInvalidKind = false
-            if requestedKinds == nil {
+            if dig(l, "allowedRoutes", "kinds") == nil {
               supportedKinds = defaultKinds
             } else {
-              for _, reqEntry := range toSlice(requestedKinds) {
-                var reqGroup = tostring(dig(reqEntry, "group") | fallback("gateway.networking.k8s.io"))
-                var reqKind = tostring(dig(reqEntry, "kind") | fallback(""))
+              for _, reqEntry := range l.AllowedRoutes.Kinds {
+                var reqGroup = reqEntry.Group
+                if reqGroup == "" { reqGroup = "gateway.networking.k8s.io" }
+                var reqKind = reqEntry.Kind
                 var matched = false
                 for _, def := range defaultKinds {
                   if tostring(dig(def, "group")) == reqGroup && tostring(dig(def, "kind")) == reqKind {
@@ -2001,51 +2020,50 @@ templateSnippets:
             var hasInvalidCertRef = false
             var hasRefNotPermitted = false
             if protocol == "HTTPS" || protocol == "TLS" {
-              var listenerTls = dig(l, "tls")
-              if listenerTls != nil {
-                for _, ref := range dig(listenerTls, "certificateRefs") | toSlice() {
-                  var refGroup = tostring(dig(ref, "group") | fallback(""))
-                  var refKind = tostring(dig(ref, "kind") | fallback("Secret"))
-                  if refGroup != "" && refGroup != "core" {
-                    hasInvalidCertRef = true
+              for _, ref := range l.Tls.CertificateRefs {
+                var refGroup = ref.Group
+                var refKind = ref.Kind
+                if refKind == "" { refKind = "Secret" }
+                if refGroup != "" && refGroup != "core" {
+                  hasInvalidCertRef = true
+                  continue
+                }
+                if refKind != "Secret" {
+                  hasInvalidCertRef = true
+                  continue
+                }
+                var refName = ref.Name
+                var refNs = ref.Namespace
+                if refNs == "" { refNs = lsNs }
+                if refName == "" {
+                  hasInvalidCertRef = true
+                  continue
+                }
+                if refNs != lsNs {
+                  var rgOk = ReferenceGrantPermitted(
+                    "gateway.networking.k8s.io", "ListenerSet", lsNs,
+                    "", "Secret", refNs, refName)
+                  if rgOk != "true" {
+                    hasRefNotPermitted = true
                     continue
                   }
-                  if refKind != "Secret" {
+                }
+                var sec = resources.secrets.GetSingle(refNs, refName)
+                if sec == nil {
+                  hasInvalidCertRef = true
+                  continue
+                }
+                var crtB64 = sec.Data["tls.crt"]
+                var keyB64 = sec.Data["tls.key"]
+                if crtB64 == "" || keyB64 == "" {
+                  hasInvalidCertRef = true
+                } else {
+                  var crt, crtErr = b64decode(crtB64)
+                  var key, keyErr = b64decode(keyB64)
+                  if crtErr != nil || keyErr != nil {
                     hasInvalidCertRef = true
-                    continue
-                  }
-                  var refName = tostring(dig(ref, "name") | fallback(""))
-                  var refNs = tostring(dig(ref, "namespace") | fallback(lsNs))
-                  if refName == "" {
+                  } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
                     hasInvalidCertRef = true
-                    continue
-                  }
-                  if refNs != lsNs {
-                    var rgOk = ReferenceGrantPermitted(
-                      "gateway.networking.k8s.io", "ListenerSet", lsNs,
-                      "", "Secret", refNs, refName)
-                    if rgOk != "true" {
-                      hasRefNotPermitted = true
-                      continue
-                    }
-                  }
-                  var sec = resources.secrets.GetSingle(refNs, refName)
-                  if sec == nil {
-                    hasInvalidCertRef = true
-                    continue
-                  }
-                  var crtB64 = sec.Data["tls.crt"]
-                  var keyB64 = sec.Data["tls.key"]
-                  if crtB64 == "" || keyB64 == "" {
-                    hasInvalidCertRef = true
-                  } else {
-                    var crt, crtErr = b64decode(crtB64)
-                    var key, keyErr = b64decode(keyB64)
-                    if crtErr != nil || keyErr != nil {
-                      hasInvalidCertRef = true
-                    } else if !hasPrefix(crt, "-----BEGIN ") || !hasPrefix(key, "-----BEGIN ") {
-                      hasInvalidCertRef = true
-                    }
                   }
                 }
               }

@@ -24,15 +24,15 @@ templateSnippets:
         {#- Pass 1: HTTPRoute SSL passthrough (annotation-driven) -#}
         {%- for _, route := range resources.httproutes.List() %}
           {%%
+            // Flattened via `[*]`: outer rule loop only accessed
+            // rule.Filters and the inner body never references rule.
             var hasPassthrough = false
-            for _, rule := range route.Spec.Rules {
-              for _, filter := range rule.Filters {
-                if filter.Type == "ExtensionRef" {
-                  var kind = filter.ExtensionRef.Kind
-                  var name = filter.ExtensionRef.Name
-                  if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
-                    hasPassthrough = true
-                  }
+            for _, filter := range route.Spec.Rules[*].Filters {
+              if filter.Type == "ExtensionRef" {
+                var kind = filter.ExtensionRef.Kind
+                var name = filter.ExtensionRef.Name
+                if kind == "SSLPassthrough" || (name != "" && (name | toLower() | regex_search("ssl.*passthrough"))) {
+                  hasPassthrough = true
                 }
               }
             }

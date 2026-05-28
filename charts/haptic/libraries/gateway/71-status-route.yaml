@@ -484,46 +484,48 @@ templateSnippets:
             var nsStr = route.Metadata.Namespace
             var nameStr = route.Metadata.Name
             var generation = route.Metadata.Generation
-            var routeHostnames = dig(route, "spec", "hostnames") | toSlice()
+            // Coerce to []any: downstream HostnamesIntersect macro
+            // expects []any (polymorphic-route ergonomics).
+            var routeHostnames = route.Spec.Hostnames | toSlice()
 
             // ResolvedRefs computation — fail-fast on first invalid
             // backendRef. Same precedence as HTTPRoute: InvalidKind >
-            // RefNotPermitted > BackendNotFound.
+            // RefNotPermitted > BackendNotFound. Flattened via `[*]`:
+            // outer rule loop only accessed rule.BackendRefs; the
+            // single desugared loop's `break` replaces the outer
+            // `if !allRefsResolved { break }` re-check.
             var allRefsResolved = true
             var refFailReason = ""
             var refFailMsg = ""
-            for _, rule := range route.Spec.Rules {
-              for _, backendRef := range dig(rule, "backendRefs") | toSlice() {
-                var svcName = dig_string(backendRef, "", "name")
-                var svcNamespace = dig_string(backendRef, nsStr, "namespace")
-                var group = dig_string(backendRef, "", "group")
-                var refKind = dig_string(backendRef, "Service", "kind")
+            for _, backendRef := range route.Spec.Rules[*].BackendRefs {
+              var svcName = backendRef.Name
+              var svcNamespace = backendRef.Namespace
+              if svcNamespace == "" { svcNamespace = nsStr }
+              var group = backendRef.Group
+              var refKind = backendRef.Kind
+              if refKind == "" { refKind = "Service" }
 
-                if !((group == "" || group == "core") && refKind == "Service") {
+              if !((group == "" || group == "core") && refKind == "Service") {
+                allRefsResolved = false
+                refFailReason = "InvalidKind"
+                refFailMsg = "Unsupported backend kind " + group + "/" + refKind
+                break
+              }
+              if svcNamespace != nsStr {
+                if ReferenceGrantPermitted(
+                  "gateway.networking.k8s.io", kind, nsStr,
+                  "", "Service", svcNamespace, svcName) != "true" {
                   allRefsResolved = false
-                  refFailReason = "InvalidKind"
-                  refFailMsg = "Unsupported backend kind " + group + "/" + refKind
-                  break
-                }
-                if svcNamespace != nsStr {
-                  if ReferenceGrantPermitted(
-                    "gateway.networking.k8s.io", kind, nsStr,
-                    "", "Service", svcNamespace, svcName) != "true" {
-                    allRefsResolved = false
-                    refFailReason = "RefNotPermitted"
-                    refFailMsg = "Cross-namespace backend ref " + svcNamespace + "/" + svcName + " requires a matching ReferenceGrant"
-                    break
-                  }
-                }
-                var svc = resources.services.GetSingle(svcNamespace, svcName)
-                if svc == nil {
-                  allRefsResolved = false
-                  refFailReason = "BackendNotFound"
-                  refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
+                  refFailReason = "RefNotPermitted"
+                  refFailMsg = "Cross-namespace backend ref " + svcNamespace + "/" + svcName + " requires a matching ReferenceGrant"
                   break
                 }
               }
-              if !allRefsResolved {
+              var svc = resources.services.GetSingle(svcNamespace, svcName)
+              if svc == nil {
+                allRefsResolved = false
+                refFailReason = "BackendNotFound"
+                refFailMsg = "Backend not found: " + svcNamespace + "/" + svcName
                 break
               }
             }
