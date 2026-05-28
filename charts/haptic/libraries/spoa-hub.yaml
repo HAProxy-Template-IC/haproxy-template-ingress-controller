@@ -159,7 +159,7 @@ templateSnippets:
           for _, ingress := range resources.ingresses.List() {
             var ns = ingress | dig_string("", "metadata", "namespace")
             var name = ingress | dig_string("", "metadata", "name")
-            var snippet = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/modsecurity-snippet")
+            var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
             if snippet != "" {
               if strings_contains(snippet, "\"\"\"") {
                 fail("Ingress " + ns + "/" + name + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
@@ -173,7 +173,7 @@ templateSnippets:
                 "ns": ns, "name": name, "snippet": snippet,
               }
             }
-            var waf = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/waf")
+            var waf = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf"]
             if waf != "" {
               hasHaproxyIngressWaf = true
             }
@@ -245,7 +245,7 @@ templateSnippets:
             {#- has_haproxy_ingress_waf is true and modsec-snippets is empty —
                 find the offending Ingress to point at in the error message. -#}
             {%- for _, ingress := range resources.ingresses.List() -%}
-              {%- var w = ingress | dig_string("", "metadata", "annotations", "haproxy-ingress.github.io/waf") -%}
+              {%- var w = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf"] -%}
               {%- if w != "" -%}
                 {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
                 {%- var name = ingress | dig_string("", "metadata", "name") -%}
@@ -827,7 +827,7 @@ templateSnippets:
           longer part of the key, so host-less Ingress rules are fine
           (the routing chain still resolves them to a resource_id). -#}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var v = ingress | dig_string("", "metadata", "annotations", "nginx.ingress.kubernetes.io/enable-modsecurity") -%}
+        {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-modsecurity"] -%}
         {%- if v == "false" -%}
           {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
           {%- var name = ingress | dig_string("", "metadata", "name") -%}

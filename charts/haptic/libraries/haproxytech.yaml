@@ -83,11 +83,15 @@ templateSnippets:
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
-            {%- var origin = ingress | dig_string("*", "metadata", "annotations", "haproxy.org/cors-allow-origin") %}
-            {%- var methods = ingress | dig_string("GET, POST", "metadata", "annotations", "haproxy.org/cors-allow-methods") %}
+            {%- var origin = ingress.Metadata.Annotations["haproxy.org/cors-allow-origin"] %}
+            {%- if origin == "" %}{%- origin = "*" %}{%- end %}
+            {%- var methods = ingress.Metadata.Annotations["haproxy.org/cors-allow-methods"] %}
+            {%- if methods == "" %}{%- methods = "GET, POST" %}{%- end %}
             {%- var headers = ingress.Metadata.Annotations["haproxy.org/cors-allow-headers"] %}
-            {%- var credentials = ingress | dig_string("false", "metadata", "annotations", "haproxy.org/cors-allow-credentials") %}
-            {%- var maxAge = ingress | dig_string("0", "metadata", "annotations", "haproxy.org/cors-max-age") %}
+            {%- var credentials = ingress.Metadata.Annotations["haproxy.org/cors-allow-credentials"] %}
+            {%- if credentials == "" %}{%- credentials = "false" %}{%- end %}
+            {%- var maxAge = ingress.Metadata.Annotations["haproxy.org/cors-max-age"] %}
+            {%- if maxAge == "" %}{%- maxAge = "0" %}{%- end %}
             {%- if credentials == "true" && origin == "*" %}
               {{- fail("CORS configuration error on Ingress '" + key + "': cors-allow-credentials cannot be 'true' when cors-allow-origin is '*'. Specify an explicit origin.") -}}
             {%- end %}
@@ -152,7 +156,8 @@ templateSnippets:
           {%- var sslRedirect = ingress.Metadata.Annotations["haproxy.org/ssl-redirect"] %}
           {%- var shouldRedirect = sslRedirect == "true" || (sslRedirect == "" && sslRedirectDefault == "true") %}
           {%- if shouldRedirect %}
-            {%- var code = ingress | dig_string("302", "metadata", "annotations", "haproxy.org/ssl-redirect-code") %}
+            {%- var code = ingress.Metadata.Annotations["haproxy.org/ssl-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}
                 {%- var redirectHosts []any = gf["sslRedirectHosts"] -%}
@@ -173,7 +178,8 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var target = ingress.Metadata.Annotations["haproxy.org/request-redirect"] %}
           {%- if target != "" %}
-            {%- var code = ingress | dig_string("302", "metadata", "annotations", "haproxy.org/request-redirect-code") %}
+            {%- var code = ingress.Metadata.Annotations["haproxy.org/request-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
             {%- var codeValid = false %}
             {%- for _, v := range validCodes %}{%- if code == v %}{%- codeValid = true %}{%- end %}{%- end %}
@@ -201,7 +207,8 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var srcIpHeader = ingress.Metadata.Annotations["haproxy.org/src-ip-header"] %}
           {%- var reqCapture = ingress.Metadata.Annotations["haproxy.org/request-capture"] %}
-          {%- var captureLen = ingress | dig_string("128", "metadata", "annotations", "haproxy.org/request-capture-len") %}
+          {%- var captureLen = ingress.Metadata.Annotations["haproxy.org/request-capture-len"] %}
+          {%- if captureLen == "" %}{%- captureLen = "128" %}{%- end %}
           {%- if srcIpHeader != "" %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
@@ -440,9 +447,12 @@ templateSnippets:
       {%- if ingress != nil %}
         {%- var rateReq = ingress.Metadata.Annotations["haproxy.org/rate-limit-requests"] %}
         {%- if rateReq != "" %}
-          {%- var period = ingress | dig_string("1s", "metadata", "annotations", "haproxy.org/rate-limit-period") %}
-          {%- var size = ingress | dig_string("100k", "metadata", "annotations", "haproxy.org/rate-limit-size") %}
-          {%- var status = ingress | dig_string("403", "metadata", "annotations", "haproxy.org/rate-limit-status-code") %}
+          {%- var period = ingress.Metadata.Annotations["haproxy.org/rate-limit-period"] %}
+          {%- if period == "" %}{%- period = "1s" %}{%- end %}
+          {%- var size = ingress.Metadata.Annotations["haproxy.org/rate-limit-size"] %}
+          {%- if size == "" %}{%- size = "100k" %}{%- end %}
+          {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] %}
+          {%- if status == "" %}{%- status = "403" %}{%- end %}
       # haproxytech/backend-directives-haproxytech-rate-limiting
       stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }})
       http-request track-sc0 src
@@ -550,7 +560,8 @@ templateSnippets:
         {%- end %}
         {%- if authType == "basic-auth" %}
           {%- var authSecret = ingress.Metadata.Annotations["haproxy.org/auth-secret"] %}
-          {%- var authRealm = ingress | dig_string("RestrictedArea", "metadata", "annotations", "haproxy.org/auth-realm") %}
+          {%- var authRealm = ingress.Metadata.Annotations["haproxy.org/auth-realm"] %}
+          {%- if authRealm == "" %}{%- authRealm = "RestrictedArea" %}{%- end %}
           {#- Validate auth realm: DataPlane API pattern ^[^\s]+$ forbids spaces -#}
           {%- if strings_contains(authRealm, " ") %}
             {%- var sanitize = extraContext | dig("sanitize_auth_realm") | fallback(false) %}

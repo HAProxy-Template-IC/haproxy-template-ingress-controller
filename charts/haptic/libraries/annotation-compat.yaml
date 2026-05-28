@@ -160,7 +160,8 @@ templateSnippets:
             {%- var ns = ingress.Metadata.Namespace %}
             {%- var name = ingress.Metadata.Name %}
             {%- var key = ns + "/" + name %}
-            {%- var maxAge = ingress | dig_string(defaultMaxAge, "metadata", "annotations", maxAgeAnn) %}
+            {%- var maxAge = ingress.Metadata.Annotations[maxAgeAnn] %}
+            {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
             {%- var includeSubdomains = ingress.Metadata.Annotations[subdomainsAnn] %}
             {%- var preload = ingress.Metadata.Annotations[preloadAnn] %}
             {%- var hstsValue = "max-age=" + maxAge %}
@@ -210,12 +211,16 @@ templateSnippets:
             {%- var ns = ingress.Metadata.Namespace %}
             {%- var name = ingress.Metadata.Name %}
             {%- var key = ns + "/" + name %}
-            {%- var origin = ingress | dig_string("*", "metadata", "annotations", prefix + "/cors-allow-origin") %}
-            {%- var methods = ingress | dig_string("GET, PUT, POST, DELETE, PATCH, OPTIONS", "metadata", "annotations", prefix + "/cors-allow-methods") %}
-            {%- var headers = ingress | dig_string("DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization", "metadata", "annotations", prefix + "/cors-allow-headers") %}
+            {%- var origin = ingress.Metadata.Annotations[prefix + "/cors-allow-origin"] %}
+            {%- if origin == "" %}{%- origin = "*" %}{%- end %}
+            {%- var methods = ingress.Metadata.Annotations[prefix + "/cors-allow-methods"] %}
+            {%- if methods == "" %}{%- methods = "GET, PUT, POST, DELETE, PATCH, OPTIONS" %}{%- end %}
+            {%- var headers = ingress.Metadata.Annotations[prefix + "/cors-allow-headers"] %}
+            {%- if headers == "" %}{%- headers = "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" %}{%- end %}
             {%- var credentials = ingress.Metadata.Annotations[prefix + "/cors-allow-credentials"] %}
             {%- var exposeHeaders = ingress.Metadata.Annotations[prefix + "/cors-expose-headers"] %}
-            {%- var maxAge = ingress | dig_string(defaultMaxAge, "metadata", "annotations", prefix + "/cors-max-age") %}
+            {%- var maxAge = ingress.Metadata.Annotations[prefix + "/cors-max-age"] %}
+            {%- if maxAge == "" %}{%- maxAge = defaultMaxAge %}{%- end %}
             {%- var cond = HostMatchCondition(hosts) %}
       # {{ commentLabel }} ({{ key }})
       http-response add-header Access-Control-Allow-Origin '{{ origin }}' if {{ cond }}
