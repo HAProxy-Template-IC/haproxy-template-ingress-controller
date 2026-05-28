@@ -190,17 +190,16 @@ templateSnippets:
                   continue
                 }
                 var refsHit = false
-                for _, rule := range route.Spec.Rules {
-                  for _, br := range rule.BackendRefs {
-                    var brName = br.Name
-                    var brKind = br.Kind
-                    if brKind == "" { brKind = "Service" }
-                    if brKind == "Service" && brName == trName {
-                      refsHit = true
-                      break
-                    }
-                  }
-                  if refsHit {
+                // Flattened via `[*]`: outer rule loop only accessed
+                // rule.BackendRefs; the single desugared loop's `break`
+                // replaces the original outer `if refsHit { break }`
+                // re-check.
+                for _, br := range route.Spec.Rules[*].BackendRefs {
+                  var brName = br.Name
+                  var brKind = br.Kind
+                  if brKind == "" { brKind = "Service" }
+                  if brKind == "Service" && brName == trName {
+                    refsHit = true
                     break
                   }
                 }

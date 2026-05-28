@@ -44,13 +44,16 @@ templateSnippets:
 
             // Validate optional parametersRef. Empty / unset → accepted.
             // Mismatched group or kind → InvalidParameters.
-            var paramsRef = dig(gc, "spec", "parametersRef")
+            // dig() outer presence guard distinguishes "block absent"
+            // (Accepted) from "present with mismatched fields"
+            // (InvalidParameters); typed access alone collapses the
+            // two into one branch.
             var acceptedStatus = "True"
             var acceptedReason = "Accepted"
             var acceptedMessage = "GatewayClass accepted by haproxy-haptic controller"
-            if paramsRef != nil {
-              var pGroup = dig_string(paramsRef, "", "group")
-              var pKind = dig_string(paramsRef, "", "kind")
+            if dig(gc, "spec", "parametersRef") != nil {
+              var pGroup = gc.Spec.ParametersRef.Group
+              var pKind = gc.Spec.ParametersRef.Kind
               if pGroup != "haproxy-haptic.org" || pKind != "HAProxyTemplateConfig" {
                 acceptedStatus = "False"
                 acceptedReason = "InvalidParameters"

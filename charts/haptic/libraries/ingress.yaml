@@ -497,15 +497,18 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- var candidates = []any{} -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
-        {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
-        {%- if defaultBackend != nil && dig(defaultBackend, "service") != nil -%}
+        {#- dig() handles "defaultBackend absent" (returns nil) vs
+            "present but with no service" (returns the struct, then
+            inner dig() returns nil on absent service). Typed access
+            alone can't observe these cases. -#}
+        {%- if dig(ingress, "spec", "defaultBackend") != nil && dig(ingress, "spec", "defaultBackend", "service") != nil -%}
           {%- var ts = ingress.Metadata.CreationTimestamp -%}
           {%- var rules = ingress.Spec.Rules -%}
           {%- if len(rules) == 0 -%}
             {%- candidates = append(candidates, map[string]any{"hostKey": "", "ingress": ingress, "ts": ts}) -%}
           {%- else -%}
             {%- for _, rule := range rules -%}
-              {%- var hostKey = MapKeyForHost(dig(rule, "host")) -%}
+              {%- var hostKey = MapKeyForHost(rule.Host) -%}
               {%- candidates = append(candidates, map[string]any{"hostKey": hostKey, "ingress": ingress, "ts": ts}) -%}
             {%- end -%}
           {%- end -%}
@@ -525,8 +528,7 @@ templateSnippets:
                 confirmed). The explicit assertion takes the standard
                 Scriggo emit path instead. -#}
             {%- var ingress = cand["ingress"].(*resources.ingresses.T) -%}
-            {%- var defaultBackend = dig(ingress, "spec", "defaultBackend") -%}
-            {%- var path = map[string]any{"backend": defaultBackend} %}
+            {%- var path = map[string]any{"backend": ingress.Spec.DefaultBackend} %}
       # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} (defaultBackend → "{{ hostKey }}/")
       {{ hostKey }}/ BACKEND:{{ BackendNameIngress(ingress, path) }}
           {%- end -%}

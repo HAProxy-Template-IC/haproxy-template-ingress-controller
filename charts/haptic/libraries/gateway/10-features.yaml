@@ -260,25 +260,24 @@ templateSnippets:
       {%- var gatewayListenerMTLSConfig = gf["gatewayListenerMTLSConfig"].(map[string]any) %}
       {%- for _, gateway := range resources.gateways.List() %}
         {%%
-          var gwSpec = gateway | dig("spec")
-          if gwSpec == nil {
+          var gwNs = gateway.Metadata.Namespace
+          var gwName = gateway.Metadata.Name
+          // Outer presence check uses dig() so an absent TLS-frontend
+          // block short-circuits the loop (typed access would yield a
+          // zero-value struct, indistinguishable from "present but
+          // empty"). Same idiom as the route-analysis pass.
+          if dig(gateway, "spec", "tls", "frontend") == nil {
             continue
           }
-          var gwNs = tostring(gateway | dig("metadata", "namespace") | fallback(""))
-          var gwName = tostring(gateway | dig("metadata", "name") | fallback(""))
-          var frontend = gwSpec | dig("tls", "frontend")
-          if frontend == nil {
-            continue
+          var defaultValidation any = nil
+          if dig(gateway, "spec", "tls", "frontend", "default", "validation") != nil {
+            defaultValidation = gateway.Spec.Tls.Frontend.Default.Validation
           }
-          var defaultValidation = frontend | dig("default", "validation")
           var perPortValidations = map[int]any{}
-          for _, pp := range frontend | dig("perPort") | toSlice() {
-            var p = toint(pp | dig("port") | fallback(0))
-            if p > 0 {
-              var v = pp | dig("tls", "validation")
-              if v != nil {
-                perPortValidations[p] = v
-              }
+          for _, pp := range gateway.Spec.Tls.Frontend.PerPort {
+            var p = toint(pp.Port)
+            if p > 0 && dig(pp, "tls", "validation") != nil {
+              perPortValidations[p] = pp.Tls.Validation
             }
           }
 
@@ -369,7 +368,7 @@ templateSnippets:
           // applies to all listeners under it (Gateway + ListenerSets);
           // there is no per-ListenerSet mTLS config slot.
           var allListeners = []any{}
-          for _, l := range gwSpec | dig("listeners") | toSlice() {
+          for _, l := range gateway.Spec.Listeners {
             allListeners = append(allListeners, l)
           }
           // Read pre-computed admission state from the
