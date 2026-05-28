@@ -1182,44 +1182,78 @@ templateSnippets:
         {#- Group by path key to detect conflicts #}
         {%- var pathGroups = group_by(allRoutes, "pathKey") %}
 
-        {#- Check for conflicts and mark routes needing VAR qualifier #}
+        {#- Check for conflicts and mark routes needing VAR qualifier.
+            "Conflict" here means two routes share the same pathKey
+            but have different method / header / queryParam matchers
+            — the chart needs a per-route VAR qualifier in the
+            rendered http-request rules so the matchers pick the
+            right backend. The conditions key is the deterministic
+            serialisation of the matcher set; two routes with
+            identical sets share a key and don't conflict. -#}
+        {%%
+          {#- buildConditions(routeInfo) re-derives the matcher set
+              from the typed route + ruleIdx/matchIdx (per ADR-0010)
+              rather than reading the legacy routeInfo["match"]
+              slot, so removing that slot later is a pure
+              AnalyzeRoutes-internal change. Two siblings (one per
+              Kind) so the typed match struct's per-Kind shape is
+              preserved (HTTPRouteMatch has a string Method,
+              GRPCRouteMatch has a struct Method that we serialise
+              into a comparable string here). -#}
+          var buildConditions = func(ri any) string {
+            var rm = ri.(map[string]any)
+            var ruleIdx = toint(rm["ruleIdx"])
+            var matchIdx = toint(rm["matchIdx"])
+            var conditions = ""
+            switch r := rm["route"].(type) {
+            case *resources.httproutes.T:
+              if ruleIdx < 0 || ruleIdx >= len(r.Spec.Rules) {
+                return conditions
+              }
+              var rule = r.Spec.Rules[ruleIdx]
+              if matchIdx < 0 || matchIdx >= len(rule.Matches) {
+                return conditions
+              }
+              var match = rule.Matches[matchIdx]
+              if match.Method != "" {
+                conditions = conditions + "method:" + match.Method
+              }
+              for _, h := range match.Headers {
+                conditions = conditions + ";header:" + h.Name + "=" + h.Value
+              }
+              for _, p := range match.QueryParams {
+                conditions = conditions + ";param:" + p.Name + "=" + p.Value
+              }
+            case *resources.grpcroutes.T:
+              if ruleIdx < 0 || ruleIdx >= len(r.Spec.Rules) {
+                return conditions
+              }
+              var rule = r.Spec.Rules[ruleIdx]
+              if matchIdx < 0 || matchIdx >= len(rule.Matches) {
+                return conditions
+              }
+              var match = rule.Matches[matchIdx]
+              // GRPCRouteMatch.Method is a struct (Type/Service/
+              // Method), not a string — serialise into the same
+              // shape the previous polymorphic dig+tostring produced.
+              if match.Method.Service != "" || match.Method.Method != "" {
+                conditions = conditions + "method:" + match.Method.Type + "/" + match.Method.Service + "/" + match.Method.Method
+              }
+              for _, h := range match.Headers {
+                conditions = conditions + ";header:" + h.Name + "=" + h.Value
+              }
+              // GRPCRoute has no QueryParams field — skip.
+            }
+            return conditions
+          }
+        %%}
         {%- for _, pathKey := range keys(pathGroups) %}
           {%- var routes []any = pathGroups[pathKey] %}
-          {#- Check if routes in this group have different matchers #}
           {%- var hasConflicts = false %}
           {%- if len(routes) > 1 %}
-            {#- Build comparison key from match conditions #}
-            {%- var firstConditions = "" %}
-            {%- var firstRoute = routes[0] %}
-            {%- var firstMatch = firstRoute["match"] %}
-            {%- var firstMethod = firstMatch | dig("method") %}
-            {%- if firstMethod != nil %}
-              {%- firstConditions = firstConditions + "method:" + tostring(firstMethod) %}
-            {%- end %}
-            {%- for idx, header := range firstMatch | dig("headers") | toSlice() %}
-              {%- firstConditions = firstConditions + ";header:" + tostring(header | dig("name")) + "=" + tostring(header | dig("value")) %}
-            {%- end %}
-            {%- for idx, param := range firstMatch | dig("queryParams") | toSlice() %}
-              {%- firstConditions = firstConditions + ";param:" + tostring(param | dig("name")) + "=" + tostring(param | dig("value")) %}
-            {%- end %}
-
-            {#- Check if any other route has different conditions #}
+            {%- var firstConditions = buildConditions(routes[0]) %}
             {%- for i := 1; i < len(routes); i++ %}
-              {%- var routeConditions = "" %}
-              {%- var r = routes[i] %}
-              {%- var routeMatch = r["match"] %}
-              {%- var routeMethod = routeMatch | dig("method") %}
-              {%- if routeMethod != nil %}
-                {%- routeConditions = routeConditions + "method:" + tostring(routeMethod) %}
-              {%- end %}
-              {%- for idx, header := range routeMatch | dig("headers") | toSlice() %}
-                {%- routeConditions = routeConditions + ";header:" + tostring(header | dig("name")) + "=" + tostring(header | dig("value")) %}
-              {%- end %}
-              {%- for idx, param := range routeMatch | dig("queryParams") | toSlice() %}
-                {%- routeConditions = routeConditions + ";param:" + tostring(param | dig("name")) + "=" + tostring(param | dig("value")) %}
-              {%- end %}
-
-              {%- if firstConditions != routeConditions %}
+              {%- if buildConditions(routes[i]) != firstConditions %}
                 {%- hasConflicts = true %}
               {%- end %}
             {%- end %}
@@ -1296,28 +1330,58 @@ templateSnippets:
             TOML) and spoe-conf-content (HAProxy SPOE config), via
             globalFeatures["mirrorRouteMirrorCount"]. -#}
         {%- var routeMirrorCount = 0 %}
-        {%- for _, route := range finalAllRoutes %}
-          {%- var filters []any = route["filters"] %}
-          {%- var perRouteMirrors = 0 %}
-          {%- for _, filter := range filters %}
-            {%- var filterType = filter | dig("type") %}
-            {%- if filterType == "RequestHeaderModifier" %}
-              {%- hasRequestHeader = true %}
-            {%- else if filterType == "ResponseHeaderModifier" %}
-              {%- hasResponseHeader = true %}
-            {%- else if filterType == "RequestRedirect" %}
-              {%- hasRedirect = true %}
-            {%- else if filterType == "URLRewrite" %}
-              {%- hasUrlrewrite = true %}
-            {%- else if filterType == "RequestMirror" %}
-              {%- hasMirror = true %}
-              {%- perRouteMirrors = perRouteMirrors + 1 %}
-            {%- end %}
-          {%- end %}
-          {%- if perRouteMirrors > routeMirrorCount %}
-            {%- routeMirrorCount = perRouteMirrors %}
-          {%- end %}
-        {%- end %}
+        {%%
+          // Type-switch on routeInfo["route"] to read filters via the
+          // typed rule struct rather than the legacy routeInfo
+          // ["filters"] slot — sets up the slot's eventual removal.
+          // Filter type strings (RequestHeaderModifier / etc.) match
+          // the schema's enum values for both Kinds.
+          for _, route := range finalAllRoutes {
+            var rm = route.(map[string]any)
+            var ruleIdx = toint(rm["ruleIdx"])
+            var perRouteMirrors = 0
+            switch r := rm["route"].(type) {
+            case *resources.httproutes.T:
+              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+                for _, filter := range r.Spec.Rules[ruleIdx].Filters {
+                  switch filter.Type {
+                  case "RequestHeaderModifier":
+                    hasRequestHeader = true
+                  case "ResponseHeaderModifier":
+                    hasResponseHeader = true
+                  case "RequestRedirect":
+                    hasRedirect = true
+                  case "URLRewrite":
+                    hasUrlrewrite = true
+                  case "RequestMirror":
+                    hasMirror = true
+                    perRouteMirrors = perRouteMirrors + 1
+                  }
+                }
+              }
+            case *resources.grpcroutes.T:
+              if ruleIdx >= 0 && ruleIdx < len(r.Spec.Rules) {
+                for _, filter := range r.Spec.Rules[ruleIdx].Filters {
+                  switch filter.Type {
+                  case "RequestHeaderModifier":
+                    hasRequestHeader = true
+                  case "ResponseHeaderModifier":
+                    hasResponseHeader = true
+                  case "RequestMirror":
+                    hasMirror = true
+                    perRouteMirrors = perRouteMirrors + 1
+                  }
+                  // GRPCRouteFilter has no RequestRedirect or
+                  // URLRewrite cases per the spec — schema-enforced
+                  // by typegen.
+                }
+              }
+            }
+            if perRouteMirrors > routeMirrorCount {
+              routeMirrorCount = perRouteMirrors
+            }
+          }
+        %%}
 
         {#- Populate result map with analysis data #}
         {%- result["pathGroups"] = pathGroups %}
