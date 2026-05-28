@@ -614,9 +614,12 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
         {%- var affinity = ingress.Metadata.Annotations["haproxy-ingress.github.io/affinity"] %}
         {%- if affinity == "cookie" %}
-          {%- var cookieName = ingress | dig_string("INGRESSCOOKIE", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-name") %}
-          {%- var strategy = ingress | dig_string("insert", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-strategy") %}
-          {%- var dynamic = ingress | dig_string("true", "metadata", "annotations", "haproxy-ingress.github.io/session-cookie-dynamic") %}
+          {%- var cookieName = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-name"] %}
+          {%- if cookieName == "" %}{%- cookieName = "INGRESSCOOKIE" %}{%- end %}
+          {%- var strategy = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-strategy"] %}
+          {%- if strategy == "" %}{%- strategy = "insert" %}{%- end %}
+          {%- var dynamic = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-dynamic"] %}
+          {%- if dynamic == "" %}{%- dynamic = "true" %}{%- end %}
           {%- var keywords = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-keywords"] %}
           {%- var domain = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-domain"] %}
           {%- var sameSite = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-same-site"] %}
@@ -771,7 +774,8 @@ templateSnippets:
       {%- for _, ingress := range resources.ingresses.List() %}
         {%- var sslRedirect = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect"] %}
         {%- if sslRedirect == "true" %}
-          {%- var code = ingress | dig_string("302", "metadata", "annotations", "haproxy-ingress.github.io/ssl-redirect-code") %}
+          {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-redirect-code"] %}
+          {%- if code == "" %}{%- code = "302" %}{%- end %}
           {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
           {%- var codeValid = false %}
           {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
@@ -863,7 +867,8 @@ templateSnippets:
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
-            {%- var code = ingress | dig_string("302", "metadata", "annotations", "haproxy-ingress.github.io/redirect-to-code") %}
+            {%- var code = ingress.Metadata.Annotations["haproxy-ingress.github.io/redirect-to-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- var validCodes = []string{"301", "302", "303", "307", "308"} %}
             {%- var codeValid = false %}
             {%- for _, c := range validCodes %}{%- if c == code %}{%- codeValid = true %}{%- end %}{%- end %}
@@ -1086,7 +1091,8 @@ templateSnippets:
         {%- if secretRef != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
-          {%- var verifyClient = ingress | dig_string("on", "metadata", "annotations", "haproxy-ingress.github.io/auth-tls-verify-client") | toLower() %}
+          {%- var verifyClient = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-verify-client"] | toLower() %}
+          {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
           {%- if verifyClient == "off" %}
             {%- continue %}
           {%- end %}
@@ -1652,7 +1658,8 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
         {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] %}
         {%- if authSecret != "" %}
-          {%- var authRealm = ingress | dig_string("Restricted", "metadata", "annotations", "haproxy-ingress.github.io/auth-realm") %}
+          {%- var authRealm = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-realm"] %}
+          {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
           {#- Parse secret reference (supports "ns/name" or just "name") -#}
           {%- var secretNs = ns %}
           {%- var secretName = authSecret %}

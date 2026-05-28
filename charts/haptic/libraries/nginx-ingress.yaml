@@ -85,7 +85,8 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
         {%- var affinity = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/affinity"] %}
         {%- if affinity == "cookie" %}
-          {%- var cookieName = ingress | dig_string("INGRESSCOOKIE", "metadata", "annotations", "nginx.ingress.kubernetes.io/session-cookie-name") %}
+          {%- var cookieName = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-name"] %}
+          {%- if cookieName == "" %}{%- cookieName = "INGRESSCOOKIE" %}{%- end %}
           {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-path"] %}
           {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
           {%- if cookiePath != "" %}
@@ -524,7 +525,8 @@ templateSnippets:
           {%- end %}
           {%- var authSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret"] %}
           {%- if authSecret != "" %}
-            {%- var authRealm = ingress | dig_string("Restricted", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-realm") %}
+            {%- var authRealm = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-realm"] %}
+            {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
             {%- var secretNs = ns %}
             {%- var secretName = authSecret %}
             {%- if strings_contains(authSecret, "/") %}
@@ -1167,7 +1169,8 @@ templateSnippets:
         {%- if secretRef != "" %}
           {%- var ns = ingress.Metadata.Namespace %}
           {%- var name = ingress.Metadata.Name %}
-          {%- var verifyClient = ingress | dig_string("on", "metadata", "annotations", "nginx.ingress.kubernetes.io/auth-tls-verify-client") | toLower() %}
+          {%- var verifyClient = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-verify-client"] | toLower() %}
+          {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
           {%- if verifyClient == "off" %}
             {%- continue %}
           {%- end %}
