@@ -1,8 +1,8 @@
 templateSnippets:
-  util-generate-host-map-gateway:
+  util-generate-httproute-host-map-gateway:
     template: |
       {#-
-        Generate host map entries for Gateway API routes.
+        Generate host map entries for HTTPRoute (typed sibling).
 
         Per Gateway API spec the effective hostname set for a route is
         the *intersection* of the route's `spec.hostnames` with each
@@ -24,30 +24,27 @@ templateSnippets:
       {%- import "util-ingress-host-key" for MapKeyForHost -%}
       {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
       {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
-      {%- import "util-resource-helpers" for ListenerName, ListenerProtocolOr, ListenerHostname -%}
-      {%- macro GenerateHostMap(routes []any, route_type string) -%}
+      {%- macro GenerateHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
       {%- for _, route := range routes %}
       {%%
-        var routeHostnames = route | dig("spec", "hostnames") | toSlice()
-        var parentRefs = dig(route, "spec", "parentRefs") | toSlice()
+        var routeHostnames = route.Spec.Hostnames
         var effectiveHosts = map[string]bool{}
         var resolvedGwCount = 0
-        var routeNs = tostring(dig(route, "metadata", "namespace") | fallback(""))
-        for _, parentRef := range parentRefs {
-          var prGroup = tostring(dig(parentRef, "group") | fallback("gateway.networking.k8s.io"))
-          var prKind = tostring(dig(parentRef, "kind") | fallback("Gateway"))
+        var routeNs = route.Metadata.Namespace
+        for _, parentRef := range route.Spec.ParentRefs {
+          var prGroup = parentRef.Group
+          if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
+          var prKind = parentRef.Kind
+          if prKind == "" { prKind = "Gateway" }
           if prGroup != "gateway.networking.k8s.io" {
             continue
           }
-          // ListenerSet parentRef branch: treat the ListenerSet's
-          // own spec.listeners as additional attach candidates,
-          // gated through IsListenerSetAdmitted (same admission
-          // contract as the F2 status side).
           if prKind == "ListenerSet" {
-            var lsNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
-            var lsName = tostring(dig(parentRef, "name") | fallback(""))
-            var section = tostring(dig(parentRef, "sectionName") | fallback(""))
-            var prPort = toint(dig(parentRef, "port") | fallback(0))
+            var lsNs = parentRef.Namespace
+            if lsNs == "" { lsNs = routeNs }
+            var lsName = parentRef.Name
+            var section = parentRef.SectionName
+            var prPort = toint(parentRef.Port)
             var ls = resources.listenersets.GetSingle(lsNs, lsName)
             if ls == nil {
               continue
@@ -69,23 +66,24 @@ templateSnippets:
               if prPort != 0 && prPort != listenerPort {
                 continue
               }
-              var listenerProto = ListenerProtocolOr(listener, "HTTP")
+              var listenerProto = listener.Protocol
+              if listenerProto == "" { listenerProto = "HTTP" }
               var portSuffix = ""
               if listenerPort > 0 {
                 if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
                   portSuffix = ":" + tostring(listenerPort)
                 }
               }
-              var listenerHostname = ListenerHostname(listener)
+              var listenerHostname = listener.Hostname
               if len(routeHostnames) == 0 {
                 effectiveHosts[listenerHostname + portSuffix] = true
               } else if listenerHostname == "" {
                 for _, rh := range routeHostnames {
-                  effectiveHosts[tostring(rh) + portSuffix] = true
+                  effectiveHosts[rh + portSuffix] = true
                 }
               } else {
                 for _, rh := range routeHostnames {
-                  var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
+                  var inter = HostnameSinglePairIntersection(listenerHostname, rh)
                   if inter != "" {
                     effectiveHosts[inter + portSuffix] = true
                   }
@@ -97,10 +95,11 @@ templateSnippets:
           if prKind != "Gateway" {
             continue
           }
-          var gwNs = tostring(dig(parentRef, "namespace") | fallback(routeNs))
-          var gwName = tostring(dig(parentRef, "name") | fallback(""))
-          var section = tostring(dig(parentRef, "sectionName") | fallback(""))
-          var prPort = toint(dig(parentRef, "port") | fallback(0))
+          var gwNs = parentRef.Namespace
+          if gwNs == "" { gwNs = routeNs }
+          var gwName = parentRef.Name
+          var section = parentRef.SectionName
+          var prPort = toint(parentRef.Port)
           var gw = resources.gateways.GetSingle(gwNs, gwName)
           if gw == nil {
             continue
@@ -115,16 +114,15 @@ templateSnippets:
             if prPort != 0 && prPort != listenerPort {
               continue
             }
-            // Per-port suffix for non-default HTTP/HTTPS ports, see
-            // analyze_routes for the same logic.
-            var listenerProto = ListenerProtocolOr(listener, "HTTP")
+            var listenerProto = listener.Protocol
+            if listenerProto == "" { listenerProto = "HTTP" }
             var portSuffix = ""
             if listenerPort > 0 {
               if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
                 portSuffix = ":" + tostring(listenerPort)
               }
             }
-            var listenerHostname = ListenerHostname(listener)
+            var listenerHostname = listener.Hostname
             // Listener isolation (catch-all only — see analyze_routes for
             // the rationale): drop a route hostname when a sibling listener
             // on the same Gateway claims it more specifically.
@@ -133,7 +131,6 @@ templateSnippets:
               effectiveHosts[listenerHostname + portSuffix] = true
             } else if listenerHostname == "" {
               for _, rh := range routeHostnames {
-                var rhStr = tostring(rh)
                 var ownedBySibling = false
                 for _, sibling := range gw.Spec.Listeners {
                   var sibName = sibling.Name
@@ -141,18 +138,18 @@ templateSnippets:
                     continue
                   }
                   var sibHost = sibling.Hostname
-                  if sibHost != "" && HostnameSinglePairMatch(sibHost, rhStr) == "true" && toint(HostnameRank(sibHost)) > currentRank {
+                  if sibHost != "" && HostnameSinglePairMatch(sibHost, rh) == "true" && toint(HostnameRank(sibHost)) > currentRank {
                     ownedBySibling = true
                     break
                   }
                 }
                 if !ownedBySibling {
-                  effectiveHosts[rhStr + portSuffix] = true
+                  effectiveHosts[rh + portSuffix] = true
                 }
               }
             } else {
               for _, rh := range routeHostnames {
-                var inter = HostnameSinglePairIntersection(listenerHostname, tostring(rh))
+                var inter = HostnameSinglePairIntersection(listenerHostname, rh)
                 if inter != "" {
                   effectiveHosts[inter + portSuffix] = true
                 }
@@ -170,22 +167,190 @@ templateSnippets:
             effectiveHosts[""] = true
           } else {
             for _, rh := range routeHostnames {
-              effectiveHosts[tostring(rh)] = true
+              effectiveHosts[rh] = true
             }
           }
         }
-        var hostnames = []any{}
+        var hostnames = []string{}
         for h, _ := range effectiveHosts {
           hostnames = append(hostnames, h)
         }
       %%}
       {%- if len(hostnames) > 0 %}
-      {%- var routeNs = route | dig("metadata", "namespace") | fallback("") %}
-      {%- var routeName = route | dig("metadata", "name") | fallback("") %}
-      # {{ route_type }}: {{ routeNs }}/{{ routeName }} ({{ len(hostnames) }} hosts)
+      # HTTPRoute: {{ route.Metadata.Namespace }}/{{ route.Metadata.Name }} ({{ len(hostnames) }} hosts)
       {% for _, hostname := range hostnames %}
-      {%- if tostring(hostname) != "" %}
-      {%- var hostKey = MapKeyForHost(tostring(hostname)) %}
+      {%- if hostname != "" %}
+      {%- var hostKey = MapKeyForHost(hostname) %}
+      {{ hostKey }} {{ hostKey }}
+      {%- end %}
+      {% end %}
+      {%- end %}
+      {%- end %}
+      {%- end macro -%}
+
+  util-generate-grpcroute-host-map-gateway:
+    template: |
+      {#-
+        Generate host map entries for GRPCRoute (typed sibling).
+
+        Body identical to GenerateHTTPRouteHostMap apart from the
+        route slice type and the route_type literal stamped on the
+        header comment. Kept as a separate macro so the typed
+        parameter stays at the call boundary — the whole point of the
+        per-Kind split.
+      -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameSinglePairMatch, HostnameRank -%}
+      {%- import "util-listenerset-routing-gate" for IsListenerSetAdmitted -%}
+      {%- macro GenerateGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
+      {%- for _, route := range routes %}
+      {%%
+        var routeHostnames = route.Spec.Hostnames
+        var effectiveHosts = map[string]bool{}
+        var resolvedGwCount = 0
+        var routeNs = route.Metadata.Namespace
+        for _, parentRef := range route.Spec.ParentRefs {
+          var prGroup = parentRef.Group
+          if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
+          var prKind = parentRef.Kind
+          if prKind == "" { prKind = "Gateway" }
+          if prGroup != "gateway.networking.k8s.io" {
+            continue
+          }
+          if prKind == "ListenerSet" {
+            var lsNs = parentRef.Namespace
+            if lsNs == "" { lsNs = routeNs }
+            var lsName = parentRef.Name
+            var section = parentRef.SectionName
+            var prPort = toint(parentRef.Port)
+            var ls = resources.listenersets.GetSingle(lsNs, lsName)
+            if ls == nil {
+              continue
+            }
+            var gwName = ls.Spec.ParentRef.Name
+            var gwNs = ls.Spec.ParentRef.Namespace
+            if gwNs == "" { gwNs = lsNs }
+            var gw = resources.gateways.GetSingle(gwNs, gwName)
+            if gw == nil || !hasPrefix(IsListenerSetAdmitted(gw, ls), "true") {
+              continue
+            }
+            resolvedGwCount = resolvedGwCount + 1
+            for _, listener := range ls.Spec.Listeners {
+              var listenerName = listener.Name
+              if section != "" && section != listenerName {
+                continue
+              }
+              var listenerPort = toint(listener.Port)
+              if prPort != 0 && prPort != listenerPort {
+                continue
+              }
+              var listenerProto = listener.Protocol
+              if listenerProto == "" { listenerProto = "HTTP" }
+              var portSuffix = ""
+              if listenerPort > 0 {
+                if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
+                  portSuffix = ":" + tostring(listenerPort)
+                }
+              }
+              var listenerHostname = listener.Hostname
+              if len(routeHostnames) == 0 {
+                effectiveHosts[listenerHostname + portSuffix] = true
+              } else if listenerHostname == "" {
+                for _, rh := range routeHostnames {
+                  effectiveHosts[rh + portSuffix] = true
+                }
+              } else {
+                for _, rh := range routeHostnames {
+                  var inter = HostnameSinglePairIntersection(listenerHostname, rh)
+                  if inter != "" {
+                    effectiveHosts[inter + portSuffix] = true
+                  }
+                }
+              }
+            }
+            continue
+          }
+          if prKind != "Gateway" {
+            continue
+          }
+          var gwNs = parentRef.Namespace
+          if gwNs == "" { gwNs = routeNs }
+          var gwName = parentRef.Name
+          var section = parentRef.SectionName
+          var prPort = toint(parentRef.Port)
+          var gw = resources.gateways.GetSingle(gwNs, gwName)
+          if gw == nil {
+            continue
+          }
+          resolvedGwCount = resolvedGwCount + 1
+          for _, listener := range gw.Spec.Listeners {
+            var listenerName = listener.Name
+            if section != "" && section != listenerName {
+              continue
+            }
+            var listenerPort = toint(listener.Port)
+            if prPort != 0 && prPort != listenerPort {
+              continue
+            }
+            var listenerProto = listener.Protocol
+            if listenerProto == "" { listenerProto = "HTTP" }
+            var portSuffix = ""
+            if listenerPort > 0 {
+              if (listenerProto == "HTTP" && listenerPort != 80) || (listenerProto == "HTTPS" && listenerPort != 443) || (listenerProto == "TLS" && listenerPort != 443) {
+                portSuffix = ":" + tostring(listenerPort)
+              }
+            }
+            var listenerHostname = listener.Hostname
+            var currentRank = toint(HostnameRank(listenerHostname))
+            if len(routeHostnames) == 0 {
+              effectiveHosts[listenerHostname + portSuffix] = true
+            } else if listenerHostname == "" {
+              for _, rh := range routeHostnames {
+                var ownedBySibling = false
+                for _, sibling := range gw.Spec.Listeners {
+                  var sibName = sibling.Name
+                  if sibName == listenerName {
+                    continue
+                  }
+                  var sibHost = sibling.Hostname
+                  if sibHost != "" && HostnameSinglePairMatch(sibHost, rh) == "true" && toint(HostnameRank(sibHost)) > currentRank {
+                    ownedBySibling = true
+                    break
+                  }
+                }
+                if !ownedBySibling {
+                  effectiveHosts[rh + portSuffix] = true
+                }
+              }
+            } else {
+              for _, rh := range routeHostnames {
+                var inter = HostnameSinglePairIntersection(listenerHostname, rh)
+                if inter != "" {
+                  effectiveHosts[inter + portSuffix] = true
+                }
+              }
+            }
+          }
+        }
+        if resolvedGwCount == 0 {
+          if len(routeHostnames) == 0 {
+            effectiveHosts[""] = true
+          } else {
+            for _, rh := range routeHostnames {
+              effectiveHosts[rh] = true
+            }
+          }
+        }
+        var hostnames = []string{}
+        for h, _ := range effectiveHosts {
+          hostnames = append(hostnames, h)
+        }
+      %%}
+      {%- if len(hostnames) > 0 %}
+      # GRPCRoute: {{ route.Metadata.Namespace }}/{{ route.Metadata.Name }} ({{ len(hostnames) }} hosts)
+      {% for _, hostname := range hostnames %}
+      {%- if hostname != "" %}
+      {%- var hostKey = MapKeyForHost(hostname) %}
       {{ hostKey }} {{ hostKey }}
       {%- end %}
       {% end %}
@@ -195,29 +360,32 @@ templateSnippets:
 
   util-sharded-host-map-gateway:
     template: |
-      {#- Sharded host map generator for Gateway API routes -#}
-      {%- import "util-generate-host-map-gateway" for GenerateHostMap -%}
+      {#- Per-Kind typed sharded host-map wrappers. Each calls its
+          Kind-specific Generate macro directly with the typed slice. -#}
+      {%- import "util-generate-httproute-host-map-gateway" for GenerateHTTPRouteHostMap -%}
+      {%- import "util-generate-grpcroute-host-map-gateway" for GenerateGRPCRouteHostMap -%}
       {%- import "util-macros" for CalculateShardCount -%}
-      {%- macro ShardedHostMap(routes []any, route_type string) -%}
-      {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
-      {%- if n <= 1 || len(routes) < 100 -%}
-      {{ GenerateHostMap(routes, route_type) }}
-      {%- else -%}
-      {%- for i := 0; i < n; i++ -%}
-      {{ go GenerateHostMap(shard_slice(routes, i, n), route_type) }}
-      {%- end -%}
-      {%- end -%}
+
+      {%- macro ShardedHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateHTTPRouteHostMap(routes) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateHTTPRouteHostMap(shard_slice(routes, i, n)) }}
+          {%- end -%}
+        {%- end -%}
       {%- end macro -%}
 
-      {#- Per-Kind typed wrappers — same shape as the other Sharded* (c)
-          splits: keep `ShardedHostMap` as the polymorphic helper,
-          expose typed entry points so the call site is compile-time-
-          kind-checked. -#}
-      {%- macro ShardedHTTPRouteHostMap(routes []*resources.httproutes.T) -%}
-      {{ ShardedHostMap(routes | toSlice(), "HTTPRoute") }}
-      {%- end macro -%}
       {%- macro ShardedGRPCRouteHostMap(routes []*resources.grpcroutes.T) -%}
-      {{ ShardedHostMap(routes | toSlice(), "GRPCRoute") }}
+        {%- var n = toint(CalculateShardCount(len(routes), 100)) -%}
+        {%- if n <= 1 || len(routes) < 100 -%}
+      {{ GenerateGRPCRouteHostMap(routes) }}
+        {%- else -%}
+          {%- for i := 0; i < n; i++ -%}
+      {{ go GenerateGRPCRouteHostMap(shard_slice(routes, i, n)) }}
+          {%- end -%}
+        {%- end -%}
       {%- end macro -%}
 
   map-host-500-gateway:
