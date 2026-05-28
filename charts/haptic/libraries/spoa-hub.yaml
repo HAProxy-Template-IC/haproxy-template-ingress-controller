@@ -157,8 +157,8 @@ templateSnippets:
           var byKey = map[string]any{}
           var hasHaproxyIngressWaf = false
           for _, ingress := range resources.ingresses.List() {
-            var ns = ingress | dig_string("", "metadata", "namespace")
-            var name = ingress | dig_string("", "metadata", "name")
+            var ns = ingress.Metadata.Namespace
+            var name = ingress.Metadata.Name
             var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
             if snippet != "" {
               if strings_contains(snippet, "\"\"\"") {
@@ -247,8 +247,8 @@ templateSnippets:
             {%- for _, ingress := range resources.ingresses.List() -%}
               {%- var w = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf"] -%}
               {%- if w != "" -%}
-                {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-                {%- var name = ingress | dig_string("", "metadata", "name") -%}
+                {%- var ns = ingress.Metadata.Namespace -%}
+                {%- var name = ingress.Metadata.Name -%}
                 {{- fail("Ingress " + ns + "/" + name + " sets annotation 'haproxy-ingress.github.io/waf' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
               {%- end -%}
             {%- end -%}
@@ -829,12 +829,12 @@ templateSnippets:
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-modsecurity"] -%}
         {%- if v == "false" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
       {{ "\n" }}{{ ns }}/{{ name }} 1
         {%- else if v != "" && v != "true" -%}
-          {%- var ns = ingress | dig_string("", "metadata", "namespace") -%}
-          {%- var name = ingress | dig_string("", "metadata", "name") -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
           {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".") -}}
         {%- end -%}
       {%- end -%}
