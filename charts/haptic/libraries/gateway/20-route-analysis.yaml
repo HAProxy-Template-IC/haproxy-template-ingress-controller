@@ -876,11 +876,9 @@ templateSnippets:
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
-                  "rule": rule,
                   "ruleIdx": ruleIdx,
                   "matchIdx": matchIdx,
                   "path": pathSlot,
-                  "filters": rule.Filters,
                   "resource_type": "httproute",
                   "pathKey": pathKey,
                   "pathType": pathType,
@@ -1176,11 +1174,9 @@ templateSnippets:
                 {%- var routeInfo = map[string]any{
                   "route": route,
                   "hostname": hostname,
-                  "rule": rule,
                   "ruleIdx": ruleIdx,
                   "matchIdx": matchIdx,
                   "path": grpcPath,
-                  "filters": rule.Filters,
                   "resource_type": "grpcroute",
                   "pathKey": pathKey,
                   "pathType": "PathPrefix",
