@@ -111,13 +111,14 @@ controller:
     # Features: Path matching, header matching, traffic splitting, host-based routing
     gateway:
       enabled: true
-    # Annotation-compat scaffold: shared HAProxy output macros and utility
-    # snippets consumed by the vendor-specific annotation libraries below.
-    # Sits at hierarchy level 2.5 — currently provides one macro for the
-    # SSL-passthrough annotation scan and one for CIDR allow/deny ACL
-    # emission, both shared across haproxytech / haproxy-ingress /
-    # nginx-ingress. See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
-    annotationCompat:
+    # Ingress-annotations-compat scaffold: shared HAProxy output macros
+    # consumed by the three Ingress vendor annotation libraries below
+    # (haproxytech / haproxy-ingress / nginx-ingress). Sits at hierarchy
+    # level 2.5 — currently provides macros for the SSL-passthrough
+    # annotation scan and CIDR allow/deny ACL emission. Ingress-scoped:
+    # a vendor library operating on a non-Ingress CRD writes its own
+    # equivalents. See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+    ingressAnnotationsCompat:
       enabled: true
     # HAProxyTech library: haproxy.org/* annotation compatibility
     # Covers basic auth, allow/deny lists, SSL redirect, SSL passthrough, CORS,

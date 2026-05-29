@@ -42,7 +42,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTPRoute, GRPCRoute) |
-| `controller.templateLibraries.annotationCompat.enabled` | bool | `true` | Shared annotation-compat scaffold (level 2.5). Provides parameterized macros consumed by the vendor annotation libraries below |
+| `controller.templateLibraries.ingressAnnotationsCompat.enabled` | bool | `true` | Shared ingress-annotations-compat scaffold (level 2.5). Provides parameterized macros consumed by the Ingress vendor annotation libraries below |
 | `controller.templateLibraries.haproxytech.enabled` | bool | `true` | haproxy.org/* annotation support |
 | `controller.templateLibraries.haproxyIngress.enabled` | bool | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | bool | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |

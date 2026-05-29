@@ -64,7 +64,7 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `ssl` | on | Terminate TLS, crt-list management, SSL passthrough |
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
 | `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` (requires Gateway CRDs installed) |
-| `annotationCompat` | on | Shared scaffold consumed by the vendor annotation libraries below (level 2.5) |
+| `ingressAnnotationsCompat` | on | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | `haproxytech` | on | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
 | `haproxy-ingress` | on | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |
 | `nginx-ingress` | off | `nginx.ingress.kubernetes.io/*` annotation compatibility |

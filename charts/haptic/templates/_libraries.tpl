@@ -126,7 +126,7 @@ Each entry in `$libraryFiles` is either:
     "libraries/ssl.yaml"
     "libraries/ingress.yaml"
     "libraries/gateway/"
-    "libraries/annotation-compat.yaml"
+    "libraries/ingress-annotations-compat.yaml"
     "libraries/haproxytech.yaml"
     "libraries/haproxy-ingress.yaml"
     "libraries/nginx-ingress.yaml"

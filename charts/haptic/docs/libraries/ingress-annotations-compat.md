@@ -1,12 +1,14 @@
-# annotation-compat Library
+# ingress-annotations-compat Library
 
 ## Overview
 
-`annotation-compat.yaml` is a scaffold library at hierarchy level 2.5 that holds parameterized macros consumed by the vendor-specific annotation libraries (`haproxytech`, `haproxy-ingress`, `nginx-ingress`). It does NOT process Kubernetes resources directly — its macros are stateless emitters that take parameters and return HAProxy directives.
+`ingress-annotations-compat.yaml` is a scaffold library at hierarchy level 2.5 that holds parameterized macros consumed by the three **Ingress** vendor annotation libraries (`haproxytech`, `haproxy-ingress`, `nginx-ingress`). The scaffold either walks `resources.ingresses.List()` itself (e.g. `BuildAnnotationSSLPassthrough`) or takes a typed `*resources.ingresses.T` parameter (e.g. `EmitAnnotationAccessControl`) — that's correct, because all three vendor libraries process the same resource and differ only by annotation namespace.
 
-The scaffold exists to concentrate behaviour that would otherwise be duplicated three times. Each protocol library still owns its annotation extraction (the keys differ per vendor: `haproxy.org/*`, `haproxy-ingress.github.io/*`, `nginx.ingress.kubernetes.io/*`); the shared output emission lives in this library.
+The scaffold exists to concentrate behaviour that would otherwise be duplicated three times. Each vendor library still owns its annotation extraction (the keys differ per vendor: `haproxy.org/*`, `haproxy-ingress.github.io/*`, `nginx.ingress.kubernetes.io/*`); the shared output emission lives in this library.
 
-See ADR-0003 (`docs/adr/0003-annotation-compat-scaffold-level-2-5.md`) for the design rationale.
+**Scope: Ingress only.** A vendor library operating on a non-Ingress CRD (HTTPRoute, GRPCRoute, custom CRDs) does NOT use these macros — it writes its own equivalents. The earlier name (`annotation-compat`) implied generality across resources; in practice the scaffold was always Ingress-coupled, and pretending otherwise blocked typed Ingress access here. The rename makes the scope explicit.
+
+See ADR-0003 (`docs/adr/0003-annotation-compat-scaffold-level-2-5.md`) for the design rationale (the ADR predates this rename; the scaffold pattern still applies — only the scope is now made explicit).
 
 ## Hierarchy
 
@@ -14,11 +16,11 @@ See ADR-0003 (`docs/adr/0003-annotation-compat-scaffold-level-2-5.md`) for the d
 Level 0:   base
 Level 1:   ssl
 Level 2:   ingress, gateway
-Level 2.5: annotation-compat   <-- this library
+Level 2.5: ingress-annotations-compat   <-- this library
 Level 3:   haproxytech, haproxy-ingress, nginx-ingress
 ```
 
-The protocol libraries import macros from this scaffold; the scaffold knows nothing about them. Resource-agnostic.
+The vendor libraries import macros from this scaffold; the scaffold knows about Ingress but not about any specific vendor.
 
 ## Available Macros
 
@@ -41,12 +43,17 @@ BuildAnnotationSSLPassthrough(
 
 ```scriggo
 {
-  "name":      namePrefix + ns + "-" + name,
-  "sni":       host,
-  "namespace": ns,
-  "ingress":   name,
+  "name":        namePrefix + ns + "-" + name,
+  "sni":         host,
+  "namespace":   ns,
+  "ingress":     name,
+  "svcName":     <first path's service name>,
+  "svcPort":     <first path's service port (int, resolved from port.number or port.name)>,
+  "svcPortName": <first path's service port name ("" if the port is referenced by number)>,
 }
 ```
+
+The service fields (`svcName`, `svcPort`, `svcPortName`) are captured at scan time rather than re-fetched by the consumer's `backends-*-ssl-passthrough` snippet — a second `GetSingle()` lookup could disagree with the use_backend pass under concurrent Ingress deletion. The macro comment in the source has the full rationale.
 
 **Used by:**
 
@@ -64,7 +71,7 @@ Emits CIDR-based source-range access control: `acl <name> src <cidrs>` plus `htt
 
 ```scriggo
 EmitAnnotationAccessControl(
-  ingress         any,
+  ingress         *resources.ingresses.T,
   allowAnnotation string,  // e.g. "nginx.ingress.kubernetes.io/whitelist-source-range"
   denyAnnotation  string,  // e.g. "nginx.ingress.kubernetes.io/denylist-source-range"
   aclPrefix       string,  // e.g. "ni" — produces ACL names like "ni_allowlist_<ns>_<name>"

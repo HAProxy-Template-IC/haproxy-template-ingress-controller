@@ -14,7 +14,7 @@ Merge Order (lowest to highest priority):
 2. ssl.yaml                - HTTPS frontend, TLS certs, SSL passthrough infra
 3. ingress.yaml            - Kubernetes Ingress support
 4. gateway.yaml            - Gateway API (only when GatewayClass CRD is present)
-5. annotation-compat.yaml  - Shared scaffold for vendor annotation libraries (level 2.5)
+5. ingress-annotations-compat.yaml  - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
 6. haproxytech.yaml        - haproxy.org/* annotation compatibility
 7. haproxy-ingress.yaml    - haproxy-ingress.github.io/* annotation compatibility
 8. nginx-ingress.yaml      - nginx.ingress.kubernetes.io/* compat (disabled by default)
@@ -22,7 +22,7 @@ Merge Order (lowest to highest priority):
 10. controller.config.*    - User overrides from values.yaml (highest priority)
 ```
 
-Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `annotation-compat.yaml` (level 2.5) provides macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
+Each layer skips itself if its `controller.templateLibraries.<name>.enabled` flag is false. The `spoa-hub` library is also auto-loaded by `haptic.mergeLibraries` whenever the chart helper `haptic.spoaHub.enabled` is truthy, so operators don't need to flip both switches. Layers 5-9 are plugin/scaffold libraries — they only contribute templateSnippets that base.yaml's `render_glob` extension points pick up, plus parameterized macros that the annotation libraries call. `ingress-annotations-compat.yaml` (level 2.5) provides Ingress-scoped macros currently used for SSL passthrough and CIDR access-control patterns; see ADR-0003.
 
 The frontend path-matching order is selected at base-load time by `controller.config.routing.regexMatchOrder` (`default` or `last`). When `last`, `haptic.mergeLibraries` swaps `templateSnippets.frontend-routing-logic` for the alternate `frontend-routing-logic-regex-last` variant defined in `base.yaml`. The alternate is unset before merge so it never appears in the rendered HAProxyTemplateConfig.
 
@@ -115,18 +115,21 @@ Level 2: ingress.yaml, gateway.yaml
          ├── Know: base, ssl
          ├── Don't know: each other
          │
-Level 2.5: annotation-compat.yaml
+Level 2.5: ingress-annotations-compat.yaml
          │
          ├── Knows: base (via shared utilities like HostMatchCondition)
          ├── Provides: parameterized macros for patterns shared across the
-         │             vendor annotation libraries below (currently SSL
-         │             passthrough scan + CIDR allow/deny ACL emission)
-         ├── Constraint: macros are stateless — they take parameters and
-         │             emit HAProxy directives, never read resources directly
+         │             three Ingress vendor annotation libraries below
+         │             (currently SSL passthrough scan + CIDR allow/deny
+         │             ACL emission)
+         ├── Scope: Ingress only — macros walk `resources.ingresses.List()`
+         │             or take typed `*resources.ingresses.T` parameters.
+         │             Vendor libraries for non-Ingress CRDs write their
+         │             own equivalents.
          │
 Level 3: haproxy-ingress.yaml, haproxytech.yaml, nginx-ingress.yaml
          │
-         ├── Know: all libraries above (including annotation-compat)
+         ├── Know: all libraries above (including ingress-annotations-compat)
          └── Don't know: each other
 ```
 
