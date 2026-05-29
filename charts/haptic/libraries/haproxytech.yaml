@@ -20,7 +20,7 @@ templateSnippets:
   util-haproxytech-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends from haproxy.org/ssl-passthrough annotations.
-          Build logic lives in annotation-compat.yaml's BuildAnnotationSSLPassthrough macro;
+          Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
           this snippet only owns the per-library cache key and naming-convention parameters. -#}
       {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%
@@ -59,7 +59,7 @@ templateSnippets:
 
   frontend-filters-200-haproxytech-access-control:
     template: |
-      {#- HAProxy IP allowlist/denylist via the shared annotation-compat scaffold. -#}
+      {#- HAProxy IP allowlist/denylist via the shared ingress-annotations-compat scaffold. -#}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {{ EmitAnnotationAccessControl(ingress,

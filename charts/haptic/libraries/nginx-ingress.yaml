@@ -1083,7 +1083,7 @@ templateSnippets:
   util-nginx-ingress-ssl-passthrough:
     template: |
       {#- Caches SSL passthrough backends from nginx.ingress.kubernetes.io/ssl-passthrough annotations.
-          Build logic lives in annotation-compat.yaml's BuildAnnotationSSLPassthrough macro;
+          Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
           this snippet only owns the per-library cache key and naming-convention parameters. -#}
       {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
       {%%

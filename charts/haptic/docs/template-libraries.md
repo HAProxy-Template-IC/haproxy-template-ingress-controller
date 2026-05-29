@@ -19,7 +19,7 @@ HAPTIC uses a library-based architecture where YAML configuration files are merg
 | [SSL](libraries/ssl.md) | Enabled | TLS certificate management, HTTPS frontend |
 | [Ingress](libraries/ingress.md) | Enabled | Kubernetes Ingress resource support |
 | [Gateway API](libraries/gateway.md) | Enabled | Gateway API (HTTPRoute, GRPCRoute) support |
-| [annotation-compat](libraries/annotation-compat.md) | Enabled | Shared scaffold consumed by the vendor annotation libraries below (level 2.5) |
+| [ingress-annotations-compat](libraries/ingress-annotations-compat.md) | Enabled | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | [haproxytech](libraries/haproxytech.md) | Enabled | `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat) |
 | [haproxy-ingress](libraries/haproxy-ingress.md) | Enabled | `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat) |
 | [nginx-ingress](libraries/nginx-ingress.md) | Disabled | `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat) |
@@ -60,7 +60,7 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 2. ssl.yaml
 3. ingress.yaml
 4. gateway.yaml
-5. annotation-compat.yaml  (level 2.5 - shared scaffold)
+5. ingress-annotations-compat.yaml  (level 2.5 - Ingress-only shared scaffold)
 6. haproxytech.yaml
 7. haproxy-ingress.yaml
 8. nginx-ingress.yaml
@@ -256,8 +256,9 @@ applied last and overrides anything below it.
 └──────────────────────────────────────────────────────────────────────┘
                                    ▲
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Level 2.5 — Annotation-compat scaffold                               │
-│   annotation-compat.yaml  (shared macros for the libraries above)    │
+│ Level 2.5 — Ingress-annotations-compat scaffold                      │
+│   ingress-annotations-compat.yaml  (shared macros for Ingress vendor │
+│                                     libraries above; Ingress-scoped) │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▲
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -290,7 +291,7 @@ above.
 - [SSL Library](libraries/ssl.md) - TLS certificate management and HTTPS frontend
 - [Ingress Library](libraries/ingress.md) - Kubernetes Ingress resource support
 - [Gateway API Library](libraries/gateway.md) - HTTPRoute and GRPCRoute support
-- [annotation-compat scaffold](libraries/annotation-compat.md) - Shared macros consumed by the vendor annotation libraries below (level 2.5)
+- [ingress-annotations-compat scaffold](libraries/ingress-annotations-compat.md) - Shared macros consumed by the Ingress vendor annotation libraries below (level 2.5)
 - [haproxytech library](libraries/haproxytech.md) - `haproxy.org/*` annotations ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress) compat)
 - [haproxy-ingress library](libraries/haproxy-ingress.md) - `haproxy-ingress.github.io/*` annotations ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/) compat)
 - [nginx-ingress library](libraries/nginx-ingress.md) - `nginx.ingress.kubernetes.io/*` annotations ([kubernetes/ingress-nginx](https://kubernetes.github.io/ingress-nginx/) compat)

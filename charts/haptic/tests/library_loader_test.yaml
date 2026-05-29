@@ -69,16 +69,16 @@ tests:
       - exists:
           path: spec.watchedResources.gateways
 
-  - it: should load annotation-compat scaffold by default
+  - it: should load ingress-annotations-compat scaffold by default
     asserts:
       - exists:
           path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]
       - exists:
           path: spec.templateSnippets["util-emit-annotation-access-control"]
 
-  - it: should skip annotation-compat scaffold when disabled
+  - it: should skip ingress-annotations-compat scaffold when disabled
     set:
-      controller.templateLibraries.annotationCompat.enabled: false
+      controller.templateLibraries.ingressAnnotationsCompat.enabled: false
     asserts:
       - notExists:
           path: spec.templateSnippets["util-build-annotation-ssl-passthrough"]

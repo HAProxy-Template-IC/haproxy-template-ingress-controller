@@ -108,7 +108,7 @@ The controller uses a modular template library system where configuration files 
 | SSL | Enabled | `ssl` | TLS certificates, HTTPS frontend |
 | Ingress | Enabled | `ingress` | Kubernetes Ingress support |
 | Gateway | Enabled | `gateway` | Gateway API (HTTPRoute, GRPCRoute) |
-| annotation-compat | Enabled | `annotationCompat` | Shared scaffold consumed by the vendor annotation libraries below (level 2.5) |
+| ingress-annotations-compat | Enabled | `ingressAnnotationsCompat` | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | haproxytech | Enabled | `haproxytech` | `haproxy.org/*` annotation support |
 | haproxy-ingress | Enabled | `haproxyIngress` | `haproxy-ingress.github.io/*` annotation compatibility |
 | nginx-ingress | Disabled | `nginxIngress` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
