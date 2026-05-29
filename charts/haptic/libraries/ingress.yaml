@@ -158,7 +158,8 @@ templateSnippets:
   # forcing every caller to `tostring(rule | dig("host") | fallback(""))`
   # before the call would just push the same boilerplate everywhere.
   # Returns a string. Empty input → empty string (caller's responsibility
-  # to validate non-empty if it matters; util-coraza-scan etc. already do).
+  # to validate non-empty if it matters; vendor libraries' annotation
+  # walks already do).
   util-ingress-host-key:
     template: |
       {%- macro MapKeyForHost(host any) string -%}
