@@ -1325,8 +1325,12 @@ templateSnippets:
             rendered spoe.conf + the hub plugin's TOML messages list.
             Consumed by spoa-hub.yaml's spoa-hub-config-content (hub
             TOML) and spoe-conf-content (HAProxy SPOE config), via
-            globalFeatures["mirrorRouteMirrorCount"]. -#}
-        {%- var routeMirrorCount = 0 %}
+            globalFeatures["mirrorMaxFanout"]. The key name is
+            resource-neutral so the spoa-hub library can read it without
+            embedding Gateway-API "Route" terminology in its consumer
+            code — a hypothetical CRD-based routing layer that uses
+            mirror filters would produce the same key. -#}
+        {%- var mirrorFanout = 0 %}
         {%%
           // Type-switch on routeInfo["route"] to read filters via the
           // typed rule struct. Filter type strings
@@ -1373,8 +1377,8 @@ templateSnippets:
                 }
               }
             }
-            if perRouteMirrors > routeMirrorCount {
-              routeMirrorCount = perRouteMirrors
+            if perRouteMirrors > mirrorFanout {
+              mirrorFanout = perRouteMirrors
             }
           }
         %%}
@@ -1389,7 +1393,7 @@ templateSnippets:
         {%- result["hasRedirect_filter"] = hasRedirect %}
         {%- result["hasUrlrewrite_filter"] = hasUrlrewrite %}
         {%- result["hasMirror_filter"] = hasMirror %}
-        {%- result["mirrorRouteMirrorCount"] = routeMirrorCount %}
+        {%- result["mirrorMaxFanout"] = mirrorFanout %}
         {#- Cross-library: spoa-hub.yaml's spoe-conf-content +
             spoa-hub-config-content snippets read this off
             globalFeatures to size the mirror message list. Defensive
@@ -1406,5 +1410,5 @@ templateSnippets:
             return map[string]any{}
         }) %}
         {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-        {%- gf["mirrorRouteMirrorCount"] = routeMirrorCount %}
+        {%- gf["mirrorMaxFanout"] = mirrorFanout %}
       {%- end macro %}

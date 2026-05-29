@@ -1091,7 +1091,7 @@ validationTests:
       respectively. The chart's spoa-hub library must register at
       least the dynamic max (mirror-1..mirror-3) AND the static
       floor (mirror-1..mirror-mirrorStaticMinSlots, default 4) — so
-      with routeMirrorCount=3 and the default floor of 4, slots 1
+      with mirrorFanout=3 and the default floor of 4, slots 1
       through 4 are emitted. The floor exists because the SPOA hub
       reloads plugin handler state on every TOML file change; any
       transient render that emits messages=[] (between two

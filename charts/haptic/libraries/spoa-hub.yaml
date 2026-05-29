@@ -188,10 +188,12 @@ templateSnippets:
         {%- var pTimeoutMs = p["timeoutMs"] -%}
         {#- Mirror plugin's messages list. Floored at a static minimum
             (mirrorStaticMinSlots, default 4) and extended dynamically
-            beyond that based on the actual max-mirrors-per-route in
-            the cluster (routeMirrorCount, computed by the gateway
-            library's 20-route-analysis pass into
-            globalFeatures["mirrorRouteMirrorCount"]).
+            beyond that based on the cluster-wide max number of mirror
+            filters on any single rule (mirrorFanout, computed by the
+            gateway library's 20-route-analysis pass into
+            globalFeatures["mirrorMaxFanout"]). The key name stays
+            resource-neutral here — a future CRD-based routing layer
+            that produces mirror filters would write into the same key.
 
             Why the static floor (issue #47): the SPOA hub sidecar
             reloads its TOML on file change, but plugin handler state
@@ -229,9 +231,9 @@ templateSnippets:
         {%- if pName == "mirror" -%}
           {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
           {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
-          {%- var routeMirrorCount = gf | dig("mirrorRouteMirrorCount") | fallback(0) | toint() -%}
+          {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() -%}
           {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() -%}
-          {%- var effectiveSlots = routeMirrorCount -%}
+          {%- var effectiveSlots = mirrorFanout -%}
           {%- if mirrorStaticMinSlots > effectiveSlots -%}
             {%- effectiveSlots = mirrorStaticMinSlots -%}
           {%- end -%}
@@ -318,25 +320,29 @@ templateSnippets:
   spoe-conf-content:
     template: |
       {#- Trigger gateway route analysis if the gateway library is
-          loaded — it populates globalFeatures["mirrorRouteMirrorCount"]
-          which the mirror message expansion below reads. render_glob
-          on an exact name renders the matching snippet when it exists
-          (gateway loaded) and returns empty otherwise (gateway disabled,
-          spoa-hub-only deployment). The Scriggo-side compute is
-          memoised via shared.ComputeIfAbsent inside util-gateway-
-          analysis so repeated invocations across the same render are
-          free. -#}
+          loaded — it populates globalFeatures["mirrorMaxFanout"]
+          which the mirror message expansion below reads. The key name
+          is resource-neutral: a hypothetical CRD-based routing layer
+          that produces mirror filters would write into the same key,
+          and spoa-hub.yaml reads it without embedding routing-resource
+          terminology. render_glob on an exact name renders the
+          matching snippet when it exists (gateway loaded) and returns
+          empty otherwise (gateway disabled, spoa-hub-only deployment).
+          The Scriggo-side compute is memoised via
+          shared.ComputeIfAbsent inside util-gateway-analysis so
+          repeated invocations across the same render are free. -#}
       {{- render_glob "util-gateway-analysis" -}}
       {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) %}
-      {#- Dynamic mirror messages: each HTTPRoute rule with N mirror
-          filters needs N distinct (message, group) pairs because
-          HAProxy SPOE processes each group at most once per stream.
-          The gateway library writes the actual max-mirrors-per-route
-          (`routeMirrorCount`) into globalFeatures, and we expand it
-          into `mirror-1`..`mirror-<effectiveSlots>` here, replacing
-          the "mirror" placeholder from values.yaml.
+      {#- Dynamic mirror messages: each rule with N mirror filters
+          needs N distinct (message, group) pairs because HAProxy SPOE
+          processes each group at most once per stream. The producing
+          library (currently gateway/20-route-analysis) writes the
+          cluster-wide max mirror-fanout (`mirrorFanout`) into
+          globalFeatures, and we expand it into `mirror-1`
+          ..`mirror-<effectiveSlots>` here, replacing the "mirror"
+          placeholder from values.yaml.
 
           Floored at `mirrorStaticMinSlots` (default 4) — see the
           parallel logic in `spoa-hub-config-content` above for the
@@ -349,9 +355,9 @@ templateSnippets:
           N in [1, mirrorStaticMinSlots] without depending on the
           per-render route observation race. -#}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
-      {%- var routeMirrorCount = gf | dig("mirrorRouteMirrorCount") | fallback(0) | toint() %}
+      {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() %}
       {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() %}
-      {%- var effectiveSlots = routeMirrorCount %}
+      {%- var effectiveSlots = mirrorFanout %}
       {%- if mirrorStaticMinSlots > effectiveSlots %}
         {%- effectiveSlots = mirrorStaticMinSlots %}
       {%- end %}

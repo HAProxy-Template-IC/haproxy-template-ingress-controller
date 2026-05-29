@@ -233,6 +233,17 @@ templateSnippets:
       {%- import "util-resource-helpers" for ListenerKey -%}
       {{ render "util-effective-listeners" }}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {#- Self-seed the two gateway-owned mTLS shared-state keys before the
+          first read. ssl.yaml used to pre-seed these for convenience, but
+          ssl.yaml is Level 1 (knows only base) and the keys are produced
+          and consumed entirely within the gateway library — seeding them
+          here keeps the Level-1 boundary clean. -#}
+      {%- if gf["mtlsBlockedListeners"] == nil -%}
+        {%- gf["mtlsBlockedListeners"] = map[string]any{} -%}
+      {%- end -%}
+      {%- if gf["gatewayListenerMTLSConfig"] == nil -%}
+        {%- gf["gatewayListenerMTLSConfig"] = map[string]any{} -%}
+      {%- end -%}
       {%- var clientCertVerifyHosts = gf["clientCertVerifyHosts"].(map[string]any) %}
       {#- mtlsBlockedListeners: set of listener keys
           (`<gw-ns>/<gw-name>/<listener-name>`) where the configured
