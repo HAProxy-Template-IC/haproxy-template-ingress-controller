@@ -1610,7 +1610,16 @@ templateSnippets:
     template: |-
       {#- Keyed by <ns>/<name>. The validation guards (unsupported waf
           value, waf-mode without waf, invalid mode) still apply because
-          they run at render time regardless of map keying. -#}
+          they run at render time regardless of map keying. The
+          coraza-plugin-enabled check fails loud at the first offending
+          Ingress when the operator wires the annotation without enabling
+          the plugin — silent ignore would hide a real misconfiguration. -#}
+      {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+      {%- var corazaEnabled = false -%}
+      {%- for _, p := range plugins -%}
+        {%- var pName = p.(map[string]any)["name"].(string) -%}
+        {%- if pName == "coraza" -%}{%- corazaEnabled = true -%}{%- end -%}
+      {%- end -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
         {%- var ns = ingress.Metadata.Namespace -%}
         {%- var name = ingress.Metadata.Name -%}
@@ -1624,6 +1633,9 @@ templateSnippets:
           {{- fail("Ingress " + key + " sets 'haproxy-ingress.github.io/waf-mode' but not 'haproxy-ingress.github.io/waf'. waf-mode is meaningful only when waf is also set; remove waf-mode or add 'haproxy-ingress.github.io/waf: modsecurity'.") -}}
         {%- end -%}
         {%- if waf != "" -%}
+          {%- if !corazaEnabled -%}
+            {{- fail("Ingress " + key + " sets annotation 'haproxy-ingress.github.io/waf' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
+          {%- end -%}
           {%- if waf != "modsecurity" -%}
             {{- fail("Invalid value '" + waf + "' for annotation 'haproxy-ingress.github.io/waf' on Ingress '" + key + "'. Only 'modsecurity' is supported.") -}}
           {%- end -%}

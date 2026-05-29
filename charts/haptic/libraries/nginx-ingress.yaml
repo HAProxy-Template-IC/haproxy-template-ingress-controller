@@ -1330,6 +1330,178 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
+  # Coraza WAF: scan Ingresses for nginx.ingress.kubernetes.io/modsecurity-snippet
+  # and nginx.ingress.kubernetes.io/enable-modsecurity annotations, populate
+  # gf["sphCorazaApps"] and gf["sphCorazaDisabledKeys"] for the spoa-hub library
+  # to consume. The scan + validation lives here (not in spoa-hub.yaml) per
+  # RULE #1: spoa-hub.yaml must stay agnostic about Ingress / HTTPRoute / etc.
+  # — annotations specific to nginx-ingress belong with the rest of the
+  # nginx-ingress annotation surface.
+  #
+  # Cached via shared.ComputeIfAbsent so the scan runs at most once per
+  # render. Consumers re-fetch through `render "util-nginx-ingress-coraza-scan"`:
+  #   - spoa-hub.yaml's spoa-hub-config-content reads gf["sphCorazaApps"]
+  #     to emit per-app `[plugins.params.applications."<ns>/<name>"]` blocks.
+  #   - map-coraza-app-500-nginx-ingress emits coraza-app.map entries.
+  #   - map-coraza-disabled-500-nginx-ingress emits coraza-disabled.map entries.
+  #
+  # Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#modsecurity
+  #
+  # Annotations:
+  #   nginx.ingress.kubernetes.io/modsecurity-snippet: <SecRule body>
+  #     → per-Ingress WAF instance, bound to the Ingress's <ns>/<name>
+  #       via coraza-app.map. Rules don't bleed into other Ingresses'
+  #       traffic.
+  #   nginx.ingress.kubernetes.io/enable-modsecurity: "false"
+  #     → entry in coraza-disabled.map; the resource_id is excluded from the
+  #       unconditional default-on dispatch in frontend-spoe-filters-050-coraza.
+  #     "true" is accepted as a no-op (modsecurity-snippet already implies opt-in).
+  #
+  # Validation (fail-loud at render time → admission denial):
+  #   - modsec-snippet contains TOML triple-quote (injection vector — TOML
+  #     multi-line basic strings have no escape; """ would let an Ingress-
+  #     write RBAC holder break out of the directives string and inject
+  #     arbitrary TOML keys).
+  #   - enable-modsecurity value other than "true"/"false".
+  #   - modsec-snippet OR enable-modsecurity set without coraza plugin
+  #     enabled in spoaHub.plugins (silent ignore would hide a real
+  #     misconfiguration where the operator wrote per-Ingress WAF
+  #     directives and nothing enforces them).
+  util-nginx-ingress-coraza-scan:
+    template: |-
+      {%%
+        var _, _ = shared.ComputeIfAbsent("sphCorazaScanNginx", func() any {
+          var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} })
+          var gf = shared.Get("globalFeatures").(map[string]any)
+
+          // Determine whether the coraza plugin is enabled (used by the
+          // post-scan annotation-without-plugin validation).
+          var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice()
+          var corazaEnabled = false
+          for _, p := range plugins {
+            var pName = p.(map[string]any)["name"].(string)
+            if pName == "coraza" {
+              corazaEnabled = true
+            }
+          }
+
+          // Dedupe modsec apps by `ns/name`. Under UPDATE admission, the
+          // dryrun-validator's overlay may carry both the existing Ingress
+          // AND the proposed-new version side-by-side; without dedupe we'd
+          // emit two `[plugins.params.applications."<ns>/<name>"]` headers
+          // and the TOML parser would reject with `duplicate key`. The
+          // map keyed by ns/name keeps the LAST seen entry, which under
+          // the overlay's append-after-base ordering is the proposed
+          // version — exactly what the dryrun-validator should be checking.
+          var byKey = map[string]any{}
+          var disabledKeys = []any{}
+          var firstAnnotationKey = ""
+          var firstAnnotationName = ""
+          var anyAnnotation = false
+
+          for _, ingress := range resources.ingresses.List() {
+            var ns = ingress.Metadata.Namespace
+            var name = ingress.Metadata.Name
+            var key = ns + "/" + name
+
+            var snippet = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/modsecurity-snippet"]
+            if snippet != "" {
+              if strings_contains(snippet, "\"\"\"") {
+                fail("Ingress " + key + " annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote delimiter (\"\"\"); this would break the rendered coraza directives multi-line string and is rejected. Remove the triple-quote sequence from the SecRule(s).")
+              }
+              // coraza-app.map is keyed by <ns>/<name> (resource id), not
+              // by <host><path> — see frontend-spoe-filters-050-coraza
+              // and base.yaml's resource_id extraction. Host-less rules
+              // are fine because the routing chain still produces a
+              // resource_id whatever path/host pattern matched.
+              byKey[key] = map[string]any{"ns": ns, "name": name, "snippet": snippet}
+              if !anyAnnotation {
+                firstAnnotationKey = key
+                firstAnnotationName = "nginx.ingress.kubernetes.io/modsecurity-snippet"
+                anyAnnotation = true
+              }
+            }
+
+            var v = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/enable-modsecurity"]
+            if v == "false" {
+              disabledKeys = append(disabledKeys, key)
+              if !anyAnnotation {
+                firstAnnotationKey = key
+                firstAnnotationName = "nginx.ingress.kubernetes.io/enable-modsecurity"
+                anyAnnotation = true
+              }
+            } else if v == "true" {
+              // No map entry — `enable-modsecurity: "true"` is a no-op
+              // because opt-in is already implied by modsecurity-snippet
+              // (rule customisation) and by haproxy-ingress.github.io's
+              // `waf: modsecurity` annotation. We still surface the
+              // annotation for the plugin-enabled check so a "true" alone
+              // doesn't silently pass when coraza is disabled.
+              if !anyAnnotation {
+                firstAnnotationKey = key
+                firstAnnotationName = "nginx.ingress.kubernetes.io/enable-modsecurity"
+                anyAnnotation = true
+              }
+            } else if v != "" {
+              fail("Ingress " + key + " has nginx.ingress.kubernetes.io/enable-modsecurity: \"" + v + "\"; allowed values are \"true\" or \"false\".")
+            }
+          }
+
+          if anyAnnotation && !corazaEnabled {
+            fail("Ingress " + firstAnnotationKey + " sets annotation '" + firstAnnotationName + "' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.")
+          }
+
+          // Reduce the map back to a deterministic-order slice so the
+          // rendered TOML's `[plugins.params.applications."<ns>/<name>"]`
+          // blocks come out in stable namespace+name order across
+          // reconciliations.
+          var sortedKeys = keys(byKey)
+          var modsecApps = []any{}
+          for _, k := range sortedKeys {
+            modsecApps = append(modsecApps, byKey[k])
+          }
+          gf["sphCorazaApps"] = modsecApps
+          gf["sphCorazaDisabledKeys"] = disabledKeys
+          return true
+        })
+      %%}
+
+  # coraza-app.map population. Walks the cached util-nginx-ingress-coraza-scan
+  # output and emits one `<ns>/<name> <ns>/<name>` identity row per Ingress
+  # carrying the modsecurity-snippet annotation. The map is consumed via
+  # `var(txn.resource_id),map(...)` (see frontend-spoe-filters-050-coraza in
+  # spoa-hub.yaml), so the value sent to the SPOE plugin is the resource id
+  # itself.
+  map-coraza-app-500-nginx-ingress:
+    template: |-
+      {%- var _ = render "util-nginx-ingress-coraza-scan" -%}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- var modsecApps = gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice() -%}
+      {%- for _, app := range modsecApps -%}
+        {%- var a = app.(map[string]any) -%}
+        {%- var aNs = a["ns"].(string) -%}
+        {%- var aName = a["name"].(string) -%}
+      {{ "\n" }}{{ aNs }}/{{ aName }} {{ aNs }}/{{ aName }}
+      {%- end -%}
+
+  # coraza-disabled.map population: one `<ns>/<name> 1` row per Ingress
+  # carrying `nginx.ingress.kubernetes.io/enable-modsecurity: "false"`.
+  # Consumed under default-on dispatch (controller.templatingSettings.extraContext.coraza.dispatch.mode == "default-on")
+  # to skip the SPOE roundtrip for resources that opt out. Keyed by
+  # `<ns>/<name>` (resource id) — the host dimension is not part of the
+  # key, so host-less Ingress rules are fine (the routing chain still
+  # resolves them to a resource_id).
+  map-coraza-disabled-500-nginx-ingress:
+    template: |-
+      {%- var _ = render "util-nginx-ingress-coraza-scan" -%}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- var disabledKeys = gf | dig("sphCorazaDisabledKeys") | fallback([]any{}) | toSlice() -%}
+      {%- for _, key := range disabledKeys -%}
+      {{ "\n" }}{{ key.(string) }} 1
+      {%- end -%}
+
 # ============================================================================
 # Validation Tests
 # ============================================================================
