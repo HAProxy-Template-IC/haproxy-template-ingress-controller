@@ -2270,15 +2270,7 @@ validationTests:
       - type: contains
         target: "map:path-exact.map"
         pattern: '(?m)^exact\.example\.com/api/users BACKEND:default_exact-ingress_svc_exact-service_80$'
-        description: |
-          Map entry must carry the `BACKEND:<backend_name>` qualifier
-          prefix so base.yaml's frontend-routing-logic can decode the
-          qualifier (`field(1,:)`) and dispatch to the named backend.
-          Asserting on the value (not just the key) is the assertion
-          that would have caught the historical breakage where the
-          renderer omitted the `BACKEND:` prefix and routing silently
-          fell through to default_backend.
-
+        description: "Map entry must carry the `BACKEND:<backend_name>` qualifier prefix so base.yaml's frontend-routing-logic can decode the qualifier (`field(1,:)`) and dispatch to the named backend. Asserting on the value (not just the key) is the assertion that would have caught the historical breakage where the renderer omitted the `BACKEND:` prefix and routing silently fell through to default_backend."
   test-haproxy-ingress-path-type-prefix:
     description: HAProxy-Ingress path-type prefix annotation uses prefix map
     fixtures:
@@ -2400,15 +2392,7 @@ validationTests:
       - type: contains
         target: "map:path-regex.map"
         pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
-        description: |
-          Map entry must carry the literal regex pattern as the key AND
-          the `BACKEND:<backend_name>` qualifier value. The historical
-          renderer wrote the row as `<host><pathRegex> ` (trailing space,
-          no backend name) because it used `render "util-backend-name-ingress"`
-          — which only defines the BackendNameIngress macro without
-          calling it. With the fix the renderer imports the macro and
-          calls it, so the row is well-formed.
-
+        description: "Map entry must carry the literal regex pattern as the key AND the `BACKEND:<backend_name>` qualifier value. The historical renderer wrote the row as `<host><pathRegex> ` (trailing space, no backend name) because it used `render \"util-backend-name-ingress\"` — which only defines the BackendNameIngress macro without calling it. With the fix the renderer imports the macro and calls it, so the row is well-formed."
   test-haproxy-ingress-path-type-regex-wildcard-host:
     description: HAProxy-Ingress path-type=regex annotation on a wildcard-host Ingress produces a valid regex (no leading literal `*`). The historical renderer used the raw rule.
     fixtures:
@@ -2444,34 +2428,17 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: |
-          HAProxy must parse the rendered config (in particular,
-          path-regex.map) without error. Catches the wildcard-`*`
-          regex bug — without MapKeyForHost the key would start with
-          `*.example.com` and HAProxy would reject the regex.
+        description: "HAProxy must parse the rendered config (in particular, path-regex.map) without error. Catches the wildcard-`*` regex bug — without MapKeyForHost the key would start with `*.example.com` and HAProxy would reject the regex."
       - type: contains
         target: "map:path-regex.map"
         pattern: '(?m)^\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_wild-regex-ingress_svc_wild-regex-service_80$'
-        description: |
-          Wildcard host normalisation: `*.example.com` → `.example.com`
-          (leading `*` stripped via MapKeyForHost). The result is a
-          valid regex pattern that matches concrete subdomains via
-          base.yaml's regsub fallback at request time.
+        description: "Wildcard host normalisation: `*.example.com` → `.example.com` (leading `*` stripped via MapKeyForHost). The result is a valid regex pattern that matches concrete subdomains via base.yaml's regsub fallback at request time."
       - type: not_contains
         target: "map:path-regex.map"
         pattern: '\*\.example\.com'
-        description: |
-          The leading `*` from the wildcard host MUST NOT appear in
-          the regex pattern (would make it an invalid regex).
-
+        description: "The leading `*` from the wildcard host MUST NOT appear in the regex pattern (would make it an invalid regex)."
   test-haproxy-ingress-path-type-regex-rule-without-http:
-    description: |
-      HAProxy-Ingress path-type=regex with a rule that has no `http` block
-      must not panic or emit any map row for that rule. Regression test
-      for the typed-traversal migration (!1017) — `rule.Http.Paths` is
-      accessed directly, and an absent `http:` in the source YAML must
-      surface as an empty slice (loop emits nothing), not a nil-deref
-      panic.
+    description: "HAProxy-Ingress path-type=regex with a rule that has no `http` block must not panic or emit any map row for that rule. Regression test for the typed-traversal migration (!1017) — `rule.Http.Paths` is accessed directly, and an absent `http:` in the source YAML must surface as an empty slice (loop emits nothing), not a nil-deref panic."
     fixtures:
       services:
         - apiVersion: v1
@@ -2512,16 +2479,11 @@ validationTests:
       - type: contains
         target: "map:path-regex.map"
         pattern: '(?m)^hashttp\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_mixed-ingress_svc_mixed-service_80$'
-        description: |
-          The rule with an http block must still emit its row even when
-          a sibling rule has no http block.
+        description: "The rule with an http block must still emit its row even when a sibling rule has no http block."
       - type: not_contains
         target: "map:path-regex.map"
         pattern: 'nohttp\.example\.com'
-        description: |
-          The rule without an http block must not contribute any map
-          entry (its empty Paths slice produces zero iterations).
-
+        description: "The rule without an http block must not contribute any map entry (its empty Paths slice produces zero iterations)."
   # ============================================================================
   # Phase 4: Session Affinity Tests
   # ============================================================================
@@ -2967,11 +2929,7 @@ validationTests:
     # the library isn't loaded (e.g. validate-helm-libraries default
     # render).
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      HAProxy-Ingress auth-url annotation populates auth-url.map and
-      the spoa-hub frontend wiring (set-var, send-spoe-group, deny
-      rule). Mirrors test-nginx-ingress-external-auth but uses the
-      haproxy-ingress.github.io/auth-url annotation flavour.
+    description: "HAProxy-Ingress auth-url annotation populates auth-url.map and the spoa-hub frontend wiring (set-var, send-spoe-group, deny rule). Mirrors test-nginx-ingress-external-auth but uses the haproxy-ingress.github.io/auth-url annotation flavour."
     extraContext:
       spoaHub:
         enabled: true
@@ -3039,11 +2997,7 @@ validationTests:
     # Same prerequisite as the other external-auth tests — needs the
     # spoa-hub library loaded so auth-signin.map is defined.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      HAProxy-Ingress auth-signin annotation makes auth failures
-      redirect (302) to the configured sign-in URL instead of
-      returning 401. Mirrors test-nginx-ingress-external-auth-signin
-      but uses the haproxy-ingress.github.io/auth-signin annotation.
+    description: "HAProxy-Ingress auth-signin annotation makes auth failures redirect (302) to the configured sign-in URL instead of returning 401. Mirrors test-nginx-ingress-external-auth-signin but uses the haproxy-ingress.github.io/auth-signin annotation."
     extraContext:
       spoaHub:
         enabled: true
@@ -3110,11 +3064,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-method:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      haproxy-ingress.github.io/auth-method annotation populates
-      auth-method.map and threads through the SPOE check-auth
-      message's `method` arg. Mirrors test-nginx-ingress-external-auth-method
-      but uses the haproxy-ingress.github.io/* annotation prefix.
+    description: "haproxy-ingress.github.io/auth-method annotation populates auth-method.map and threads through the SPOE check-auth message's `method` arg. Mirrors test-nginx-ingress-external-auth-method but uses the haproxy-ingress.github.io/* annotation prefix."
     extraContext:
       spoaHub:
         enabled: true
@@ -3349,12 +3299,7 @@ validationTests:
     # and need identical auth-deny semantics regardless of which one
     # the request landed in.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      auth-url + auth-headers-fail annotations must emit the deny 401
-      AND the http-after-response set-header directives into BOTH the
-      HTTP/1.1 and H2C frontends. Regression for the asymmetric render
-      that broke TestIngressAuthHeadersFail on MR !974 pipeline
-      2546220821.
+    description: "auth-url + auth-headers-fail annotations must emit the deny 401 AND the http-after-response set-header directives into BOTH the HTTP/1.1 and H2C frontends. Regression for the asymmetric render that broke TestIngressAuthHeadersFail on MR !974 pipeline 2546220821."
     extraContext:
       spoaHub:
         enabled: true
@@ -3503,28 +3448,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-headers-request-overlaps-builtin:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Regression test for the HAProxy 3.0 SPOE-frame-parse failure
-      that surfaced as pipeline 2549047264's test-e2e [3.0]
-      TestIngressAuthHeadersFail. An Ingress annotation
-      `auth-headers-request: X-Forwarded-Uri` overlaps a header the
-      base spoe-hub library already captures (`hdr_x_forwarded_uri=
-      req.hdr(X-Forwarded-Uri)` is hardcoded in
-      spoe-message-check-auth-body). The auto-extend snippet was
-      supposed to dedup against those built-ins, but the pre-seeded
-      `seen` map used dash-form keys (`x-forwarded-uri`) while the
-      check uses underscore-form (`replace(toLower(name), "-", "_")`
-      → `x_forwarded_uri`). The two never matched and the SPOE args
-      line ended up with the header captured twice.
-
-      HAProxy 3.0's SPOE notify-frame parser rejects duplicate arg
-      names (spop returns "Failed to parse frame: Tag"); 3.1+ tolerates
-      them silently, which is why only the 3.0 e2e shard failed.
-
-      Fixture: an Ingress with `auth-headers-request: X-Forwarded-Uri`
-      (one of the six built-in captures). The rendered spoe.conf args
-      line must mention `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)`
-      exactly ONCE.
+    description: "Regression test for the HAProxy 3.0 SPOE-frame-parse failure that surfaced as pipeline 2549047264's test-e2e [3.0] TestIngressAuthHeadersFail. An Ingress annotation `auth-headers-request: X-Forwarded-Uri` overlaps a header the base spoe-hub library already captures (`hdr_x_forwarded_uri= req.hdr(X-Forwarded-Uri)` is hardcoded in spoe-message-check-auth-body). The auto-extend snippet was supposed to dedup against those built-ins, but the pre-seeded `seen` map used dash-form keys (`x-forwarded-uri`) while the check uses underscore-form (`replace(toLower(name), \"-\", \"_\")` → `x_forwarded_uri`). The two never matched and the SPOE args line ended up with the header captured twice. HAProxy 3.0's SPOE notify-frame parser rejects duplicate arg names (spop returns \"Failed to parse frame: Tag\"); 3.1+ tolerates them silently, which is why only the 3.0 e2e shard failed. Fixture: an Ingress with `auth-headers-request: X-Forwarded-Uri` (one of the six built-in captures). The rendered spoe.conf args line must mention `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)` exactly ONCE."
     extraContext:
       spoaHub:
         enabled: true
@@ -3574,10 +3498,7 @@ validationTests:
       - type: not_contains
         target: file:spoe.conf
         pattern: "hdr_x_forwarded_uri=req\\.hdr\\(X-Forwarded-Uri\\).*hdr_x_forwarded_uri=req\\.hdr"
-        description: |
-          The built-in `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)`
-          arg must not be re-emitted by the auto-extend snippet —
-          duplicate arg names trip HAProxy 3.0's SPOE frame parser.
+        description: "The built-in `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)` arg must not be re-emitted by the auto-extend snippet — duplicate arg names trip HAProxy 3.0's SPOE frame parser."
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_forwarded_uri=req\\.hdr\\(X-Forwarded-Uri\\)"
@@ -3719,11 +3640,7 @@ validationTests:
 
   test-haproxy-ingress-external-auth-hostless-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Ingress with haproxy-ingress.github.io/auth-url AND a host-less
-      rule must render successfully — auth-url.map is keyed by
-      <ns>/<name>, so the host dimension is irrelevant. The previous
-      fail-loud guard is obsolete.
+    description: "Ingress with haproxy-ingress.github.io/auth-url AND a host-less rule must render successfully — auth-url.map is keyed by <ns>/<name>, so the host dimension is irrelevant. The previous fail-loud guard is obsolete."
     extraContext:
       spoaHub:
         enabled: true
@@ -3772,10 +3689,7 @@ validationTests:
       - type: contains
         target: map:auth-url.map
         pattern: '(?m)^default/hi-hostless https://auth\.example/check$'
-        description: |
-          auth-url.map must contain the host-less Ingress keyed by
-          <ns>/<name>.
-
+        description: "auth-url.map must contain the host-less Ingress keyed by <ns>/<name>."
   # ============================================================================
   # WAF (Coraza, via SPOA hub): /waf + /waf-mode annotation tests
   # ============================================================================
@@ -3783,11 +3697,7 @@ validationTests:
   test-haproxy-ingress-waf-deny-default:
     # Needs the spoa-hub library loaded (the dispatch wiring lives there).
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Single Ingress with haproxy-ingress.github.io/waf: "modsecurity"
-      and no /waf-mode populates haproxy-ingress-waf.map with mode
-      "deny" and produces conditional dispatch in the rendered HAProxy
-      config (set-var → map lookup → send-spoe-group if found).
+    description: "Single Ingress with haproxy-ingress.github.io/waf: \"modsecurity\" and no /waf-mode populates haproxy-ingress-waf.map with mode \"deny\" and produces conditional dispatch in the rendered HAProxy config (set-var → map lookup → send-spoe-group if found)."
     extraContext:
       spoaHub:
         enabled: true
@@ -3856,12 +3766,7 @@ validationTests:
 
   test-haproxy-ingress-waf-detect-mode:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Ingress with haproxy-ingress.github.io/waf: "modsecurity" and
-      /waf-mode: "detect" populates the map with "detect", which the
-      frontend deny rule then short-circuits via the detect-mode
-      predicate. The SPOE check still dispatches so observability vars
-      get populated for shadow-mode rollouts.
+    description: "Ingress with haproxy-ingress.github.io/waf: \"modsecurity\" and /waf-mode: \"detect\" populates the map with \"detect\", which the frontend deny rule then short-circuits via the detect-mode predicate. The SPOE check still dispatches so observability vars get populated for shadow-mode rollouts."
     extraContext:
       spoaHub:
         enabled: true
@@ -3919,10 +3824,7 @@ validationTests:
 
   test-haproxy-ingress-waf-invalid-value-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Ingress with /waf set to anything other than "modsecurity" must
-      fail-loud at render time. Only "modsecurity" is supported by the
-      bundled coraza plugin; silent ignore would hide an operator typo.
+    description: "Ingress with /waf set to anything other than \"modsecurity\" must fail-loud at render time. Only \"modsecurity\" is supported by the bundled coraza plugin; silent ignore would hide an operator typo."
     extraContext:
       spoaHub:
         enabled: true
@@ -3975,11 +3877,7 @@ validationTests:
 
   test-haproxy-ingress-waf-mode-invalid-value-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      /waf-mode set to anything other than "deny" or "detect" must
-      fail-loud. Quietly defaulting to "deny" would mask a typo
-      ("detec" / "detct" → silent enforcement when the operator
-      intended shadow mode).
+    description: "/waf-mode set to anything other than \"deny\" or \"detect\" must fail-loud. Quietly defaulting to \"deny\" would mask a typo (\"detec\" / \"detct\" → silent enforcement when the operator intended shadow mode)."
     extraContext:
       spoaHub:
         enabled: true
@@ -4033,11 +3931,7 @@ validationTests:
 
   test-haproxy-ingress-waf-mode-without-waf-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      /waf-mode set without /waf is an operator error (no-op upstream)
-      and must fail-loud. Silently ignoring would let an operator who
-      meant to enable WAF in detect mode silently run with no WAF at
-      all.
+    description: "/waf-mode set without /waf is an operator error (no-op upstream) and must fail-loud. Silently ignoring would let an operator who meant to enable WAF in detect mode silently run with no WAF at all."
     extraContext:
       spoaHub:
         enabled: true
@@ -4090,11 +3984,7 @@ validationTests:
 
   test-haproxy-ingress-waf-host-less-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: |
-      Ingress with /waf set AND a rule without a host must render
-      successfully — the WAF map is now keyed by <ns>/<name>, so the
-      host dimension is irrelevant. The previous fail-loud guard is
-      obsolete.
+    description: "Ingress with /waf set AND a rule without a host must render successfully — the WAF map is now keyed by <ns>/<name>, so the host dimension is irrelevant. The previous fail-loud guard is obsolete."
     extraContext:
       spoaHub:
         enabled: true
@@ -4140,10 +4030,7 @@ validationTests:
       - type: contains
         target: map:haproxy-ingress-waf.map
         pattern: '(?m)^default/hi-waf-hostless deny$'
-        description: |
-          haproxy-ingress-waf.map must contain the host-less Ingress keyed
-          by <ns>/<name> with the default deny mode.
-
+        description: "haproxy-ingress-waf.map must contain the host-less Ingress keyed by <ns>/<name> with the default deny mode."
   test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and haproxy-ingress.github.io/waf are present in the cluster, nginx's \"global rules + always dispatch\" wins for dispatch (the send-spoe-group..."

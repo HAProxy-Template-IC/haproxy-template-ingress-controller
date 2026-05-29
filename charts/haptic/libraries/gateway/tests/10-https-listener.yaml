@@ -117,11 +117,7 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "bind .*:443.*ssl crt"
-        description: |
-          Chart-static `bind *:443 ssl crt-list` MUST be omitted —
-          HAProxy must not answer TLS handshakes when no listener
-          accepts traffic on this port (the conformance contract).
-
+        description: "Chart-static `bind *:443 ssl crt-list` MUST be omitted — HAProxy must not answer TLS handshakes when no listener accepts traffic on this port (the conformance contract)."
   test-gateway-https-listener-mtls-unresolved-ca-status-conditions:
     description: "Status-side companion of test-gateway-https-listener-mtls- unresolved-ca-no-bind. The chart-side fix for GatewayFrontendInvalidDefaultClientCertificateValidation requires BOTH:"
     fixtures:
@@ -174,34 +170,22 @@ validationTests:
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"reason":"InvalidCACertificateRef"'
-        description: |
-          Listener's ResolvedRefs condition must surface
-          InvalidCACertificateRef as the failure reason.
+        description: "Listener's ResolvedRefs condition must surface InvalidCACertificateRef as the failure reason."
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"reason":"NoValidCACertificate"'
-        description: |
-          Listener's Accepted condition must surface
-          NoValidCACertificate so attached routes know the
-          listener is unusable.
+        description: "Listener's Accepted condition must surface NoValidCACertificate so attached routes know the listener is unusable."
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"status":"False"'
-        description: |
-          At least one listener-level condition flipped to
-          False (covers both ResolvedRefs and Accepted).
+        description: "At least one listener-level condition flipped to False (covers both ResolvedRefs and Accepted)."
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"name":"https"'
         description: The status entry targets the offending listener by name
 
   test-gateway-https-listener-with-valid-cert-binds:
-    description: |
-      The companion test to the invalid-cert case: a Gateway HTTPS
-      listener at httpsPort with a resolvable cert sets gf
-      ["bindHTTPSDefault"]=true via features-150-gateway-bind, the
-      chart-static `bind *:443 ssl crt-list ...` renders normally,
-      and `frontend https` exists.
+    description: "The companion test to the invalid-cert case: a Gateway HTTPS listener at httpsPort with a resolvable cert sets gf [\"bindHTTPSDefault\"]=true via features-150-gateway-bind, the chart-static `bind *:443 ssl crt-list ...` renders normally, and `frontend https` exists."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -534,9 +518,7 @@ validationTests:
         description: HAProxy config must be valid with frontend.default.mode=AllowInsecureFallback
 
   test-gateway-insecure-frontend-validation-mode-per-port:
-    description: |
-      Gateway with spec.tls.frontend.perPort[*].tls.validation.mode=AllowInsecureFallback
-      compiles cleanly (GEP-91 perPort override path).
+    description: "Gateway with spec.tls.frontend.perPort[*].tls.validation.mode=AllowInsecureFallback compiles cleanly (GEP-91 perPort override path)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       controllerNamespace: "haptic-system"
@@ -705,20 +687,12 @@ validationTests:
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: '\[ocsp-update on ca-file [^ ]+ verify required\]'
-        description: |
-          Default crt-list line includes ca-file + verify directives
-          drawn from the gateway-level frontend.default.validation
-          config — covers TLS handshakes whose SNI doesn't match a
-          specific SNI line.
-
+        description: "Default crt-list line includes ca-file + verify directives drawn from the gateway-level frontend.default.validation config — covers TLS handshakes whose SNI doesn't match a specific SNI line."
       # SNI line for second-example.org carries the per-port override CA.
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'verify required\] second-example\.org'
-        description: |
-          The SNI line for `second-example.org` (the only listener with
-          a hostname) carries the per-port override CA's verify clause.
-
+        description: "The SNI line for `second-example.org` (the only listener with a hostname) carries the per-port override CA's verify clause."
   test-gateway-frontend-client-cert-insecure-fallback-default-line:
     description: "Variant of the previous test with mode: AllowInsecureFallback. Same Gateway shape (two listeners, one per port; default vs. perPort validation), but with InsecureFallback set on both."
     fixtures:
@@ -856,18 +830,11 @@ validationTests:
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: '\[ocsp-update on ca-file [^ ]+ verify optional\]'
-        description: |
-          Default crt-list line uses `verify optional` for
-          AllowInsecureFallback (HAProxy still asks for a cert but
-          accepts handshakes without one).
-
+        description: "Default crt-list line uses `verify optional` for AllowInsecureFallback (HAProxy still asks for a cert but accepts handshakes without one)."
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'verify optional\] second-example\.org'
-        description: |
-          Per-port SNI line also carries `verify optional` when the
-          per-port override mode is AllowInsecureFallback.
-
+        description: "Per-port SNI line also carries `verify optional` when the per-port override mode is AllowInsecureFallback."
   test-gateway-backend-client-cert-shape:
     description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
@@ -1002,23 +969,12 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'ssl ca-file [^ ]+ verify required sni str\(abc\.example\.com\) verifyhost abc\.example\.com'
-        description: |
-          Backend default-server line carries the BackendTLSPolicy CA +
-          verify required + SNI + verifyhost (the upstream-side TLS).
-
+        description: "Backend default-server line carries the BackendTLSPolicy CA + verify required + SNI + verifyhost (the upstream-side TLS)."
       - type: contains
         target: haproxy.cfg
         pattern: 'crt gw-clientcert-gateway-conformance-infra-gateway-tls-backend-client-certificate\.pem'
-        description: |
-          Backend default-server line also carries the Gateway-level
-          client cert (`crt /path/to/gw-clientcert-<gw>.pem`) so HAProxy
-          presents that cert when connecting upstream — closes the
-          GatewayBackendClientCertificateFeature conformance test's
-          "configured client certificate should be presented" assertion.
-
+        description: "Backend default-server line also carries the Gateway-level client cert (`crt /path/to/gw-clientcert-<gw>.pem`) so HAProxy presents that cert when connecting upstream — closes the GatewayBackendClientCertificateFeature conformance test's \"configured client certificate should be presented\" assertion."
       - type: contains
         target: "status:gateway-conformance-infra/gateway-tls-backend-client-certificate:rendered"
         pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'
-        description: |
-          Gateway top-level ResolvedRefs=True/ResolvedRefs (the backend
-          clientCertificateRef Secret resolved cleanly).
+        description: "Gateway top-level ResolvedRefs=True/ResolvedRefs (the backend clientCertificateRef Secret resolved cleanly)."

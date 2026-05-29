@@ -1,11 +1,6 @@
 validationTests:
   test-listenerset-default-not-allowed:
-    description: |
-      ListenerSet attached to a Gateway without `spec.allowedListeners`
-      must be rejected with Accepted=False/NotAllowed and
-      Programmed=False/NotAllowed (default-deny per Gateway API spec
-      for SupportListenerSet). Pins the
-      ListenerSetDefaultNotAllowed conformance test's status assertions.
+    description: "ListenerSet attached to a Gateway without `spec.allowedListeners` must be rejected with Accepted=False/NotAllowed and Programmed=False/NotAllowed (default-deny per Gateway API spec for SupportListenerSet). Pins the ListenerSetDefaultNotAllowed conformance test's status assertions."
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -82,10 +77,7 @@ validationTests:
         description: HAProxy config must be valid
 
   test-listenerset-allowed-different-namespace-denied:
-    description: |
-      Same=`allowedListeners.namespaces.from=Same` but the ListenerSet
-      lives in a different namespace from the parent Gateway → must be
-      rejected with Accepted=False/NotAllowed.
+    description: "Same=`allowedListeners.namespaces.from=Same` but the ListenerSet lives in a different namespace from the parent Gateway → must be rejected with Accepted=False/NotAllowed."
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -319,10 +311,7 @@ validationTests:
         description: Cross-ns ListenerSet WITH RG must be bound
 
   test-listenerset-listener-multi-port-bind:
-    description: |
-      Multi-port HTTP bind must include ports declared on accepted
-      ListenerSet listeners (in addition to the Gateway's own listeners).
-      Pins the routing-layer side of F2 listener-merge integration.
+    description: "Multi-port HTTP bind must include ports declared on accepted ListenerSet listeners (in addition to the Gateway's own listeners). Pins the routing-layer side of F2 listener-merge integration."
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -454,11 +443,7 @@ validationTests:
         description: Non-conflicting LS listener's hostname claim must be present
 
   test-listenerset-protocol-conflict:
-    description: |
-      Two listeners on the same port but different protocols → the later
-      one (LS) loses to the earlier one (Gateway). The conflicting LS
-      listener doesn't bind. Pins ListenerSetProtocolConflict status
-      assertion.
+    description: "Two listeners on the same port but different protocols → the later one (LS) loses to the earlier one (Gateway). The conflicting LS listener doesn't bind. Pins ListenerSetProtocolConflict status assertion."
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -505,15 +490,7 @@ validationTests:
         description: Non-conflicting LS HTTP listener at port 9000 must be bound
 
   test-listenerset-allowed-routes-supported-kinds:
-    description: |
-      ListenerSet listener with `allowedRoutes.kinds: [HTTPRoute]` on a
-      TLS-protocol listener must report `supportedKinds: []` and
-      `ResolvedRefs=False/InvalidRouteKinds` — HTTPRoute is not in the
-      chart's TLS-protocol default route-kinds set ([TLSRoute]), so the
-      requested kind doesn't intersect. Mirrors the upstream
-      ListenerSetAllowedRoutesSupportedKinds conformance fixture
-      (gateway-with-listener-sets-test-supported-route-kinds Gateway +
-      listenerset-test-allowed-routes-supported-kinds ListenerSet).
+    description: "ListenerSet listener with `allowedRoutes.kinds: [HTTPRoute]` on a TLS-protocol listener must report `supportedKinds: []` and `ResolvedRefs=False/InvalidRouteKinds` — HTTPRoute is not in the chart's TLS-protocol default route-kinds set ([TLSRoute]), so the requested kind doesn't intersect. Mirrors the upstream ListenerSetAllowedRoutesSupportedKinds conformance fixture (gateway-with-listener-sets-test-supported-route-kinds Gateway + listenerset-test-allowed-routes-supported-kinds ListenerSet)."
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -562,52 +539,17 @@ validationTests:
       - type: contains
         target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
         pattern: '"name":"listener-set-listener-allowed-routes-tls-only","supportedKinds":\[\]'
-        description: |
-          TLS-protocol listener with allowedRoutes.kinds=[HTTPRoute]
-          must report empty supportedKinds (HTTPRoute is not in the
-          TLS protocol's default-kinds set [TLSRoute] — the
-          intersection is empty).
-
+        description: "TLS-protocol listener with allowedRoutes.kinds=[HTTPRoute] must report empty supportedKinds (HTTPRoute is not in the TLS protocol's default-kinds set [TLSRoute] — the intersection is empty)."
       - type: contains
         target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
         pattern: '"reason":"InvalidRouteKinds"'
-        description: |
-          ResolvedRefs goes False with reason InvalidRouteKinds because
-          at least one requested kind (HTTPRoute) couldn't be matched
-          against the listener's protocol-defaults.
-
+        description: "ResolvedRefs goes False with reason InvalidRouteKinds because at least one requested kind (HTTPRoute) couldn't be matched against the listener's protocol-defaults."
       - type: not_contains
         target: "status:default/listenerset-test-allowed-routes-supported-kinds:rendered"
         pattern: '"name":"listener-set-listener-allowed-routes-tls-only"[^}]*"TLSRoute"'
-        description: |
-          Specifically must NOT report TLSRoute as supported on this
-          listener. The listener requested only HTTPRoute via
-          allowedRoutes.kinds; even though TLS protocol's defaults
-          include TLSRoute, the user-specified filter narrows the set
-          (per Gateway-API spec: "When unspecified, defaults to the
-          values supported by Gateway. When specified, the listener
-          will support only the kinds in allowedRoutes.kinds that are
-          also supported by the Gateway").
-
+        description: "Specifically must NOT report TLSRoute as supported on this listener. The listener requested only HTTPRoute via allowedRoutes.kinds; even though TLS protocol's defaults include TLSRoute, the user-specified filter narrows the set (per Gateway-API spec: \"When unspecified, defaults to the values supported by Gateway. When specified, the listener will support only the kinds in allowedRoutes.kinds that are also supported by the Gateway\")."
   test-listenerset-rendered-variant-includes-programmed-observed-generation:
-    description: |
-      The ListenerSet CRD defaults `status.conditions` to include both
-      Accepted and Programmed entries with `observedGeneration` unset
-      (so it serialises as 0). If the chart's rendered-variant patch
-      only writes Accepted, the API-server-defaulted Programmed entry
-      sticks around with observedGeneration=0 until the deployed-variant
-      patch lands after the data plane reload. The Gateway-API
-      conformance helper `ListenerSetListenersMustHaveConditions`
-      fast-fails (`return false, err`) the first time it observes any
-      top-level condition whose observedGeneration is behind the LS's
-      metadata.generation — so a poll between the rendered and deployed
-      applies sees Programmed (generation 0) and fails the test
-      immediately. The rendered variant must therefore emit
-      lsProgrammedCond too, so the very first apply bumps Programmed's
-      observedGeneration to the current generation. Pinned by the
-      upstream ListenerSetAllowedRoutesNamespaces conformance test —
-      this fixture mirrors the LS shape that test creates so the patch
-      payload is asserted directly here without waiting on a kind run.
+    description: "The ListenerSet CRD defaults `status.conditions` to include both Accepted and Programmed entries with `observedGeneration` unset (so it serialises as 0). If the chart's rendered-variant patch only writes Accepted, the API-server-defaulted Programmed entry sticks around with observedGeneration=0 until the deployed-variant patch lands after the data plane reload. The Gateway-API conformance helper `ListenerSetListenersMustHaveConditions` fast-fails (`return false, err`) the first time it observes any top-level condition whose observedGeneration is behind the LS's metadata.generation — so a poll between the rendered and deployed applies sees Programmed (generation 0) and fails the test immediately. The rendered variant must therefore emit lsProgrammedCond too, so the very first apply bumps Programmed's observedGeneration to the current generation. Pinned by the upstream ListenerSetAllowedRoutesNamespaces conformance test — this fixture mirrors the LS shape that test creates so the patch payload is asserted directly here without waiting on a kind run."
     fixtures:
       gateways:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -655,13 +597,7 @@ validationTests:
       - type: contains
         target: "status:default/ls-rendered-variant-programmed-observed-gen:rendered"
         pattern: '\{[^}]*"observedGeneration":1[^}]*"type":"Programmed"[^}]*\}'
-        description: |
-          Rendered-variant patch must include the top-level Programmed
-          condition with observedGeneration=1 — otherwise the CRD
-          default Programmed entry (observedGeneration=0) survives
-          until the deployed-variant patch lands and fails the
-          conformance helper's fast observedGeneration check.
-
+        description: "Rendered-variant patch must include the top-level Programmed condition with observedGeneration=1 — otherwise the CRD default Programmed entry (observedGeneration=0) survives until the deployed-variant patch lands and fails the conformance helper's fast observedGeneration check."
       - type: contains
         target: "status:default/ls-rendered-variant-programmed-observed-gen:rendered"
         pattern: '\{[^}]*"observedGeneration":1[^}]*"type":"Accepted"[^}]*\}'
@@ -670,7 +606,4 @@ validationTests:
       - type: contains
         target: "status:default/ls-rendered-variant-programmed-observed-gen:deployed"
         pattern: '\{[^}]*"observedGeneration":1[^}]*"type":"Programmed"[^}]*\}'
-        description: |
-          Deployed-variant patch still owns the post-reload Programmed
-          condition with current observedGeneration — adding it to the
-          rendered variant must not remove it here.
+        description: "Deployed-variant patch still owns the post-reload Programmed condition with current observedGeneration — adding it to the rendered variant must not remove it here."

@@ -707,14 +707,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_rule_id\\) str\\(default_grpc-route_0\\) if !\\{ var\\(txn\\.gw_rule_id\\) -m found \\} \\{ var\\(req\\.gw_routeId\\) -m str \"default_grpc-route_0\" \\} \\{ path \"/com\\.example\\.Service/GetData\" \\}"
-        description: |
-          GRPCRoute method match emits a `path` ACL — the URL path
-          fetch — not `req.hdr(:path)`. HAProxy's `req.hdr` targets
-          regular HTTP/1.1 headers and yields an empty string for the
-          HTTP/2 `:path` pseudo-header, so a `req.hdr(:path)` matcher
-          would silently never fire and gRPC traffic would fall
-          through to default_backend (404).
-
+        description: "GRPCRoute method match emits a `path` ACL — the URL path fetch — not `req.hdr(:path)`. HAProxy's `req.hdr` targets regular HTTP/1.1 headers and yields an empty string for the HTTP/2 `:path` pseudo-header, so a `req.hdr(:path)` matcher would silently never fire and gRPC traffic would fall through to default_backend (404)."
   test-gateway-http-listener-isolation:
     description: Multi-listener Gateway routes are isolated per-listener (mirrors GatewayHTTPListenerIsolation)
     fixtures:
@@ -874,12 +867,7 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^/empty-hostname GW_ROUTE_ID:http:default_attaches-to-empty-hostname_0$"
-        description: |
-          Case 1 (Host=bar.com Path=/empty-hostname): catch-all
-          listener owns this path → 200. Routing chain: host_match
-          falls through to "" (catch-all), path-prefix-exact.map
-          lookup keyed by "" + "/empty-hostname" hits the entry.
-
+        description: "Case 1 (Host=bar.com Path=/empty-hostname): catch-all listener owns this path → 200. Routing chain: host_match falls through to \"\" (catch-all), path-prefix-exact.map lookup keyed by \"\" + \"/empty-hostname\" hits the entry."
       # Cases targeting the wildcard-example-com listener
       # (Host=bar.example.com):
       #   5: /empty-hostname            → 404
@@ -888,12 +876,7 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^\\.example\\.com/wildcard-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-example-com_0$"
-        description: |
-          Case 6 (Host=bar.example.com Path=/wildcard-example-com):
-          regsub strips "bar" → host_match=".example.com", path
-          lookup keyed ".example.com/wildcard-example-com" hits the
-          path-prefix-exact entry → 200.
-
+        description: "Case 6 (Host=bar.example.com Path=/wildcard-example-com): regsub strips \"bar\" → host_match=\".example.com\", path lookup keyed \".example.com/wildcard-example-com\" hits the path-prefix-exact entry → 200."
       # Cases targeting the wildcard-foo-example-com listener
       # (Host=bar.foo.example.com):
       #   9-10: /empty-hostname / /wildcard-example-com → 404
@@ -902,12 +885,7 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^\\.foo\\.example\\.com/wildcard-foo-example-com GW_ROUTE_ID:http:default_attaches-to-wildcard-foo-example-com_0$"
-        description: |
-          Case 11 (Host=bar.foo.example.com Path=/wildcard-foo-example-com):
-          regsub strips "bar" → host_match=".foo.example.com",
-          path lookup keyed ".foo.example.com/wildcard-foo-example-com"
-          hits the path-prefix-exact entry → 200.
-
+        description: "Case 11 (Host=bar.foo.example.com Path=/wildcard-foo-example-com): regsub strips \"bar\" → host_match=\".foo.example.com\", path lookup keyed \".foo.example.com/wildcard-foo-example-com\" hits the path-prefix-exact entry → 200."
       # Cases targeting the abc-foo-example-com listener
       # (Host=abc.foo.example.com — exact match in host.map):
       #   13-15: /empty-hostname / /wildcard-* / /wildcard-foo-* → 404
@@ -915,12 +893,7 @@ validationTests:
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/abc-foo-example-com GW_ROUTE_ID:http:default_attaches-to-abc-foo-example-com_0$"
-        description: |
-          Case 16 (Host=abc.foo.example.com Path=/abc-foo-example-com):
-          host.map exact match → host_match="abc.foo.example.com",
-          path lookup keyed "abc.foo.example.com/abc-foo-example-com"
-          hits the path-prefix-exact entry → 200.
-
+        description: "Case 16 (Host=abc.foo.example.com Path=/abc-foo-example-com): host.map exact match → host_match=\"abc.foo.example.com\", path lookup keyed \"abc.foo.example.com/abc-foo-example-com\" hits the path-prefix-exact entry → 200."
       # The 12 404-expected cases are pinned implicitly: a 404
       # case (e.g. Case 13: Host=abc.foo.example.com,
       # Path=/empty-hostname) routes to the abc-foo-example-com
@@ -932,14 +905,7 @@ validationTests:
       - type: not_contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^abc\\.foo\\.example\\.com/empty-hostname GW_ROUTE_ID"
-        description: |
-          Case 13 fails-open assertion: there is NO
-          "abc.foo.example.com/empty-hostname" entry; the request
-          falls through to the default backend → 404 as the
-          conformance test expects (the empty-hostname listener's
-          route doesn't bleed into the abc-foo-example-com
-          listener).
-
+        description: "Case 13 fails-open assertion: there is NO \"abc.foo.example.com/empty-hostname\" entry; the request falls through to the default backend → 404 as the conformance test expects (the empty-hostname listener's route doesn't bleed into the abc-foo-example-com listener)."
   test-gateway-listener-isolation-hostname-intersection:
     description: Catch-all listener routes drop hostnames more-specifically claimed by sibling listeners
     fixtures:
@@ -1039,26 +1005,7 @@ validationTests:
   # / conformance suite.
 
   test-httproute-weight-zero-explicit-excludes:
-    description: |
-      Regression test for issue #52 (typegen tristate): a backendRef
-      with explicit weight=0 means "exclude this backend" per the
-      Gateway-API spec, NOT "default to 1". Pipeline 2549047264's
-      gateway-conformance 3/4 HTTPRouteWeight test failed because the
-      typed Gateway struct couldn't distinguish "weight absent"
-      (defaults to 1) from "weight explicitly 0" (excluded) — both
-      read back as int64(0) from the typed struct, the chart's
-      `dig(backendRef, "weight") | fallback(1)` defaulted both to 1,
-      and the weighted-multi-backend.map ended up with one entry for
-      the should-be-excluded backend.
-
-      Fix: typegen now emits `*int64` for optional integer fields
-      (typebootstrap.needsTristatePointer). json.Unmarshal stores nil
-      for missing keys and a non-nil pointer to the explicit value
-      otherwise; digStructField dereferences transparently so chart
-      code keeps reading plain int64 via dig().
-
-      Fixture: weights 70 / 30 / 0 — the third backend MUST NOT
-      appear in the rendered weighted-multi-backend.map.
+    description: "Regression test for issue #52 (typegen tristate): a backendRef with explicit weight=0 means \"exclude this backend\" per the Gateway-API spec, NOT \"default to 1\". Pipeline 2549047264's gateway-conformance 3/4 HTTPRouteWeight test failed because the typed Gateway struct couldn't distinguish \"weight absent\" (defaults to 1) from \"weight explicitly 0\" (excluded) — both read back as int64(0) from the typed struct, the chart's `dig(backendRef, \"weight\") | fallback(1)` defaulted both to 1, and the weighted-multi-backend.map ended up with one entry for the should-be-excluded backend. Fix: typegen now emits `*int64` for optional integer fields (typebootstrap.needsTristatePointer). json.Unmarshal stores nil for missing keys and a non-nil pointer to the explicit value otherwise; digStructField dereferences transparently so chart code keeps reading plain int64 via dig(). Fixture: weights 70 / 30 / 0 — the third backend MUST NOT appear in the rendered weighted-multi-backend.map."
     fixtures:
       services:
         - apiVersion: v1
@@ -1112,8 +1059,4 @@ validationTests:
       - type: not_contains
         target: map:weighted-multi-backend.map
         pattern: "app-v3-excluded"
-        description: |
-          Backend with weight=0 MUST NOT appear (Gateway-API spec:
-          weight=0 means excluded). Before the issue #52 fix the
-          typed struct couldn't distinguish weight=0 from weight
-          unset and a single phantom entry leaked into the map.
+        description: "Backend with weight=0 MUST NOT appear (Gateway-API spec: weight=0 means excluded). Before the issue #52 fix the typed struct couldn't distinguish weight=0 from weight unset and a single phantom entry leaked into the map."

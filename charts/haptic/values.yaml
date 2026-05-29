@@ -80,79 +80,39 @@ controller:
     healthz: 8080 # Health check endpoint
     metrics: 9090 # Prometheus metrics endpoint
     webhook: 9443 # Admission webhook HTTPS endpoint
-  # Template libraries
-  # Control which predefined template libraries to include.
-  # Merge order is fixed by templates/_libraries.tpl (haptic.mergeLibraries) and
-  # documented in docs/template-libraries.md; later libraries override earlier
-  # ones, and user-provided controller.config always wins.
-  # Each library can define its own watched resources (conditionally included when enabled)
+  # Template libraries. Merge order is fixed in templates/_libraries.tpl
+  # (haptic.mergeLibraries) and documented in docs/template-libraries.md.
+  # Per-library reference docs live under docs/libraries/.
   templateLibraries:
-    # Base library: Resource-agnostic core configuration
-    # Provides generic HAProxy configuration, error pages, and plugin orchestration
-    # Uses resource_* patterns to discover and include resource-specific implementations
+    # Resource-agnostic core. Defines the haproxyConfig template and the
+    # render_glob extension points the other libraries plug into.
     base:
       enabled: true
-    # SSL library: SSL/TLS infrastructure and certificate management
-    # Provides HTTPS frontend, SSL passthrough infrastructure, and default certificate loading
-    # Watched resources: secrets (for SSL certificate loading)
-    # Features: HTTPS termination, SSL passthrough (coordinated with resource libraries)
+    # HTTPS frontend + SSL passthrough infrastructure + default cert loading.
     ssl:
       enabled: true
-    # Ingress library: Kubernetes Ingress resource support
-    # Provides routing and backend management for networking.k8s.io/v1 Ingress resources
-    # Implements resource_ingress_* plugin interface (backends, maps, routing logic)
-    # Watched resources: ingresses (filtered by spec.ingressClassName)
+    # networking.k8s.io/v1 Ingress support.
     ingress:
       enabled: true
-    # Gateway library: Kubernetes Gateway API support
-    # Provides routing for gateway.networking.k8s.io/v1 resources (HTTPRoute, GRPCRoute)
-    # Implements resource_gateway_* plugin interface
-    # Watched resources: httproutes, grpcroutes
-    # Features: Path matching, header matching, traffic splitting, host-based routing
+    # gateway.networking.k8s.io/v1 support (HTTPRoute, GRPCRoute, TLSRoute).
     gateway:
       enabled: true
-    # Ingress-annotations-compat scaffold: shared HAProxy output macros
-    # consumed by the three Ingress vendor annotation libraries below
-    # (haproxytech / haproxy-ingress / nginx-ingress). Sits at hierarchy
-    # level 2.5 — currently provides macros for the SSL-passthrough
-    # annotation scan and CIDR allow/deny ACL emission. Ingress-scoped:
-    # a vendor library operating on a non-Ingress CRD writes its own
-    # equivalents. See docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+    # Shared Ingress-scoped macros for the vendor annotation libraries
+    # below (level 2.5). See docs/adr/0003-annotation-compat-scaffold-level-2-5.md.
     ingressAnnotationsCompat:
       enabled: true
-    # HAProxyTech library: haproxy.org/* annotation compatibility
-    # Covers basic auth, allow/deny lists, SSL redirect, SSL passthrough, CORS,
-    # cookie persistence, server SSL/mTLS, timeouts, health checks, rate
-    # limiting, header rewriting, and per-backend snippet injection. See
-    # docs/libraries/haproxytech.md for the per-annotation reference.
-    # Reference: https://github.com/haproxytech/kubernetes-ingress
+    # haproxy.org/* annotation compatibility.
     haproxytech:
       enabled: true
-    # HAProxy Ingress library: haproxy-ingress.github.io/* annotation compatibility
-    # Covers the same feature areas as the haproxytech library plus path-type
-    # (regex), HSTS, external auth (via the SPOA hub), and incoming client
-    # mTLS — see docs/libraries/haproxy-ingress.md for the per-annotation
-    # reference (~50+ annotations).
-    # Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
+    # haproxy-ingress.github.io/* annotation compatibility.
     haproxyIngress:
       enabled: true
-    # Nginx Ingress library: nginx.ingress.kubernetes.io annotation compatibility
-    # Provides migration support from nginx-ingress to HAPTIC
-    # Supports: timeouts, load balancing, SSL redirect, CORS, auth, rate limiting, canary, and more
-    # Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/
+    # nginx.ingress.kubernetes.io/* annotation compatibility (migration aid).
     nginxIngress:
       enabled: false
-    # SPOA hub library: HAProxy-side wiring for the bundled spoa-hub sidecar
-    # Provides the `backend spoa-hub` block, the `filter spoe engine` directive
-    # in frontends, and registers the `spoe.conf` general file so vendor
-    # annotation libraries can plug into the SPOE message lifecycle (e.g.
-    # nginx-ingress / haproxy-ingress wire `auth-url` / `auth-signin` /
-    # `auth-method` annotations through the external-auth plugin).
-    # Reads its config from templatingSettings.extraContext.spoaHub, which the
-    # chart populates from the values.yaml `spoaHub:` block.
-    # Auto-enabled by haptic.mergeLibraries when the sidecar is on (any plugin
-    # enabled, or `spoaHub.enabled: true` set explicitly). Set to true here to
-    # force-include the library even with no plugins enabled.
+    # HAProxy-side wiring for the bundled spoa-hub sidecar. Auto-enabled by
+    # haptic.mergeLibraries when any spoaHub.plugins.* is on; flip to true
+    # here only to force-load the library with no plugins enabled.
     spoaHub:
       enabled: false
   # Pluggable validator sidecar
@@ -204,25 +164,9 @@ controller:
     # MMDB databases for maxmind, OWASP CRS rule files for coraza).
     # Same shape as spoaHub.extraVolumeMounts.
     extraVolumeMounts: []
-    # Entries appended to spec.validators of the rendered
-    # HAProxyTemplateConfig. Each entry has the CRD shape:
-    #   - name: <unique-name>
-    #     socketPath: <unix socket path the controller dials>
-    #     files: ["<glob>", ...]   # file paths the controller routes here
-    #     timeoutMs: <int>          # optional, default 5000
-    #     maxConnections: <int>     # optional, default 4
-    # Operators wire their own globs based on which template snippets
-    # produce validate-able file content. The chart does NOT auto-inject
-    # an entry — supplying a default with empty `files` would fail the
-    # CRD's MinItems=1 validation, and the right glob list depends on
-    # which plugins the operator actually rendered output for.
-    # Example (after enabling coraza in spoaHub.plugins and a template
-    # library that emits per-Ingress rule files):
-    #   entries:
-    #     - name: spoa-hub
-    #       socketPath: /var/run/haptic-validators/spoa-hub.sock
-    #       files:
-    #         - "general/coraza/*.conf"
+    # Entries appended to spec.validators (CRD shape: name, socketPath,
+    # files glob list, optional timeoutMs/maxConnections). Operators wire
+    # their own globs per enabled plugin. See docs/configuration/validators.md.
     entries: []
   # Default SSL Certificate Configuration
   # A default SSL certificate is required for HTTPS traffic.
@@ -444,29 +388,14 @@ controller:
       sslCertsDir: /etc/haproxy/ssl
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
-      # Throttle for republishing the rendered config as the HAProxyCfg
-      # observability CRD. Reduces etcd write pressure during endpoint churn.
-      # Default: 30s
-      # configPublishInterval: 30s
-      # Maximum time the Dataplane sync waits for HAProxy to report a
-      # graceful reload as completed. Set higher than the Dataplane API's
-      # own reload-delay setting.
-      # Default: 10s
-      # reloadVerificationTimeout: 10s
-      # Overall timeout for one Dataplane sync to a single HAProxy endpoint
-      # (parse + diff + transactional apply + optional reload-verify).
-      # Default: 2m
-      # syncTimeout: 2m
-      # Max retries the VersionAdapter performs on HTTP 409 transaction
-      # commit conflicts. 0 disables retries.
-      # Default: 3
-      # syncMaxRetries: 3
-    # Frontend path-matching order
-    # "default" — Exact > Regex > Prefix-exact > Prefix (de-facto standard)
-    # "last"    — Exact > Prefix-exact > Prefix > Regex (performance-first;
-    #             evaluates faster matchers before regex)
-    # The chart swaps in the regex-last variant of the frontend-routing-logic
-    # snippet at Helm load time when this is set to "last".
+      # Optional sync knobs (uncomment to override):
+      # configPublishInterval: 30s     # observability CRD republish throttle
+      # reloadVerificationTimeout: 10s # wait for HAProxy reload to complete
+      # syncTimeout: 2m                # per-endpoint sync budget
+      # syncMaxRetries: 3              # HTTP 409 commit-conflict retries
+    # Frontend path-matching order. "default" = Exact>Regex>Prefix-exact>
+    # Prefix. "last" = Exact>Prefix-exact>Prefix>Regex (faster matchers
+    # first; swaps in the regex-last frontend-routing-logic variant).
     routing:
       regexMatchOrder: default
     # Runtime log level override (optional)
@@ -551,67 +480,14 @@ controller:
         store: on-demand
         indexBy: ["metadata.namespace", "metadata.name"]
         #
-        # You can add custom watched resources here or override library-defined resources
-        # Example - Watch ConfigMaps:
-        # configmaps:
-        #   apiVersion: v1
-        #   resources: configmaps
-        #   indexBy: ["metadata.namespace", "metadata.name"]
-        #   # Optional: per-resource debounce override; defaults to 5s.
-        #   # Useful to react faster on routes (e.g. "500ms" on httproutes for canary work)
-        #   # On EndpointSlices, keep the default — a longer debounce
-        #   # delays Pod removal from the HAProxy backend by that
-        #   # window, so traffic keeps landing on Terminating Pods.
-        #   debounceInterval: ""
-    # Template customization
-    # The sections below (templateSnippets, maps, files, haproxyConfig, validationTests)
-    # are provided by template libraries (see controller.templateLibraries above).
-    # You can override or extend library templates by defining them here.
-    # User-provided values always take precedence over library defaults.
-    #
-    # HAProxy global and defaults sections are composed from overridable snippets:
-    #   global-settings-100-logging    log directive
-    #   global-settings-200-process    daemon, nbthread
-    #   global-settings-300-paths      default-path, crt-base
-    #   global-settings-400-ssl        tune.ssl.default-dh-param
-    #   defaults-settings-100-options  mode, log, option directives
-    #   defaults-settings-200-balance  balance algorithm
-    #   defaults-settings-300-timeouts timeout connect/client/server
-    #   defaults-settings-400-errorfiles errorfile directives
-    #
-    # Override a snippet to replace its content, or add new ones to extend:
-    #
-    # Example - Custom timeouts:
-    # templateSnippets:
-    #   defaults-settings-300-timeouts:
-    #     template: |
-    #       timeout connect 5000
-    #       timeout client 30000
-    #       timeout server 30000
-    #       timeout tunnel 600000
-    #       timeout http-request 10000
-    #
-    # Example - Add global tuning directives:
-    # templateSnippets:
-    #   global-settings-500-tuning:
-    #     template: |
-    #       tune.bufsize 262144
-    #       no-memory-trimming
-    #
-    # Example - Add a custom map:
-    # maps:
-    #   custom.map:
-    #     template: |
-    #       # Your custom map content
-    #
-    # Example - Add custom validation tests:
-    # validationTests:
-    #   test-custom-feature:
-    #     description: Test custom feature
-    #     fixtures:
-    #       ingresses: [...]
-    #     assertions: [...]
-  # Uncomment and customize as needed:
+        # Add custom or override library-defined entries. Per-resource
+        # debounceInterval is supported (default 5s). See
+        # docs/configuration/watched-resources.md.
+    # Override or extend the library-provided templateSnippets / maps /
+    # files / haproxyConfig / validationTests sections by defining the
+    # same keys here — user-provided values always win.
+    # Snippet name conventions and override examples:
+    # docs/configuration/template-overrides.md.
   # templateSnippets:
   # maps:
   # files:
@@ -885,25 +761,8 @@ podDisruptionBudget:
   # Only one of minAvailable or maxUnavailable should be set
   minAvailable: 1
   # maxUnavailable: 1
-# Prometheus Metrics and Monitoring
-# The controller exposes 31 Prometheus metrics on port 9090. Authoritative list
-# lives in pkg/controller/metrics/metrics.go; a representative subset is
-# asserted by pkg/controller/metrics.TestMetrics_AllMetricsRegistered. Coverage groups:
-# - Reconciliation pipeline: cycles, errors, duration, queue wait
-# - Deployment: operations, errors, duration
-# - Validation: totals, errors, embedded test pass/fail/duration
-# - Resources: per-type counts (includes haproxy-pods + every watched type)
-# - Event bus: subscribers, publishes, drop counters (by subscriber/critical/observability)
-# - Webhook: admission requests, validation results, cert expiry + rotations
-# - Leader election: is-leader gauge, transitions, time-as-leader
-# - Parser cache: hits and misses
-# - Build info: version/commit/Go-version static gauge
-#
-# Metrics endpoint: http://<pod-ip>:9090/metrics
-# Access via: kubectl port-forward pod/<controller-pod> 9090:9090
-#
-# For complete metric definitions and queries, see:
-# pkg/controller/metrics/README.md in the repository
+# Prometheus metrics + ServiceMonitor / PodMonitor / PrometheusRule
+# wiring. Metric catalogue: pkg/controller/metrics/README.md.
 monitoring:
   # ServiceMonitor for Prometheus Operator
   # Creates a ServiceMonitor resource that configures Prometheus to scrape metrics
@@ -1003,29 +862,10 @@ haproxy:
   # Enable HAProxy deployment as part of this chart
   # Set to false to use external HAProxy pods (bring your own HAProxy)
   enabled: true
-  # HAProxy container ports
-  # These are the ports HAProxy listens on inside the container
-  # Services and NetworkPolicies reference these by name or value
-  #
-  # IMPORTANT: http/https default to the literal Gateway-listener-port
-  # numbers (80/443) so that Gateway listeners on arbitrary ports never
-  # collide with the chart-static internal binds. With http=8080 a
-  # Gateway listener on port 8080 (legitimate per spec) shares HAProxy's
-  # `bind *:8080` with the chart-static http frontend (Service NAT
-  # routes Service port 80 → containerPort 8080), making `dst_port`
-  # ambiguous between the two logical listeners. Binding on the literal
-  # numbers eliminates the collision: each Gateway listener port owns
-  # its own bind and dst_port is unambiguous. The HAProxy container has
-  # `CAP_NET_BIND_SERVICE` granted (see haproxy-deployment.yaml) so
-  # privileged ports work as non-root.
-  #
-  # Plumbing: the chart automatically threads these values into the
-  # template engine via `extraContext.httpPort` / `extraContext.httpsPort`
-  # so HAProxy's bind directives (in base/ssl) and the redirect-filter's
-  # well-known-port omit logic (in gateway) all reference the same
-  # values. Override via this knob — no need to also set
-  # `controller.config.templatingSettings.extraContext.httpPort`
-  # explicitly.
+  # HAProxy container ports. http/https default to the literal Gateway
+  # listener-port numbers (80/443) so Gateway listeners on those ports
+  # never collide with the chart-static internal binds. Rationale +
+  # plumbing detail: docs/development/haproxy-ports.md.
   ports:
     http: 80 # HTTP frontend
     https: 443 # HTTPS frontend
@@ -1093,35 +933,9 @@ haproxy:
       port: 8404
       # targetPort: stats (set in template)
       nodePort: 30404
-    # Additional Service ports. Operators using haptic without
-    # Gateway API (e.g. an Ingress-only deployment that also exposes
-    # a raw TCP frontend via a custom haproxyConfig snippet, or
-    # anything else not modelled by an Ingress / Gateway /
-    # ListenerSet) declare them here. The chart concatenates these
-    # entries with the http/https/stats triple above into a single
-    # `extraContext.haproxyService.ports` list that the
-    # `k8sResources.haproxy-service` template iterates verbatim.
-    #
-    # Each entry mirrors a `corev1.ServicePort` shape: at minimum
-    # `name` + `port`. `targetPort` defaults to `port`, `protocol`
-    # defaults to TCP. `nodePort` only applies when
-    # `haproxy.service.type` is `NodePort` or `LoadBalancer`.
-    # Names must be RFC 1123 labels and unique across all Service
-    # ports (including the http/https/stats entries above and any
-    # Gateway-derived `gw-*` entries the controller adds at render
-    # time).
-    #
-    # To drop a default entry (e.g. expose only http on the
-    # Service), set the matching `haproxy.service.<name>.port` to
-    # 0 — entries with port 0 are filtered out at chart-render time.
-    #
-    # Example — exposing a raw TCP frontend on port 5432:
-    #   extraPorts:
-    #     - name: postgres
-    #       port: 5432
-    #       targetPort: 5432
-    #       protocol: TCP
-    #       nodePort: 30432
+    # Additional Service ports (corev1.ServicePort shape). Concatenated
+    # with the http/https/stats entries above. Set http/https/stats.port=0
+    # to drop a default entry. See docs/configuration/haproxy-service.md.
     extraPorts: []
   # Dataplane API sidecar configuration
   dataplane:
@@ -1183,23 +997,14 @@ haproxy:
     # Formula: (number of backends + number of servers) * safety margin.
     # Default 50000 supports ~40k servers with headroom.
     maxObjects: 50000
-    # Size limit for the /dev/shm emptyDir volume (medium: Memory).
-    # Auto-calculated from maxObjects if not set (~4KB per object with 10% margin).
-    # For 50,000 objects the auto-calculated size is 215Mi.
-    # Override this if you have specific memory constraints.
-    # Note: counts against the pod's memory limit (SizeMemoryBackedVolumes).
+    # /dev/shm emptyDir size cap (medium: Memory). Auto-calculated from
+    # maxObjects (~4KB/object +10%). Counts against pod memory limit.
     # shmSizeLimit: "256Mi"
-  # Number of HAProxy threads (nbthread global directive).
-  # Default (key absent): auto-calculated from CPU requests (ceil of CPU cores, minimum 1).
-  # Set to 0 to disable the nbthread directive entirely (HAProxy uses its built-in default).
-  # Set to a positive integer to override the auto-calculation.
-  # Supports Helm templating: nbthread: "{{ mul 2 (.Values.someValue | int) }}"
+  # HAProxy nbthread. Auto-derived from CPU requests when unset.
+  # Set 0 to omit the directive; positive int to override. Supports tpl.
   # nbthread: 4
-  #
-  # Resource limits and requests for HAProxy containers
-  # Default configuration uses Guaranteed QoS for memory (requests = limits) for eviction protection.
-  # No CPU limit is set to avoid throttling during traffic spikes.
-  # HAProxy uses ~32KB per connection (16KB each direction).
+  # Guaranteed-QoS memory (requests=limits) for eviction protection. No
+  # CPU limit to avoid throttling. HAProxy uses ~32KB per connection.
   resources:
     requests:
       cpu: 250m
@@ -1341,56 +1146,13 @@ haproxy:
     # Triggers (required when keda.enabled is true)
     # See: https://keda.sh/docs/2.17/scalers/
     triggers: []
-    # Example: Scale based on CPU/memory utilization of the haproxy container
-    # (use containerName to target only haproxy, excluding sidecar overhead)
-    # - type: cpu
-    #   metricType: Utilization
-    #   metadata:
-    #     value: "80"
-    #     containerName: "haproxy"
-    # - type: memory
-    #   metricType: Utilization
-    #   metadata:
-    #     value: "80"
-    #     containerName: "haproxy"
-    # Example: Scale based on HAProxy connection count
-    # - type: prometheus
-    #   metadata:
-    #     serverAddress: http://prometheus:9090
-    #     metricName: haproxy_connections_total
-    #     threshold: "1000"
-    #     query: sum(rate(haproxy_server_connections_total[1m]))
-    # Example: Scale based on HTTP requests per second
-    # - type: prometheus
-    #   metadata:
-    #     serverAddress: http://prometheus:9090
-    #     metricName: haproxy_http_requests_per_second
-    #     threshold: "500"
-    #     query: sum(rate(haproxy_http_requests_total[1m]))
-    # Example: Time-based scaling for business hours
-    # - type: cron
-    #   metadata:
-    #     timezone: UTC
-    #     start: 0 8 * * 1-5
-    #     end: 0 18 * * 1-5
-    #     desiredReplicas: "5"
-  # Initial HAProxy bootstrap config rendered into the haproxy-config ConfigMap.
-  # This is the config HAProxy starts with on pod boot. The controller replaces
-  # it via the Dataplane API on its first reconcile, so the bootstrap only
-  # matters during the seconds between pod start and controller handoff (and on
-  # pod restart before the controller reconciles again).
-  #
-  # The string is processed through Helm's tpl, so chart helpers
-  # ({{ include "haptic.haproxy.nbthread" . }}) and value references
-  # ({{ .Values.haproxy.ports.stats }}) are available. To customise the
-  # bootstrap, copy this default into your values file and edit it.
-  #
-  # !!! warning "Preserve the /ready 503 until controller takeover"
-  #     The default returns 503 on /ready so the pod stays NotReady until the
-  #     controller pushes its first real config (which then defines the
-  #     production /ready handler). An override that returns 200 on /ready
-  #     will let the Service route traffic to HAProxy before any backends
-  #     exist — clients will see 404s.
+    # CPU/memory/prometheus/cron trigger examples:
+    # docs/configuration/keda-autoscaling.md.
+  # HAProxy bootstrap config (replaced by the controller on first
+  # reconcile). Processed via Helm `tpl` — chart helpers and value refs
+  # are available. CRITICAL: keep the /ready 503 below; returning 200
+  # before controller takeover routes traffic to an empty backend set
+  # (clients see 404s).
   initialConfig: |
     global
         log stdout len 4096 local0 info
@@ -1417,67 +1179,19 @@ haproxy:
 
     backend default_backend
         http-request return status 404
-  # NetworkPolicy configuration for HAProxy loadbalancer pods
-  # This controls network access to/from HAProxy pods that handle incoming traffic
-  #
-  # !!! warning "CNI Plugin Requirement"
-  #     NetworkPolicies require a CNI plugin that supports NetworkPolicy enforcement
-  #     (e.g., Calico, Cilium, Weave Net). Clusters without a compatible CNI plugin
-  #     will ignore NetworkPolicy resources. kind clusters use kindnet by default,
-  #     which does NOT support NetworkPolicy. To test NetworkPolicies with kind,
-  #     install Calico or Cilium.
-  #
-  # !!! warning "Deny-All Prevention"
-  #     Setting allowExternal: false with empty allowedSources will cause
-  #     Helm installation to fail with a validation error. This prevents
-  #     accidental creation of a deny-all policy that blocks all traffic.
-  #     Either set allowExternal: true OR provide allowedSources.
+  # NetworkPolicy for HAProxy loadbalancer pods. Requires a CNI that
+  # enforces NetworkPolicy (Calico/Cilium/etc — kindnet does not).
+  # allowExternal=false with empty allowedSources fails install by
+  # design (blocks accidental deny-all). See docs/configuration/network-policy.md.
   networkPolicy:
-    # Enable NetworkPolicy for HAProxy loadbalancer pods
-    # Enable in production to restrict network access
     enabled: true
-    # Allow external traffic (from any source including internet)
-    # true: Allow traffic from any source (required for public-facing ingress with NodePort/LoadBalancer)
-    # false: Only allow from specific sources defined in allowedSources
-    #
-    # When true, the NetworkPolicy omits the 'from' clause for HTTP/HTTPS ingress rules,
-    # which is the standard Kubernetes pattern for allowing traffic from any source.
+    # true = omit `from`, accept any source (public ingress pattern).
+    # false = restrict to allowedSources (must be non-empty).
     allowExternal: true
-    # When allowExternal: false, define allowed traffic sources
-    # REQUIRED if allowExternal is false - empty list will cause Helm validation error
-    #
-    # Example - allow only from specific namespaces:
-    # allowedSources:
-    #   - namespaceSelector:
-    #       matchLabels:
-    #         kubernetes.io/metadata.name: frontend
-    #     podSelector:
-    #       matchLabels:
-    #         app: nginx
-    #
-    # Example - allow from any pod in specific namespaces:
-    # allowedSources:
-    #   - namespaceSelector:
-    #       matchLabels:
-    #         environment: production
-    #
-    # Example - allow from specific IP ranges:
-    # allowedSources:
-    #   - ipBlock:
-    #       cidr: 10.0.0.0/8
-    #       except:
-    #         - 10.1.0.0/16
+    # namespaceSelector / podSelector / ipBlock entries; required when
+    # allowExternal=false.
     allowedSources: []
-    # Additional custom ingress rules
-    # These are added to the NetworkPolicy as-is
-    # Use this for advanced scenarios not covered by the default rules
-    # Example:
-    # extraIngress:
-    #   - from:
-    #       - ipBlock:
-    #           cidr: 192.168.1.0/24
-    #     ports:
-    #       - port: 8080
+    # Extra ingress rules merged into the NetworkPolicy as-is.
     extraIngress: []
     # Additional custom egress rules
     # Default egress rules allow DNS and backend service connections
@@ -1584,27 +1298,11 @@ networkPolicy:
       from:
         - podSelector: {}
           # Port is defined in haproxy.ports.dataplane (referenced in template)
-    # Allow Kubernetes API server to call webhook.
-    #
-    # IMPORTANT: this rule uses ipBlock — NOT podSelector/namespaceSelector.
-    # The kube-apiserver runs as a host-network process (k3s embedded, kubeadm
-    # static-pod control plane, etc.) and the connection it opens to the
-    # webhook pod has no pod identity from the CNI's NetworkPolicy
-    # enforcement layer. `podSelector: {}` and `namespaceSelector: {}` only
-    # match pod-network traffic and silently exclude the apiserver, which
-    # surfaces in the cluster as `failed to call webhook ...
-    # 502 Bad Gateway` from `proxy error ... while dialing <pod-ip>:9443`.
-    #
-    # Both `0.0.0.0/0` and `::/0` are present because NetworkPolicy
-    # `ipBlock.cidr` is single-family — IPv4 catch-all does not cover
-    # IPv6 apiserver dials on dual-stack or IPv6-only clusters. The
-    # outbound `egress.kubernetesApi` mirrors this shape for the same
-    # reason.
-    #
-    # Operators who need a tighter rule for production replace the
-    # defaults with narrower CIDRs (e.g. the node network) — the webhook
-    # still enforces TLS + Kubernetes AdmissionReview shape, so
-    # source-address exposure is not the security boundary.
+    # Webhook ingress from kube-apiserver. Uses ipBlock (NOT pod/ns
+    # selector — apiserver runs host-network on most distros and would
+    # silently fail the selector match → 502s). Both v4 and v6 catch-alls
+    # present because ipBlock.cidr is single-family.
+    # docs/configuration/network-policy.md#webhook for tightening.
     webhook:
       enabled: true # Automatically enabled when webhook.enabled is true
       from:
@@ -1615,30 +1313,9 @@ networkPolicy:
     # Additional custom ingress rules
     additionalRules: []
 
-# Extra Kubernetes resources to deploy alongside the chart.
-# Supports Helm templating ({{ .Release.Name }}, {{ .Release.Namespace }}, etc.)
-#
-# Can be a list (replaced wholesale when merging values files):
-#   extraDeploy:
-#     - apiVersion: monitoring.coreos.com/v1
-#       kind: ServiceMonitor
-#       metadata:
-#         name: "{{ .Release.Name }}-haproxy-stats"
-#
-# Or a dict (keys are merge identifiers, composable across values files):
-#   extraDeploy:
-#     service-monitor:
-#       apiVersion: monitoring.coreos.com/v1
-#       kind: ServiceMonitor
-#       metadata:
-#         name: "{{ .Release.Name }}-haproxy-stats"
-#       spec:
-#         selector:
-#           matchLabels:
-#             app.kubernetes.io/instance: "{{ .Release.Name }}"
-#         endpoints:
-#           - port: stats
-#             path: /metrics
+# Extra Kubernetes resources to deploy alongside the chart. List or
+# dict; supports Helm templating. See docs/configuration/extra-deploy.md
+# for the list-vs-dict merge semantics + examples.
 # SPOA hub sidecar
 # Bundles the haproxy-spoa-hub binary plus seven plugin shared libraries
 # (coraza, external-auth, fingerprinting, maxmind, mirror, otel, sso-auth) inside
@@ -1674,17 +1351,10 @@ spoaHub:
     workerThreads: null
     maxConnections: 1000
     blockingThreadKeepAliveSecs: 30
-    # Prometheus /metrics endpoint. Loopback by default so the surface
-    # is cluster-internal; the haproxy container shares the pod's
-    # network namespace with the sidecar and can scrape from there
-    # (the ServiceMonitor target / a kubectl-exec wget will both
-    # reach it). Plugin-level counters (plugin_<plugin>_dispatches_total,
-    # dispatch_dropped_total, dispatch_outcomes_total, etc.) only appear
-    # once this is set — leaving it null disables the endpoint entirely
-    # which blinds the conformance failure capture (issue #45). Override
-    # to "" to opt out; override to "0.0.0.0:9095" to expose the
-    # endpoint outside the pod (do not do this lightly — the bundled
-    # counters carry per-Ingress / per-route cardinality).
+    # Prometheus /metrics endpoint. Loopback by default; the haproxy
+    # container scrapes via the shared pod netns. Set to "" to disable
+    # (loses per-plugin counters); set to "0.0.0.0:9095" to expose
+    # cluster-wide (carries per-Ingress/route cardinality — careful).
     metricsAddr: "127.0.0.1:9095"
 
   # HAProxy-side wiring. The chart surfaces these into
@@ -1707,82 +1377,26 @@ spoaHub:
     poolPurgeDelay: 30s
 
   # Static floor for the mirror plugin's SPOE message slot count.
-  #
-  # The chart-rendered SPOA-hub TOML enumerates `mirror-1`..`mirror-N`
-  # under the mirror plugin's `messages` list (and the haproxy-side SPOE
-  # config declares matching `mirror-N-group` groups). N is normally the
-  # max-mirrors-per-route count across all observed HTTPRoutes; this
-  # value floors that count so the rendered list is never shorter than
-  # mirrorStaticMinSlots.
-  #
-  # Why the floor exists (issue #47): the SPOA hub sidecar reloads the
-  # plugin on TOML file changes, and rebuilds plugin handler state from
-  # scratch on every reload. If a transient render emits messages=[]
-  # (e.g. between two conformance subtests, or any reconciliation that
-  # races an HTTPRoute observation), the mirror plugin loses its handler
-  # for `mirror-1` until the next reload. Every in-flight SPOE NOTIFY
-  # for `send-spoe-group mirror-1-group` then hits the SPOA hub's "no
-  # plugins registered for message" path and gets silently dropped.
-  # Conformance test traffic spikes during this window have been
-  # observed as ~50% mirror-rate flakes on the gateway-api conformance
-  # shards.
-  #
-  # 4 is enough for the upstream Gateway-API conformance suite
-  # (TLSRouteHostnameIntersection and HTTPRouteRequestMultipleMirrors
-  # both top out at 2 mirrors per rule). Workloads with > 4 mirrors per
-  # HTTPRoute rule are still covered by the chart's dynamic extension,
-  # but slots beyond `mirrorStaticMinSlots` remain exposed to the same
-  # shrink-on-reload race. Bump this value if you regularly run a
-  # workload with > 4 mirrors per rule and observe the flake.
+  # The rendered slot count is `max(max-mirrors-per-route, this value)`.
+  # Floor exists (issue #47) to keep handler state across SPOA-hub reloads
+  # when transient renders drop slots. Bump if > 4 mirrors per HTTPRoute
+  # and you observe drop-flakes. See docs/spoa-hub/mirror-slots.md.
   mirrorStaticMinSlots: 4
 
   # Plugins. Each entry has chart-managed lifecycle keys (enabled, timeoutMs,
-  # messages, dependsOn) plus a free-form `params:` TOML string blob spliced
-  # verbatim under the hub's `[plugins.params]` table. The chart never parses
-  # `params:` — see each upstream plugin's README for the schema and copy
-  # the recommended block in.
-  #
-  # `enabled` is templatable: the default value is a `tpl`-evaluated string
-  # so a plugin can auto-enable itself when the template libraries that
-  # rely on it are turned on. Operator override is via a literal bool
-  # (`--set spoaHub.plugins.<X>.enabled=true|false`); explicit bools always
-  # win over the templated default. `external-auth` already wires this up
-  # — its default is `'{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'`
-  # so flipping the nginx-ingress library on consumes
-  # `nginx.ingress.kubernetes.io/auth-url` annotations without a second
-  # toggle. Other plugins keep `'{{ false }}'` until a similar wire-up
-  # exists for the libraries that need them.
-  #
-  # IMPORTANT: `params:` is rendered *inside* the `[plugins.params]` scope,
-  # so any bare table header in it (e.g. `[instrumentation]`) would close
-  # that scope and be parsed as a top-level table. Use either:
-  #   - dotted keys for nested values:  `instrumentation.name = "..."`
-  #   - or fully-qualified headers:     `[plugins.params.instrumentation]`
-  # Bare `[xxx]` headers inside `params:` will break the plugin's config.
+  # messages, dependsOn) plus a free-form `params:` TOML string spliced
+  # verbatim under `[plugins.params]`. `enabled` is `tpl`-evaluated so
+  # libraries that need a plugin can auto-enable it; explicit `--set ...
+  # .enabled=<bool>` always wins. Inside `params:` use dotted keys or the
+  # full `[plugins.params.<x>]` header — a bare `[x]` closes the scope.
+  # See docs/spoa-hub/plugin-config.md for per-plugin schemas.
   plugins:
     coraza:
-      # Auto-enabled when EITHER nginx-ingress OR haproxy-ingress library
-      # is on. nginx-ingress feeds coraza via `nginx.ingress.kubernetes.io/modsecurity-snippet`
-      # (rule text appended to the global `directives = """..."""` block,
-      # always-dispatch). haproxy-ingress feeds it via `haproxy-ingress.github.io/waf`
-      # + `/waf-mode` (path-scoped opt-in dispatch via a single
-      # `haproxy-ingress-waf.map` whose value is the resolved enforcement
-      # mode for the path — `deny` or `detect`).
-      # haproxy-ingress is on by default in HAPTIC, so flipping coraza
-      # on by default with it adds the spoa-hub sidecar (~50 MB) to the
-      # baseline footprint — accepted in exchange for richer chart
-      # defaults: any user setting `/waf: modsecurity` on an Ingress
-      # gets the WAF wired without a second toggle.
-      # haproxytech (haproxy.org/*) has no public WAF annotation; nothing
-      # to OR. Operators wanting cluster-wide WAF without either ingress
-      # library can `--set spoaHub.plugins.coraza.enabled=true`.
-      #
-      # NOTE: this block configures the WAF service (rules, body
-      # limits, plugin runtime knobs — all rendered into the spoa-hub
-      # TOML). The dispatch decision — i.e., which HTTP requests
-      # HAProxy ships to the WAF — lives separately under
-      # `controller.templatingSettings.extraContext.coraza.dispatch`,
-      # because it changes the rendered haproxy.cfg, not the hub TOML.
+      # Auto-enabled when nginx-ingress OR haproxy-ingress is on. Configures
+      # the WAF *service* (rules, limits, runtime knobs → spoa-hub TOML);
+      # dispatch lives separately under
+      # `controller.templatingSettings.extraContext.coraza.dispatch`.
+      # See docs/spoa-hub/plugins/coraza.md.
       enabled: '{{ or .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled }}'
       timeoutMs: 15
       messages: ["check-request"]
@@ -1896,42 +1510,9 @@ spoaHub:
       # name), so the list length is purely a chart-render concern.
       messages: ["mirror"]
       dependsOn: []
-      # Plugin runtime knobs (rendered into the spoa-hub TOML's
-      # [plugins.params] block for the mirror plugin). All fields map
-      # 1:1 to the plugin's PluginConfig struct
-      # (haproxy-spoa-hub-plugin-mirror/src/config.rs):
-      #   - timeout_ms: per-request HTTP timeout to the mirror backend.
-      #   - max_body_bytes: cap on reassembled body bytes. Bodies larger
-      #     than this are truncated and the mirror request is still sent.
-      #   - request_concurrency: bounded in-flight dispatches across all
-      #     targets. When saturated, excess dispatches are dropped (not
-      #     queued) — keeps the SPOA worker thread responsive under burst
-      #     load. Defaults match the plugin's own defaults; raise for
-      #     high-fan-out workloads.
-      #   - verify_tls: validate TLS certs for HTTPS mirror targets.
-      #     Defaults to false because the Gateway API conformance suite
-      #     uses self-signed in-cluster certs. Once BackendTLSPolicy-style
-      #     trust material is threaded through to the mirror plugin a
-      #     future minor release will flip this default to true.
-      #   - worker_threads (v0.2.0+, omitted by default): tokio worker
-      #     thread count. Omitting the line lets the plugin auto-derive
-      #     from std::thread::available_parallelism() (cgroup-aware on
-      #     Linux 5.16+ / glibc 2.36+, so a sidecar with cpu:100m sees
-      #     its limit rather than the host's CPU count) and floor at 2.
-      #     The floor of 2 is load-bearing — a single-worker tokio
-      #     runtime self-deadlocks under load because reqwest's
-      #     connection driver and per-request dispatch tasks would have
-      #     to share one worker. Operators who want predictable
-      #     resource accounting can pin a specific count by uncommenting
-      #     the line below; the default scales with the available
-      #     parallelism so high-load multi-core deployments aren't
-      #     bottlenecked on the pre-v0.2.0 hardcoded `worker_threads=2`.
-      #   - pool_max_idle_per_host (v0.2.0+, default 32): bounds the
-      #     per-target idle-connection pool. reqwest's default is
-      #     unbounded, which is fine for a single hot target but
-      #     accumulates unbounded idle keep-alive sockets in a
-      #     long-running plugin mirroring to many distinct backends.
-      #     0 disables idle reuse entirely.
+      # Mirror plugin runtime knobs (1:1 with PluginConfig in
+      # haproxy-spoa-hub-plugin-mirror/src/config.rs). Per-field reference:
+      # docs/spoa-hub/plugins/mirror.md.
       params: |
         # timeout_ms: omitted on purpose. The plugin default (60_000ms in
         # v0.5.0+) is the safety net for SPOE messages that don't carry
