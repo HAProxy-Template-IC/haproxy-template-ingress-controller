@@ -108,7 +108,13 @@ templateSnippets:
           - features-100-haproxytech-ssl-redirect
       -#}
 
-      {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once #}
+      {# Initialize SSL data structures atomically - ComputeIfAbsent ensures this runs exactly once.
+         Only keys that ssl.yaml itself owns (produces or consumes) are seeded
+         here. Keys owned end-to-end by another library (e.g. the gateway
+         library's mtlsBlockedListeners / gatewayListenerMTLSConfig, populated
+         and read entirely within gateway/*) self-seed in their producing
+         snippet — ssl.yaml is Level 1 and must not know about Level 2+
+         shared-state keys. #}
       {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any {
         return map[string]any{
           "sslPassthroughBackends":      []any{},
@@ -119,14 +125,6 @@ templateSnippets:
           "bindHTTPSDefault":            false,
           "needHTTPFrontend":            false,
           "needHTTPSFrontend":           false,
-          // mtlsBlockedListeners + gatewayListenerMTLSConfig are
-          // populated by features-110-gateway-frontend-mtls (in the
-          // gateway library) and consumed by phases 2+4. Seeding
-          // them here means downstream readers can do bare
-          // gf["mtlsBlockedListeners"] / gf["gatewayListenerMTLSConfig"]
-          // without a coalesce-with-empty-map dance.
-          "mtlsBlockedListeners":        map[string]any{},
-          "gatewayListenerMTLSConfig":   map[string]any{},
         }
       }) -%}
       {# Ensure fields exist (in case globalFeatures was created elsewhere without these fields) #}
@@ -142,12 +140,6 @@ templateSnippets:
       {%- end -%}
       {%- if gf["clientCertVerifyHosts"] == nil -%}
         {%- gf["clientCertVerifyHosts"] = map[string]any{} -%}
-      {%- end -%}
-      {%- if gf["mtlsBlockedListeners"] == nil -%}
-        {%- gf["mtlsBlockedListeners"] = map[string]any{} -%}
-      {%- end -%}
-      {%- if gf["gatewayListenerMTLSConfig"] == nil -%}
-        {%- gf["gatewayListenerMTLSConfig"] = map[string]any{} -%}
       {%- end -%}
       {#- Bind-decision flags: each resource library's features-100-* phase
           OR's its contribution into these. Reading happens later in
