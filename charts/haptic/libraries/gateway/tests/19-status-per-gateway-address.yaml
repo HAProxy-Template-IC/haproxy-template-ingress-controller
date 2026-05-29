@@ -1,19 +1,6 @@
 validationTests:
   test-gateway-status-per-gateway-address:
-    description: |
-      Phase 5 of the per-Gateway-IP refactor. Verifies that the
-      Gateway status patcher writes the per-Gateway LoadBalancer
-      Service's realized LB IP into Gateway.Status.Addresses
-      instead of the chart's main LB IP.
-
-      Two Gateway shapes:
-        * `gw-https-allocated`: HTTPS listener, no spec.addresses,
-          per-Gateway Service `gw-default-gw-https-allocated`
-          allocated `203.0.113.50` by MetalLB → status.addresses
-          MUST contain that IP, NOT the chart's main IP.
-        * `gw-http-only`: HTTP-only Gateway → no per-Gateway Service
-          → status.addresses keeps using the chart's main LB IP
-          (existing behaviour, untouched by phase 5).
+    description: "Phase 5 of the per-Gateway-IP refactor. Verifies that the Gateway status patcher writes the per-Gateway LoadBalancer Service's realized LB IP into Gateway.Status.Addresses instead of the chart's main LB IP. Two Gateway shapes:   * `gw-https-allocated`: HTTPS listener, no spec.addresses,     per-Gateway Service `gw-default-gw-https-allocated`     allocated `203.0.113.50` by MetalLB → status.addresses     MUST contain that IP, NOT the chart's main IP.   * `gw-http-only`: HTTP-only Gateway → no per-Gateway Service     → status.addresses keeps using the chart's main LB IP     (existing behaviour, untouched by phase 5)."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       controllerNamespace: "haptic-system"
@@ -110,27 +97,13 @@ validationTests:
       - type: contains
         target: 'status:default/gw-https-allocated:rendered'
         pattern: '"value":"203\.0\.113\.50"'
-        description: |
-          Gateway with HTTPS listener and per-Gateway Service gets
-          that Service's LB IP (203.0.113.50) in status.addresses,
-          NOT the chart's main LB IP.
-
+        description: "Gateway with HTTPS listener and per-Gateway Service gets that Service's LB IP (203.0.113.50) in status.addresses, NOT the chart's main LB IP."
       - type: not_contains
         target: 'status:default/gw-https-allocated:rendered'
         pattern: '"value":"10\.0\.0\.1"'
-        description: |
-          Chart's main LB IP (10.0.0.1) MUST NOT appear in
-          status.addresses for HTTPS Gateways with their own per-
-          Gateway Service. Without phase 5, the patcher would have
-          left the main IP in place — that's the leak phase 5
-          closes.
-
+        description: "Chart's main LB IP (10.0.0.1) MUST NOT appear in status.addresses for HTTPS Gateways with their own per- Gateway Service. Without phase 5, the patcher would have left the main IP in place — that's the leak phase 5 closes."
       # gw-http-only: status.addresses keeps the chart's main LB IP.
       - type: contains
         target: 'status:default/gw-http-only:rendered'
         pattern: '"value":"10\.0\.0\.1"'
-        description: |
-          HTTP-only Gateway (no per-Gateway Service from phase 3)
-          retains the existing behaviour: status.addresses contains
-          the chart's main LB IP. Phase 5 only kicks in for HTTPS
-          Gateways.
+        description: "HTTP-only Gateway (no per-Gateway Service from phase 3) retains the existing behaviour: status.addresses contains the chart's main LB IP. Phase 5 only kicks in for HTTPS Gateways."

@@ -841,10 +841,7 @@ maps:
 
 validationTests:
   test-spoa-hub-disabled:
-    description: |
-      With extraContext.spoaHub.enabled=false (or missing), the
-      library must not emit the `backend spoa-hub` block, the SPOE
-      filter, or any spoe.conf reference.
+    description: "With extraContext.spoaHub.enabled=false (or missing), the library must not emit the `backend spoa-hub` block, the SPOE filter, or any spoe.conf reference."
     extraContext:
       spoaHub:
         enabled: false
@@ -868,12 +865,7 @@ validationTests:
     # introduced in 3.1. test-spoa-hub-mode-tcp-on-haproxy-3-0 covers
     # the 3.0 fallback path; this test is skipped there.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      With extraContext.spoaHub.enabled=true and `check-auth` in the
-      messages union, the library emits the spoa-hub backend, the SPOE
-      filter directive, the per-message group + canonical message body,
-      and the external-auth frontend wiring (auth-url lookup, group
-      trigger, deny rule).
+    description: "With extraContext.spoaHub.enabled=true and `check-auth` in the messages union, the library emits the spoa-hub backend, the SPOE filter directive, the per-message group + canonical message body, and the external-auth frontend wiring (auth-url lookup, group trigger, deny rule)."
     extraContext:
       # Pin the HAProxy version to 3.1+ so the rendered backend uses
       # `mode spop` (the assertion below requires it). Native SPOP
@@ -979,11 +971,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      When haproxytech's option-forwardfor and the spoa-hub filter spoe
-      directive both render at frontend-filters priority 100, they must
-      be on separate lines. Catches the cycle 4 part C bug where the
-      `{%- if` in spoa-hub's snippet stripped the separating newline.
+    description: "When haproxytech's option-forwardfor and the spoa-hub filter spoe directive both render at frontend-filters priority 100, they must be on separate lines. Catches the cycle 4 part C bug where the `{%- if` in spoa-hub's snippet stripped the separating newline."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1076,12 +1064,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      With coraza enabled and no per-Ingress modsecurity-snippet
-      annotations, the rendered spoa-hub-config.toml contains the
-      top-level hub keys, the [[listeners]] block, and one [[plugins]]
-      block for coraza with the base directives wrapped in
-      `directives = """..."""`. No snippet comment markers appear.
+    description: "With coraza enabled and no per-Ingress modsecurity-snippet annotations, the rendered spoa-hub-config.toml contains the top-level hub keys, the [[listeners]] block, and one [[plugins]] block for coraza with the base directives wrapped in `directives = \"\"\"...\"\"\"`. No snippet comment markers appear."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1169,11 +1152,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      A single Ingress with nginx.ingress.kubernetes.io/modsecurity-snippet
-      sees its rule appended into the rendered coraza directives, with a
-      comment marker identifying the source Ingress. The rule sits BELOW
-      the values-supplied base directives.
+    description: "A single Ingress with nginx.ingress.kubernetes.io/modsecurity-snippet sees its rule appended into the rendered coraza directives, with a comment marker identifying the source Ingress. The rule sits BELOW the values-supplied base directives."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1243,12 +1222,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      Multiple Ingresses with modsecurity-snippet annotations are
-      inlined into the rendered coraza directives in deterministic
-      order — sorted by `<namespace>/<name>` — so renders are
-      reproducible and don't churn the dataplane API push payload
-      across reconciliations.
+    description: "Multiple Ingresses with modsecurity-snippet annotations are inlined into the rendered coraza directives in deterministic order — sorted by `<namespace>/<name>` — so renders are reproducible and don't churn the dataplane API push payload across reconciliations."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1463,11 +1437,7 @@ validationTests:
       - type: contains
         target: map:coraza-app.map
         pattern: '(?m)^default/protected default/protected$'
-        description: |
-          One identity row per ingress: key=value=<ns>/<name>. There's
-          no per-path fan-out — the routing chain has already resolved
-          which Ingress owns the request by the time coraza-app.map is
-          consulted via var(txn.resource_id).
+        description: "One identity row per ingress: key=value=<ns>/<name>. There's no per-path fan-out — the routing chain has already resolved which Ingress owns the request by the time coraza-app.map is consulted via var(txn.resource_id)."
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn.coraza_app\).*coraza-app\.map'
@@ -1479,11 +1449,7 @@ validationTests:
 
   test-spoa-hub-config-render-modsecurity-snippet-host-less-accepted:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      An Ingress with modsecurity-snippet and a host-less rule renders
-      successfully — coraza-app.map is keyed by <ns>/<name> (resource
-      id), so the host dimension is irrelevant. The previous fail-loud
-      guard is obsolete.
+    description: "An Ingress with modsecurity-snippet and a host-less rule renders successfully — coraza-app.map is keyed by <ns>/<name> (resource id), so the host dimension is irrelevant. The previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1528,10 +1494,7 @@ validationTests:
       - type: contains
         target: map:coraza-app.map
         pattern: '(?m)^default/hostless-modsec default/hostless-modsec$'
-        description: |
-          coraza-app.map carries the host-less Ingress as an identity
-          row keyed by <ns>/<name>.
-
+        description: "coraza-app.map carries the host-less Ingress as an identity row keyed by <ns>/<name>."
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
     description: "An Ingress whose modsecurity-snippet contains a TOML triple-quote delimiter (\"\"\") is rejected at render time. The annotation value lands inside `directives = \"\"\"..."
     extraContext:
@@ -1582,12 +1545,7 @@ validationTests:
         description: Render must fail with explicit triple-quote-rejection error
 
   test-spoa-hub-config-render-modsecurity-without-coraza-fails:
-    description: |
-      An Ingress carrying nginx.ingress.kubernetes.io/modsecurity-snippet
-      while the spoaHub coraza plugin is NOT enabled fails the render
-      with an explicit error. Silent ignore would hide a real
-      misconfiguration; the operator wrote a per-Ingress WAF rule and
-      nothing enforces it.
+    description: "An Ingress carrying nginx.ingress.kubernetes.io/modsecurity-snippet while the spoaHub coraza plugin is NOT enabled fails the render with an explicit error. Silent ignore would hide a real misconfiguration; the operator wrote a per-Ingress WAF rule and nothing enforces it."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1634,9 +1592,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      Multiple enabled plugins each get their own [[plugins]] block.
-      This pins the iteration over extraContext.spoaHub.plugins.
+    description: "Multiple enabled plugins each get their own [[plugins]] block. This pins the iteration over extraContext.spoaHub.plugins."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1721,11 +1677,7 @@ validationTests:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
     # spoa-hub backend renders `mode spop`, which 3.0 can't parse.
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      Default dispatch mode (`opt-in`) keeps the per-Ingress-gated
-      send-spoe-group line and does NOT emit the coraza-disabled.map
-      lookup or the str(deny) fallback. Regression test that the new
-      branch doesn't leak into the default rendering.
+    description: "Default dispatch mode (`opt-in`) keeps the per-Ingress-gated send-spoe-group line and does NOT emit the coraza-disabled.map lookup or the str(deny) fallback. Regression test that the new branch doesn't leak into the default rendering."
     extraContext:
       haproxyVersion: "3.2"
       spoaHub:
@@ -1796,12 +1748,7 @@ validationTests:
 
   test-coraza-dispatch-default-on-no-annotations:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      With dispatch.mode=default-on and no per-Ingress annotations,
-      the rendered haproxy.cfg has the unconditional send-spoe-group
-      line gated only on the coraza-disabled map lookup, plus the
-      str(deny) fallback for txn.coraza_mode. coraza-disabled.map
-      is empty (no Ingress opted out).
+    description: "With dispatch.mode=default-on and no per-Ingress annotations, the rendered haproxy.cfg has the unconditional send-spoe-group line gated only on the coraza-disabled map lookup, plus the str(deny) fallback for txn.coraza_mode. coraza-disabled.map is empty (no Ingress opted out)."
     extraContext:
       haproxyVersion: "3.2"
       coraza:
@@ -1881,12 +1828,7 @@ validationTests:
 
   test-coraza-dispatch-default-on-detect:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      With dispatch.mode=default-on and defaultEnforcement=detect, the
-      str fallback line uses str(detect) so the existing deny-rule
-      predicate `!{ var(txn.coraza_mode) -m str detect }` short-
-      circuits enforcement on every path that didn't have a per-path
-      waf-mode annotation override.
+    description: "With dispatch.mode=default-on and defaultEnforcement=detect, the str fallback line uses str(detect) so the existing deny-rule predicate `!{ var(txn.coraza_mode) -m str detect }` short- circuits enforcement on every path that didn't have a per-path waf-mode annotation override."
     extraContext:
       haproxyVersion: "3.2"
       coraza:
@@ -1956,12 +1898,7 @@ validationTests:
 
   test-coraza-dispatch-default-on-with-opt-out:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      With dispatch.mode=default-on and one Ingress carrying
-      nginx.ingress.kubernetes.io/enable-modsecurity: "false", the
-      coraza-disabled.map gets a `<ns>/<name> 1` entry; the
-      send-spoe-group dispatch line is gated only on
-      txn.coraza_disabled (so the opted-out resource skips the WAF).
+    description: "With dispatch.mode=default-on and one Ingress carrying nginx.ingress.kubernetes.io/enable-modsecurity: \"false\", the coraza-disabled.map gets a `<ns>/<name> 1` entry; the send-spoe-group dispatch line is gated only on txn.coraza_disabled (so the opted-out resource skips the WAF)."
     extraContext:
       haproxyVersion: "3.2"
       coraza:
@@ -2024,10 +1961,7 @@ validationTests:
 
   test-coraza-dispatch-enable-modsecurity-bogus-rejected:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity
-      set to a value other than "true" or "false" makes rendering fail
-      loud. Only "true"/"false" are accepted.
+    description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity set to a value other than \"true\" or \"false\" makes rendering fail loud. Only \"true\"/\"false\" are accepted."
     extraContext:
       haproxyVersion: "3.2"
     fixtures:
@@ -2063,11 +1997,7 @@ validationTests:
 
   test-coraza-dispatch-enable-modsecurity-host-less-accepted:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
-    description: |
-      An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity:
-      "false" and a host-less rule renders successfully — coraza-disabled.map
-      is now keyed by <ns>/<name> (resource id), so the host dimension
-      is irrelevant and the previous fail-loud guard is obsolete.
+    description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity: \"false\" and a host-less rule renders successfully — coraza-disabled.map is now keyed by <ns>/<name> (resource id), so the host dimension is irrelevant and the previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
       coraza:
@@ -2100,7 +2030,4 @@ validationTests:
       - type: contains
         target: map:coraza-disabled.map
         pattern: '(?m)^default/host-less 1$'
-        description: |
-          coraza-disabled.map carries the host-less Ingress as a
-          resource-id-keyed entry; the routing chain still resolves it
-          to a stable resource_id so the WAF skip applies correctly.
+        description: "coraza-disabled.map carries the host-less Ingress as a resource-id-keyed entry; the routing chain still resolves it to a stable resource_id so the WAF skip applies correctly."

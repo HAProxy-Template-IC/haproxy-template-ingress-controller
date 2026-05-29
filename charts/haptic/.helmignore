@@ -29,3 +29,10 @@ mkdocs.yml
 # Chart-level CHANGELOG and README — informational, not chart-functional.
 CHANGELOG.md
 README.md
+# helm-unittest suite (read from source tree by `helm unittest`, never
+# from the packaged chart) and chart-testing config (`ct lint`, also
+# read from the source tree). Neither runs at runtime.
+# Anchored to the chart root so we don't also drop libraries/gateway/tests/
+# which carries Gateway API validation-test source for chart libraries.
+/tests/
+/.ct/

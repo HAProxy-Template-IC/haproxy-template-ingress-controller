@@ -1192,11 +1192,7 @@ validationTests:
         description: Error message must list the service's actual port names to aid debugging
 
   test-ingress-default-backend-rules-less:
-    description: |
-      Ingress with only spec.defaultBackend (no rules) emits a "/"
-      catch-all entry in path-prefix.map pointing at the default backend
-      pool, and the backend pool itself gets generated. Routes any
-      request that didn't match a more-specific rule to that backend.
+    description: "Ingress with only spec.defaultBackend (no rules) emits a \"/\" catch-all entry in path-prefix.map pointing at the default backend pool, and the backend pool itself gets generated. Routes any request that didn't match a more-specific rule to that backend."
     fixtures:
       services:
         - apiVersion: v1
@@ -1240,12 +1236,7 @@ validationTests:
         description: Exactly one catch-all "/" entry (no duplicates)
 
   test-ingress-default-backend-with-rules-per-host:
-    description: |
-      Ingress with both spec.rules (host: example.com) and
-      spec.defaultBackend emits a per-host catch-all "example.com/"
-      entry in path-prefix.map alongside the rule's entries. K8s spec:
-      requests matching the Ingress's host but no rule path go to
-      defaultBackend; requests to OTHER hosts must NOT be caught.
+    description: "Ingress with both spec.rules (host: example.com) and spec.defaultBackend emits a per-host catch-all \"example.com/\" entry in path-prefix.map alongside the rule's entries. K8s spec: requests matching the Ingress's host but no rule path go to defaultBackend; requests to OTHER hosts must NOT be caught."
     fixtures:
       services:
         - apiVersion: v1
@@ -1317,12 +1308,7 @@ validationTests:
         description: No global "/" catch-all (defaultBackend is scoped to the Ingress's host, not all hosts)
 
   test-ingress-default-backend-newest-wins-per-host:
-    description: |
-      Two Ingresses in different namespaces both declare defaultBackend
-      for the same host. HAProxy maps keep only one entry per key, so
-      we MUST pick deterministically; the newest Ingress wins per host
-      (matches operator intent on rollout + avoids stale-Ingress 503s
-      during scenario churn).
+    description: "Two Ingresses in different namespaces both declare defaultBackend for the same host. HAProxy maps keep only one entry per key, so we MUST pick deterministically; the newest Ingress wins per host (matches operator intent on rollout + avoids stale-Ingress 503s during scenario churn)."
     fixtures:
       services:
         - apiVersion: v1

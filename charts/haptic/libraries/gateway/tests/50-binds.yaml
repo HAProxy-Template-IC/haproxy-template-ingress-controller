@@ -123,7 +123,4 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "(?m)^\\s*bind \\*:443 ssl crt-list .*\\n\\s*bind \\*:443 ssl crt-list"
-        description: |
-          Must NOT emit a duplicate TLS bind on the chart-static HTTPS
-          port — chart-static already binds 443, so the bind-extra
-          snippet skips httpsPort to avoid HAProxy parser error.
+        description: "Must NOT emit a duplicate TLS bind on the chart-static HTTPS port — chart-static already binds 443, so the bind-extra snippet skips httpsPort to avoid HAProxy parser error."

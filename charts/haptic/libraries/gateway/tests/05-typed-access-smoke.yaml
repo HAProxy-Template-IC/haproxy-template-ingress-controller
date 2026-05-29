@@ -1,13 +1,6 @@
 validationTests:
   test-gateway-typed-access-smoke:
-    description: |
-      Typed `gateways` global is wired end-to-end through the offline
-      validate path. Asserts the typed-access-smoke snippet emits one
-      comment per Gateway with Metadata.Namespace + Metadata.Name
-      resolved via compile-time typed field access. If this test
-      regresses, the offline validate path has drifted from the
-      production renderer (typebootstrap is silently fail-opening,
-      or BuildEngineDeclarations / addTypedResources have diverged).
+    description: "Typed `gateways` global is wired end-to-end through the offline validate path. Asserts the typed-access-smoke snippet emits one comment per Gateway with Metadata.Namespace + Metadata.Name resolved via compile-time typed field access. If this test regresses, the offline validate path has drifted from the production renderer (typebootstrap is silently fail-opening, or BuildEngineDeclarations / addTypedResources have diverged)."
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1

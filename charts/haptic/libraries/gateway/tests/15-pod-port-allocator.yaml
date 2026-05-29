@@ -1,23 +1,6 @@
 validationTests:
   test-gateway-pod-port-allocator-multi-gateway:
-    description: |
-      Phase 1 of the per-Gateway-IP refactor. Verifies that the
-      pod-port allocator (`util-gateway-pod-port-allocator`) assigns
-      a unique container port to each (Gateway, HTTPS listener) tuple
-      via deterministic alphabetical sort. Activated via
-      `extraContext.dumpPodPortAllocations=true` so the allocator
-      emits debug comments into `frontend-extra-*` for assertion
-      without requiring the (not-yet-built) consumer snippets in
-      phases 2-5.
-
-      Allocation contract:
-        * Sort all `<gwNs>/<gwName>:<listenerName>:<port>` keys
-          alphabetically.
-        * Assign sequential container ports starting at base 18000
-          (or `extraContext.perGatewayPodPortBase` if set).
-        * Only HTTPS Gateway listeners receive an allocation —
-          HTTP / TLS-Passthrough / TLS-Terminate listeners use
-          existing chart-static or per-port routing paths.
+    description: "Phase 1 of the per-Gateway-IP refactor. Verifies that the pod-port allocator (`util-gateway-pod-port-allocator`) assigns a unique container port to each (Gateway, HTTPS listener) tuple via deterministic alphabetical sort. Activated via `extraContext.dumpPodPortAllocations=true` so the allocator emits debug comments into `frontend-extra-*` for assertion without requiring the (not-yet-built) consumer snippets in phases 2-5. Allocation contract:   * Sort all `<gwNs>/<gwName>:<listenerName>:<port>` keys     alphabetically.   * Assign sequential container ports starting at base 18000     (or `extraContext.perGatewayPodPortBase` if set).   * Only HTTPS Gateway listeners receive an allocation —     HTTP / TLS-Passthrough / TLS-Terminate listeners use     existing chart-static or per-port routing paths."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       dumpPodPortAllocations: "true"
@@ -121,10 +104,7 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https-alt:8443 = 18001$'
-        description: |
-          Second sorted tuple is gw-zulu's `https-alt` (the `-` in
-          `https-alt` sorts before `:` in `https:443`).
-
+        description: "Second sorted tuple is gw-zulu's `https-alt` (the `-` in `https-alt` sorts before `:` in `https:443`)."
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+# gw-pod-port: default/gw-zulu:https:443 = 18002$'
@@ -133,25 +113,13 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: 'gw-pod-port: default/gw-alpha:http:80'
-        description: |
-          HTTP listeners are NOT allocated (only HTTPS). The chart's
-          allocator filters by protocol so per-Gateway pod ports apply
-          only where they're needed (HTTPS termination).
-
+        description: "HTTP listeners are NOT allocated (only HTTPS). The chart's allocator filters by protocol so per-Gateway pod ports apply only where they're needed (HTTPS termination)."
       - type: not_contains
         target: haproxy.cfg
         pattern: 'gw-pod-port: default/gw-alpha:tls-pass:9443'
-        description: |
-          TLS-Passthrough listeners use chart-static `frontend ssl-tcp`
-          (or `frontends-600-gateway-tls-listener` for non-default
-          ports), not per-Gateway HTTPS binds.
-
+        description: "TLS-Passthrough listeners use chart-static `frontend ssl-tcp` (or `frontends-600-gateway-tls-listener` for non-default ports), not per-Gateway HTTPS binds."
   test-gateway-pod-port-allocator-custom-base:
-    description: |
-      `extraContext.perGatewayPodPortBase` overrides the default
-      18000 base. Useful for operators whose port budget is
-      constrained or who run HAProxy alongside other pod processes
-      that already claim 18xxx.
+    description: "`extraContext.perGatewayPodPortBase` overrides the default 18000 base. Useful for operators whose port budget is constrained or who run HAProxy alongside other pod processes that already claim 18xxx."
     extraContext:
       controllerName: "haproxy-haptic.org/controller"
       dumpPodPortAllocations: "true"
@@ -197,22 +165,7 @@ validationTests:
         description: Custom base 25000 used as starting allocation.
 
   test-gateway-listener-port-override-stands-alone:
-    description: |
-      Regression: base.yaml's `frontend-routing-listener-port-*` extension
-      point must place the gateway override's first directive on its own
-      line. The Scriggo `{{- … }}` form strips ALL adjacent whitespace
-      INCLUDING newlines (see `charts/CLAUDE.md` "Whitespace Control"),
-      which fuses the preceding comment with the rendered snippet's first
-      output line — HAProxy then parses the directive as part of the
-      comment and silently drops it. Symptom: `txn.listener_port` never
-      gets remapped from pod port (e.g. 18003) back to the user-facing
-      listener port (e.g. 443), and Gateway-API HTTPRoute RequestRedirect
-      filters emit Location headers with the pod port. Caught in
-      conformance shard 2/4 (HTTPRouteRedirectPortAndScheme).
-
-      This test asserts both:
-        - the override directive appears on a line by itself (not fused)
-        - no comment line ends with the directive (the fused form)
+    description: "Regression: base.yaml's `frontend-routing-listener-port-*` extension point must place the gateway override's first directive on its own line. The Scriggo `{{- … }}` form strips ALL adjacent whitespace INCLUDING newlines (see `charts/CLAUDE.md` \"Whitespace Control\"), which fuses the preceding comment with the rendered snippet's first output line — HAProxy then parses the directive as part of the comment and silently drops it. Symptom: `txn.listener_port` never gets remapped from pod port (e.g. 18003) back to the user-facing listener port (e.g. 443), and Gateway-API HTTPRoute RequestRedirect filters emit Location headers with the pod port. Caught in conformance shard 2/4 (HTTPRouteRedirectPortAndScheme). This test asserts both:   - the override directive appears on a line by itself (not fused)   - no comment line ends with the directive (the fused form)"
     fixtures:
       gatewayclasses:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -255,16 +208,8 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+http-request set-var\(txn\.listener_port\) var\(txn\.dst_port\),map\([^)]*pod-listener-port\.map\) if \{ var\(txn\.dst_port\),map\([^)]*pod-listener-port\.map\) -m found \}$'
-        description: |
-          The gateway override directive must appear at the start of its
-          own line (after optional indentation) and end the line. `(?m)^`
-          + `$` anchors verify both — neither holds when the directive is
-          fused into the trailing portion of a comment.
-
+        description: "The gateway override directive must appear at the start of its own line (after optional indentation) and end the line. `(?m)^` + `$` anchors verify both — neither holds when the directive is fused into the trailing portion of a comment."
       - type: not_contains
         target: haproxy.cfg
         pattern: '#[^\n]*http-request set-var\(txn\.listener_port\)'
-        description: |
-          No `# … http-request set-var(txn.listener_port) …` line — the
-          fused-into-comment form that HAProxy silently parses as a
-          comment, dropping the directive.
+        description: "No `# … http-request set-var(txn.listener_port) …` line — the fused-into-comment form that HAProxy silently parses as a comment, dropping the directive."
