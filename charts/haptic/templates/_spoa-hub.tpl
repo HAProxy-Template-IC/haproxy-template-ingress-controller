@@ -38,7 +38,7 @@ Returns "true" or "" (Helm-truthy convention).
          emitted at most once. Emitting "true" inside the range concatenates
          a separate "true" per enabled plugin (`"truetrue"`, …) which
          compares not-equal to the literal `"true"` that callers like
-         libraries/spoa-hub.yaml's `_helm_load.enable` predicate test
+         libraries/spoa-hub/_index.yaml's `_helm_load.enable` predicate test
          against — silently dropping the spoa-hub library when ≥2 plugins
          are enabled. */}}
   {{- $any := dict "v" false -}}

@@ -130,7 +130,7 @@ Each entry in `$libraryFiles` is either:
     "libraries/haproxytech.yaml"
     "libraries/haproxy-ingress.yaml"
     "libraries/nginx-ingress.yaml"
-    "libraries/spoa-hub.yaml"
+    "libraries/spoa-hub/"
 }}
 {{- range $file := $libraryFiles }}
   {{- $library := dict }}
