@@ -1,0 +1,478 @@
+# SPOA hub library — production templateSnippets, batch 20:
+#
+# Runtime configuration content rendered into auxiliary files:
+#   - spoa-hub-config-content              (TOML for the sidecar; via
+#                                          spoa-hub-config.toml)
+#   - spoe-conf-content                    (HAProxy SPOE engine config)
+#   - spoe-message-check-auth-body         (per-message body)
+#   - spoe-message-check-request-body
+#   - spoe-message-mirror-body
+
+templateSnippets:
+  # Renders the SPOA hub's runtime config.toml. Called from features-spoa-hub
+  # via fileRegistry.Register("file", "spoa-hub-config.toml", ...). The
+  # dataplane API delivers the rendered file to the haproxy pod, where the
+  # spoa-hub sidecar's file-watch + graceful-reload (haproxy-spoa-hub MR1)
+  # picks it up without a restart.
+  #
+  # The TOML mirrors the bootstrap configmap's shape (templates/spoa-hub-configmap.yaml)
+  # — same plugin_dir, default_timeout_ms, [[listeners]], one [[plugins]]
+  # block per enabled plugin, and a [plugins.params] block with the
+  # operator's params: blob spliced verbatim. The runtime version differs in
+  # one important place: for coraza, this snippet emits per-app
+  # `[plugins.params.applications."<ns>/<name>"]` blocks derived from
+  # `gf["sphCorazaApps"]` (populated by the resource-specific scan in
+  # nginx-ingress.yaml's util-nginx-ingress-coraza-scan), sorted by
+  # `<ns>/<name>` for determinism. Each Ingress's WAF rules land in the
+  # runtime hub without per-request SPOE shipping. ADR-0007 captures the
+  # rationale; the per-resource scan + validation lives in the vendor
+  # annotation library that owns the annotation, keeping this snippet
+  # resource-agnostic per RULE #1.
+  spoa-hub-config-content:
+    template: |
+      {%- var hub = extraContext | dig("spoaHub", "hub") | fallback(map[string]any{}) -%}
+      {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+      {%- var socketPath = extraContext | dig_string("/run/spoa/hub.sock", "spoaHub", "socketPath") -%}
+
+      {#- Pull the per-app coraza modsec-snippet list out of shared state.
+          Vendor annotation libraries (nginx-ingress.yaml) populate
+          gf["sphCorazaApps"] via render of util-*-coraza-scan; if the
+          library is disabled or no Ingress carries a coraza annotation,
+          the list is absent / empty and no per-app blocks emit. Plugin-
+          enabled validation runs in the populating library — silent
+          ignore is impossible because the vendor library fail()s at
+          render time if its annotations are present without the plugin. -#}
+      {{- render_glob "util-*-coraza-scan" -}}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- var modsecApps = gf | dig("sphCorazaApps") | fallback([]any{}) | toSlice() -%}
+
+      plugin_dir = "{{ hub | dig("pluginDir") | fallback("/etc/haproxy-spoa-hub/plugins") }}"
+      default_timeout_ms = {{ hub | dig("defaultTimeoutMs") | fallback(500) }}
+      log_level = "{{ hub | dig("logLevel") | fallback("info") }}"
+      max_connections = {{ hub | dig("maxConnections") | fallback(1000) }}
+      blocking_thread_keep_alive_secs = {{ hub | dig("blockingThreadKeepAliveSecs") | fallback(30) }}
+      {#- Prometheus metrics endpoint. Default bound on the pod loopback
+          so the sidecar surface stays cluster-internal (the haproxy pod's
+          ServiceMonitor / PodMonitor can scrape from inside via the
+          haproxy container's network namespace, since both containers
+          share it). Plugin-level counters (plugin_<plugin>_dispatches_total,
+          dispatch_dropped_total, dispatch_outcomes_total, etc., shipped
+          by the SPOA-metrics rollout in spoa-hub v0.6.0+) only become
+          observable once this address is set — leaving it `null` is what
+          made the conformance flake in issue #45 invisible to artifact
+          captures (the mirror plugin acks the SPOE NOTIFY in microseconds,
+          fire-and-forget dispatch then runs async, and the only signal
+          for whether it succeeded / dropped / errored is the
+          /metrics scrape). -#}
+      metrics_addr = "{{ hub | dig("metricsAddr") | fallback("127.0.0.1:9095") }}"
+      {%- var workerThreads = hub | dig("workerThreads") -%}
+      {%- if workerThreads != nil %}
+      worker_threads = {{ workerThreads }}
+      {%- end %}
+
+      [[listeners]]
+      type = "unix"
+      address = "{{ socketPath }}"
+      {% for _, plugin := range plugins %}
+        {%- var p = plugin.(map[string]any) -%}
+        {%- var pName = p["name"].(string) -%}
+        {%- var pLibrary = p["library"].(string) -%}
+        {%- var pMessages = p["messages"] | toSlice() -%}
+        {%- var pTimeoutMs = p["timeoutMs"] -%}
+        {#- Mirror plugin's messages list. Floored at a static minimum
+            (mirrorStaticMinSlots, default 4) and extended dynamically
+            beyond that based on the cluster-wide max number of mirror
+            filters on any single rule (mirrorFanout, computed by the
+            gateway library's 20-route-analysis pass into
+            globalFeatures["mirrorMaxFanout"]). The key name stays
+            resource-neutral here — a future CRD-based routing layer
+            that produces mirror filters would write into the same key.
+
+            Why the static floor (issue #47): the SPOA hub sidecar
+            reloads its TOML on file change, but plugin handler state
+            is rebuilt from scratch on every reload — so if the
+            controller emits messages=[] at any point (e.g. during a
+            transient render where no HTTPRoute with a mirror filter
+            is observed, between two conformance subtests, etc.), the
+            mirror plugin loses its handler for "mirror-1". Every
+            in-flight SPOE NOTIFY for `send-spoe-group mirror-1-group`
+            then hits the SPOA hub's "no plugins registered for
+            message" path and gets silently dropped. The conformance
+            suite catches this as ~50% mirror-rate flakiness on
+            `test-gateway-conformance` shards — different subtests
+            failing each run depending on which side of a reload the
+            burst lands on.
+
+            DO NOT REMOVE THE FLOOR. The chart previously carried a
+            mirror-1..mirror-4 static default that was removed in
+            controller commit 77c760c2 (`skip_reload=true` on aux-file
+            UPDATEs) with the rationale "the floor workaround is no
+            longer needed". That rationale was correct for the haproxy
+            reload-ordering race (race A) but missed that the floor was
+            independently masking the SPOA hub plugin-reload race here
+            (race B). `skip_reload=true` addresses race A only. Until
+            the SPOA hub plugin loader is reworked to never unregister
+            an already-registered message on reload (upstream-plugin
+            work, tracked under #47), the floor is the only thing
+            holding race B closed.
+
+            Routes with > 4 mirrors per rule still extend dynamically
+            below — a 12-mirror route allocates 12 slots — but slots
+            5..N are still exposed to race B. Bump
+            mirrorStaticMinSlots if a real workload regularly exceeds
+            4 mirrors per rule and observes the flake. -#}
+        {%- if pName == "mirror" -%}
+          {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) -%}
+          {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+          {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() -%}
+          {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() -%}
+          {%- var effectiveSlots = mirrorFanout -%}
+          {%- if mirrorStaticMinSlots > effectiveSlots -%}
+            {%- effectiveSlots = mirrorStaticMinSlots -%}
+          {%- end -%}
+          {%- pMessages = []any{} -%}
+          {%- for i := 1; i <= effectiveSlots; i++ -%}
+            {%- pMessages = append(pMessages, "mirror-" + tostring(i)) -%}
+          {%- end -%}
+        {%- end -%}
+        {%- var pDependsOn = p | dig("dependsOn") | fallback([]any{}) | toSlice() -%}
+        {%- var pParams = p | dig_string("", "params") -%}
+
+      [[plugins]]
+      name = "{{ pName }}"
+      library = "{{ pLibrary }}"
+      messages = [
+        {%- for i, m := range pMessages -%}
+          {%- if i > 0 -%}, {% end -%}
+          "{{ m | tostring() }}"
+        {%- end -%}
+      ]
+      timeout_ms = {{ pTimeoutMs }}
+        {%- if len(pDependsOn) > 0 %}
+      depends_on = [
+          {%- for i, d := range pDependsOn -%}
+            {%- if i > 0 -%}, {% end -%}
+            "{{ d | tostring() }}"
+          {%- end -%}
+      ]
+        {%- end %}
+
+      [plugins.params]
+        {%- var corazaDirectives = "" %}
+        {%- if pName == "coraza" %}
+          {#- Coraza-specific: emit the BASE directives only — no per-Ingress
+              modsec-snippets. Each Ingress with a snippet gets its OWN
+              [plugins.params.applications."<ns>/<name>"] block below, so
+              its rules are scoped to that Ingress's traffic via
+              coraza-app.map. Operators upgrading from the pre-multitenant
+              chart who relied on rule bleed (one Ingress's SecRule firing
+              on another Ingress's traffic) must move the shared rules
+              into the chart-level `spoaHub.plugins.coraza.directives`
+              values key. -#}
+          {%- corazaDirectives = p | dig_string("", "directives") %}
+      directives = """
+      {{ corazaDirectives | trimSpace() }}
+      """
+        {%- end %}
+        {%- if pParams != "" %}
+      {{ pParams | trimSpace() }}
+        {%- end %}
+        {%- if pName == "coraza" && len(modsecApps) > 0 %}
+          {#- Per-app WAF instances. The plugin's config schema parses
+              `applications` as a TOML table keyed by app name (see
+              haproxy-spoa-hub-plugin-coraza/src/config.rs:124-130).
+              `<ns>/<name>` is quoted because the slash isn't a bare-key
+              char in TOML. Each block contains the chart-default base
+              directives PRE-PENDED to the per-Ingress modsec-snippet,
+              so per-app WAF instances inherit the base ruleset
+              (operator's chart-wide config) plus their own custom
+              rules. coraza-app.map (populated by nginx-ingress.yaml)
+              binds <host><path> → "<ns>/<name>" so SPOE check-request
+              sets `app=` and the plugin routes to this app's WAF. -#}
+          {%- for _, app := range modsecApps %}
+            {%- var a = app.(map[string]any) %}
+            {%- var aNs = a["ns"].(string) %}
+            {%- var aName = a["name"].(string) %}
+
+      [plugins.params.applications."{{ aNs }}/{{ aName }}"]
+      directives = """
+      {{ corazaDirectives | trimSpace() }}
+
+      # nginx-ingress modsecurity-snippet from {{ aNs }}/{{ aName }}
+      {{ a["snippet"].(string) | trimSpace() }}
+      """
+          {%- end %}
+        {%- end %}
+      {# Newline between plugin iterations so the next [[plugins]] table
+         header lands on its own line. Without it the rendered TOML
+         reads `transaction_ttl_ms = 10000[[plugins]]` and the hub's
+         reload bails with a parse error. {% end %} preserves the
+         trailing newline; {%- end -%} would strip it. #}
+      {% end %}
+
+  spoe-conf-content:
+    template: |
+      {#- Trigger gateway route analysis if the gateway library is
+          loaded — it populates globalFeatures["mirrorMaxFanout"]
+          which the mirror message expansion below reads. The key name
+          is resource-neutral: a hypothetical CRD-based routing layer
+          that produces mirror filters would write into the same key,
+          and spoa-hub.yaml reads it without embedding routing-resource
+          terminology. render_glob on an exact name renders the
+          matching snippet when it exists (gateway loaded) and returns
+          empty otherwise (gateway disabled, spoa-hub-only deployment).
+          The Scriggo-side compute is memoised via
+          shared.ComputeIfAbsent inside util-gateway-analysis so
+          repeated invocations across the same render are free. -#}
+      {{- render_glob "util-gateway-analysis" -}}
+      {%- var messagesAny = extraContext | dig("spoaHub", "messages") | fallback([]any{}) %}
+      {%- var messages = toStringSlice(messagesAny) %}
+      {%- var _, _ = shared.ComputeIfAbsent("globalFeatures", func() any { return map[string]any{} }) %}
+      {#- Dynamic mirror messages: each rule with N mirror filters
+          needs N distinct (message, group) pairs because HAProxy SPOE
+          processes each group at most once per stream. The producing
+          library (currently gateway/20-route-analysis) writes the
+          cluster-wide max mirror-fanout (`mirrorFanout`) into
+          globalFeatures, and we expand it into `mirror-1`
+          ..`mirror-<effectiveSlots>` here, replacing the "mirror"
+          placeholder from values.yaml.
+
+          Floored at `mirrorStaticMinSlots` (default 4) — see the
+          parallel logic in `spoa-hub-config-content` above for the
+          full rationale (issue #47): the SPOA hub plugin loses its
+          handler state on every TOML reload, so any transient render
+          that emits an empty messages list collapses in-flight mirror
+          NOTIFY traffic at the hub. Keeping the haproxy-side SPOE
+          group declarations in sync with the plugin-side floor means
+          haproxy can safely fire `send-spoe-group mirror-N-group` for
+          N in [1, mirrorStaticMinSlots] without depending on the
+          per-render route observation race. -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var mirrorFanout = gf | dig("mirrorMaxFanout") | fallback(0) | toint() %}
+      {%- var mirrorStaticMinSlots = extraContext | dig("spoaHub", "mirrorStaticMinSlots") | fallback(4) | toint() %}
+      {%- var effectiveSlots = mirrorFanout %}
+      {%- if mirrorStaticMinSlots > effectiveSlots %}
+        {%- effectiveSlots = mirrorStaticMinSlots %}
+      {%- end %}
+      {%- var expanded = []any{} %}
+      {%- for _, m := range messages %}
+        {%- if m != "mirror" %}
+          {%- expanded = append(expanded, m) %}
+        {%- end %}
+      {%- end %}
+      {%- for i := 1; i <= effectiveSlots; i++ %}
+        {%- expanded = append(expanded, "mirror-" + tostring(i)) %}
+      {%- end %}
+      {%- messages = toStringSlice(expanded) %}
+      [spoa-hub]
+
+      spoe-agent spoa-hub-agent
+      {%- if len(messages) > 0 %}
+          groups
+            {%- for _, msg := range messages -%}
+              {{ " " + msg + "-group" }}
+            {%- end %}
+      {%- end %}
+          option var-prefix       hub
+          option pipelining
+          option async
+          timeout hello      {{ extraContext | dig("spoaHub", "timeoutHello") | fallback("2s") }}
+          timeout idle       {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
+          timeout processing {{ extraContext | dig("spoaHub", "timeoutProcessing") | fallback("500ms") }}
+          use-backend spoa-hub
+      {{ render_glob "spoe-agents-*" }}
+      {#- Per-message SPOE-message bodies. Each known plugin message
+          gets its canonical body via a literal `render`; everything
+          else falls back to a minimal stub so HAProxy accepts the
+          group's reference. This dispatch is hard-coded because the
+          Scriggo fork's `render` requires a string literal — adding
+          a new plugin with a real body means adding a branch here.
+          The leading blank line before each block is required: the
+          HAProxy SPOE config parser uses blank lines as block
+          separators. -#}
+      {%- for _, msg := range messages %}
+
+      {% if msg == "check-auth" -%}
+      {{ render "spoe-message-check-auth-body" }}
+      {%- else if msg == "check-request" -%}
+      {{ render "spoe-message-check-request-body" }}
+      {%- else if hasPrefix(msg, "mirror-") -%}
+      {{ render "spoe-message-mirror-body" inherit_context }}
+      {%- else -%}
+      spoe-message {{ msg }}
+          args ip=src
+      {%- end %}
+      {%- end %}
+
+      {#- Per-message group definitions. Each message becomes a singleton
+          group (`<msg>-group`) so frontends can trigger it explicitly
+          via `http-request send-spoe-group spoa-hub-agent <msg>-group`. -#}
+      {%- for _, msg := range messages %}
+
+      spoe-group {{ msg }}-group
+          messages {{ msg }}
+      {%- end %}
+
+  # Canonical spoe-message check-auth body. Rendered by name from
+  # spoe-conf-content's per-message dispatch when "check-auth" is in
+  # the messages union. Args follow the haproxy-spoa-hub external-auth
+  # plugin's documented contract:
+  #
+  #   - auth_url   (required) — drives the auth-url annotation lookup
+  #   - method     (optional, v0.3.0+) — per-request HTTP method override
+  #     for the auth subrequest, populated from the
+  #     {nginx.ingress.kubernetes.io,haproxy-ingress.github.io}/auth-method
+  #     annotations via auth-method.map. The plugin treats an empty
+  #     value as "no override" and falls back to its plugin-level
+  #     config, so routes without the annotation behave unchanged.
+  #   - forward_headers (optional, v0.3.0+) — comma-separated list of
+  #     request header names to forward to the auth service, populated
+  #     from the haproxy-ingress.github.io/auth-headers-request
+  #     annotation via auth-forward-headers.map. The plugin replaces
+  #     its plugin-level forward_headers list with this when the arg
+  #     is non-empty; empty (no annotation) falls back to the default.
+  #   - extract_headers (optional, v0.3.0+) — comma-separated list of
+  #     response header names to extract from the auth reply (on every
+  #     reply path: 2xx, 3xx, 4xx, 5xx). Each extracted header becomes
+  #     a transaction variable `txn.hub.external_auth.<name>` (with
+  #     dashes → underscores). Populated as the union of pass + fail
+  #     headers per ingress from auth-extract-headers.map; the
+  #     ingress libraries themselves emit per-route per-header
+  #     `set-header` (pass) and `deny ... hdr` (fail) directives that
+  #     consume those vars.
+  #
+  # The plugin v0.3.0 also accepts `client_cert` / `client_key` SPOE
+  # args for per-request mTLS to the auth service, but no upstream
+  # ingress controller (nginx-ingress / haproxy-ingress) exposes a
+  # typed annotation for "auth subrequest mTLS" — only for incoming
+  # client-cert verification (a different feature). The chart
+  # therefore does not wire `client_cert` / `client_key`. Operators
+  # who need subrequest mTLS can extend the args= line with their
+  # own SPOE arg sources (e.g. via the chart's user-config layer).
+  #
+  # The hardcoded `hdr_*` args at the end of the line capture the six
+  # standard auth headers (Authorization, Cookie, X-Forwarded-*).
+  # Ingress libraries can extend the captured set via the
+  # `spoe-message-check-auth-extra-args-*` glob — e.g. haproxy-ingress
+  # contributes one `hdr_<name>=req.hdr(<Name>)` per unique header
+  # listed in any ingress's `auth-headers-request` annotation, so the
+  # annotation alone determines what headers reach the auth service
+  # (the plugin's `forward_headers` arg then narrows per-route).
+  #
+  # The plugin writes back the response variables
+  # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
+  spoe-message-check-auth-body:
+    template: |-
+      spoe-message check-auth
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri){{- render_glob "spoe-message-check-auth-extra-args-*" -}}
+
+  # Canonical spoe-message check-request body. Args follow the
+  # haproxy-spoa-hub-plugin-coraza message contract (plugin.rs:266-307):
+  #
+  #   - src-ip / src-port / dst-ip / dst-port — connection metadata for
+  #     phase-1 connection rules and IP-based SecRules.
+  #   - method / path / query / version — URI and request-line fields
+  #     for phase-1 URI rules. Coraza canonicalizes path before
+  #     SecRule evaluation; query is appended to the URI internally.
+  #   - headers — the full request header block in HTTP wire format
+  #     (`Name: Value\r\n`). The coraza plugin's parser expects this
+  #     text shape (see `parse_haproxy_headers` in
+  #     haproxy-spoa-hub-plugin-coraza/src/plugin.rs); HAProxy emits
+  #     it via `req.hdrs`. **Not** `req.hdrs_bin` — that returns
+  #     varint-encoded SPOE-wire bytes which the plugin would split
+  #     wrong, leaving header-targeted SecRules
+  #     (`REQUEST_HEADERS:X-*`) silently unmatched.
+  #   - body — phase-2 body inspection. HAProxy buffers up to
+  #     `tune.bufsize` bytes; SecRules see whatever was buffered when
+  #     the request body completed (or was cut off by maxbody).
+  #
+  # `app` is intentionally omitted — single-WAF deployments use the
+  # default WAF instance the plugin loads from `params.directives`.
+  # Multi-tenant operators can add an `app=<expr>` to the args= line
+  # via a chart user-override snippet to route per-tenant rule sets.
+  #
+  # The plugin writes back txn.hub.coraza.{action,status,rule_id,
+  # anomaly_score,rules_hit,data}; the dispatcher in
+  # frontend-spoe-filters-050-coraza denies on
+  # rule_id >= 1 AND action == "deny".
+  #
+  # `app=var(txn.coraza_app)` carries the per-Ingress WAF identifier
+  # that the chart's `coraza-app.map` lookup populates from the
+  # request's resource_id. The coraza plugin reads this in `process()`
+  # (haproxy-spoa-hub-plugin-coraza/src/plugin.rs:370) and routes the
+  # request to that app's WAF instance — the per-Ingress
+  # [plugins.params.applications."<ns>/<name>"] block. When unset, the
+  # plugin falls through to the default WAF (chart-default base
+  # directives only). This is the multi-tenancy lever: per-Ingress
+  # custom rules don't fire on other Ingresses' traffic.
+  spoe-message-check-request-body:
+    template: |-
+      spoe-message check-request
+          args src-ip=src src-port=src_port dst-ip=dst dst-port=dst_port method=method path=path query=query version=req.ver headers=req.hdrs body=req.body app=var(txn.coraza_app)
+
+  # Canonical spoe-message mirror body. Rendered by name from
+  # spoe-conf-content's per-message dispatch when "mirror" is in the
+  # messages union (i.e. spoaHub.plugins.mirror is enabled). Args follow
+  # the haproxy-spoa-hub-plugin-mirror plugin's contract
+  # (haproxy-spoa-hub-plugin-mirror/src/request.rs):
+  #
+  #   - arg_target  : the mirror backend's <host:port>. Sourced from
+  #     `var(txn.gw_mirror_target)` — set per-request by the gateway
+  #     library's frontend-filter snippet when a route's RequestMirror
+  #     filter matches. Different routes set different targets; the
+  #     plugin reads the var-sourced value off each NOTIFY frame and
+  #     dispatches dynamically, so a single spoe-message block covers
+  #     every HTTPRoute mirror filter in the cluster.
+  #   - arg_scheme  : "http" or "https". Same per-request variable
+  #     pattern as arg_target. The chart currently only emits "http"
+  #     (BackendTLSPolicy-style TLS mirroring is a v0.2 plugin feature);
+  #     the variable plumbing is here so flipping in the future is a
+  #     chart-side change, not a plugin contract change.
+  #   - arg_method / arg_path / arg_query / arg_ver — request-line
+  #     fields, pulled directly from HAProxy's request fetches.
+  #   - arg_hdrs    : `req.hdrs_bin` — HAProxy's varint-prefixed wire
+  #     format for the full header block. The plugin's request.rs
+  #     parses this directly; using `req.hdrs` (text form) would
+  #     mismatch.
+  #   - arg_body    : raw request body, capped at the plugin's
+  #     `max_body_bytes`. Requires `option http-buffer-request` on the
+  #     consuming frontend (the gateway library forces this on any
+  #     frontend with a RequestMirror filter); without it, PUT/POST
+  #     bodies arrive empty here and the mirror sees zero-byte requests.
+  #   - arg_timeout_ms / arg_retries (plugin v0.5.0+) — per-dispatch
+  #     overrides for the HTTP-roundtrip timeout and connection-error
+  #     retry budget. Sourced from `var(txn.gw_mirror_timeout_ms_<i>)`
+  #     and `var(txn.gw_mirror_retries_<i>)`, which the gateway
+  #     library's frontend-filter snippet computes from the primary
+  #     backend's chart-wide `timeout server` / `retries` (so a mirror
+  #     dispatch matches the operator's per-route expectations
+  #     instead of using a uniform plugin default). The plugin
+  #     treats arg_timeout_ms=0 as absent (falls back to plugin
+  #     default — guards against a misconfigured chart emitting a
+  #     literal 0ms-timeout footgun) and arg_retries=0 as an
+  #     explicit "no retries" override. Older plugin versions
+  #     (≤ v0.4.0) ignore unknown args, so emitting these on a stale
+  #     image is safe — it just doesn't take effect.
+  #
+  # The mirror plugin never writes back into HAProxy variables; the
+  # ack is fire-and-forget. No `output_var` configuration needed.
+  # Body for indexed mirror messages (`mirror-1`, `mirror-2`, ...).
+  # Receives `msg` via inherit_context from spoe-conf-content's
+  # per-message dispatch loop. The trailing index is what makes each
+  # message + group unique per stream — HAProxy SPOE only processes
+  # each group once per stream ("only one call to a group is allowed
+  # per stream" per the docs), so HTTPRoutes carrying N mirror filters
+  # need N distinct (message, group) pairs to actually trigger N
+  # NOTIFY frames. The chart's frontend filter snippet (gateway library)
+  # emits per-filter `set-var(txn.gw_mirror_target_<i>) ...`,
+  # `send-spoe-group spoa-hub mirror-<i>-group ...` triples; the message
+  # body below reads from the corresponding indexed txn variable. The
+  # plugin's process() only inspects SPOE args, not the message name —
+  # so all `mirror-<i>` messages route to the same plugin and dispatch
+  # identically (just to different targets via the indexed var).
+  spoe-message-mirror-body:
+    template: |-
+      {%- var idx = replace(msg, "mirror-", "") -%}
+      spoe-message {{ msg }}
+          args arg_target=var(txn.gw_mirror_target_{{ idx }}) arg_scheme=var(txn.gw_mirror_scheme_{{ idx }}) arg_method=method arg_path=path arg_query=query arg_ver=req.ver arg_hdrs=req.hdrs_bin arg_body=req.body arg_timeout_ms=var(txn.gw_mirror_timeout_ms_{{ idx }}) arg_retries=var(txn.gw_mirror_retries_{{ idx }})

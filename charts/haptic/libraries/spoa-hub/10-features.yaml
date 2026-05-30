@@ -1,0 +1,74 @@
+# SPOA hub library — production templateSnippets, batch 10:
+#
+#   - util-auth-validate-header-name      (header-name token guard)
+#   - util-spoa-hub-enabled                (one-line truthiness gate)
+#   - features-spoa-hub                    (file-registration entry point)
+#   - backends-100-spoa-hub                (backend spoa-hub block)
+
+templateSnippets:
+  # RFC 7230 token guard for HTTP header field names from annotation
+  # values. Ingress libraries call this before embedding a header
+  # name into a HAProxy `set-header` / `set-var` directive — defence
+  # in depth for operator typos and against any future code path
+  # where annotation editing isn't strictly RBAC-gated. The regex
+  # mirrors RFC 7230 `tchar`; values containing whitespace, `;`,
+  # fetch syntax like `%[var(...)]`, etc. fail-loud at render time.
+  util-auth-validate-header-name:
+    template: |-
+      {%- macro ValidateAuthHeaderName(name string, annotation string, ns string, ingressName string) %}
+        {%- if !regex_search(name, "^[A-Za-z0-9!#$&'*+.^_`|~-]+$") -%}
+          {{- fail("Invalid HTTP header name '" + name + "' in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ". Header names must be RFC 7230 tokens (1*tchar): no whitespace, no special characters, no fetch syntax.") -}}
+        {%- end -%}
+      {%- end %}
+
+  # URL guard for annotation values that get interpolated into
+  # HAProxy directives (e.g. `http-request redirect location <url>`).
+  # An unsanitised URL with whitespace, newlines, or HAProxy
+  # metacharacters could let an Ingress-write RBAC holder inject
+  # arbitrary directives into the shared frontend (e.g. closing the
+  # current rule and opening a `http-request deny if TRUE`). The
+  # check is intentionally strict — RFC 3986 URIs are constrained
+  # enough that disallowing whitespace and newlines covers every
+  # realistic injection vector while passing every legitimate
+  # https://... value operators care about.
+  util-spoa-hub-enabled:
+    template: |-
+      {{- extraContext | dig("spoaHub", "enabled") | fallback(false) | tostring() -}}
+
+  features-spoa-hub:
+    template: |
+      {%- if (render "util-spoa-hub-enabled") == "true" -%}
+        {%- var spoeContent = render "spoe-conf-content" -%}
+        {%- var _, regErr = fileRegistry.Register("file", "spoe.conf", spoeContent) -%}
+        {%- if regErr != nil %}
+          {%- fail("failed to register spoe.conf: " + regErr.Error()) %}
+        {%- end -%}
+        {#- Register the runtime hub config (TOML) at <GeneralStorageDir>/spoa-hub-config.toml.
+            The dataplane API delivers it to the haproxy pod's filesystem and the
+            spoa-hub sidecar's file-watch + graceful-reload picks it up without a
+            restart. ADR-0007 captures the end-to-end flow. -#}
+        {%- var hubConfig = render "spoa-hub-config-content" -%}
+        {%- var _, regErr2 = fileRegistry.Register("file", "spoa-hub-config.toml", hubConfig) -%}
+        {%- if regErr2 != nil %}
+          {%- fail("failed to register spoa-hub-config.toml: " + regErr2.Error()) %}
+        {%- end -%}
+      {%- end -%}
+
+  backends-100-spoa-hub:
+    template: |
+      {%- if (render "util-spoa-hub-enabled") == "true" %}
+      {#- mode spop is the native SPOP backend mode introduced in HAProxy 3.1.
+          On HAProxy 3.0 the proxy mode doesn't exist and the parser rejects
+          it ("unknown proxy mode 'spop'"); fall back to mode tcp, which is
+          the legacy SPOE transport. The filter spoe directive in the
+          frontend handles the protocol either way. Operators can force tcp
+          on 3.1+ by setting spoaHub.haproxy.modeSpop: false. -#}
+      {%- var modeSpopRequested = extraContext | dig("spoaHub", "modeSpop") | fallback(true) | tostring() %}
+      {%- var hapVersion = extraContext | dig_string("", "haproxyVersion") %}
+      {%- var spopSupported = semver_gte(hapVersion, "3.1") %}
+      backend spoa-hub
+          mode {%- if modeSpopRequested == "true" && spopSupported %} spop{%- else %} tcp{%- end %}
+          timeout connect 5s
+          timeout server  {{ extraContext | dig("spoaHub", "timeoutIdle") | fallback("5m") }}
+          server hub {{ extraContext | dig("spoaHub", "socketPath") | fallback("/run/spoa/hub.sock") }} pool-low-conn 0 pool-max-conn {{ extraContext | dig("spoaHub", "poolMaxConn") | fallback(100) }} pool-purge-delay {{ extraContext | dig("spoaHub", "poolPurgeDelay") | fallback("30s") }}
+      {%- end %}
