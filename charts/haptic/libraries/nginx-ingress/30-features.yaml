@@ -1,0 +1,170 @@
+# nginx-ingress library — feature registration + passthrough backends.
+# util-ssl-passthrough, features-100 (ssl-passthrough), features-110 (mTLS),
+# backends-501 (ssl-passthrough backend emission).
+templateSnippets:
+  # ============================================================================
+  # SSL Passthrough
+  # ============================================================================
+
+  util-nginx-ingress-ssl-passthrough:
+    template: |
+      {#- Caches SSL passthrough backends from nginx.ingress.kubernetes.io/ssl-passthrough annotations.
+          Build logic lives in ingress-annotations-compat.yaml's BuildAnnotationSSLPassthrough macro;
+          this snippet only owns the per-library cache key and naming-convention parameters. -#}
+      {%- import "util-build-annotation-ssl-passthrough" for BuildAnnotationSSLPassthrough %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("ni_sslPassthrough", func() any {
+          var sslData = map[string]any{"backends": []any{}}
+          BuildAnnotationSSLPassthrough(sslData,
+            "nginx.ingress.kubernetes.io/ssl-passthrough",
+            "ssl-passthrough-ni-",
+            "ni_sslPassthrough_host")
+          return sslData
+        })
+      %%}
+
+  features-100-nginx-ingress-ssl-passthrough:
+    template: |
+      {#-
+        Nginx Ingress SSL Passthrough Registration
+
+        Annotation: nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+
+        Registers SSL passthrough backends with global feature registry.
+        The ssl.yaml library consumes these to generate:
+          - TCP frontend for SNI-based routing
+          - SSL passthrough backends
+
+        Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#ssl-passthrough
+      -#}
+      {{ render "util-nginx-ingress-ssl-passthrough" }}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var niVal, _ = shared.ComputeIfAbsent("ni_sslPassthrough", func() any { return nil }) %}
+        {%- if niVal != nil %}
+          {%- var niBackends = niVal.(map[string]any)["backends"].([]any) %}
+          {%- for _, backend := range niBackends %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  features-110-nginx-ingress-mtls:
+    template: |
+      {#-
+        Nginx Ingress Client-Cert Verification Registration
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/auth-tls-secret: "<name>" or "<ns>/<name>"
+            (kubernetes.io/tls Secret with `ca.crt` containing the CA bundle
+            that signed the clients' certificates)
+          - nginx.ingress.kubernetes.io/auth-tls-verify-client: "on" | "off" |
+            "optional" | "optional_no_ca" (default: "on")
+
+        Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#client-certificate-authentication
+
+        Looks up each referenced Secret, writes its `ca.crt` to the SSL
+        cert dir via fileRegistry (path becomes `ssl/<ns>-<name>-client-ca.pem`),
+        and registers per-host config in `gf["clientCertVerifyHosts"]`.
+        ssl.yaml's `features-150-ssl-crtlist` reads that map and emits a
+        crt-list line with `[ca-file <path> verify <mode>]` for each
+        affected host, so HAProxy verifies incoming client certs against
+        the configured CA.
+
+        nginx-ingress's `auth-tls-verify-depth` is intentionally NOT
+        wired: HAProxy's crt-list does not expose a per-line verify-depth
+        option (depth is global, controlled at the bind level). Operators
+        needing a strict depth can rely on the CA bundle scope: only
+        certs signed within the bundle's chain depth are accepted.
+
+        Verify-client value mapping (nginx → HAProxy):
+          - on               → verify required
+          - off              → no entry registered (host falls through to
+                               default crt-list line, no client-cert verify)
+          - optional         → verify optional
+          - optional_no_ca   → verify optional (HAProxy doesn't have a
+                               distinct mode for "verify but accept invalid";
+                               operators wanting to accept self-signed
+                               certs should set verify=optional and inspect
+                               ssl_c_used in their auth-tls-error-page logic)
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var secretRef = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] %}
+        {%- if secretRef != "" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var verifyClient = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-verify-client"] | toLower() %}
+          {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
+          {%- if verifyClient == "off" %}
+            {%- continue %}
+          {%- end %}
+          {%- var verifyMode = "" %}
+          {%- if verifyClient == "on" %}
+            {%- verifyMode = "required" %}
+          {%- else if verifyClient == "optional" || verifyClient == "optional_no_ca" %}
+            {%- verifyMode = "optional" %}
+          {%- else %}
+            {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-tls-verify-client=" + verifyClient + " which is not one of 'on', 'off', 'optional', 'optional_no_ca'.") -}}
+          {%- end %}
+
+          {%- var secretNs = ns %}
+          {%- var secretName = secretRef %}
+          {%- if strings_contains(secretRef, "/") %}
+            {%- var parts = split(secretRef, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {%- if secret == nil %}
+            {#- See the matching block in haproxy-ingress.yaml for why we
+                skip-and-continue rather than fail() here: a missing
+                referenced Secret on one Ingress should not cascade to
+                webhook-rejection of every other Ingress in the cluster. -#}
+            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            {%- continue %}
+          {%- end %}
+          {%- var caBundleB64 = secret.Data["ca.crt"] %}
+          {%- if caBundleB64 == "" %}
+            # WARNING nginx.ingress.kubernetes.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            {%- continue %}
+          {%- end %}
+          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).
+              The Dataplane API's SSL cert endpoint validates ssl/ uploads as
+              cert+key bundles ("file should contain both certificate and
+              private key" / 500), but a CA bundle has no private key. -#}
+          {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
+          {%- var _, regErr = fileRegistry.Register("file", caFilename, caBundle) -%}
+          {%- if regErr != nil -%}
+            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
+          {%- end -%}
+          {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
+
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = rule.Host %}
+            {%- if host == "" %}
+              {{- fail("Ingress " + ns + "/" + name + " has nginx.ingress.kubernetes.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end %}
+            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
+              "ca_path": caPath,
+              "verify_mode": verifyMode,
+            } %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  backends-501-nginx-ingress-ssl-passthrough:
+    template: |
+      {#-
+        Nginx Ingress SSL Passthrough Backends
+
+        Generates TCP mode backends for Ingress resources with
+        nginx.ingress.kubernetes.io/ssl-passthrough: "true" annotation.
+
+        Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#ssl-passthrough
+      -#}
+      {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
+      {{ render "util-nginx-ingress-ssl-passthrough" }}
+      {{ RenderAnnotationSSLPassthroughBackends("ni_sslPassthrough", "ni_sslPassthrough_backend", "nginx-ingress") }}

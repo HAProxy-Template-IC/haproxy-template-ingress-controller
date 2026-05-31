@@ -1,0 +1,961 @@
+# nginx-ingress library — auth + mTLS validation tests.
+# mTLS client-cert pass-through, auth-tls secret, and external-auth (SPOE)
+# flows including resource-id keying variants.
+validationTests:
+  test-nginx-ingress-mtls-pass-cert:
+    description: Nginx Ingress auth-tls-pass-certificate-to-upstream adds cert headers
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mtls-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mtls-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mtls-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: mtls.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mtls-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl_c_der"
+        description: Must pass client certificate DER
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl_c_s_dn"
+        description: Must pass client subject DN
+
+  test-nginx-ingress-auth-tls-secret:
+    description: "nginx.ingress.kubernetes.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line for the matching SNI as `ca-file <path> verify required`. HAProxy then verifies incoming client certs against that CA bundle."
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: mtls-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: mtls-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: mtls-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: client-ca
+          type: kubernetes.io/tls
+          # Self-signed CA test fixture (re-used from echo demo).
+          data:
+            ca.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: server-tls
+          type: kubernetes.io/tls
+          data:
+            tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNXZ0F3SUJBZ0lVSkdvYlN1UzZ6K0lnWnVHejQwYU8xc01NL0RJd0NnWUlLb1pJemowRUF3SXcKRkRFU01CQUdBMVVFQXd3SmJHOWpZV3hvYjNOME1DQVhEVEkyTURVd09USXdORFV6TjFvWUR6SXhNall3TkRFMQpNakEwTlRNM1dqQVVNUkl3RUFZRFZRUUREQWxzYjJOaGJHaHZjM1F3V1RBVEJnY3Foa2pPUFFJQkJnZ3Foa2pPClBRTUJCd05DQUFRZ1FnRDBWaEErcDNrTzgxWndSdW8yM3JLVmVVZ0FyZ3YwZ09obEpOakczN1lzNXJ4aHNXSk8KZWttODVOM3JDS1htRmlBNWp0RlNMTXBydlhqUnVEZlFvMU13VVRBZEJnTlZIUTRFRmdRVUs0T1lyMzY0eVlRZgpMYUFiUFZpcXlsS2wrcXN3SHdZRFZSMGpCQmd3Rm9BVUs0T1lyMzY0eVlRZkxhQWJQVmlxeWxLbCtxc3dEd1lEClZSMFRBUUgvQkFVd0F3RUIvekFLQmdncWhrak9QUVFEQWdOSEFEQkVBaUI5R0RBaE5Uc29GblZWZVJPWVdVSE8KellnNzNQUG5OU2JDK1lhWnFaWHNoZ0lnWnpqVDkvdDNxUlAwMFVhMGJ3T1N6Z2tEcnVKd2lhM2dxNEYrNGdjVQpLdk09Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K
+            tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: mtls-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-tls-secret: "client-ca"
+              nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+          spec:
+            ingressClassName: haproxy
+            tls:
+              - hosts:
+                  - api.example.com
+                secretName: server-tls
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: mtls-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-tls-secret annotation
+      - type: contains
+        target: crt-list:certificate-list.txt
+        pattern: "ca-file [^ ]*general/default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
+        description: crt-list line carries the per-host ca-file path (general/, not ssl/ — Dataplane SSL endpoint validates ssl/ uploads as cert+key), verify mode, and SNI
+
+  test-nginx-ingress-external-auth:
+    # The auth-url.map and SPOE wiring this test asserts on are
+    # contributed by the spoa-hub library, which only auto-loads when
+    # the chart's haptic.spoaHub.enabled helper is truthy (any plugin
+    # enabled, or operator forces it). When the test renders against
+    # default chart values (no plugins), spoa-hub library is absent —
+    # auth-url.map doesn't exist and the frontend snippets don't
+    # render. Skip in that case so validate-helm-libraries is green.
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Nginx Ingress auth-url annotation populates auth-url.map and the spoa-hub frontend wiring (set-var, send-spoe-group, deny rule). Runs in a render where spoaHub is enabled with the external-auth plugin, simulating the auto-enable that nginxIngress=true triggers via the OR-expression in spoaHub.plugins.external-auth.enabled."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-url annotation
+      - type: contains
+        target: map:auth-url.map
+        pattern: "default/protected https://auth.example/check"
+        description: auth-url.map must contain the <ns>/<name> → URL entry
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn.auth_url\\).*auth-url\\.map"
+        description: Frontend looks up auth_url from the map after routing
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request send-spoe-group spoa-hub check-auth-group"
+        description: Frontend triggers the SPOE check when auth_url is found
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 401"
+        description: Frontend denies on auth failure
+
+  test-nginx-ingress-external-auth-signin:
+    # Same prerequisite as the other external-auth tests — needs the
+    # spoa-hub library loaded so auth-signin.map is defined.
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Nginx Ingress auth-signin annotation makes auth failures redirect (302) to the configured sign-in URL instead of returning 401. The deny rule still emits, so requests without auth-signin configured fall through to it."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              nginx.ingress.kubernetes.io/auth-signin: "https://login.example/oauth2/start"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-signin annotation
+      - type: contains
+        target: map:auth-signin.map
+        pattern: "default/protected https://login.example/oauth2/start"
+        description: auth-signin.map must contain the <ns>/<name> → URL entry
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn.auth_signin\\).*auth-signin\\.map"
+        description: Frontend looks up auth_signin from the map
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location %\\[var\\(txn.auth_signin\\)\\] code 302"
+        description: Frontend redirects to auth-signin URL on auth failure (browser flow)
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 401"
+        description: Deny rule still emits as fallback for ingresses without auth-signin
+
+  test-nginx-ingress-external-auth-method:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Nginx Ingress auth-method annotation populates auth-method.map and threads through the SPOE check-auth message's `method` arg so the auth subrequest goes out with the configured verb. The external-auth plugin v0.3.0+ falls back to its plugin-level method config when this map lookup is empty, so routes without the annotation are unaffected."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              nginx.ingress.kubernetes.io/auth-method: "POST"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-method annotation
+      - type: contains
+        target: map:auth-method.map
+        pattern: "default/protected POST"
+        description: auth-method.map must contain the <ns>/<name> → method entry
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-var\\(txn.auth_method\\).*auth-method\\.map"
+        description: Frontend looks up auth_method from the map
+      - type: contains
+        target: file:spoe.conf
+        pattern: "method=var\\(txn.auth_method\\)"
+        description: SPOE message body threads txn.auth_method into the plugin's method arg
+
+  test-nginx-ingress-external-auth-response-headers:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Nginx Ingress auth-response-headers annotation populates auth-extract-headers.map and emits one `http-request set-header` per unique header in any ingress's pass list, gated on `allowed -m bool` so the headers only flow through to the upstream backend on auth success."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              nginx.ingress.kubernetes.io/auth-response-headers: "X-Auth-User, X-Auth-Roles"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: protected.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with auth-response-headers annotation
+      - type: contains
+        target: map:auth-extract-headers.map
+        pattern: "default/protected X-Auth-User, X-Auth-Roles"
+        description: auth-extract-headers.map must contain the <ns>/<name> → comma-list entry
+      - type: contains
+        target: file:spoe.conf
+        pattern: "extract_headers=var\\(txn.auth_extract_headers\\)"
+        description: SPOE message body threads txn.auth_extract_headers into the plugin's extract_headers arg
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_user\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
+        description: First pass header gets a set-header line gated on allowed=true and var found
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-Roles %\\[var\\(txn.hub.external_auth.x_auth_roles\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_roles\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
+        description: Second pass header gets its own set-header line
+
+  test-nginx-ingress-external-auth-hostless-accepted:
+    # Same as test-nginx-ingress-external-auth: needs the spoa-hub library
+    # loaded for the auth-url.map definition.
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Ingress with auth-url annotation AND a host-less rule must render successfully now that auth-url.map is keyed by <ns>/<name> (resource identity) rather than by host+path. The host dimension is no longer part of the key, so the previous fail-loud behaviour for host-less rules is obsolete. The map row is emitted by ns/name and the routing chain populates txn.resource_id correctly for whatever request the host-less Ingress's catch-all matches."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hostless-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid even with a host-less Ingress
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/hostless-protected https://auth\.example/check$'
+        description: "auth-url.map must contain the host-less Ingress keyed by <ns>/<name>. The host dimension is irrelevant under resource_id keying."
+  # ----------------------------------------------------------------------------
+  # auth-url <host><path> keying bug (red→green)
+  #
+  # auth-url.map (and friends) are currently keyed on the literal
+  # `MapKeyForHost(host) + path` string. The frontend looks them up via plain
+  # `map(...)` (exact match), so:
+  #
+  #   - regex paths never match: the row's key is the regex pattern string,
+  #     the lookup key is the actual request path.
+  #   - prefix paths only match the exact ingress path, never subpaths.
+  #   - the wildcard-host case happens to work for Exact paths because both
+  #     render and request collapse to ".example.com/<path>".
+  #
+  # The fix keys feature maps by `<ns>/<name>` (resource identity, derived
+  # from the qualifier value the routing chain has already produced). After
+  # the fix:
+  #   - auth-url.map row: "default/<name> <url>"
+  #   - consumer line:    "set-var(txn.auth_url) var(txn.resource_id),map(...)"
+  #
+  # All five tests below assert the post-fix shape, so they FAIL with the
+  # current code (proving the bug) and PASS after the fix.
+  # ----------------------------------------------------------------------------
+
+  test-nginx-ingress-external-auth-resource-id-keying-wildcard-host:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "auth-url with wildcard host: the map row must be keyed by <ns>/<name>, not by the wildcard-stripped host+path. Demonstrates the new keying shape on a scenario that happens to work today (wildcard-host + Exact path), so any regression in the new keying is caught here even though the old keying didn't break this specific case at request time."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: wild-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: "*.example.com"
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/wild-protected https://auth\.example/check$'
+        description: "POST-FIX: auth-url.map must be keyed by <ns>/<name>. Currently FAILS because the row is keyed \".example.com/ https://auth.example/check\"."
+      - type: not_contains
+        target: map:auth-url.map
+        pattern: '\.example\.com/'
+        description: "POST-FIX: no host+path keys remain in the map. Currently FAILS — the old renderer emits \".example.com/\" as the key."
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.auth_url\) var\(txn\.resource_id\),map\('
+        description: "POST-FIX: the consumer line reads from txn.resource_id. Currently FAILS — it reads var(txn.host_match),concat(,txn.path,),map(...)."
+  test-nginx-ingress-external-auth-resource-id-keying-prefix-subpath:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "auth-url with Prefix path: a request to a SUBPATH of the ingress path must be authenticated. Today's bug: the map row is keyed \"host.example.com/api\" but the request lookup key is \"host.example.com/api/users\" — exact-match map() always misses on subpaths, so auth silently does not fire. After the fix the map is keyed \"<ns>/<name>\" and the consumer reads txn.resource_id, so any route owned by this ingress (regardless of subpath) triggers auth."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: prefix-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/prefix-protected https://auth\.example/check$'
+        description: "POST-FIX: auth-url.map keyed by <ns>/<name>. Currently FAILS — row is \"api.example.com/api https://auth.example/check\", which only matches a request to exactly /api (never /api/users etc.)."
+      - type: not_contains
+        target: map:auth-url.map
+        pattern: 'api\.example\.com/api'
+        description: "POST-FIX: no host+path keys remain. Currently FAILS — old renderer emits the literal ingress path as the map key."
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.auth_url\) var\(txn\.resource_id\),map\('
+        description: "POST-FIX: consumer reads resource_id. Currently FAILS — uses host+path concatenation and so misses on every subpath request."
+  test-nginx-ingress-external-auth-resource-id-keying-regex-path:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "auth-url on an Ingress using haproxy-ingress.github.io/path-type=regex. Routing works today via map_reg(); auth-url.map does not because its key is the literal regex string and its consumer is exact-match. Same red→green pattern: row keyed by <ns>/<name>, consumer reads resource_id."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: regex-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/path-type: regex
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: api.example.com
+                http:
+                  paths:
+                    - path: /api/v[0-9]+/.*
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/regex-protected https://auth\.example/check$'
+        description: "POST-FIX: auth-url.map keyed by <ns>/<name>. Currently FAILS — row is keyed \"api.example.com/api/v[0-9]+/.*\" (literal regex string), which exact-match map() can never resolve at request time."
+      - type: not_contains
+        target: map:auth-url.map
+        pattern: 'api/v\[0-9'
+        description: "POST-FIX: regex metacharacters do not appear in any auth-url.map key. Currently FAILS — the old renderer writes the regex pattern straight into the map key."
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.auth_url\) var\(txn\.resource_id\),map\('
+        description: "POST-FIX: consumer reads resource_id. Currently FAILS — host+path construction can never match a regex pattern via exact-match map()."
+  test-nginx-ingress-external-auth-resource-id-keying-wildcard-regex:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Combination: wildcard host AND regex path (the case the user asked about). Today this is triple-broken — the row is keyed \".example.com/api/v[0-9]+/.*\", the consumer is exact-match, AND the haproxy-ingress regex-map renderer at haproxy-ingress.yaml:111 leaks the literal `*` into the regex pattern (it doesn't apply MapKeyForHost), making the path-regex.map invalid for HAProxy. The third bug is out of scope here, so we don't assert haproxy_valid; this test just demonstrates the auth-url keying mismatch."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: protected-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: protected-svc-abc
+            labels:
+              kubernetes.io/service-name: protected-svc
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: wild-regex-protected
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/path-type: regex
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: "*.example.com"
+                http:
+                  paths:
+                    - path: /api/v[0-9]+/.*
+                      pathType: ImplementationSpecific
+                      backend:
+                        service:
+                          name: protected-svc
+                          port:
+                            number: 80
+    assertions:
+      # haproxy_valid is intentionally omitted here — the wildcard `*` leaks
+      # into path-regex.map via haproxy-ingress.yaml:111 (separate bug,
+      # tracked elsewhere).
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/wild-regex-protected https://auth\.example/check$'
+        description: "POST-FIX: auth-url.map keyed by <ns>/<name>. Currently FAILS — row is keyed \".example.com/api/v[0-9]+/.*\" which exact-match map() can never match for any actual request."
+      - type: not_contains
+        target: map:auth-url.map
+        pattern: '\.example\.com'
+        description: "POST-FIX: no host fragments leak into auth-url.map keys. Currently FAILS — the wildcard-stripped host is part of the row key."
+  test-nginx-ingress-external-auth-resource-id-keying-deterministic:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "Regression guard: the new <ns>/<name>-keyed renderer must produce byte-identical output across re-renders for the same input. Re-renders iterate resources.ingresses.List(), and store ordering must be stable."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: svc-a
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: svc-b
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: svc-a-abc
+            labels:
+              kubernetes.io/service-name: svc-a
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            namespace: default
+            name: svc-b-abc
+            labels:
+              kubernetes.io/service-name: svc-b
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: alpha
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/alpha"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: alpha.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-a
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: beta
+            annotations:
+              nginx.ingress.kubernetes.io/auth-url: "https://auth.example/beta"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: beta.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: svc-b
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: deterministic
+        description: Re-renders must produce byte-identical output
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/alpha https://auth\.example/alpha$'
+        description: POST-FIX
+      - type: contains
+        target: map:auth-url.map
+        pattern: '(?m)^default/beta https://auth\.example/beta$'
+        description: POST-FIX

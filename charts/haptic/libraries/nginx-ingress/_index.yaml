@@ -1,0 +1,67 @@
+# Nginx Ingress compatibility library for HAPTIC
+# Provides support for nginx.ingress.kubernetes.io annotation compatibility
+# Reference: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/
+#
+# This library is self-contained and works independently of other annotation libraries.
+# All annotations use the nginx.ingress.kubernetes.io/* prefix.
+#
+# Split library (ADR-0008): this _index.yaml is the load-rule authority
+# (_helm_load + watchedResources). Production templateSnippets live in the
+# sibling fragments by concern — 10-backend-directives, 20-frontend-filters,
+# 30-features, 40-auth-spoe — and validationTests live under tests/
+# (annotations, redirects-canary, auth-mtls). All fragments merge into one
+# library at chart-render time; the merge order is lexicographic, but since
+# each snippet/test name is unique the source file it lives in is purely
+# organisational.
+#
+# Supported annotations (see each section for details):
+#
+# Backend Configuration:
+#   - proxy-connect-timeout, proxy-read-timeout, proxy-send-timeout
+#   - load-balance
+#   - proxy-body-size
+#   - backend-protocol
+#   - use-proxy-protocol
+#   - rewrite-target
+#   - upstream-hash-by
+#   - configuration-snippet
+#
+# Session Affinity:
+#   - affinity: cookie
+#   - session-cookie-name, session-cookie-hash, session-cookie-path
+#
+# Authentication:
+#   - auth-type, auth-secret, auth-realm
+#
+# Rate Limiting:
+#   - limit-rps, limit-connections
+#
+# Frontend Filters:
+#   - whitelist-source-range, denylist-source-range
+#   - ssl-redirect, force-ssl-redirect
+#   - hsts, hsts-max-age, hsts-include-subdomains, hsts-preload
+#   - enable-cors, cors-allow-origin, cors-allow-methods, cors-allow-headers
+#   - cors-allow-credentials, cors-max-age, cors-expose-headers
+#   - custom-request-headers, custom-response-headers
+#   - app-root
+#   - permanent-redirect, temporal-redirect
+#
+# Canary:
+#   - canary, canary-by-header, canary-by-header-value, canary-by-header-pattern
+#   - canary-by-cookie, canary-weight
+#
+# SSL Features:
+#   - ssl-passthrough
+#
+# mTLS:
+#   - auth-tls-pass-certificate-to-upstream, auth-tls-error-page
+
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.nginxIngress.enabled }}'
+
+watchedResources:
+  secrets:
+    apiVersion: v1
+    resources: secrets
+    indexBy: ["metadata.namespace", "metadata.name"]
