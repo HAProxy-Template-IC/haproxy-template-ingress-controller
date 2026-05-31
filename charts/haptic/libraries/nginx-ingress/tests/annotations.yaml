@@ -1,0 +1,1081 @@
+# nginx-ingress library — annotation validation tests.
+# Backend directives, frontend filters, session affinity, basic auth, and
+# SSL passthrough.
+validationTests:
+  # ==========================================================================
+  # Backend Directive Tests
+  # ==========================================================================
+
+  test-nginx-ingress-timeouts:
+    description: Nginx Ingress timeout annotations generate correct config
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: timeout-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: timeout-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: timeout-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: timeout-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+              nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: timeout.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: timeout-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout connect 10s"
+        description: Must set timeout connect with s suffix
+      - type: contains
+        target: haproxy.cfg
+        pattern: "timeout server 60s"
+        description: Must set timeout server from proxy-read-timeout
+
+  test-nginx-ingress-load-balance:
+    description: Nginx Ingress load-balance annotation maps to HAProxy algorithm
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: lb-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: lb-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: lb-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lb-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/load-balance: "least_conn"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lb.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: lb-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "balance leastconn"
+        description: Must map least_conn to leastconn
+
+  test-nginx-ingress-ssl-redirect:
+    description: Nginx Ingress ssl-redirect annotation generates 301 redirect
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: redirect-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: redirect-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: redirect-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redirect-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-redirect: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: redirect.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: redirect-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect scheme https code 301"
+        description: Must generate SSL redirect with code 301
+
+  test-nginx-ingress-force-ssl-redirect:
+    description: Nginx Ingress force-ssl-redirect annotation generates 308 redirect
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: force-redirect-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: force-redirect-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: force-redirect-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: force-redirect-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: force-redirect.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: force-redirect-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect scheme https code 308"
+        description: Must generate SSL redirect with code 308
+
+  test-nginx-ingress-cors:
+    description: Nginx Ingress CORS annotations generate correct headers
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cors-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: cors-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: cors-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/enable-cors: "true"
+              nginx.ingress.kubernetes.io/cors-allow-origin: "https://example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cors.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cors-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "Access-Control-Allow-Origin"
+        description: Must set CORS origin header
+      - type: contains
+        target: haproxy.cfg
+        pattern: "https://example.com"
+        description: Must use specified origin
+
+  test-nginx-ingress-access-control:
+    description: Nginx Ingress whitelist-source-range creates ACL and deny rule
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: allow-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: allow-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: allow-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: allow-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: allow.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: allow-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl ni_allowlist_default_allow-ingress src"
+        description: Must create allowlist ACL with ni_ prefix
+      - type: contains
+        target: haproxy.cfg
+        pattern: "10.0.0.0/8"
+        description: Must include first CIDR
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny"
+        description: Must deny non-matching requests
+
+  test-nginx-ingress-hsts:
+    description: Nginx Ingress HSTS annotations generate correct header
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: hsts-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: hsts-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: hsts-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hsts-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/hsts: "true"
+              nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+              nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+              nginx.ingress.kubernetes.io/hsts-preload: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hsts.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hsts-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "Strict-Transport-Security"
+        description: Must set HSTS header
+      - type: contains
+        target: haproxy.cfg
+        pattern: "max-age=31536000"
+        description: Must include max-age
+      - type: contains
+        target: haproxy.cfg
+        pattern: "includeSubDomains"
+        description: Must include subdomains flag
+      - type: contains
+        target: haproxy.cfg
+        pattern: "preload"
+        description: Must include preload flag
+
+  test-nginx-ingress-backend-protocol-https:
+    description: Nginx Ingress backend-protocol HTTPS adds ssl to server options
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: https-service
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: https-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: https-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: https-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: https.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: https-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ssl verify none"
+        description: Must enable SSL to backend
+
+  test-nginx-ingress-backend-protocol-grpc:
+    description: Nginx Ingress backend-protocol GRPC adds proto h2 to server options
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: grpc-service
+          spec:
+            ports:
+              - port: 50051
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: grpc-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: grpc-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 50051
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: grpc-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: grpc.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: grpc-service
+                          port:
+                            number: 50051
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "proto h2"
+        description: Must set HTTP/2 protocol for gRPC
+
+  test-nginx-ingress-session-affinity:
+    description: Nginx Ingress cookie affinity generates cookie directive
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: affinity-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: affinity-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: affinity-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: affinity-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-name: "SERVERID"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: affinity.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: affinity-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie SERVERID insert indirect nocache dynamic"
+        description: Must generate cookie directive with custom name
+
+  test-nginx-ingress-auth-basic:
+    description: Nginx Ingress basic auth generates userlist and auth directive
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: my-auth
+          type: Opaque
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: auth-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: auth-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: auth-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "my-auth"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: auth-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "userlist ni_auth_default_my-auth"
+        description: Must generate userlist from secret
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password"
+        description: Userlist must contain credentials
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request auth"
+        description: Must require auth
+
+  test-nginx-ingress-rate-limit-rps:
+    description: Nginx Ingress limit-rps annotation generates stick-table and deny 429
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: ratelimit-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: ratelimit-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: ratelimit-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ratelimit-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ratelimit.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ratelimit-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
+        description: Must create stick-table for rate limiting
+      - type: contains
+        target: haproxy.cfg
+        pattern: "deny_status 429"
+        description: Must deny with 429 status
+
+  test-nginx-ingress-config-snippet:
+    description: Nginx Ingress configuration-snippet injects raw directives
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: snippet-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: snippet-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: snippet-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: snippet-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/configuration-snippet: |
+                option httpchk GET /healthz
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: snippet.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: snippet-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "option httpchk GET /healthz"
+        description: Must inject raw snippet into backend
+
+  test-nginx-ingress-rewrite-target:
+    description: Nginx Ingress rewrite-target translates capture groups
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rewrite-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: rewrite-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: rewrite-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rewrite-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: "/api\\$1"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rewrite.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rewrite-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "replace-path"
+        description: Must generate replace-path directive
+
+  test-nginx-ingress-app-root:
+    description: Nginx Ingress app-root redirects root path
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: approot-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: approot-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: approot-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: approot-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/app-root: "/dashboard"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: approot.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: approot-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location /dashboard"
+        description: Must redirect root to app-root path
+      - type: contains
+        target: haproxy.cfg
+        pattern: "{ path / }"
+        description: Must match root path only
+
+  test-nginx-ingress-proxy-body-size:
+    description: Nginx Ingress proxy-body-size limits request body
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: bodysize-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: bodysize-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: bodysize-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: bodysize-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: bodysize.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: bodysize-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "req.body_size gt 10485760"
+        description: Must convert 10m to bytes (10485760)
+
+  test-nginx-ingress-ssl-passthrough:
+    description: Nginx Ingress ssl-passthrough creates TCP backend and SNI routing
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: passthrough-service
+          spec:
+            ports:
+              - port: 443
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: passthrough-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: passthrough-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: passthrough-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: passthrough.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: passthrough-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "backend ssl-passthrough-ni-default-passthrough-ingress"
+        description: Must generate SSL passthrough backend with ni prefix
+      - type: contains
+        target: haproxy.cfg
+        pattern: "mode tcp"
+        description: Backend must be in TCP mode
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend ssl-passthrough-ni-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
+        description: TCP frontend must route by SNI
+
+  test-nginx-ingress-ssl-passthrough-skips-ingress-without-paths:
+    description: "Regression test for the dry-run race that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. Pre-fix shape: BuildAnnotationSSLPassthrough added an entry to gf[\"sslPassthroughBackends\"] for any (host, ingress) pair where the annotation was truthy. The use_backend in ssl-tcp was emitted from that list. The corresponding `backend X` block came from a separate `resources.ingresses.GetSingle` lookup that walked spec.rules to find a service. If the ingress had a host but no spec.rules[*].http.paths (or those paths had no backend.service), the use_backend was emitted without a matching backend block — `haproxy -c` rejected the config and the webhook denied the unrelated dry-run as collateral damage. Post-fix: the macro itself extracts svcName/svcPort up front and refuses to add an entry without them. This fixture's ingress has the annotation + a host but no http.paths, so neither use_backend nor backend should appear in the rendered config."
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: passthrough-ingress-no-paths
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: noservice.example.com
+                # Note: no `http:` block, so no paths.
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid (no use_backend without backend block)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "ssl-passthrough-ni-default-passthrough-ingress-no-paths"
+        description: "Neither use_backend nor backend block must mention the path-less ingress. If a use_backend slipped through without a matching backend block, haproxy_valid would also fail with 'unable to find required use_backend' — but assert on the string explicitly so a test failure points at the right cause."
+  test-nginx-ingress-ssl-passthrough-named-port:
+    description: nginx-ingress SSL passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (regression guard for the silent fallback-to-not-rendered bug in BuildAnnotationSSLPassthrough)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: secure-app
+            namespace: default
+          spec:
+            ports:
+              - name: https
+                port: 8443
+                targetPort: https
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: secure-app-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: secure-app
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.50"]
+              targetRef:
+                kind: Pod
+                name: secure-app-0
+          ports:
+            - name: https
+              port: 8443
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: secure-app
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: secure-app.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: secure-app
+                          port:
+                            name: https
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.50:8443 "
+        description: nginx-ingress SSL passthrough must use the resolved port for named-port references
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_1 10.0.0.50:80 "
+        description: Must not regress to port-80 fallback for nginx-ingress SSL passthrough

@@ -129,7 +129,7 @@ Each entry in `$libraryFiles` is either:
     "libraries/ingress-annotations-compat.yaml"
     "libraries/haproxytech.yaml"
     "libraries/haproxy-ingress/"
-    "libraries/nginx-ingress.yaml"
+    "libraries/nginx-ingress/"
     "libraries/spoa-hub/"
 }}
 {{- range $file := $libraryFiles }}

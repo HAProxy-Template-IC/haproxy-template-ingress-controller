@@ -1,0 +1,575 @@
+# nginx-ingress library — redirect + canary validation tests.
+# permanent/temporal redirect, multi-sibling redirect, upstream-hash, canary
+# by header and by weight.
+validationTests:
+  test-nginx-ingress-permanent-redirect:
+    description: Nginx Ingress permanent-redirect generates 301 redirect
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: permredir-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: permredir-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: permredir-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: permredir-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/permanent-redirect: "https://new.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: permredir.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: permredir-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect location https://new.example.com code 301"
+        description: Must redirect with 301 to new URL
+
+  test-nginx-ingress-temporal-redirect:
+    description: Nginx Ingress temporal-redirect generates 302 redirect
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: tempredir-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tempredir-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tempredir-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: tempredir-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/temporal-redirect: "https://temp.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: tempredir.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: tempredir-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect location https://temp.example.com code 302"
+        description: Must redirect with 302 to temp URL
+
+  test-nginx-ingress-redirect-with-many-siblings:
+    # Reproducer for the test-e2e:[3.x] flake where TestIngressNginxTemporalRedirect /
+    # TestIngressNginxPermanentRedirect sees its redirect rule disappear from
+    # the running HAProxy config under heavy parallel-test churn. The chart
+    # rendering itself is a pure function of the input resources; if the
+    # render IS deterministic across many sibling Ingresses (all with their
+    # own annotations contributing http_request_rules to the shared
+    # http_frontend), the residual flake is dataplane-side, not chart-side.
+    # If the render is NON-deterministic — e.g., the chart's iteration order
+    # leaks into ordering of the redirect rules, and the redirect Ingress's
+    # rule sometimes lands at a position that collides with a sibling — the
+    # bug is right here in this test.
+    description: redirect rule survives when many sibling Ingresses contribute http_request_rules to the same http_frontend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: redir-svc
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cors-svc
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rewrite-svc
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: hsts-svc
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: srcip-svc
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: redir-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: redir-svc
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.1"]}]
+          ports: [{port: 8080}]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: cors-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: cors-svc
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.2"]}]
+          ports: [{port: 8080}]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: rewrite-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: rewrite-svc
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.3"]}]
+          ports: [{port: 8080}]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: hsts-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: hsts-svc
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.4"]}]
+          ports: [{port: 8080}]
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: srcip-svc-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: srcip-svc
+          addressType: IPv4
+          endpoints: [{addresses: ["10.0.0.5"]}]
+          ports: [{port: 8080}]
+      ingresses:
+        # The redirect-bearing Ingress under test. The remaining ingresses
+        # each contribute their own http_request_rule(s) to the shared
+        # http_frontend so we hit the chart's many-rules-in-one-frontend
+        # path, which is what the e2e flake exercises.
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: redir-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/temporal-redirect: "https://flake-repro.example.com/temp"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: redir.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: redir-svc
+                          port: {number: 80}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cors-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/enable-cors: "true"
+              nginx.ingress.kubernetes.io/cors-allow-origin: "https://allowed.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cors.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cors-svc
+                          port: {number: 80}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rewrite-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/rewrite-target: "/new"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rewrite.example.com
+                http:
+                  paths:
+                    - path: /old
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rewrite-svc
+                          port: {number: 80}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hsts-ingress
+            annotations:
+              haproxy-ingress.github.io/hsts: "true"
+              haproxy-ingress.github.io/hsts-max-age: "31536000"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hsts.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hsts-svc
+                          port: {number: 80}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: srcip-ingress
+            annotations:
+              haproxy-ingress.github.io/whitelist-source-range: "10.0.0.0/8"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: srcip.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: srcip-svc
+                          port: {number: 80}
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid with all the sibling Ingresses present
+      - type: contains
+        target: haproxy.cfg
+        pattern: "redirect location https://flake-repro.example.com/temp code 302"
+        description: redirect rule MUST be in the rendered config — anchors the test against silent omission under the chart's many-Ingress iteration path
+
+  test-nginx-ingress-upstream-hash-header:
+    description: Nginx Ingress upstream-hash-by translates $http_ variables
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: hash-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: hash-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: hash-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hash-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/upstream-hash-by: "$http_x_forwarded_for"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: hash.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: hash-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "balance hash req\\.hdr\\(x-forwarded-for\\)"
+        description: Must translate $http_x_forwarded_for to req.hdr
+      - type: contains
+        target: haproxy.cfg
+        pattern: "hash-type consistent"
+        description: Must use consistent hashing
+
+  test-nginx-ingress-canary-by-header:
+    description: Nginx Ingress canary by header generates use_backend rule
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-ingress
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: canary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: canary.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "use_backend"
+        description: Must generate use_backend rule for canary
+      - type: contains
+        target: haproxy.cfg
+        pattern: "req\\.hdr\\(X-Canary\\)"
+        description: Must match on canary header
+
+  test-nginx-ingress-canary-by-weight:
+    description: Nginx Ingress canary by weight generates randomized use_backend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: main-service
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: canary-weight-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: main-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: main-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: canary-weight-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: canary-weight-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: main-weight-ingress
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: canary-weight.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: main-service
+                          port:
+                            number: 80
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: canary-weight-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/canary: "true"
+              nginx.ingress.kubernetes.io/canary-weight: "20"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: canary-weight.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: canary-weight-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "rand\\(100\\) lt 20"
+        description: Must use weighted random for canary routing

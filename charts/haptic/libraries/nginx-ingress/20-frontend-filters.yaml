@@ -1,0 +1,401 @@
+# nginx-ingress library — frontend-filters-* annotation handlers.
+# access-control, ssl-redirect, hsts, cors, custom-headers, app-root,
+# permanent/temporal-redirect, canary, mtls-error.
+templateSnippets:
+  # ============================================================================
+  # Frontend Filters
+  # ============================================================================
+
+  frontend-filters-700-nginx-ingress-access-control:
+    template: |
+      {#-
+        Nginx Ingress Access Control Annotations
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#whitelist-source-range
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/whitelist-source-range: "CIDR,CIDR,..." (optional)
+          - nginx.ingress.kubernetes.io/denylist-source-range: "CIDR,CIDR,..." (optional)
+
+        Generated HAProxy Config:
+          acl <name> src <cidrs>
+          http-request deny if <host-match> !<acl>    (for allowlist)
+          http-request deny if <host-match> <acl>     (for denylist)
+      -#}
+      {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationAccessControl(ingress,
+            "nginx.ingress.kubernetes.io/whitelist-source-range",
+            "nginx.ingress.kubernetes.io/denylist-source-range",
+            "ni",
+            "nginx-ingress/whitelist-source-range ({KEY})",
+            "nginx-ingress/denylist-source-range ({KEY})") }}
+      {%- end -%}
+
+  frontend-filters-710-nginx-ingress-ssl-redirect:
+    template: |
+      {#-
+        Nginx Ingress SSL Redirect Annotations
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#server-side-https-enforcement-through-redirect
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/ssl-redirect: "true|false" (code 301)
+          - nginx.ingress.kubernetes.io/force-ssl-redirect: "true|false" (code 308)
+
+        If both are set, force-ssl-redirect takes precedence (code 308).
+
+        Generated HAProxy Config:
+          http-request redirect scheme https code <code> if !{ ssl_fc } <host-match>
+      -#}
+      {%- import "util-emit-annotation-ssl-redirect" for EmitAnnotationSSLRedirect -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var sslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] %}
+        {%- var forceSslRedirect = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/force-ssl-redirect"] %}
+        {%- var code = "" %}
+        {%- if forceSslRedirect == "true" %}
+          {%- code = "308" %}
+        {%- else if sslRedirect == "true" %}
+          {%- code = "301" %}
+        {%- end %}
+        {%- if code != "" %}
+          {{ EmitAnnotationSSLRedirect(ingress, code, "nginx-ingress/ssl-redirect") }}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-720-nginx-ingress-hsts:
+    template: |
+      {#-
+        Nginx Ingress HSTS Annotations
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#http-strict-transport-security
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/hsts: "true|false" (optional)
+          - nginx.ingress.kubernetes.io/hsts-max-age: "<seconds>" (optional, default: 15724800)
+          - nginx.ingress.kubernetes.io/hsts-include-subdomains: "true|false" (optional)
+          - nginx.ingress.kubernetes.io/hsts-preload: "true|false" (optional)
+
+        Generated HAProxy Config:
+          http-response set-header Strict-Transport-Security "max-age=<age>[; includeSubDomains][; preload]" if { ssl_fc } <host-match>
+      -#}
+      {%- import "util-emit-annotation-hsts" for EmitAnnotationHSTS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationHSTS(ingress,
+            "nginx.ingress.kubernetes.io/hsts",
+            "nginx.ingress.kubernetes.io/hsts-max-age",
+            "nginx.ingress.kubernetes.io/hsts-include-subdomains",
+            "nginx.ingress.kubernetes.io/hsts-preload",
+            "15724800",
+            "nginx-ingress/hsts") }}
+      {%- end -%}
+
+  frontend-filters-730-nginx-ingress-cors:
+    template: |
+      {#-
+        Nginx Ingress CORS Annotations
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#enable-cors
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/enable-cors: "true|false" (required to enable)
+          - nginx.ingress.kubernetes.io/cors-allow-origin: "<origin>" (default: *)
+          - nginx.ingress.kubernetes.io/cors-allow-methods: "<methods>" (default: GET, PUT, POST, DELETE, PATCH, OPTIONS)
+          - nginx.ingress.kubernetes.io/cors-allow-headers: "<headers>" (default: DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization)
+          - nginx.ingress.kubernetes.io/cors-allow-credentials: "true|false" (optional)
+          - nginx.ingress.kubernetes.io/cors-max-age: "<seconds>" (default: 1728000)
+          - nginx.ingress.kubernetes.io/cors-expose-headers: "<headers>" (optional)
+
+        Generated HAProxy Config:
+          http-response add-header Access-Control-Allow-Origin <origin> if <host-match>
+          http-response add-header Access-Control-Allow-Methods <methods> if <host-match> METH_OPTIONS
+          ... (other CORS headers)
+      -#}
+      {%- import "util-emit-annotation-cors" for EmitAnnotationCORS -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {{ EmitAnnotationCORS(ingress,
+            "nginx.ingress.kubernetes.io",
+            "nginx.ingress.kubernetes.io/enable-cors",
+            "1728000",
+            "nginx-ingress/cors") }}
+      {%- end -%}
+
+  frontend-filters-740-nginx-ingress-custom-headers:
+    template: |
+      {#-
+        Nginx Ingress Custom Headers
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-headers
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/custom-request-headers: "name:value|name:value|..."
+          - nginx.ingress.kubernetes.io/custom-response-headers: "name:value|name:value|..."
+
+        Format: Pipe-separated list of header:value pairs.
+
+        Generated HAProxy Config:
+          http-request set-header <name> <value> if <host-match>
+          http-response set-header <name> <value> if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var reqHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-request-headers"] %}
+          {%- var respHeaders = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/custom-response-headers"] %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+          {%- end %}
+          {%- if len(hosts) > 0 %}
+            {%- if reqHeaders != "" %}
+      # nginx-ingress/custom-request-headers ({{ key }})
+              {%- for _, header := range split(reqHeaders, "|") %}
+                {%- var headerTrimmed = trimSpace(header) %}
+                {%- if headerTrimmed != "" %}
+                  {%- var parts = split(headerTrimmed, ":") %}
+                  {%- if len(parts) >= 2 %}
+                    {%- var headerName = trimSpace(parts[0]) %}
+                    {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
+      http-request set-header {{ headerName }} '{{ headerValue }}' if {{ HostMatchCondition(hosts) }}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {%- if respHeaders != "" %}
+      # nginx-ingress/custom-response-headers ({{ key }})
+              {%- for _, header := range split(respHeaders, "|") %}
+                {%- var headerTrimmed = trimSpace(header) %}
+                {%- if headerTrimmed != "" %}
+                  {%- var parts = split(headerTrimmed, ":") %}
+                  {%- if len(parts) >= 2 %}
+                    {%- var headerName = trimSpace(parts[0]) %}
+                    {%- var headerValue = trimSpace(join(parts[1:], ":")) %}
+      http-response set-header {{ headerName }} '{{ headerValue }}' if {{ HostMatchCondition(hosts) }}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-750-nginx-ingress-app-root:
+    template: |
+      {#-
+        Nginx Ingress App Root Annotation
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#rewrite
+
+        Annotation: nginx.ingress.kubernetes.io/app-root
+
+        Redirects requests to / to the specified path.
+
+        Generated HAProxy Config:
+          http-request redirect location <path> code 302 if { path / } <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var appRoot = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/app-root"] %}
+          {%- if appRoot != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # nginx-ingress/app-root ({{ key }})
+      http-request redirect location {{ appRoot }} code 302 if { path / } {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-760-nginx-ingress-permanent-redirect:
+    template: |
+      {#-
+        Nginx Ingress Permanent Redirect
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#permanent-redirect
+
+        Annotation: nginx.ingress.kubernetes.io/permanent-redirect
+
+        Redirects all requests to the specified URL with code 301.
+
+        Generated HAProxy Config:
+          http-request redirect location <url> code 301 if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
+          {%- if url != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # nginx-ingress/permanent-redirect ({{ key }})
+      http-request redirect location {{ url }} code 301 if {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-770-nginx-ingress-temporal-redirect:
+    template: |
+      {#-
+        Nginx Ingress Temporal Redirect
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#temporal-redirect
+
+        Annotation: nginx.ingress.kubernetes.io/temporal-redirect
+
+        Redirects all requests to the specified URL with code 302.
+
+        Generated HAProxy Config:
+          http-request redirect location <url> code 302 if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
+          {%- if url != "" %}
+            {%- var hosts = []string{} %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 %}
+      # nginx-ingress/temporal-redirect ({{ key }})
+      http-request redirect location {{ url }} code 302 if {{ HostMatchCondition(hosts) }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
+
+  frontend-filters-780-nginx-ingress-canary:
+    template: |
+      {#-
+        Nginx Ingress Canary Annotations
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#canary
+
+        Annotations (on canary Ingress, with canary: "true"):
+          - nginx.ingress.kubernetes.io/canary: "true" (required)
+          - nginx.ingress.kubernetes.io/canary-by-header: "<header-name>" (optional)
+          - nginx.ingress.kubernetes.io/canary-by-header-value: "<value>" (optional, default: "always")
+          - nginx.ingress.kubernetes.io/canary-by-header-pattern: "<regex>" (optional)
+          - nginx.ingress.kubernetes.io/canary-by-cookie: "<cookie-name>" (optional)
+          - nginx.ingress.kubernetes.io/canary-weight: "<0-100>" (optional)
+
+        Priority order: header > cookie > weight
+
+        The canary Ingress must share a host with a non-canary (main) Ingress.
+        use_backend rules are generated in the frontend for the matching host.
+
+        Generated HAProxy Config:
+          use_backend <canary-backend> if { req.hdr(<header>) -m str <value> } <host-match>
+          use_backend <canary-backend> if { req.cook(<cookie>) -m str always } <host-match>
+          use_backend <canary-backend> if { rand(100) lt <weight> } <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var isCanary = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary"] %}
+        {%- if isCanary == "true" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var key = ns + "/" + name %}
+            {#- Extract hosts and find the first backend name from this canary ingress -#}
+            {%- var hosts = []string{} %}
+            {%- var canaryBackend = "" %}
+            {%- for _, rule := range ingress.Spec.Rules %}
+              {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+              {%- if canaryBackend == "" %}
+                {%- var http = rule | dig("http") %}
+                {%- if http != nil %}
+                  {%- var paths []any = http | dig("paths") | toSlice() %}
+                  {%- if len(paths) > 0 %}
+                    {%- canaryBackend = BackendNameIngress(ingress, paths[0]) %}
+                  {%- end %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+            {%- if len(hosts) > 0 && canaryBackend != "" %}
+              {%- var cond = HostMatchCondition(hosts) %}
+              {%- var canaryHeader = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header"] %}
+              {%- var canaryHeaderValue = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-value"] %}
+              {%- var canaryHeaderPattern = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-header-pattern"] %}
+              {%- var canaryCookie = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-by-cookie"] %}
+              {%- var canaryWeight = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/canary-weight"] %}
+      # nginx-ingress/canary ({{ key }})
+              {%- if canaryHeader != "" %}
+                {%- if canaryHeaderPattern != "" %}
+      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m reg {{ canaryHeaderPattern }} } {{ cond }}
+                {%- else if canaryHeaderValue != "" %}
+      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str {{ canaryHeaderValue }} } {{ cond }}
+                {%- else %}
+      use_backend {{ canaryBackend }} if { req.hdr({{ canaryHeader }}) -m str always } {{ cond }}
+                {%- end %}
+              {%- end %}
+              {%- if canaryCookie != "" %}
+      use_backend {{ canaryBackend }} if { req.cook({{ canaryCookie }}) -m str always } {{ cond }}
+              {%- end %}
+              {%- if canaryWeight != "" %}
+      use_backend {{ canaryBackend }} if { rand(100) lt {{ canaryWeight }} } {{ cond }}
+              {%- end %}
+            {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  frontend-filters-790-nginx-ingress-mtls-error:
+    template: |
+      {#-
+        Nginx Ingress mTLS Error Page and Certificate Passthrough
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#client-certificate-authentication
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/auth-tls-error-page: "<url>" (optional)
+          - nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true|false" (optional)
+
+        Generated HAProxy Config:
+          http-request redirect location <url> code 302 if { ssl_c_verify gt 0 } <host-match>
+          http-request set-header ssl-client-cert %[ssl_c_der,base64] if <host-match>
+          http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if <host-match>
+      -#}
+      {%- import "util-ingress-helpers" for HostMatchCondition -%}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+          {%- var hosts = []string{} %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
+          {%- end %}
+          {%- if len(hosts) > 0 %}
+            {%- var errorPage = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-error-page"] %}
+            {%- var passCert = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream"] %}
+            {%- var cond = HostMatchCondition(hosts) %}
+            {%- if errorPage != "" %}
+              {#- Inline URL guard: this snippet renders via the
+                  always-compiled `frontend-filters-*` glob, so it
+                  can't import util macros from spoa-hub.yaml (opt-in
+                  library, absent under default values — Scriggo
+                  would fail to resolve the import at compile time). -#}
+              {%- if strings_contains(errorPage, "\n") || strings_contains(errorPage, "\r") || strings_contains(errorPage, " ") || strings_contains(errorPage, "\t") -%}
+                {{- fail("Invalid URL in annotation 'nginx.ingress.kubernetes.io/auth-tls-error-page' on Ingress " + ns + "/" + name + ": value contains whitespace or newlines. URLs must not contain whitespace — they are interpolated into HAProxy directives where whitespace is significant and could be used to inject arbitrary config.") -}}
+              {%- end %}
+      # nginx-ingress/auth-tls-error-page ({{ key }})
+      http-request redirect location {{ errorPage }} code 302 if { ssl_c_verify gt 0 } {{ cond }}
+            {%- end %}
+            {%- if passCert == "true" %}
+      # nginx-ingress/auth-tls-pass-certificate-to-upstream ({{ key }})
+      http-request set-header ssl-client-cert %[ssl_c_der,base64] if {{ cond }}
+      http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if {{ cond }}
+            {%- end %}
+          {%- end %}
+      {%- end -%}
