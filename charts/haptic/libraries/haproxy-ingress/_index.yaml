@@ -1,0 +1,71 @@
+# HAProxy Ingress compatibility library for HAPTIC
+# Provides support for haproxy-ingress.github.io annotation compatibility
+# Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
+#
+# This library is self-contained and works independently of haproxytech.yaml.
+# All annotations use the haproxy-ingress.github.io/* prefix.
+#
+# Split library (ADR-0008): this _index.yaml is the load-rule authority
+# (_helm_load + watchedResources). Production templateSnippets live in the
+# sibling fragments by concern — 10-path-maps, 20-backend-directives,
+# 30-frontend-filters, 40-features, 50-auth-spoe — and validationTests live
+# under tests/ (annotations, auth, waf). All fragments merge into one library
+# at chart-render time; the merge order is lexicographic, but since each
+# snippet/test name is unique the source file it lives in is purely
+# organisational.
+#
+# Supported annotations (see each section for details):
+#
+# Path Matching:
+#   - path-type: regex, exact, prefix, begin
+#
+# Backend Configuration:
+#   - timeout-connect, timeout-server, timeout-queue, timeout-tunnel
+#   - timeout-http-request, timeout-keep-alive
+#   - balance-algorithm
+#   - maxconn-server, maxqueue-server
+#   - backend-check-interval, health-check-uri, health-check-port
+#   - health-check-fall-count, health-check-rise-count
+#   - proxy-protocol
+#   - secure-backends, secure-sni, secure-verify-ca-secret
+#   - secure-crt-secret, secure-verify-hostname
+#   - config-backend
+#   - initial-weight, limit-connections, backend-protocol
+#
+# Frontend Filters:
+#   - allowlist-source-range, denylist-source-range
+#   - ssl-redirect, ssl-redirect-code
+#   - forwardfor
+#   - hsts, hsts-max-age, hsts-include-subdomains, hsts-preload
+#   - app-root
+#   - redirect-to, redirect-to-code
+#   - cors-enable, cors-allow-origin, cors-allow-methods
+#   - cors-allow-headers, cors-allow-credentials, cors-max-age
+#
+# Session Affinity:
+#   - affinity: cookie
+#   - session-cookie-name, session-cookie-strategy, session-cookie-dynamic
+#   - session-cookie-keywords, session-cookie-domain, session-cookie-same-site
+#
+# SSL Features:
+#   - ssl-passthrough, ssl-passthrough-http-port
+#
+# Authentication:
+#   - auth-secret, auth-realm
+#
+# WAF (Coraza, via SPOA hub):
+#   - waf: modsecurity (path-scoped opt-in; only "modsecurity" supported)
+#   - waf-mode: deny | detect (default deny; detect = shadow mode)
+#
+# Advanced:
+#   - limit-rps, limit-whitelist
+
+# Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
+_helm_load:
+  enable: '{{ .Values.controller.templateLibraries.haproxyIngress.enabled }}'
+
+watchedResources:
+  secrets:
+    apiVersion: v1
+    resources: secrets
+    indexBy: ["metadata.namespace", "metadata.name"]

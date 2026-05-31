@@ -1,0 +1,182 @@
+# haproxy-ingress library — path-matching map contributions.
+# Emits map-path-{regex,exact,prefix,pfxexact}-600 entries from the Ingress
+# path-type annotation. Merges into the chart-wide path maps base.yaml owns.
+templateSnippets:
+  map-path-regex-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Regex Path Map Entries
+
+        Purpose: Generates path-regex.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "regex" annotation.
+
+        Extension Point: map-path-regex-* (priority 600 - compatibility layer)
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "regex"
+
+        Output: <MapKeyForHost(host)><path> BACKEND:<backend_name> — same
+        shape as ingress.yaml's standard renderers, so base.yaml's
+        frontend-routing-logic decodes the qualifier (`field(1,:)`) and
+        backend name (`field(2,:)`) from the value identically.
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
+      {%- if pathTypeAnnotation == "regex" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-regex-haproxy-ingress
+      {%- isFirst = false %}
+      {%- end %}
+      {#- Count regex paths for this ingress -#}
+      {%- var regexPathCount = 0 %}
+      {%- for _, path := range ingress.Spec.Rules[*].Http.Paths %}
+        {%- if path.PathType == "ImplementationSpecific" %}
+          {%- regexPathCount++ %}
+        {%- end %}
+      {%- end %}
+      {%- if regexPathCount > 0 %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} ({{ regexPathCount }} regex paths)
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Phase 3: Path Type Matching - Exact
+  # ============================================================================
+
+  map-path-exact-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Exact Path Map Entries
+
+        Purpose: Generates path-exact.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "exact" annotation.
+
+        Extension Point: map-path-exact-* (priority 600 - compatibility layer)
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "exact"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
+      {%- if pathTypeAnnotation == "exact" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-exact-haproxy-ingress
+      {%- isFirst = false %}
+      {%- end %}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Phase 3: Path Type Matching - Prefix
+  # ============================================================================
+
+  map-path-prefix-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Prefix Path Map Entries
+
+        Purpose: Generates path-prefix.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "prefix" annotation.
+
+        Extension Point: map-path-prefix-* (priority 600 - compatibility layer)
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "prefix"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
+      {%- if pathTypeAnnotation == "prefix" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-path-prefix-haproxy-ingress
+      {%- isFirst = false %}
+      {%- end %}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+            {%- var pathValue = path.Path %}
+            {#- Ensure path ends with / for prefix matching -#}
+            {%- if pathValue != "" && !hasSuffix(pathValue, "/") %}
+              {%- pathValue = pathValue + "/" %}
+            {%- end %}
+      {{ MapKeyForHost(rule.Host) }}{{ pathValue }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}
+
+  # ============================================================================
+  # Phase 3: Path Type Matching - Begin (Legacy)
+  # ============================================================================
+
+  map-pfxexact-600-haproxy-ingress:
+    template: |
+      {#-
+        HAProxy Ingress Begin Path Map Entries
+
+        Purpose: Generates path-prefix-exact.map entries for Ingress resources with
+                 haproxy-ingress.github.io/path-type: "begin" annotation.
+
+        Extension Point: map-pfxexact-* (priority 600 - compatibility layer)
+
+        The "begin" path type in haproxy-ingress is a legacy type that matches
+        if the path begins with the specified prefix (no trailing slash normalization).
+
+        Matches: Ingress paths with:
+          - pathType: ImplementationSpecific
+          - Annotation: haproxy-ingress.github.io/path-type: "begin"
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#path-type
+      -#}
+      {%- import "util-backend-name-ingress" for BackendNameIngress -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var pathTypeAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/path-type"] %}
+      {%- if pathTypeAnnotation == "begin" -%}
+      {%- if isFirst %}
+      # haproxy-ingress/map-pfxexact-haproxy-ingress (begin)
+      {%- isFirst = false %}
+      {%- end %}
+        {%- for _, rule := range ingress.Spec.Rules %}
+          {%- for _, path := range rule.Http.Paths %}
+          {%- if path.PathType == "ImplementationSpecific" %}
+      {{ MapKeyForHost(rule.Host) }}{{ path.Path }} BACKEND:{{ BackendNameIngress(ingress, path) }}
+          {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+      {%- end %}

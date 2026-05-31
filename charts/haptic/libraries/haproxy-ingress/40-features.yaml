@@ -1,0 +1,148 @@
+# haproxy-ingress library — feature registration + passthrough backends.
+# features-100 (ssl-passthrough), features-110 (mTLS), backends-501
+# (ssl-passthrough backend emission).
+templateSnippets:
+  features-100-haproxy-ingress-ssl-passthrough:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Passthrough Registration
+
+        Annotation: haproxy-ingress.github.io/ssl-passthrough: "true"
+
+        Registers SSL passthrough backends with global feature registry.
+        The ssl.yaml library consumes these to generate:
+          - TCP frontend for SNI-based routing
+          - SSL passthrough backends
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-passthrough
+      -#}
+      {{ render "util-haproxy-ingress-ssl-passthrough" }}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
+      {%- if sslBackends != nil %}
+        {%- var hiVal, _ = shared.ComputeIfAbsent("hi_sslPassthrough", func() any { return nil }) %}
+        {%- if hiVal != nil %}
+          {%- var hiBackends = hiVal.(map[string]any)["backends"].([]any) %}
+          {%- for _, backend := range hiBackends %}
+            {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  features-110-haproxy-ingress-mtls:
+    template: |
+      {#-
+        HAProxy-Ingress Client-Cert Verification Registration
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-tls-secret: "<name>" or "<ns>/<name>"
+            (kubernetes.io/tls Secret with `ca.crt` containing the CA bundle
+            that signed the clients' certificates)
+          - haproxy-ingress.github.io/auth-tls-verify-client: "on" | "off" |
+            "optional" | "optional_no_ca" (default: "on")
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-tls-secret
+
+        Mirrors features-110-nginx-ingress-mtls — same Secret format,
+        same verify-client value mapping, same emission into
+        `gf["clientCertVerifyHosts"]`. ssl.yaml's
+        features-150-ssl-crtlist owns the actual `[ca-file ... verify ...]`
+        crt-list line emission, so both ingress libraries can stack on
+        the same SNI-keyed map without coordinating.
+
+        haproxy-ingress's `auth-tls-strict` (when false, accepts unverified
+        connections and relies on backend header inspection) overlaps with
+        `auth-tls-verify-client: optional` and is intentionally not wired
+        as a separate axis — operators wanting "soft" verification should
+        use `auth-tls-verify-client: optional` directly.
+      -#}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var secretRef = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-secret"] %}
+        {%- if secretRef != "" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var verifyClient = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-tls-verify-client"] | toLower() %}
+          {%- if verifyClient == "" %}{%- verifyClient = "on" %}{%- end %}
+          {%- if verifyClient == "off" %}
+            {%- continue %}
+          {%- end %}
+          {%- var verifyMode = "" %}
+          {%- if verifyClient == "on" %}
+            {%- verifyMode = "required" %}
+          {%- else if verifyClient == "optional" || verifyClient == "optional_no_ca" %}
+            {%- verifyMode = "optional" %}
+          {%- else %}
+            {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-verify-client=" + verifyClient + " which is not one of 'on', 'off', 'optional', 'optional_no_ca'.") -}}
+          {%- end %}
+
+          {%- var secretNs = ns %}
+          {%- var secretName = secretRef %}
+          {%- if strings_contains(secretRef, "/") %}
+            {%- var parts = split(secretRef, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var secret = resources.secrets.GetSingle(secretNs, secretName) %}
+          {%- if secret == nil %}
+            {#- Secret missing — emit a render comment and skip mTLS for
+                this ingress instead of failing the entire render. The
+                latter form (fail()) blocks every ingress's admission,
+                because the webhook re-renders the merged config of the
+                whole cluster on every CREATE. With skip-and-continue,
+                the missing secret is logged at render time, this one
+                ingress's mTLS isn't applied (the backend behaves as if
+                the annotation were absent), and unrelated ingresses
+                continue to render. The webhook still rejects an
+                ingress whose OWN secret is missing — it just doesn't
+                cascade. -#}
+            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' referenced on Ingress {{ ns }}/{{ name }} not found at render time; skipping mTLS for this ingress.
+            {%- continue %}
+          {%- end %}
+          {%- var caBundleB64 = secret.Data["ca.crt"] %}
+          {%- if caBundleB64 == "" %}
+            # WARNING haproxy-ingress.github.io/auth-tls-secret: Secret '{{ secretNs }}/{{ secretName }}' (referenced on Ingress {{ ns }}/{{ name }}) is missing data.ca.crt; skipping mTLS for this ingress.
+            {%- continue %}
+          {%- end %}
+          {%- var caBundle = caBundleB64 | b64decode() | tostring() %}
+          {#- Register the CA bundle as a "file" (general/) not "cert" (ssl/).
+              The Dataplane API's SSL cert endpoint validates ssl/ uploads as
+              cert+key bundles ("file should contain both certificate and
+              private key" / 500), but a CA bundle has no private key. The
+              same library uses "file" for the upstream-side
+              secure-verify-ca-secret CA at line 562 — keep parity. HAProxy's
+              `crt-list` `[ca-file <path>]` accepts any path, so general/
+              works fine. -#}
+          {%- var caFilename = secretNs + "-" + secretName + "-client-ca.pem" %}
+          {%- var _, regErr = fileRegistry.Register("file", caFilename, caBundle) -%}
+          {%- if regErr != nil -%}
+            {{- fail("failed to register client CA " + caFilename + ": " + tostring(regErr)) -}}
+          {%- end -%}
+          {%- var caPath, _ = pathResolver.GetPath(caFilename, "file") %}
+
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var host = rule.Host %}
+            {%- if host == "" %}
+              {{- fail("Ingress " + ns + "/" + name + " has haproxy-ingress.github.io/auth-tls-secret set but a rule without a host. Client-cert verification is keyed by SNI / host; host-less rules can't be enforced. Add an explicit host to the rule.") -}}
+            {%- end %}
+            {%- gf["clientCertVerifyHosts"].(map[string]any)[host] = map[string]any{
+              "ca_path": caPath,
+              "verify_mode": verifyMode,
+            } %}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+  backends-501-haproxy-ingress-ssl-passthrough:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Passthrough Backends
+
+        Generates TCP mode backends for Ingress resources with
+        haproxy-ingress.github.io/ssl-passthrough: "true" annotation.
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-passthrough
+      -#}
+      {%- import "util-render-annotation-ssl-passthrough-backends" for RenderAnnotationSSLPassthroughBackends -%}
+      {{ render "util-haproxy-ingress-ssl-passthrough" }}
+      {{ RenderAnnotationSSLPassthroughBackends("hi_sslPassthrough", "hi_sslPassthrough_backend", "haproxy-ingress") }}
