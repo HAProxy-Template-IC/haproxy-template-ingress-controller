@@ -128,7 +128,7 @@ Each entry in `$libraryFiles` is either:
     "libraries/gateway/"
     "libraries/ingress-annotations-compat.yaml"
     "libraries/haproxytech.yaml"
-    "libraries/haproxy-ingress.yaml"
+    "libraries/haproxy-ingress/"
     "libraries/nginx-ingress.yaml"
     "libraries/spoa-hub/"
 }}

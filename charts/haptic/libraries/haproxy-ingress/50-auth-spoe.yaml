@@ -1,0 +1,527 @@
+# haproxy-ingress library — auth, external-auth (SPOE), and WAF.
+# Basic-auth userlist + backend directive, the auth-*/waf SPOE map
+# contributions, pass/fail header wiring, and the coraza /waf map. Consumes
+# the spoa-hub library SPOE extension points.
+templateSnippets:
+  # ============================================================================
+  # Phase 7: Basic Auth
+  # ============================================================================
+
+  global-top-600-haproxy-ingress-auth:
+    template: |
+      {#-
+        HAProxy-Ingress Basic Auth Userlist Generation
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-secret
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-secret: "<ns/name>" or "<name>" (required)
+
+        Generates userlist from htpasswd-format Secret:
+          userlist auth_<ns>_<name>
+            user <username> password <hash>
+
+        Secret format:
+          Each key is a username, value is base64-encoded bcrypt/apr1 hash
+          Example: admin: JDJ5JDA1JG1OMVdWazVRbmJnNFF3ZEFkWGJmei4...
+      -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] %}
+        {%- if authSecret != "" %}
+          {#- Parse secret reference (supports "ns/name" or just "name") -#}
+          {%- var secretNs = ns %}
+          {%- var secretName = authSecret %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
+          {%- if first_seen("hi_userlist", userlistName) %}
+            {#-
+              Skip both the userlist and the matching backend ACL ref when the
+              referenced Secret isn't in the controller's cache (informer not
+              yet caught up, or the Secret was just cascade-deleted while the
+              Ingress still lingers). The next render — once the cache catches
+              up — will produce the full auth setup.
+
+              Goes through shared.ComputeIfAbsent so the matching http_auth
+              snippet sees the same Secret presence/absence; stores are live
+              during render and two direct GetSingle calls can observe
+              different states.
+            -#}
+            {%- var secret, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
+              return resources.secrets.GetSingle(secretNs, secretName)
+            }) %}
+            {%- if secret != nil %}
+      # haproxy-ingress/global-top-auth ({{ key }})
+      userlist {{ userlistName }}
+              {#- secret is `any` from shared.ComputeIfAbsent; type-assert
+                  to the typed pointer the closure returned so .Data
+                  field access compiles. -#}
+              {% var secretData = secret.(*resources.secrets.T).Data -%}
+              {%- var hashRegex = extraContext | dig_string("^.*$", "password_hash_validation_regex") %}
+              {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "password_hash_validation_error_message") %}
+              {%- for _, username := range keys(secretData) %}
+                {%- var passwordHash = secretData[username] | b64decode() | tostring() %}
+                {%- if !regex_search(passwordHash, hashRegex) %}
+                  {{- fail(hashErrMsg + " for user '" + username + "' in Secret '" + secretNs + "/" + secretName + "' (pattern \"" + hashRegex + "\")") -}}
+                {%- end %}
+        user {{ username }} password {{ passwordHash }}
+              {% end -%}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # External-auth (auth-url) map contribution. The spoa-hub library
+  # defines auth-url.map and the SPOE wiring; this snippet feeds the
+  # map with one entry per Ingress that has the auth-url annotation
+  # set. The frontend looks up the URL by `txn.resource_id`
+  # (= `<ns>/<name>`) and triggers the SPOE plugin.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-external
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-url: "https://auth-svc.example/check"
+  #
+  map-auth-url-500-haproxy-ingress:
+    template: |-
+      {#- Keyed by <ns>/<name> (resource identity). The frontend looks up
+          via var(txn.resource_id),map(...) — see spoa-hub.yaml's
+          frontend-spoe-filters-100-external-auth and base.yaml's
+          resource_id extraction at the end of frontend-routing-logic. -#}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authUrl = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-url"] -%}
+        {%- if authUrl != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authUrl }}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth sign-in URL: when the auth service returns 401, redirect
+  # the browser to this URL instead of denying. Mirrors nginx-ingress's
+  # auth-signin handler — same HAProxy machinery (auth-signin.map +
+  # frontend redirect rule in the spoa-hub library).
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-external
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-signin: "https://login.example/oauth2/start"
+  map-auth-signin-500-haproxy-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authSignin = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-signin"] -%}
+        {%- if authSignin != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authSignin }}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth HTTP method override. Mirrors the nginx-ingress
+  # variant; both feed the spoa-hub library's auth-method.map and
+  # surface in the SPOE check-auth message's `method` arg (plugin
+  # v0.3.0+).
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-method
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-method: "POST"
+  #
+  # Allowed values: GET / HEAD / POST / PUT / PATCH / DELETE / OPTIONS.
+  # Body-having methods (POST/PUT/PATCH) go out with an empty body —
+  # the plugin does not forward the original request payload.
+  map-auth-method-500-haproxy-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authMethod = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-method"] -%}
+        {%- if authMethod != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authMethod }}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth request-headers allowlist. Per-ingress comma-separated
+  # list of request header names the SPOA hub forwards to the auth
+  # service, populated from the haproxy-ingress.github.io/auth-headers-request
+  # annotation. Threads into the SPOE check-auth message's
+  # `forward_headers` arg (plugin v0.3.0+); empty value = plugin falls
+  # back to its plugin-level forward_headers list.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-request
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-headers-request: "X-Tenant-Id, X-Request-Id"
+  #
+  # Header names are stored verbatim in the map; the plugin lower-cases
+  # them when matching against the incoming request headers, so casing
+  # in the annotation value does not matter. The companion snippet
+  # `spoe-message-check-auth-extra-args-500-haproxy-ingress` auto-extends
+  # the SPOE check-auth message body so it captures every header listed
+  # across the union of `auth-headers-request` annotations — operators
+  # don't have to edit `spoe-message-check-auth-body` themselves to
+  # forward custom headers.
+  map-auth-forward-headers-500-haproxy-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
+        {%- if authHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ authHeaders }}
+        {%- end -%}
+      {%- end -%}
+
+  # Auto-extends the SPOE check-auth message body's `args=` line with
+  # additional `hdr_<name>=req.hdr(<Name>)` captures based on the union
+  # of `auth-headers-request` annotations across all ingresses. The
+  # spoe-hub library's spoe-message-check-auth-body template hardcodes
+  # the six standard auth headers (Authorization, Cookie,
+  # X-Forwarded-{For,Proto,Host,Uri}); this contribution adds anything
+  # else operators ask for via the annotation, deduped per header
+  # (multiple ingresses listing the same header → one capture). The
+  # plugin's per-route `forward_headers` SPOE arg then narrows which of
+  # the captured headers actually flow to the auth service.
+  #
+  # Output format: a sequence of ` hdr_<argname>=req.hdr(<Name>)`
+  # tokens with a leading space, on the same line as the existing
+  # `args=` directive. Whitespace control on every block boundary
+  # ensures no newlines leak in (a stray newline would terminate the
+  # SPOE `args` directive at parse time).
+  spoe-message-check-auth-extra-args-500-haproxy-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Pre-seed `seen` with the six headers spoa-hub.yaml already
+          captures, so we don't emit a duplicate `hdr_*` arg for one
+          of them. The dedup check below normalises to underscore-form
+          (`replace(toLower(name), "-", "_")`), so the pre-seed keys
+          MUST also use underscore-form — otherwise an Ingress
+          annotation `auth-headers-request: X-Forwarded-Uri` produces
+          argName `x_forwarded_uri`, the lookup misses the
+          `x-forwarded-uri` pre-seed entry, and the chart emits a
+          duplicate `hdr_x_forwarded_uri` arg.
+
+          HAProxy 3.0 rejects SPOE notify frames with duplicate arg
+          names ("Failed to parse frame: Tag" from the spoa-hub spop
+          parser); HAProxy 3.1+ tolerates them. That asymmetry was the
+          root cause of pipeline 2549047264's test-e2e [3.0]
+          TestIngressAuthHeadersFail failure (3.1/3.2/3.3 all passed
+          the same fixture). -#}
+      {%- var seen = map[string]bool{} -%}
+      {%- seen["authorization"] = true -%}
+      {%- seen["cookie"] = true -%}
+      {%- seen["x_forwarded_for"] = true -%}
+      {%- seen["x_forwarded_proto"] = true -%}
+      {%- seen["x_forwarded_host"] = true -%}
+      {%- seen["x_forwarded_uri"] = true -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var authHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-request"] -%}
+        {%- if authHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
+          {%- for _, h := range split(authHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-request", ns, ingressName) -}}
+              {#- Dedupe on the argName (after dash→underscore) — not
+                  the lowercased original — because that's what
+                  appears as the SPOE arg key. Two header spellings
+                  like `X-Foo-Bar` and `X_Foo_Bar` produce different
+                  lower-case names but the same argName, and emitting
+                  both would put two `hdr_x_foo_bar=...` tokens on
+                  the same args= line, which SPOE parses as malformed
+                  / undefined-order. -#}
+              {%- var argName = replace(toLower(name), "-", "_") -%}
+              {%- if !seen[argName] -%}
+                {%- seen[argName] = true -%}
+                {{- " hdr_" + argName + "=req.hdr(" + name + ")" -}}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  # External-auth response-headers allowlist (success path). Lands in
+  # auth-extract-headers.map as the union of pass + fail headers per
+  # ingress. The frontend-spoe-set-pass-headers-* glob below emits one
+  # `http-request set-header` per unique pass header, gated on
+  # `allowed -m bool` and `var ... -m found`.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-succeed
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-headers-succeed: "X-Auth-User, X-Auth-Roles"
+  #
+  # The companion annotation `auth-headers-fail` (failure path) shares
+  # the same auth-extract-headers.map — the plugin extracts the union
+  # so each var is available for whichever path runs.
+  map-auth-extract-headers-500-haproxy-ingress:
+    template: |-
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
+        {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}
+        {%- var union = passHeaders -%}
+        {%- if passHeaders != "" && failHeaders != "" -%}
+          {%- union = passHeaders + ", " + failHeaders -%}
+        {%- else if failHeaders != "" -%}
+          {%- union = failHeaders -%}
+        {%- end -%}
+        {%- if union != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var name = ingress.Metadata.Name -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ union }}
+        {%- end -%}
+      {%- end -%}
+
+  # One `http-request set-header` per unique header across all
+  # ingresses with auth-headers-succeed. Per-route gating happens
+  # implicitly via the plugin's per-route extract_headers SPOE arg —
+  # routes that didn't ask for a header have its txn var unset, so
+  # the `var ... -m found` gate skips them.
+  frontend-spoe-set-pass-headers-500-haproxy-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Collect the unique (name, varName) pairs across all
+          ingresses ONCE per render, cached via shared.ComputeIfAbsent.
+          The chart renders this snippet inside `frontend-filters-*` for
+          both http_frontend AND http_frontend_h2c — those two
+          render_glob calls live in the same template execution, so a
+          `first_seen` dedup would silently emit the directive only in
+          the first frontend (issue #49). The cached pair list lets
+          each frontend's render iterate the same set without sharing
+          first_seen state.
+
+          ValidateAuthHeaderName fail()s at template compile time on a
+          malformed header — we keep the validation pass inside the
+          ingress loop below so the existing CR-rejection contract is
+          preserved (each malformed value still produces a clear
+          render error pointing at the ingress + annotation).
+      -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var passHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-succeed"] -%}
+        {%- if passHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
+          {%- for _, h := range split(passHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-succeed", ns, ingressName) -}}
+              {#- Dedupe on varName so spellings that differ only in
+                  dashes vs underscores (e.g. `X-Foo` vs `X_Foo`,
+                  both → `x_foo`) collapse to a single set-header
+                  directive — the plugin produces the same txn var
+                  for both, so the second directive would just
+                  duplicate the first. -#}
+              {%- var varName = replace(toLower(name), "-", "_") -%}
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-request set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.hub.external_auth.{{ pVarName }}) -m found } { var(txn.hub.external_auth.allowed) -m bool }
+      {%- end -%}
+
+  # External-auth fail-headers allowlist. Per-ingress comma-list of
+  # response header names from the auth reply that should surface in
+  # the response to the *client* on auth failure (e.g.
+  # WWW-Authenticate to drive a Bearer challenge, X-Error-Reason for
+  # diagnostics). Plugin v0.3.0+ extracts these on every reply path
+  # (so 401 / 5xx replies populate the txn vars too).
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-headers-fail
+  #
+  # Annotation:
+  #   haproxy-ingress.github.io/auth-headers-fail: "WWW-Authenticate, X-Error-Reason"
+  #
+  # The frontend-spoe-set-fail-headers-* glob emits one
+  # `http-after-response set-header` per unique fail header, gated on
+  # the auth path having run, !allowed, and the var being set. The
+  # extract_headers SPOE arg union is built in
+  # map-auth-extract-headers-500-haproxy-ingress.
+  #
+  # `http-after-response` (rather than the more obvious
+  # `http-response`) is required because HAProxy's `http-request deny`
+  # short-circuits the request flow: the deny response is generated
+  # internally, so `http-response` rules — which fire only on
+  # responses received from a backend — never apply to it.
+  # `http-after-response` runs unconditionally on every response,
+  # whether it came from a backend or HAProxy generated it via a
+  # deny / errorfile / redirect, which is exactly what we need for
+  # auth-headers-fail to surface in the 401 sent back to the client.
+  frontend-spoe-set-fail-headers-500-haproxy-ingress:
+    template: |-
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {#- Same render-shared dedup pattern as
+          frontend-spoe-set-pass-headers-500-haproxy-ingress — see
+          issue #49. The chart renders this snippet inside
+          `frontend-filters-*` for both http_frontend AND
+          http_frontend_h2c; a `first_seen` dedup would silently emit
+          the directive only in whichever frontend renders first. The
+          local map-based dedup below keeps the dedup confined to the
+          ingress loop, so both frontend renders emit the same set
+          of directives.
+      -#}
+      {%- var pairs []any = []any{} -%}
+      {%- var seen = map[string]bool{} -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var failHeaders = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-headers-fail"] -%}
+        {%- if failHeaders != "" -%}
+          {%- var ns = ingress.Metadata.Namespace -%}
+          {%- var ingressName = ingress.Metadata.Name -%}
+          {%- for _, h := range split(failHeaders, ",") -%}
+            {%- var name = h | strip() -%}
+            {%- if name != "" -%}
+              {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-fail", ns, ingressName) -}}
+              {#- Dedupe on varName (after dash→underscore) so
+                  spellings that collapse to the same plugin txn var
+                  produce one set-header directive, not two. -#}
+              {%- var varName = replace(toLower(name), "-", "_") -%}
+              {%- if !seen[varName] -%}
+                {%- seen[varName] = true -%}
+                {%- pairs = append(pairs, map[string]any{"name": name, "varName": varName}) -%}
+              {%- end -%}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+      {%- for _, pair := range pairs -%}
+        {%- var pName = pair.(map[string]any)["name"].(string) -%}
+        {%- var pVarName = pair.(map[string]any)["varName"].(string) -%}
+      {{ "\n" }}      http-after-response set-header {{ pName }} %[var(txn.hub.external_auth.{{ pVarName }})] if { var(txn.auth_url) -m found } !{ var(txn.hub.external_auth.allowed) -m bool } { var(txn.hub.external_auth.{{ pVarName }}) -m found }
+      {%- end -%}
+
+  # WAF (Coraza, via SPOA hub): per-Ingress opt-in path-scoped WAF.
+  # Populates haproxy-ingress-waf.map with one entry per `<host><path>`
+  # for Ingresses carrying `haproxy-ingress.github.io/waf: "modsecurity"`.
+  # The map's *value* is the resolved enforcement mode (`deny` or
+  # `detect`) read from `haproxy-ingress.github.io/waf-mode` (default
+  # `deny`); this lets a single map drive both the dispatch gate
+  # (`if { var(txn.coraza_mode) -m found }`) and the deny-skip in detect
+  # mode (`!{ var(txn.coraza_mode) -m str detect }`) — see
+  # `frontend-spoe-filters-050-coraza` in spoa-hub.yaml.
+  #
+  # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#modsecurity
+  #
+  # Annotations:
+  #   haproxy-ingress.github.io/waf: "modsecurity"        (required to opt in; only "modsecurity" supported)
+  #   haproxy-ingress.github.io/waf-mode: "deny"|"detect" (default "deny"; "detect" runs WAF in shadow mode)
+  #
+  # Validation (fail-loud at render time → admission denial):
+  #   - waf set to anything other than "modsecurity"             → fail()
+  #   - waf-mode set to anything other than "deny" or "detect"   → fail()
+  #   - waf-mode set without waf (operator error; no-op upstream) → fail()
+  #   - rule lacks a host (map key needs <host><path>)            → fail()
+  #
+  # Coexistence with `nginx.ingress.kubernetes.io/modsecurity-snippet`:
+  # nginx-ingress's annotation appends to coraza's global directives so
+  # rules apply chart-wide and dispatch is unconditional. When BOTH
+  # styles are present, nginx wins for dispatch (everywhere) but this
+  # map's mode lookup still gates the deny rule per-path, so a
+  # `waf-mode: detect` path remains in shadow mode under nginx-driven
+  # dispatch. See ADR-0007.
+  map-haproxy-ingress-waf-500-haproxy-ingress:
+    template: |-
+      {#- Keyed by <ns>/<name>. The validation guards (unsupported waf
+          value, waf-mode without waf, invalid mode) still apply because
+          they run at render time regardless of map keying. The
+          coraza-plugin-enabled check fails loud at the first offending
+          Ingress when the operator wires the annotation without enabling
+          the plugin — silent ignore would hide a real misconfiguration. -#}
+      {%- var plugins = extraContext | dig("spoaHub", "plugins") | fallback([]any{}) | toSlice() -%}
+      {%- var corazaEnabled = false -%}
+      {%- for _, p := range plugins -%}
+        {%- var pName = p.(map[string]any)["name"].(string) -%}
+        {%- if pName == "coraza" -%}{%- corazaEnabled = true -%}{%- end -%}
+      {%- end -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var ns = ingress.Metadata.Namespace -%}
+        {%- var name = ingress.Metadata.Name -%}
+        {%- var key = ns + "/" + name -%}
+        {%- var waf = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf"] -%}
+        {%- var mode = ingress.Metadata.Annotations["haproxy-ingress.github.io/waf-mode"] -%}
+        {#- waf-mode without waf is a no-op upstream; loud here per the
+            chart-wide fail-loud convention so operators don't silently
+            drop into shadow mode. -#}
+        {%- if waf == "" && mode != "" -%}
+          {{- fail("Ingress " + key + " sets 'haproxy-ingress.github.io/waf-mode' but not 'haproxy-ingress.github.io/waf'. waf-mode is meaningful only when waf is also set; remove waf-mode or add 'haproxy-ingress.github.io/waf: modsecurity'.") -}}
+        {%- end -%}
+        {%- if waf != "" -%}
+          {%- if !corazaEnabled -%}
+            {{- fail("Ingress " + key + " sets annotation 'haproxy-ingress.github.io/waf' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.") -}}
+          {%- end -%}
+          {%- if waf != "modsecurity" -%}
+            {{- fail("Invalid value '" + waf + "' for annotation 'haproxy-ingress.github.io/waf' on Ingress '" + key + "'. Only 'modsecurity' is supported.") -}}
+          {%- end -%}
+          {%- var resolvedMode = mode -%}
+          {%- if resolvedMode == "" -%}
+            {%- resolvedMode = "deny" -%}
+          {%- end -%}
+          {%- if resolvedMode != "deny" && resolvedMode != "detect" -%}
+            {{- fail("Invalid value '" + mode + "' for annotation 'haproxy-ingress.github.io/waf-mode' on Ingress '" + key + "'. Valid values: 'deny', 'detect'.") -}}
+          {%- end -%}
+      {{ "\n" }}{{ key }} {{ resolvedMode }}
+        {%- end -%}
+      {%- end -%}
+
+  backend-directives-680-haproxy-ingress-auth:
+    template: |
+      {#-
+        HAProxy-Ingress Basic Auth Backend Directive
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-secret
+
+        Annotations:
+          - haproxy-ingress.github.io/auth-secret: "<ns/name>" or "<name>" (required)
+          - haproxy-ingress.github.io/auth-realm: "<realm>" (optional, default: "Restricted")
+
+        Generates:
+          http-request auth realm "<realm>" unless { http_auth(<userlist>) }
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var authSecret = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-secret"] %}
+        {%- if authSecret != "" %}
+          {%- var authRealm = ingress.Metadata.Annotations["haproxy-ingress.github.io/auth-realm"] %}
+          {%- if authRealm == "" %}{%- authRealm = "Restricted" %}{%- end %}
+          {#- Parse secret reference (supports "ns/name" or just "name") -#}
+          {%- var secretNs = ns %}
+          {%- var secretName = authSecret %}
+          {%- if strings_contains(authSecret, "/") %}
+            {%- var parts = split(authSecret, "/") %}
+            {%- secretNs = parts[0] %}
+            {%- secretName = parts[1] %}
+          {%- end %}
+          {%- var userlistName = "hi_auth_" + secretNs + "_" + secretName %}
+          {#-
+            Skip the http_auth ACL ref when the referenced Secret isn't in
+            the controller's cache; the matching userlist snippet skips its
+            userlist on the same condition so the rendered config stays
+            self-consistent. Routed through shared.ComputeIfAbsent so the two
+            snippets see the same store state (live stores can mutate
+            between two direct GetSingle calls in one render).
+          -#}
+          {%- var hiAuthSecret, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
+            return resources.secrets.GetSingle(secretNs, secretName)
+          }) %}
+          {%- if hiAuthSecret != nil %}
+      # haproxy-ingress/backend-directives-auth ({{ key }})
+      http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
+          {%- end %}
+        {%- end %}
+      {%- end -%}

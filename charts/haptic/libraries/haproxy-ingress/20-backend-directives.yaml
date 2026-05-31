@@ -1,0 +1,451 @@
+# haproxy-ingress library — backend-directives-* annotation handlers.
+# Timeouts, load-balance, maxconn, health-checks, proxy-protocol, ssl-backend,
+# server-options, session-affinity, config-backend snippet. (The basic-auth
+# backend directive lives in 50-auth-spoe alongside the rest of auth.)
+templateSnippets:
+  # ============================================================================
+  # Annotation Helpers
+  # ============================================================================
+  backend-directives-600-haproxy-ingress-timeouts:
+    template: |
+      {#-
+        HAProxy-Ingress Backend Timeouts
+
+        Annotations:
+          - timeout-connect: Backend connection timeout
+          - timeout-server: Server response timeout
+          - timeout-queue: Queue timeout
+          - timeout-tunnel: Tunnel timeout (websockets, etc.)
+          - timeout-http-request: HTTP request timeout
+          - timeout-keep-alive: HTTP keep-alive timeout
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#timeout
+      -#}
+      {%- if ingress != nil %}
+        {%- var tConnect = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-connect"] %}
+        {%- var tServer = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-server"] %}
+        {%- var tQueue = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-queue"] %}
+        {%- var tTunnel = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-tunnel"] %}
+        {%- var tHttpReq = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-http-request"] %}
+        {%- var tKeepAlive = ingress.Metadata.Annotations["haproxy-ingress.github.io/timeout-keep-alive"] %}
+        {%- var hasTimeout = tConnect != "" || tServer != "" || tQueue != "" || tTunnel != "" || tHttpReq != "" || tKeepAlive != "" %}
+        {%- if hasTimeout %}
+      # haproxy-ingress/backend-directives-timeouts
+        {%- end %}
+        {%- if tConnect != "" %}
+      timeout connect {{ tConnect }}
+        {% end %}
+        {%- if tServer != "" %}
+      timeout server {{ tServer }}
+        {% end %}
+        {%- if tQueue != "" %}
+      timeout queue {{ tQueue }}
+        {% end %}
+        {%- if tTunnel != "" %}
+      timeout tunnel {{ tTunnel }}
+        {% end %}
+        {%- if tHttpReq != "" %}
+      timeout http-request {{ tHttpReq }}
+        {% end %}
+        {%- if tKeepAlive != "" %}
+      timeout http-keep-alive {{ tKeepAlive }}
+        {% end %}
+      {%- end -%}
+
+  backend-directives-610-haproxy-ingress-load-balance:
+    template: |
+      {#-
+        HAProxy-Ingress Load Balancing Algorithm
+
+        Annotation: balance-algorithm
+        Values: roundrobin, leastconn, source, uri, hdr, random, rdp-cookie
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#balance-algorithm
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var lb = ingress.Metadata.Annotations["haproxy-ingress.github.io/balance-algorithm"] %}
+        {%- if lb != "" %}
+          {%- var valid = []string{"roundrobin", "leastconn", "source", "uri", "hdr", "random", "rdp-cookie"} %}
+          {%- var isValid = false %}
+          {%- for _, v := range valid %}{%- if lb == v %}{%- isValid = true %}{%- end %}{%- end %}
+          {%- if !isValid %}
+            {{- fail("Invalid value '" + lb + "' for annotation 'haproxy-ingress.github.io/balance-algorithm' on Ingress '" + key + "'. Valid values: " + (valid | join(", "))) -}}
+          {%- end %}
+      # haproxy-ingress/backend-directives-load-balance
+      balance {{ lb }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-620-haproxy-ingress-maxconn:
+    template: |
+      {#-
+        HAProxy-Ingress Server Connection Limits
+
+        Annotations:
+          - maxconn-server: Max connections per server
+          - maxqueue-server: Max queued connections per server
+          - limit-connections: Max concurrent connections to backend
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#maxconn-server
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var maxconn = ingress.Metadata.Annotations["haproxy-ingress.github.io/maxconn-server"] %}
+        {%- var maxqueue = ingress.Metadata.Annotations["haproxy-ingress.github.io/maxqueue-server"] %}
+        {%- var limitConn = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-connections"] %}
+        {%- if maxconn != "" %}
+          {%- var val = toint(maxconn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + maxconn + "' for annotation 'haproxy-ingress.github.io/maxconn-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["maxconnValue"] = val %}
+        {%- end %}
+        {%- if maxqueue != "" %}
+          {%- var val = toint(maxqueue) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + maxqueue + "' for annotation 'haproxy-ingress.github.io/maxqueue-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["maxqueueValue"] = val %}
+        {%- end %}
+        {%- if limitConn != "" %}
+          {%- var val = toint(limitConn) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + limitConn + "' for annotation 'haproxy-ingress.github.io/limit-connections' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+      # haproxy-ingress/backend-directives-maxconn (limit-connections)
+      fullconn {{ val }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-630-haproxy-ingress-health-checks:
+    template: |
+      {#-
+        HAProxy-Ingress Health Check Configuration
+
+        Annotations:
+          - backend-check-interval: Interval between health checks (e.g., "2s")
+          - health-check-uri: HTTP health check URI (e.g., "/health")
+          - health-check-port: Port for health checks
+          - health-check-fall-count: Consecutive failures to mark down
+          - health-check-rise-count: Consecutive successes to mark up
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#health-check
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var checkInterval = ingress.Metadata.Annotations["haproxy-ingress.github.io/backend-check-interval"] %}
+        {%- var checkUri = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-uri"] %}
+        {%- var checkPort = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-port"] %}
+        {%- var fallCount = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-fall-count"] %}
+        {%- var riseCount = ingress.Metadata.Annotations["haproxy-ingress.github.io/health-check-rise-count"] %}
+        {%- var hasHealthCheck = checkUri != "" || checkInterval != "" || checkPort != "" || fallCount != "" || riseCount != "" %}
+        {%- if hasHealthCheck %}
+      # haproxy-ingress/backend-directives-health-checks
+        {%- end %}
+        {%- if checkUri != "" %}
+      option httpchk GET {{ checkUri }}
+        {%- end %}
+        {%- if checkInterval != "" %}
+          {%- serverOpts["checkIntervalValue"] = checkInterval %}
+        {%- end %}
+        {%- if checkPort != "" %}
+          {%- var val = toint(checkPort) %}
+          {%- if val <= 0 || val > 65535 %}
+            {{- fail("Invalid value '" + checkPort + "' for annotation 'haproxy-ingress.github.io/health-check-port' on Ingress '" + key + "'. Must be 1-65535.") -}}
+          {%- end %}
+          {%- serverOpts["checkPortValue"] = val %}
+        {%- end %}
+        {%- if fallCount != "" %}
+          {%- var val = toint(fallCount) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + fallCount + "' for annotation 'haproxy-ingress.github.io/health-check-fall-count' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["fallCountValue"] = val %}
+        {%- end %}
+        {%- if riseCount != "" %}
+          {%- var val = toint(riseCount) %}
+          {%- if val <= 0 %}
+            {{- fail("Invalid value '" + riseCount + "' for annotation 'haproxy-ingress.github.io/health-check-rise-count' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- serverOpts["riseCountValue"] = val %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-640-haproxy-ingress-proxy-protocol:
+    template: |
+      {#-
+        HAProxy-Ingress Proxy Protocol
+
+        Annotation: proxy-protocol
+        Values: v1, v2, v2-ssl, v2-ssl-cn
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-protocol
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var pp = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-protocol"] %}
+        {%- if pp != "" %}
+          {%- if pp == "v1" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy") %}
+          {%- else if pp == "v2" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2") %}
+          {%- else if pp == "v2-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2-ssl") %}
+          {%- else if pp == "v2-ssl-cn" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "send-proxy-v2-ssl-cn") %}
+          {%- else %}
+            {{- fail("Invalid value '" + pp + "' for annotation 'haproxy-ingress.github.io/proxy-protocol' on Ingress '" + key + "'. Valid values: v1, v2, v2-ssl, v2-ssl-cn") -}}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-650-haproxy-ingress-ssl-backend:
+    template: |
+      {#-
+        HAProxy-Ingress SSL Backend Configuration
+
+        Annotations:
+          - secure-backends: Enable SSL to backend (true/false)
+          - secure-sni: SNI value for backend (sni, host, or hostname)
+          - secure-verify-ca-secret: Secret containing CA for backend verification
+          - secure-crt-secret: Secret containing client cert for mTLS
+          - secure-verify-hostname: Hostname for backend cert verification
+          - backend-protocol: Backend protocol (h1, h2, h1-ssl, h2-ssl)
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#secure-backends
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+
+        {#- secure-backends -#}
+        {%- var secureBackends = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-backends"] %}
+        {%- if secureBackends == "true" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+        {%- end %}
+
+        {#- backend-protocol -#}
+        {%- var backendProto = ingress.Metadata.Annotations["haproxy-ingress.github.io/backend-protocol"] %}
+        {%- if backendProto != "" %}
+          {%- if backendProto == "h1" %}
+            {#- HTTP/1.1 is default, no flag needed -#}
+          {%- else if backendProto == "h2" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
+          {%- else if backendProto == "h1-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+          {%- else if backendProto == "h2-ssl" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none proto h2") %}
+          {%- else %}
+            {{- fail("Invalid value '" + backendProto + "' for annotation 'haproxy-ingress.github.io/backend-protocol' on Ingress '" + key + "'. Valid values: h1, h2, h1-ssl, h2-ssl") -}}
+          {%- end %}
+        {%- end %}
+
+        {#- secure-sni -#}
+        {%- var secureSni = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-sni"] %}
+        {%- if secureSni != "" %}
+          {%- if secureSni == "sni" || secureSni == "host" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni req.hdr(host)") %}
+          {%- else %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "sni str(" + secureSni + ")") %}
+          {%- end %}
+        {%- end %}
+
+        {#- secure-verify-hostname -#}
+        {%- var verifyHostname = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-verify-hostname"] %}
+        {%- if verifyHostname != "" %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "verifyhost " + verifyHostname) %}
+        {%- end %}
+
+        {#- secure-verify-ca-secret -#}
+        {%- var caSec = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-verify-ca-secret"] %}
+        {%- if caSec != "" %}
+          {%- var caNs = ns %}
+          {%- var caName = caSec %}
+          {%- if strings_contains(caSec, "/") %}
+            {%- var parts = split(caSec, "/") %}
+            {%- caNs = parts[0] %}
+            {%- caName = parts[1] %}
+          {%- end %}
+          {%- var caSecret = resources.secrets.GetSingle(caNs, caName) %}
+          {%- if caSecret != nil %}
+            {%- var caContent = caSecret.Data["ca.crt"] | b64decode() %}
+            {%- if caContent != "" %}
+              {%- var caFilename = caNs + "-" + caName + "-ca.pem" %}
+              {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+              {%- if caRegErr != nil -%}{{ fail("failed to register CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify required ca-file " + caPath) %}
+            {%- else %}
+            # Warning: Secret {{ caNs }}/{{ caName }} missing 'ca.crt' key
+            {%- end %}
+          {%- else %}
+            # Warning: Secret {{ caNs }}/{{ caName }} referenced by haproxy-ingress.github.io/secure-verify-ca-secret not found
+          {%- end %}
+        {%- end %}
+
+        {#- secure-crt-secret -#}
+        {%- var crtSec = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-crt-secret"] %}
+        {%- if crtSec != "" %}
+          {%- var crtNs = ns %}
+          {%- var crtName = crtSec %}
+          {%- if strings_contains(crtSec, "/") %}
+            {%- var parts = split(crtSec, "/") %}
+            {%- crtNs = parts[0] %}
+            {%- crtName = parts[1] %}
+          {%- end %}
+          {%- var crtSecret = resources.secrets.GetSingle(crtNs, crtName) %}
+          {%- if crtSecret != nil %}
+            {%- var tlsCrt = crtSecret.Data["tls.crt"] | b64decode() %}
+            {%- var tlsKey = crtSecret.Data["tls.key"] | b64decode() %}
+            {%- if tlsCrt != "" && tlsKey != "" %}
+              {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
+              {%- var crtFilename = crtNs + "-" + crtName + "-client.pem" %}
+              {%- var _, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+              {%- if crtRegErr != nil -%}{{ fail("failed to register client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
+              {#- Use just filename - HAProxy's crt-base directive resolves the full path -#}
+              {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "crt " + crtFilename) %}
+            {%- else %}
+            # Warning: Secret {{ crtNs }}/{{ crtName }} missing 'tls.crt' or 'tls.key' keys
+            {%- end %}
+          {%- else %}
+            # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-ingress.github.io/secure-crt-secret not found
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-660-haproxy-ingress-server-options:
+    template: |
+      {#-
+        HAProxy-Ingress Server Options
+
+        Annotations:
+          - initial-weight: Initial server weight (default 1)
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#initial-weight
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var weight = ingress.Metadata.Annotations["haproxy-ingress.github.io/initial-weight"] %}
+        {%- if weight != "" %}
+          {%- var val = toint(weight) %}
+          {%- if val < 0 || val > 256 %}
+            {{- fail("Invalid value '" + weight + "' for annotation 'haproxy-ingress.github.io/initial-weight' on Ingress '" + key + "'. Must be 0-256.") -}}
+          {%- end %}
+          {%- serverOpts["weightValue"] = val %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # Phase 4: Session Affinity (Cookie Persistence)
+  # ============================================================================
+
+  backend-directives-670-haproxy-ingress-session-affinity:
+    template: |
+      {#-
+        HAProxy-Ingress Session Affinity Annotations
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#affinity
+
+        Annotations:
+          - haproxy-ingress.github.io/affinity: "cookie" (required to enable)
+          - haproxy-ingress.github.io/session-cookie-name: "<name>" (default: INGRESSCOOKIE)
+          - haproxy-ingress.github.io/session-cookie-strategy: "insert|rewrite|prefix" (default: insert)
+          - haproxy-ingress.github.io/session-cookie-dynamic: "true|false" (default: true)
+          - haproxy-ingress.github.io/session-cookie-keywords: "indirect nocache httponly" (optional)
+          - haproxy-ingress.github.io/session-cookie-domain: ".example.com" (optional)
+          - haproxy-ingress.github.io/session-cookie-same-site: "None|Lax|Strict" (optional)
+          - haproxy-ingress.github.io/session-cookie-preserve: "true|false" (optional)
+
+        Generated HAProxy Config:
+          cookie <name> <strategy> [indirect] [nocache] [dynamic] [domain <domain>] [attr "SameSite=<value>"]
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var affinity = ingress.Metadata.Annotations["haproxy-ingress.github.io/affinity"] %}
+        {%- if affinity == "cookie" %}
+          {%- var cookieName = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-name"] %}
+          {%- if cookieName == "" %}{%- cookieName = "INGRESSCOOKIE" %}{%- end %}
+          {%- var strategy = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-strategy"] %}
+          {%- if strategy == "" %}{%- strategy = "insert" %}{%- end %}
+          {%- var dynamic = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-dynamic"] %}
+          {%- if dynamic == "" %}{%- dynamic = "true" %}{%- end %}
+          {%- var keywords = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-keywords"] %}
+          {%- var domain = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-domain"] %}
+          {%- var sameSite = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-same-site"] %}
+          {%- var preserve = ingress.Metadata.Annotations["haproxy-ingress.github.io/session-cookie-preserve"] %}
+
+          {#- Validate strategy -#}
+          {%- if strategy != "insert" && strategy != "rewrite" && strategy != "prefix" %}
+            {{- fail("Invalid value '" + strategy + "' for annotation 'haproxy-ingress.github.io/session-cookie-strategy' on Ingress '" + key + "'. Valid values: insert, rewrite, prefix") -}}
+          {%- end %}
+
+          {#- Build cookie directive -#}
+          {%- var cookieDir = "cookie " + cookieName + " " + strategy %}
+
+          {#- Add indirect and nocache by default for insert/prefix strategy -#}
+          {%- if strategy == "insert" || strategy == "prefix" %}
+            {%- cookieDir = cookieDir + " indirect nocache" %}
+          {%- end %}
+
+          {#- Add dynamic if enabled -#}
+          {%- if dynamic == "true" %}
+            {%- cookieDir = cookieDir + " dynamic" %}
+          {%- end %}
+
+          {#- Add preserve if enabled -#}
+          {%- if preserve == "true" %}
+            {%- cookieDir = cookieDir + " preserve" %}
+          {%- end %}
+
+          {#- Add custom keywords -#}
+          {%- if keywords != "" %}
+            {%- cookieDir = cookieDir + " " + keywords %}
+          {%- end %}
+
+          {#- Add domain -#}
+          {%- if domain != "" %}
+            {%- cookieDir = cookieDir + " domain " + domain %}
+          {%- end %}
+
+          {#- Add SameSite attribute -#}
+          {%- if sameSite != "" %}
+            {%- if sameSite != "None" && sameSite != "Lax" && sameSite != "Strict" %}
+              {{- fail("Invalid value '" + sameSite + "' for annotation 'haproxy-ingress.github.io/session-cookie-same-site' on Ingress '" + key + "'. Valid values: None, Lax, Strict") -}}
+            {%- end %}
+            {%- cookieDir = cookieDir + " attr \"SameSite=" + sameSite + "\"" %}
+          {%- end %}
+      # haproxy-ingress/session-affinity ({{ key }})
+      {{ cookieDir }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-900-haproxy-ingress-config-backend:
+    template: |
+      {#-
+        HAProxy-Ingress Backend Config Snippet
+
+        Annotation: config-backend
+        Allows injecting raw HAProxy directives into the backend.
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#config-backend
+      -#}
+      {%- if ingress != nil %}
+        {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-backend"] %}
+        {%- if snippet != "" %}
+      # haproxy-ingress/config-backend
+      {{ snippet }}
+        {%- end %}
+      {%- end -%}
