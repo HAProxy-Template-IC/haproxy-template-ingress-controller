@@ -72,7 +72,7 @@ func TestParseVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			major, minor, err := ParseVersion(tt.version)
+			v, err := ParseVersion(tt.version)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -80,8 +80,8 @@ func TestParseVersion(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantMajor, major, "major version mismatch")
-			assert.Equal(t, tt.wantMinor, minor, "minor version mismatch")
+			assert.Equal(t, tt.wantMajor, v.Major, "major version mismatch")
+			assert.Equal(t, tt.wantMinor, v.Minor, "minor version mismatch")
 		})
 	}
 }

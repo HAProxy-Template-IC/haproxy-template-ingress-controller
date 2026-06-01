@@ -16,7 +16,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -163,7 +162,7 @@ func runIteration(
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
-		setup.IterCtx, k8sClient, crdName, secretName,
+		setup.IterCtx, k8sClient, crdName, secretName, webhookCertSecretName,
 		crdGVR, secretGVR, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
 	); err != nil {
 		return err
@@ -207,16 +206,9 @@ func runIteration(
 	// validation can dispatch the rendered file set to validator sidecars
 	// (e.g. SPOA hub --validate-socket) after the standard pipeline
 	// passes. A nil Manager is the no-validators-configured case.
-	var dryrunValidator *dryrunvalidator.Component
-	if webhook.HasWebhookEnabled(cfg) {
-		var err error
-		dryrunValidator, err = createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, logger)
-		if err != nil && !errors.Is(err, errNoWebhookRules) {
-			return fmt.Errorf("creating dry-run validator: %w", err)
-		}
-		if errors.Is(err, errNoWebhookRules) {
-			logger.Debug("DryRunValidator not created: no webhook validation rules configured")
-		}
+	dryrunValidator, configValidator, err := maybeCreateWebhookValidators(setup, cfg, reconComponents, pluggableMgr, logger)
+	if err != nil {
+		return err
 	}
 
 	// 6.5. Start the EventBus (releases buffered events and begins normal operation)
@@ -232,7 +224,7 @@ func runIteration(
 	)
 
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
-	maybeSetupWebhook(cfg, webhookCerts, setup, k8sClient, dryrunValidator, logger)
+	maybeSetupWebhook(cfg, webhookCerts, setup, k8sClient, dryrunValidator, configValidator, logger)
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
@@ -316,24 +308,61 @@ func handleConfigurationChange(
 	logger.Info("Reinitialization triggered - starting new iteration")
 }
 
-// maybeSetupWebhook sets up webhook validation if enabled in the configuration.
-// When webhook validation is enabled but no certificate secret is configured,
-// it logs a warning and skips setup instead of panicking.
+// maybeCreateWebhookValidators constructs the DryRunValidator (watched-
+// resource admission) and ConfigValidator (HAProxyTemplateConfig admission)
+// when webhook validation is enabled. Both are nil if webhook is disabled
+// in the CRD; the DryRunValidator may also be nil if no watched resources
+// have `enableValidationWebhook: true` even though the webhook is enabled.
+// Extracted from runIteration to keep that function under the function-
+// length lint cap.
+func maybeCreateWebhookValidators(
+	setup *componentSetup,
+	cfg *coreconfig.Config,
+	reconComponents *reconciliationComponents,
+	pluggableMgr *pluggablevalidator.Manager,
+	logger *slog.Logger,
+) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
+	// The webhook server runs whenever the chart provisioned a TLS cert
+	// (the maybeSetupWebhook caller gates on `webhookCerts != nil`).
+	// Construction is NOT gated on whether any watched resource enables
+	// validation: the HAProxyTemplateConfig admission webhook is independent
+	// of watched resources, and the chart may have provisioned a cert +
+	// ValidatingWebhookConfiguration solely for HAProxyTemplateConfig admission.
+	// The DryRunValidator inside the returned
+	// tuple is nil when no watched-resource rules exist; the ConfigValidator
+	// is always present so HAProxyTemplateConfig admissions land on a real
+	// handler instead of the pure server's fail-open path.
+	dryrunValidator, configValidator, err := createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, logger)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating webhook validators: %w", err)
+	}
+	return dryrunValidator, configValidator, nil
+}
+
+// maybeSetupWebhook sets up the webhook server when the chart has
+// provisioned a TLS cert. Cert availability — not the CRD's watchedResources
+// section — is the operative gate: the chart's `webhook.enabled` toggle
+// controls cert provisioning, and the ValidatingWebhookConfiguration may
+// cover HAProxyTemplateConfig admission even when no watched-resource has
+// `enableValidationWebhook: true`. Without a cert, the server can't bind
+// the TLS listener regardless of what we'd want to register.
 func maybeSetupWebhook(
 	cfg *coreconfig.Config,
 	webhookCerts *WebhookCertificates,
 	setup *componentSetup,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component,
+	configValidator webhook.ConfigValidatorFunc,
 	logger *slog.Logger,
 ) {
-	if !webhook.HasWebhookEnabled(cfg) {
+	if webhookCerts == nil {
+		logger.Debug("No webhook TLS cert configured; skipping webhook setup")
 		return
 	}
-	if webhookCerts == nil {
-		logger.Warn("Webhook validation is enabled in config but no webhook certificate secret is configured - skipping webhook setup")
+	if dryrunValidator == nil && configValidator == nil {
+		logger.Debug("No webhook validators wired; skipping webhook setup")
 		return
 	}
 	logger.Info("Stage 7: Setting up webhook validation")
-	setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, dryrunValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+	setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, dryrunValidator, configValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 }

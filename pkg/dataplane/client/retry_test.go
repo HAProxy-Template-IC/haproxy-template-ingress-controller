@@ -459,3 +459,49 @@ func TestContainsAny(t *testing.T) {
 		})
 	}
 }
+
+func TestIsReloadInProgress(t *testing.T) {
+	cond := IsReloadInProgress()
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{
+			name:     "master socket connection refused (deploy raw-push 500)",
+			err:      errors.New(`raw config push with skip_reload failed with status 500: {"code":500,"message":"cannot execute SetServerState: dial unix /etc/haproxy/haproxy-master.sock: connect: connection refused"}`),
+			expected: true,
+		},
+		{
+			name:     "runtime server not found (fast-path PUT mid-reload)",
+			err:      errors.New("runtime server replace api/SRV_2: runtime server 'api/SRV_2' not found"),
+			expected: true,
+		},
+		{
+			name:     "plain connection refused",
+			err:      errors.New("dial tcp 10.0.0.1:5555: connect: connection refused"),
+			expected: true,
+		},
+		{
+			name:     "version conflict (409) is NOT a reload signature",
+			err:      errors.New("raw config push failed with status 409"),
+			expected: false,
+		},
+		{
+			name:     "unrelated sentinel error is NOT a reload signature",
+			err:      errors.New("some unrelated client error"),
+			expected: false,
+		},
+		{
+			name:     "genuine config error (500) is NOT a reload signature",
+			err:      errors.New("raw config push failed with status 500: invalid section 'frontend'"),
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, cond(tt.err))
+		})
+	}
+}

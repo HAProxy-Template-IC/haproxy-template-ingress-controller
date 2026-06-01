@@ -4,9 +4,23 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 )
+
+// maxAuxSyncConcurrency bounds how many auxiliary-file storage round-trips run
+// concurrently within a single file type. Each Create/Update/Delete is an
+// independent skip_reload storage write to a distinct path — no transaction, no
+// inter-file dependency — so they parallelize safely. Bounding the fan-out
+// keeps a large churned changeset (hundreds of map/general files across all
+// tenants) from opening an unbounded number of Dataplane API connections, while
+// collapsing the per-file round-trip latency that would otherwise serialize
+// into a multi-second pre-config phase. Under CI's slow per-op latency that
+// serial phase is the window during which the deploy loop's runtime fast path
+// is dark and a rolling-restart endpoint change cannot propagate — the residual
+// zero-downtime 503.
+const maxAuxSyncConcurrency = 16
 
 // noFingerprintSentinel is the placeholder content older API versions
 // (or stale storage metadata) return when they have an entry but no
@@ -268,36 +282,68 @@ func Sync[T FileItem](
 		return nil, nil
 	}
 
-	var reloadIDs []string
-
-	// Create new files
-	for _, file := range diff.ToCreate {
-		reloadID, err := ops.Create(ctx, file.GetIdentifier(), file.GetContent())
-		if err != nil {
-			return nil, fmt.Errorf("creating file '%s': %w", file.GetIdentifier(), err)
+	var (
+		mu        sync.Mutex
+		reloadIDs []string
+	)
+	addReload := func(id string) {
+		if id == "" {
+			return
 		}
-		if reloadID != "" {
-			reloadIDs = append(reloadIDs, reloadID)
-		}
+		mu.Lock()
+		reloadIDs = append(reloadIDs, id)
+		mu.Unlock()
 	}
 
-	// Update existing files
-	for _, file := range diff.ToUpdate {
-		reloadID, err := ops.Update(ctx, file.GetIdentifier(), file.GetContent())
+	// Phases run in order (create → update → delete) — deletes must not race a
+	// create/update of the same path, and a reload triggered mid-phase must see
+	// all of that phase's files. Within a phase every operation is over a
+	// distinct path with no inter-file dependency, so they run concurrently
+	// (bounded) to collapse per-file round-trip latency. The reload-ID order is
+	// no longer the input order (completion order), which callers don't rely on.
+	if err := applyAuxConcurrently(ctx, diff.ToCreate, func(c context.Context, file T) error {
+		reloadID, err := ops.Create(c, file.GetIdentifier(), file.GetContent())
 		if err != nil {
-			return nil, fmt.Errorf("updating file '%s': %w", file.GetIdentifier(), err)
+			return fmt.Errorf("creating file '%s': %w", file.GetIdentifier(), err)
 		}
-		if reloadID != "" {
-			reloadIDs = append(reloadIDs, reloadID)
-		}
+		addReload(reloadID)
+		return nil
+	}); err != nil {
+		return nil, err
 	}
-
-	// Delete unreferenced files
-	for _, id := range diff.ToDelete {
-		if err := ops.Delete(ctx, id); err != nil {
-			return nil, fmt.Errorf("deleting file '%s': %w", id, err)
+	if err := applyAuxConcurrently(ctx, diff.ToUpdate, func(c context.Context, file T) error {
+		reloadID, err := ops.Update(c, file.GetIdentifier(), file.GetContent())
+		if err != nil {
+			return fmt.Errorf("updating file '%s': %w", file.GetIdentifier(), err)
 		}
+		addReload(reloadID)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := applyAuxConcurrently(ctx, diff.ToDelete, func(c context.Context, id string) error {
+		if err := ops.Delete(c, id); err != nil {
+			return fmt.Errorf("deleting file '%s': %w", id, err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return reloadIDs, nil
+}
+
+// applyAuxConcurrently runs fn over each item with bounded concurrency
+// (maxAuxSyncConcurrency), failing fast: the first error cancels the shared
+// context and is returned once the in-flight operations unwind.
+func applyAuxConcurrently[E any](ctx context.Context, items []E, fn func(context.Context, E) error) error {
+	if len(items) == 0 {
+		return nil
+	}
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(maxAuxSyncConcurrency)
+	for _, item := range items {
+		g.Go(func() error { return fn(gCtx, item) })
+	}
+	return g.Wait()
 }

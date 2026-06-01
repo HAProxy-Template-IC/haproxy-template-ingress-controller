@@ -27,7 +27,9 @@ const (
 // DefaultReinitDebounceInterval is the default time to wait after the last config
 // change before signaling controller reinitialization. This allows rapid CRD updates
 // to be coalesced, ensuring templates are fully rendered before reinitialization starts.
-// Uses the centralized debounce interval from types package.
+// Reuses the lenient per-watcher debounce default (types.DefaultDebounceInterval, 2s):
+// CRD config edits are operator-initiated and tolerate a couple of seconds of
+// coalescing, like other structural changes.
 var DefaultReinitDebounceInterval = types.DefaultDebounceInterval
 
 // syntheticBootstrapVersion is the literal version string webhook.go

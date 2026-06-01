@@ -196,28 +196,6 @@ type ControllerConfig struct {
 	// ConfigPublishing configures how rendered configs are stored in CRDs.
 	// +optional
 	ConfigPublishing ConfigPublishingConfig `json:"configPublishing,omitempty"`
-
-	// ReconciliationDebounceInterval overrides the leading-edge refractory window
-	// the Reconciler applies to resource and HTTP-resource change events before
-	// triggering a reconciliation cycle.
-	//
-	// The first change after the window expires fires immediately; further changes
-	// arriving within the window are batched and the timer fires once at window end.
-	// This guarantees at least this much time between any two reconciliations and at
-	// most this much latency for any single change.
-	//
-	// Format: Go duration string (e.g., "1s", "5s", "30s").
-	// Default: 5s (DefaultReconciliationDebounceInterval, shared with the per-watcher
-	// debounce default in pkg/k8s/types.DefaultDebounceInterval).
-	//
-	// Lower it when responsiveness matters more than reconciliation cost (small
-	// clusters, latency-sensitive rollouts). Raise it on high-churn clusters to
-	// absorb more changes per render and reduce GC pressure.
-	//
-	// Invalid values silently fall back to the default. Empty (the default) also
-	// uses the default.
-	// +optional
-	ReconciliationDebounceInterval string `json:"reconciliationDebounceInterval,omitempty"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.
@@ -385,48 +363,6 @@ type DataplaneConfig struct {
 	// Default: 2m
 	// +optional
 	SyncTimeout string `json:"syncTimeout,omitempty"`
-
-	// SyncMaxRetries is the maximum number of automatic retries the Dataplane
-	// VersionAdapter performs when a transaction commit fails with HTTP 409
-	// (config-version conflict, typically caused by a concurrent writer). Each
-	// retry re-fetches the current version and replays the transaction.
-	//
-	// 0 disables retries. Use a pointer so unset / 0 / positive are all
-	// distinguishable: nil means "use the default", 0 means "no retries".
-	// Default: 3
-	// +kubebuilder:validation:Minimum=0
-	// +optional
-	SyncMaxRetries *int `json:"syncMaxRetries,omitempty"`
-
-	// MaxParallel limits concurrent Dataplane API operations during sync.
-	// This prevents overwhelming the API when syncing large configurations.
-	//
-	// Values:
-	//   - 0 or unset: auto-calculated as dataplane GOMAXPROCS * 10
-	//   - Positive integer: use that exact limit
-	//
-	// The auto-calculation uses the dataplane container's CPU allocation to determine
-	// an appropriate parallelism level that balances throughput and API stability.
-	// +kubebuilder:validation:Minimum=0
-	// +optional
-	MaxParallel int `json:"maxParallel,omitempty"`
-
-	// RawPushThreshold sets the number of configuration changes that triggers
-	// a raw config push instead of fine-grained sync.
-	//
-	// Fine-grained sync applies individual API operations (create/update/delete)
-	// which is efficient for small changes but slow for large deployments.
-	// When changes exceed this threshold, the controller pushes the complete
-	// configuration as a raw config, which is faster for bulk updates.
-	//
-	// Additionally, when the remote HAProxy config version is 1 (initial state),
-	// raw push is always used regardless of this threshold.
-	//
-	// Default: 100
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:default=100
-	// +optional
-	RawPushThreshold int `json:"rawPushThreshold,omitempty"`
 }
 
 // TemplatingSettings configures template rendering behavior.
@@ -524,22 +460,8 @@ type WatchedResource struct {
 	// +optional
 	Store string `json:"store,omitempty"`
 
-	// DebounceInterval overrides the default leading-edge refractory window
-	// for this resource type's watcher.
-	//
-	// Format: Go duration string (e.g., "500ms", "10s").
-	// Default: 5s (pkg/k8s/types.DefaultDebounceInterval).
-	//
-	// Lower values make the controller respond faster to bursty changes at
-	// the cost of more reconciliations and GC pressure under load. Most
-	// workloads should leave this unset; per-resource overrides are useful
-	// for resources that need faster reaction (e.g., HTTPRoute changes
-	// during canary rollouts) or slower batching (e.g., very high-churn
-	// EndpointSlices on a large cluster).
-	//
-	// Invalid values silently fall back to the default — invalid means a
-	// string that fails time.ParseDuration. Empty (the default) also uses
-	// the default.
+	// DebounceInterval overrides the watcher's refractory window.
+	// "0" disables debouncing; default 100ms.
 	// +optional
 	DebounceInterval string `json:"debounceInterval,omitempty"`
 }

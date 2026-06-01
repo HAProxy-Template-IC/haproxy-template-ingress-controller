@@ -3,6 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -390,10 +391,16 @@ func TestSyncSSLStorageFiles_UnsupportedCapability(t *testing.T) {
 }
 
 func TestSyncSSLStorageFiles_DelegatesToSync(t *testing.T) {
-	var createdIDs []string
+	var (
+		mu         sync.Mutex
+		createdIDs []string
+	)
 	ops := &sslStorageOps[SSLCaFile]{
 		create: func(_ context.Context, id, _ string) (string, error) {
+			// Sync runs creates concurrently within a phase; guard the recorder.
+			mu.Lock()
 			createdIDs = append(createdIDs, id)
+			mu.Unlock()
 			return "reload-" + id, nil
 		},
 		update: func(_ context.Context, id, _ string) (string, error) {

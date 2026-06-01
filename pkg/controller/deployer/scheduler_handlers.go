@@ -88,13 +88,21 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 	auxFiles := s.lastAuxiliaryFiles
 	endpoints := s.currentEndpoints
 	statusPatches := s.lastValidatedStatusPatches
-	// Cache validated config immediately to prevent race condition
+	configChecksum := s.lastContentChecksum
+	// Cache validated config immediately to prevent race condition.
+	// `lastValidatedContentChecksum` must be captured AT THE SAME POINT as
+	// `lastValidatedConfig` — otherwise pod-discovery reads (which fall
+	// through to this cache) can re-read a stale or newer
+	// `lastContentChecksum` and the resulting deploy records the wrong
+	// hash. See scheduler.go's scheduledDeployment.contentChecksum doc.
 	s.lastValidatedConfig = config
 	s.lastValidatedAux = auxFiles
+	s.lastValidatedContentChecksum = configChecksum
 	s.lastParsedConfig = event.ParsedConfig // Cache pre-parsed config for sync optimization
 	s.lastCorrelationID = correlationID
 	s.lastCoalescible = event.Coalescible()
 	s.hasValidConfig = true
+	parsedConfig := s.lastParsedConfig
 	s.mu.Unlock()
 
 	if config == "" {
@@ -107,10 +115,13 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		return
 	}
 
-	// Use pre-computed content checksum from pipeline (propagated via TemplateRenderedEvent)
-	s.mu.RLock()
-	configHash := s.lastContentChecksum
-	s.mu.RUnlock()
+	// Use the content checksum captured WITH the config that was just
+	// validated — `lastValidatedContentChecksum`, set above under the same
+	// lock as `lastValidatedConfig`. Reading `s.lastContentChecksum`
+	// directly here would let a fresh reconcile (which mutates that
+	// field in handleTemplateRendered) substitute a newer hash than the
+	// config we're about to deploy actually carries.
+	configHash := configChecksum
 	podSetHash := computePodSetHash(endpoints)
 
 	// Drift prevention deployments must ALWAYS execute (bypass cache)
@@ -146,14 +157,17 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 		return
 	}
 
-	// Get parsed config for sync optimization
-	s.mu.RLock()
-	parsedConfig := s.lastParsedConfig
-	s.mu.RUnlock()
-
-	// Schedule deployment to current endpoints (or queue if deployment in progress)
-	// Propagate coalescibility from validation event through the deployment pipeline
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, statusPatches, event.Coalescible())
+	// Schedule deployment to current endpoints (or queue if deployment in progress).
+	// scheduleOrQueue classifies the render into a lane (runtime-raw vs structural)
+	// against the last-dispatched config; the deploy loop applies it accordingly.
+	// Propagate coalescibility from validation event through the deployment pipeline.
+	//
+	// `configHash` was captured above from `s.lastContentChecksum` at the same
+	// point `config` was captured (line 112). Thread it through scheduleOrQueue
+	// so the eventual deploy records THIS hash, not whatever
+	// `s.lastContentChecksum` holds at deploy-time (which a later reconcile
+	// will have overwritten under sustained parallel-test load).
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "config_validation", correlationID, statusPatches, event.Coalescible(), configHash)
 }
 
 // handlePodsDiscovered handles HAProxy pod discovery/changes with coalescing.
@@ -193,6 +207,7 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 	auxFiles := s.lastValidatedAux
 	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
+	contentChecksum := s.lastValidatedContentChecksum
 	correlationID := s.lastCorrelationID
 	coalescible := s.lastCoalescible
 	hasValidConfig := s.hasValidConfig
@@ -211,9 +226,13 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 		return
 	}
 
-	// Schedule deployment of last validated config to new endpoints (or queue if in progress)
-	// Use the correlation ID and coalescibility from the last validation for traceability
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible)
+	// Schedule deployment of last validated config to new endpoints (or queue if in progress).
+	// Use the correlation ID, coalescibility, AND content checksum captured
+	// when the config was validated — same lock window in
+	// handleValidationCompleted — so the deploy records the hash that
+	// matches the config it actually carries, not whatever
+	// `lastContentChecksum` holds now (later renders' values).
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, event.Endpoints, "pod_discovery", correlationID, statusPatches, coalescible, contentChecksum)
 }
 
 // handleValidationFailed handles validation failure events.
@@ -233,6 +252,7 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 	auxFiles := s.lastValidatedAux
 	parsedConfig := s.lastParsedConfig
 	statusPatches := s.lastValidatedStatusPatches
+	contentChecksum := s.lastValidatedContentChecksum
 	endpoints := s.currentEndpoints
 	hasValidConfig := s.hasValidConfig
 	s.mu.RUnlock()
@@ -254,16 +274,20 @@ func (s *DeploymentScheduler) handleValidationFailed(ctx context.Context, event 
 		return
 	}
 
-	// Schedule fallback deployment with last known good config
-	// Fallback deployments are NOT coalescible - they must execute to ensure consistency
-	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, statusPatches, false)
+	// Schedule fallback deployment with last known good config. Fallback
+	// deployments are NOT coalescible — they must execute to ensure
+	// consistency. The contentChecksum threaded here is the hash of the
+	// last-validated config (NOT the failed-validation render), so the
+	// deploy records the correct hash for what's actually being applied.
+	s.scheduleOrQueue(ctx, config, auxFiles, parsedConfig, endpoints, "validation_fallback", correlationID, statusPatches, false, contentChecksum)
 }
 
 // handleDeploymentCompleted handles deployment completion events.
 //
-// This marks the deployment as complete, updates the deployment end time,
-// caches the deployed config hash for optimization, and processes any
-// pending deployment via scheduleOrQueue.
+// This marks the deployment as complete, updates the deployment end time, and
+// caches the deployed config hash for optimization. It does NOT re-schedule —
+// it only clears deployInFlight and signals the loop, which picks up any pending
+// deployment on its next cycle.
 //
 // The "deployed config hash" must come from event.ContentChecksum — the
 // hash threaded through the DeploymentScheduledEvent that triggered this
@@ -292,30 +316,18 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 
 	s.schedulerMutex.Lock()
 
-	// Transition to idle and record completion time
-	s.state.phase = phaseIdle
+	// Mark the deploy complete and record the end time (the loop rate-limits the
+	// next deploy from here). The deploy loop is blocked in awaitCompletion; the
+	// signal below releases it and it picks up any pending deployment on its own
+	// next cycle. We do NOT re-schedule here — that second scheduling path was
+	// the source of concurrent rate-limit goroutines and the reload storm.
+	s.state.deployInFlight = false
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeCorrelationID = ""
 	s.state.lastDeploymentEndTime = time.Now()
-
-	// Check if there's a pending deployment to process
-	pending := s.state.pending
-	if pending != nil {
-		s.state.pending = nil
-		s.schedulerMutex.Unlock()
-
-		s.logger.Debug("Deployment completed, processing queued deployment",
-			"pending_reason", pending.reason,
-			"pending_endpoint_count", len(pending.endpoints),
-			"correlation_id", pending.correlationID)
-
-		// Use scheduleOrQueue for proper mutex management and goroutine control
-		// This ensures only one scheduling goroutine runs at a time
-		s.scheduleOrQueue(s.ctx, pending.config, pending.auxFiles, pending.parsedConfig, pending.endpoints, pending.reason, pending.correlationID, pending.statusPatches, pending.coalescible)
-		return
-	}
-
 	s.schedulerMutex.Unlock()
+
+	s.signalCompleted()
 }
 
 // handleConfigPublished handles ConfigPublishedEvent by caching runtime config metadata.
@@ -341,23 +353,31 @@ func (s *DeploymentScheduler) handleConfigPublished(event *events.ConfigPublishe
 // potential deadlocks if there's a race condition during shutdown.
 //
 // This prevents scenarios where:
-//   - phase is stuck at non-idle, blocking future deployments
+//   - deployInFlight is stuck true, blocking future deployments
 //   - pending contains stale deployments that shouldn't execute
 func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
 
-	if s.state.phase != phaseIdle || s.state.pending != nil {
+	if s.state.deployInFlight || s.state.pending != nil {
 		s.logger.Info("Lost leadership, clearing deployment state",
-			"phase", s.state.phase.String(),
+			"deploy_in_flight", s.state.deployInFlight,
 			"has_pending", s.state.pending != nil)
 	}
 
-	// Transition to idle and clear all transient state
-	s.state.phase = phaseIdle
+	// Clear all transient deploy state. The deploy loop itself exits via ctx
+	// cancellation on leadership loss; its channels are recreated on next Start.
+	s.state.deployInFlight = false
 	s.state.deploymentStartTime = time.Time{}
 	s.state.activeCorrelationID = ""
 	s.state.pending = nil
+
+	// Drop the dispatch diff baseline (the new leader hasn't dispatched, so its
+	// first render must be classified structural — nil baseline — and deploy the
+	// whole config) and close the bypass's persistent clients.
+	s.lastDispatchedParsed = nil
+	s.lastDispatchedConfig = ""
+	s.runtimeBypass.Close()
 
 	// Note: state.lastDeploymentEndTime is NOT cleared - this historical data is safe to keep
 	// and helps prevent rapid deployments if leadership is quickly reacquired

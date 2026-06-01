@@ -159,11 +159,8 @@ loop:
 }
 
 func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	deployer := createTestDeployer(bus)
-
 	t.Run("nil input", func(t *testing.T) {
-		result := deployer.convertSyncResultToMetadata(nil)
+		result := syncResultToMetadata(nil)
 		assert.Nil(t, result)
 	})
 
@@ -172,8 +169,7 @@ func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 			ReloadTriggered: true,
 			ReloadID:        "12345",
 			Duration:        100 * time.Millisecond,
-			Retries:         2,
-			SyncMode:        dataplane.SyncModeFineGrained,
+			SyncMode:        dataplane.SyncModeReload,
 			Details: dataplane.DiffDetails{
 				TotalOperations:  10,
 				BackendsAdded:    []string{"backend1", "backend2"},
@@ -194,14 +190,12 @@ func TestComponent_ConvertSyncResultToMetadata(t *testing.T) {
 			},
 		}
 
-		result := deployer.convertSyncResultToMetadata(syncResult)
+		result := syncResultToMetadata(syncResult)
 
 		require.NotNil(t, result)
 		assert.True(t, result.ReloadTriggered)
 		assert.Equal(t, "12345", result.ReloadID)
 		assert.Equal(t, 100*time.Millisecond, result.SyncDuration)
-		assert.Equal(t, 2, result.VersionConflictRetries)
-		assert.False(t, result.FallbackUsed)
 		assert.Equal(t, 10, result.OperationCounts.TotalAPIOperations)
 		assert.Equal(t, 2, result.OperationCounts.BackendsAdded)
 		assert.Equal(t, 1, result.OperationCounts.BackendsRemoved)
@@ -310,64 +304,4 @@ func TestComponent_DeploymentInProgressFlag_DuplicateRejected(t *testing.T) {
 
 	// Flag should still be true (not modified)
 	assert.True(t, deployer.deploymentInProgress.Load())
-}
-
-// whether a deployment made meaningful changes that warrant publishing ConfigAppliedToPodEvent.
-func TestComponent_isNoOpDeployment(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	deployer := createTestDeployer(bus)
-
-	tests := []struct {
-		name       string
-		syncResult *dataplane.SyncResult
-		expected   bool
-	}{
-		{
-			name:       "nil sync result - skip",
-			syncResult: nil,
-			expected:   true,
-		},
-		{
-			name: "with operations - do not skip",
-			syncResult: &dataplane.SyncResult{
-				Details: dataplane.DiffDetails{
-					TotalOperations: 5,
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "with reload - do not skip",
-			syncResult: &dataplane.SyncResult{
-				ReloadTriggered: true,
-				Details:         dataplane.DiffDetails{},
-			},
-			expected: false,
-		},
-		{
-			name: "no operations no reload - skip",
-			syncResult: &dataplane.SyncResult{
-				ReloadTriggered: false,
-				Details: dataplane.DiffDetails{
-					TotalOperations: 0,
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "zero value details - skip",
-			syncResult: &dataplane.SyncResult{
-				ReloadTriggered: false,
-				Details:         dataplane.DiffDetails{},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := deployer.isNoOpDeployment(tt.syncResult)
-			assert.Equal(t, tt.expected, got)
-		})
-	}
 }

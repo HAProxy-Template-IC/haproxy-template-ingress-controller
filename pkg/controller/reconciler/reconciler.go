@@ -12,24 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package reconciler implements the Reconciler component that debounces resource
-// changes and triggers reconciliation events.
+// Package reconciler implements the Reconciler component that triggers
+// reconciliation events on resource changes.
 //
-// The Reconciler is a key component in Stage 5 of the controller startup sequence.
-// It subscribes to resource change events, applies debouncing to batch rapid changes,
-// and publishes reconciliation trigger events when the system reaches a quiet state.
+// The Reconciler is a Stage 5 controller component. It subscribes to resource
+// change events and publishes a ReconciliationTriggeredEvent IMMEDIATELY for
+// each one — there is no reconciler-level refractory/debounce. Batching of
+// rapid changes happens upstream, per watched-resource kind (the
+// pkg/k8s/watcher leading-edge debouncer; default 2s, EndpointSlice "0"), and
+// reload throttling happens downstream (the deployer's minDeploymentInterval,
+// which the runtime-eligible fast path bypasses). Keeping the reconciler
+// immediate means a runtime-eligible endpoint change reaches the deployer with
+// no latency added by this layer.
 package reconciler
 
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
 
@@ -42,43 +45,43 @@ const EventBufferSize = busevents.HighVolumeSubscriberBuffer
 // ComponentName is the unique identifier for this component.
 const ComponentName = "reconciler"
 
-// Reconciler implements the reconciliation debouncer component.
+// Trigger reasons published on ReconciliationTriggeredEvent. The two state
+// updates (reasonResourceChange, reasonHTTPResourceChange) are coalescible; the
+// command reasons are always processed. Drift uses
+// events.TriggerReasonDriftPrevention.
+const (
+	reasonResourceChange       = "resource_change"
+	reasonHTTPResourceChange   = "http_resource_change"
+	reasonIndexSynchronized    = "index_synchronized"
+	reasonHTTPResourceAccepted = "http_resource_accepted"
+	reasonBecameLeader         = "became_leader"
+)
+
+// Reconciler triggers reconciliation immediately on every resource/HTTP change.
 //
-// It subscribes to resource change events and index synchronization events,
-// applies debouncing logic to prevent excessive reconciliations, and triggers
-// reconciliation when appropriate.
+// There is NO reconciler-level debounce. Rapid changes are batched upstream by
+// the per-watcher debouncer (pkg/k8s/watcher), and reload-inducing structural
+// deploys are throttled downstream by the deployer's minDeploymentInterval
+// (which the runtime-eligible fast path skips). Firing immediately here ensures
+// runtime-eligible endpoint changes (e.g. EndpointSlice watchers with
+// debounceInterval: "0") propagate with no added latency. All trigger paths
+// fire immediately:
+//   - ResourceIndexUpdatedEvent → "resource_change"
+//   - HTTPResourceUpdatedEvent  → "http_resource_change"
+//   - IndexSynchronizedEvent    → "index_synchronized" (initial reconciliation)
+//   - HTTPResourceAcceptedEvent / DriftPreventionTriggeredEvent / BecameLeaderEvent → immediate command triggers
 //
-// Debouncing behavior (leading-edge with refractory period):
-//   - First change after refractory: Trigger immediately (0ms delay)
-//   - Changes during refractory: Queued (timer NOT reset, fires at refractory end)
-//   - Index synchronized: Trigger immediately (initial reconciliation after all resources synced)
-//
-// This guarantees:
-//   - Minimum interval: At least debounceInterval between any two triggers
-//   - Maximum latency: Every change synced within debounceInterval
-//
-// The component publishes ReconciliationTriggeredEvent to signal the Executor
-// to begin a reconciliation cycle.
+// The component publishes ReconciliationTriggeredEvent to signal the Coordinator
+// to begin a reconciliation cycle. Coalescible state-update triggers
+// (resource_change, http_resource_change) may be superseded downstream by a
+// newer trigger; command triggers are always processed.
 type Reconciler struct {
-	eventBus          *busevents.EventBus
-	eventChan         <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
-	logger            *slog.Logger
-	debounceInterval  time.Duration
-	debounceTimer     timers.SafeTimer
-	pendingTrigger    bool
-	lastTriggerReason string
-	lastTriggerTime   time.Time // Tracks when we last triggered for refractory period
+	eventBus  *busevents.EventBus
+	eventChan <-chan busevents.Event // Subscribed in constructor for proper startup synchronization
+	logger    *slog.Logger
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
-}
-
-// Config configures the Reconciler component.
-type Config struct {
-	// DebounceInterval is the minimum time between reconciliation triggers (refractory period).
-	// The first change triggers immediately, subsequent changes within this interval are batched.
-	// If not set, types.DefaultDebounceInterval is used.
-	DebounceInterval time.Duration
 }
 
 // New creates a new Reconciler component.
@@ -86,19 +89,13 @@ type Config struct {
 // Parameters:
 //   - eventBus: The EventBus for subscribing to events and publishing triggers
 //   - logger: Structured logger for component logging
-//   - config: Optional configuration (nil for defaults)
 //
 // Returns:
 //   - A new Reconciler instance ready to be started
-func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Reconciler {
-	debounceInterval := types.DefaultDebounceInterval
-	if config != nil && config.DebounceInterval > 0 {
-		debounceInterval = config.DebounceInterval
-	}
-
+func New(eventBus *busevents.EventBus, logger *slog.Logger) *Reconciler {
 	// Subscribe to EventBus during construction (before EventBus.Start())
-	// This ensures proper startup synchronization without timing-based sleeps
-	// Use typed subscription to only receive events we handle (reduces buffer pressure)
+	// This ensures proper startup synchronization without timing-based sleeps.
+	// Use typed subscription to only receive events we handle (reduces buffer pressure).
 	eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
 		events.EventTypeResourceIndexUpdated,
 		events.EventTypeIndexSynchronized,
@@ -109,13 +106,10 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, config *Config) *Rec
 	)
 
 	return &Reconciler{
-		eventBus:          eventBus,
-		eventChan:         eventChan,
-		logger:            logger,
-		debounceInterval:  debounceInterval,
-		pendingTrigger:    false,
-		lastTriggerReason: "",
-		healthTracker:     lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
+		eventBus:      eventBus,
+		eventChan:     eventChan,
+		logger:        logger,
+		healthTracker: lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}
 }
 
@@ -127,42 +121,20 @@ func (r *Reconciler) Name() string {
 
 // Start begins the reconciler's event loop.
 //
-// This method blocks until the context is cancelled or an error occurs.
-// The component is already subscribed to the EventBus (subscription happens in New()),
-// so this method only processes events:
-//   - ResourceIndexUpdatedEvent: Leading-edge trigger or queue for refractory timer
-//   - IndexSynchronizedEvent: Triggers initial reconciliation when all resources synced
-//   - Refractory timer expiration: Publishes ReconciliationTriggeredEvent if pending changes
-//
-// The component runs until the context is cancelled, at which point it
-// performs cleanup and returns.
-//
-// Parameters:
-//   - ctx: Context for cancellation and lifecycle management
-//
-// Returns:
-//   - nil when context is cancelled (graceful shutdown)
-//   - Error only in exceptional circumstances
+// This method blocks until the context is cancelled. The component is already
+// subscribed to the EventBus (subscription happens in New()), so this method
+// only dispatches events to their handlers; each handler triggers
+// reconciliation immediately. Exits cleanly on ctx cancellation.
 func (r *Reconciler) Start(ctx context.Context) error {
-	r.logger.Debug("reconciler starting",
-		"debounce_interval", r.debounceInterval)
+	r.logger.Debug("reconciler starting (immediate trigger; no reconciler-level debounce)")
 
 	for {
 		select {
 		case event := <-r.eventChan:
 			r.handleEvent(event)
 
-		case <-r.debounceTimer.Chan():
-			r.debounceTimer.Fired()
-
-			// Only trigger if there are pending changes
-			if r.pendingTrigger {
-				r.triggerReconciliation("debounce_timer")
-			}
-
 		case <-ctx.Done():
 			r.logger.Info("Reconciler shutting down", "reason", ctx.Err())
-			r.cleanup()
 			return nil
 		}
 	}
@@ -195,17 +167,15 @@ func (r *Reconciler) handleEvent(event busevents.Event) {
 	}
 }
 
-// handleResourceChange processes resource index update events.
+// handleResourceChange triggers reconciliation immediately for a resource change.
 //
-// Uses leading-edge debouncing: the first change triggers immediately if outside
-// the refractory period, subsequent changes are batched until refractory expires.
-// This guarantees both minimum interval between triggers and maximum latency for changes.
-//
-// HAProxy pods are filtered out since they are deployment targets, not configuration sources.
-// Changes to HAProxy pods trigger deployment-only reconciliation via the Deployer component.
+// Initial-sync events are skipped (the first reconciliation is driven by
+// IndexSynchronizedEvent once all watchers have synced). HAProxy pod changes
+// are skipped — they are deployment targets, not configuration sources, and are
+// handled by the Deployer via HAProxyPodsDiscoveredEvent.
 func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEvent) {
 	// Skip initial sync events - we don't want to trigger reconciliation
-	// until the initial sync is complete
+	// until the initial sync is complete.
 	if event.ChangeStats.IsInitialSync {
 		r.logger.Debug("Skipping initial sync event",
 			"resource_type", event.ResourceTypeName,
@@ -215,8 +185,8 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 		return
 	}
 
-	// Skip HAProxy pod changes - they are deployment targets, not configuration sources
-	// Pod changes trigger deployment via HAProxyPodsDiscoveredEvent → Deployer component
+	// Skip HAProxy pod changes - they are deployment targets, not configuration sources.
+	// Pod changes trigger deployment via HAProxyPodsDiscoveredEvent → Deployer component.
 	if event.ResourceTypeName == names.HAProxyPodsResourceType {
 		r.logger.Debug("Skipping HAProxy pod change (deployment target, not config source)",
 			"created", event.ChangeStats.Created,
@@ -225,161 +195,84 @@ func (r *Reconciler) handleResourceChange(event *events.ResourceIndexUpdatedEven
 		return
 	}
 
-	r.debounceTrigger("Resource change", "resource_change",
+	r.logger.Debug("Resource change detected, triggering reconciliation",
 		"resource_type", event.ResourceTypeName,
 		"created", event.ChangeStats.Created,
 		"modified", event.ChangeStats.Modified,
 		"deleted", event.ChangeStats.Deleted)
+	r.triggerReconciliation(reasonResourceChange)
 }
 
 // handleIndexSynchronized processes index synchronized events.
 //
 // When all resource watchers have completed their initial sync, this triggers
-// the initial reconciliation. This ensures the first render happens only after
-// all resources are indexed, providing a complete view of the cluster state.
+// the initial reconciliation so the first render happens with a complete view
+// of cluster state.
 func (r *Reconciler) handleIndexSynchronized(event *events.IndexSynchronizedEvent) {
 	r.logger.Info("All indices synchronized, triggering initial reconciliation",
 		"resource_counts", event.ResourceCounts)
-
-	// Stop any pending debounce timer - initial sync takes priority
-	r.stopDebounceTimer()
-
-	// Trigger reconciliation immediately
-	r.triggerReconciliation("index_synchronized")
+	r.triggerReconciliation(reasonIndexSynchronized)
 }
 
-// handleHTTPResourceChange processes HTTP resource update events.
+// handleHTTPResourceChange triggers reconciliation immediately for an HTTP content change.
 //
-// HTTP resource changes use the same leading-edge debouncing as other resource changes.
-// When external HTTP content changes (e.g., IP blocklists, API responses),
-// this triggers a re-render to incorporate the new content.
+// When external HTTP content changes (e.g. IP blocklists, API responses), this
+// triggers a re-render to incorporate the new content.
 func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedEvent) {
-	r.debounceTrigger("HTTP resource change", "http_resource_change",
+	r.logger.Debug("HTTP resource change detected, triggering reconciliation",
 		"url", event.URL,
 		"content_size", event.ContentSize)
-}
-
-// debounceTrigger applies leading-edge debouncing to a reconciliation request.
-// If the refractory period has elapsed since the last trigger, fires
-// immediately; otherwise marks a pending trigger and starts the refractory
-// timer (without resetting it if already running). logPrefix is the
-// human-readable event name used in the debug logs ("Resource change",
-// "HTTP resource change"); reason is the snake_case identifier passed to
-// triggerReconciliation; extraFields lets the caller include
-// resource-specific debug attributes alongside the standard timing fields.
-func (r *Reconciler) debounceTrigger(logPrefix, reason string, extraFields ...any) {
-	now := time.Now()
-	timeSinceLastTrigger := now.Sub(r.lastTriggerTime)
-
-	if timeSinceLastTrigger >= r.debounceInterval {
-		// Outside refractory period - trigger immediately (leading edge)
-		r.logger.Debug(logPrefix+" detected, triggering immediately (outside refractory)",
-			append(extraFields, "time_since_last_trigger", timeSinceLastTrigger)...)
-		r.triggerReconciliation(reason)
-		return
-	}
-
-	// Inside refractory period - queue for later, DO NOT reset timer
-	r.logger.Debug(logPrefix+" detected, queuing (inside refractory)",
-		append(extraFields,
-			"remaining_refractory", r.debounceInterval-timeSinceLastTrigger,
-			"debounce_interval", r.debounceInterval)...)
-	r.pendingTrigger = true
-	r.lastTriggerReason = reason
-	// Only start timer if not already running (key difference from trailing-edge debounce).
-	r.ensureRefractoryTimer(now)
+	r.triggerReconciliation(reasonHTTPResourceChange)
 }
 
 // handleHTTPResourceAccepted processes HTTP resource accepted events.
 //
-// When HTTP content is promoted from pending to accepted (after validation succeeds),
-// we need to trigger a new reconciliation to re-render the production configuration
-// with the new accepted content. Without this, the production config would stay
-// with the old content until the next external trigger.
+// When HTTP content is promoted from pending to accepted (after validation
+// succeeds), trigger reconciliation to re-render the production configuration
+// with the new accepted content.
 func (r *Reconciler) handleHTTPResourceAccepted(event *events.HTTPResourceAcceptedEvent) {
 	r.logger.Info("HTTP resource accepted, triggering immediate reconciliation",
 		"url", event.URL,
 		"content_size", event.ContentSize)
-
-	// Stop pending debounce timer - accepted content should be deployed immediately
-	r.stopDebounceTimer()
-
-	// Trigger reconciliation immediately
-	r.triggerReconciliation("http_resource_accepted")
+	r.triggerReconciliation(reasonHTTPResourceAccepted)
 }
 
 // handleDriftPrevention processes drift prevention triggered events.
 //
-// Drift prevention triggers immediate full reconciliation (render → validate → deploy).
-// This ensures HTTP store entries get their LastAccessTime updated during template rendering,
-// preventing premature eviction. If validation fails, the DeploymentScheduler will fall back
-// to deploying the cached last known good config.
+// Drift prevention triggers immediate full reconciliation (render → validate →
+// deploy). This refreshes HTTP-store LastAccessTime during rendering, preventing
+// premature eviction. If validation fails, the DeploymentScheduler falls back to
+// the cached last known good config.
 func (r *Reconciler) handleDriftPrevention(_ *events.DriftPreventionTriggeredEvent) {
-	// Stop pending debounce timer - drift prevention takes priority
-	r.stopDebounceTimer()
-
-	// Trigger reconciliation immediately with drift_prevention reason
-	// The TriggerReason will be propagated through the event chain and used by
-	// DeploymentScheduler to deploy cached config if validation fails
+	// The TriggerReason propagates through the event chain so the
+	// DeploymentScheduler can deploy cached config if validation fails.
 	r.triggerReconciliation(events.TriggerReasonDriftPrevention)
 }
 
 // handleBecameLeader triggers immediate reconciliation when leadership is acquired.
 //
-// This ensures leader-only components (renderer, drift monitor) receive fresh state.
-// The renderer is leader-only and starts when we become leader, so this reconciliation
-// provides the initial config rendering for the new leader.
+// This bootstraps leader-only components (renderer, drift monitor) with fresh
+// state — the new leader's first reconciliation produces a current render.
 func (r *Reconciler) handleBecameLeader(_ *events.BecameLeaderEvent) {
 	r.logger.Info("Became leader, triggering immediate reconciliation")
-
-	// Stop pending debounce timer - leader transition takes priority
-	r.stopDebounceTimer()
-
-	// Trigger reconciliation immediately
-	r.triggerReconciliation("became_leader")
-}
-
-// ensureRefractoryTimer ensures a timer is running for the remainder of the refractory period.
-// Unlike Reset, this does NOT restart an existing timer - it only starts one if none exists.
-// This is critical for the leading-edge debounce behavior.
-func (r *Reconciler) ensureRefractoryTimer(now time.Time) {
-	// Calculate remaining time until refractory period ends
-	remaining := r.debounceInterval - now.Sub(r.lastTriggerTime)
-	if remaining <= 0 {
-		// Refractory already expired - should not happen, but handle gracefully
-		remaining = r.debounceInterval
-	}
-
-	r.debounceTimer.EnsureRunning(remaining)
-}
-
-// stopDebounceTimer stops the debounce timer if it's running and clears pending state.
-func (r *Reconciler) stopDebounceTimer() {
-	r.debounceTimer.Stop()
-	r.pendingTrigger = false
+	r.triggerReconciliation(reasonBecameLeader)
 }
 
 // triggerReconciliation publishes a ReconciliationTriggeredEvent with a new correlation ID.
 //
-// The correlation ID is generated here and will be propagated through the entire
-// reconciliation pipeline (Coordinator → Pipeline → Scheduler → Deployer) enabling
-// end-to-end tracing of all events in a single reconciliation cycle.
+// The correlation ID is generated here and propagated through the entire
+// reconciliation pipeline (Coordinator → Pipeline → Scheduler → Deployer),
+// enabling end-to-end tracing of a single reconciliation cycle.
 //
-// The coalescible flag is set based on the trigger reason:
-//   - true for state updates (debounce_timer, resource_change, http_resource_change)
-//   - false for commands that must be processed (index_synchronized, drift_prevention, etc.)
-//
-// This also updates lastTriggerTime to start a new refractory period.
+// The coalescible flag is set from the trigger reason:
+//   - true for state updates (resource_change, http_resource_change) that may be
+//     safely superseded by a newer trigger of the same kind
+//   - false for commands that must each be processed (index_synchronized,
+//     http_resource_accepted, drift_prevention, became_leader)
 func (r *Reconciler) triggerReconciliation(reason string) {
-	// Update last trigger time for refractory period tracking
-	r.lastTriggerTime = time.Now()
-
-	// Determine coalescibility based on trigger reason
-	// State updates (only latest matters) are coalescible
-	// Commands (must be processed) are not coalescible
 	coalescible := isCoalescibleReason(reason)
 
-	// Create event with new correlation ID to trace this reconciliation cycle
+	// Create event with new correlation ID to trace this reconciliation cycle.
 	event := events.NewReconciliationTriggeredEvent(reason, coalescible, events.WithNewCorrelation())
 
 	r.logger.Debug("Triggering reconciliation",
@@ -388,39 +281,27 @@ func (r *Reconciler) triggerReconciliation(reason string) {
 		"correlation_id", event.CorrelationID())
 
 	r.eventBus.Publish(event)
-	r.pendingTrigger = false
 }
 
 // isCoalescibleReason determines if a trigger reason produces coalescible events.
-// Coalescible events can be safely skipped when a newer event of the same type is available.
+// Coalescible events can be safely skipped when a newer event of the same type
+// is available downstream.
 //
 // State updates (coalescible=true):
-//   - debounce_timer: Timer expired after batching changes
-//   - resource_change: Resource changed (immediate trigger)
+//   - resource_change: a watched resource changed
 //   - http_resource_change: HTTP content changed
 //
 // Commands (coalescible=false):
-//   - index_synchronized: Initial sync complete - must process
+//   - index_synchronized: initial sync complete - must process
 //   - http_resource_accepted: HTTP content promoted - must deploy
-//   - drift_prevention: Drift prevention cycle - must enforce
-//   - became_leader: Leadership acquired - must initialize
+//   - drift_prevention: drift prevention cycle - must enforce
+//   - became_leader: leadership acquired - must initialize
 func isCoalescibleReason(reason string) bool {
 	switch reason {
-	case "debounce_timer", "resource_change", "http_resource_change":
+	case reasonResourceChange, reasonHTTPResourceChange:
 		return true
 	default:
 		return false
-	}
-}
-
-// cleanup performs cleanup when the component is shutting down.
-func (r *Reconciler) cleanup() {
-	r.stopDebounceTimer()
-
-	// If there was a pending trigger when we shut down, log it
-	if r.pendingTrigger {
-		r.logger.Debug("Reconciler shutting down with pending trigger",
-			"last_reason", r.lastTriggerReason)
 	}
 }
 

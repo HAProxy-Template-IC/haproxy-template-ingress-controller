@@ -62,8 +62,10 @@ func safeIntToInt32(n int) int32 {
 	return int32(n)
 }
 
-// convertSyncResultToMetadata converts dataplane.SyncResult to events.SyncMetadata.
-func (c *Component) convertSyncResultToMetadata(result *dataplane.SyncResult) *events.SyncMetadata {
+// syncResultToMetadata converts dataplane.SyncResult to events.SyncMetadata.
+// Package-level (no receiver state) so both the structural deploy path and the
+// runtime-raw bypass can build the metadata for ConfigAppliedToPodEvent.
+func syncResultToMetadata(result *dataplane.SyncResult) *events.SyncMetadata {
 	if result == nil {
 		return nil
 	}
@@ -83,11 +85,9 @@ func (c *Component) convertSyncResultToMetadata(result *dataplane.SyncResult) *e
 	}
 
 	return &events.SyncMetadata{
-		ReloadTriggered:        result.ReloadTriggered,
-		ReloadID:               result.ReloadID,
-		SyncDuration:           result.Duration,
-		VersionConflictRetries: result.Retries,
-		FallbackUsed:           result.UsedRawPush(),
+		ReloadTriggered: result.ReloadTriggered,
+		ReloadID:        result.ReloadID,
+		SyncDuration:    result.Duration,
 		OperationCounts: events.OperationCounts{
 			TotalAPIOperations: result.Details.TotalOperations,
 			BackendsAdded:      len(result.Details.BackendsAdded),

@@ -107,6 +107,15 @@ type ValidationService struct {
 	// Use true for runtime validation (permissive) and false for webhook validation (strict).
 	skipDNSValidation bool
 
+	// skipSemanticValidation controls whether to skip the `haproxy -c`
+	// semantic-validation step entirely. Use true for the deployment
+	// path (the chart already validated the template, the syntax + schema
+	// check still runs, and the dominant runtime risk is rolling-restart
+	// reaction latency where `haproxy -c` adds ~60 ms per render) and
+	// false for the webhook path (admission requests come from operator
+	// input where strict validation is what the user expects).
+	skipSemanticValidation bool
+
 	// baseDir is the production base directory used in "default-path origin".
 	// During validation, this is replaced with the temp directory path so
 	// relative paths resolve correctly.
@@ -136,6 +145,12 @@ type ValidationServiceConfig struct {
 	// When true, servers with unresolvable hostnames start in DOWN state instead of failing.
 	// When false (strict mode), DNS resolution failures cause validation to fail.
 	SkipDNSValidation bool
+
+	// SkipSemanticValidation controls whether to skip the `haproxy -c`
+	// semantic-validation step. Set true for the deployment pipeline
+	// (~60 ms per render saved, syntax + schema still runs), false for
+	// the webhook (admission requests must still be strictly validated).
+	SkipSemanticValidation bool
 
 	// BaseDir is the production base directory used in "default-path origin" directive.
 	// During local validation, this is replaced with the temp directory path so that
@@ -182,13 +197,14 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 	}
 
 	return &ValidationService{
-		logger:            logger,
-		version:           cfg.Version,
-		skipDNSValidation: cfg.SkipDNSValidation,
-		baseDir:           baseDir,
-		mapsDir:           mapsDir,
-		sslCertsDir:       sslCertsDir,
-		generalDir:        generalDir,
+		logger:                 logger,
+		version:                cfg.Version,
+		skipDNSValidation:      cfg.SkipDNSValidation,
+		skipSemanticValidation: cfg.SkipSemanticValidation,
+		baseDir:                baseDir,
+		mapsDir:                mapsDir,
+		sslCertsDir:            sslCertsDir,
+		generalDir:             generalDir,
 	}
 }
 
@@ -246,6 +262,22 @@ func (s *ValidationService) ValidateWithChecksum(ctx context.Context, config str
 	parsedConfig, err := dataplane.ValidateSyntaxAndSchema(config, s.version)
 	if err != nil {
 		return failedResult(err, validationPhase(err), startTime)
+	}
+
+	// Short-circuit: when the deployment pipeline opts out of semantic
+	// validation, syntax + schema is enough. The chart's bundled
+	// validationTests + the webhook's strict semantic check already
+	// guard against structurally-broken configs; skipping the per-render
+	// `haproxy -c` invocation here removes ~60 ms from every reconcile
+	// (the dominant fixed cost on the rolling-restart hot path) without
+	// affecting admission-time correctness.
+	if s.skipSemanticValidation {
+		s.cacheResult(checksum, parsedConfig)
+		return &ValidationResult{
+			Valid:        true,
+			DurationMs:   time.Since(startTime).Milliseconds(),
+			ParsedConfig: parsedConfig,
+		}
 	}
 
 	// Step 2: Create isolated temp directory for semantic validation

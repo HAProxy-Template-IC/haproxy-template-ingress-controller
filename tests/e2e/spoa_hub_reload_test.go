@@ -72,7 +72,7 @@ func TestSPOAHubReloadOnConfigPush(t *testing.T) {
 			})
 
 			// (1) File on haproxy pod's filesystem reflects the snippet.
-			fileCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+			fileCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			if err := testutil.WaitForCondition(fileCtx, testutil.DefaultWaitConfig(), func(c context.Context) (bool, error) {
 				content, err := readFileFromHAProxyPod(c, haproxyPod, "/etc/haproxy/general/spoa-hub-config.toml")
@@ -85,7 +85,7 @@ func TestSPOAHubReloadOnConfigPush(t *testing.T) {
 			}
 
 			// (2) Hub container logs a successful reload after the push.
-			logCtx, cancel2 := context.WithTimeout(ctx, 60*time.Second)
+			logCtx, cancel2 := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel2()
 			if err := testutil.WaitForCondition(logCtx, testutil.DefaultWaitConfig(), func(c context.Context) (bool, error) {
 				logs, err := readSPOAHubLogs(c, haproxyPod)

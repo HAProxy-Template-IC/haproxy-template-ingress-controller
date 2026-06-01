@@ -2,7 +2,7 @@
 
 Entry point to the reconciliation pipeline. Two components:
 
-- **`Reconciler`** — leading-edge-triggered with a refractory period on watched-resource / HTTP-resource changes, immediate on whole-index events. Publishes `ReconciliationTriggeredEvent`.
+- **`Reconciler`** — fires immediately on every watched-resource / HTTP-resource change and on whole-index events. No reconciler-level debounce. Publishes `ReconciliationTriggeredEvent`.
 - **`Coordinator`** — leader-only adapter that consumes `ReconciliationTriggeredEvent` and drives the synchronous render/validate pipeline via a `PipelineExecutor`.
 
 ## Reconciler
@@ -10,18 +10,12 @@ Entry point to the reconciliation pipeline. Two components:
 ```go
 import (
     "context"
-    "time"
 
     "gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 )
 
-// Nil config → default refractory period from types.DefaultDebounceInterval (5s)
-r := reconciler.New(bus, logger, nil)
-
-// Or override:
-r = reconciler.New(bus, logger, &reconciler.Config{
-    DebounceInterval: 2 * time.Second,
-})
+// No configuration — the reconciler fires immediately on every event.
+r := reconciler.New(bus, logger)
 
 go r.Start(ctx)
 ```
@@ -30,15 +24,15 @@ go r.Start(ctx)
 
 | Incoming event | Behaviour |
 |----------------|-----------|
-| `ResourceIndexUpdatedEvent` (real change) | Leading-edge: fire immediately if no recent reconciliation, otherwise batch into the next one |
+| `ResourceIndexUpdatedEvent` (real change) | Immediate — fire a reconciliation now |
 | `ResourceIndexUpdatedEvent` (initial sync) | Ignored — the initial bulk load is covered by `IndexSynchronizedEvent` |
-| `HTTPResourceUpdatedEvent` | Same leading-edge rule |
+| `HTTPResourceUpdatedEvent` | Immediate |
 | `IndexSynchronizedEvent` | Immediate — first reconciliation always runs with a complete store |
 | `HTTPResourceAcceptedEvent` | Immediate — content is only promoted from pending to accepted after validation |
-| `DriftPreventionTriggeredEvent` | Immediate — periodic redeploy path, no debounce |
+| `DriftPreventionTriggeredEvent` | Immediate — periodic redeploy path |
 | `BecameLeaderEvent` | Immediate — bootstraps the new leader's pipeline so the (leader-only) renderer produces fresh `TemplateRenderedEvent` instead of relying on a stale replay |
 
-The refractory-period design is deliberately different from classic trailing-edge debouncing: the *first* change in a quiet period fires with 0ms delay (so single ingress flips react fast), and only further changes arriving within the refractory window are batched. This removes the multi-second latency that a trailing-edge debouncer introduces during rolling deployments where many `ResourceIndexUpdatedEvent`s arrive in sequence. 5s default is shared with `pkg/k8s/types.DefaultDebounceInterval`.
+The Reconciler adds zero latency: every event it handles fires a reconciliation immediately. Coalescing of rapid changes is the per-watcher debounce window's job (default 2s, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers use `debounceInterval: "0"` so pod-IP rotations react instantly during rolling restarts). Reload throttling is the deployer's `minDeploymentInterval` (bypassed by the runtime-eligible fast path). This split keeps single ingress flips and rolling-restart endpoint rotations both fast without a reconciler-level refractory.
 
 The initial-sync filter exists because `ResourceIndexUpdatedEvent` fires for every object as stores hydrate. Early reconciliations there would run against an incomplete store, so `IndexSynchronizedEvent` (which fires once every watcher finishes its initial list) is the correct first-reconciliation trigger.
 
@@ -69,7 +63,7 @@ The pipeline is called directly, not through another event hop. That's deliberat
 - [`pkg/controller/renderer`](../renderer/) / [`validator`](../validator/) — pure stages composed into the pipeline
 - [`pkg/controller/deployer`](../deployer/) — downstream consumer of `TemplateRenderedEvent` + `ValidationCompletedEvent`
 - [`pkg/controller/deployer`](../deployer/) — the `DriftPreventionMonitor` here is the actual `DriftPreventionTriggeredEvent` source (see `drift_monitor.go`); `pkg/controller/timers` is just a `SafeTimer` wrapper, not an event publisher
-- `pkg/controller/reconciler/CLAUDE.md` — developer context (leading-edge triggering design, leadership-transition patterns)
+- `pkg/controller/reconciler/CLAUDE.md` — developer context (immediate-triggering design, leadership-transition patterns)
 
 ## License
 

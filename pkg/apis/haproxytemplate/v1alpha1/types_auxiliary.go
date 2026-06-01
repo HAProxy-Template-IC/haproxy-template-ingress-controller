@@ -88,6 +88,8 @@ type HAProxyMapFileStatus struct {
 	// Pods are automatically added when the map file is applied and removed when
 	// the pod terminates.
 	// +optional
+	// +listType=map
+	// +listMapKey=podName
 	DeployedToPods []PodDeploymentStatus `json:"deployedToPods,omitempty"`
 
 	// ObservedGeneration reflects the generation of the spec that was most recently processed.
@@ -187,6 +189,8 @@ type HAProxyGeneralFileStatus struct {
 	// Pods are automatically added when the file is applied and removed when
 	// the pod terminates.
 	// +optional
+	// +listType=map
+	// +listMapKey=podName
 	DeployedToPods []PodDeploymentStatus `json:"deployedToPods,omitempty"`
 
 	// ObservedGeneration reflects the generation of the spec that was most recently processed.
@@ -289,6 +293,8 @@ type HAProxyCRTListFileStatus struct {
 	// Pods are automatically added when the crt-list file is applied and removed when
 	// the pod terminates.
 	// +optional
+	// +listType=map
+	// +listMapKey=podName
 	DeployedToPods []PodDeploymentStatus `json:"deployedToPods,omitempty"`
 
 	// ObservedGeneration reflects the generation of the spec that was most recently processed.

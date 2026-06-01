@@ -16,7 +16,6 @@ package deployer
 
 import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 )
 
 // handleDeploymentCancelRequest cancels an in-progress deployment if the correlation ID matches.
@@ -72,33 +71,4 @@ func (c *Component) cancelActiveDeployment(reason string) {
 		<-c.deploymentDone
 		c.cancelMu.Lock()
 	}
-}
-
-// isNoOpDeployment returns true if this deployment made no meaningful changes
-// that warrant publishing a ConfigAppliedToPodEvent.
-//
-// We skip event publishing when ALL of the following are true:
-//   - No operations were performed (TotalOperations=0)
-//   - No HAProxy reload was triggered.
-//
-// This applies to both drift checks and regular reconciliation-triggered deployments.
-// If HAProxy state is unchanged (no operations, no reload), there's no need to
-// update RuntimeConfig status, regardless of what triggered the deployment.
-func (c *Component) isNoOpDeployment(syncResult *dataplane.SyncResult) bool {
-	if syncResult == nil {
-		return true
-	}
-
-	// Always publish if operations were performed
-	if syncResult.Details.TotalOperations > 0 {
-		return false
-	}
-
-	// Always publish if reload was triggered
-	if syncResult.ReloadTriggered {
-		return false
-	}
-
-	// No meaningful changes - safe to skip
-	return true
 }

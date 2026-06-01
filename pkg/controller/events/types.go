@@ -101,6 +101,7 @@ const (
 	EventTypeDeploymentCompleted      = "deployment.completed"
 	EventTypeDeploymentSkipped        = "deployment.skipped"
 	EventTypeDeploymentCancelRequest  = "deployment.cancel.request"
+	EventTypeRuntimeFastPathResult    = "runtime.fastpath.result"
 	EventTypeDriftPreventionTriggered = "drift.prevention.triggered"
 
 	// HAProxy pod event types.
@@ -109,8 +110,9 @@ const (
 	EventTypeHAProxyPodRejected    = "haproxy.pod.rejected"
 
 	// Config publishing event types.
-	EventTypeConfigPublished    = "config.published"
-	EventTypeConfigAppliedToPod = "config.applied.to.pod"
+	EventTypeConfigPublished              = "config.published"
+	EventTypeConfigAppliedToPod           = "config.applied.to.pod"
+	EventTypeDeployedConfigPublishRequest = "config.deployed.publish.request"
 
 	// Credentials event types.
 	EventTypeSecretResourceChanged = "secret.resource.changed"

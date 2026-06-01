@@ -35,6 +35,22 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
+          # K8s contract: a backend Pod is Ready only when its
+          # listener actually answers — not the instant the
+          # container process starts. Without this probe kubelet
+          # marks the container Running (= Ready, since no other
+          # probe is configured), EndpointSlice flips while Node
+          # is still loading modules and hasn't called listen()
+          # yet, and any consumer routes to a pod whose kernel
+          # RSTs incoming SYNs. Closing this race is what
+          # readiness probes exist for; every fixture serving
+          # real traffic in the e2e suite needs one.
+          readinessProbe:
+            httpGet: {path: /, port: 80}
+            periodSeconds: 1
+            successThreshold: 1
+            failureThreshold: 1
+            timeoutSeconds: 1
 ---
 apiVersion: v1
 kind: Service

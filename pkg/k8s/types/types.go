@@ -18,17 +18,40 @@ import (
 
 // Default values for watcher configuration.
 const (
-	// DefaultDebounceInterval is the default minimum time between callback invocations.
-	// This value is shared across all components that use debouncing.
+	// DefaultDebounceInterval is the default leading-edge debounce window for
+	// resource-watch callbacks. The first change in a quiet period fires the
+	// callback immediately; any further change inside the window is coalesced
+	// (the watcher fires once when the window closes if anything was
+	// suppressed).
 	//
-	// 1s is the leading-edge refractory window: the first change in a quiet
-	// period fires immediately, then any further change inside the window is
-	// suppressed. With 1s the chart reacts well inside Gateway API
-	// conformance polling cadences (the suite uses 30s timeouts but polls
-	// at sub-second intervals after spec changes) without flooding —
-	// kube-apiserver watch coalescing and the chart's per-render dedup
-	// keep the actual render rate proportional to real spec churn.
-	DefaultDebounceInterval = 1 * time.Second
+	// 2s is deliberately lenient: it governs operator-initiated, structural
+	// kinds (Ingress, Gateway, HTTPRoute, Service spec edits) where a couple of
+	// seconds of coalescing is fine and reduces render/reload churn. The
+	// zero-downtime-critical kinds opt out — EndpointSlice watchers set
+	// `debounceInterval: "0"` (DebounceImmediate) so a pod-IP rotation reaches
+	// the deployer's runtime-eligible fast path with no debounce delay. There
+	// is intentionally NO reconciler-level refractory on top of this: the
+	// reconciler fires immediately, and reload throttling lives solely in the
+	// deployer (minDeploymentInterval), which the runtime-eligible fast path
+	// bypasses. Override via `debounceInterval` on a watched-resource entry to
+	// tune batching for a specific kind.
+	DefaultDebounceInterval = 2 * time.Second
+
+	// DebounceImmediate is the sentinel WatcherConfig.DebounceInterval value
+	// for "no debounce — fire the callback on every change event." It exists
+	// because zero already means "unset, apply DefaultDebounceInterval" on
+	// every WatcherConfig caller (SetDefaults swaps 0 → default), so a third
+	// state was needed to express the operator-facing
+	// `debounceInterval: "0"` semantic on the CRD without breaking the
+	// existing zero-is-unset convention for direct Go callers. Picked as -1
+	// because time.Duration is an int64 and negative values have no other
+	// meaning in the debouncer state machine.
+	//
+	// Resource-agnostic: the watcher consults this sentinel; it never
+	// learns which Kubernetes Kind it's watching. The chart and the
+	// operator decide which watched resources opt into immediate firing
+	// (per-resource `debounceInterval: "0"` on the CRD).
+	DebounceImmediate time.Duration = -1
 )
 
 const (
@@ -280,7 +303,7 @@ type WatcherConfig struct {
 	// Rapid resource changes within this interval are batched into a single callback
 	// with aggregated statistics.
 	//
-	// Default: DefaultDebounceInterval (1s) — applied in WatcherConfig.SetDefaults
+	// Default: DefaultDebounceInterval (100ms) — applied in WatcherConfig.SetDefaults
 	// when DebounceInterval is zero. With leading-edge triggering, the first
 	// change in a quiet period fires immediately; only subsequent changes
 	// within the window are batched. Override only when a specific resource
@@ -330,6 +353,15 @@ func (c *WatcherConfig) SetDefaults() {
 	}
 	if c.DebounceInterval == 0 {
 		c.DebounceInterval = DefaultDebounceInterval
+	}
+	// Negative durations are the DebounceImmediate sentinel (or any other
+	// negative, which we treat as equivalent). Normalise to 0 here so the
+	// Debouncer sees a single representation of "fire immediately on every
+	// event" and its existing leading-edge code handles it without a
+	// separate branch (timeSinceLastFire >= 0 always holds, the
+	// time.AfterFunc path is never taken).
+	if c.DebounceInterval < 0 {
+		c.DebounceInterval = 0
 	}
 	if c.Context == nil {
 		c.Context = context.Background()

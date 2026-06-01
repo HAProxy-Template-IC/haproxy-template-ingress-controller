@@ -625,7 +625,7 @@ dump_debug_info() {
     echo ""
 
     echo "=== Controller Logs ==="
-    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=controller" --all-containers --prefix --tail=100 2>/dev/null || true
+    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=controller" --all-containers --prefix --tail=50000 2>/dev/null || true
     echo ""
 
     # --all-containers + --prefix so dataplane and spoa-hub stdout are visible
@@ -634,12 +634,15 @@ dump_debug_info() {
     # --previous gets stdout from the last terminated instance of crashlooping
     # containers (the current instance might still be starting / not have
     # written anything yet when the smoke test gives up).
+    # --tail=50000: dataplane at log_level=trace can emit hundreds of lines
+    # per second under load; small tails clip the failure window out of the
+    # artifact entirely (see tests/e2e/cleanup.go for the same reasoning).
     echo "=== HAProxy Pod Logs (current) ==="
-    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --tail=200 2>/dev/null || true
+    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --tail=50000 2>/dev/null || true
     echo ""
 
     echo "=== HAProxy Pod Logs (previous, for crashlooping containers) ==="
-    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --previous --tail=200 2>/dev/null || true
+    kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/component=loadbalancer" --all-containers --prefix --previous --tail=50000 2>/dev/null || true
     echo ""
 
     echo "=== Certificates ==="

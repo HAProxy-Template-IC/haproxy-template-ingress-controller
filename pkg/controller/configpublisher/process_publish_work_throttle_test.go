@@ -9,6 +9,8 @@
 package configpublisher
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,4 +175,58 @@ func TestProcessPublishWork_BuffersWhenWithinRefractoryAndDiscardsOldPending(t *
 			"of the old one would orphan the buffered publish: when the throttle "+
 			"timer fires, flushPendingPublish would have no rendered output to "+
 			"publish, silently dropping the update")
+}
+
+// TestProcessPublishWork_NoDeadlockWithLostLeadership is a concurrency
+// regression test for the mu/pendingMu lock ordering. processPublishWork's
+// supersede path discards a cached config (which takes mu) and
+// handleLostLeadership takes mu then pendingMu; an earlier revision nested
+// pendingMu->mu inside processPublishWork, inverting that order — a latent
+// AB-BA deadlock that neither -race (data races only) nor go vet nor Go's
+// all-goroutines-blocked deadlock detector can catch. Running both paths
+// concurrently under a watchdog hangs pre-fix and completes post-fix.
+func TestProcessPublishWork_NoDeadlockWithLostLeadership(t *testing.T) {
+	c := throttleComponent(time.Hour, true) // gate closed → buffering+supersede branch
+
+	mkWork := func(id string) *publishWorkItem {
+		// Seed a cache entry so the supersede path actually calls discardCachedConfig.
+		c.mu.Lock()
+		c.renderedConfigs[id] = &renderedConfigEntry{config: "cfg", contentChecksum: id}
+		c.mu.Unlock()
+		return &publishWorkItem{
+			correlationID:  id,
+			templateConfig: &v1alpha1.HAProxyTemplateConfig{},
+			entry:          &renderedConfigEntry{config: "cfg", contentChecksum: id},
+		}
+	}
+
+	const iters = 2000
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				c.processPublishWork(mkWork(fmt.Sprintf("c-%d", i)))
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				c.handleLostLeadership(nil)
+			}
+		}()
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+		// Completed without deadlock — the two mutexes are never nested in
+		// conflicting orders.
+	case <-time.After(15 * time.Second):
+		t.Fatal("deadlock: processPublishWork and handleLostLeadership did not " +
+			"complete — mu/pendingMu AB-BA lock inversion")
+	}
 }

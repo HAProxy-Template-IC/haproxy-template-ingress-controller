@@ -140,7 +140,7 @@ func waitForHaproxyIngressWafMap(ctx context.Context, t *testing.T, entries []st
 	t.Helper()
 	pod := firstHAProxyPodName(ctx, t)
 	const path = "/etc/haproxy/maps/haproxy-ingress-waf.map"
-	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := testutil.WaitForCondition(waitCtx, testutil.DefaultWaitConfig(), func(c context.Context) (bool, error) {
 		content, err := readFileFromHAProxyPod(c, pod, path)

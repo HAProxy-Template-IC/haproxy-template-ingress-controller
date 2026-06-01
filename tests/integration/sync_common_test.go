@@ -44,14 +44,6 @@ type syncTestCase struct {
 	// false = expects status 200 without reload
 	expectedReload bool
 
-	// Fallback to raw push expectation
-	// expectedFallbackToRaw indicates whether the sync is expected to fall back to raw config push.
-	// Fallback typically occurs when fine-grained sync encounters transactional conflicts
-	// in the HAProxy Dataplane API (e.g., 409 conflicts when creating certain resources).
-	// true = expects fallback to raw push (operation tracking may be less granular)
-	// false = expects fine-grained sync to succeed without fallback
-	expectedFallbackToRaw bool
-
 	// Auxiliary files for INITIAL configuration
 	// These files are uploaded before pushing the initial config to ensure it validates
 	// Map: HAProxy file path → testdata file to load
@@ -220,10 +212,9 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	}
 
 	// Step 2: Push initial configuration using Sync API
-	// We use Sync instead of PushRawConfiguration because:
-	// - PushRawConfiguration uses skip_version=true which keeps version at 1
-	// - When version=1, Sync uses SyncModeRawInitial (raw push) and increments version
-	// - This ensures the actual test sync sees version > 1 and uses fine-grained sync
+	// Use Sync so the version increments after the initial push — keeps
+	// PushRawConfiguration's idempotency semantics out of the test's
+	// version-resolution path.
 	initialConfigContent := LoadTestConfig(t, tc.initialConfigFile)
 	initialResult, err := dpClient.Sync(ctx, initialConfigContent, nil, nil)
 	require.NoError(t, err, "pushing initial config should succeed")
@@ -269,21 +260,18 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	}
 
 	// Step 3: Assert operation counts from sync result
-	// Skip operation checks when fallback to raw push is expected, as operations aren't tracked during raw push
-	if !tc.expectedFallbackToRaw {
-		assert.Equal(t, tc.expectedCreates, result.Details.Creates, "create count mismatch")
-		assert.Equal(t, tc.expectedUpdates, result.Details.Updates, "update count mismatch")
-		assert.Equal(t, tc.expectedDeletes, result.Details.Deletes, "delete count mismatch")
+	assert.Equal(t, tc.expectedCreates, result.Details.Creates, "create count mismatch")
+	assert.Equal(t, tc.expectedUpdates, result.Details.Updates, "update count mismatch")
+	assert.Equal(t, tc.expectedDeletes, result.Details.Deletes, "delete count mismatch")
 
-		// Step 4: Validate operations by their descriptions
-		if tc.expectedOperations != nil && len(tc.expectedOperations) > 0 {
-			actualOps := make([]string, len(result.AppliedOperations))
-			for i, op := range result.AppliedOperations {
-				actualOps[i] = op.Description
-			}
-			assert.ElementsMatch(t, tc.expectedOperations, actualOps,
-				"operation descriptions mismatch")
+	// Step 4: Validate operations by their descriptions
+	if len(tc.expectedOperations) > 0 {
+		actualOps := make([]string, len(result.AppliedOperations))
+		for i, op := range result.AppliedOperations {
+			actualOps[i] = op.Description
 		}
+		assert.ElementsMatch(t, tc.expectedOperations, actualOps,
+			"operation descriptions mismatch")
 	}
 
 	// Step 5: Validate reload expectations
@@ -295,16 +283,6 @@ func runSyncTest(t *testing.T, tc syncTestCase) {
 	} else {
 		assert.False(t, result.ReloadTriggered, "expected no reload")
 		assert.Empty(t, result.ReloadID, "expected no reload ID")
-	}
-
-	// Step 5.5: Validate fallback to raw push expectation
-	// Note: expectedFallbackToRaw specifically tests for fallback behavior (SyncModeRawFallback),
-	// not intentional raw push modes (SyncModeRawInitial for version=1, SyncModeRawThreshold).
-	if tc.expectedFallbackToRaw {
-		assert.Equal(t, dataplane.SyncModeRawFallback, result.SyncMode, "expected fallback to raw config push")
-		t.Logf("⚠️  Fallback to raw config push occurred (expected)")
-	} else {
-		assert.NotEqual(t, dataplane.SyncModeRawFallback, result.SyncMode, "expected no fallback to raw push")
 	}
 
 	// Step 6: Parse desired config for idempotency verification

@@ -265,7 +265,7 @@ func TestParseVersionParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			major, minor, err := parseVersionParts(tt.input)
+			major, minor, _, err := parseVersionParts(tt.input)
 
 			if tt.expectError {
 				require.Error(t, err)

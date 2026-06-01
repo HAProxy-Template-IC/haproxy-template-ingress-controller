@@ -1,0 +1,422 @@
+// Copyright 2025 Philipp Hossner
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//go:build e2e
+
+package e2e
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/e2e-framework/klient"
+	"sigs.k8s.io/e2e-framework/pkg/envconf"
+	"sigs.k8s.io/e2e-framework/pkg/features"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+)
+
+// TestIngressRollingRestartZeroDowntime is the regression test for the
+// single-replica rolling-restart 503 pattern.
+//
+// What it exercises end-to-end:
+//   - Deploy a 1-replica echo-server (the typical "small backend" shape
+//     that exposed the bug in production).
+//   - Create an Ingress pointing at it; wait for the chart to render a
+//     working backend.
+//   - Start a continuous prober that hits the Ingress at ~5 req/s.
+//   - Issue a rolling restart (kubectl rollout restart equivalent — a
+//     patch to spec.template.metadata.annotations.kubectl.kubernetes.io/
+//     restartedAt with the current timestamp, which kubectl uses too).
+//   - Wait for the deployment to settle (new pod Ready, old pod gone).
+//   - Wait an extra grace window for any trailing in-flight responses to
+//     finish racing.
+//   - Stop the prober and assert ZERO non-2xx/3xx responses.
+//
+// The bug this guards against:
+//   - charts/haptic/libraries/base.yaml builds the HAProxy backend by
+//     iterating slice.Endpoints[].Addresses with no conditions check.
+//     During a rolling restart the EndpointSlice for the Service
+//     transiently contains the new pod with conditions.ready=false (its
+//     container hasn't started listening yet) and the old pod with
+//     conditions.terminating=true (kubelet has sent SIGTERM and most
+//     apps drop new connections immediately on SIGTERM). The template
+//     happily includes both, so HAProxy dispatches requests to a not-
+//     yet-listening container OR a torn-down container and returns
+//     503 SC--.
+//   - The fix is a two-line conditions filter in base.yaml; this test
+//     is the empirical proof it works against the live chart + a real
+//     kubelet rolling-restart timeline.
+//
+// Why one replica and not two:
+//   - With ≥2 replicas K8s's RollingUpdate strategy (maxSurge=25%,
+//     maxUnavailable=25%) keeps at least one healthy pod in the slice
+//     at all times, so HAProxy's roundrobin masks the bug behind a 50/50
+//     coin flip. One replica forces the transition window to be exactly
+//     the time it takes new-pod-Ready ↔ old-pod-Terminating to overlap
+//     — the worst case, and the one operators actually report.
+//
+// This test runs in parallel like every other e2e test. There is no such
+// thing as a "reload-sensitive test" — HAPTIC must route correctly through
+// HAProxy reload churn, which sibling tests creating / deleting Ingresses
+// reliably produce. If this assertion fails because of reload-induced
+// drops, that's a real chart/controller bug to investigate, not a reason
+// to serialize the test.
+func TestIngressRollingRestartZeroDowntime(t *testing.T) {
+	t.Parallel()
+
+	const host = "ingress-rolling-restart.localdev.me"
+	// Captured by both closures below; assigned in Setup, read in Assess.
+	// e2e-framework runs Setup→Assess sequentially within one t.Run, so
+	// the write/read order is safe even under the outer t.Parallel().
+	var (
+		namespace      string
+		deploymentName string
+	)
+
+	feature := features.New("Ingress: rolling restart of single-replica backend is zero-downtime").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatalf("new client: %v", err)
+			}
+			namespace = NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, namespace)
+			backend := NewEchoServerBackend(ctx, t, client, namespace)
+			deploymentName = backend.Service
+
+			NewIngress(ctx, t, client, namespace, IngressSpec{
+				Name:           "echo",
+				Host:           host,
+				BackendService: backend.Service,
+				BackendPort:    backend.Port,
+			})
+
+			// Baseline: confirm the Ingress + backend are wired before
+			// we start poking the deployment. ExpectOK polls until the
+			// chart's render+deploy cycle catches up — if this times
+			// out the test fails here with a clear "Ingress never
+			// became reachable" signal rather than mid-restart noise.
+			httpclient.New(t).GET(host, "/").ExpectOK(t)
+			// Wait for HAPTIC's reconcile to propagate to EVERY HAProxy
+			// pod, not just one. ExpectOK above only proves "at least
+			// one HAProxy pod can serve this Ingress" — NodePort round-
+			// robins across the chart's HAProxy replicas, so a probe
+			// hitting a pod whose config push hasn't landed yet gets
+			// 503 SC--. CI parallel-test contention exposed this: e2e
+			// [3.1] of pipeline 2560383500 had a 503 fire ~1.4s after
+			// Ingress create but BEFORE the rolling restart began.
+			// Initial provisioning latency isn't what this test pins;
+			// reaction-time on endpoint changes is. Wait here for the
+			// initial setup to be fully propagated; the timer below
+			// then exercises only what we actually care about.
+			waitForControllerDeployed(ctx, t, client, namespace)
+			// Start continuous tailers — HAProxy access logs, backend
+			// pod stdout, EPS watch, events watch, kubelet log. They
+			// run for the whole test and write to
+			// debug-logs/<test>/continuous/. The point-in-time snapshot
+			// fires AFTER a failure is observed and is too late to
+			// capture the moment-of-failure HAProxy/backend state; the
+			// continuous tailers fill that gap. Starts here (post-
+			// initial-propagation) so the streams contain only the
+			// rolling-restart-phase activity, not initial setup noise.
+			newContinuousTailer(t, namespace)
+			return ctx
+		}).
+		Assess("zero non-2xx/3xx responses during and after rollout restart",
+			func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+				client, err := cfg.NewClient()
+				if err != nil {
+					t.Fatalf("new client: %v", err)
+				}
+
+				proberCtx, stopProber := context.WithCancel(ctx)
+				var probeWG sync.WaitGroup
+				snapshotter := newProberSnapshotter(t, namespace)
+				results := &probeRecorder{snapshotter: snapshotter}
+
+				probeWG.Add(1)
+				go func() {
+					defer probeWG.Done()
+					runProbeLoop(proberCtx, t, host, results)
+				}()
+
+				// Brief warm-up so the asserter has baseline samples
+				// to compare against the restart-window samples.
+				time.Sleep(2 * time.Second)
+				baselineCount := results.count()
+
+				if err := triggerRollingRestart(ctx, client, namespace, deploymentName); err != nil {
+					stopProber()
+					probeWG.Wait()
+					t.Fatalf("trigger rollout restart: %v", err)
+				}
+
+				if err := waitForDeploymentRolloutComplete(ctx, client, namespace, deploymentName, 90*time.Second); err != nil {
+					stopProber()
+					probeWG.Wait()
+					t.Fatalf("rollout did not complete cleanly: %v", err)
+				}
+
+				// Trailing grace window: the kubelet may keep the old
+				// pod's EndpointSlice entry briefly past Ready=true on
+				// the new one, and HAProxy reload latency can stretch
+				// into this window. The bug fires here in the buggy
+				// build; the fix should keep this window clean too.
+				time.Sleep(5 * time.Second)
+				stopProber()
+				probeWG.Wait()
+
+				assertProbeRunClean(t, results, baselineCount)
+				return ctx
+			}).
+		Feature()
+
+	testEnv.Test(t, feature)
+}
+
+// probeRecorder accumulates probe outcomes with enough detail for the
+// failure message to point at the exact request that 503'd. Concurrent
+// from the prober goroutine; total + failures use atomic counters so
+// the assertion side can read a consistent snapshot without holding the
+// mutex.
+type probeRecorder struct {
+	mu          sync.Mutex
+	failures    []probeFailure
+	total       atomic.Int64
+	snapshotter *proberSnapshotter
+}
+
+type probeFailure struct {
+	ts     time.Time
+	status int
+	dur    time.Duration
+	err    error
+}
+
+func (r *probeRecorder) recordSuccess() { r.total.Add(1) }
+
+func (r *probeRecorder) recordFailure(f probeFailure) {
+	r.mu.Lock()
+	r.failures = append(r.failures, f)
+	r.total.Add(1)
+	snap := r.snapshotter
+	r.mu.Unlock()
+	// Capture HAProxy + controller state immediately. Synchronous —
+	// blocks the next probe interval by ~5–10 s while kubectl exec
+	// fans out to both HAProxy pods + dumps EPS/logs. That's
+	// intentional: by the time the prober's next 200 ms tick fires,
+	// reload churn from sibling parallel tests will have moved
+	// HAProxy's runtime state on, and the data we need to root-cause
+	// THIS failure is already stale. We deliberately trade probe
+	// cadence for evidence quality.
+	if snap != nil {
+		snap.snapshot(f)
+	}
+}
+
+func (r *probeRecorder) count() int64 { return r.total.Load() }
+
+func (r *probeRecorder) snapshotFailures() []probeFailure {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]probeFailure, len(r.failures))
+	copy(out, r.failures)
+	return out
+}
+
+// runProbeLoop fires HTTP GETs at the host every ~200 ms until ctx is
+// done. Successful responses (2xx, 3xx) increment the success counter;
+// anything else (including connection errors with no status at all) is
+// recorded as a failure with full detail.
+//
+// 200 ms is a sweet spot: dense enough to hit the ~3 s
+// "connect-failed-and-retry" windows that produced the 503s in
+// production (~15 probes per window — easy to see), sparse enough that
+// the test doesn't hammer the kind NodePort gratuitously.
+func runProbeLoop(ctx context.Context, t *testing.T, host string, rec *probeRecorder) {
+	t.Helper()
+	hc := httpclient.New(t)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		start := time.Now()
+		// Per-probe budget so a hung connect doesn't stretch the
+		// iteration past the next tick.
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		resp, err := hc.GET(host, "/").Do(reqCtx)
+		cancel()
+		dur := time.Since(start)
+
+		if err != nil {
+			// Cleanup-race guard: when stopProber() runs, reqCtx
+			// inherits the canceled parent and the request fails
+			// instantly with context.Canceled. That's shutdown
+			// bookkeeping, not a real probe failure — skip it.
+			if ctx.Err() != nil {
+				return
+			}
+			rec.recordFailure(probeFailure{ts: start, status: 0, dur: dur, err: err})
+			continue
+		}
+		if resp.Status >= 200 && resp.Status < 400 {
+			rec.recordSuccess()
+			continue
+		}
+		rec.recordFailure(probeFailure{ts: start, status: resp.Status, dur: dur})
+	}
+}
+
+// triggerRollingRestart issues the exact patch `kubectl rollout
+// restart deployment/<name>` issues — adding (or refreshing) the
+// kubectl.kubernetes.io/restartedAt annotation on the pod template.
+// The kubelet treats any change to pod template as "spin up a new
+// ReplicaSet" so this triggers the same EndpointSlice transitions the
+// production restart did.
+func triggerRollingRestart(ctx context.Context, client klient.Client, namespace, deploymentName string) error {
+	dep := &appsv1.Deployment{}
+	if err := client.Resources(namespace).Get(ctx, deploymentName, namespace, dep); err != nil {
+		return fmt.Errorf("get deployment %s/%s: %w", namespace, deploymentName, err)
+	}
+
+	if dep.Spec.Template.Annotations == nil {
+		dep.Spec.Template.Annotations = map[string]string{}
+	}
+	dep.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] = time.Now().UTC().Format(time.RFC3339)
+
+	if err := client.Resources(namespace).Update(ctx, dep); err != nil {
+		return fmt.Errorf("patch deployment %s/%s with restartedAt: %w", namespace, deploymentName, err)
+	}
+	return nil
+}
+
+// waitForDeploymentRolloutComplete blocks until the Deployment's status
+// shows the new generation fully observed AND zero unavailable
+// replicas — the same condition `kubectl rollout status` waits for.
+//
+// We deliberately don't reach into ReplicaSets here. The Deployment
+// status fields are the authoritative summary, and polling the
+// Deployment alone keeps the test deterministic when the controller
+// momentarily emits a ReplicaSet status update mid-transition.
+func waitForDeploymentRolloutComplete(ctx context.Context, client klient.Client, namespace, deploymentName string, budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	tick := time.NewTicker(500 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		dep := &appsv1.Deployment{}
+		if err := client.Resources(namespace).Get(ctx, deploymentName, namespace, dep); err != nil {
+			return fmt.Errorf("get deployment %s/%s: %w", namespace, deploymentName, err)
+		}
+		desired := int32(1)
+		if dep.Spec.Replicas != nil {
+			desired = *dep.Spec.Replicas
+		}
+		if dep.Status.ObservedGeneration >= dep.Generation &&
+			dep.Status.UpdatedReplicas == desired &&
+			dep.Status.AvailableReplicas == desired &&
+			dep.Status.UnavailableReplicas == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("rollout did not complete within %s: generation=%d/observed=%d updated=%d/%d available=%d/%d unavailable=%d",
+				budget, dep.Generation, dep.Status.ObservedGeneration,
+				dep.Status.UpdatedReplicas, desired,
+				dep.Status.AvailableReplicas, desired,
+				dep.Status.UnavailableReplicas)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
+// assertProbeRunClean is the only place this test calls t.Fatalf on the
+// behavioural assertion. The output deliberately lists every failure
+// (with timestamp, status, duration, and error if any) so the regression
+// is debuggable from the test log alone — no kubectl exec required.
+func assertProbeRunClean(t *testing.T, rec *probeRecorder, baselineCount int64) {
+	t.Helper()
+	failures := rec.snapshotFailures()
+	total := rec.count()
+
+	// Liveness sanity floor: we need at least one probe attempt to
+	// have completed AFTER the baseline phase, otherwise the assert
+	// is meaningless ("zero failures out of zero requests" is true
+	// vacuously). One is enough — even a single failing probe inside
+	// the rollout window is enough to flag the bug class via the
+	// per-failure detail report below.
+	//
+	// Deliberately NOT requiring N≥20 probes total: in CI the e2e
+	// suite runs ~30 tests in parallel, each creating/deleting
+	// Ingresses, which forces the HAProxy in the chart to reload on
+	// roughly every test setup/teardown. Reloads cause curl to retry
+	// the connection (~1–3s each), which slows the probe loop by ~10×
+	// without changing the behaviour we're testing. The bug we care
+	// about is "request dispatched to a dead pod IP → 503 SC--", which
+	// the per-failure report catches regardless of probe count. The
+	// minProbes-during-rollout gate guards only against the loop
+	// being completely stuck.
+	const minProbesDuringRollout = 1
+	probesDuringRollout := total - baselineCount
+	if probesDuringRollout < minProbesDuringRollout {
+		t.Fatalf("probe loop fired only %d requests during the rollout window (baseline before restart: %d, total: %d) — the prober may have been wedged. Need ≥%d to assert anything.",
+			probesDuringRollout, baselineCount, total, minProbesDuringRollout)
+	}
+
+	if len(failures) == 0 {
+		t.Logf("clean: %d total probes (%d during rollout window after %d-probe baseline), zero non-2xx/3xx",
+			total, probesDuringRollout, baselineCount)
+		return
+	}
+
+	// Build a one-line-per-failure report so the failure mode is
+	// obvious at a glance: "all SC-- 503s clustered at +T1s and +T2s"
+	// is the production-bug signature; "intermittent errors across the
+	// whole run" is a different bug (test infra).
+	var report string
+	for _, f := range failures {
+		ts := f.ts.UTC().Format("15:04:05.000")
+		if f.err != nil {
+			report += fmt.Sprintf("  %s  err=%v  dur=%s\n", ts, f.err, f.dur)
+		} else {
+			report += fmt.Sprintf("  %s  status=%d  dur=%s\n", ts, f.status, f.dur)
+		}
+	}
+	// The failure could be many things — a regression of the conditions
+	// filter in base.yaml step 5, a slot rotation race, an HAProxy
+	// reload outage, NodePort routing churn. Don't presuppose which;
+	// just list the failures. The timestamps + statuses + durations
+	// give the operator enough to triage. The conditions-filter
+	// regression in particular shows up as 503 SC-- with a short
+	// duration (HAProxy retries hit ECONNREFUSED fast); reload-window
+	// drops show up as context-canceled with duration ~= the per-probe
+	// budget (5s).
+	t.Fatalf("rolling-restart probe found %d non-2xx/3xx responses out of %d total:\n%s",
+		len(failures), total, report)
+}

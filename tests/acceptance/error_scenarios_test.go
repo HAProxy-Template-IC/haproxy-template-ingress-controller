@@ -36,11 +36,29 @@ import (
 
 // Template strings for CRD updates
 const (
-	// InvalidSyntaxTemplate is a HAProxy config with syntax errors that will fail validation.
-	// The "invalid_directive_xyz" is not a valid HAProxy directive and will cause parse errors.
+	// InvalidSyntaxTemplate is a HAProxy config that fails validation at
+	// the SCHEMA phase. The server uses port 99999 which violates the
+	// server-port schema constraint (`must be between 1 and 65535`) —
+	// caught by client-native's generated validator before `haproxy -c`
+	// ever runs.
+	//
+	// IMPORTANT: this test asserts the leader-side reconcile pipeline
+	// rejects bad configs. With SkipSemanticValidation=true on the fast
+	// (leader) pipeline, only the syntax + schema phases catch errors
+	// in the deployment path; haproxy -c semantic violations are caught
+	// instead by the admission webhook (acceptance tests don't deploy
+	// with the chart's webhook, so they can only exercise syntax/schema).
+	//
+	// We empirically determined what the syntax+schema phase catches
+	// (see /tmp/test_validation.go-style probes): client-native's parser
+	// silently accepts MANY structural sins (`invalid_directive_xyz`,
+	// `maxconn 0`, `bind` with no value, `mode garbagemode`, even total
+	// garbage text), surfacing only semantic violations at `haproxy -c`.
+	// The generated schema validator DOES validate per-element fields:
+	// server ports, bind addresses, rule patterns. So we use a
+	// per-server constraint violation that's always caught at schema.
 	InvalidSyntaxTemplate = `global
-  maxconn 2000
-  invalid_directive_xyz  # This is not a valid HAProxy directive
+  daemon
 
 defaults
   mode http
@@ -53,7 +71,7 @@ frontend http_front
   default_backend test-backend
 
 backend test-backend
-  server test-server 127.0.0.1:8080
+  server test-server 127.0.0.1:99999
 `
 
 	// ValidTemplate is a valid HAProxy config used for restoring/recovery
@@ -213,8 +231,9 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 
 			hasExpectedError := false
 			for _, errMsg := range pipeline.Validation.Errors {
-				if strings.Contains(errMsg, "unknown keyword") ||
-					strings.Contains(errMsg, "invalid_directive_xyz") ||
+				if strings.Contains(errMsg, "port: must be between") ||
+					strings.Contains(errMsg, "99999") ||
+					strings.Contains(errMsg, "schema") ||
 					strings.Contains(errMsg, "parsing") {
 					hasExpectedError = true
 					break

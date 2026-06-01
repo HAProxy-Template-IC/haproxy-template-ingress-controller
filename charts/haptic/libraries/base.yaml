@@ -473,7 +473,7 @@ templateSnippets:
         Output:
           server SRV_1 10.0.0.1:8080 enabled  # Pod: my-pod-abc
           server SRV_2 10.0.0.2:8080 enabled  # Pod: my-pod-def
-          server SRV_3 127.0.0.1:1 disabled  # Placeholder
+          server SRV_3 192.0.2.1:1 disabled  # Placeholder
           ...
       -#}
       {% import "util-backend-servers-helpers" for BuildServerOptions %}
@@ -538,8 +538,38 @@ templateSnippets:
             // Note: If multiple ports exist but no name available,
             // we use the service port as fallback.
 
-            // Collect addresses from this slice
+            // Collect addresses from this slice. Filter on the
+            // EndpointSlice conditions so endpoints whose pods aren't
+            // actually serving don't end up in the backend:
+            //
+            //   - Ready=false: the pod is in the slice but the
+            //     container isn't listening yet (kubelet adds new
+            //     pods at PodReadyToStartContainers, well before
+            //     the readiness probe flips Ready=true). Including
+            //     it puts a dead IP in the SRV slot → HAProxy
+            //     returns 503 SC-- on dispatch until the next
+            //     reconcile catches up.
+            //
+            //   - Terminating=true: kubelet has sent SIGTERM and
+            //     most apps stop accepting new connections on
+            //     SIGTERM, well before the terminationGracePeriod
+            //     elapses. Including it lets HAProxy keep dispatching
+            //     to a draining/dead pod → 503 SC-- during the
+            //     rolling-restart drain window.
+            //
+            // Per the K8s EndpointSlice spec, a nil Conditions.Ready
+            // means "ready" (the producer didn't set it), so only
+            // skip when explicitly false. Conditions.Terminating
+            // defaults to nil/false; only skip when explicitly true.
+            // Tested by validationTests test-ingress-endpoint-conditions-filter
+            // in libraries/ingress.yaml.
             for _, ep := range slice.Endpoints {
+              if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
+                continue
+              }
+              if ep.Conditions.Terminating != nil && *ep.Conditions.Terminating {
+                continue
+              }
               for _, addr := range ep.Addresses {
                 var name = ep.TargetRef.Name
                 if name == "" { name = addr }
@@ -551,41 +581,59 @@ templateSnippets:
           }
 
           // ── 6. Build slot assignment map from current config ──────────────
-          // Maps address:port → slot number (1-based) from existing config.
-          // Enables slot preservation during rolling deployments for zero-reload updates.
+          // Servers come from currentConfig.ServerIndex[bkName] — the upstream
+          // value map `backend.Servers` is deliberately left nil by haptic's
+          // parserconfig (see pkg/dataplane/parser/parserconfig/config.go).
+          // highestUsedSlot is used by step 7's second pass to allocate new
+          // endpoints AFTER all currently-used slots — never reusing a slot
+          // freshly vacated in the same render. Required for option redispatch
+          // to have a healthy fallback under merged rolling-restart EPS events.
           var existingSlots = map[string]int{}
           var usedSlots = map[int]bool{}
+          var highestUsedSlot = 0
           var bkName = ""
           if backendName != nil {
             bkName = tostring(backendName)
           }
           if bkName != "" && !isNil(currentConfig) {
-            for _, backend := range currentConfig.Backends {
-              if backend.Name == bkName {
-                // Found the backend - extract server slot assignments
-                for serverName, server := range backend.Servers {
-                  // Extract slot number from server name (e.g., "SRV_1" → 1)
-                  if hasPrefix(serverName, "SRV_") {
-                    var slotStr = serverName[4:]
-                    var slotNum = toint(slotStr)
-                    if slotNum > 0 && slotNum <= slots {
-                      // Skip placeholders (127.0.0.1:1)
-                      if server.Address != "127.0.0.1" || (server.Port != nil && *server.Port != 1) {
-                        var key = server.Address + ":" + tostring(*server.Port)
-                        existingSlots[key] = slotNum
-                        usedSlots[slotNum] = true
+            var bkServers = currentConfig.ServerIndex[bkName]
+            if bkServers != nil {
+              for serverName, server := range bkServers {
+                // Extract slot number from server name (e.g., "SRV_1" → 1)
+                if hasPrefix(serverName, "SRV_") {
+                  var slotStr = serverName[4:]
+                  var slotNum = toint(slotStr)
+                  if slotNum > 0 && slotNum <= slots {
+                    // Skip placeholders (the unroutable sentinel on port 1) and
+                    // any server without a resolvable port — we can't form an
+                    // address:port slot key without one, and dereferencing a nil
+                    // Port would panic. Both the current sentinel (192.0.2.1) and
+                    // the legacy one (127.0.0.1) are skipped so slot preservation
+                    // is correct across a rolling chart upgrade, where the live
+                    // pod config still carries 127.0.0.1:1 placeholders until its
+                    // first post-upgrade reload.
+                    if server.Port != nil && !(*server.Port == 1 && (server.Address == "192.0.2.1" || server.Address == "127.0.0.1")) {
+                      var key = server.Address + ":" + tostring(*server.Port)
+                      existingSlots[key] = slotNum
+                      usedSlots[slotNum] = true
+                      if slotNum > highestUsedSlot {
+                        highestUsedSlot = slotNum
                       }
                     }
                   }
                 }
-                break
               }
             }
           }
 
           // ── 7. Assign endpoints to slots with preservation ────────────────
-          // First pass: assign endpoints that have existing slots
-          // Second pass: assign remaining endpoints to free slots
+          // First pass: endpoints already in the prior config keep their slot.
+          // Second pass: NEW endpoints take slots AFTER all currently-used
+          // ones (highestUsedSlot+1, wrap at slots+1 → 1). Never reuse a
+          // freshly-vacated slot — keeps the old slot as a drained
+          // placeholder so option redispatch has a healthy fallback when a
+          // rolling-restart's old-pod-terminating + new-pod-ready EPS events
+          // are merged into one render.
           var slotAssignments = map[int]map[string]any{}  // slot → endpoint
           var unassignedEndpoints = []any{}
 
@@ -600,25 +648,59 @@ templateSnippets:
             }
           }
 
-          // Second pass: assign unassigned endpoints to free slots
-          var nextFreeSlot = 1
+          // Second pass: allocate AFTER highestUsedSlot (wrap when needed).
+          var nextFreeSlot = highestUsedSlot + 1
+          if nextFreeSlot > slots {
+            nextFreeSlot = 1
+          }
           for _, ep := range unassignedEndpoints {
-            // Find next free slot
-            for nextFreeSlot <= slots && slotAssignments[nextFreeSlot] != nil {
+            var attempts = 0
+            for slotAssignments[nextFreeSlot] != nil {
               nextFreeSlot++
+              if nextFreeSlot > slots {
+                nextFreeSlot = 1
+              }
+              attempts++
+              if attempts > slots {
+                break
+              }
             }
-            if nextFreeSlot <= slots {
+            if slotAssignments[nextFreeSlot] == nil {
               slotAssignments[nextFreeSlot] = ep.(map[string]any)
               nextFreeSlot++
+              if nextFreeSlot > slots {
+                nextFreeSlot = 1
+              }
             }
           }
         %%}
-      {#- ── 8. Generate server lines ────────────────────────────────────── -#}
+      {#- ── 8. Generate server lines ──────────────────────────────────────
+        Server addresses are CONFIG-DRIVEN across reloads. HAProxy does NOT
+        restore an IP-literal server's address from the server-state-file: the
+        state-file address is only stashed in `srv->lastaddr` and applied via
+        the `init-addr` resolution chain, which `srv_init_addr()` runs ONLY for
+        FQDN / DNS-SRV servers (`if (srv->hostname || srv->srvrq)` in
+        src/server.c). Pod servers are IP literals, so the parsed config
+        address always wins on reload — `init-addr last` + the server-state
+        machinery were a no-op for our address and have been removed. The full
+        analysis and the alternatives we rejected (DNS/server-template) are in
+        docs/adr/0011-no-haproxy-server-state-file.md. Correctness relies on the
+        deploy pipeline rendering the CURRENT endpoints into the config (the
+        single deploy-loop keeps it fresh) plus the runtime fast path for live,
+        reload-free convergence.
+
+        Placeholders use 192.0.2.1 (RFC 5737 TEST-NET-1, guaranteed unroutable),
+        NOT 127.0.0.1 — defense in depth. If anything ever produced a slot with
+        a placeholder address but an active port, 127.0.0.1:<bind-port> would
+        point back at this proxy's own `bind *:80` and loop the request through
+        the h2c loopback until `tune.http.maxhdr` trips → 400. 192.0.2.1 can
+        never reach the bind, so the worst case is a fast `timeout connect` +
+        `option redispatch` failover instead of an unbounded self-loop. -#}
       {%- for i := 1; i <= slots; i++ %}
       {%- if ep := slotAssignments[i]; ep != nil %}
       server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }}{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} enabled  # Pod: {{ ep["name"] }}
       {% else %}
-      server SRV_{{ i }} 127.0.0.1:1{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} disabled  # Placeholder
+      server SRV_{{ i }} 192.0.2.1:1{% if bkName != "" %} guid {{ make_guid("srv", bkName, "SRV_" + tostring(i)) }}{% end %} disabled  # Placeholder
       {% end %}
       {% end %}
       {% end %}
@@ -752,6 +834,24 @@ templateSnippets:
       nbthread {{ nbthread }}
       {%- end %}
 
+  global-settings-210-graceful-reload:
+    template: |
+      {#- Graceful-stop bound: cap how long an old worker keeps draining -#}
+      {#- after a reload. Without it, a worker pinned by a persistent -#}
+      {#- keep-alive connection survives every reload and accumulates as a -#}
+      {#- stale "draining" generation; a request looped through the -#}
+      {#- http-tcp -> unix-socket -> http_frontend path can then land on a -#}
+      {#- stale worker mid-reload and be corrupted (-> <BADREQ> 400). Both -#}
+      {#- the official (haproxytech/kubernetes-ingress, default 30m) and -#}
+      {#- community (haproxy-ingress, default 10m) controllers set -#}
+      {#- hard-stop-after for this. The primary churn reducer is -#}
+      {#- minDeploymentInterval (structural reloads only; the runtime fast -#}
+      {#- path stays instant and bypasses it). -#}
+      {%- var hsa = extraContext | dig("hardStopAfter") | fallback("10s") | tostring() -%}
+      {%- if hsa != "" %}
+      hard-stop-after {{ hsa }}
+      {%- end %}
+
   global-settings-250-shm-stats:
     template: |
       {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
@@ -764,6 +864,14 @@ templateSnippets:
     template: |
       default-path origin {{ pathResolver.GetBaseDir() }}
       crt-base {{ pathResolver.GetPath("", "cert") }}
+
+  # NOTE: there is deliberately no `server-state-file` / `load-server-state-from-file`.
+  # HAProxy does not restore an IP-literal server's address from the state file
+  # (it only restores port/op-state/admin and stashes the address in lastaddr,
+  # applied solely to FQDN/DNS-SRV servers), so the machinery did not preserve
+  # pod addresses across reloads and its port restoration minted a stale-slot
+  # hybrid. Removed; reloads are config-driven. See
+  # docs/adr/0011-no-haproxy-server-state-file.md.
 
   global-settings-400-ssl:
     template: |
@@ -783,6 +891,20 @@ templateSnippets:
       option dontlognull
       option log-health-checks
       option forwardfor
+      # Retry on TCP-connect failure against a DIFFERENT server in the
+      # same backend. Without this, HAProxy's default `retries 3` re-
+      # tries the same dead server three times and gives up; combined
+      # with `option redispatch`, retries land on any other healthy
+      # server in the backend — matching nginx-ingress's default
+      # `proxy-next-upstream: "error timeout"` behaviour and envoy's
+      # default retry policy. This is what closes the K8s pod-
+      # termination race window: when an old pod's IP becomes
+      # unreachable (kubelet finished cleanup, netns gone) and
+      # HAProxy hasn't yet processed the EndpointSlice update, the
+      # request retries against the new pod's SRV slot instead of
+      # hanging on the dead IP until the client times out.
+      # https://www.haproxy.com/documentation/hapee/latest/service-reliability/retries/retries/
+      option redispatch
 
   defaults-settings-200-balance:
     template: |
@@ -790,7 +912,45 @@ templateSnippets:
 
   defaults-settings-300-timeouts:
     template: |
-      timeout connect {{ extraContext | dig("timeout_connect") | fallback("5000") }}
+      # timeout connect default: 100ms (vs HAProxy's recommended 5s and
+      # the default of every other major K8s ingress controller — they
+      # all ship 5s).
+      #
+      # Why this is right for HAPTIC specifically:
+      #
+      # An ingress controller's backends are pod IPs from EndpointSlice,
+      # reached over the cluster's CNI fabric. There's no per-connection
+      # DNS, no LB-pool resolution, just a direct TCP SYN to a
+      # kube-routed IP. Same-node connects are sub-millisecond; cross-node
+      # via VXLAN overlay (flannel/calico/cilium) is typically <30ms; even
+      # AWS cross-AZ stays under ~10ms p99. 100ms is 3-100× the typical
+      # case.
+      #
+      # The pathological case 100ms targets is the one we actively want
+      # to fail fast on: a SYN to a pod IP whose pod just terminated.
+      # The chart does in-place runtime updates on rolling restart, so
+      # for the brief window between EndpointSlice update and HAPTIC's
+      # deploy landing, the SRV slot's address can point at a dying pod.
+      # HAPTIC keeps that window short by reacting to the EndpointSlice
+      # change as fast as possible: the EndpointSlice watcher runs with
+      # debounceInterval: "0" (the 2s pkg/k8s/types.DefaultDebounceInterval
+      # that the other watchers use is bypassed for endpoints), the
+      # reconciler fires immediately with no refractory window, and the
+      # deployer's runtime-eligible fast path swaps the server address
+      # without a reload. BUT — a request already dispatched into HAProxy
+      # when the EP changes is committed to that slot; fast reaction
+      # doesn't help the in-flight request, only future ones. The
+      # committed request has to wait for `timeout connect` before
+      # `option redispatch` retries against a live slot. At 5s connect
+      # timeout, the request sits 5s before being saved — well past the
+      # typical client request budget, surfacing as 504/client timeout.
+      # At 100ms, the full failover including the original connect attempt
+      # + retry completes inside ~200ms.
+      #
+      # Operators on genuinely slow networks (multi-region, satellite,
+      # constrained CPU) can override via
+      # `controller.config.extraContext.timeout_connect: "5000"`.
+      timeout connect {{ extraContext | dig("timeout_connect") | fallback("100") }}
       timeout client {{ extraContext | dig("timeout_client") | fallback("50000") }}
       timeout server {{ extraContext | dig("timeout_server") | fallback("50000") }}
       {%- var tHttpReq = extraContext | dig_string("", "timeout_http_request") -%}

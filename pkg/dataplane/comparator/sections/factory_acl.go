@@ -16,8 +16,6 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // describeACLOp wraps DescribeACL into the IndexChildCRUDWithDescriber describer shape.
@@ -29,14 +27,8 @@ func describeACLOp(parentType string) func(OperationType, *models.ACL, string, i
 
 // CRUD builders for ACLs in frontends and backends.
 var (
-	aclFrontendOps = NewIndexChildCRUDWithDescriber[*models.ACL](
-		"acl", PriorityACL, describeACLOp("frontend"),
-		executors.ACLFrontendCreate(), executors.ACLFrontendUpdate(), executors.ACLFrontendDelete(),
-	)
-	aclBackendOps = NewIndexChildCRUDWithDescriber[*models.ACL](
-		"acl", PriorityACL, describeACLOp("backend"),
-		executors.ACLBackendCreate(), executors.ACLBackendUpdate(), executors.ACLBackendDelete(),
-	)
+	aclFrontendOps = NewIndexChildCRUDWithDescriber[*models.ACL]("acl", describeACLOp("frontend"))
+	aclBackendOps  = NewIndexChildCRUDWithDescriber[*models.ACL]("acl", describeACLOp("backend"))
 )
 
 // NewACLFrontendCreate creates an operation to create an ACL in a frontend.

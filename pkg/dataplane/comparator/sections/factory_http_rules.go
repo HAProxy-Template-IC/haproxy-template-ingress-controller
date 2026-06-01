@@ -16,8 +16,6 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // httpRequestRuleIdentifier extracts the type identifier from an HTTPRequestRule model.
@@ -40,22 +38,10 @@ func httpResponseRuleIdentifier(rule *models.HTTPResponseRule) string {
 
 // CRUD builders for HTTP request and response rules.
 var (
-	httpRequestRuleFrontendOps = NewIndexChildCRUD[*models.HTTPRequestRule](
-		"http_request_rule", "HTTP request rule", "frontend", PriorityRule, httpRequestRuleIdentifier,
-		executors.HTTPRequestRuleFrontendCreate(), executors.HTTPRequestRuleFrontendUpdate(), executors.HTTPRequestRuleFrontendDelete(),
-	)
-	httpRequestRuleBackendOps = NewIndexChildCRUD[*models.HTTPRequestRule](
-		"http_request_rule", "HTTP request rule", "backend", PriorityRule, httpRequestRuleIdentifier,
-		executors.HTTPRequestRuleBackendCreate(), executors.HTTPRequestRuleBackendUpdate(), executors.HTTPRequestRuleBackendDelete(),
-	)
-	httpResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPResponseRule](
-		"http_response_rule", "HTTP response rule", "frontend", PriorityRule, httpResponseRuleIdentifier,
-		executors.HTTPResponseRuleFrontendCreate(), executors.HTTPResponseRuleFrontendUpdate(), executors.HTTPResponseRuleFrontendDelete(),
-	)
-	httpResponseRuleBackendOps = NewIndexChildCRUD[*models.HTTPResponseRule](
-		"http_response_rule", "HTTP response rule", "backend", PriorityRule, httpResponseRuleIdentifier,
-		executors.HTTPResponseRuleBackendCreate(), executors.HTTPResponseRuleBackendUpdate(), executors.HTTPResponseRuleBackendDelete(),
-	)
+	httpRequestRuleFrontendOps  = NewIndexChildCRUD[*models.HTTPRequestRule]("http_request_rule", "HTTP request rule", "frontend", httpRequestRuleIdentifier)
+	httpRequestRuleBackendOps   = NewIndexChildCRUD[*models.HTTPRequestRule]("http_request_rule", "HTTP request rule", "backend", httpRequestRuleIdentifier)
+	httpResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPResponseRule]("http_response_rule", "HTTP response rule", "frontend", httpResponseRuleIdentifier)
+	httpResponseRuleBackendOps  = NewIndexChildCRUD[*models.HTTPResponseRule]("http_response_rule", "HTTP response rule", "backend", httpResponseRuleIdentifier)
 )
 
 // NewHTTPRequestRuleFrontendCreate creates an operation to create an HTTP request rule in a frontend.

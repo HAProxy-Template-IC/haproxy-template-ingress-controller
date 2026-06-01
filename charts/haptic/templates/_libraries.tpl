@@ -31,7 +31,13 @@ Args (list): [library dict, root context]
   {{- range $testName, $testDef := $library.validationTests }}
     {{- /* Drop tests whose _helm_skip_test expression renders to "true"; keep the rest with the marker stripped. */ -}}
     {{- if not (and $testDef._helm_skip_test (eq (tpl ($testDef._helm_skip_test | toString) $context | trim) "true")) }}
-      {{- $_ := set $filteredTests $testName (omit $testDef "_helm_skip_test") }}
+      {{- /* Also strip `description`: it's documentation-only metadata the
+             testrunner echoes on failure, not part of the test logic. The
+             test name already identifies the case. Dropping it from the
+             rendered HAProxyTemplateConfig keeps the Helm release Secret
+             clear of the K8s 1 MiB limit (these descriptions sum to ~47 KB
+             across the bundled libraries). */ -}}
+      {{- $_ := set $filteredTests $testName (omit $testDef "_helm_skip_test" "description") }}
     {{- end }}
   {{- end }}
   {{- $_ := set $library "validationTests" $filteredTests }}

@@ -17,17 +17,14 @@ const (
 type SyncMode string
 
 const (
-	// SyncModeFineGrained indicates fine-grained API operations were used.
-	SyncModeFineGrained SyncMode = "fine_grained"
-	// SyncModeRawInitial indicates raw push was used for initial configuration (version=1).
-	SyncModeRawInitial SyncMode = "raw_initial"
-	// SyncModeRawThreshold indicates raw push was used because changes exceeded threshold.
-	SyncModeRawThreshold SyncMode = "raw_threshold"
-	// SyncModeRawFallback indicates raw push was used as fallback after fine-grained failure.
-	SyncModeRawFallback SyncMode = "raw_fallback"
-	// SyncModeRuntime indicates the optimized runtime path was used:
-	// single raw push with skip_reload=true + X-Runtime-Actions.
+	// SyncModeNoChanges indicates the diff was empty; no API calls were made.
+	SyncModeNoChanges SyncMode = "no_changes"
+	// SyncModeRuntime indicates the runtime path: one PushRawConfigurationSkipReload
+	// with X-Runtime-Actions, no HAProxy reload.
 	SyncModeRuntime SyncMode = "runtime"
+	// SyncModeReload indicates the reload path: optional skip_reload+actions push
+	// to seed the live worker, then force_reload.
+	SyncModeReload SyncMode = "reload"
 )
 
 // SyncResult contains detailed information about a sync operation.
@@ -61,9 +58,6 @@ type SyncResult struct {
 	// Duration of the sync operation
 	Duration time.Duration
 
-	// Retries indicates how many times operations were retried (for 409 conflicts)
-	Retries int
-
 	// Details contains detailed diff information
 	// This field is always populated regardless of SyncMode
 	Details DiffDetails
@@ -91,13 +85,6 @@ type SyncResult struct {
 	// apples — the comparator sees pod-actual vs desired, not
 	// desired vs desired.
 	PostSyncParsedConfig *parserconfig.StructuredConfig
-}
-
-// UsedRawPush returns true if raw configuration push was used instead of fine-grained sync.
-// This is a convenience helper for code that needs to know whether any form of raw push was used.
-// The runtime-optimized path (SyncModeRuntime) is not considered a raw push.
-func (r *SyncResult) UsedRawPush() bool {
-	return r.SyncMode != SyncModeFineGrained && r.SyncMode != SyncModeRuntime && r.SyncMode != ""
 }
 
 // AppliedOperation represents a single applied configuration change.
@@ -140,9 +127,6 @@ type PlannedOperation struct {
 
 	// Description is a human-readable description of what would be changed
 	Description string
-
-	// Priority indicates execution order (lower = earlier for creates, higher = earlier for deletes)
-	Priority int
 }
 
 // DiffDetails contains detailed diff information about configuration changes.
@@ -220,32 +204,23 @@ func NewDiffDetails() DiffDetails {
 func (r *SyncResult) String() string {
 	var parts []string
 
-	// Status
 	status := statusSuccess
 	if !r.Success {
 		status = "FAILED"
 	}
 	parts = append(parts,
 		fmt.Sprintf("Status: %s", status),
-		fmt.Sprintf("Duration: %s (retries: %d)", r.Duration, r.Retries))
+		fmt.Sprintf("Duration: %s", r.Duration))
 
-	// Sync mode indicator
 	switch r.SyncMode {
-	case SyncModeFineGrained:
-		parts = append(parts, "Mode: Fine-grained sync")
-	case SyncModeRawInitial:
-		parts = append(parts, "Mode: Raw config push (initial configuration)")
-	case SyncModeRawThreshold:
-		parts = append(parts, "Mode: Raw config push (threshold exceeded)")
-	case SyncModeRawFallback:
-		parts = append(parts, "Mode: Raw config push (fallback)")
+	case SyncModeNoChanges:
+		parts = append(parts, "Mode: No changes")
 	case SyncModeRuntime:
-		parts = append(parts, "Mode: Runtime-optimized (skip_reload + X-Runtime-Actions)")
-	default:
-		parts = append(parts, "Mode: Fine-grained sync")
+		parts = append(parts, "Mode: Runtime (skip_reload + X-Runtime-Actions)")
+	case SyncModeReload:
+		parts = append(parts, "Mode: Reload (force_reload raw push)")
 	}
 
-	// Reload info
 	if r.ReloadTriggered {
 		if r.ReloadID != "" {
 			if r.ReloadVerified {
@@ -259,7 +234,7 @@ func (r *SyncResult) String() string {
 			parts = append(parts, "Reload: Triggered")
 		}
 	} else {
-		parts = append(parts, "Reload: Not triggered (runtime API used)")
+		parts = append(parts, "Reload: Not triggered (runtime path)")
 	}
 
 	// Operations summary

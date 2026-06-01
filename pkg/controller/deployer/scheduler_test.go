@@ -16,6 +16,8 @@ package deployer
 
 import (
 	"context"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +29,32 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 )
+
+// initLoopChannels creates the deploy-loop coordination channels WITHOUT starting
+// the loop. Use it for tests that call handleDeploymentCompleted /
+// checkDeploymentTimeout directly: those call signalCompleted(), which would be a
+// silent no-op on a nil channel (a send case on a nil channel is never selected,
+// so it always falls through to default). Creating the channels makes the signal
+// observable and matches the production invariant that Start() created them.
+func initLoopChannels(s *DeploymentScheduler) {
+	s.pendingSignal = make(chan struct{}, 1)
+	s.completed = make(chan struct{}, 1)
+	s.loopDone = make(chan struct{})
+}
+
+// startLoopForTest wires the deploy-loop channels and starts runDeployLoop in a
+// goroutine bound to ctx (mirroring what Start() does). The caller owns ctx and
+// must cancel it (via defer cancel()) so the loop exits and doesn't leak. The
+// loop closes loopDone on exit; tests that need to join it can select on
+// s.loopDone.
+func startLoopForTest(t *testing.T, s *DeploymentScheduler, ctx context.Context) {
+	t.Helper()
+	s.ctx = ctx
+	initLoopChannels(s)
+	go s.runDeployLoop(ctx)
+}
 
 func TestNewDeploymentScheduler(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
@@ -88,8 +115,11 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
-	ctx := context.Background()
-	scheduler.ctx = ctx
+	// Run the deploy loop so scheduleOrQueue's pending → published event flows
+	// (minInterval=0 → the loop emits immediately on signal).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
 
 	t.Run("caches validated config", func(t *testing.T) {
 		// Set rendered config first
@@ -137,19 +167,8 @@ func TestDeploymentScheduler_HandleValidationCompleted(t *testing.T) {
 
 		scheduler.handleValidationCompleted(ctx, event)
 
-		// Wait for deployment scheduled event
-		timeout := time.After(500 * time.Millisecond)
-	waitLoop:
-		for {
-			select {
-			case e := <-eventChan:
-				if _, ok := e.(*events.DeploymentScheduledEvent); ok {
-					break waitLoop
-				}
-			case <-timeout:
-				t.Fatal("timeout waiting for DeploymentScheduledEvent")
-			}
-		}
+		// The loop picks up the pending deploy and publishes it.
+		testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	})
 }
 
@@ -160,8 +179,10 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
-	ctx := context.Background()
-	scheduler.ctx = ctx
+	// Run the deploy loop so the valid-config subtest's pending deploy is emitted.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
 
 	t.Run("updates endpoints", func(t *testing.T) {
 		endpoints := []dataplane.Endpoint{
@@ -214,19 +235,8 @@ func TestDeploymentScheduler_HandlePodsDiscovered(t *testing.T) {
 
 		scheduler.handlePodsDiscovered(ctx, event)
 
-		// Wait for deployment scheduled event
-		timeout := time.After(500 * time.Millisecond)
-	waitLoop:
-		for {
-			select {
-			case e := <-eventChan:
-				if _, ok := e.(*events.DeploymentScheduledEvent); ok {
-					break waitLoop
-				}
-			case <-timeout:
-				t.Fatal("timeout waiting for DeploymentScheduledEvent")
-			}
-		}
+		// The loop picks up the pending deploy and publishes it.
+		testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
 	})
 }
 
@@ -238,8 +248,10 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
-	ctx := context.Background()
-	scheduler.ctx = ctx
+	// Run the deploy loop so the fallback subtest's pending deploy is emitted.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
 
 	t.Run("deploys cached config on any validation failure", func(t *testing.T) {
 		scheduler.mu.Lock()
@@ -256,20 +268,9 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 
 		scheduler.handleValidationFailed(ctx, event)
 
-		// Wait for deployment scheduled event
-		timeout := time.After(500 * time.Millisecond)
-	waitLoop:
-		for {
-			select {
-			case e := <-eventChan:
-				if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
-					assert.Equal(t, "validation_fallback", scheduled.Reason)
-					break waitLoop
-				}
-			case <-timeout:
-				t.Fatal("timeout waiting for DeploymentScheduledEvent")
-			}
-		}
+		// The loop picks up the pending fallback deploy and publishes it.
+		scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+		assert.Equal(t, "validation_fallback", scheduled.Reason)
 	})
 
 	t.Run("skips fallback without valid config", func(t *testing.T) {
@@ -319,9 +320,12 @@ func TestDeploymentScheduler_HandleValidationFailed(t *testing.T) {
 func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	bus := testutil.NewTestBus()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	// handleDeploymentCompleted calls signalCompleted(), which is a no-op send on
+	// a nil channel unless the loop channels exist. Create them (no loop running).
+	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
 	scheduler.schedulerMutex.Unlock()
 
 	event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
@@ -335,7 +339,7 @@ func TestDeploymentScheduler_HandleDeploymentCompleted(t *testing.T) {
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
 
-	assert.Equal(t, phaseIdle, scheduler.state.phase)
+	assert.False(t, scheduler.state.deployInFlight)
 	assert.False(t, scheduler.state.lastDeploymentEndTime.IsZero())
 }
 
@@ -365,7 +369,7 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 
 	// Set up state that should be cleared
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
 	scheduler.state.pending = &scheduledDeployment{
 		config: "test",
 		reason: "test",
@@ -379,10 +383,15 @@ func TestDeploymentScheduler_HandleLostLeadership(t *testing.T) {
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
 
-	assert.Equal(t, phaseIdle, scheduler.state.phase)
+	assert.False(t, scheduler.state.deployInFlight)
 	assert.Nil(t, scheduler.state.pending)
 }
 
+// TestDeploymentScheduler_ScheduleOrQueue verifies the latest-wins pending slot.
+// No deploy loop is running here, so the pending slot stays populated for
+// inspection; deployInFlight=true also keeps it from being eligible for dispatch
+// even if a loop were running. scheduleOrQueue calls signalLoop(), which needs
+// the loop channels to exist, so create them.
 func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
@@ -390,14 +399,15 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 	ctx := context.Background()
 	scheduler.ctx = ctx
+	initLoopChannels(scheduler)
 
-	t.Run("queues when deployment in progress", func(t *testing.T) {
+	t.Run("sets pending slot", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.state.phase = phaseDeploying
+		scheduler.state.deployInFlight = true
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true)
+		scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{}, "test", "test-correlation-id", nil, true, "")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -406,14 +416,14 @@ func TestDeploymentScheduler_ScheduleOrQueue(t *testing.T) {
 		assert.Equal(t, "test", scheduler.state.pending.reason)
 	})
 
-	t.Run("latest wins when queueing", func(t *testing.T) {
+	t.Run("latest wins in pending slot", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.state.phase = phaseDeploying
+		scheduler.state.deployInFlight = true
 		scheduler.state.pending = nil
 		scheduler.schedulerMutex.Unlock()
 
-		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true)
-		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true)
+		scheduler.scheduleOrQueue(ctx, "config1", nil, nil, []dataplane.Endpoint{}, "first", "correlation-1", nil, true, "")
+		scheduler.scheduleOrQueue(ctx, "config2", nil, nil, []dataplane.Endpoint{}, "second", "correlation-2", nil, true, "")
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
@@ -430,6 +440,8 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 	ctx := context.Background()
 	scheduler.ctx = ctx
+	// DeploymentCompletedEvent routing calls signalCompleted(); give it channels.
+	initLoopChannels(scheduler)
 
 	t.Run("routes TemplateRenderedEvent", func(t *testing.T) {
 		event := events.NewTemplateRenderedEvent(
@@ -498,7 +510,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 
 	t.Run("routes LostLeadershipEvent", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.state.phase = phaseDeploying
+		scheduler.state.deployInFlight = true
 		scheduler.schedulerMutex.Unlock()
 
 		event := events.NewLostLeadershipEvent("test-pod", "test")
@@ -508,12 +520,12 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		assert.Equal(t, phaseIdle, scheduler.state.phase)
+		assert.False(t, scheduler.state.deployInFlight)
 	})
 
 	t.Run("routes DeploymentCompletedEvent", func(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
-		scheduler.state.phase = phaseDeploying
+		scheduler.state.deployInFlight = true
 		scheduler.schedulerMutex.Unlock()
 
 		event := events.NewDeploymentCompletedEvent(&events.DeploymentResult{
@@ -527,7 +539,7 @@ func TestDeploymentScheduler_HandleEvent(t *testing.T) {
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		assert.Equal(t, phaseIdle, scheduler.state.phase)
+		assert.False(t, scheduler.state.deployInFlight)
 	})
 
 	t.Run("routes DriftPreventionTriggeredEvent", func(t *testing.T) {
@@ -616,18 +628,27 @@ func TestDeploymentScheduler_HandleConfigValidated(t *testing.T) {
 	})
 }
 
-// with a pending deployment.
+// TestDeploymentScheduler_HandleDeploymentCompleted_WithPending verifies that a
+// deployment queued while one was in flight is emitted by the loop AFTER the
+// in-flight one completes. handleDeploymentCompleted no longer re-schedules
+// itself (that second scheduling path was the source of the reload storm); it
+// only clears deployInFlight and signals the loop, which then picks up pending
+// on its next cycle.
 func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	scheduler.ctx = context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
 
-	// Set up state with deployment in progress and pending
+	// Simulate a deploy already in flight with a deployment queued behind it.
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
+	scheduler.state.deploymentStartTime = time.Now()
+	scheduler.state.activeCorrelationID = "in-flight-corr"
 	scheduler.state.pending = &scheduledDeployment{
 		config:        "pending-config",
 		auxFiles:      nil,
@@ -643,25 +664,19 @@ func TestDeploymentScheduler_HandleDeploymentCompleted_WithPending(t *testing.T)
 		DurationMs: 100,
 	})
 
+	// Completing the in-flight deploy releases the loop's awaitCompletion; it
+	// then grabs the pending deployment and emits exactly one scheduled event.
 	scheduler.handleDeploymentCompleted(event)
 
-	// The pending deployment should be scheduled
-	timeout := time.After(500 * time.Millisecond)
-waitLoop:
-	for {
-		select {
-		case e := <-eventChan:
-			if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
-				assert.Equal(t, "pending-config", scheduled.Config)
-				assert.Equal(t, "pending-deployment", scheduled.Reason)
-				break waitLoop
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for DeploymentScheduledEvent")
-		}
-	}
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, "pending-config", scheduled.Config)
+	assert.Equal(t, "pending-deployment", scheduled.Reason)
 }
 
+// TestDeploymentScheduler_ScheduleWithRateLimit verifies the loop waits out
+// minDeploymentInterval (measured from the last deploy's end time) before
+// emitting the scheduled event. The old design slept inside a per-schedule
+// goroutine; the rate-limit wait now lives in the single runDeployLoop.
 func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
@@ -669,102 +684,77 @@ func TestDeploymentScheduler_ScheduleWithRateLimit(t *testing.T) {
 
 	// Use longer rate limit to test the path
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)
-	scheduler.ctx = context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Set last deployment time to recent past
+	// Set last deployment time to recent past, then start the loop: the next
+	// deploy must wait out the 50ms interval since that end time.
 	scheduler.schedulerMutex.Lock()
 	scheduler.state.lastDeploymentEndTime = time.Now()
 	scheduler.schedulerMutex.Unlock()
+	startLoopForTest(t, scheduler, ctx)
 
 	start := time.Now()
 
-	// Schedule deployment - should be rate limited
-	go scheduler.scheduleWithRateLimitUnlocked(
-		context.Background(),
-		"config",
-		nil,
-		nil,
-		[]dataplane.Endpoint{{URL: "http://localhost:5555"}},
-		"test-rate-limit",
-		"correlation-456",
-		nil,  // statusPatches
-		true, // coalescible
-	)
+	// nil parsedConfig → cold-start structural lane (no runtime-raw apply), and
+	// empty endpoints → nothing to apply anyway.
+	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
+		"test-rate-limit", "correlation-456", nil, true, "")
 
-	// Wait for deployment scheduled event
-	timeout := time.After(500 * time.Millisecond)
-waitLoop:
-	for {
-		select {
-		case e := <-eventChan:
-			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
-				elapsed := time.Since(start)
-				// Should have been delayed by rate limiting (at least 50ms)
-				assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(40)) // Allow some tolerance
-				break waitLoop
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for DeploymentScheduledEvent")
-		}
-	}
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+	_ = scheduled
+	elapsed := time.Since(start)
+	// Should have been delayed by rate limiting (at least ~50ms, with tolerance).
+	assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(40))
 }
 
+// TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation verifies the
+// loop exits promptly while waiting out the rate-limit interval when its context
+// is cancelled, closing loopDone. This replaces the old test that cancelled a
+// per-schedule goroutine's wait.
 func TestDeploymentScheduler_ScheduleWithRateLimit_ContextCancellation(t *testing.T) {
 	bus := testutil.NewTestBus()
 	bus.Start()
 
-	// Use long rate limit
+	// Use long rate limit so the loop is parked in its interval wait when we cancel.
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
 
-	// Set last deployment time to recent past
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseRateLimiting
 	scheduler.state.lastDeploymentEndTime = time.Now()
 	scheduler.schedulerMutex.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	startLoopForTest(t, scheduler, ctx)
 
-	done := make(chan struct{})
-	go func() {
-		scheduler.scheduleWithRateLimitUnlocked(
-			ctx,
-			"config",
-			nil,
-			nil,
-			[]dataplane.Endpoint{},
-			"test-cancel",
-			"correlation-789",
-			nil,  // statusPatches
-			true, // coalescible
-		)
-		close(done)
-	}()
+	// Enqueue work so the loop advances from "wait for pending" into the
+	// (5s) interval wait.
+	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
+		"test-cancel", "correlation-789", nil, true, "")
 
-	// Cancel context after short delay
+	// Give the loop a moment to enter the interval wait, then cancel.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
-	// Should return quickly due to context cancellation
+	// The loop must return quickly (close loopDone) on cancellation.
 	select {
-	case <-done:
+	case <-scheduler.loopDone:
 		// Expected
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("scheduling should have been cancelled")
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("deploy loop should have exited on context cancellation")
 	}
-
-	// Phase should be idle after cancellation
-	scheduler.schedulerMutex.Lock()
-	defer scheduler.schedulerMutex.Unlock()
-	assert.Equal(t, phaseIdle, scheduler.state.phase)
 }
 
+// TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig verifies the
+// loop's publishScheduled computes the runtime config name from the cached
+// template config name when no ConfigPublishedEvent has set it yet.
 func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	scheduler.ctx = context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Set template config name but not runtime config name
 	scheduler.mu.Lock()
@@ -773,140 +763,58 @@ func TestDeploymentScheduler_ScheduleWithRateLimit_ComputeRuntimeConfig(t *testi
 	scheduler.runtimeConfigName = "" // Not set
 	scheduler.mu.Unlock()
 
-	go scheduler.scheduleWithRateLimitUnlocked(
-		context.Background(),
-		"config",
-		nil,
-		nil,
-		[]dataplane.Endpoint{},
-		"test-compute-runtime",
-		"correlation-compute",
-		nil,  // statusPatches
-		true, // coalescible
-	)
+	startLoopForTest(t, scheduler, ctx)
 
-	// Wait for deployment scheduled event
-	timeout := time.After(500 * time.Millisecond)
-waitLoop:
-	for {
-		select {
-		case e := <-eventChan:
-			if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
-				// Runtime config name should be computed from template config name
-				assert.NotEmpty(t, scheduled.RuntimeConfigName)
-				assert.Equal(t, "my-namespace", scheduled.RuntimeConfigNamespace)
-				break waitLoop
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for DeploymentScheduledEvent")
-		}
-	}
+	// nil parsedConfig → cold-start structural lane (no runtime-raw apply), and
+	// empty endpoints → nothing to apply anyway.
+	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
+		"test-compute-runtime", "correlation-compute", nil, true, "")
+
+	scheduled := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.LongTimeout)
+	// Runtime config name should be computed from template config name
+	assert.NotEmpty(t, scheduled.RuntimeConfigName)
+	assert.Equal(t, "my-namespace", scheduled.RuntimeConfigNamespace)
 }
 
-func TestDeploymentScheduler_ScheduleWithPendingWhileScheduling(t *testing.T) {
-	bus := testutil.NewTestBus()
-	eventChan := bus.Subscribe("test-sub", 50)
-	bus.Start()
-
-	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 50*time.Millisecond, 30*time.Second)
-	scheduler.ctx = context.Background()
-
-	// Set last deployment time to trigger rate limiting
-	scheduler.schedulerMutex.Lock()
-	scheduler.state.lastDeploymentEndTime = time.Now()
-	scheduler.schedulerMutex.Unlock()
-
-	// Start first scheduling
-	go scheduler.scheduleWithRateLimitUnlocked(
-		context.Background(),
-		"config1",
-		nil,
-		nil,
-		[]dataplane.Endpoint{},
-		"first",
-		"correlation-1",
-		nil,  // statusPatches
-		true, // coalescible
-	)
-
-	// Add pending deployment while first is being rate limited
-	time.Sleep(10 * time.Millisecond)
-	scheduler.schedulerMutex.Lock()
-	scheduler.state.pending = &scheduledDeployment{
-		config:        "config2",
-		auxFiles:      nil,
-		endpoints:     []dataplane.Endpoint{},
-		reason:        "second",
-		correlationID: "correlation-2",
-	}
-	scheduler.schedulerMutex.Unlock()
-
-	// Collect events - should see both deployments
-	eventsReceived := 0
-	timeout := time.After(1 * time.Second)
-collectLoop:
-	for {
-		select {
-		case e := <-eventChan:
-			if _, ok := e.(*events.DeploymentScheduledEvent); ok {
-				eventsReceived++
-				if eventsReceived >= 2 {
-					break collectLoop
-				}
-			}
-		case <-timeout:
-			// At minimum we should have received the first deployment
-			if eventsReceived == 0 {
-				t.Fatal("timeout waiting for first DeploymentScheduledEvent")
-			}
-			break collectLoop
-		}
-	}
-
-	// Should have received at least the first deployment
-	assert.GreaterOrEqual(t, eventsReceived, 1)
-}
-
-func TestDeploymentScheduler_StatePhases(t *testing.T) {
-	t.Run("phase string representation", func(t *testing.T) {
-		assert.Equal(t, "idle", phaseIdle.String())
-		assert.Equal(t, "rate_limiting", phaseRateLimiting.String())
-		assert.Equal(t, "deploying", phaseDeploying.String())
-		assert.Equal(t, "unknown", deploymentPhase(99).String())
-	})
-
-	t.Run("initial phase is idle", func(t *testing.T) {
+// TestDeploymentScheduler_DeployInFlightState replaces the old
+// TestDeploymentScheduler_StatePhases. The phase state machine
+// (deploymentPhase + its String() method) is gone; deployInFlight is the
+// single boolean replacement. The "timeout only fires in deploying phase"
+// subtest is rewritten as "timeout only fires when deployInFlight".
+func TestDeploymentScheduler_DeployInFlightState(t *testing.T) {
+	t.Run("initial deployInFlight is false", func(t *testing.T) {
 		bus := testutil.NewTestBus()
 		scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
 
 		scheduler.schedulerMutex.Lock()
 		defer scheduler.schedulerMutex.Unlock()
 
-		assert.Equal(t, phaseIdle, scheduler.state.phase)
+		assert.False(t, scheduler.state.deployInFlight)
 	})
 
-	t.Run("timeout only fires in deploying phase", func(t *testing.T) {
+	t.Run("timeout only fires when deployInFlight", func(t *testing.T) {
 		bus := testutil.NewTestBus()
 		bus.Start()
 		scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+		initLoopChannels(scheduler)
 		ctx := context.Background()
 
-		// In rate limiting phase with expired timeout - should NOT fire
+		// Not in flight but with an expired start time - timeout MUST NOT fire.
 		scheduler.schedulerMutex.Lock()
-		scheduler.state.phase = phaseRateLimiting
+		scheduler.state.deployInFlight = false
 		scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
 		scheduler.schedulerMutex.Unlock()
 
 		scheduler.checkDeploymentTimeout(ctx)
 
 		scheduler.schedulerMutex.Lock()
-		// Phase should be unchanged - timeout checker skips rate limiting phase
-		assert.Equal(t, phaseRateLimiting, scheduler.state.phase)
+		// Unchanged - the timeout checker guards on deployInFlight.
+		assert.False(t, scheduler.state.deployInFlight)
 		scheduler.schedulerMutex.Unlock()
 
-		// In deploying phase with expired timeout - SHOULD fire
+		// In flight with an expired timeout - SHOULD fire and clear deployInFlight.
 		scheduler.schedulerMutex.Lock()
-		scheduler.state.phase = phaseDeploying
+		scheduler.state.deployInFlight = true
 		scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
 		scheduler.state.activeCorrelationID = "test-correlation"
 		scheduler.schedulerMutex.Unlock()
@@ -914,7 +822,176 @@ func TestDeploymentScheduler_StatePhases(t *testing.T) {
 		scheduler.checkDeploymentTimeout(ctx)
 
 		scheduler.schedulerMutex.Lock()
-		assert.Equal(t, phaseIdle, scheduler.state.phase)
+		assert.False(t, scheduler.state.deployInFlight)
 		scheduler.schedulerMutex.Unlock()
 	})
+}
+
+// countScheduledEvents drains eventChan for the given window and returns every
+// DeploymentScheduledEvent seen. Used by the coalescing/no-burst tests to assert
+// on the exact count published over a fixed observation window.
+func countScheduledEvents(eventChan <-chan busevents.Event, window time.Duration) []*events.DeploymentScheduledEvent {
+	var got []*events.DeploymentScheduledEvent
+	deadline := time.After(window)
+	for {
+		select {
+		case e := <-eventChan:
+			if scheduled, ok := e.(*events.DeploymentScheduledEvent); ok {
+				got = append(got, scheduled)
+			}
+		case <-deadline:
+			return got
+		}
+	}
+}
+
+// TestScheduler_NoBurstUnderConcurrentReconciles is the headline regression test
+// for the reload-storm fix. With a single deploy loop owning the rate-limit
+// timer, N concurrent scheduleOrQueue calls (each latest-wins overwriting the
+// single pending slot) collapse into EXACTLY ONE DeploymentScheduledEvent after
+// minDeploymentInterval — the loop then parks in awaitCompletion. The OLD phase
+// machine spawned a rate-limit goroutine per schedule and would burst ~N events.
+//
+// nil parsedConfig → cold-start structural lane (so the interval applies and the
+// loop coalesces); empty endpoints → no real dataplane client is needed.
+func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.SubscribeTypes("burst-watcher", 200, events.EventTypeDeploymentScheduled)
+	bus.Start()
+
+	const interval = 100 * time.Millisecond
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A deploy just ended → the first deploy must wait out the full interval, so
+	// all N concurrent schedules land in the single pending slot before the loop
+	// fires once.
+	scheduler.schedulerMutex.Lock()
+	scheduler.state.lastDeploymentEndTime = time.Now()
+	scheduler.schedulerMutex.Unlock()
+	startLoopForTest(t, scheduler, ctx)
+
+	const n = 50
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			reason := "reconcile-" + strconv.Itoa(i)
+			corr := "corr-" + strconv.Itoa(i)
+			scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
+				reason, corr, nil, true, "")
+		}(i)
+	}
+	wg.Wait()
+
+	// Observe well past the interval (≈2.5×). The loop coalesces all 50 into ONE
+	// deploy, publishes it, then blocks in awaitCompletion (no completion is ever
+	// signalled), so no further events can appear.
+	got := countScheduledEvents(eventChan, 250*time.Millisecond)
+	require.Len(t, got, 1,
+		"the single deploy loop must coalesce all %d concurrent schedules into exactly one "+
+			"DeploymentScheduledEvent — more than one means concurrent rate-limit timers (the "+
+			"reload storm) have returned", n)
+
+	// The loop is now parked in awaitCompletion holding deployInFlight. Drive a
+	// completion and assert it's ready for the next deploy.
+	scheduler.schedulerMutex.Lock()
+	inFlight := scheduler.state.deployInFlight
+	scheduler.schedulerMutex.Unlock()
+	assert.True(t, inFlight, "after emitting the coalesced deploy the loop must be in-flight")
+
+	scheduler.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+		Total:      1,
+		Succeeded:  1,
+		DurationMs: 10,
+	}))
+
+	scheduler.schedulerMutex.Lock()
+	defer scheduler.schedulerMutex.Unlock()
+	assert.False(t, scheduler.state.deployInFlight,
+		"completion must clear deployInFlight so the loop is ready for the next deploy")
+}
+
+// TestScheduler_LatestWinsCoalescing verifies that several schedules landing
+// before the rate-limit interval elapses collapse to ONE deploy carrying the
+// LAST config (latest-wins on the single pending slot).
+func TestScheduler_LatestWinsCoalescing(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.SubscribeTypes("coalesce-watcher", 50, events.EventTypeDeploymentScheduled)
+	bus.Start()
+
+	const interval = 100 * time.Millisecond
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Deploy just ended → the loop waits the interval, giving us time to overwrite
+	// the pending slot three times before it fires.
+	scheduler.schedulerMutex.Lock()
+	scheduler.state.lastDeploymentEndTime = time.Now()
+	scheduler.schedulerMutex.Unlock()
+	startLoopForTest(t, scheduler, ctx)
+
+	scheduler.scheduleOrQueue(ctx, "A", nil, nil, []dataplane.Endpoint{}, "first", "corr-a", nil, true, "")
+	scheduler.scheduleOrQueue(ctx, "B", nil, nil, []dataplane.Endpoint{}, "second", "corr-b", nil, true, "")
+	scheduler.scheduleOrQueue(ctx, "C", nil, nil, []dataplane.Endpoint{}, "third", "corr-c", nil, true, "")
+
+	got := countScheduledEvents(eventChan, 250*time.Millisecond)
+	require.Len(t, got, 1, "three pre-interval schedules must coalesce into exactly one deploy")
+	assert.Equal(t, "C", got[0].Config,
+		"latest-wins: the single emitted deploy must carry the newest config (C), not A or B")
+}
+
+// TestScheduler_LoopStopsOnContextCancel verifies runDeployLoop exits and closes
+// loopDone when its context is cancelled — the join point Start() relies on for
+// clean shutdown.
+func TestScheduler_LoopStopsOnContextCancel(t *testing.T) {
+	bus := testutil.NewTestBus()
+	bus.Start()
+
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 100*time.Millisecond, 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	startLoopForTest(t, scheduler, ctx)
+
+	// Loop is parked waiting for pending work; cancelling must release it.
+	cancel()
+
+	select {
+	case <-scheduler.loopDone:
+		// Expected - loop exited and closed loopDone.
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("runDeployLoop did not exit (loopDone not closed) within timeout after context cancel")
+	}
+}
+
+// TestScheduler_IntervalUsesCompletionEndTime verifies the rate-limit interval is
+// measured from the last deploy's END time (lastDeploymentEndTime), i.e. the loop
+// delays the first deploy by ≈minDeploymentInterval when a deploy just completed.
+func TestScheduler_IntervalUsesCompletionEndTime(t *testing.T) {
+	bus := testutil.NewTestBus()
+	eventChan := bus.SubscribeTypes("interval-watcher", 50, events.EventTypeDeploymentScheduled)
+	bus.Start()
+
+	const interval = 200 * time.Millisecond
+	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), interval, 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Mark a deploy as having just ended, then start the loop and schedule once.
+	scheduler.schedulerMutex.Lock()
+	scheduler.state.lastDeploymentEndTime = time.Now()
+	scheduler.schedulerMutex.Unlock()
+	startLoopForTest(t, scheduler, ctx)
+
+	start := time.Now()
+	scheduler.scheduleOrQueue(ctx, "config", nil, nil, []dataplane.Endpoint{},
+		"rate-limited", "corr-interval", nil, true, "")
+
+	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, testutil.VeryLongTimeout)
+	elapsed := time.Since(start)
+	// Rate-limited from the completion end time. Allow tolerance for timer/scheduler jitter.
+	assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(150),
+		"the deploy must be delayed ≈minDeploymentInterval measured from lastDeploymentEndTime")
 }

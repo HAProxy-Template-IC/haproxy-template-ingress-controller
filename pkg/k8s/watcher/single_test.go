@@ -950,6 +950,53 @@ func TestSingleWatcher_SkipsStatusOnlyUpdates(t *testing.T) {
 	}
 }
 
+// TestSingleWatcher_DoesNotSkipUpdatesWhenGenerationStaysZero verifies that the
+// "status-only update" guard above doesn't accidentally drop updates to
+// resources that simply don't use .metadata.generation. Secrets, ConfigMaps,
+// and most core/v1 resources keep generation pinned at 0, so old/new gen
+// equality is the always-true degenerate case for them — the watcher must
+// still deliver the callback when the resourceVersion advances.
+//
+// Regression guard for the webhook-cert Secret rotation bug: before this
+// fix, every Secret rotation observed by a SingleWatcher was silently
+// dropped, so cert-manager renewals and the e2e CA-rotation test harness
+// never reached the controller's cert pipeline.
+func TestSingleWatcher_DoesNotSkipUpdatesWhenGenerationStaysZero(t *testing.T) {
+	k8sClient := createFakeClientForSingleWatcher()
+
+	callbackCount := 0
+	cfg := types.SingleWatcherConfig{
+		GVR: schema.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "secrets",
+		},
+		Namespace: "default",
+		Name:      "test-cert",
+		OnChange: func(obj any) error {
+			callbackCount++
+			return nil
+		},
+	}
+
+	w, err := NewSingle(&cfg, k8sClient)
+	if err != nil {
+		t.Fatalf("creating watcher: %v", err)
+	}
+	w.synced.Store(true)
+
+	// Both old and new have generation=0 (the Secret default), but the
+	// resourceVersion advances — the canonical "Secret content rotated"
+	// shape. The callback must fire.
+	old := createUnstructuredWithGeneration("100", 0)
+	updated := createUnstructuredWithGeneration("101", 0)
+	w.handleUpdate(old, updated)
+
+	if callbackCount != 1 {
+		t.Errorf("expected 1 callback for Secret-content rotation (gen 0→0, rv 100→101), got %d", callbackCount)
+	}
+}
+
 // TestSingleWatcher_SkipsResyncCallback verifies that Update events with unchanged
 // resource version (resync events) don't trigger callbacks.
 func TestSingleWatcher_SkipsResyncCallback(t *testing.T) {

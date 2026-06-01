@@ -39,7 +39,7 @@ func TestLogProfileFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(logProfile)
-			assertOperation(t, op, tt.wantType, "log_profile", effectivePriority(PriorityLogProfile), tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, "log_profile", tt.wantDescContains)
 		})
 	}
 }
@@ -62,7 +62,7 @@ func TestAcmeProviderFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(acme)
-			assertOperation(t, op, tt.wantType, "acme_provider", effectivePriority(PriorityAcmeProvider), tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, "acme_provider", tt.wantDescContains)
 		})
 	}
 }
@@ -75,5 +75,5 @@ func TestNewTracesUpdate(t *testing.T) {
 	traces := &models.Traces{}
 	op := NewTracesUpdate(traces)
 
-	assertOperation(t, op, OperationUpdate, "traces", effectivePriority(PriorityTraces), "Update traces section")
+	assertOperation(t, op, OperationUpdate, "traces", "Update traces section")
 }

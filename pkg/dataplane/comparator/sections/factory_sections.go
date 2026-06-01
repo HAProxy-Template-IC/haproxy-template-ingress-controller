@@ -16,80 +16,30 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // Top-level CRUD builders for additional sections.
 var (
-	cacheOps = NewTopLevelCRUD(
-		"cache", "cache", PriorityCache, CacheName,
-		executors.CacheCreate(), executors.CacheUpdate(), executors.CacheDelete(),
-	)
-	httpErrorsOps = NewTopLevelCRUD(
-		"http_errors", "http-errors section", PriorityHTTPErrors, HTTPErrorsSectionName,
-		executors.HTTPErrorsSectionCreate(), executors.HTTPErrorsSectionUpdate(), executors.HTTPErrorsSectionDelete(),
-	)
-	mailersOps = NewTopLevelCRUD(
-		"mailers", "mailers", PriorityMailers, MailersSectionName,
-		executors.MailersSectionCreate(), executors.MailersSectionUpdate(), executors.MailersSectionDelete(),
-	)
-	peerSectionOps = NewTopLevelCRUD(
-		"peers", "peer section", PriorityPeer, PeerSectionName,
-		executors.PeerSectionCreate(), executors.PeerSectionUpdate(), executors.PeerSectionDelete(),
-	)
-	programOps = NewTopLevelCRUD(
-		"program", "program", PriorityProgram, ProgramName,
-		executors.ProgramCreate(), executors.ProgramUpdate(), executors.ProgramDelete(),
-	)
-	resolverOps = NewTopLevelCRUD(
-		"resolver", "resolver", PriorityResolver, ResolverName,
-		executors.ResolverCreate(), executors.ResolverUpdate(), executors.ResolverDelete(),
-	)
-	ringOps = NewTopLevelCRUD(
-		"ring", "ring", PriorityRing, RingName,
-		executors.RingCreate(), executors.RingUpdate(), executors.RingDelete(),
-	)
-	crtStoreOps = NewTopLevelCRUD(
-		"crt_store", "crt-store", PriorityCrtStore, CrtStoreName,
-		executors.CrtStoreCreate(), executors.CrtStoreUpdate(), executors.CrtStoreDelete(),
-	)
-	userlistOps = NewTopLevelCRUD(
-		"userlist", "userlist", PriorityUserlist, UserlistName,
-		executors.UserlistCreate(), executors.UserlistUpdate(), executors.UserlistDelete(),
-	)
-	fcgiAppOps = NewTopLevelCRUD(
-		"fcgi_app", "fcgi-app", PriorityFCGIApp, FCGIAppName,
-		executors.FCGIAppCreate(), executors.FCGIAppUpdate(), executors.FCGIAppDelete(),
-	)
-	logProfileOps = NewTopLevelCRUD(
-		"log_profile", "log-profile", PriorityLogProfile, LogProfileName,
-		executors.LogProfileCreate(), executors.LogProfileUpdate(), executors.LogProfileDelete(),
-	)
-	acmeProviderOps = NewTopLevelCRUD(
-		"acme_provider", "acme-provider", PriorityAcmeProvider, AcmeProviderName,
-		executors.AcmeProviderCreate(), executors.AcmeProviderUpdate(), executors.AcmeProviderDelete(),
-	)
+	cacheOps        = NewTopLevelCRUD("cache", "cache", CacheName)
+	httpErrorsOps   = NewTopLevelCRUD("http_errors", "http-errors section", HTTPErrorsSectionName)
+	mailersOps      = NewTopLevelCRUD("mailers", "mailers", MailersSectionName)
+	peerSectionOps  = NewTopLevelCRUD("peers", "peer section", PeerSectionName)
+	programOps      = NewTopLevelCRUD("program", "program", ProgramName)
+	resolverOps     = NewTopLevelCRUD("resolver", "resolver", ResolverName)
+	ringOps         = NewTopLevelCRUD("ring", "ring", RingName)
+	crtStoreOps     = NewTopLevelCRUD("crt_store", "crt-store", CrtStoreName)
+	userlistOps     = NewTopLevelCRUD("userlist", "userlist", UserlistName)
+	fcgiAppOps      = NewTopLevelCRUD("fcgi_app", "fcgi-app", FCGIAppName)
+	logProfileOps   = NewTopLevelCRUD("log_profile", "log-profile", LogProfileName)
+	acmeProviderOps = NewTopLevelCRUD("acme_provider", "acme-provider", AcmeProviderName)
 )
 
 // Container-child CRUD builders.
 var (
-	userOps = NewContainerChildCRUD[*models.User](
-		"user", "user", "userlist", PriorityUser, UserName,
-		executors.UserCreate, executors.UserUpdate, executors.UserDelete,
-	)
-	mailerEntryOps = NewContainerChildCRUD[*models.MailerEntry](
-		"mailer_entry", "mailer entry", "mailers section", PriorityMailerEntry, MailerEntryName,
-		executors.MailerEntryCreate, executors.MailerEntryUpdate, executors.MailerEntryDelete,
-	)
-	peerEntryOps = NewContainerChildCRUD[*models.PeerEntry](
-		"peer_entry", "peer entry", "peer section", PriorityPeerEntry, PeerEntryName,
-		executors.PeerEntryCreate, executors.PeerEntryUpdate, executors.PeerEntryDelete,
-	)
-	nameserverOps = NewContainerChildCRUD[*models.Nameserver](
-		"nameserver", "nameserver", "resolvers section", PriorityNameserver, NameserverName,
-		executors.NameserverCreate, executors.NameserverUpdate, executors.NameserverDelete,
-	)
+	userOps        = NewContainerChildCRUD[*models.User]("user", "user", "userlist", UserName)
+	mailerEntryOps = NewContainerChildCRUD[*models.MailerEntry]("mailer_entry", "mailer entry", "mailers section", MailerEntryName)
+	peerEntryOps   = NewContainerChildCRUD[*models.PeerEntry]("peer_entry", "peer entry", "peer section", PeerEntryName)
+	nameserverOps  = NewContainerChildCRUD[*models.Nameserver]("nameserver", "nameserver", "resolvers section", NameserverName)
 )
 
 // User factory functions (container children of userlist).
@@ -307,14 +257,10 @@ func NewLogProfileDelete(logProfile *models.LogProfile) Operation {
 // NewTracesUpdate creates an operation to update the traces section.
 // The traces section is a singleton - it can be created or replaced.
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
-func NewTracesUpdate(traces *models.Traces) Operation {
-	return NewSingletonOp(
+func NewTracesUpdate(_ *models.Traces) Operation {
+	return NewSingletonOp[*models.Traces](
 		OperationUpdate,
 		"traces",
-		PriorityTraces,
-		traces,
-		Identity[*models.Traces],
-		executors.TracesUpdate(),
 		func() string { return "Update traces section" },
 	)
 }

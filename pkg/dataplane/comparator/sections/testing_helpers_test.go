@@ -22,12 +22,10 @@ import (
 
 // assertOperation validates that an Operation has the expected properties.
 // This helper reduces repetition in factory function tests.
-// wantPriority is the expected effective priority (after PriorityMultiplier).
-func assertOperation(t *testing.T, op Operation, wantType OperationType, wantSection string, wantPriority int, wantDescContains string) {
+func assertOperation(t *testing.T, op Operation, wantType OperationType, wantSection, wantDescContains string) {
 	t.Helper()
 
 	assert.Equal(t, wantType, op.Type(), "unexpected operation type")
 	assert.Equal(t, wantSection, op.Section(), "unexpected section")
-	assert.Equal(t, wantPriority, op.Priority(), "unexpected priority")
 	assert.Contains(t, op.Describe(), wantDescContains, "description should contain expected text")
 }

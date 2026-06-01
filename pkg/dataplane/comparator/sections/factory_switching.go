@@ -16,8 +16,6 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // backendSwitchingRuleIdentifier extracts the name identifier from a BackendSwitchingRule model.
@@ -33,14 +31,8 @@ func serverSwitchingRuleIdentifier(rule *models.ServerSwitchingRule) string { re
 
 // CRUD builders for backend and server switching rules.
 var (
-	backendSwitchingRuleFrontendOps = NewIndexChildCRUD[*models.BackendSwitchingRule](
-		"backend_switching_rule", "backend switching rule", "frontend", PriorityBackendSwitchingRule, backendSwitchingRuleIdentifier,
-		executors.BackendSwitchingRuleCreate(), executors.BackendSwitchingRuleUpdate(), executors.BackendSwitchingRuleDelete(),
-	)
-	serverSwitchingRuleBackendOps = NewIndexChildCRUD[*models.ServerSwitchingRule](
-		"server_switching_rule", "server switching rule", "backend", PriorityServerSwitchingRule, serverSwitchingRuleIdentifier,
-		executors.ServerSwitchingRuleBackendCreate(), executors.ServerSwitchingRuleBackendUpdate(), executors.ServerSwitchingRuleBackendDelete(),
-	)
+	backendSwitchingRuleFrontendOps = NewIndexChildCRUD[*models.BackendSwitchingRule]("backend_switching_rule", "backend switching rule", "frontend", backendSwitchingRuleIdentifier)
+	serverSwitchingRuleBackendOps   = NewIndexChildCRUD[*models.ServerSwitchingRule]("server_switching_rule", "server switching rule", "backend", serverSwitchingRuleIdentifier)
 )
 
 // NewBackendSwitchingRuleFrontendCreate creates an operation to create a backend switching rule.

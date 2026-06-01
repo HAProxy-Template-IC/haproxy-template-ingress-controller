@@ -14,7 +14,11 @@
 
 package events
 
-import "time"
+import (
+	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+)
 
 // ConfigPublishedEvent is published after runtime configuration resources are created/updated.
 //
@@ -67,8 +71,7 @@ type ConfigAppliedToPodEvent struct {
 // SyncMetadata contains detailed information about a sync operation.
 type SyncMetadata struct {
 	// ReloadTriggered indicates whether HAProxy was reloaded during this sync.
-	// Reloads occur for structural changes via transaction API (status 202).
-	// Runtime-only changes don't trigger reloads (status 200).
+	// Reload path triggers a reload; runtime path doesn't.
 	ReloadTriggered bool
 
 	// ReloadID is the reload identifier from HAProxy dataplane API.
@@ -77,14 +80,6 @@ type SyncMetadata struct {
 
 	// SyncDuration is how long the sync operation took.
 	SyncDuration time.Duration
-
-	// VersionConflictRetries is the number of retries due to version conflicts.
-	// HAProxy's dataplane API uses optimistic concurrency control.
-	VersionConflictRetries int
-
-	// FallbackUsed indicates whether incremental sync failed and a full
-	// raw configuration push was used instead.
-	FallbackUsed bool
 
 	// OperationCounts provides a breakdown of operations performed.
 	OperationCounts OperationCounts
@@ -135,3 +130,42 @@ func NewConfigAppliedToPodEvent(runtimeConfigName, runtimeConfigNamespace, podNa
 }
 
 func (e *ConfigAppliedToPodEvent) EventType() string { return EventTypeConfigAppliedToPod }
+
+// DeployedConfigPublishRequest asks the config-publisher to publish, as the
+// HAProxyCfg spec, the exact config bytes the deployer just applied to the
+// pods. It closes a CR self-consistency gap: the deployer stamps
+// status.deployedToPods[].Checksum from these bytes (via
+// dataplane.ComputeContentChecksum), but the validation-driven spec publish for
+// that same render can be throttled/coalesced away under churn — leaving a
+// pod's recorded checksum that never appears in any published spec.Checksum.
+// Emitting this on every successful, non-drift deploy guarantees the deployed
+// checksum becomes an observable published spec.
+//
+// Config/AuxiliaryFiles are the deployer's immutable post-render bytes; like
+// DeploymentScheduledEvent, AuxiliaryFiles is carried by pointer (never mutated
+// after rendering).
+type DeployedConfigPublishRequest struct {
+	RuntimeConfigName      string
+	RuntimeConfigNamespace string
+	Config                 string
+	AuxiliaryFiles         *dataplane.AuxiliaryFiles
+	ContentChecksum        string
+
+	timestamped
+}
+
+// NewDeployedConfigPublishRequest creates a new DeployedConfigPublishRequest.
+func NewDeployedConfigPublishRequest(runtimeConfigName, runtimeConfigNamespace, config string, auxFiles *dataplane.AuxiliaryFiles, contentChecksum string) *DeployedConfigPublishRequest {
+	return &DeployedConfigPublishRequest{
+		RuntimeConfigName:      runtimeConfigName,
+		RuntimeConfigNamespace: runtimeConfigNamespace,
+		Config:                 config,
+		AuxiliaryFiles:         auxFiles,
+		ContentChecksum:        contentChecksum,
+		timestamped:            newTimestamped(),
+	}
+}
+
+func (e *DeployedConfigPublishRequest) EventType() string {
+	return EventTypeDeployedConfigPublishRequest
+}

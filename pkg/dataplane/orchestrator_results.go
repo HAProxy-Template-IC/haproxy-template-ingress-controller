@@ -53,7 +53,6 @@ func convertOperationsToPlanned(ops []comparator.Operation) []PlannedOperation {
 			Section:     op.Section(),
 			Resource:    extractResourceName(op),
 			Description: op.Describe(),
-			Priority:    op.Priority(),
 		})
 	}
 	return planned

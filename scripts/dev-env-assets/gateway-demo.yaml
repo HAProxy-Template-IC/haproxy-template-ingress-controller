@@ -161,6 +161,15 @@ spec:
               value: "v2"
           ports:
             - containerPort: 80
+          # K8s contract: Ready means responding to traffic.
+          # See dev-env-assets/echo-server.yaml for the full
+          # rationale — same Node.js startup race here.
+          readinessProbe:
+            httpGet: {path: /, port: 80}
+            periodSeconds: 1
+            successThreshold: 1
+            failureThreshold: 1
+            timeoutSeconds: 1
 
 ---
 # Service for echo-server-v2

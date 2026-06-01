@@ -176,58 +176,14 @@ type cachedAuxFileStatus struct {
 	checksum string
 }
 
-// tryCachedReadFunc attempts to read the auxiliary file from an informer cache.
-// Returns nil if no cache is available or the read fails.
-type tryCachedReadFunc func() *cachedAuxFileStatus
-
-// updateAuxFileDeploymentStatus updates an auxiliary file's deployment status.
-// It first tries a cached read (if available) to skip unnecessary API calls,
-// then falls back to retry-on-conflict with fresh API reads.
-func updateAuxFileDeploymentStatus(
-	podStatus *haproxyv1alpha1.PodDeploymentStatus,
-	tryCachedRead tryCachedReadFunc,
-	getHandle func() (*auxFileHandle, error),
-	fileType string,
-) error {
-	// Try cached read first to check if update is needed
-	if cached := tryCachedRead(); cached != nil {
-		existingStatus := findPodStatus(cached.pods, podStatus.PodName)
-		auxPodStatus := buildAuxiliaryFilePodStatus(
-			podStatus.PodName,
-			cached.checksum,
-			existingStatus,
-		)
-		newStatuses := addOrUpdatePodStatus(copyPodStatuses(cached.pods), &auxPodStatus)
-
-		if podStatusesEqual(cached.pods, newStatuses) {
-			return nil
-		}
-	}
-
-	// Need to update - do retry-on-conflict with fresh API reads
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		h, err := getHandle()
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return fmt.Errorf("getting %s: %w", fileType, err)
-		}
-
-		originalStatus := copyPodStatuses(h.pods)
-
-		existingStatus := findPodStatus(h.pods, podStatus.PodName)
-		auxPodStatus := buildAuxiliaryFilePodStatus(
-			podStatus.PodName,
-			h.checksum,
-			existingStatus,
-		)
-
-		newPods := addOrUpdatePodStatus(h.pods, &auxPodStatus)
-		if podStatusesEqual(originalStatus, newPods) {
-			return nil
-		}
-
-		return h.applyStatus(newPods)
-	})
-}
+// updateAuxFileDeploymentStatus was removed when the production status-
+// update path switched to Server-Side Apply with per-pod field managers.
+// The read-modify-write retry-on-conflict pattern it implemented was the
+// source of the deployedToPods drop bug — two concurrent updates from
+// different pods would each read the same snapshot and last-writer-wins
+// silently dropped one entry. SSA with listType=map keyed by podName
+// merges concurrent applies at the API-server level, so this helper is no
+// longer needed and is removed.
+//
+// Callers were updated to use `applyPodStatusToAuxiliaryFiles` in
+// deployment_status.go.

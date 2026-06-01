@@ -23,13 +23,16 @@ import (
 	"os"
 	"strconv"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 
+	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
@@ -96,11 +99,80 @@ func WaitForE2EEnvironmentReady(ctx context.Context, client klient.Client) error
 		serviceName: DebugServiceNameValue,
 		port:        strconv.Itoa(DebugPort),
 	}
-	return testutil.WaitForConditionWithDescription(ctx, cfg,
+	if err := testutil.WaitForConditionWithDescription(ctx, cfg,
 		"controller /healthz returns 200 (all components ready, leader-only running)",
 		func(ctx context.Context) (bool, error) {
 			return dc.healthzReady(ctx)
+		}); err != nil {
+		return err
+	}
+
+	// /healthz reports the controller as ready before it has finished its
+	// initial HAProxy-pod discovery + deploy cycle. Without this extra wait,
+	// the first per-test waitForControllerDeployed call races against
+	// discovery — on a cold cluster the controller takes ~50s after start
+	// to discover both HAProxy replicas, while individual test budgets
+	// (per the 15s rule in tests/e2e/CLAUDE.md) are far tighter than that.
+	// Block here until the cluster's chart-default HAProxy replicas are
+	// all in HAProxyCfg.status.deployedToPods at the current spec.checksum.
+	// After this, per-test reactions are sub-second.
+	return waitForInitialHAProxyDeployment(ctx, client, cfg)
+}
+
+// waitForInitialHAProxyDeployment blocks until every chart-default HAProxy
+// replica is reported in HAProxyCfg.status.deployedToPods at the current
+// spec.checksum — i.e., the controller has finished its initial discovery
+// + deploy cycle for all HAProxy pods. This is a one-time suite-startup
+// wait; per-test fixtures rely on this having completed before they apply
+// resources with the tighter 15s reaction budget.
+func waitForInitialHAProxyDeployment(ctx context.Context, client klient.Client, cfg testutil.WaitConfig) error {
+	expectedReplicas, err := discoverHAProxyReplicaCount(ctx, client)
+	if err != nil {
+		return fmt.Errorf("discover HAProxy replica count: %w", err)
+	}
+
+	hc, err := hapticclient.NewForConfig(client.RESTConfig())
+	if err != nil {
+		return fmt.Errorf("build haptic clientset: %w", err)
+	}
+
+	cfgName := HAProxyConfigName + "-haproxycfg"
+	return testutil.WaitForConditionWithDescription(ctx, cfg,
+		fmt.Sprintf("HAProxyCfg deployed to %d HAProxy replicas (initial sync)", expectedReplicas),
+		func(ctx context.Context) (bool, error) {
+			obj, err := hc.HaproxyTemplateICV1alpha1().HAProxyCfgs(ControllerNamespace).Get(ctx, cfgName, metav1.GetOptions{})
+			if err != nil {
+				return false, fmt.Errorf("get HAProxyCfg %s/%s: %w", ControllerNamespace, cfgName, err)
+			}
+			want := obj.Spec.Checksum
+			if want == "" {
+				return false, fmt.Errorf("HAProxyCfg.spec.checksum not populated yet")
+			}
+			deployed := obj.Status.DeployedToPods
+			if len(deployed) < expectedReplicas {
+				return false, fmt.Errorf("only %d/%d HAProxy pods reported deployed", len(deployed), expectedReplicas)
+			}
+			for _, p := range deployed {
+				if p.Checksum != want {
+					return false, fmt.Errorf("pod %s at checksum %q, spec is %q", p.PodName, p.Checksum, want)
+				}
+			}
+			return true, nil
 		})
+}
+
+// discoverHAProxyReplicaCount returns the spec.replicas of the chart's
+// HAProxy Deployment. This is sourced live so it tracks any chart-values
+// override (CI shards may pin a different replicaCount).
+func discoverHAProxyReplicaCount(ctx context.Context, client klient.Client) (int, error) {
+	dep := &appsv1.Deployment{}
+	if err := client.Resources(ControllerNamespace).Get(ctx, HAProxyDeploymentName, ControllerNamespace, dep); err != nil {
+		return 0, fmt.Errorf("get deployment %s/%s: %w", ControllerNamespace, HAProxyDeploymentName, err)
+	}
+	if dep.Spec.Replicas == nil {
+		return 1, nil
+	}
+	return int(*dep.Spec.Replicas), nil
 }
 
 // debugClient is the minimal API-proxy client the e2e suite needs.
@@ -164,25 +236,6 @@ func (dc *debugClient) healthzReady(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, fmt.Errorf("/healthz not ready: %w", err)
-}
-
-// getRenderedConfig returns the current rendered haproxy.cfg as the
-// controller sees it. The /debug/vars/rendered response wraps the config in
-// a {"config": "..."} envelope; we unwrap it to a plain string.
-func (dc *debugClient) getRenderedConfig(ctx context.Context) (string, error) {
-	body, err := dc.clientset.CoreV1().Services(dc.namespace).ProxyGet(
-		"http", dc.serviceName, dc.port, DebugPathRendered, nil,
-	).DoRaw(ctx)
-	if err != nil {
-		return "", err
-	}
-	var envelope struct {
-		Config string `json:"config"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return "", fmt.Errorf("decode rendered config: %w (body=%s)", err, body)
-	}
-	return envelope.Config, nil
 }
 
 // newClientsetForE2E builds a clientset with rate-limiting disabled. The

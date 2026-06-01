@@ -1,12 +1,9 @@
 package comparator
 
 import (
-	"cmp"
 	"fmt"
 	"slices"
 	"strings"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 )
 
 // ConfigDiff represents the difference between two HAProxy configurations.
@@ -220,45 +217,4 @@ func (s *DiffSummary) formatOtherChanges() []string {
 	}
 
 	return parts
-}
-
-// 3. Updates (any order - resources already exist).
-func OrderOperations(ops []Operation) []Operation {
-	if len(ops) == 0 {
-		return ops
-	}
-
-	// Separate operations by type
-	var creates, updates, deletes []Operation
-	for _, op := range ops {
-		switch op.Type() {
-		case sections.OperationCreate:
-			creates = append(creates, op)
-		case sections.OperationUpdate:
-			updates = append(updates, op)
-		case sections.OperationDelete:
-			deletes = append(deletes, op)
-		}
-	}
-
-	// Sort creates by priority (ascending: parents first)
-	// Using stable sort to preserve original order when priorities are equal
-	// (e.g., ACLs must be created in index order: 0, 1, 2, not randomized)
-	slices.SortStableFunc(creates, func(a, b Operation) int {
-		return cmp.Compare(a.Priority(), b.Priority())
-	})
-
-	// Sort deletes by priority (descending: children first)
-	// Using stable sort for consistent ordering of operations with equal priority
-	slices.SortStableFunc(deletes, func(a, b Operation) int {
-		return cmp.Compare(b.Priority(), a.Priority())
-	})
-
-	// Combine in execution order: deletes → creates → updates
-	ordered := make([]Operation, 0, len(ops))
-	ordered = append(ordered, deletes...)
-	ordered = append(ordered, creates...)
-	ordered = append(ordered, updates...)
-
-	return ordered
 }

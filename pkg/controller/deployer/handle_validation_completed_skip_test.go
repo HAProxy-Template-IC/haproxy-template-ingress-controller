@@ -141,8 +141,11 @@ func TestHandleValidationCompleted_DriftPreventionBypassesSkip(t *testing.T) {
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	ctx := context.Background()
-	scheduler.ctx = ctx
+	// Drive the deploy loop: scheduleOrQueue now only sets pending + signals the
+	// loop, which is the goroutine that publishes DeploymentScheduledEvent.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
 
 	const checksum = "stable-content-checksum"
 	endpoints := []dataplane.Endpoint{
@@ -225,8 +228,11 @@ func TestHandleValidationCompleted_DeploymentScheduledCarriesStatusPatches(t *te
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
-	ctx := context.Background()
-	scheduler.ctx = ctx
+	// Drive the deploy loop: scheduleOrQueue now only sets pending + signals the
+	// loop, which is the goroutine that publishes DeploymentScheduledEvent.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, scheduler, ctx)
 
 	patches := []templating.StatusPatch{
 		{Name: "gw", Kind: "Gateway"},

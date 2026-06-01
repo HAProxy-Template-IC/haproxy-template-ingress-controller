@@ -166,21 +166,6 @@ func BenchmarkCompare_Scale(b *testing.B) {
 	}
 }
 
-// BenchmarkOrderOperations benchmarks operation ordering.
-func BenchmarkOrderOperations(b *testing.B) {
-	b.Run("size=small", func(b *testing.B) {
-		benchmarkOrderSmall(b)
-	})
-
-	b.Run("size=medium", func(b *testing.B) {
-		benchmarkOrderMedium(b)
-	})
-
-	b.Run("size=large", func(b *testing.B) {
-		benchmarkOrderLarge(b)
-	})
-}
-
 // benchmarkCompareSmall benchmarks comparison with a small config (2 backends, 1 frontend).
 func benchmarkCompareSmall(b *testing.B) {
 	b.Helper()
@@ -299,51 +284,6 @@ func benchmarkCompareBackendScale(b *testing.B, backendCount int) {
 		r, _ = comp.Compare(current, desired)
 	}
 	benchResultDiff = r
-}
-
-// benchmarkOrderSmall benchmarks ordering a small number of operations.
-func benchmarkOrderSmall(b *testing.B) {
-	b.Helper()
-	ops := generateMockOperations(10)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	var r []Operation
-	for b.Loop() {
-		r = OrderOperations(ops)
-	}
-	_ = r
-}
-
-// benchmarkOrderMedium benchmarks ordering a medium number of operations.
-func benchmarkOrderMedium(b *testing.B) {
-	b.Helper()
-	ops := generateMockOperations(50)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	var r []Operation
-	for b.Loop() {
-		r = OrderOperations(ops)
-	}
-	_ = r
-}
-
-// benchmarkOrderLarge benchmarks ordering a large number of operations.
-func benchmarkOrderLarge(b *testing.B) {
-	b.Helper()
-	ops := generateMockOperations(200)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	var r []Operation
-	for b.Loop() {
-		r = OrderOperations(ops)
-	}
-	_ = r
 }
 
 // Helper functions to generate test configs.

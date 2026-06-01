@@ -83,13 +83,3 @@ func parseAPIVersion(apiVersion string) (group, version string) {
 	// Named API group (e.g., "networking.k8s.io/v1")
 	return parts[0], parts[1]
 }
-
-// HasWebhookEnabled checks if any watched resources have webhook validation enabled.
-func HasWebhookEnabled(cfg *config.Config) bool {
-	for _, resource := range cfg.WatchedResources {
-		if resource.EnableValidationWebhook {
-			return true
-		}
-	}
-	return false
-}

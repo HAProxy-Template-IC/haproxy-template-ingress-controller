@@ -247,13 +247,30 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
 	}
 
 	// Skip callback if generation hasn't changed (status-only update).
-	// This is the canonical Kubernetes pattern for resources with status subresources.
-	// Generation only increments on spec changes, not status changes.
-	// See: https://book-v1.book.kubebuilder.io/basics/status_subresource.html
+	// This is the canonical Kubernetes pattern for resources WITH a status
+	// subresource (Deployment, StatefulSet, custom CRDs that declare
+	// /status). Generation increments on spec changes, not status changes,
+	// so an unchanged generation across an update event means only status
+	// fields moved.
+	//
+	// Resources WITHOUT a status subresource (Secret, ConfigMap, Service,
+	// most core/v1 resources) keep .metadata.generation pinned at 0
+	// forever. For those, "old gen == new gen" is always true and the
+	// filter would drop every meaningful update. We detect that case by
+	// requiring at least one side to have a non-zero generation before
+	// using it as a skip signal — when both are zero, fall through and
+	// honour the resourceVersion-changed signal that already passed above.
+	//
+	// History: until this guard, the webhook-cert Secret watcher
+	// observed rotations from cert-manager / the e2e test harness, but
+	// every update was discarded as "status-only" because generation was
+	// 0/0. The cert pipeline (CertResourceChangedEvent → CertLoader →
+	// CertParsedEvent → ConfigChangeHandler → iteration restart) never
+	// fired, so rotations only took effect on the next pod restart.
 	if oldResource != nil {
 		oldGen := oldResource.GetGeneration()
 		newGen := resource.GetGeneration()
-		if oldGen == newGen {
+		if oldGen == newGen && (oldGen != 0 || newGen != 0) {
 			slog.Debug("SingleWatcher skipping update callback - generation unchanged (status-only update)",
 				"resource_name", resource.GetName(),
 				"generation", newGen,

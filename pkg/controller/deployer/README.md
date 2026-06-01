@@ -42,7 +42,7 @@ go exec.Start(ctx)
 go monitor.Start(ctx)
 ```
 
-All durations / ints come from `spec.dataplane` and `spec.controller` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `maxParallel`, `rawPushThreshold`, `driftPreventionInterval`, `reloadVerificationTimeout`, `syncTimeout`, `syncMaxRetries`, plus `controller.reconciliationDebounceInterval`.
+All durations / ints come from `spec.dataplane` and `spec.controller` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `maxParallel`, `rawPushThreshold`, `driftPreventionInterval`, `reloadVerificationTimeout`, `syncTimeout`, `syncMaxRetries`.
 
 ## Event Flow
 

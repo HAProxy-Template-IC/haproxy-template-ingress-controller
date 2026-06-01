@@ -1,11 +1,11 @@
 // Package client provides a high-level wrapper around the generated HAProxy Dataplane API client.
 //
 // This wrapper adds:
-// - Multi-version support (v3.0, v3.1, v3.2)
+// - Multi-version support (v3.0, v3.1, v3.2, v3.3) and Enterprise variants
 // - Runtime version detection
 // - Capability-based feature detection
-// - Transaction lifecycle management
-// - Configuration fetch/push operations
+// - Raw config push (skip_reload + X-Runtime-Actions, or force_reload)
+// - Auxiliary file storage operations (maps, SSL certs, general files, crt-lists)
 // - Error handling and retry logic
 package client
 

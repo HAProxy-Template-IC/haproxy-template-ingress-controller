@@ -27,12 +27,10 @@ const (
 	// DefaultDataplaneMapsDir is the default directory for HAProxy map files.
 	DefaultDataplaneMapsDir = "/etc/haproxy/maps"
 
-	// DefaultConfigPublishInterval is the default throttle interval for HAProxyCfg CRD updates.
-	// During endpoint churn each reconciliation changes the rendered config, but writing
-	// the ~500 KB CRD to etcd every 5 s creates significant write pressure. Throttling
-	// CRD publishes to 30 s reduces etcd writes ~6× while deployments to HAProxy pods
-	// (event-driven) remain unaffected.
-	DefaultConfigPublishInterval = 30 * time.Second
+	// DefaultConfigPublishInterval throttles HAProxyCfg CRD updates to coalesce
+	// rapid renders during endpoint churn. Bounds the observable gap between
+	// pod status.deployedToPods[].checksum and spec.checksum.
+	DefaultConfigPublishInterval = 10 * time.Second
 
 	// DefaultDataplaneSSLCertsDir is the Go-side fallback directory for SSL
 	// certificates, used when neither the user nor the chart sets sslCertsDir.
@@ -65,10 +63,6 @@ const (
 	// DefaultLeaderElectionRetryPeriod is the default retry period.
 	DefaultLeaderElectionRetryPeriod = 2 * time.Second
 
-	// DefaultRawPushThreshold is the default number of changes that triggers
-	// a raw config push instead of fine-grained sync.
-	DefaultRawPushThreshold = 100
-
 	// DefaultReloadVerificationTimeout is the default maximum time the Dataplane
 	// sync waits for a graceful HAProxy reload to be reported as completed.
 	DefaultReloadVerificationTimeout = 10 * time.Second
@@ -76,21 +70,7 @@ const (
 	// DefaultSyncTimeout is the default overall timeout for one Dataplane sync
 	// to a single HAProxy endpoint.
 	DefaultSyncTimeout = 2 * time.Minute
-
-	// DefaultSyncMaxRetries is the default number of HTTP 409 retries the
-	// VersionAdapter performs on a transaction commit conflict.
-	DefaultSyncMaxRetries = 3
 )
-
-// DefaultReconciliationDebounceInterval is the default leading-edge refractory
-// window the Reconciler applies before triggering a reconciliation cycle.
-//
-// Intentionally equal to pkg/k8s/types.DefaultDebounceInterval so the two
-// debouncers (per-watcher and reconciler-level) share one timing default.
-// We can't import pkg/k8s/types from pkg/core (arch-go.yml forbids it), so
-// the equality is enforced by a sanity test in pkg/k8s/types that imports
-// this constant. If you change one, change the other.
-const DefaultReconciliationDebounceInterval = 1 * time.Second
 
 // SetDefaults applies default values to unset configuration fields.
 // This modifies the config in-place and should be called after parsing
@@ -141,9 +121,6 @@ func SetDefaults(cfg *Config) {
 	}
 	if cfg.Dataplane.ConfigFile == "" {
 		cfg.Dataplane.ConfigFile = DefaultDataplaneConfigFile
-	}
-	if cfg.Dataplane.RawPushThreshold == 0 {
-		cfg.Dataplane.RawPushThreshold = DefaultRawPushThreshold
 	}
 
 	// Watched resources defaults
@@ -208,12 +185,6 @@ func (le *LeaderElectionConfig) GetRetryPeriod() time.Duration {
 	return parseDurationOr(le.RetryPeriod, DefaultLeaderElectionRetryPeriod)
 }
 
-// GetReconciliationDebounceInterval returns the configured reconciler
-// refractory window or the default if not specified or invalid.
-func (c *ControllerConfig) GetReconciliationDebounceInterval() time.Duration {
-	return parseDurationOr(c.ReconciliationDebounceInterval, DefaultReconciliationDebounceInterval)
-}
-
 // GetReloadVerificationTimeout returns the configured reload-verification
 // timeout or the default if not specified or invalid.
 func (d *DataplaneConfig) GetReloadVerificationTimeout() time.Duration {
@@ -224,14 +195,4 @@ func (d *DataplaneConfig) GetReloadVerificationTimeout() time.Duration {
 // default if not specified or invalid.
 func (d *DataplaneConfig) GetSyncTimeout() time.Duration {
 	return parseDurationOr(d.SyncTimeout, DefaultSyncTimeout)
-}
-
-// GetSyncMaxRetries returns the configured number of HTTP 409 retries or the
-// default if unset. A pointer is used so that "0 = no retries" is
-// distinguishable from "unset".
-func (d *DataplaneConfig) GetSyncMaxRetries() int {
-	if d.SyncMaxRetries == nil {
-		return DefaultSyncMaxRetries
-	}
-	return *d.SyncMaxRetries
 }

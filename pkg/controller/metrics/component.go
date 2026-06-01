@@ -74,6 +74,7 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeReconciliationStarted,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeInstanceDeploymentFailed,
+		events.EventTypeRuntimeFastPathResult,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeValidationTestsCompleted,
@@ -149,6 +150,8 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0)
 	case *events.InstanceDeploymentFailedEvent:
 		c.metrics.RecordDeployment(0, false)
+	case *events.RuntimeFastPathResultEvent:
+		c.metrics.RecordRuntimeFastPath(e.ServerUpdates, e.Failed)
 	case *events.ValidationCompletedEvent:
 		c.metrics.RecordValidation(true)
 	case *events.ValidationFailedEvent:

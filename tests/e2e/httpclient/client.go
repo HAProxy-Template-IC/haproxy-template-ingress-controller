@@ -144,16 +144,16 @@ func New(t *testing.T) *Client {
 		waitCfg: testutil.WaitConfig{
 			InitialInterval: 100 * time.Millisecond,
 			MaxInterval:     2 * time.Second,
-			// 180s budget tolerates the controller's reconcile-cycle queueing
-			// under high test parallelism. With ~70 sub-tests (annotation
-			// matrix exercises every haproxy.org/* + haproxy-ingress.github.io/*
-			// + nginx.ingress.kubernetes.io/* annotation in the chart), each
-			// new Ingress can wait several debounce windows + minDeploymentInterval
-			// before hitting HAProxy. 90s held when the matrix was ~13 rows;
-			// at 38+ rows + everything else, queueing tail extends well past
-			// that. The wait is a ceiling, not a target — most tests still
-			// resolve in <15s once the controller catches up.
-			Timeout:    180 * time.Second,
+			// 15s cap. haptic must apply a routing change (reconcile -> render
+			// -> validate -> deploy -> reload) and HAProxy must serve it well
+			// within 10s — even under the full parallel suite's churn. Backend
+			// pod readiness is gated separately (waitForServiceEndpointReady,
+			// before any probe runs), so this budget bounds ONLY haptic's own
+			// reaction. A probe that needs >15s is a convergence regression to
+			// surface, not a tail to absorb behind a generous ceiling. Tests
+			// probing a deliberately transient condition (e.g. rate-limit
+			// windows) opt into a longer budget via WithRetryBudget.
+			Timeout:    15 * time.Second,
 			Multiplier: 2.0,
 		},
 		transport:     newSharedTransport(nodeIP, defaultHTTPSPort),

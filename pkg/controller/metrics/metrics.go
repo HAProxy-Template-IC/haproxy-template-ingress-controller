@@ -37,6 +37,16 @@ type Metrics struct {
 	DeploymentTotal    prometheus.Counter
 	DeploymentErrors   prometheus.Counter
 
+	// Runtime-eligible fast-path metrics. Fires counts every fast-path attempt
+	// (one per pod per reconcile); Applies counts the subset that actually
+	// applied >=1 runtime-eligible server update. Applies stuck at 0 while
+	// Fires climbs means the fast path runs but the render diff never carries a
+	// runtime-eligible change.
+	RuntimeFastPathFires         prometheus.Counter
+	RuntimeFastPathApplies       prometheus.Counter
+	RuntimeFastPathFailures      prometheus.Counter
+	RuntimeFastPathServerUpdates prometheus.Counter
+
 	// Validation metrics
 	ValidationTotal  prometheus.Counter
 	ValidationErrors prometheus.Counter
@@ -139,6 +149,28 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_deployment_errors_total",
 			"Total number of failed deployments",
+		),
+
+		// Runtime-eligible fast-path metrics
+		RuntimeFastPathFires: pkgmetrics.NewCounter(
+			registry,
+			"haptic_runtime_fast_path_fires_total",
+			"Total runtime-eligible fast-path apply attempts (one per pod per reconcile)",
+		),
+		RuntimeFastPathApplies: pkgmetrics.NewCounter(
+			registry,
+			"haptic_runtime_fast_path_applies_total",
+			"Fast-path attempts that applied at least one runtime-eligible server update",
+		),
+		RuntimeFastPathFailures: pkgmetrics.NewCounter(
+			registry,
+			"haptic_runtime_fast_path_failures_total",
+			"Fast-path attempts that errored (best-effort; the scheduled deploy converges)",
+		),
+		RuntimeFastPathServerUpdates: pkgmetrics.NewCounter(
+			registry,
+			"haptic_runtime_fast_path_server_updates_total",
+			"Total runtime-eligible server updates applied via the fast path",
 		),
 
 		// Validation metrics
@@ -325,6 +357,21 @@ func (m *Metrics) RecordDeployment(durationSeconds float64, success bool) {
 	m.DeploymentDuration.Observe(durationSeconds)
 	if !success {
 		m.DeploymentErrors.Inc()
+	}
+}
+
+// RecordRuntimeFastPath records one runtime-eligible fast-path apply attempt:
+// serverUpdates is how many server updates it applied (0 = fired but nothing to
+// do), failed reports whether it errored.
+func (m *Metrics) RecordRuntimeFastPath(serverUpdates int, failed bool) {
+	m.RuntimeFastPathFires.Inc()
+	if failed {
+		m.RuntimeFastPathFailures.Inc()
+		return
+	}
+	if serverUpdates > 0 {
+		m.RuntimeFastPathApplies.Inc()
+		m.RuntimeFastPathServerUpdates.Add(float64(serverUpdates))
 	}
 }
 

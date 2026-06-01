@@ -301,6 +301,34 @@ func (c *Client) Sync(ctx context.Context, desiredConfig string, auxFiles *Auxil
 	return c.orch.sync(ctx, desiredConfig, opts, auxFiles)
 }
 
+// SyncRuntimeFast is the runtime-raw apply: a single raw config push of the
+// DESIRED config body with skip_reload+skip_version, carrying the precomputed
+// render diff's runtime `set server` actions (X-Runtime-Actions). No per-pod
+// fetch and no reload — cost is O(config size) for the push but independent of
+// the number of pods (the diff is computed once and shared across pods).
+//
+// updates is the precomputed runtime-eligible render diff
+// (ComputeRuntimeServerUpdates); desiredConfig is the render whose server
+// addresses/states the actions move the live worker to. Callers: the deployer's
+// runtime-raw lane (a purely runtime-eligible render — this is the only apply),
+// and the scheduler's pre-interval apply (the runtime subset of a STRUCTURAL
+// render, applied off the interval-gated path before the gated reload). When the
+// body carries structural changes they land on disk un-activated until that
+// gated reload — never hidden from a reload indefinitely. Reloads are
+// config-driven (no server-state-file — ADR-0011), so the change persists across
+// any later structural reload because that deploy re-renders the current endpoints.
+func (c *Client) SyncRuntimeFast(ctx context.Context, updates *RuntimeServerUpdates, desiredConfig string, opts *SyncOptions) (*SyncResult, error) {
+	if opts == nil {
+		opts = DefaultSyncOptions()
+	}
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	return c.orch.syncRuntimeFast(ctx, updates, desiredConfig)
+}
+
 // DryRun previews what changes would be applied without actually applying them.
 //
 // This method performs all the same steps as Sync except for the actual application:

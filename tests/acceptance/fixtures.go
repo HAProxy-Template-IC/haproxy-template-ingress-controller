@@ -507,14 +507,12 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 	// they're either safety ceilings or paid once per cluster (see the
 	// evaluation in tests/acceptance/CLAUDE.md / repo plan).
 	var (
-		controllerRefractory     string
 		minDeploymentInterval    string
 		configPublishInterval    string
 		driftPreventionInterval  string
 		watchedResourceDebounce  string
 	)
 	if b.fastTimings {
-		controllerRefractory = "100ms"
 		minDeploymentInterval = "100ms"
 		configPublishInterval = "200ms"
 		driftPreventionInterval = "10m"
@@ -556,7 +554,6 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 					}
 					return haproxyv1alpha1.ConfigPublishingConfig{}
 				}(),
-				ReconciliationDebounceInterval: controllerRefractory,
 			},
 			Logging: haproxyv1alpha1.LoggingConfig{
 				Level: "DEBUG", // DEBUG level for tests

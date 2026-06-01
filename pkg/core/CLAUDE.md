@@ -112,8 +112,10 @@ type Config struct {
 // There is intentionally no Kind field; the controller derives the kind from
 // the GroupVersionResource at watch time. DebounceInterval is optional —
 // when empty or unparseable, the watcher falls back to
-// pkg/k8s/types.DefaultDebounceInterval (1s); the field exists so noisy
-// resources (HTTPRoute, EndpointSlice) can override the global window.
+// pkg/k8s/types.DefaultDebounceInterval (2s); the field exists so noisy
+// resources (HTTPRoute, EndpointSlice) can override the global window
+// (the chart sets it to "0" on EndpointSlice for instant rolling-restart
+// reaction).
 type WatchedResource struct {
     APIVersion              string            `yaml:"api_version"`
     Resources               string            `yaml:"resources"`
@@ -320,17 +322,16 @@ const (
     DefaultMinDeploymentInterval   = 2 * time.Second
     DefaultDriftPreventionInterval = 60 * time.Second
     // The watcher debounce window is intentionally NOT redefined here;
-    // reuse pkg/k8s/types.DefaultDebounceInterval (1 * time.Second).
+    // reuse pkg/k8s/types.DefaultDebounceInterval (2 * time.Second).
 )
 
-// The reconciler refractory window mirrors the watcher debounce default
-// (1s) so a single timing default drives both debouncers. pkg/core/config
-// can't import pkg/k8s/types (arch-go.yml forbids it), so the constant is
-// duplicated by design and a test in tests/defaults_consistency_test.go
-// pins the equality. Both tunables surface to operators on the CRD —
-// per-watcher debounce on spec.watchedResources.<name>.debounceInterval,
-// reconciler refractory on spec.controller.reconciliationDebounceInterval.
-const DefaultReconciliationDebounceInterval = 1 * time.Second
+// There is no reconciler-level debounce default here. The reconciler fires
+// immediately on every event, so pkg/core/config does not mirror the
+// per-watcher debounce default, and there is no
+// spec.controller.reconciliationDebounceInterval CRD knob. The single
+// timing default that matters for batching lives in
+// pkg/k8s/types.DefaultDebounceInterval (the per-watcher window);
+// reload throttling lives in DefaultMinDeploymentInterval (the deployer).
 
 // Each Get* accessor parses the user's duration string and falls back to
 // the constant when the field is empty or invalid.

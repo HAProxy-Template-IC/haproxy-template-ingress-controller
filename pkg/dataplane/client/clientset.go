@@ -22,6 +22,36 @@ import (
 	v33 "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v33"
 )
 
+const (
+	// pooledMaxIdleConnsPerHost sizes the idle connection pool per dataplane API
+	// endpoint above Go's default (http.DefaultMaxIdleConnsPerHost = 2), so a
+	// sync's parallel in-transaction operations to one endpoint reuse keep-alive
+	// connections rather than re-establishing the excess each call.
+	pooledMaxIdleConnsPerHost = 16
+	// pooledMaxIdleConns bounds idle connections across all watched endpoints.
+	pooledMaxIdleConns = 256
+)
+
+// sharedHTTPClient is reused by every version client across all endpoints so
+// connections to each dataplane API server are pooled and kept alive between
+// calls. Pooling is orthogonal to parallelism: the transport still dials a
+// separate connection per concurrent request (HTTP/1.1 cannot multiplex), so
+// reuse does NOT serialize a parallel fan-out — it only avoids re-establishing
+// connections that the default 2-idle-per-host pool would otherwise drop.
+var sharedHTTPClient = newPooledHTTPClient()
+
+func newPooledHTTPClient() *http.Client {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		// stdlib always uses *http.Transport; fall back to the default client.
+		return &http.Client{}
+	}
+	tr := base.Clone()
+	tr.MaxIdleConnsPerHost = pooledMaxIdleConnsPerHost
+	tr.MaxIdleConns = pooledMaxIdleConns
+	return &http.Client{Transport: tr}
+}
+
 // Clientset provides access to clients for all supported HAProxy DataPlane API versions.
 // This follows the Kubernetes clientset pattern, allowing version-specific operations
 // while maintaining compatibility across HAProxy versions.
@@ -104,13 +134,14 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		}
 
 		// Parse version string (e.g., "v3.2.6 87ad0bcf" -> major=3, minor=2)
-		major, minor, err = ParseVersion(versionInfo.API.Version)
-		if err != nil {
+		major, minor = 3, 0
+		if v, perr := ParseVersion(versionInfo.API.Version); perr == nil {
+			major, minor = v.Major, v.Minor
+		} else {
 			logger.Warn("Failed to parse version, assuming v3.0",
 				"version", versionInfo.API.Version,
-				"error", err,
+				"error", perr,
 			)
-			major, minor = 3, 0
 		}
 		detectedVersion = versionInfo.API.Version
 
@@ -130,7 +161,7 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 		return nil, fmt.Errorf("unsupported DataPlane API major version: %d (only v3.x is supported)", major)
 	}
 
-	// Build capabilities map based on detected version and edition
+	// Build capabilities map based on detected version and edition.
 	capabilities := buildCapabilities(major, minor, isEnterprise)
 
 	// Create request editor for basic auth
@@ -140,39 +171,42 @@ func NewClientset(ctx context.Context, endpoint *Endpoint, logger *slog.Logger) 
 	}
 
 	// Create community clients for all supported versions
-	// Note: We create all clients regardless of detected version for maximum flexibility
-	v30Client, err := v30.NewClient(endpoint.URL, v30.WithRequestEditorFn(authEditor))
+	// Note: We create all clients regardless of detected version for maximum flexibility.
+	// All share sharedHTTPClient so connections to this endpoint are pooled and kept
+	// alive across calls (see sharedHTTPClient): connection reuse, NOT request
+	// serialization — the pool still hands out one connection per concurrent request.
+	v30Client, err := v30.NewClient(endpoint.URL, v30.WithRequestEditorFn(authEditor), v30.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.0 client: %w", err)
 	}
 
-	v31Client, err := v31.NewClient(endpoint.URL, v31.WithRequestEditorFn(authEditor))
+	v31Client, err := v31.NewClient(endpoint.URL, v31.WithRequestEditorFn(authEditor), v31.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.1 client: %w", err)
 	}
 
-	v32Client, err := v32.NewClient(endpoint.URL, v32.WithRequestEditorFn(authEditor))
+	v32Client, err := v32.NewClient(endpoint.URL, v32.WithRequestEditorFn(authEditor), v32.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.2 client: %w", err)
 	}
 
-	v33Client, err := v33.NewClient(endpoint.URL, v33.WithRequestEditorFn(authEditor))
+	v33Client, err := v33.NewClient(endpoint.URL, v33.WithRequestEditorFn(authEditor), v33.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.3 client: %w", err)
 	}
 
 	// Create enterprise clients for all supported versions
-	v30eeClient, err := v30ee.NewClient(endpoint.URL, v30ee.WithRequestEditorFn(authEditor))
+	v30eeClient, err := v30ee.NewClient(endpoint.URL, v30ee.WithRequestEditorFn(authEditor), v30ee.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.0 enterprise client: %w", err)
 	}
 
-	v31eeClient, err := v31ee.NewClient(endpoint.URL, v31ee.WithRequestEditorFn(authEditor))
+	v31eeClient, err := v31ee.NewClient(endpoint.URL, v31ee.WithRequestEditorFn(authEditor), v31ee.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.1 enterprise client: %w", err)
 	}
 
-	v32eeClient, err := v32ee.NewClient(endpoint.URL, v32ee.WithRequestEditorFn(authEditor))
+	v32eeClient, err := v32ee.NewClient(endpoint.URL, v32ee.WithRequestEditorFn(authEditor), v32ee.WithHTTPClient(sharedHTTPClient))
 	if err != nil {
 		return nil, fmt.Errorf("creating v3.2 enterprise client: %w", err)
 	}

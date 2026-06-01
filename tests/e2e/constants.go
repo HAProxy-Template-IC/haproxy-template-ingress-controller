@@ -106,7 +106,6 @@ var ControllerImageName = "haptic:test-haproxy" + ChartHAProxyVersion
 // Debug endpoint paths, mirrored from tests/acceptance/constants.go.
 const (
 	DebugPathConfig    = "/debug/vars/config"
-	DebugPathRendered  = "/debug/vars/rendered"
 	DebugPathPipeline  = "/debug/vars/pipeline"
 	DebugPathValidated = "/debug/vars/validated"
 	DebugPathErrors    = "/debug/vars/errors"
@@ -143,10 +142,10 @@ const (
 	DefaultEnvironmentReadyTimeout = 3 * time.Minute
 
 	// DefaultPerTestSetupTimeout is the budget for per-test fixture
-	// application + reaching steady-state for the new manifests.
+	// application + reaching steady-state for the new manifests. This bounds
+	// Kubernetes backend-pod readiness (scheduling + container start +
+	// readiness probe), NOT haptic's reaction, so it is deliberately NOT
+	// subject to the 15s convergence cap — pod scheduling under parallel
+	// load can legitimately exceed 15s.
 	DefaultPerTestSetupTimeout = 90 * time.Second
-
-	// DefaultRequestRetryBudget is the wall-clock budget for an HTTP probe
-	// to succeed under the client's exponential-backoff retry policy.
-	DefaultRequestRetryBudget = 30 * time.Second
 )

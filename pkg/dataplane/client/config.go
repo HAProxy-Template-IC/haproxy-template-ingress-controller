@@ -168,7 +168,15 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 //	}
 func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config string, version int64) (string, error) {
 	forceReload := true
-	resp, err := c.postHAProxyConfiguration(ctx, config, version, nil, &forceReload, nil)
+	// NB: skip_version=true was tried here and rolled back. The
+	// dataplane writes the config WITHOUT the `# _version=N` header
+	// when skip_version is set (see client-native raw.go), and
+	// GetVersion reads the version from that header. End result was
+	// GetVersion always returning 1, trapping the orchestrator in the
+	// "version==1 → raw push" branch forever (caught in CI as every
+	// reconcile re-running raw push instead of reaching the
+	// runtime-eligible fast path). Keep the version check on.
+	resp, err := c.postHAProxyConfiguration(ctx, config, version, nil, &forceReload, nil, nil)
 	if err != nil {
 		return "", fmt.Errorf("pushing raw configuration: %w", err)
 	}
@@ -193,61 +201,121 @@ func (c *DataplaneClient) PushRawConfiguration(ctx context.Context, config strin
 // This allows N server state changes to be applied atomically in a single API call,
 // replacing N serial ReplaceServerBackend calls that each re-read haproxy.cfg from disk.
 func (c *DataplaneClient) PushRawConfigurationSkipReload(ctx context.Context, config string, version int64, runtimeActions string) error {
-	skipReload := true
-	resp, err := c.postHAProxyConfiguration(ctx, config, version, &skipReload, nil, &runtimeActions)
-	if err != nil {
-		return fmt.Errorf("pushing raw configuration without reload: %w", err)
-	}
-	defer resp.Body.Close()
-	return CheckResponse(resp, "raw config push with skip_reload")
+	// Retry across a concurrent reload: while HAProxy re-execs its master, the
+	// -S socket is briefly closed and SetServer* runtime actions fail with a 500
+	// ("connection refused"). retryWhileReloadInProgress re-pushes immediately
+	// (the HTTP round-trip paces it) until the listener returns, so the runtime
+	// change lands inside option redispatch's window instead of waiting for the
+	// next reconcile. A version conflict (409) is NOT a reload signature, so it
+	// still returns immediately.
+	return retryWhileReloadInProgress(ctx, c.logger, func() error {
+		skipReload := true
+		resp, err := c.postHAProxyConfiguration(ctx, config, version, &skipReload, nil, nil, &runtimeActions)
+		if err != nil {
+			return fmt.Errorf("pushing raw configuration without reload: %w", err)
+		}
+		defer resp.Body.Close()
+		return CheckResponse(resp, "raw config push with skip_reload")
+	})
+}
+
+// PushRawConfigurationSkipReloadSkipVersion is the queue-bypass variant of
+// PushRawConfigurationSkipReload: it applies the runtime actions without a
+// reload AND without the optimistic-locking version check (skip_version).
+//
+// The deployer's runtime bypass fires this immediately when a queued reconcile
+// produces runtime-eligible server changes, OUTSIDE the deployment scheduler's
+// serialization — so a pod-IP rotation reaches the live worker in ~ms instead
+// of waiting in the pending slot behind an in-flight ~200ms structural reload.
+// The caller passes the CURRENT on-disk config as the body (so a co-batched
+// reconcile's structural changes are NOT written to disk without a reload); only
+// the runtime actions take effect on the live worker. The push still bumps the
+// config version, so skip_version drops the optimistic-lock check; the gated
+// scheduled deploy runs only after the in-flight one finishes and re-fetches the
+// version, so there is no collision. The runtime change persists across the
+// scheduled deploy's structural reload because that deploy re-renders the
+// current endpoints (config-driven; no server-state-file — ADR-0011).
+func (c *DataplaneClient) PushRawConfigurationSkipReloadSkipVersion(ctx context.Context, config, runtimeActions string) error {
+	// Same reload-clobber retry as PushRawConfigurationSkipReload (see there).
+	return retryWhileReloadInProgress(ctx, c.logger, func() error {
+		skipReload := true
+		skipVersion := true
+		resp, err := c.postHAProxyConfiguration(ctx, config, 0, &skipReload, nil, &skipVersion, &runtimeActions)
+		if err != nil {
+			return fmt.Errorf("pushing raw configuration without reload (skip_version): %w", err)
+		}
+		defer resp.Body.Close()
+		return CheckResponse(resp, "raw config push with skip_reload+skip_version")
+	})
 }
 
 // postHAProxyConfiguration dispatches a POST /haproxy/configuration call to all supported
-// API version variants. skipReload, forceReload, and runtimeActions are optional — pass nil to omit them.
-func (c *DataplaneClient) postHAProxyConfiguration(ctx context.Context, config string, version int64, skipReload, forceReload *bool, runtimeActions *string) (*http.Response, error) {
-	// Convert int64 to each version's API-specific Version type (int alias)
-	v33Version := v33.Version(version)
-	v32Version := v32.Version(version)
-	v31Version := v31.Version(version)
-	v30Version := v30.Version(version)
-	v32eeVersion := v32ee.Version(version)
-	v31eeVersion := v31ee.Version(version)
-	v30eeVersion := v30ee.Version(version)
+// API version variants. skipReload, forceReload, skipVersion, and runtimeActions are
+// optional — pass nil to omit them. When skipVersion=true the version query param is
+// elided too: skip_version tells the dataplane to enforce the pushed config without an
+// optimistic-locking check, so sending a stale (or zero) version alongside is at best
+// noise and at worst confusing in API traces.
+func (c *DataplaneClient) postHAProxyConfiguration(ctx context.Context, config string, version int64, skipReload, forceReload, skipVersion *bool, runtimeActions *string) (*http.Response, error) {
+	// When skipVersion is true the dataplane enforces the pushed config without
+	// an optimistic-locking check, so we elide the version query param entirely
+	// (sending a value alongside skip_version is at best noise, at worst
+	// confusing in API traces).
+	skipVer := skipVersion != nil && *skipVersion
+
+	v33Ver := v33.Version(version)
+	v32Ver := v32.Version(version)
+	v31Ver := v31.Version(version)
+	v30Ver := v30.Version(version)
+	v32eeVer := v32ee.Version(version)
+	v31eeVer := v31ee.Version(version)
+	v30eeVer := v30ee.Version(version)
+
+	v33VerP := &v33Ver
+	v32VerP := &v32Ver
+	v31VerP := &v31Ver
+	v30VerP := &v30Ver
+	v32eeVerP := &v32eeVer
+	v31eeVerP := &v31eeVer
+	v30eeVerP := &v30eeVer
+	if skipVer {
+		v33VerP, v32VerP, v31VerP, v30VerP = nil, nil, nil, nil
+		v32eeVerP, v31eeVerP, v30eeVerP = nil, nil, nil
+	}
 
 	return c.Dispatch(ctx, CallFunc[*http.Response]{
 		V33: func(c *v33.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v33.PostHAProxyConfigurationParams{
-				Version: &v33Version, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v33VerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 		V32: func(c *v32.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32.PostHAProxyConfigurationParams{
-				Version: &v32Version, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v32VerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 		V31: func(c *v31.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v31.PostHAProxyConfigurationParams{
-				Version: &v31Version, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v31VerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 		V30: func(c *v30.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v30.PostHAProxyConfigurationParams{
-				Version: &v30Version, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v30VerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 		V32EE: func(c *v32ee.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v32ee.PostHAProxyConfigurationParams{
-				Version: &v32eeVersion, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v32eeVerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 		V31EE: func(c *v31ee.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v31ee.PostHAProxyConfigurationParams{
-				Version: &v31eeVersion, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v31eeVerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 		V30EE: func(c *v30ee.Client) (*http.Response, error) {
 			return c.PostHAProxyConfigurationWithTextBody(ctx, &v30ee.PostHAProxyConfigurationParams{
-				Version: &v30eeVersion, SkipReload: skipReload, ForceReload: forceReload, XRuntimeActions: runtimeActions,
+				Version: v30eeVerP, SkipReload: skipReload, ForceReload: forceReload, SkipVersion: skipVersion, XRuntimeActions: runtimeActions,
 			}, config)
 		},
 	})

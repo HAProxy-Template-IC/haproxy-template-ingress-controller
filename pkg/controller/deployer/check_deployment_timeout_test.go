@@ -22,16 +22,16 @@ import (
 
 // checkDeploymentTimeout is the safety net that recovers from stuck
 // deployments after leadership transitions where the
-// DeploymentCompletedEvent may never arrive. The existing
-// "timeout only fires in deploying phase" test covers two cases
-// (rate-limiting skip + deploying expired). These tests pin the
-// load-bearing observable side effects that the existing test
+// DeploymentCompletedEvent may never arrive. The
+// "timeout only fires when deployInFlight" test (in scheduler_test.go)
+// covers two cases (not-in-flight skip + in-flight expired). These
+// tests pin the load-bearing observable side effects that test
 // doesn't check:
 //
 //  1. zero startTime → no fire (defensive — never seen in production
 //     but a regression that fired here would publish spurious cancels
 //     immediately on every check during the brief window between
-//     phase=phaseDeploying being set and deploymentStartTime being
+//     deployInFlight being set and deploymentStartTime being
 //     populated).
 //
 //  2. elapsed <= timeout → no fire (the normal-progress branch).
@@ -55,17 +55,18 @@ import (
 //     would corrupt deployer state.
 
 func TestCheckDeploymentTimeout_NoFireWhenStartTimeIsZero(t *testing.T) {
-	// Defensive contract: phase=phaseDeploying but startTime is the
+	// Defensive contract: deployInFlight=true but startTime is the
 	// zero value. This shouldn't happen in production but the code
 	// has an explicit guard. A regression that removed it would fire
 	// the timeout immediately on every tick in the brief window
-	// between phase transition and start-time assignment.
+	// between deployInFlight being set and start-time assignment.
 	bus := testutil.NewTestBus()
 	bus.Start()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Time{} // ← zero, the guard
 	scheduler.state.activeCorrelationID = "should-not-be-touched"
 	scheduler.schedulerMutex.Unlock()
@@ -74,8 +75,8 @@ func TestCheckDeploymentTimeout_NoFireWhenStartTimeIsZero(t *testing.T) {
 
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	assert.Equal(t, phaseDeploying, scheduler.state.phase,
-		"phase MUST remain phaseDeploying when startTime is zero — "+
+	assert.True(t, scheduler.state.deployInFlight,
+		"deployInFlight MUST remain true when startTime is zero — "+
 			"a regression that removed the IsZero() guard would fire the "+
 			"timeout immediately during the brief setup window")
 	assert.Equal(t, "should-not-be-touched", scheduler.state.activeCorrelationID,
@@ -83,15 +84,16 @@ func TestCheckDeploymentTimeout_NoFireWhenStartTimeIsZero(t *testing.T) {
 }
 
 func TestCheckDeploymentTimeout_NoFireWhenElapsedWithinTimeout(t *testing.T) {
-	// Normal-progress branch: phase=phaseDeploying, startTime recent.
+	// Normal-progress branch: deployInFlight=true, startTime recent.
 	// The timeout MUST NOT fire — that's the whole point of having a
 	// timeout instead of a hard deadline.
 	bus := testutil.NewTestBus()
 	bus.Start()
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 30*time.Second)
+	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Now() // just started
 	scheduler.state.activeCorrelationID = "in-progress"
 	scheduler.schedulerMutex.Unlock()
@@ -100,8 +102,8 @@ func TestCheckDeploymentTimeout_NoFireWhenElapsedWithinTimeout(t *testing.T) {
 
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	assert.Equal(t, phaseDeploying, scheduler.state.phase,
-		"phase MUST remain phaseDeploying when elapsed <= timeout — "+
+	assert.True(t, scheduler.state.deployInFlight,
+		"deployInFlight MUST remain true when elapsed <= timeout — "+
 			"a regression that flipped the comparison would cancel every "+
 			"in-progress deployment on the first check")
 	assert.Equal(t, "in-progress", scheduler.state.activeCorrelationID)
@@ -117,10 +119,11 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveCorrelationID(t *t
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+	initLoopChannels(scheduler)
 
 	const activeCorrID = "in-flight-deployment-corr-1"
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second) // long expired
 	scheduler.state.activeCorrelationID = activeCorrID
 	scheduler.schedulerMutex.Unlock()
@@ -152,34 +155,37 @@ func TestCheckDeploymentTimeout_PublishesCancelEventWithActiveCorrelationID(t *t
 			"defeat the recovery (the trigger could be merged into an "+
 			"already-pending deployment that's also stuck)")
 
-	// State should be reset to idle.
+	// State should be reset (no longer in flight).
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	assert.Equal(t, phaseIdle, scheduler.state.phase,
-		"after timeout recovery, phase MUST be reset to idle")
+	assert.False(t, scheduler.state.deployInFlight,
+		"after timeout recovery, deployInFlight MUST be cleared")
 	assert.True(t, scheduler.state.deploymentStartTime.IsZero(),
 		"deploymentStartTime MUST be reset so the next deployment "+
 			"starts fresh")
 	assert.Empty(t, scheduler.state.activeCorrelationID,
 		"activeCorrelationID MUST be cleared so a future stale completion "+
 			"event from the cancelled deployment doesn't get matched")
+	assert.False(t, scheduler.state.lastDeploymentEndTime.IsZero(),
+		"the timeout counts as a deploy-end so the loop rate-limits the next deploy from here")
 }
 
 func TestCheckDeploymentTimeout_DoesNotPublishCancelWithEmptyCorrelationID(t *testing.T) {
 	// Edge case: timeout fires but activeCorrelationID is empty (e.g.
-	// the deployment scheduler was forced into the deploying phase
-	// without populating the correlation ID — defensive). The cancel
-	// event MUST NOT be published in this case because it would carry
-	// an empty correlation ID, which the deployer can't match against
-	// any active deployment, leading to corrupted deployer state.
+	// the deployment scheduler was forced in-flight without populating
+	// the correlation ID — defensive). The cancel event MUST NOT be
+	// published in this case because it would carry an empty correlation
+	// ID, which the deployer can't match against any active deployment,
+	// leading to corrupted deployer state.
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("cancel-empty-corr-watcher", 50)
 	bus.Start()
 
 	scheduler := NewDeploymentScheduler(bus, testutil.NewTestLogger(), 0, 1*time.Millisecond)
+	initLoopChannels(scheduler)
 
 	scheduler.schedulerMutex.Lock()
-	scheduler.state.phase = phaseDeploying
+	scheduler.state.deployInFlight = true
 	scheduler.state.deploymentStartTime = time.Now().Add(-10 * time.Second)
 	scheduler.state.activeCorrelationID = "" // ← empty, the guard
 	scheduler.schedulerMutex.Unlock()

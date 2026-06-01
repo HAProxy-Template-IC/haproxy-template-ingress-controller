@@ -86,6 +86,15 @@ var DevValuesYAML []byte
 //go:embed e2e-values.yaml
 var E2EValuesYAML []byte
 
+// MetricsServerYAML is the upstream metrics-server install manifest
+// (v0.7.2) patched with --kubelet-insecure-tls (kind's kubelet serves a
+// self-signed cert) and a 10s scrape resolution. The e2e TestMain applies
+// it best-effort so `kubectl top pods/nodes` works for the rolling-restart
+// failure snapshot's utilization capture. Not used in production.
+//
+//go:embed metrics-server.yaml
+var MetricsServerYAML []byte
+
 // ConformanceValuesYAML is the helm values file used by the upstream
 // Gateway API / Ingress conformance suites. Stripped-down version of
 // dev-values.yaml: no HTTP-store demo (the blocklist URL was burning

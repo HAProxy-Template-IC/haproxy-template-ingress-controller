@@ -75,7 +75,6 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		ConfigPublishing: config.ConfigPublishingConfig{
 			CompressionThreshold: compressionThreshold,
 		},
-		ReconciliationDebounceInterval: spec.Controller.ReconciliationDebounceInterval,
 	}
 
 	// Convert logging config
@@ -95,12 +94,9 @@ func ConvertSpec(spec *v1alpha1.HAProxyTemplateConfigSpec) (*config.Config, erro
 		SSLCertsDir:               spec.Dataplane.SSLCertsDir,
 		GeneralStorageDir:         spec.Dataplane.GeneralStorageDir,
 		ConfigFile:                spec.Dataplane.ConfigFile,
-		MaxParallel:               spec.Dataplane.MaxParallel,
-		RawPushThreshold:          spec.Dataplane.RawPushThreshold,
 		ConfigPublishInterval:     spec.Dataplane.ConfigPublishInterval,
 		ReloadVerificationTimeout: spec.Dataplane.ReloadVerificationTimeout,
 		SyncTimeout:               spec.Dataplane.SyncTimeout,
-		SyncMaxRetries:            spec.Dataplane.SyncMaxRetries,
 	}
 
 	// Convert watched resources

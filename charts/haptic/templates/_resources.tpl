@@ -133,23 +133,6 @@ Input: .Values.haproxy.dataplane context
 {{- end -}}
 
 {{/*
-Calculate maxParallel for controller config dataplane section.
-If user explicitly set maxParallel (including 0), use that value.
-Otherwise, auto-calculate as dataplane GOMAXPROCS * 10.
-Input: root context (.)
-*/}}
-{{- define "haptic.config.dataplane.maxParallel" -}}
-{{- $dpConfig := .Values.controller.config.dataplane -}}
-{{- /* Check if user explicitly set maxParallel to a number (including 0) */ -}}
-{{- if hasKey $dpConfig "maxParallel" -}}
-  {{- $dpConfig.maxParallel | int -}}
-{{- else -}}
-  {{- /* Auto-calculate: GOMAXPROCS * 10 */ -}}
-  {{- mul (include "haptic.dataplane.gomaxprocsValue" .Values.haproxy.dataplane | int) 10 -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
 Auto-calculate GOMAXPROCS for dataplane container.
 Returns env var YAML if:
   - No CPU limit is set (automaxprocs won't work correctly)

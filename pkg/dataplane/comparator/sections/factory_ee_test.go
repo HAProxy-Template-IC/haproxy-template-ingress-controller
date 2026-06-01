@@ -12,11 +12,11 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 	profile := &v32ee.BotmgmtProfile{Name: "bot-profile-1"}
 
 	tests := []struct {
-		name             string
-		factory          func(*v32ee.BotmgmtProfile) Operation
-		wantType         OperationType
-		wantSection      string
-		wantPriority     int
+		name        string
+		factory     func(*v32ee.BotmgmtProfile) Operation
+		wantType    OperationType
+		wantSection string
+
 		wantDescContains string
 	}{
 		{
@@ -24,7 +24,6 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 			factory:          NewBotMgmtProfileCreate,
 			wantType:         OperationCreate,
 			wantSection:      "botmgmt-profile",
-			wantPriority:     effectivePriority(PriorityEEBotMgmtProfile),
 			wantDescContains: "Create botmgmt-profile 'bot-profile-1'",
 		},
 		{
@@ -32,7 +31,6 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 			factory:          NewBotMgmtProfileUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "botmgmt-profile",
-			wantPriority:     effectivePriority(PriorityEEBotMgmtProfile),
 			wantDescContains: "Update botmgmt-profile 'bot-profile-1'",
 		},
 		{
@@ -40,7 +38,6 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 			factory:          NewBotMgmtProfileDelete,
 			wantType:         OperationDelete,
 			wantSection:      "botmgmt-profile",
-			wantPriority:     effectivePriority(PriorityEEBotMgmtProfile),
 			wantDescContains: "Delete botmgmt-profile 'bot-profile-1'",
 		},
 	}
@@ -48,7 +45,7 @@ func TestBotMgmtProfileFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(profile)
-			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantPriority, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantDescContains)
 		})
 	}
 }
@@ -57,11 +54,11 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 	captcha := &v32ee.Captcha{Name: "recaptcha-v3"}
 
 	tests := []struct {
-		name             string
-		factory          func(*v32ee.Captcha) Operation
-		wantType         OperationType
-		wantSection      string
-		wantPriority     int
+		name        string
+		factory     func(*v32ee.Captcha) Operation
+		wantType    OperationType
+		wantSection string
+
 		wantDescContains string
 	}{
 		{
@@ -69,7 +66,6 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 			factory:          NewCaptchaCreate,
 			wantType:         OperationCreate,
 			wantSection:      "captcha",
-			wantPriority:     effectivePriority(PriorityEECaptcha),
 			wantDescContains: "Create captcha 'recaptcha-v3'",
 		},
 		{
@@ -77,7 +73,6 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 			factory:          NewCaptchaUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "captcha",
-			wantPriority:     effectivePriority(PriorityEECaptcha),
 			wantDescContains: "Update captcha 'recaptcha-v3'",
 		},
 		{
@@ -85,7 +80,6 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 			factory:          NewCaptchaDelete,
 			wantType:         OperationDelete,
 			wantSection:      "captcha",
-			wantPriority:     effectivePriority(PriorityEECaptcha),
 			wantDescContains: "Delete captcha 'recaptcha-v3'",
 		},
 	}
@@ -93,7 +87,7 @@ func TestCaptchaFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(captcha)
-			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantPriority, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantDescContains)
 		})
 	}
 }
@@ -102,11 +96,11 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 	profile := &v32ee.WafProfile{Name: "waf-default"}
 
 	tests := []struct {
-		name             string
-		factory          func(*v32ee.WafProfile) Operation
-		wantType         OperationType
-		wantSection      string
-		wantPriority     int
+		name        string
+		factory     func(*v32ee.WafProfile) Operation
+		wantType    OperationType
+		wantSection string
+
 		wantDescContains string
 	}{
 		{
@@ -114,7 +108,6 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 			factory:          NewWAFProfileCreate,
 			wantType:         OperationCreate,
 			wantSection:      "waf-profile",
-			wantPriority:     effectivePriority(PriorityEEWAFProfile),
 			wantDescContains: "Create waf-profile 'waf-default'",
 		},
 		{
@@ -122,7 +115,6 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 			factory:          NewWAFProfileUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "waf-profile",
-			wantPriority:     effectivePriority(PriorityEEWAFProfile),
 			wantDescContains: "Update waf-profile 'waf-default'",
 		},
 		{
@@ -130,7 +122,6 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 			factory:          NewWAFProfileDelete,
 			wantType:         OperationDelete,
 			wantSection:      "waf-profile",
-			wantPriority:     effectivePriority(PriorityEEWAFProfile),
 			wantDescContains: "Delete waf-profile 'waf-default'",
 		},
 	}
@@ -138,7 +129,7 @@ func TestWAFProfileFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(profile)
-			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantPriority, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantDescContains)
 		})
 	}
 }
@@ -148,11 +139,11 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 	wafGlobal := &v32ee.WafGlobal{AnalyzerCache: &cache}
 
 	tests := []struct {
-		name             string
-		factory          func(*v32ee.WafGlobal) Operation
-		wantType         OperationType
-		wantSection      string
-		wantPriority     int
+		name        string
+		factory     func(*v32ee.WafGlobal) Operation
+		wantType    OperationType
+		wantSection string
+
 		wantDescContains string
 	}{
 		{
@@ -160,7 +151,6 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 			factory:          NewWAFGlobalCreate,
 			wantType:         OperationCreate,
 			wantSection:      "waf-global",
-			wantPriority:     effectivePriority(PriorityEEWAFGlobal),
 			wantDescContains: "Create waf-global configuration",
 		},
 		{
@@ -168,7 +158,6 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 			factory:          NewWAFGlobalUpdate,
 			wantType:         OperationUpdate,
 			wantSection:      "waf-global",
-			wantPriority:     effectivePriority(PriorityEEWAFGlobal),
 			wantDescContains: "Update waf-global configuration",
 		},
 		{
@@ -176,7 +165,6 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 			factory:          NewWAFGlobalDelete,
 			wantType:         OperationDelete,
 			wantSection:      "waf-global",
-			wantPriority:     effectivePriority(PriorityEEWAFGlobal),
 			wantDescContains: "Delete waf-global configuration",
 		},
 	}
@@ -184,7 +172,7 @@ func TestWAFGlobalFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(wafGlobal)
-			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantPriority, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, tt.wantSection, tt.wantDescContains)
 		})
 	}
 }
@@ -203,20 +191,6 @@ func TestEENameExtractors(t *testing.T) {
 	t.Run("WAFProfileName", func(t *testing.T) {
 		profile := &v32ee.WafProfile{Name: "waf-default"}
 		assert.Equal(t, "waf-default", WAFProfileName(profile))
-	})
-}
-
-func TestEEIdentityTransforms(t *testing.T) {
-	t.Run("Identity returns same pointer", func(t *testing.T) {
-		profile := &v32ee.BotmgmtProfile{Name: "test"}
-		assert.Same(t, profile, Identity[*v32ee.BotmgmtProfile](profile))
-	})
-}
-
-func TestEENilTransforms(t *testing.T) {
-	t.Run("Nil returns nil", func(t *testing.T) {
-		profile := &v32ee.BotmgmtProfile{Name: "test"}
-		assert.Nil(t, Nil[*v32ee.BotmgmtProfile](profile))
 	})
 }
 
@@ -263,18 +237,5 @@ func TestWAFGlobalSingleton_Methods(t *testing.T) {
 
 	assert.Equal(t, OperationCreate, op.Type())
 	assert.Equal(t, "waf-global", op.Section())
-	assert.Equal(t, effectivePriority(PriorityEEWAFGlobal), op.Priority())
 	assert.Contains(t, op.Describe(), "waf-global")
-}
-
-func TestEEPriorityConstants(t *testing.T) {
-	// WAF global should be created before WAF profiles
-	assert.Less(t, PriorityEEWAFGlobal, PriorityEEWAFProfile,
-		"WAF global should have lower priority (execute first) than WAF profiles")
-
-	// All EE sections should have reasonable priority values
-	assert.Greater(t, PriorityEEBotMgmtProfile, 0)
-	assert.Greater(t, PriorityEECaptcha, 0)
-	assert.Greater(t, PriorityEEWAFGlobal, 0)
-	assert.Greater(t, PriorityEEWAFProfile, 0)
 }

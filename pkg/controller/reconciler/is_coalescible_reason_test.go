@@ -22,26 +22,25 @@ import (
 //
 // The function is small but EVERY reason mapping is load-bearing:
 //
-//   STATE UPDATES (coalescible=true): only the latest matters
-//     - "debounce_timer"        → batched resource changes
-//     - "resource_change"       → individual resource change
-//     - "http_resource_change"  → HTTP content changed
+//	STATE UPDATES (coalescible=true): only the latest matters
+//	  - "resource_change"       → individual resource change
+//	  - "http_resource_change"  → HTTP content changed
 //
-//   COMMANDS (coalescible=false): MUST be processed individually
-//     - "index_synchronized"    → initial sync complete; if coalesced
-//                                 the controller would never produce
-//                                 the first reconciliation
-//     - "drift_prevention"      → periodic drift enforcement; if
-//                                 coalesced under load, drift would
-//                                 silently accumulate and never get
-//                                 corrected
-//     - "became_leader"         → leadership acquired; if coalesced
-//                                 the new leader's initial state
-//                                 reconciliation would be skipped
-//                                 leaving HAProxy on stale config
-//     - "http_resource_accepted" → validated HTTP content promoted;
-//                                  if coalesced, the deploy of the
-//                                  new content would never fire
+//	COMMANDS (coalescible=false): MUST be processed individually
+//	  - "index_synchronized"    → initial sync complete; if coalesced
+//	                              the controller would never produce
+//	                              the first reconciliation
+//	  - "drift_prevention"      → periodic drift enforcement; if
+//	                              coalesced under load, drift would
+//	                              silently accumulate and never get
+//	                              corrected
+//	  - "became_leader"         → leadership acquired; if coalesced
+//	                              the new leader's initial state
+//	                              reconciliation would be skipped
+//	                              leaving HAProxy on stale config
+//	  - "http_resource_accepted" → validated HTTP content promoted;
+//	                               if coalesced, the deploy of the
+//	                               new content would never fire
 //
 // A regression that flipped the boolean for ANY of these reasons
 // would change runtime behavior in a way that wouldn't surface in
@@ -58,14 +57,6 @@ func TestIsCoalescibleReason(t *testing.T) {
 		why    string
 	}{
 		// State updates → coalescible (only latest matters)
-		{
-			name:   "debounce_timer is coalescible (state update)",
-			reason: "debounce_timer",
-			want:   true,
-			why: "the whole point of the debounce timer is that only the latest " +
-				"batch matters; a regression making this non-coalescible would " +
-				"defeat the debounce by forcing every batch to be processed",
-		},
 		{
 			name:   "resource_change is coalescible (state update)",
 			reason: "resource_change",

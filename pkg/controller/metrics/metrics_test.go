@@ -85,6 +85,31 @@ func TestMetrics_RecordDeployment(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.DeploymentErrors))
 }
 
+func TestMetrics_RecordRuntimeFastPath(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	metrics := NewMetrics(registry)
+
+	// Fired, nothing runtime-eligible to apply.
+	metrics.RecordRuntimeFastPath(0, false)
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathFires))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeFastPathApplies))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeFastPathServerUpdates))
+	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeFastPathFailures))
+
+	// Fired and applied two server updates.
+	metrics.RecordRuntimeFastPath(2, false)
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeFastPathFires))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathApplies))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeFastPathServerUpdates))
+
+	// Failed: a fire + a failure, but NOT an apply (server-update count unchanged).
+	metrics.RecordRuntimeFastPath(0, true)
+	assert.Equal(t, 3.0, testutil.ToFloat64(metrics.RuntimeFastPathFires))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathApplies))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeFastPathFailures))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RuntimeFastPathServerUpdates))
+}
+
 func TestMetrics_RecordValidation(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

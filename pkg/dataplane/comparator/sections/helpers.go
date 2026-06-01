@@ -9,13 +9,6 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 )
 
-// Identity returns the model as-is. Used as transform function for create/update operations.
-func Identity[T any](model T) T { return model }
-
-// Nil returns the zero value of T. Used as transform function for delete operations
-// where the model isn't needed.
-func Nil[T any](_ T) T { var zero T; return zero }
-
 // DescribeTopLevel returns a description function for top-level operations.
 func DescribeTopLevel(op OperationType, section, name string) func() string {
 	verb := opVerb(op)

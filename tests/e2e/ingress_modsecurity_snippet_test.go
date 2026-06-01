@@ -182,7 +182,7 @@ func TestIngressModSecuritySnippetHotReload(t *testing.T) {
 func waitForSnippetOnPod(ctx context.Context, t *testing.T, markers []string) {
 	t.Helper()
 	pod := firstHAProxyPodName(ctx, t)
-	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := testutil.WaitForCondition(waitCtx, testutil.DefaultWaitConfig(), func(c context.Context) (bool, error) {
 		content, err := readFileFromHAProxyPod(c, pod, "/etc/haproxy/general/spoa-hub-config.toml")
@@ -206,7 +206,7 @@ func waitForSnippetOnPod(ctx context.Context, t *testing.T, markers []string) {
 func waitForSnippetGoneFromPod(ctx context.Context, t *testing.T, marker string) {
 	t.Helper()
 	pod := firstHAProxyPodName(ctx, t)
-	waitCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	if err := testutil.WaitForCondition(waitCtx, testutil.DefaultWaitConfig(), func(c context.Context) (bool, error) {
 		content, err := readFileFromHAProxyPod(c, pod, "/etc/haproxy/general/spoa-hub-config.toml")

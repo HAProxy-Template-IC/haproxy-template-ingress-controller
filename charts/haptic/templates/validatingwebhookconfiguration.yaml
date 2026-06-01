@@ -21,9 +21,10 @@
     {{- $webhookRules = append $webhookRules (dict "name" $name "resource" $resource) }}
   {{- end }}
 {{- end }}
-{{- if $webhookRules }}
+{{- $htcCfg := default (dict "enabled" true) $webhook.haproxyTemplateConfig }}
 {{- $webhookSvcName := include "haptic.webhook.serviceName" . }}
 {{- $ns := .Release.Namespace }}
+{{- if or $webhookRules $htcCfg.enabled }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -62,6 +63,54 @@ webhooks:
     admissionReviewVersions:
       - v1
     timeoutSeconds: 10
+{{- end }}
+{{- /*
+  HAProxyTemplateConfig admission webhook. Validates the controller's own
+  CRD at apply time — operators see template errors with line-numbered
+  haproxy -c output before the resource ever lands in etcd. With this
+  upstream gate in place, the leader-side reconcile pipeline can safely
+  skip haproxy -c (saves ~94 ms on every render — see
+  project_haptic_rolling_restart_root_cause.md).
+
+  failurePolicy: Ignore is intentional — the worst case of webhook
+  unavailability is "operator gets a delayed error from the dataplane API
+  rejection on the next reload" rather than "broken config silently runs".
+  This avoids the chicken-and-egg of first install (controller starting
+  while Helm applies the CRD) and any recovery scenario (operator must be
+  able to apply CRD fixes while the controller is degraded).
+
+  timeoutSeconds: 5 is shorter than the watched-resource webhook's 10 s —
+  CRD updates are infrequent (operator-triggered), so a quick timeout
+  failing back to Ignore is preferable to a 10 s hang during partial-
+  degradation scenarios.
+*/}}
+{{- if $htcCfg.enabled }}
+  - name: haproxytemplateconfig.validation.{{ $webhookSvcName }}
+    clientConfig:
+      {{- if not $cm.enabled }}
+      caBundle: {{ required "webhook.caBundle is required when webhook.certManager.enabled is false" $webhook.caBundle }}
+      {{- end }}
+      service:
+        namespace: {{ $ns }}
+        name: {{ $webhookSvcName }}
+        path: /validate
+    rules:
+      - apiGroups:
+          - haproxy-haptic.org
+        apiVersions:
+          - v1alpha1
+        resources:
+          - haproxytemplateconfigs
+        operations:
+          - CREATE
+          - UPDATE
+        scope: Namespaced
+    failurePolicy: Ignore
+    matchPolicy: Equivalent
+    sideEffects: None
+    admissionReviewVersions:
+      - v1
+    timeoutSeconds: 5
 {{- end }}
 {{- end }}
 {{- end }}

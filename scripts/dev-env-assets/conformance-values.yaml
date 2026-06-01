@@ -60,14 +60,12 @@ controller:
     logging:
       level: DEBUG
 
-    # Same fast-timings profile as dev-values — chosen for the
-    # upstream conformance suite's no-retry HTTP polls, see the
-    # comment block in dev-values.yaml for the full rationale.
-    controller:
-      reconciliationDebounceInterval: 10ms
+    # Timing overrides removed: chart defaults (100ms per-watcher and
+    # reconciler debounce) are tight enough for the conformance suite's
+    # no-retry HTTP polls. driftPreventionInterval stays at 10m so the
+    # background drift-check loop doesn't interleave with the suite's
+    # tight polling cadence.
     dataplane:
-      minDeploymentInterval: 10ms
-      configPublishInterval: 50ms
       driftPreventionInterval: 10m
 
     templatingSettings:
