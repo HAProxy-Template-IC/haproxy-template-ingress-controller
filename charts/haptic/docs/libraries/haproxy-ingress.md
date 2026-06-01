@@ -981,7 +981,7 @@ This library does not add additional watched resources. It uses Ingress resource
 
 ## Implementation Status Summary
 
-The library processes **66** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress.yaml`).
+The library processes **66** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress/`).
 
 **Supported by category:**
 
