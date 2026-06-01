@@ -16,8 +16,6 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // captureIdentifier extracts the type identifier from a Capture model.
@@ -43,42 +41,15 @@ func httpAfterResponseRuleIdentifier(rule *models.HTTPAfterResponseRule) string 
 
 // Index-child CRUD builders for TCP/HTTP rules, checks, sticks and captures.
 var (
-	tcpRequestRuleFrontendOps = NewIndexChildCRUD[*models.TCPRequestRule](
-		"tcp_request_rule", "TCP request rule", "frontend", PriorityRule, tcpRequestRuleIdentifier,
-		executors.TCPRequestRuleFrontendCreate(), executors.TCPRequestRuleFrontendUpdate(), executors.TCPRequestRuleFrontendDelete(),
-	)
-	tcpRequestRuleBackendOps = NewIndexChildCRUD[*models.TCPRequestRule](
-		"tcp_request_rule", "TCP request rule", "backend", PriorityRule, tcpRequestRuleIdentifier,
-		executors.TCPRequestRuleBackendCreate(), executors.TCPRequestRuleBackendUpdate(), executors.TCPRequestRuleBackendDelete(),
-	)
-	tcpResponseRuleBackendOps = NewIndexChildCRUD[*models.TCPResponseRule](
-		"tcp_response_rule", "TCP response rule", "backend", PriorityRule, tcpResponseRuleIdentifier,
-		executors.TCPResponseRuleBackendCreate(), executors.TCPResponseRuleBackendUpdate(), executors.TCPResponseRuleBackendDelete(),
-	)
-	stickRuleBackendOps = NewIndexChildCRUD[*models.StickRule](
-		"stick_rule", "stick rule", "backend", PriorityStickRule, stickRuleIdentifier,
-		executors.StickRuleBackendCreate(), executors.StickRuleBackendUpdate(), executors.StickRuleBackendDelete(),
-	)
-	httpAfterResponseRuleBackendOps = NewIndexChildCRUD[*models.HTTPAfterResponseRule](
-		"http_after_response_rule", "HTTP after response rule", "backend", PriorityHTTPAfterRule, httpAfterResponseRuleIdentifier,
-		executors.HTTPAfterResponseRuleBackendCreate(), executors.HTTPAfterResponseRuleBackendUpdate(), executors.HTTPAfterResponseRuleBackendDelete(),
-	)
-	httpAfterResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPAfterResponseRule](
-		"http_after_response_rule", "HTTP after response rule", "frontend", PriorityHTTPAfterRule, httpAfterResponseRuleIdentifier,
-		executors.HTTPAfterResponseRuleFrontendCreate(), executors.HTTPAfterResponseRuleFrontendUpdate(), executors.HTTPAfterResponseRuleFrontendDelete(),
-	)
-	httpCheckBackendOps = NewIndexChildCRUD[*models.HTTPCheck](
-		"http_check", "HTTP check", "backend", PriorityHTTPCheck, httpCheckIdentifier,
-		executors.HTTPCheckBackendCreate(), executors.HTTPCheckBackendUpdate(), executors.HTTPCheckBackendDelete(),
-	)
-	tcpCheckBackendOps = NewIndexChildCRUD[*models.TCPCheck](
-		"tcp_check", "TCP check", "backend", PriorityTCPCheck, tcpCheckIdentifier,
-		executors.TCPCheckBackendCreate(), executors.TCPCheckBackendUpdate(), executors.TCPCheckBackendDelete(),
-	)
-	captureFrontendOps = NewIndexChildCRUD[*models.Capture](
-		"capture", "capture", "frontend", PriorityCapture, captureIdentifier,
-		executors.DeclareCaptureFrontendCreate(), executors.DeclareCaptureFrontendUpdate(), executors.DeclareCaptureFrontendDelete(),
-	)
+	tcpRequestRuleFrontendOps        = NewIndexChildCRUD[*models.TCPRequestRule]("tcp_request_rule", "TCP request rule", "frontend", tcpRequestRuleIdentifier)
+	tcpRequestRuleBackendOps         = NewIndexChildCRUD[*models.TCPRequestRule]("tcp_request_rule", "TCP request rule", "backend", tcpRequestRuleIdentifier)
+	tcpResponseRuleBackendOps        = NewIndexChildCRUD[*models.TCPResponseRule]("tcp_response_rule", "TCP response rule", "backend", tcpResponseRuleIdentifier)
+	stickRuleBackendOps              = NewIndexChildCRUD[*models.StickRule]("stick_rule", "stick rule", "backend", stickRuleIdentifier)
+	httpAfterResponseRuleBackendOps  = NewIndexChildCRUD[*models.HTTPAfterResponseRule]("http_after_response_rule", "HTTP after response rule", "backend", httpAfterResponseRuleIdentifier)
+	httpAfterResponseRuleFrontendOps = NewIndexChildCRUD[*models.HTTPAfterResponseRule]("http_after_response_rule", "HTTP after response rule", "frontend", httpAfterResponseRuleIdentifier)
+	httpCheckBackendOps              = NewIndexChildCRUD[*models.HTTPCheck]("http_check", "HTTP check", "backend", httpCheckIdentifier)
+	tcpCheckBackendOps               = NewIndexChildCRUD[*models.TCPCheck]("tcp_check", "TCP check", "backend", tcpCheckIdentifier)
+	captureFrontendOps               = NewIndexChildCRUD[*models.Capture]("capture", "capture", "frontend", captureIdentifier)
 )
 
 // NewTCPRequestRuleFrontendCreate creates an operation to create a TCP request rule in a frontend.

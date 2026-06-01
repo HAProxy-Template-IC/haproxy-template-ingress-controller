@@ -205,6 +205,9 @@ spec:
                   - podName
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - podName
+                x-kubernetes-list-type: map
               observedGeneration:
                 description: |-
                   ObservedGeneration reflects the generation of the spec that was most recently processed.

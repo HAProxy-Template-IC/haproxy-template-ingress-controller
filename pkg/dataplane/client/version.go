@@ -72,38 +72,85 @@ func DetectVersion(ctx context.Context, endpoint *Endpoint, _ *slog.Logger) (*Ve
 	return &versionInfo, nil
 }
 
-// ParseVersion extracts major and minor version numbers from version string.
-// Example: "v3.2.6 87ad0bcf" -> (3, 2, nil).
-// This function is exported for use by the version compatibility checking logic.
-func ParseVersion(version string) (major, minor int, err error) {
+// Version represents a DataPlane API / HAProxy version (major.minor.patch).
+// Patch is best-effort: it is 0 when the source string carries only
+// "major.minor" or a non-numeric patch segment.
+//
+// This is the single version type for the project; pkg/dataplane aliases it as
+// dataplane.Version.
+type Version struct {
+	Major int
+	Minor int
+	Patch int
+	Full  string // Original version string, retained for logging
+}
+
+// Compare orders two versions by major, then minor. Patch is INTENTIONALLY
+// ignored: Compare is used for series compatibility — e.g. discovery matching a
+// dataplaneapi version ("v3.3.5") against a HAProxy version ("3.3.10"), which
+// share major.minor but never patch. Use AtLeast for patch-level gates.
+// Returns -1 if v < other, 0 if same series, 1 if v > other.
+func (v *Version) Compare(other *Version) int {
+	switch {
+	case v.Major != other.Major:
+		if v.Major < other.Major {
+			return -1
+		}
+		return 1
+	case v.Minor != other.Minor:
+		if v.Minor < other.Minor {
+			return -1
+		}
+		return 1
+	default:
+		return 0
+	}
+}
+
+// AtLeast reports whether v is at least major.minor.patch. Unlike Compare, this
+// IS patch-aware — it backs the dataplaneapi v3.3.2+ runtime-server-addr gate.
+func (v *Version) AtLeast(major, minor, patch int) bool {
+	switch {
+	case v.Major != major:
+		return v.Major > major
+	case v.Minor != minor:
+		return v.Minor > minor
+	default:
+		return v.Patch >= patch
+	}
+}
+
+// ParseVersion parses a DataPlane API / HAProxy version string into a Version.
+// Examples: "v3.2.6 87ad0bcf" -> {3, 2, 6}, "3.3" -> {3, 3, 0}.
+func ParseVersion(version string) (*Version, error) {
 	// Split on whitespace to get version part (e.g., "v3.2.6")
 	parts := strings.Fields(version)
 	if len(parts) == 0 {
-		return 0, 0, errors.New("empty version string")
+		return nil, errors.New("empty version string")
 	}
 
-	versionPart := parts[0]
-
 	// Strip 'v' prefix if present
-	versionPart = strings.TrimPrefix(versionPart, "v")
+	versionPart := strings.TrimPrefix(parts[0], "v")
 
 	// Split on dots (e.g., "3.2.6" -> ["3", "2", "6"])
 	segments := strings.Split(versionPart, ".")
 	if len(segments) < 2 {
-		return 0, 0, fmt.Errorf("invalid version format: %s", version)
+		return nil, fmt.Errorf("invalid version format: %s", version)
 	}
 
-	// Parse major version
-	if _, err := fmt.Sscanf(segments[0], "%d", &major); err != nil {
-		return 0, 0, fmt.Errorf("parsing major version: %w", err)
+	v := &Version{Full: version}
+	if _, err := fmt.Sscanf(segments[0], "%d", &v.Major); err != nil {
+		return nil, fmt.Errorf("parsing major version: %w", err)
+	}
+	if _, err := fmt.Sscanf(segments[1], "%d", &v.Minor); err != nil {
+		return nil, fmt.Errorf("parsing minor version: %w", err)
+	}
+	// Patch is optional and best-effort: a non-numeric segment leaves it 0.
+	if len(segments) >= 3 {
+		_, _ = fmt.Sscanf(segments[2], "%d", &v.Patch)
 	}
 
-	// Parse minor version
-	if _, err := fmt.Sscanf(segments[1], "%d", &minor); err != nil {
-		return 0, 0, fmt.Errorf("parsing minor version: %w", err)
-	}
-
-	return major, minor, nil
+	return v, nil
 }
 
 // IsEnterpriseVersion detects if a version string indicates HAProxy Enterprise edition.

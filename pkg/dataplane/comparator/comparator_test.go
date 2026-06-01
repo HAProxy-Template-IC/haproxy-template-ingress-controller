@@ -136,7 +136,7 @@ func findOperationIndex(operations []Operation, sectionNames ...string) int {
 func logOperations(t *testing.T, operations []Operation) {
 	t.Helper()
 	for i, op := range operations {
-		t.Logf("  %d: %v %s - %s (priority: %d)", i, op.Type(), op.Section(), op.Describe(), op.Priority())
+		t.Logf("  %d: %v %s - %s", i, op.Type(), op.Section(), op.Describe())
 	}
 }
 
@@ -190,70 +190,6 @@ backend test_backend
 			t.Logf("Operation %d: %v %s - %s", i, op.Type(), op.Section(), op.Describe())
 		}
 	}
-}
-
-func TestCompare_UserlistPriority(t *testing.T) {
-	currentConfig := `
-global
-    daemon
-
-defaults
-    mode http
-`
-
-	desiredConfig := `
-global
-    daemon
-
-defaults
-    mode http
-
-userlist auth_users
-    user admin password $6$hash1
-
-frontend test_frontend
-    bind :80
-
-backend test_backend
-    server srv1 127.0.0.1:8080
-`
-
-	// Parse configs
-	p, err := parser.New()
-	if err != nil {
-		t.Fatalf("Failed to create parser: %v", err)
-	}
-
-	current, err := p.ParseFromString(currentConfig)
-	if err != nil {
-		t.Fatalf("Failed to parse current config: %v", err)
-	}
-
-	desired, err := p.ParseFromString(desiredConfig)
-	if err != nil {
-		t.Fatalf("Failed to parse desired config: %v", err)
-	}
-
-	// Run comparator
-	comp := New()
-	diff, err := comp.Compare(current, desired)
-	if err != nil {
-		t.Fatalf("Compare() failed: %v", err)
-	}
-
-	// Find userlist operation
-	for _, op := range diff.Operations {
-		if op.Section() == "userlist" {
-			// Userlist priority should be 10 * PriorityMultiplier (same as other foundational sections)
-			expectedPriority := 10 * sections.PriorityMultiplier
-			if op.Priority() != expectedPriority {
-				t.Errorf("Expected userlist priority to be %d, got %d", expectedPriority, op.Priority())
-			}
-			return
-		}
-	}
-
-	t.Error("No userlist operation found in diff")
 }
 
 // maintain their order when comparing configs.

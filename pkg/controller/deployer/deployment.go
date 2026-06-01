@@ -238,6 +238,20 @@ func (c *Component) deployToEndpoints(
 		},
 		events.WithCorrelation(correlationID, correlationID),
 	))
+
+	// Publish the just-deployed config as the HAProxyCfg spec so its checksum —
+	// the same value stamped onto each pod's status.deployedToPods entry above —
+	// is always observable as a published spec.Checksum. Without this, a render
+	// whose validation-driven publish was throttled/coalesced away under churn
+	// leaves pods recorded at a checksum that no consumer (operators, the e2e
+	// convergence wait) can verify against spec. Gated on a real, successful,
+	// non-drift deploy: drift checks are GET-only and carry an already-deployed
+	// (hence already-published) checksum.
+	if state.successCount > 0 && runtimeConfigName != "" && contentChecksum != "" && reason != events.TriggerReasonDriftPrevention {
+		c.eventBus.Publish(events.NewDeployedConfigPublishRequest(
+			runtimeConfigName, runtimeConfigNamespace, config, auxFiles, contentChecksum,
+		))
+	}
 }
 
 // deploymentState holds aggregated metrics protected for concurrent access.
@@ -367,26 +381,44 @@ func (c *Component) handleEndpointSuccess(
 		events.WithCorrelation(correlationID, correlationID),
 	))
 
-	// Publish ConfigAppliedToPodEvent (for runtime config status updates)
-	// Skip for no-op deployments to reduce Kubernetes API load
+	// Publish ConfigAppliedToPodEvent unconditionally, regardless of
+	// whether the sync did any HAProxy operations.
+	//
+	// The earlier "skip no-op deployments to reduce API load" optimisation
+	// broke the spec.checksum ↔ status.deployedToPods[].checksum invariant.
+	// Scenario from CI pipeline 2559825226 / TestIngressBackendSSL etc.:
+	//
+	//   1. Deploy with content X — sync applies operations, ConfigApplied
+	//      event fires with checksum=X, pod's deployedToPods entry → X.
+	//   2. Render produces content Y (same HAProxy operations but different
+	//      checksum: e.g. an aux file's byte order changed, or a label-only
+	//      delta on a watched resource shifted the content hash without
+	//      changing the rendered HAProxy directives).
+	//   3. Deploy with content Y — sync reports 0 ops, no reload. The old
+	//      skip-path treated this as a no-op and DIDN'T publish the
+	//      ConfigAppliedToPodEvent.
+	//   4. config-publisher writes spec.checksum=Y (it dedups against
+	//      content, not ops). status.deployedToPods[].checksum stays at X.
+	//   5. waitForControllerDeployed polls (Y vs X) → 90 s timeout.
+	//
+	// The Kubernetes API saving from skipping was illusory: server-side
+	// apply with a no-change payload doesn't bump resourceVersion when the
+	// managedFields entry is byte-identical, so the cost is bounded to
+	// the request round-trip. The correctness cost of skipping is
+	// unbounded — operators see permanently mismatched status until the
+	// next content change happens to also be a non-no-op sync. Always
+	// publish.
 	if runtimeConfigName != "" && runtimeConfigNamespace != "" {
-		if c.isNoOpDeployment(syncResult) {
-			c.logger.Debug("Skipping ConfigAppliedToPodEvent for no-op deployment",
-				"pod", ep.PodName,
-				"endpoint", ep.URL,
-				"is_drift_check", isDriftCheck)
-		} else {
-			syncMetadata := c.convertSyncResultToMetadata(syncResult)
-			c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
-				runtimeConfigName,
-				runtimeConfigNamespace,
-				ep.PodName,
-				ep.PodNamespace,
-				checksum,
-				isDriftCheck,
-				syncMetadata,
-			))
-		}
+		syncMetadata := syncResultToMetadata(syncResult)
+		c.eventBus.Publish(events.NewConfigAppliedToPodEvent(
+			runtimeConfigName,
+			runtimeConfigNamespace,
+			ep.PodName,
+			ep.PodNamespace,
+			checksum,
+			isDriftCheck,
+			syncMetadata,
+		))
 	}
 
 	atomic.AddInt32(&state.successCount, 1)
@@ -434,16 +466,11 @@ func (c *Component) deployToSingleEndpoint(
 
 	// Use default sync options and apply configuration limits
 	opts := dataplane.DefaultSyncOptions()
-	opts.MaxParallel = c.maxParallel
-	opts.RawPushThreshold = c.rawPushThreshold
 	if c.reloadVerificationTimeout > 0 {
 		opts.ReloadVerificationTimeout = c.reloadVerificationTimeout
 	}
 	if c.syncTimeout > 0 {
 		opts.Timeout = c.syncTimeout
-	}
-	if c.syncMaxRetries != nil {
-		opts.MaxRetries = *c.syncMaxRetries
 	}
 
 	// Pass pre-parsed config to skip redundant parsing during sync

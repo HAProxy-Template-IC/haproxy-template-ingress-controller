@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -59,8 +60,17 @@ type FixtureServer struct {
 // will close the connection without responding.
 func NewFixtureServer(t *testing.T) *FixtureServer {
 	t.Helper()
-	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "validator.sock")
+	// A unix socket path must fit in sun_path (~108 bytes). t.TempDir() embeds
+	// the (often long) test name, which overflows that limit under a non-trivial
+	// $TMPDIR (e.g. a sandboxed /tmp/<runner-id>/...), surfacing as
+	// "bind: invalid argument". Use a short os.MkdirTemp dir + short socket name
+	// so the bind succeeds regardless of test name / $TMPDIR length.
+	dir, err := os.MkdirTemp("", "pvfix")
+	if err != nil {
+		t.Fatalf("create fixture socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socketPath := filepath.Join(dir, "v.sock")
 
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {

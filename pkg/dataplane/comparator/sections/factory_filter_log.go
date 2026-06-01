@@ -16,8 +16,6 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // filterIdentifier extracts the type identifier from a Filter model.
@@ -28,26 +26,11 @@ func logTargetIdentifier(logTarget *models.LogTarget) string { return logTarget.
 
 // CRUD builders for filters, log targets and the log-forward top-level section.
 var (
-	filterFrontendOps = NewIndexChildCRUD[*models.Filter](
-		"filter", "filter", "frontend", PriorityFilter, filterIdentifier,
-		executors.FilterFrontendCreate(), executors.FilterFrontendUpdate(), executors.FilterFrontendDelete(),
-	)
-	filterBackendOps = NewIndexChildCRUD[*models.Filter](
-		"filter", "filter", "backend", PriorityFilter, filterIdentifier,
-		executors.FilterBackendCreate(), executors.FilterBackendUpdate(), executors.FilterBackendDelete(),
-	)
-	logTargetFrontendOps = NewIndexChildCRUD[*models.LogTarget](
-		"log_target", "log target", "frontend", PriorityLogTarget, logTargetIdentifier,
-		executors.LogTargetFrontendCreate(), executors.LogTargetFrontendUpdate(), executors.LogTargetFrontendDelete(),
-	)
-	logTargetBackendOps = NewIndexChildCRUD[*models.LogTarget](
-		"log_target", "log target", "backend", PriorityLogTarget, logTargetIdentifier,
-		executors.LogTargetBackendCreate(), executors.LogTargetBackendUpdate(), executors.LogTargetBackendDelete(),
-	)
-	logForwardOps = NewTopLevelCRUD[*models.LogForward](
-		"log_forward", "log-forward", PriorityLogForward, LogForwardName,
-		executors.LogForwardCreate(), executors.LogForwardUpdate(), executors.LogForwardDelete(),
-	)
+	filterFrontendOps    = NewIndexChildCRUD[*models.Filter]("filter", "filter", "frontend", filterIdentifier)
+	filterBackendOps     = NewIndexChildCRUD[*models.Filter]("filter", "filter", "backend", filterIdentifier)
+	logTargetFrontendOps = NewIndexChildCRUD[*models.LogTarget]("log_target", "log target", "frontend", logTargetIdentifier)
+	logTargetBackendOps  = NewIndexChildCRUD[*models.LogTarget]("log_target", "log target", "backend", logTargetIdentifier)
+	logForwardOps        = NewTopLevelCRUD[*models.LogForward]("log_forward", "log-forward", LogForwardName)
 )
 
 // NewFilterFrontendCreate creates an operation to create a filter in a frontend.

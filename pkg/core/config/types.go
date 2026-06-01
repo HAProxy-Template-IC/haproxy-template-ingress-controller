@@ -201,13 +201,6 @@ type ControllerConfig struct {
 
 	// ConfigPublishing configures how rendered configs are stored in CRDs.
 	ConfigPublishing ConfigPublishingConfig `yaml:"config_publishing"`
-
-	// ReconciliationDebounceInterval overrides the leading-edge refractory window
-	// the Reconciler applies before triggering a reconciliation cycle.
-	// Format: Go duration string (e.g., "5s", "1s")
-	// Default: 5s (DefaultReconciliationDebounceInterval, shared with the
-	// per-watcher debounce default in pkg/k8s/types.DefaultDebounceInterval)
-	ReconciliationDebounceInterval string `yaml:"reconciliation_debounce_interval"`
 }
 
 // LeaderElectionConfig configures leader election for running multiple replicas.
@@ -306,17 +299,6 @@ type DataplaneConfig struct {
 	// Default: /etc/haproxy/haproxy.cfg
 	ConfigFile string `yaml:"config_file"`
 
-	// MaxParallel limits concurrent Dataplane API operations during sync.
-	// This prevents overwhelming the API when syncing large configurations.
-	// 0 means auto-calculated (based on dataplane GOMAXPROCS * 10).
-	MaxParallel int `yaml:"max_parallel"`
-
-	// RawPushThreshold sets the number of configuration changes that triggers
-	// a raw config push instead of fine-grained sync.
-	// 0 means disabled (always use fine-grained sync, except version=1).
-	// Default: 100
-	RawPushThreshold int `yaml:"raw_push_threshold"`
-
 	// ConfigPublishInterval throttles how often the HAProxyCfg CRD is updated.
 	// During endpoint churn the rendered config changes frequently, but each CRD update
 	// writes ~500 KB to etcd. This interval limits CRD publishes while deployments to
@@ -338,12 +320,6 @@ type DataplaneConfig struct {
 	// Format: Go duration string (e.g., "2m", "30s")
 	// Default: 2m
 	SyncTimeout string `yaml:"sync_timeout"`
-
-	// SyncMaxRetries is the maximum number of automatic retries the VersionAdapter
-	// performs on HTTP 409 config-version conflicts. nil means "use default"; 0
-	// disables retries.
-	// Default: 3
-	SyncMaxRetries *int `yaml:"sync_max_retries"`
 }
 
 // WatchedResource configures watching for a specific Kubernetes resource type.
@@ -393,7 +369,7 @@ type WatchedResource struct {
 	// DebounceInterval overrides the default leading-edge refractory window
 	// for this resource type's watcher. Format: Go duration string (e.g.,
 	// "500ms", "10s"). When empty or invalid, the watcher falls back to
-	// pkg/k8s/types.DefaultDebounceInterval (5s).
+	// pkg/k8s/types.DefaultDebounceInterval (100ms).
 	//
 	// Lower values make the controller respond faster to bursty changes at
 	// the cost of more reconciliations and GC pressure. Most workloads
@@ -401,10 +377,22 @@ type WatchedResource struct {
 	DebounceInterval string `yaml:"debounce_interval,omitempty"`
 }
 
-// GetDebounceInterval returns the configured debounce interval, or zero if
-// the field is empty or unparseable. The watcher treats zero as "use the
-// pkg/k8s/types.DefaultDebounceInterval (5s)" via WatcherConfig.SetDefaults,
-// so callers can pass the result through without a nil check.
+// GetDebounceInterval returns the configured debounce interval. The CRD field
+// is a Go duration string. Mapping:
+//
+//   - empty / unparseable → 0, signalling "no override" — the watcher's
+//     WatcherConfig.SetDefaults swaps it for pkg/k8s/types.DefaultDebounceInterval.
+//   - explicit zero ("0", "0s", "0ms", …) → pkg/k8s/types.DebounceImmediate
+//     (-1), signalling "fire on every event without batching." SetDefaults
+//     normalises this to 0 before reaching the Debouncer, whose leading-edge
+//     code already handles the zero case correctly.
+//   - any other valid duration → parsed value.
+//
+// The two distinct return values for "user wrote 0" vs "user wrote nothing"
+// are why this function can't just return the ParseDuration result directly:
+// the WatcherConfig contract treats 0 as "unset, apply default," so a
+// genuine immediate-fire intent has to ride a different value through the
+// pipeline.
 func (r *WatchedResource) GetDebounceInterval() time.Duration {
 	if r.DebounceInterval == "" {
 		return 0
@@ -413,8 +401,18 @@ func (r *WatchedResource) GetDebounceInterval() time.Duration {
 	if err != nil {
 		return 0
 	}
+	if d == 0 {
+		return DebounceImmediate
+	}
 	return d
 }
+
+// DebounceImmediate mirrors pkg/k8s/types.DebounceImmediate (-1) — the
+// sentinel value for "no debounce, fire on every event." arch-go.yml
+// forbids pkg/core/config from importing pkg/k8s/types, so the constant
+// is duplicated. tests/defaults_consistency_test.go pins the equality;
+// change both together.
+const DebounceImmediate time.Duration = -1
 
 // TemplateSnippet is a reusable template fragment.
 type TemplateSnippet struct {

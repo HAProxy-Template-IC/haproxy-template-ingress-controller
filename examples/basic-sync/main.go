@@ -82,10 +82,7 @@ backend web-servers
 
 	// Optional: Configure sync behavior
 	opts := &dataplane.SyncOptions{
-		MaxRetries:      3,               // Retry version conflicts up to 3 times
-		Timeout:         2 * time.Minute, // Overall operation timeout
-		ContinueOnError: false,           // Stop on first error
-		FallbackToRaw:   true,            // Auto-fallback to raw config push if needed
+		Timeout: 2 * time.Minute, // Overall operation timeout
 	}
 
 	// Sync the configuration
@@ -126,19 +123,12 @@ func displaySyncResults(result *dataplane.SyncResult) {
 	fmt.Println("\nSync completed successfully!")
 	fmt.Printf("Duration: %v\n", result.Duration)
 	fmt.Printf("Operations applied: %d\n", len(result.AppliedOperations))
-
-	if result.Retries > 0 {
-		fmt.Printf("Retries (version conflicts): %d\n", result.Retries)
-	}
-
-	if result.UsedRawPush() {
-		fmt.Println("⚠ Warning: Used raw config push (fine-grained sync not used)")
-	}
+	fmt.Printf("Sync mode: %s\n", result.SyncMode)
 
 	if result.ReloadTriggered {
 		fmt.Printf("HAProxy reloaded: %s\n", result.ReloadID)
 	} else {
-		fmt.Println("No HAProxy reload required (runtime API used)")
+		fmt.Println("No HAProxy reload required (runtime path)")
 	}
 
 	// Display applied operations

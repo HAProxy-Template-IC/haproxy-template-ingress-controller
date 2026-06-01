@@ -1,17 +1,16 @@
 // Package sections provides factory functions for creating HAProxy configuration operations.
 //
-// This file contains generic CRUD builders that generate Create/Update/Delete operation
-// factories from a single registration, eliminating repetitive boilerplate.
+// This file contains generic CRUD builders that turn a single registration into
+// Create/Update/Delete operation descriptor factories. Descriptors no longer
+// carry per-section execute closures — the orchestrator pushes the full
+// rendered config via the dataplane raw endpoint.
 package sections
 
 import (
-	"context"
 	"fmt"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 )
 
-// TopLevelCRUD holds pre-built Create/Update/Delete factory functions for a top-level resource.
+// TopLevelCRUD holds pre-built Create/Update/Delete factories for a top-level resource.
 type TopLevelCRUD[T any] struct {
 	Create func(model T) Operation
 	Update func(model T) Operation
@@ -20,38 +19,30 @@ type TopLevelCRUD[T any] struct {
 
 // NewTopLevelCRUD creates a CRUD builder for a top-level resource (backend, frontend, etc.).
 // The displayName is used in operation descriptions and may differ from the section name.
-func NewTopLevelCRUD[T any](
-	section, displayName string,
-	priority int,
-	nameFn func(T) string,
-	createExec, updateExec, deleteExec ExecuteTopLevelFunc[T],
-) TopLevelCRUD[T] {
+func NewTopLevelCRUD[T any](section, displayName string, nameFn func(T) string) TopLevelCRUD[T] {
 	return TopLevelCRUD[T]{
 		Create: func(model T) Operation {
-			return NewTopLevelOp(
-				OperationCreate, section, priority, model,
-				Identity[T], nameFn, createExec,
+			return NewTopLevelOp[T](
+				OperationCreate, section,
 				DescribeTopLevel(OperationCreate, displayName, nameFn(model)),
 			)
 		},
 		Update: func(model T) Operation {
-			return NewTopLevelOp(
-				OperationUpdate, section, priority, model,
-				Identity[T], nameFn, updateExec,
+			return NewTopLevelOp[T](
+				OperationUpdate, section,
 				DescribeTopLevel(OperationUpdate, displayName, nameFn(model)),
 			)
 		},
 		Delete: func(model T) Operation {
-			return NewTopLevelOp(
-				OperationDelete, section, priority, model,
-				Nil[T], nameFn, deleteExec,
+			return NewTopLevelOp[T](
+				OperationDelete, section,
 				DescribeTopLevel(OperationDelete, displayName, nameFn(model)),
 			)
 		},
 	}
 }
 
-// ContainerChildCRUD holds pre-built Create/Update/Delete factory functions for a
+// ContainerChildCRUD holds pre-built Create/Update/Delete factories for a
 // container-child resource (user-in-userlist, nameserver-in-resolver, etc.).
 type ContainerChildCRUD[T any] struct {
 	Create func(containerName string, model T) Operation
@@ -59,57 +50,32 @@ type ContainerChildCRUD[T any] struct {
 	Delete func(containerName string, model T) Operation
 }
 
-// containerChildExecFactory matches the literal return type of executors.UserCreate
-// and friends: a function that, given a container name, yields the per-operation
-// executor. Spelled out so call sites can pass the executor factories directly
-// without an intermediate cast to ExecuteContainerChildFunc.
-type containerChildExecFactory[T any] func(string) func(ctx context.Context, c *client.DataplaneClient, txID string, containerName string, childName string, model T) error
-
-// nameChildExecFactory matches the literal return type of executors.ServerCreate,
-// executors.BindFrontendCreate and friends: a function that, given a parent name,
-// yields the per-operation executor. Spelled out for the same assignability
-// reason as containerChildExecFactory.
-type nameChildExecFactory[T any] func(string) func(ctx context.Context, c *client.DataplaneClient, txID string, parent string, childName string, model T) error
-
 // NewContainerChildCRUD creates a CRUD builder for a container-child resource.
-// section is the API section name (e.g. "user"), displayName is used in
-// descriptions (e.g. "user"), and containerType describes the parent in
-// descriptions (e.g. "userlist"). The exec factories take the container name
-// at call time and return the per-operation executor.
-func NewContainerChildCRUD[T any](
-	section, displayName, containerType string,
-	priority int,
-	nameFn func(T) string,
-	createExecFactory, updateExecFactory, deleteExecFactory containerChildExecFactory[T],
-) ContainerChildCRUD[T] {
+func NewContainerChildCRUD[T any](section, displayName, containerType string, nameFn func(T) string) ContainerChildCRUD[T] {
 	return ContainerChildCRUD[T]{
 		Create: func(containerName string, model T) Operation {
-			return NewContainerChildOp(
-				OperationCreate, section, priority, containerName, model,
-				Identity[T], nameFn, createExecFactory(containerName),
+			return NewContainerChildOp[T](
+				OperationCreate, section,
 				DescribeNamedChild(OperationCreate, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 		Update: func(containerName string, model T) Operation {
-			return NewContainerChildOp(
-				OperationUpdate, section, priority, containerName, model,
-				Identity[T], nameFn, updateExecFactory(containerName),
+			return NewContainerChildOp[T](
+				OperationUpdate, section,
 				DescribeNamedChild(OperationUpdate, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 		Delete: func(containerName string, model T) Operation {
-			return NewContainerChildOp(
-				OperationDelete, section, priority, containerName, model,
-				Nil[T], nameFn, deleteExecFactory(containerName),
+			return NewContainerChildOp[T](
+				OperationDelete, section,
 				DescribeNamedChild(OperationDelete, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 	}
 }
 
-// IndexChildCRUD holds pre-built Create/Update/Delete factory functions for an
-// index-based child resource (ACL, HTTP/TCP rules, checks, captures, etc.) that
-// belongs to a single parent type.
+// IndexChildCRUD holds pre-built Create/Update/Delete factories for an
+// index-based child resource (ACL, HTTP/TCP rules, checks, captures, etc.).
 type IndexChildCRUD[T any] struct {
 	Create func(parentName string, model T, index int) Operation
 	Update func(parentName string, model T, index int) Operation
@@ -117,66 +83,37 @@ type IndexChildCRUD[T any] struct {
 }
 
 // NewIndexChildCRUD creates a CRUD builder for an index-based child resource.
-// section is the API section name (e.g. "tcp_request_rule"), displayName is used
-// in descriptions (e.g. "TCP request rule"), parentType describes the parent in
-// descriptions (e.g. "frontend" or "backend"), and identifierFn extracts the
-// child's "type" string used in the description.
-func NewIndexChildCRUD[T any](
-	section, displayName, parentType string,
-	priority int,
-	identifierFn func(T) string,
-	createExec, updateExec, deleteExec ExecuteIndexChildFunc[T],
-) IndexChildCRUD[T] {
-	return NewIndexChildCRUDWithDescriber(
-		section, priority,
+func NewIndexChildCRUD[T any](section, displayName, parentType string, identifierFn func(T) string) IndexChildCRUD[T] {
+	return NewIndexChildCRUDWithDescriber[T](
+		section,
 		func(opType OperationType, model T, parentName string, index int) func() string {
 			return DescribeTypedChild(opType, displayName, identifierFn(model),
 				fmt.Sprintf("at index %d", index), parentType, parentName)
 		},
-		createExec, updateExec, deleteExec,
 	)
 }
 
 // NewIndexChildCRUDWithDescriber is the general form of NewIndexChildCRUD where
-// each operation's description is built by the caller-supplied describer rather
-// than the default DescribeTypedChild "(type) at index N" shape. Use this for
-// sections like ACL (DescribeACL: "ACL 'name'") or QUIC initial rules
-// (DescribeIndexChild: "quic-initial-rule at index N", no model identifier).
+// each operation's description is built by the caller-supplied describer.
 func NewIndexChildCRUDWithDescriber[T any](
 	section string,
-	priority int,
 	describer func(opType OperationType, model T, parentName string, index int) func() string,
-	createExec, updateExec, deleteExec ExecuteIndexChildFunc[T],
 ) IndexChildCRUD[T] {
 	return IndexChildCRUD[T]{
 		Create: func(parentName string, model T, index int) Operation {
-			return NewIndexChildOp(
-				OperationCreate, section, priority, parentName, index, model,
-				Identity[T], createExec,
-				describer(OperationCreate, model, parentName, index),
-			)
+			return NewIndexChildOp[T](OperationCreate, section, describer(OperationCreate, model, parentName, index))
 		},
 		Update: func(parentName string, model T, index int) Operation {
-			return NewIndexChildOp(
-				OperationUpdate, section, priority, parentName, index, model,
-				Identity[T], updateExec,
-				describer(OperationUpdate, model, parentName, index),
-			)
+			return NewIndexChildOp[T](OperationUpdate, section, describer(OperationUpdate, model, parentName, index))
 		},
 		Delete: func(parentName string, model T, index int) Operation {
-			return NewIndexChildOp(
-				OperationDelete, section, priority, parentName, index, model,
-				Nil[T], deleteExec,
-				describer(OperationDelete, model, parentName, index),
-			)
+			return NewIndexChildOp[T](OperationDelete, section, describer(OperationDelete, model, parentName, index))
 		},
 	}
 }
 
-// NameChildCRUD holds pre-built Create/Update/Delete factory functions for a
-// name-based child resource (server, server_template, bind, etc.) where the
-// child is identified by an explicit name string and the executor is a per-call
-// factory taking the parent name.
+// NameChildCRUD holds pre-built Create/Update/Delete factories for a
+// name-based child resource (server, server_template, bind, etc.).
 type NameChildCRUD[T any] struct {
 	Create func(parentName, childName string, model T) Operation
 	Update func(parentName, childName string, model T) Operation
@@ -184,41 +121,19 @@ type NameChildCRUD[T any] struct {
 }
 
 // NewNameChildCRUD creates a CRUD builder for a name-based child resource.
-// section is the API section name (e.g. "server"), displayType is used in
-// descriptions (e.g. "server"), parentType describes the parent in descriptions
-// (e.g. "backend" or "frontend"), and descNameFn renders the name shown in the
-// description (callers can return childName for plain naming or a richer
-// representation derived from the model — e.g. bindIdentifier).
-func NewNameChildCRUD[T any](
-	section, displayType, parentType string,
-	priority int,
-	descNameFn func(model T, childName string) string,
-	createExecFactory, updateExecFactory, deleteExecFactory nameChildExecFactory[T],
-) NameChildCRUD[T] {
+func NewNameChildCRUD[T any](section, displayType, parentType string, descNameFn func(model T, childName string) string) NameChildCRUD[T] {
 	describe := func(opType OperationType, model T, parentName, childName string) func() string {
 		return DescribeNamedChild(opType, displayType, descNameFn(model, childName), parentType, parentName)
 	}
 	return NameChildCRUD[T]{
 		Create: func(parentName, childName string, model T) Operation {
-			return NewNameChildOp(
-				OperationCreate, section, priority, parentName, childName, model,
-				Identity[T], createExecFactory(parentName),
-				describe(OperationCreate, model, parentName, childName),
-			)
+			return NewNameChildOp[T](OperationCreate, section, describe(OperationCreate, model, parentName, childName))
 		},
 		Update: func(parentName, childName string, model T) Operation {
-			return NewNameChildOp(
-				OperationUpdate, section, priority, parentName, childName, model,
-				Identity[T], updateExecFactory(parentName),
-				describe(OperationUpdate, model, parentName, childName),
-			)
+			return NewNameChildOp[T](OperationUpdate, section, describe(OperationUpdate, model, parentName, childName))
 		},
 		Delete: func(parentName, childName string, model T) Operation {
-			return NewNameChildOp(
-				OperationDelete, section, priority, parentName, childName, model,
-				Nil[T], deleteExecFactory(parentName),
-				describe(OperationDelete, model, parentName, childName),
-			)
+			return NewNameChildOp[T](OperationDelete, section, describe(OperationDelete, model, parentName, childName))
 		},
 	}
 }

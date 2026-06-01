@@ -747,11 +747,9 @@ func TestPublishingEvents(t *testing.T) {
 
 	t.Run("ConfigAppliedToPodEvent", func(t *testing.T) {
 		syncMetadata := &SyncMetadata{
-			ReloadTriggered:        true,
-			ReloadID:               "reload-123",
-			SyncDuration:           100 * time.Millisecond,
-			VersionConflictRetries: 1,
-			FallbackUsed:           false,
+			ReloadTriggered: true,
+			ReloadID:        "reload-123",
+			SyncDuration:    100 * time.Millisecond,
 			OperationCounts: OperationCounts{
 				TotalAPIOperations: 10,
 				BackendsAdded:      2,

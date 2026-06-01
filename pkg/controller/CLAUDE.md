@@ -334,19 +334,17 @@ When adding a new validator, register it in the `ConfigChangeHandler.validators`
 
 ### reconciler/ - Reconciliation Debouncer
 
-Debounces resource changes and triggers reconciliation events (Stage 5 component 1):
+Triggers reconciliation events immediately on every change (Stage 5 component 1):
 
 ```go
 // pkg/controller/reconciler/reconciler.go
 type Reconciler struct {
-    eventBus         *busevents.EventBus
-    eventChan        <-chan busevents.Event // Subscribed in New()
-    logger           *slog.Logger
-    debounceInterval time.Duration
-    debounceTimer    timers.SafeTimer
+    eventBus  *busevents.EventBus
+    eventChan <-chan busevents.Event // Subscribed in New()
+    logger    *slog.Logger
 }
 
-func New(eventBus *busevents.EventBus, logger *slog.Logger, cfg *Config) *Reconciler {
+func New(eventBus *busevents.EventBus, logger *slog.Logger) *Reconciler {
     // Subscribe BEFORE bus.Start() runs, narrowed to the event types we handle
     // so the buffer doesn't fill with traffic for other components.
     eventChan := eventBus.SubscribeTypes(ComponentName, EventBufferSize,
@@ -357,23 +355,18 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, cfg *Config) *Reconc
         events.EventTypeDriftPreventionTriggered,
         events.EventTypeBecameLeader,
     )
-    return &Reconciler{eventBus: eventBus, eventChan: eventChan, logger: logger /* … */}
+    return &Reconciler{eventBus: eventBus, eventChan: eventChan, logger: logger}
 }
 
 func (r *Reconciler) Start(ctx context.Context) error {
     for {
         select {
         case event := <-r.eventChan:
-            // handleEvent dispatches on the concrete event type and either
-            // fires immediately (IndexSynchronized, HTTPResourceAccepted,
-            // DriftPrevention, BecameLeader) or arms the refractory timer.
+            // handleEvent dispatches on the concrete event type and fires a
+            // ReconciliationTriggeredEvent immediately (the initial-sync
+            // variant of ResourceIndexUpdatedEvent is the only one filtered
+            // out, since IndexSynchronizedEvent covers the bulk load).
             r.handleEvent(event)
-
-        case <-r.debounceTimer.Chan():
-            r.debounceTimer.Fired()
-            if r.pendingTrigger {
-                r.triggerReconciliation("debounce_timer")
-            }
 
         case <-ctx.Done():
             return nil
@@ -384,7 +377,7 @@ func (r *Reconciler) Start(ctx context.Context) error {
 
 **Features:**
 
-- Debounces resource changes with a leading-edge refractory window (`types.DefaultDebounceInterval`, currently 5s). The Reconciler-level window is *not* CRD-configurable; the per-watcher `spec.watchedResources.<name>.debounceInterval` override added separately controls each watcher's own pre-Reconciler debounce, not this one.
+- Fires a reconciliation immediately on every event — no reconciler-level debounce, no refractory window, no timer. Batching of rapid changes is the per-watcher debounce window's job (`types.DefaultDebounceInterval`, currently 2s; EndpointSlice watchers run at `debounceInterval: "0"`). Reload throttling is the deployer's `minDeploymentInterval`. There is no `spec.controller.reconciliationDebounceInterval` CRD knob and no `reconciler.Config`.
 - Triggers immediate reconciliation when all indices are synchronized
 - Filters initial sync events to prevent premature reconciliation
 - Publishes ReconciliationTriggeredEvent
@@ -470,7 +463,7 @@ func runIteration(ctx context.Context, k8sClient *client.Client, ...) error {
 
     // Stage 5: reconciliation + observability components — also subscribe
     // during construction.
-    reconciler.New(bus, logger, nil)
+    reconciler.New(bus, logger)
     reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
         EventBus: bus, Pipeline: pipeline, StoreProvider: storeProvider, Logger: logger,
     })

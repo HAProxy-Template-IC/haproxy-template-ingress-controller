@@ -400,9 +400,8 @@ func (o *orchestrator) createNoChangesResult(startTime time.Time, summary *compa
 		Success:           true,
 		AppliedOperations: nil,
 		ReloadTriggered:   false,
-		SyncMode:          SyncModeFineGrained, // No actual sync happened, but semantically fine-grained path
+		SyncMode:          SyncModeNoChanges,
 		Duration:          time.Since(startTime),
-		Retries:           0,
 		Details:           convertDiffSummary(summary),
 		Message:           "No configuration or auxiliary file changes detected",
 	}

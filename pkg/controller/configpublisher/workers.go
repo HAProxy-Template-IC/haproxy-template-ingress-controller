@@ -17,6 +17,7 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -64,6 +65,8 @@ func (c *Component) publishWorker(ctx context.Context) {
 		select {
 		case work := <-c.publishWork:
 			c.processPublishWork(work)
+		case work := <-c.deployedPublishWork:
+			c.processPublishWork(work)
 		case <-c.publishThrottle.FiredCh():
 			c.flushPendingPublish()
 		case <-ctx.Done():
@@ -94,16 +97,34 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 	// closed, buffer the latest work and ask the throttle to wake us when
 	// the refractory expires.
 	if !c.publishThrottle.Available() {
+		var superseded *publishWorkItem
 		c.pendingMu.Lock()
-		if c.pendingPublish != nil {
-			c.discardCachedConfig(c.pendingPublish.correlationID)
+		if work.deployDriven {
+			// Deploy-driven items use their own slot (newest-deployed wins) so a
+			// validation publish can't coalesce away a deployed checksum. The
+			// entry is inline (carried on the event), so there's no cached render
+			// to discard when overwriting.
+			c.pendingDeployedPublish = work
+		} else {
+			superseded = c.pendingPublish
+			c.pendingPublish = work
 		}
-		c.pendingPublish = work
 		c.pendingMu.Unlock()
+
+		// Drop the superseded item's cached render AFTER releasing pendingMu:
+		// discardCachedConfig takes mu, and handleLostLeadership takes mu THEN
+		// pendingMu — nesting pendingMu->mu here would invert that order and
+		// deadlock. Keeping the two mutexes non-nested at this site makes the
+		// mu->pendingMu in handleLostLeadership the only nesting, so no AB-BA
+		// lock inversion is possible.
+		if superseded != nil {
+			c.discardCachedConfig(superseded.correlationID)
+		}
 
 		c.logger.Debug("throttling CRD publish, buffering for later",
 			"checksum", work.entry.contentChecksum,
 			"correlation_id", work.correlationID,
+			"deploy_driven", work.deployDriven,
 		)
 		c.publishThrottle.ScheduleFlush()
 		return
@@ -116,23 +137,31 @@ func (c *Component) processPublishWork(work *publishWorkItem) {
 // flushPendingPublish publishes the buffered work item (if any) when the throttle timer expires.
 func (c *Component) flushPendingPublish() {
 	c.pendingMu.Lock()
+	deployWork := c.pendingDeployedPublish
+	c.pendingDeployedPublish = nil
 	work := c.pendingPublish
 	c.pendingPublish = nil
 	c.pendingMu.Unlock()
 
-	if work == nil {
-		return
+	// Deploy-driven first: spec should reflect what's actually deployed, and the
+	// deployed checksum must become observable. When both slots carry the same
+	// content (the common case — deploy of the render that validation just
+	// published), skipIfAlreadyPublished collapses the second to a no-op, so this
+	// stays at one CRD write per window in steady state.
+	for _, w := range []*publishWorkItem{deployWork, work} {
+		if w == nil {
+			continue
+		}
+		// Re-check content deduplication (content may have been published by another path).
+		if c.skipIfAlreadyPublished(w, "skipping throttled publish, config already published") {
+			continue
+		}
+		c.logger.Debug("flushing throttled CRD publish",
+			"correlation_id", w.correlationID,
+			"deploy_driven", w.deployDriven,
+		)
+		c.executePublish(w)
 	}
-
-	// Re-check content deduplication (content may have been published by another path)
-	if c.skipIfAlreadyPublished(work, "skipping throttled publish, config already published") {
-		return
-	}
-
-	c.logger.Debug("flushing throttled CRD publish",
-		"correlation_id", work.correlationID,
-	)
-	c.executePublish(work)
 }
 
 // skipIfAlreadyPublished returns true when work's content checksum matches the
@@ -301,30 +330,68 @@ func (c *Component) handleStatusTrigger() {
 	c.statusThrottle.ScheduleFlush()
 }
 
-// processAllPendingStatusWork drains the pending status work map and processes all items.
-// This is called when the worker receives a trigger signal.
+// processAllPendingStatusWork drains the pending status work map and applies
+// each pod's latest entry in parallel.
+//
+// Two design choices, both load-bearing:
+//
+//  1. Per-pod fan-out. Each pod's status entry lives under its own server-
+//     side-apply field manager (`haptic-pod-status-<podName>`), so concurrent
+//     Applies to different pods can't conflict at the apiserver. Spawning
+//     one goroutine per pod cuts batch latency from `N × per-apply-time` to
+//     ~`1 × per-apply-time`. Under heavy parallel-test churn this was the
+//     bottleneck that let spec advance faster than status could catch up;
+//     symptom on CI pipeline 2559961278 was pods stuck at intermediate
+//     checksums for the full 90 s `waitForControllerDeployed` budget.
+//
+//  2. Latest-at-apply-time per pod. The old implementation snapshotted the
+//     entire pending map at batch start, then iterated. If a newer event
+//     for a pod arrived during a (serial) apply, the snapshot value was
+//     already obsolete — we'd push the stale value to the apiserver and
+//     pick up the newer one only on the NEXT throttle window. Instead,
+//     each goroutine atomically pops the LATEST entry for its pod at the
+//     moment the apply starts. The overwrite-by-pod-key semantics in
+//     handleConfigAppliedToPod guarantee that whatever the map holds is
+//     the most recent event seen for that pod up to the pop.
 func (c *Component) processAllPendingStatusWork() {
-	// Take a snapshot of pending work and clear the map atomically.
-	// This allows new updates to accumulate while we process these.
 	c.statusWorkPendingMu.Lock()
 	if len(c.statusWorkPending) == 0 {
 		c.statusWorkPendingMu.Unlock()
 		return
 	}
-
-	// Take ownership of the pending map and create a new empty one
-	pendingWork := c.statusWorkPending
-	c.statusWorkPending = make(map[string]*statusWorkItem)
+	podKeys := make([]string, 0, len(c.statusWorkPending))
+	for podKey := range c.statusWorkPending {
+		podKeys = append(podKeys, podKey)
+	}
 	c.statusWorkPendingMu.Unlock()
 
-	// Process all pending work items
 	c.logger.Debug("processing coalesced status updates",
-		"pending_count", len(pendingWork),
+		"pending_pod_count", len(podKeys),
 	)
 
-	for _, work := range pendingWork {
-		c.processStatusWork(work)
+	var wg sync.WaitGroup
+	for _, podKey := range podKeys {
+		wg.Add(1)
+		go func(podKey string) {
+			defer wg.Done()
+
+			c.statusWorkPendingMu.Lock()
+			work, ok := c.statusWorkPending[podKey]
+			if ok {
+				delete(c.statusWorkPending, podKey)
+			}
+			c.statusWorkPendingMu.Unlock()
+			if !ok {
+				// Another goroutine raced and popped first — only possible
+				// if a future change introduces a second drain path. Today
+				// this fan-out is the sole reader, so the branch is
+				// defensive rather than expected.
+				return
+			}
+			c.processStatusWork(work)
+		}(podKey)
 	}
+	wg.Wait()
 
 	// Record write time for throttle refractory.
 	c.statusThrottle.MarkFired()

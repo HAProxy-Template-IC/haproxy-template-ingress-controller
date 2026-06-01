@@ -1,4 +1,4 @@
-# pkg/controller/reconciler - Reconciliation Debouncer
+# pkg/controller/reconciler - Reconciliation Trigger
 
 Development context for the Reconciler component.
 
@@ -6,9 +6,7 @@ Development context for the Reconciler component.
 
 Work in this package when:
 
-- Modifying debounce logic
 - Changing reconciliation triggering behavior
-- Adjusting debounce interval
 - Adding reconciliation triggers
 
 **DO NOT** work here for:
@@ -19,14 +17,14 @@ Work in this package when:
 
 ## Package Purpose
 
-Stage 5 component that debounces resource changes and triggers reconciliation events. Uses leading-edge triggering with refractory period for fast response to isolated changes while still batching rapid successive changes.
+Stage 5 component that triggers reconciliation events. It fires **immediately** on every resource/HTTP event — there is no reconciler-level debounce or refractory window. Batching happens entirely upstream in the per-watcher debounce window (default 2s, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice watchers run with `debounceInterval: "0"` for instant rolling-restart reaction). Reload throttling happens entirely downstream in the deployer's `minDeploymentInterval` (which the runtime-eligible fast path bypasses).
 
 ## Architecture
 
 ```
-ResourceIndexUpdatedEvent  → Debounce (1s default, leading-edge)
+ResourceIndexUpdatedEvent  → Immediate Trigger
 IndexSynchronizedEvent     → Immediate Trigger (initial reconciliation)
-HTTPResourceUpdatedEvent   → Debounce (1s default, leading-edge)
+HTTPResourceUpdatedEvent   → Immediate Trigger
 HTTPResourceAcceptedEvent  → Immediate Trigger
 DriftPreventionTriggeredEvent → Immediate Trigger
 BecameLeaderEvent          → Immediate Trigger (bootstraps the new leader)
@@ -35,20 +33,9 @@ BecameLeaderEvent          → Immediate Trigger (bootstraps the new leader)
 ReconciliationTriggeredEvent → Coordinator
 ```
 
-## Debounce Behavior
+## Triggering Behavior
 
-### Leading-Edge Triggering with Refractory Period
-
-The debouncer uses leading-edge triggering: the first change fires immediately if no callback has fired recently. Subsequent changes within the refractory period are batched.
-
-```
-t=0.0s: Resource change → Immediate callback (no recent activity)
-t=0.3s: Resource change → Queued (refractory period active)
-t=0.7s: Resource change → Queued (refractory period active)
-t=1.0s: Refractory expires → Callback with batched changes
-```
-
-The refractory period defaults to `pkg/k8s/types.DefaultDebounceInterval` (1s) and is overridable via `spec.controller.reconciliationDebounceInterval` on the CRD. The default is shared with the per-watcher debounce default so the two debouncers come from one source of truth (see "centralized defaults" in `pkg/core/CLAUDE.md`). This ensures fast response (0ms delay) for isolated changes while batching rapid successive changes during busy periods.
+The Reconciler triggers a `ReconciliationTriggeredEvent` immediately on every event it handles — isolated changes and bursts alike. It holds no timer and keeps no refractory state. Coalescing of rapid changes is the per-watcher debounce window's job (each watcher emits one `ResourceIndexUpdatedEvent` per quiet window); reload throttling is the deployer's job. The reconciler itself adds zero latency, which is what keeps a single ingress flip and a rolling-restart EndpointSlice rotation both fast.
 
 ### Index Synchronized (Immediate)
 
@@ -70,46 +57,28 @@ trigger immediate reconciliation to deploy the new content.
 
 ## Configuration
 
-```go
-reconciler := reconciler.New(bus, logger, &reconciler.Config{
-    DebounceInterval: 100 * time.Millisecond,  // Customizable
-})
-```
-
-The default interval is defined in `pkg/k8s/types.DefaultDebounceInterval` (1s) and shared across all debouncing components. Operators override it on the CRD via `spec.controller.reconciliationDebounceInterval`; the controller passes the parsed value into `Config{DebounceInterval}` at construction in `pkg/controller/reconciliation.go`.
-
-## Common Patterns
-
-### Default Configuration
+The Reconciler takes no configuration — it fires immediately on every event and has no tunable interval:
 
 ```go
-// Uses types.DefaultDebounceInterval (1s)
-reconciler := reconciler.New(bus, logger, nil)
+reconciler := reconciler.New(bus, logger)
 go reconciler.Start(ctx)
 ```
 
-### Custom Debounce
-
-```go
-// Longer debounce for high-volume environments
-reconciler := reconciler.New(bus, logger, &reconciler.Config{
-    DebounceInterval: 500 * time.Millisecond,
-})
-```
+There is no `reconciler.Config`, no `DebounceInterval` field, and no `spec.controller.reconciliationDebounceInterval` CRD knob. Batching lives in the per-watcher debounce window (default 2s, `pkg/k8s/types.DefaultDebounceInterval`; EndpointSlice at `"0"`); reload throttling lives in the deployer's `minDeploymentInterval`.
 
 ## Common Pitfalls
 
-### Too Short Debounce
+### Reload storms from over-eager reconciliation
 
-**Problem**: Reconciliation triggered too frequently during bulk operations.
+**Problem**: Many reconciliations during bulk operations.
 
-**Solution**: Increase debounce interval for high-volume environments.
+**Solution**: This is bounded upstream and downstream, not here. Raise the per-watcher `debounceInterval` to coalesce more events into a single `ResourceIndexUpdatedEvent`, or rely on the deployer's `minDeploymentInterval` to throttle reload-inducing pushes. Never reintroduce a reconciler-level refractory.
 
-### Too Long Debounce
+### Slow reaction during rolling deployments
 
-**Problem**: Slow to react to changes, causing 503 errors during rolling deployments.
+**Problem**: 503 errors because a pod-IP rotation reaches HAProxy too late.
 
-**Solution**: Use leading-edge triggering (now default) which fires immediately for isolated changes while still batching rapid successive changes.
+**Solution**: Keep the reconciler firing immediately (it already does), set the relevant watcher's `debounceInterval: "0"` (the chart does this for EndpointSlice), and let the deployer's runtime-eligible fast path apply server changes without waiting on `minDeploymentInterval`.
 
 ## Integration
 
@@ -117,7 +86,7 @@ Controller creates Reconciler in Stage 5:
 
 ```go
 // Stage 5: Reconciliation
-reconciler := reconciler.New(bus, logger, nil)
+reconciler := reconciler.New(bus, logger)
 go reconciler.Start(ctx)
 ```
 

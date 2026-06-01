@@ -123,7 +123,7 @@ Setting `enableValidationWebhook: true` on an entry registers that kind with the
 
 ## Debounce Override
 
-Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler (which has its own separate, CRD-configurable debounce on top via `spec.controller.reconciliationDebounceInterval` — see [architecture-overview](./development/design/architecture-overview.md) for the two-layer flow). The default is 1 second (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval`:
+Each watcher uses a leading-edge refractory window to coalesce bursts of changes into a single store-update event before forwarding to the Reconciler. This is the only debounce layer — the Reconciler itself fires immediately on every event, and reload throttling lives in the deployer's `minDeploymentInterval` (see [architecture-overview](./development/design/architecture-overview.md)). The default is 2 seconds (set in `pkg/k8s/types.DefaultDebounceInterval`) and works well for most workloads. Override per-resource via `debounceInterval` (the bundled chart sets it to `"0"` on EndpointSlice so pod-IP rotations react instantly during rolling restarts):
 
 ```yaml
 watchedResources:
@@ -139,7 +139,7 @@ watchedResources:
     debounceInterval: "30s"     # absorb endpoint churn on large clusters
 ```
 
-Empty / invalid strings fall back to the 5s default silently — the validating webhook does not reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …).
+Empty / invalid strings fall back to the 2s default silently — the validating webhook does not reject unparseable values, so a typo just leaves you with the default. Format is any Go duration string (`"500ms"`, `"10s"`, `"1m30s"`, …); `"0"` disables debouncing so every change fires immediately.
 
 ## Troubleshooting
 

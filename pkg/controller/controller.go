@@ -24,7 +24,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -65,10 +64,6 @@ const (
 	// ShutdownProgressInterval is how often to log progress during shutdown.
 	ShutdownProgressInterval = 5 * time.Second
 )
-
-// errNoWebhookRules indicates that no webhook rules are configured.
-// This is used to signal that DryRunValidator should not be created.
-var errNoWebhookRules = errors.New("no webhook rules configured")
 
 // buildVersionInfo holds build-time version information exposed via haptic_build_info metric.
 // Set this before calling Run() using SetBuildInfo().

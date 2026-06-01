@@ -61,27 +61,12 @@ type Component struct {
 	logger               *slog.Logger
 	deploymentInProgress atomic.Bool // Defensive: prevents concurrent deployments if scheduler has bugs
 
-	// maxParallel limits concurrent Dataplane API operations during sync.
-	// 0 means unlimited (not recommended for large configs).
-	maxParallel int
-
-	// rawPushThreshold triggers raw config push when change count exceeds this value.
-	// 0 means disabled (fine-grained sync always used, except version=1).
-	rawPushThreshold int
-
 	// reloadVerificationTimeout bounds how long the Dataplane sync waits for a
 	// graceful reload to be reported as completed before failing the sync.
 	reloadVerificationTimeout time.Duration
 
 	// syncTimeout is the overall timeout for one Dataplane sync to a single endpoint.
 	syncTimeout time.Duration
-
-	// syncMaxRetries is the number of HTTP 409 retries the VersionAdapter performs.
-	// nil means "use dataplane.DefaultSyncOptions().MaxRetries"; 0 means "no retries";
-	// positive means "retry that many times". The pointer mirrors the *int on the
-	// CRD so a zero-value SyncOptions{} doesn't silently override the dataplane
-	// default of 3.
-	syncMaxRetries *int
 
 	// Health check: stall detection for event-driven component
 	healthTracker *lifecycle.HealthTracker
@@ -99,34 +84,15 @@ type Component struct {
 }
 
 // SyncOptions bundles the per-sync Dataplane tunables that the deployer applies
-// to every dataplane.SyncOptions it builds. Pass it to New so that all knobs
-// affecting one HAProxy sync travel as a single value rather than a growing
-// list of positional arguments.
+// to every dataplane.SyncOptions it builds.
 type SyncOptions struct {
-	// MaxParallel limits concurrent Dataplane API operations during a sync.
-	// 0 means unlimited (not recommended for large configs).
-	MaxParallel int
-
-	// RawPushThreshold triggers raw config push when change count exceeds this value.
-	// 0 means disabled (fine-grained sync always used, except version=1).
-	RawPushThreshold int
-
 	// ReloadVerificationTimeout bounds how long the sync waits for HAProxy to
 	// report a graceful reload as completed.
 	ReloadVerificationTimeout time.Duration
 
-	// Timeout is the overall per-endpoint sync timeout (parse + diff +
-	// transactional apply + optional reload-verify).
+	// Timeout is the overall per-endpoint sync timeout (parse + diff + apply +
+	// optional reload-verify).
 	Timeout time.Duration
-
-	// MaxRetries is the number of HTTP 409 retries the VersionAdapter performs
-	// on a transaction commit conflict.
-	//
-	// nil means "use dataplane.DefaultSyncOptions().MaxRetries" (currently 3);
-	// &0 means "no retries"; a positive *int means that many retries.
-	// The pointer mirrors the *int on the CRD so a zero-value SyncOptions{}
-	// preserves the dataplane default instead of silently disabling retries.
-	MaxRetries *int
 }
 
 // New creates a new Deployer component.
@@ -147,11 +113,8 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, opts SyncOptions) *C
 		ReadySignal:               component.NewReadySignal(),
 		eventBus:                  eventBus,
 		logger:                    logger.With("component", ComponentName),
-		maxParallel:               opts.MaxParallel,
-		rawPushThreshold:          opts.RawPushThreshold,
 		reloadVerificationTimeout: opts.ReloadVerificationTimeout,
 		syncTimeout:               opts.Timeout,
-		syncMaxRetries:            opts.MaxRetries,
 		versionCache:              newConfigVersionCache(),
 		healthTracker:             lifecycle.NewProcessingTracker(ComponentName, lifecycle.DefaultProcessingTimeout),
 	}

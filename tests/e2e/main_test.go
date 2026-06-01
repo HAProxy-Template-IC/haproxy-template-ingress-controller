@@ -23,6 +23,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -273,6 +274,9 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 		if err := provider.Create(ClusterName, opts...); err != nil {
 			return ctx, fmt.Errorf("create kind cluster %q: %w", ClusterName, err)
 		}
+		// Best-effort metrics-server so the rolling-restart failure snapshot's
+		// `kubectl top` capture has real utilization data. Non-fatal.
+		installMetricsServerBestEffort(ctx)
 	}
 
 	kubeconfig, err := provider.KubeConfig(ClusterName, false)
@@ -287,6 +291,26 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 	}
 	cfg.WithKubeconfigFile(kubeconfigPath)
 	return ctx, nil
+}
+
+// installMetricsServerBestEffort applies metrics-server to the freshly-created
+// kind cluster so `kubectl top pods/nodes` works for the rolling-restart
+// failure snapshot's utilization capture. Deliberately best-effort and
+// non-fatal: it applies the manifest and returns without waiting for readiness.
+// metrics-server needs ~15-30s to start scraping, which the subsequent
+// image-load + helm-install + fixture-deploy comfortably covers; and if a
+// restricted-egress CI can't pull the image, `kubectl top` simply returns no
+// data (empty snapshot capture) — never a reason to fail cluster setup.
+func installMetricsServerBestEffort(ctx context.Context) {
+	node := ClusterName + "-control-plane"
+	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", node,
+		"kubectl", "--kubeconfig=/etc/kubernetes/admin.conf", "apply", "-f", "-")
+	cmd.Stdin = bytes.NewReader(devassets.MetricsServerYAML)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "e2e: metrics-server apply (best-effort) failed: %v: %s\n", err, out)
+		return
+	}
+	fmt.Fprintln(os.Stderr, "e2e: metrics-server applied (best-effort; kubectl top available once it scrapes)")
 }
 
 // loadControllerImage loads haptic:test into the kind cluster so the helm
@@ -597,6 +621,27 @@ func kubectlApplyStdin(ctx context.Context, yaml []byte) error {
 		return fmt.Errorf("%w (output: %s)", err, out)
 	}
 	return nil
+}
+
+// kubectlGetSecretData returns the .data map of a Secret as a map of
+// base64-encoded string values (the same encoding the apiserver wires).
+// Returns an error if the Secret is missing or unreadable; the cert-
+// reuse path treats any error as "regenerate from scratch", so distinct
+// error types are intentionally not surfaced.
+func kubectlGetSecretData(ctx context.Context, namespace, name string) (map[string]string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name,
+		"--kubeconfig", kubeconfigPath, "-n", namespace, "-o", "json")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("kubectl get secret %s/%s: %w", namespace, name, err)
+	}
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &secret); err != nil {
+		return nil, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
+	}
+	return secret.Data, nil
 }
 
 // chartPath returns the absolute path to charts/haptic, walking up from the

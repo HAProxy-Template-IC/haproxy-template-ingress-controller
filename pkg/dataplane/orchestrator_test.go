@@ -185,12 +185,10 @@ func TestConvertOperationsToPlanned(t *testing.T) {
 	assert.Equal(t, "create", planned[0].Type)
 	assert.Equal(t, "frontend", planned[0].Section)
 	assert.Equal(t, "http", planned[0].Resource)
-	assert.Equal(t, 5, planned[0].Priority)
 
 	assert.Equal(t, "update", planned[1].Type)
 	assert.Equal(t, "bind", planned[1].Section)
 	assert.Equal(t, "https", planned[1].Resource)
-	assert.Equal(t, 15, planned[1].Priority)
 }
 
 func TestConvertDiffSummary(t *testing.T) {

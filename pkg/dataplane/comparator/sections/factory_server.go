@@ -16,13 +16,9 @@ package sections
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // serverRuntimeSupportedJSONFields is the set of models.Server JSON field names that can be
@@ -35,8 +31,17 @@ import (
 // handled in buildRuntimeActions, the change will be written to disk but never applied at
 // runtime — silently deferring it until the next reload.
 //
-// Exception: "metadata" (inline comments, e.g. "# Pod: my-pod-abc") requires no runtime
-// action — changes are written to disk by the skip_reload push and are purely cosmetic.
+// Exceptions (runtime-eligible but no runtime action required):
+//   - "metadata": inline comments, e.g. "# Pod: my-pod-abc" — purely cosmetic.
+//
+// NOTE: "init-addr" used to be listed here because the chart emitted
+// `init-addr last,<address>` on every server, so an address rotation co-changed
+// init-addr and would otherwise have been re-classified as structural. That
+// machinery was removed — HAProxy never restored an IP-literal server's address
+// from the state file (only FQDN/DNS-SRV servers consult `init-addr last`), so
+// it never preserved pod addresses across reloads. See
+// docs/adr/0011-no-haproxy-server-state-file.md. Server lines no longer carry
+// init-addr, so it is intentionally absent here.
 var serverRuntimeSupportedJSONFields = map[string]struct{}{
 	"weight":            {},
 	"address":           {},
@@ -101,45 +106,32 @@ func ServerIneligibleFields(current, desired *models.Server) []string {
 }
 
 // serverTemplateOps groups create/update/delete factories for server-template
-// operations under a backend. Plain server create/delete are handled inline
-// because server updates use the dedicated ServerUpdateOp (see NewServerUpdate),
-// so a NameChildCRUD with a never-called Update slot would be misleading here.
+// operations under a backend.
 var serverTemplateOps = NewNameChildCRUD[*models.ServerTemplate](
-	"server_template", "server template", "backend", PriorityServer,
+	"server_template", "server template", "backend",
 	func(_ *models.ServerTemplate, childName string) string { return childName },
-	executors.ServerTemplateCreate, executors.ServerTemplateUpdate, executors.ServerTemplateDelete,
 )
 
 // NewServerCreate creates an operation to create a server in a backend.
 func NewServerCreate(backendName string, server *models.Server) Operation {
-	return NewNameChildOp(
-		OperationCreate,
-		"server",
-		PriorityServer,
-		backendName,
-		server.Name,
-		server,
-		Identity[*models.Server],
-		executors.ServerCreate(backendName),
+	return NewNameChildOp[*models.Server](
+		OperationCreate, "server",
 		DescribeNamedChild(OperationCreate, "server", server.Name, "backend", backendName),
 	)
 }
 
-// ServerUpdateOp is a specialized operation for server updates that tracks
-// whether the update triggered a HAProxy reload. This is needed because server
-// updates can be executed via the runtime API (without transaction) and the
-// DataPlane API returns 202 if a reload was required.
+// ServerUpdateOp is a specialized operation for server updates. It carries the
+// current and desired models alongside the runtime-eligibility flag the
+// orchestrator uses to decide whether the diff is fully runtime-eligible (no
+// reload required).
 type ServerUpdateOp struct {
 	backendName          string
 	currentServer        *models.Server
 	server               *models.Server
-	reloadTriggered      bool
 	fullyRuntimeEligible bool
 }
 
 // NewServerUpdate creates an operation to update a server in a backend.
-// Unlike other operations, server updates use a specialized type that tracks
-// reload status for runtime-eligible operations.
 // Both current and desired server models are required to determine whether
 // all changed fields are runtime-eligible (no reload needed).
 func NewServerUpdate(backendName string, current, desired *models.Server) Operation {
@@ -153,32 +145,18 @@ func NewServerUpdate(backendName string, current, desired *models.Server) Operat
 
 // IsFullyRuntimeEligible returns true if all changed server fields are in the
 // runtime-supported set (no reload required for this update).
-// Computed once at construction time from current vs desired server models.
 func (op *ServerUpdateOp) IsFullyRuntimeEligible() bool {
 	return op.fullyRuntimeEligible
 }
 
 func (op *ServerUpdateOp) Type() OperationType { return OperationUpdate }
 func (op *ServerUpdateOp) Section() string     { return "server" }
-func (op *ServerUpdateOp) Priority() int       { return PriorityServer * PriorityMultiplier }
-
-// Parent returns the backend name — same-backend server updates run
-// sequentially under the synchronizer's per-parent serialisation; ops
-// on different backends still run in parallel.
-func (op *ServerUpdateOp) Parent() string { return op.backendName }
 
 func (op *ServerUpdateOp) Describe() string {
 	return DescribeNamedChild(OperationUpdate, "server", op.server.Name, "backend", op.backendName)()
 }
 
-// TriggeredReload implements RuntimeReloadTracker interface.
-// Returns true if the last Execute call triggered a HAProxy reload.
-func (op *ServerUpdateOp) TriggeredReload() bool {
-	return op.reloadTriggered
-}
-
 // BackendName returns the name of the backend containing this server.
-// Used by the orchestrator for direct executor calls with version caching.
 func (op *ServerUpdateOp) BackendName() string { return op.backendName }
 
 // CurrentServer returns the current (pre-update) server model.
@@ -186,34 +164,15 @@ func (op *ServerUpdateOp) BackendName() string { return op.backendName }
 func (op *ServerUpdateOp) CurrentServer() *models.Server { return op.currentServer }
 
 // ServerName returns the name of the server being updated.
-// Used by the orchestrator for direct executor calls with version caching.
 func (op *ServerUpdateOp) ServerName() string { return op.server.Name }
 
 // Server returns the server model being updated.
-// Used by the orchestrator for direct executor calls with version caching.
 func (op *ServerUpdateOp) Server() *models.Server { return op.server }
-
-// Execute performs the server update operation.
-// When txID is empty (runtime execution), it tracks whether the operation triggered a reload.
-func (op *ServerUpdateOp) Execute(ctx context.Context, c *client.DataplaneClient, txID string) error {
-	// Pass 0 for version to let ServerUpdateWithReloadTracking fetch the current version.
-	// The orchestrator uses direct executor calls with version caching for better performance.
-	reloaded, err := executors.ServerUpdateWithReloadTracking(ctx, c, op.backendName, op.server.Name, op.server, txID, 0)
-	op.reloadTriggered = reloaded
-	return err
-}
 
 // NewServerDelete creates an operation to delete a server from a backend.
 func NewServerDelete(backendName string, server *models.Server) Operation {
-	return NewNameChildOp(
-		OperationDelete,
-		"server",
-		PriorityServer,
-		backendName,
-		server.Name,
-		server,
-		Nil[*models.Server],
-		executors.ServerDelete(backendName),
+	return NewNameChildOp[*models.Server](
+		OperationDelete, "server",
 		DescribeNamedChild(OperationDelete, "server", server.Name, "backend", backendName),
 	)
 }

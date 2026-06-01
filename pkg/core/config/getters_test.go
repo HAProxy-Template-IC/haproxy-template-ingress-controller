@@ -172,17 +172,21 @@ func TestLeaderElectionConfig_DurationGetters_Overrides(t *testing.T) {
 }
 
 // TestWatchedResource_GetDebounceInterval pins the per-resource debounce
-// override semantics: GetDebounceInterval returns 0 for the empty / invalid
-// cases (so the watcher's WatcherConfig.SetDefaults takes over with the
-// pkg/k8s/types.DefaultDebounceInterval = 5s value), and returns the parsed
-// duration verbatim for valid Go duration strings. The contract is
-// load-bearing for the resourcewatcher hand-off (resourcewatcher/watcher.go
-// passes this value straight into WatcherConfig.DebounceInterval).
+// override semantics:
 //
-// This getter intentionally falls back to ZERO (not to a default duration)
-// because the watcher layer owns the default. The other Get* getters in
-// this file all fall back to a named default constant — this one is the
-// outlier and the comment exists to make that asymmetry explicit.
+//   - empty / unparseable → 0, the "no override" signal that triggers
+//     WatcherConfig.SetDefaults to install pkg/k8s/types.DefaultDebounceInterval
+//     (100ms).
+//   - explicit "0" / "0s" / "0ms" → DebounceImmediate (-1), the operator's
+//     "fire on every event, no batching" signal; SetDefaults normalises this
+//     to a true zero before reaching the Debouncer.
+//   - any other valid Go duration → parsed value.
+//
+// The three distinct return values for "user wrote nothing", "user wrote 0",
+// and "user wrote 100ms" are why this getter can't just return the
+// ParseDuration result — the watcher's WatcherConfig.SetDefaults treats zero
+// as "unset, apply default", so an explicit-immediate intent has to ride a
+// different value through the pipeline.
 func TestWatchedResource_GetDebounceInterval(t *testing.T) {
 	tests := []struct {
 		name string
@@ -220,9 +224,14 @@ func TestWatchedResource_GetDebounceInterval(t *testing.T) {
 			want: 0,
 		},
 		{
-			name: "explicit zero is preserved (caller asked for the watcher's default)",
+			name: "explicit 0s returns DebounceImmediate sentinel for fire-on-every-event",
 			raw:  "0s",
-			want: 0,
+			want: DebounceImmediate,
+		},
+		{
+			name: "explicit 0ms returns DebounceImmediate sentinel",
+			raw:  "0ms",
+			want: DebounceImmediate,
 		},
 	}
 

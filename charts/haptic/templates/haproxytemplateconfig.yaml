@@ -19,10 +19,6 @@ spec:
   {{- with $config.credentialsSecretRef }}
     {{- $_ := set . "name" (.name | default (include "haptic.dataplane.credentialsSecretName" $)) }}
   {{- end }}
-  {{- /* Set maxParallel for dataplane (auto-calculate if not explicitly set) */ -}}
-  {{- with $config.dataplane }}
-    {{- $_ := set . "maxParallel" (include "haptic.config.dataplane.maxParallel" $ | int) }}
-  {{- end }}
   {{- with $config.controller }}
     {{- /* Remove fields that are not part of the CRD (configured via env vars instead) */ -}}
     {{- $_ := unset . "healthzPort" }}

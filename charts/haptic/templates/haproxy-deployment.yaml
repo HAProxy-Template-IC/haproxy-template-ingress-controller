@@ -126,16 +126,25 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              # Create required directories
-              # Note: fsGroup handles ownership - no chown needed (and CAP_CHOWN is dropped)
               mkdir -p /etc/haproxy/maps /etc/haproxy/certs /etc/haproxy/errors /etc/haproxy/general
-
-              # Copy initial config
               cp /config/haproxy.cfg /etc/haproxy/haproxy.cfg
-
-              # Start HAProxy in master-worker mode with master socket
-              # -dr: Skip DNS resolution failures - servers start in DOWN state instead of failing startup
-              # -m: Memory limit in MB (derived from container memory requests, when set)
+              # Reload wrapper invoked by dataplaneapi reload_cmd/restart_cmd
+              # (master_worker_mode:false routes reloads here). Plain
+              # master-socket reload — NO server-state dump. HAProxy does not
+              # restore an IP-literal server's address from a state file (it
+              # only stashes it in lastaddr, applied to FQDN/DNS-SRV servers),
+              # so the dump never preserved pod addresses and its port restore
+              # minted a stale-slot hybrid. Reloads are config-driven; the
+              # deploy pipeline renders current endpoints. See
+              # docs/adr/0011-no-haproxy-server-state-file.md. This reload_cmd
+              # is now functionally identical to dataplaneapi's internal
+              # master-socket reload and is a candidate to drop (with
+              # master_worker_mode:true) in a follow-up.
+              cat > /etc/haproxy/reload.sh <<'EOF'
+              #!/bin/sh
+              echo reload|socat - UNIX-CONNECT:/etc/haproxy/haproxy-master.sock
+              EOF
+              chmod +x /etc/haproxy/reload.sh
               {{- $memReq := dig "requests" "memory" "" $haproxy.resources }}
               exec {{ $haproxyBin }} -dr -W -db{{ if $memReq }} -m {{ include "haptic.memoryToMB" $memReq }}{{ end }} -S "/etc/haproxy/haproxy-master.sock,level,admin" -- /etc/haproxy/haproxy.cfg
           {{- with $haproxy.extraEnv }}
@@ -277,12 +286,18 @@ spec:
               haproxy:
                 config_file: {{ $dataplaneConfig.configFile }}
                 haproxy_bin: {{ $haproxyBin }}
-                master_worker_mode: true
+                # false (not the actual HAProxy process model — HAProxy IS
+                # started with -W above): this only tells dataplaneapi to reload
+                # via reload_cmd (reload.sh, which dumps server state first)
+                # instead of its internal master-socket reload, which bypasses
+                # reload_cmd on HAProxy >= 2.7 (canUseMasterSocketReload). The
+                # runtime client still uses master_runtime for set-server.
+                master_worker_mode: false
                 master_runtime: /etc/haproxy/haproxy-master.sock
                 reload:
                   reload_delay: 1
-                  reload_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
-                  restart_cmd: /bin/sh -c "echo 'reload' | socat stdio unix-connect:/etc/haproxy/haproxy-master.sock"
+                  reload_cmd: /etc/haproxy/reload.sh
+                  restart_cmd: /etc/haproxy/reload.sh
                   reload_strategy: custom
                   # The dataplane API reads validate_cmd from haproxy.reload, NOT
                   # from haproxy directly. Placing it at the top-level haproxy

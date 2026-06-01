@@ -1,6 +1,8 @@
 package comparator
 
 import (
+	"reflect"
+
 	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
@@ -236,15 +238,32 @@ func backendBaseDiffFields(b1, b2 *models.Backend) []string {
 	clearNestedCollections(&b1Copy)
 	clearNestedCollections(&b2Copy)
 
-	if b1Copy.Equal(b2Copy) {
+	// client-native's BackendBase.Equal/Diff do NOT compare the default_server
+	// directive, so a default-server-only change is invisible to them. The
+	// default-server has no runtime API (it is reload-only), so a change there —
+	// e.g. a BackendTLSPolicy adding `ssl ca-file ... verify required` to an
+	// already-existing backend — MUST surface as a structural backend update.
+	// Otherwise the orchestrator's runtime-only fast path writes the new TLS
+	// config to disk but never reloads it, and the live worker keeps connecting
+	// to the backend in cleartext (the Gateway API
+	// BackendTLSPolicyConflictResolution re-encrypt requests then get a 400 from
+	// the HTTPS backend). Both sides are parsed by the same client-native, so
+	// the comparison is normalization-stable; endpoint updates never touch the
+	// default-server, so the runtime-only fast path is preserved.
+	defaultServerChanged := !reflect.DeepEqual(b1.DefaultServer, b2.DefaultServer)
+
+	if b1Copy.Equal(b2Copy) && !defaultServerChanged {
 		return nil
 	}
 
 	// Use client-native's Diff to identify which BackendBase fields differ.
 	diff := b1Copy.BackendBase.Diff(b2Copy.BackendBase)
-	fields := make([]string, 0, len(diff))
+	fields := make([]string, 0, len(diff)+1)
 	for field := range diff {
 		fields = append(fields, field)
+	}
+	if defaultServerChanged {
+		fields = append(fields, "default_server")
 	}
 	return fields
 }

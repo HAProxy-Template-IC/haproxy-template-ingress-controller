@@ -16,8 +16,6 @@ package sections
 
 import (
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // describeQUICInitialRule wraps DescribeIndexChild for the quic-initial-rule section.
@@ -30,14 +28,8 @@ func describeQUICInitialRule(parentType string) func(OperationType, *models.QUIC
 // CRUD builders for QUIC initial rules in frontends and defaults sections.
 // QUIC initial rules are only available in HAProxy DataPlane API v3.1+.
 var (
-	quicInitialRuleFrontendOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule](
-		"quic_initial_rule", PriorityQUICInitialRule, describeQUICInitialRule("frontend"),
-		executors.QUICInitialRuleFrontendCreate(), executors.QUICInitialRuleFrontendUpdate(), executors.QUICInitialRuleFrontendDelete(),
-	)
-	quicInitialRuleDefaultsOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule](
-		"quic_initial_rule", PriorityQUICInitialRule, describeQUICInitialRule("defaults"),
-		executors.QUICInitialRuleDefaultsCreate(), executors.QUICInitialRuleDefaultsUpdate(), executors.QUICInitialRuleDefaultsDelete(),
-	)
+	quicInitialRuleFrontendOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule]("quic_initial_rule", describeQUICInitialRule("frontend"))
+	quicInitialRuleDefaultsOps = NewIndexChildCRUDWithDescriber[*models.QUICInitialRule]("quic_initial_rule", describeQUICInitialRule("defaults"))
 )
 
 // NewQUICInitialRuleFrontendCreate creates an operation to create a QUIC initial rule in a frontend.

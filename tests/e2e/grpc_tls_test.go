@@ -44,10 +44,10 @@ import (
 // Three sub-features:
 //   - exact method match:      svc=GrpcEcho, method=Echo → backend
 //   - header match:            x-route-version=v2 → backend (rules
-//                              ordered so the header rule wins
-//                              over the bare method rule).
+//     ordered so the header rule wins
+//     over the bare method rule).
 //   - mismatched method:       svc=GrpcEcho, method=NotARealMethod →
-//                              backend returns "Unimplemented".
+//     backend returns "Unimplemented".
 //
 // The test dials the kind NodePort with a TLS-aware gRPC client whose
 // SNI/authority is the route's hostname; HAProxy negotiates h2 via
@@ -106,7 +106,7 @@ func TestGRPCOverTLS(t *testing.T) {
 			waitCfg := testutil.WaitConfig{
 				InitialInterval: 200 * time.Millisecond,
 				MaxInterval:     2 * time.Second,
-				Timeout:         60 * time.Second,
+				Timeout:         15 * time.Second,
 				Multiplier:      1.5,
 			}
 			// lastDialErr / lastCallErr / lastGotMethod survive the

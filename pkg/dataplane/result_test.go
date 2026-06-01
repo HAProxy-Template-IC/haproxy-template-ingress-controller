@@ -32,38 +32,37 @@ func TestSyncResult_String(t *testing.T) {
 		contains []string
 	}{
 		{
-			name: "success with operations",
+			name: "success with operations (runtime mode)",
 			result: SyncResult{
 				Success:  true,
 				Duration: 500 * time.Millisecond,
-				Retries:  1,
+				SyncMode: SyncModeRuntime,
 				AppliedOperations: []AppliedOperation{
-					{Type: "create", Section: "backend", Resource: "api"},
-					{Type: "create", Section: "server", Resource: "web1"},
+					{Type: "update", Section: "server", Resource: "web1"},
 				},
 				Details: DiffDetails{
-					TotalOperations: 2,
-					Creates:         2,
-					BackendsAdded:   []string{"api"},
+					TotalOperations: 1,
+					Updates:         1,
 				},
 			},
-			contains: []string{"SUCCESS", "500ms", "retries: 1", "Fine-grained sync", "Applied: 2 operations", "Creates: 2"},
+			contains: []string{"SUCCESS", "500ms", "Runtime", "Applied: 1 operations"},
 		},
 		{
-			name: "failure with fallback",
+			name: "failure with reload",
 			result: SyncResult{
 				Success:  false,
 				Duration: 1 * time.Second,
-				SyncMode: SyncModeRawFallback,
-				Message:  "fallback required due to conflict",
+				SyncMode: SyncModeReload,
+				Message:  "reload failed",
 			},
-			contains: []string{"FAILED", "1s", "Raw config push (fallback)", "Message: fallback required"},
+			contains: []string{"FAILED", "1s", "Reload (force_reload", "Message: reload failed"},
 		},
 		{
 			name: "success with reload",
 			result: SyncResult{
 				Success:         true,
 				Duration:        200 * time.Millisecond,
+				SyncMode:        SyncModeReload,
 				ReloadTriggered: true,
 				ReloadID:        "reload-12345",
 			},
@@ -74,31 +73,27 @@ func TestSyncResult_String(t *testing.T) {
 			result: SyncResult{
 				Success:         true,
 				Duration:        200 * time.Millisecond,
+				SyncMode:        SyncModeReload,
 				ReloadTriggered: true,
 			},
 			contains: []string{"Reload: Triggered"},
 		},
 		{
-			name: "success without reload (runtime API)",
+			name: "success without reload (runtime path)",
 			result: SyncResult{
 				Success:         true,
 				Duration:        100 * time.Millisecond,
+				SyncMode:        SyncModeRuntime,
 				ReloadTriggered: false,
 			},
-			contains: []string{"Reload: Not triggered (runtime API used)"},
+			contains: []string{"Reload: Not triggered (runtime path)"},
 		},
-		// Reload-verification surface:
-		// the ReloadVerified branch and ReloadVerificationError branch
-		// of String() were both uncovered. These strings appear in
-		// operator-facing logs and status output — a regression that
-		// dropped the verification status (or the failure reason) would
-		// silently downgrade post-reload observability to "we triggered
-		// it, no idea what happened next", masking real reload failures.
 		{
 			name: "reload verified",
 			result: SyncResult{
 				Success:         true,
 				Duration:        300 * time.Millisecond,
+				SyncMode:        SyncModeReload,
 				ReloadTriggered: true,
 				ReloadID:        "reload-verified-1",
 				ReloadVerified:  true,
@@ -110,6 +105,7 @@ func TestSyncResult_String(t *testing.T) {
 			result: SyncResult{
 				Success:                 true,
 				Duration:                300 * time.Millisecond,
+				SyncMode:                SyncModeReload,
 				ReloadTriggered:         true,
 				ReloadID:                "reload-failed-1",
 				ReloadVerificationError: "haproxy still serving old config after 30s",
@@ -118,38 +114,14 @@ func TestSyncResult_String(t *testing.T) {
 				"Reload: Failed (ID: reload-failed-1) - haproxy still serving old config after 30s",
 			},
 		},
-		// Sync-mode surface: every SyncMode value MUST format to its
-		// own distinct string. Operators triage by mode — confusing
-		// SyncModeRuntime (no reload) with SyncModeRawFallback (full
-		// rewrite + reload) leads to misdiagnosed perf incidents.
-		// SyncModeFineGrained and SyncModeRawFallback are already
-		// covered above; the three modes below were not.
 		{
-			name: "sync mode raw initial",
+			name: "sync mode no changes",
 			result: SyncResult{
 				Success:  true,
-				Duration: 50 * time.Millisecond,
-				SyncMode: SyncModeRawInitial,
+				Duration: 5 * time.Millisecond,
+				SyncMode: SyncModeNoChanges,
 			},
-			contains: []string{"Mode: Raw config push (initial configuration)"},
-		},
-		{
-			name: "sync mode raw threshold",
-			result: SyncResult{
-				Success:  true,
-				Duration: 50 * time.Millisecond,
-				SyncMode: SyncModeRawThreshold,
-			},
-			contains: []string{"Mode: Raw config push (threshold exceeded)"},
-		},
-		{
-			name: "sync mode runtime",
-			result: SyncResult{
-				Success:  true,
-				Duration: 50 * time.Millisecond,
-				SyncMode: SyncModeRuntime,
-			},
-			contains: []string{"Mode: Runtime-optimized (skip_reload + X-Runtime-Actions)"},
+			contains: []string{"Mode: No changes"},
 		},
 	}
 

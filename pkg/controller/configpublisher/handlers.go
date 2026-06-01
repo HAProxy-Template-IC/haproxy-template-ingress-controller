@@ -153,6 +153,45 @@ func (c *Component) handleValidationCompleted(event *events.ValidationCompletedE
 		func(w *publishWorkItem) string { return w.correlationID })
 }
 
+// handleDeployedConfigPublishRequest publishes, as the HAProxyCfg spec, the
+// exact config the deployer just applied. This guarantees the deployed checksum
+// — the same value stamped into status.deployedToPods[] — is observable as a
+// published spec.Checksum even when the validation-driven publish for that
+// render was throttled/coalesced away under churn. The bytes are carried on the
+// event (inline entry), so no renderedConfigs cache lookup is needed, and it
+// routes through a dedicated channel + pending slot so a validation publish
+// cannot coalesce it away.
+func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedConfigPublishRequest) {
+	if event.ContentChecksum == "" {
+		return
+	}
+
+	c.mu.RLock()
+	templateConfig := c.templateConfig
+	hasTemplateConfig := c.hasTemplateConfig
+	c.mu.RUnlock()
+
+	if !hasTemplateConfig || templateConfig == nil {
+		c.logger.Debug("skipping deployed-config publish, no template config cached yet",
+			"checksum", event.ContentChecksum)
+		return
+	}
+
+	workItem := &publishWorkItem{
+		correlationID:  "deployed:" + event.ContentChecksum,
+		templateConfig: templateConfig,
+		entry: &renderedConfigEntry{
+			config:          event.Config,
+			auxFiles:        event.AuxiliaryFiles,
+			contentChecksum: event.ContentChecksum,
+		},
+		deployDriven: true,
+	}
+
+	queueWithCoalesce(c, c.deployedPublishWork, workItem, "deployed-publish", workItem.correlationID,
+		func(w *publishWorkItem) string { return w.correlationID })
+}
+
 // handleValidationFailed queues the invalid configuration for async publishing.
 // Uses correlation ID to match with the corresponding TemplateRenderedEvent.
 //
@@ -409,4 +448,11 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.hasTemplateConfig = false
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
 	c.lastPublishedChecksum = ""
+
+	// Drop any buffered deploy-driven publish so a lost leader doesn't later
+	// flush a stale spec write. (mu is held here; pendingMu is always acquired
+	// after mu, never before, so this nesting can't deadlock.)
+	c.pendingMu.Lock()
+	c.pendingDeployedPublish = nil
+	c.pendingMu.Unlock()
 }

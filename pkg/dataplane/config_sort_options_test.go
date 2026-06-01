@@ -217,21 +217,6 @@ func TestSyncOptions_DefaultAndDryRun_SafetyContracts(t *testing.T) {
 			"ReloadVerificationTimeout MUST default to 10s — higher "+
 				"serializes sync behind reloads, lower races the "+
 				"DataPlane API's reload-delay setting")
-
-		// FallbackToRaw=true is the documented escape hatch when
-		// fine-grained sync hits a non-recoverable error. A regression
-		// flipping this would surface as production reconciliations
-		// silently failing rather than recovering via raw push.
-		assert.True(t, opts.FallbackToRaw,
-			"FallbackToRaw MUST default to true so non-recoverable "+
-				"fine-grained errors fall through to raw config push")
-
-		// ContinueOnError=false ensures a single failed operation
-		// stops the sync — important so partial-failure states don't
-		// silently land on HAProxy.
-		assert.False(t, opts.ContinueOnError,
-			"ContinueOnError MUST default to false so partial-failure "+
-				"states never silently land on HAProxy")
 	})
 
 	t.Run("DryRunOptions pins no-side-effects guarantees", func(t *testing.T) {
@@ -246,28 +231,6 @@ func TestSyncOptions_DefaultAndDryRun_SafetyContracts(t *testing.T) {
 			"DryRunOptions.VerifyReload MUST be false — dry-run never "+
 				"reloads, so polling reload status would timeout for "+
 				"every call and defeat the point of dry-run latency")
-
-		// MaxRetries=0 in dry-run prevents the conflict-retry loop
-		// from masking version drift — dry-run results must reflect
-		// the snapshot at one point in time.
-		assert.Equal(t, 0, opts.MaxRetries,
-			"DryRunOptions.MaxRetries MUST be 0 — retrying would mask "+
-				"version drift and produce inconsistent dry-run results")
-
-		// FallbackToRaw=false in dry-run prevents an "ok via raw push"
-		// answer when fine-grained sync would have failed — dry-run
-		// must report what fine-grained sync would actually do.
-		assert.False(t, opts.FallbackToRaw,
-			"DryRunOptions.FallbackToRaw MUST be false — falling back "+
-				"would report 'ok' for configs where fine-grained sync "+
-				"would have failed, defeating the dry-run guarantee")
-
-		// ContinueOnError=false in dry-run preserves the same
-		// stop-on-first-error semantics as production sync.
-		assert.False(t, opts.ContinueOnError,
-			"DryRunOptions.ContinueOnError MUST be false — must mirror "+
-				"production sync semantics so dry-run results match "+
-				"what real sync would do")
 	})
 
 	t.Run("DefaultSyncOptions and DryRunOptions return independent instances", func(t *testing.T) {

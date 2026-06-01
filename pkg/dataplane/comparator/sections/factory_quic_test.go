@@ -89,17 +89,7 @@ func TestQUICInitialRuleFactoryFunctions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := tt.factory(tt.parentName, rule, tt.index)
-			// IndexChildOp.Priority adds the index inside the priority bucket
-			// (creates/updates) or inverts (deletes). The shared
-			// assertOperation helper compares against the effective priority,
-			// so build it the same way IndexChildOp does.
-			wantPrio := PriorityQUICInitialRule * PriorityMultiplier
-			if tt.wantType == OperationDelete {
-				wantPrio += 999 - tt.index
-			} else {
-				wantPrio += tt.index
-			}
-			assertOperation(t, op, tt.wantType, "quic_initial_rule", wantPrio, tt.wantDescContains)
+			assertOperation(t, op, tt.wantType, "quic_initial_rule", tt.wantDescContains)
 		})
 	}
 }

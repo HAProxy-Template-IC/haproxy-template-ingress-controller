@@ -1,19 +1,20 @@
 validationTests:
   test-gateway-slot-preservation:
-    description: Server slots should be preserved during rolling deployments when currentConfig is available
+    description: |
+      Gateway-side mirror of test-ingress-slot-preservation. Existing pod
+      parked at SRV_3 for assertion sensitivity to actual preservation.
     currentConfig: |
-      # Previous HAProxy configuration with gateway backend and server assignments
       backend gtw_default_slot-route_slot-svc_80
-          server SRV_1 10.0.0.1:8080 check
-          server SRV_2 10.0.0.2:8080 check
-          server SRV_3 127.0.0.1:1 disabled
-          server SRV_4 127.0.0.1:1 disabled
-          server SRV_5 127.0.0.1:1 disabled
-          server SRV_6 127.0.0.1:1 disabled
-          server SRV_7 127.0.0.1:1 disabled
-          server SRV_8 127.0.0.1:1 disabled
-          server SRV_9 127.0.0.1:1 disabled
-          server SRV_10 127.0.0.1:1 disabled
+          server SRV_1 192.0.2.1:1 disabled
+          server SRV_2 192.0.2.1:1 disabled
+          server SRV_3 10.0.0.1:8080 check
+          server SRV_4 10.0.0.2:8080 check
+          server SRV_5 192.0.2.1:1 disabled
+          server SRV_6 192.0.2.1:1 disabled
+          server SRV_7 192.0.2.1:1 disabled
+          server SRV_8 192.0.2.1:1 disabled
+          server SRV_9 192.0.2.1:1 disabled
+          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -75,39 +76,42 @@ validationTests:
         pattern: "backend gtw_default_slot-route_slot-svc_80"
         description: Gateway backend must be generated
 
-      # Note: check option is now on default-server, not on individual server lines
       - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_3 10\\.0\\.0\\.1:8080"
+        description: Existing pod keeps SRV_3
+      - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10\\.0\\.0\\.1:8080"
-        description: Existing pod 10.0.0.1 must preserve its slot (SRV_1)
-
+        description: Existing pod must NOT shift to SRV_1
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.3:8080"
-        description: New pod 10.0.0.3 should take the freed slot (SRV_2) from removed pod
-
+        pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
+        description: Vacated SRV_4 stays placeholder
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
-        description: Unused slots should remain as placeholders
+        pattern: "server SRV_5 10\\.0\\.0\\.3:8080"
+        description: New pod lands in SRV_5 (highestUsedSlot+1)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_[12] 10\\.0\\.0\\.3:8080"
+        description: New pod must NOT land in low placeholder slots
 
   test-gateway-slot-preservation-lower-ip:
-    description: Slot preservation must work regardless of IP ordering (new pod has lower IP)
+    description: Gateway-side mirror of test-ingress-slot-preservation-lower-ip.
     currentConfig: |
-      # Previous config: SRV_1=10.0.0.5, SRV_2=10.0.0.6
-      # After rolling: 10.0.0.6 removed, 10.0.0.2 added (lower IP than existing)
-      # Expected: SRV_1 keeps 10.0.0.5, SRV_2 gets 10.0.0.2 (takes freed slot)
+      # SRV_3=10.0.0.5 kept; SRV_4=10.0.0.6 vacated; 10.0.0.2 → SRV_5.
       backend gtw_default_slot-lower_slot-svc_80
-          server SRV_1 10.0.0.5:8080 check
-          server SRV_2 10.0.0.6:8080 check
-          server SRV_3 127.0.0.1:1 disabled
-          server SRV_4 127.0.0.1:1 disabled
-          server SRV_5 127.0.0.1:1 disabled
-          server SRV_6 127.0.0.1:1 disabled
-          server SRV_7 127.0.0.1:1 disabled
-          server SRV_8 127.0.0.1:1 disabled
-          server SRV_9 127.0.0.1:1 disabled
-          server SRV_10 127.0.0.1:1 disabled
+          server SRV_1 192.0.2.1:1 disabled
+          server SRV_2 192.0.2.1:1 disabled
+          server SRV_3 10.0.0.5:8080 check
+          server SRV_4 10.0.0.6:8080 check
+          server SRV_5 192.0.2.1:1 disabled
+          server SRV_6 192.0.2.1:1 disabled
+          server SRV_7 192.0.2.1:1 disabled
+          server SRV_8 192.0.2.1:1 disabled
+          server SRV_9 192.0.2.1:1 disabled
+          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -164,21 +168,22 @@ validationTests:
       - type: haproxy_valid
         description: HAProxy config must be valid
 
-      # Note: check option is now on default-server, not on individual server lines
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.5:8080"
-        description: Existing pod 10.0.0.5 must preserve its slot (SRV_1)
-
+        pattern: "server SRV_3 10\\.0\\.0\\.5:8080"
+        description: Existing pod keeps SRV_3 regardless of new pod IP
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_[12] 10\\.0\\.0\\.2:8080"
+        description: Lower-IP new pod must NOT sort into low slots
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.2:8080"
-        description: New pod 10.0.0.2 (lower IP) must take freed slot (SRV_2), not be sorted first
-
+        pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
+        description: Vacated SRV_4 stays placeholder
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
-        description: Unused slots should remain as placeholders
+        pattern: "server SRV_5 10\\.0\\.0\\.2:8080"
+        description: New pod lands in SRV_5
 
   test-gateway-status-patches:
     description: Gateway status patches register conditions and addresses

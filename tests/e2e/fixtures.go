@@ -178,6 +178,49 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 							ContainerPort: 80,
 							Protocol:      corev1.ProtocolTCP,
 						}},
+						// Readiness probe so K8s only marks the pod
+						// Ready when port 80 actually responds, not the
+						// instant the container process starts.
+						//
+						// Without it, kubelet marks the pod Running
+						// (and therefore Ready, since there's no other
+						// gating probe) the moment the Node process
+						// starts. EndpointSlice gets the pod with
+						// `conditions.ready=true`. HAPTIC includes it
+						// in the rendered backend. HAProxy dispatches.
+						// Meanwhile Node is still loading modules and
+						// hasn't called `app.listen(80)` yet — the
+						// kernel RSTs the SYN. Visible on the wire as
+						// immediate RST in the ~200-500 ms after
+						// container start (captured in tcpdump during
+						// MR !1019 debugging).
+						//
+						// With this probe, K8s waits to mark Ready
+						// until /:80 answers, by which point Node has
+						// bound the listener. Matches how every
+						// K8s production deployment configures non-
+						// trivial app backends — the contract is
+						// "Ready means responding to traffic", and a
+						// fixture that simulates a real production
+						// backend has to honour it.
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{
+									Path: "/",
+									Port: intstr.FromString("http"),
+								},
+							},
+							// 1 s period + threshold 1 keeps the
+							// startup → Ready transition tight; echo-
+							// server typically answers within
+							// ~100-300 ms of container start so the
+							// first probe usually succeeds. Slow
+							// starts pay an extra second per probe.
+							PeriodSeconds:    1,
+							SuccessThreshold: 1,
+							FailureThreshold: 1,
+							TimeoutSeconds:   1,
+						},
 					}},
 				},
 			},

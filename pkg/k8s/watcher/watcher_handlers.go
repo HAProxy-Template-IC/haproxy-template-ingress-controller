@@ -1,6 +1,10 @@
 package watcher
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/cache"
@@ -33,6 +37,12 @@ func (w *Watcher) handleUpdate(oldObj, newObj any) {
 	if w.shouldSkipUpdate(oldResource, resource) {
 		return
 	}
+
+	// Full pre/post content dump for forensic debugging. Resource-agnostic
+	// (works for ANY kind), gated to DEBUG so it never costs anything in
+	// production. Without this we can't reconstruct what changed on a
+	// given resourceVersion transition — counts and RV pairs aren't enough.
+	w.logUpdateContent(context.Background(), oldResource, resource)
 
 	// Check field selector transitions
 	oldMatches := oldResource != nil && w.matchesFieldSelector(oldResource)
@@ -119,6 +129,16 @@ func (w *Watcher) processAdd(resource *unstructured.Unstructured) {
 		return
 	}
 
+	// Resource-level audit log. Routinely required during rolling-restart
+	// debugging — without per-resource detail "endpoints modified=1" in the
+	// aggregated index-update event is ambiguous across parallel tests.
+	w.logger.Debug("watcher add",
+		"gvr", w.config.GVR.String(),
+		"name", resource.GetName(),
+		"namespace", resource.GetNamespace(),
+		"resource_version", resource.GetResourceVersion(),
+		"keys", result.Keys)
+
 	// Record change
 	w.debouncer.RecordCreate()
 }
@@ -147,6 +167,14 @@ func (w *Watcher) processUpdate(resource *unstructured.Unstructured) {
 		return
 	}
 
+	// Resource-level audit log — see processAdd for rationale.
+	w.logger.Debug("watcher update",
+		"gvr", w.config.GVR.String(),
+		"name", resource.GetName(),
+		"namespace", resource.GetNamespace(),
+		"resource_version", resource.GetResourceVersion(),
+		"keys", result.Keys)
+
 	// Record change
 	w.debouncer.RecordUpdate()
 }
@@ -174,6 +202,14 @@ func (w *Watcher) processDelete(resource *unstructured.Unstructured) {
 			"error", err)
 		return
 	}
+
+	// Resource-level audit log — see processAdd for rationale.
+	w.logger.Debug("watcher delete",
+		"gvr", w.config.GVR.String(),
+		"name", resource.GetName(),
+		"namespace", resource.GetNamespace(),
+		"resource_version", resource.GetResourceVersion(),
+		"keys", keys)
 
 	// Record change
 	w.debouncer.RecordDelete()
@@ -247,4 +283,46 @@ func (w *Watcher) convertToUnstructured(obj any) *unstructured.Unstructured {
 		}
 	}
 	return nil
+}
+
+// logUpdateContent dumps the full old + new resource JSON at DEBUG level
+// so post-mortem analysis can see exactly what changed between
+// resourceVersions. Resource-agnostic by construction (operates on
+// *unstructured.Unstructured.Object, the generic map).
+//
+// Why both old and new: a single field flip (e.g. EndpointSlice's
+// conditions.terminating going from nil→true) is invisible in a snapshot
+// of the final state — we need to compare before/after.
+//
+// Why JSON: structured, greppable, post-processable with jq. Pretty-print
+// avoided to keep one log line per event (jq can re-indent).
+//
+// Gated on slog.LevelDebug because the json.Marshal of full unstructured
+// resources is non-trivial CPU + heap work — and this fires on every
+// informer update for high-frequency kinds like EndpointSlice. slog.Debug
+// is a no-op above DEBUG, but the marshal would still run unconditionally
+// without this guard.
+func (w *Watcher) logUpdateContent(ctx context.Context, oldResource, newResource *unstructured.Unstructured) {
+	if !w.logger.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	oldJSON, oldErr := json.Marshal(oldResource.Object)
+	newJSON, newErr := json.Marshal(newResource.Object)
+	if oldErr != nil || newErr != nil {
+		w.logger.Debug("watcher update: JSON marshal failed (forensic dump only)",
+			"gvr", w.config.GVR.String(),
+			"name", newResource.GetName(),
+			"namespace", newResource.GetNamespace(),
+			"old_err", oldErr,
+			"new_err", newErr)
+		return
+	}
+	w.logger.Debug("watcher update: pre/post content",
+		"gvr", w.config.GVR.String(),
+		"name", newResource.GetName(),
+		"namespace", newResource.GetNamespace(),
+		"old_rv", oldResource.GetResourceVersion(),
+		"new_rv", newResource.GetResourceVersion(),
+		"old", string(oldJSON),
+		"new", string(newJSON))
 }

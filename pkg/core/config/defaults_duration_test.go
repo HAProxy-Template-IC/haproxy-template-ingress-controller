@@ -66,46 +66,6 @@ func TestDataplaneConfig_Getters_Defaults(t *testing.T) {
 		"empty ReloadVerificationTimeout falls back to DefaultReloadVerificationTimeout")
 	assert.Equal(t, DefaultSyncTimeout, cfg.GetSyncTimeout(),
 		"empty SyncTimeout falls back to DefaultSyncTimeout")
-	assert.Equal(t, DefaultSyncMaxRetries, cfg.GetSyncMaxRetries(),
-		"nil SyncMaxRetries falls back to DefaultSyncMaxRetries")
-}
-
-// TestControllerConfig_Getters pins the reconciler-refractory accessor:
-// empty falls back to the shared default; valid duration overrides;
-// invalid falls back through parseDurationOr.
-func TestControllerConfig_Getters(t *testing.T) {
-	t.Run("empty falls back to default", func(t *testing.T) {
-		cfg := &ControllerConfig{}
-		assert.Equal(t, DefaultReconciliationDebounceInterval, cfg.GetReconciliationDebounceInterval())
-	})
-	t.Run("valid duration overrides default", func(t *testing.T) {
-		cfg := &ControllerConfig{ReconciliationDebounceInterval: "1500ms"}
-		assert.Equal(t, 1500*time.Millisecond, cfg.GetReconciliationDebounceInterval())
-	})
-	t.Run("invalid duration falls back to default", func(t *testing.T) {
-		cfg := &ControllerConfig{ReconciliationDebounceInterval: "garbage"}
-		assert.Equal(t, DefaultReconciliationDebounceInterval, cfg.GetReconciliationDebounceInterval())
-	})
-}
-
-// TestSyncMaxRetries_PointerSemantics pins the unset / 0 / positive
-// distinction the *int field encodes — the whole reason for the pointer.
-func TestSyncMaxRetries_PointerSemantics(t *testing.T) {
-	t.Run("nil means default", func(t *testing.T) {
-		cfg := &DataplaneConfig{SyncMaxRetries: nil}
-		assert.Equal(t, DefaultSyncMaxRetries, cfg.GetSyncMaxRetries())
-	})
-	t.Run("zero means no retries, not default", func(t *testing.T) {
-		zero := 0
-		cfg := &DataplaneConfig{SyncMaxRetries: &zero}
-		assert.Equal(t, 0, cfg.GetSyncMaxRetries(),
-			"explicit 0 must be honored as 'no retries', not silently replaced by the default")
-	})
-	t.Run("positive value is honored", func(t *testing.T) {
-		seven := 7
-		cfg := &DataplaneConfig{SyncMaxRetries: &seven}
-		assert.Equal(t, 7, cfg.GetSyncMaxRetries())
-	})
 }
 
 // TestDataplaneConfig_Getters_Overrides pins that valid duration strings on

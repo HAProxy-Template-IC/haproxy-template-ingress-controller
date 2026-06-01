@@ -595,7 +595,7 @@ IndexReady:
     // Stage 5: Reconciliation Components
     log.Info("Stage 5: Starting reconciliation")
 
-    reconciler := reconciler.New(eventBus, logger, nil)
+    reconciler := reconciler.New(eventBus, logger)
     coordinator := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
         EventBus:      eventBus,
         Pipeline:      pipeline,
@@ -613,14 +613,13 @@ IndexReady:
 }
 ```
 
-**Event Multiplexing with `select`** (illustrative — see `pkg/controller/reconciler/reconciler.go` for the real `Reconciler.Start` loop, which uses `*timers.SafeTimer` and a typed subscription):
+**Event Multiplexing with `select`** (illustrative — see `pkg/controller/reconciler/reconciler.go` for the real `Reconciler.Start` loop, which uses a typed subscription):
 
 ```go
 // pkg/controller/reconciler/reconciler.go (illustrative)
 type Reconciler struct {
-    eventBus  *EventBus
-    timer     *timers.SafeTimer // leading-edge refractory; not trailing-edge debounce
-    logger    *slog.Logger
+    eventBus *EventBus
+    logger   *slog.Logger
 }
 
 func (r *Reconciler) Start(ctx context.Context) error {
@@ -635,20 +634,16 @@ func (r *Reconciler) Start(ctx context.Context) error {
         case event := <-events:
             switch e := event.(type) {
             case *ResourceIndexUpdatedEvent:
-                // Leading-edge: fire immediately if no recent reconciliation,
-                // otherwise arm the refractory timer so coalesced bursts trigger
-                // exactly one reconciliation when the window closes.
-                r.handleDebounceableChange()
+                // Fire immediately. There is no reconciler-level refractory
+                // window: burst coalescing is the per-watcher debounce
+                // window's job, reload throttling is the deployer's.
+                // Only the initial-sync variant is filtered out.
+                r.triggerNow(e.EventType())
 
             case *IndexSynchronizedEvent, *BecameLeaderEvent, *DriftPreventionTriggeredEvent:
-                // Bypass the refractory window — these events represent whole-store
-                // state transitions that should reconcile immediately.
+                // Whole-store state transitions reconcile immediately too.
                 r.triggerNow(e.EventType())
             }
-
-        case <-r.timer.Chan():
-            r.timer.Fired() // MUST call after channel drain or EnsureRunning becomes a no-op
-            r.eventBus.Publish(NewReconciliationTriggeredEvent("debounce_timer", true, WithNewCorrelation()))
 
         case <-ctx.Done():
             return ctx.Err()

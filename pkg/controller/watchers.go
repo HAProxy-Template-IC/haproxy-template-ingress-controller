@@ -80,7 +80,19 @@ func setupResourceWatchers(
 	return resourceWatcher, nil
 }
 
-// setupConfigWatchers creates and starts HAProxyTemplateConfig CRD and Secret watchers, then waits for sync.
+// setupConfigWatchers creates and starts HAProxyTemplateConfig CRD, credentials Secret,
+// and optional webhook-cert Secret watchers, then waits for sync.
+//
+// webhookCertSecretName is empty when webhook validation is disabled, in
+// which case no third watcher is created. When non-empty, a single-resource
+// watcher is created for the named Secret that publishes
+// CertResourceChangedEvent so the certloader can extract the rotated cert
+// and ConfigChangeHandler can trigger an iteration restart with the new
+// cert. Without this watcher the cert-rotation pipeline is open-loop:
+// CertLoader subscribes to CertResourceChangedEvent but no producer ever
+// fires, so an external rotation of the webhook-cert Secret (cert-manager,
+// e2e test harness, manual edit) only takes effect on the next pod
+// restart.
 //
 // Returns an error if watcher creation or synchronization fails.
 func setupConfigWatchers(
@@ -88,6 +100,7 @@ func setupConfigWatchers(
 	k8sClient *client.Client,
 	crdName string,
 	secretName string,
+	webhookCertSecretName string,
 	crdGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
 	bus *busevents.EventBus,
@@ -146,9 +159,23 @@ func setupConfigWatchers(
 		return fmt.Errorf("creating Secret watcher: %w", err)
 	}
 
+	// Optional webhook-cert Secret watcher (nil when webhook validation is
+	// disabled). Construction extracted to a helper to keep the parent
+	// function within the configured cognitive-complexity budget.
+	var webhookCertWatcher *watcher.SingleWatcher
+	if webhookCertSecretName != "" {
+		webhookCertWatcher, err = newWebhookCertWatcher(k8sClient, webhookCertSecretName, secretGVR, bus, logger)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Start watchers (tracked by errgroup for graceful shutdown)
 	startInErrGroup(errGroup, iterCtx, logger, cancel, "HAProxyTemplateConfig watcher", crdWatcher.Start)
 	startInErrGroup(errGroup, iterCtx, logger, cancel, "Secret watcher", secretWatcher.Start)
+	if webhookCertWatcher != nil {
+		startInErrGroup(errGroup, iterCtx, logger, cancel, "webhook-cert Secret watcher", webhookCertWatcher.Start)
+	}
 
 	logger.Debug("Watchers started, waiting for initial sync")
 
@@ -169,7 +196,16 @@ func setupConfigWatchers(
 		return nil
 	})
 
-	// Wait for both watchers to sync
+	if webhookCertWatcher != nil {
+		watcherGroup.Go(func() error {
+			if err := webhookCertWatcher.WaitForSync(watcherCtx); err != nil {
+				return fmt.Errorf("webhook-cert Secret watcher sync failed: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Wait for watchers to sync
 	if err := watcherGroup.Wait(); err != nil {
 		return fmt.Errorf("config watcher sync failed: %w", err)
 	}
@@ -250,4 +286,48 @@ func setupCurrentConfigStore(
 	logger.Debug("HAProxyCfg watcher started for current config updates")
 
 	return store, nil
+}
+
+// newWebhookCertWatcher creates the single-resource Secret watcher that
+// publishes CertResourceChangedEvent on add/update of the cert Secret.
+// Caller must check name != "" before calling (the parent function does
+// this so the helper can stay strictly about construction).
+//
+// Why a dedicated watcher: the credentials Secret has its own watcher
+// publishing SecretResourceChangedEvent; the webhook-cert Secret needs a
+// distinct event type because CertLoader subscribes to
+// CertResourceChangedEvent (a different filter from the credentials
+// pipeline). Without this watcher the cert-rotation pipeline is open-loop:
+// CertLoader's subscription drains an empty queue, ConfigChangeHandler
+// never sees a CertParsedEvent, and the iteration restart that's supposed
+// to load the rotated cert never fires.
+func newWebhookCertWatcher(
+	k8sClient *client.Client,
+	name string,
+	secretGVR schema.GroupVersionResource,
+	bus *busevents.EventBus,
+	logger *slog.Logger,
+) (*watcher.SingleWatcher, error) {
+	w, err := watcher.NewSingle(&types.SingleWatcherConfig{
+		GVR:       secretGVR,
+		Namespace: k8sClient.Namespace(),
+		Name:      name,
+		OnChange: func(obj any) error {
+			bus.Publish(events.NewCertResourceChangedEvent(obj))
+			return nil
+		},
+		OnSyncComplete: func(obj any) error {
+			if obj == nil {
+				logger.Debug("webhook-cert Secret watcher sync complete, no resource in cache (skipping event)")
+				return nil
+			}
+			logger.Debug("webhook-cert Secret watcher sync complete, publishing current state")
+			bus.Publish(events.NewCertResourceChangedEvent(obj))
+			return nil
+		},
+	}, k8sClient)
+	if err != nil {
+		return nil, fmt.Errorf("creating webhook-cert Secret watcher: %w", err)
+	}
+	return w, nil
 }

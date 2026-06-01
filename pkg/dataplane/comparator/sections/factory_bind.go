@@ -18,8 +18,6 @@ import (
 	"fmt"
 
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
 // bindIdentifier creates a descriptive identifier for a bind that includes address, port, and SSL info.
@@ -44,9 +42,8 @@ func bindIdentifier(bind *models.Bind) string {
 
 // CRUD builder for binds in a frontend.
 var bindFrontendOps = NewNameChildCRUD[*models.Bind](
-	"bind", "bind", "frontend", PriorityBind,
+	"bind", "bind", "frontend",
 	func(bind *models.Bind, _ string) string { return bindIdentifier(bind) },
-	executors.BindFrontendCreate, executors.BindFrontendUpdate, executors.BindFrontendDelete,
 )
 
 // NewBindFrontendCreate creates an operation to create a bind in a frontend.

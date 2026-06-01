@@ -68,6 +68,12 @@ type publishWorkItem struct {
 	event          *events.ValidationCompletedEvent
 	templateConfig *v1alpha1.HAProxyTemplateConfig
 	entry          *renderedConfigEntry
+	// deployDriven marks an item that carries the bytes the deployer just
+	// applied (from a DeployedConfigPublishRequest), as opposed to the
+	// validation-driven publish. Deploy-driven items use their own pending slot
+	// so a validation publish can't coalesce them away, keeping every deployed
+	// checksum observable as a published spec.Checksum.
+	deployDriven bool
 }
 
 // validationFailedWorkItem represents a failed config publish task for the async worker.
@@ -121,6 +127,7 @@ type Component struct {
 	// Using channels with small buffers provides natural coalescing:
 	// newer work replaces older pending work when the worker is busy.
 	publishWork          chan *publishWorkItem
+	deployedPublishWork  chan *publishWorkItem
 	validationFailedWork chan *validationFailedWorkItem
 
 	// Status update coalescing.
@@ -154,7 +161,12 @@ type Component struct {
 	// inside the publish-throttle refractory window. The publish worker
 	// flushes it on publishThrottle.FiredCh(). Protected by pendingMu.
 	pendingPublish *publishWorkItem
-	pendingMu      sync.Mutex
+	// pendingDeployedPublish buffers the latest deploy-driven publish that
+	// arrived inside the throttle window. Separate from pendingPublish so a
+	// validation publish never coalesces away a deployed checksum. Flushed
+	// (deploy-first) on publishThrottle.FiredCh(). Protected by pendingMu.
+	pendingDeployedPublish *publishWorkItem
+	pendingMu              sync.Mutex
 }
 
 // Option configures the Component.
@@ -193,6 +205,7 @@ func New(
 		logger:               logger.With("component", ComponentName),
 		renderedConfigs:      make(map[string]*renderedConfigEntry),
 		publishWork:          make(chan *publishWorkItem, publishWorkChannelSize),
+		deployedPublishWork:  make(chan *publishWorkItem, publishWorkChannelSize),
 		validationFailedWork: make(chan *validationFailedWorkItem, publishWorkChannelSize),
 		statusWorkPending:    make(map[string]*statusWorkItem),
 		statusWorkTrigger:    make(chan struct{}, statusWorkTriggerSize),
@@ -237,6 +250,7 @@ func (c *Component) Start(ctx context.Context) error {
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeConfigAppliedToPod,
+		events.EventTypeDeployedConfigPublishRequest,
 		events.EventTypeHAProxyPodTerminated,
 		events.EventTypeHAProxyPodsDiscovered,
 		events.EventTypeLostLeadership,
@@ -283,6 +297,9 @@ func (c *Component) handleEvent(event busevents.Event) {
 
 	case *events.ConfigAppliedToPodEvent:
 		c.handleConfigAppliedToPod(e)
+
+	case *events.DeployedConfigPublishRequest:
+		c.handleDeployedConfigPublishRequest(e)
 
 	case *events.HAProxyPodTerminatedEvent:
 		c.handlePodTerminated(e)

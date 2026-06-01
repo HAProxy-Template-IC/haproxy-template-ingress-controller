@@ -28,6 +28,17 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_deployment_errors_total` | counter | — | Deployments that failed |
 | `haptic_deployment_duration_seconds` | histogram | — | Deployment duration, aggregated across all parallel endpoint calls |
 
+### Runtime-eligible fast path
+
+| Metric | Type | Labels | What it tracks |
+|--------|------|--------|----------------|
+| `haptic_runtime_fast_path_fires_total` | counter | — | Fast-path attempts (one per HAProxy pod per reconcile) |
+| `haptic_runtime_fast_path_applies_total` | counter | — | Attempts that applied ≥1 runtime-eligible server update |
+| `haptic_runtime_fast_path_failures_total` | counter | — | Attempts that errored (best-effort; the scheduled deploy converges) |
+| `haptic_runtime_fast_path_server_updates_total` | counter | — | Runtime-eligible server updates applied via the fast path |
+
+`applies_total` flat at 0 while `fires_total` climbs means the fast path runs but finds no runtime-eligible change to apply (the deploy is keeping pods current) — the signal that separates a healthy-but-idle fast path from a broken one.
+
 ### Config validation
 
 | Metric | Type | Labels | What it tracks |

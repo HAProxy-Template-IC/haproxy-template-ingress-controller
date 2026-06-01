@@ -15,9 +15,11 @@
 # TestIngressHaproxyIngressWafDeny depends on), haproxy service
 # shape, resources, webhook.
 #
-# CHANGED: reconciliationDebounceInterval / minDeploymentInterval /
-# configPublishInterval bumped from 10ms / 10ms / 50ms to
-# 100ms / 100ms / 200ms. At the dev-values 10ms preset, parallel
+# CHANGED: configPublishInterval bumped from 50ms to 200ms and
+# driftPreventionInterval raised to 10m. The reconciler now fires
+# immediately (no refractory knob); reload throttling is the
+# deployer's minDeploymentInterval at the chart default. At the
+# dev-values tight preset, parallel
 # ingress-create traffic produces sustained HAProxy worker-fork
 # churn (5+ worker generations per second observed on shard [3.2]
 # of pipeline 2549659472), and tests that poll-and-expect specific
@@ -110,12 +112,20 @@ controller:
     # subtests all timing out at ~91-93s with the same shape
     # (rendered config contains the expected rule, polling phase
     # never sees the response).
-    controller:
-      reconciliationDebounceInterval: 100ms
+    #
+    # configPublishInterval is overridden so tests asserting
+    # `pod.checksum == spec.checksum` don't race the throttle window.
+    # driftPreventionInterval stays at 10m so the background check
+    # doesn't interleave with tight test windows.
+    #
+    # No reconciler-level refractory knob exists any more: the Reconciler
+    # fires immediately on every event (spec.controller.reconciliationDebounceInterval
+    # was removed). Batching is per-watcher (default 2s; EndpointSlice "0")
+    # and reload throttling is the deployer's minDeploymentInterval — both
+    # apply here via the chart defaults, so there is nothing to override.
     dataplane:
-      minDeploymentInterval: 100ms
-      configPublishInterval: 200ms
       driftPreventionInterval: 10m
+      configPublishInterval: 200ms
 
     templatingSettings:
       extraContext:

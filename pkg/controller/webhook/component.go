@@ -58,6 +58,7 @@ type Component struct {
 	metrics         MetricsRecorder
 	restMapper      meta.RESTMapper
 	dryRunValidator DryRunValidator
+	configValidator ConfigValidatorFunc
 
 	// Webhook library components
 	server *webhook.Server
@@ -97,6 +98,14 @@ type DryRunValidator interface {
 	ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string)
 }
 
+// ConfigValidatorFunc validates a HAProxyTemplateConfig admission request.
+// Same signature shape as DryRunValidator.ValidateDirect — kept as a
+// function type rather than an interface so test wiring can pass a plain
+// closure without declaring a satellite type. Nil means "no validator
+// configured" — handler falls back to allow (failurePolicy=Ignore on the
+// chart-side ValidatingWebhookConfiguration covers the remaining gap).
+type ConfigValidatorFunc func(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string)
+
 // Config configures the webhook component.
 type Config struct {
 	// Port is the HTTPS port for the webhook server.
@@ -122,6 +131,13 @@ type Config struct {
 	// DryRunValidator performs dry-run validation of resources.
 	// If nil, validation is skipped (fail-open).
 	DryRunValidator DryRunValidator
+
+	// ConfigValidator validates HAProxyTemplateConfig admission requests.
+	// If nil, HAProxyTemplateConfig admission is admitted unconditionally
+	// (no handler registered → pure server's fail-open path). The chart
+	// pairs this with failurePolicy=Ignore so missing controller doesn't
+	// break the chicken-and-egg of first install / recovery.
+	ConfigValidator ConfigValidatorFunc
 }
 
 // New creates a new webhook component.
@@ -149,6 +165,7 @@ func New(logger *slog.Logger, config *Config, restMapper meta.RESTMapper, metric
 		restMapper:      restMapper,
 		metrics:         metrics,
 		dryRunValidator: config.DryRunValidator,
+		configValidator: config.ConfigValidator,
 		listening:       make(chan struct{}),
 	}
 }
@@ -315,6 +332,18 @@ func (c *Component) resolveKind(apiGroup, apiVersion, resource string) (string, 
 func (c *Component) registerValidators() {
 	c.logger.Info("Registering validators")
 
+	// HAProxyTemplateConfig admission validator. Registered separately
+	// from the Rules-driven loop because HAProxyTemplateConfig is the
+	// controller's own config, NOT a watched resource — its admission
+	// validation runs a different code path (parse CRD + ephemeral
+	// render+validate pipeline) than the overlay-based DryRunValidator
+	// used for watched resources.
+	if c.configValidator != nil {
+		c.logger.Debug("Registering HAProxyTemplateConfig validator",
+			"gvk", HAProxyTemplateConfigGVK)
+		c.server.RegisterValidator(HAProxyTemplateConfigGVK, c.createConfigValidator())
+	}
+
 	// For each webhook rule, register a validator
 	for _, rule := range c.config.Rules {
 		// Resolve Kind from Resource using RESTMapper
@@ -406,7 +435,20 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			return true, "", nil, nil
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Derive from c.serverCtx (set in Start()) so iteration shutdown
+		// cancels in-flight validations promptly. Using context.Background()
+		// would orphan up to 5s of validation work past server cancellation,
+		// delaying graceful shutdown. The 5s deadline still bounds each
+		// admission individually; failurePolicy=Ignore admits on timeout.
+		// Fall back to context.Background() if serverCtx hasn't been set
+		// yet — happens in unit tests that call this validator without
+		// going through Start(); in production Start() always sets
+		// serverCtx before RegisterValidator wires this closure up.
+		parent := c.serverCtx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 		defer cancel()
 
 		allowed, reason, warnings := c.dryRunValidator.ValidateDirect(
@@ -437,6 +479,72 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			"allowed", allowed,
 			"reason", reason,
 			"warnings", len(warnings),
+			"duration_ms", time.Since(start).Milliseconds())
+
+		return allowed, reason, warnings, nil
+	}
+}
+
+// createConfigValidator returns the ValidationFunc that handles
+// HAProxyTemplateConfig admission. Mirrors createResourceValidator's shape
+// (basic structure check, metric recording, deadline guard) but dispatches
+// to the dedicated configValidator instead of the overlay-based DryRunValidator.
+func (c *Component) createConfigValidator() webhook.ValidationFunc {
+	return func(valCtx *webhook.ValidationContext) (bool, string, []string, error) {
+		start := time.Now()
+
+		c.logger.Debug("Validating HAProxyTemplateConfig admission",
+			"gvk", HAProxyTemplateConfigGVK,
+			"operation", valCtx.Operation,
+			"namespace", valCtx.Namespace,
+			"name", valCtx.Name)
+
+		if err := c.validateBasicStructure(valCtx.Object); err != nil {
+			duration := time.Since(start).Seconds()
+			if c.metrics != nil {
+				c.metrics.RecordWebhookRequest(HAProxyTemplateConfigGVK, "denied", duration)
+				c.metrics.RecordWebhookValidation(HAProxyTemplateConfigGVK, "denied")
+			}
+			return false, err.Error(), nil, nil
+		}
+
+		// Hard 5 s internal deadline mirrors createResourceValidator. Kept
+		// shorter than the chart-side timeoutSeconds (also 5 s, but
+		// failurePolicy=Ignore there so a timeout admits anyway). Parent
+		// is c.serverCtx so iteration shutdown cancels in-flight validations.
+		// See createResourceValidator for the serverCtx-nil fallback rationale.
+		parent := c.serverCtx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
+
+		allowed, reason, warnings := c.configValidator(
+			ctx,
+			HAProxyTemplateConfigGVK,
+			valCtx.Namespace,
+			valCtx.Name,
+			valCtx.Object,
+			valCtx.Operation,
+		)
+
+		duration := time.Since(start).Seconds()
+		if c.metrics != nil {
+			resultStr := "allowed"
+			if !allowed {
+				resultStr = "denied"
+			}
+			c.metrics.RecordWebhookRequest(HAProxyTemplateConfigGVK, resultStr, duration)
+			c.metrics.RecordWebhookValidation(HAProxyTemplateConfigGVK, resultStr)
+		}
+
+		c.logger.Info("HAProxyTemplateConfig validation completed",
+			"operation", valCtx.Operation,
+			"namespace", valCtx.Namespace,
+			"name", valCtx.Name,
+			"allowed", allowed,
+			"reason", reason,
 			"duration_ms", time.Since(start).Milliseconds())
 
 		return allowed, reason, warnings, nil

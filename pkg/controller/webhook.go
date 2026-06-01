@@ -45,6 +45,8 @@ import (
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // setupWebhook creates and starts the webhook component if webhook validation is enabled.
@@ -63,6 +65,7 @@ func setupWebhook(
 	webhookCerts *WebhookCertificates,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
+	configValidator webhook.ConfigValidatorFunc, // Pre-created HAProxyTemplateConfig validator (may be nil)
 	logger *slog.Logger,
 	metricsRecorder webhook.MetricsRecorder,
 	cancel context.CancelFunc,
@@ -70,13 +73,14 @@ func setupWebhook(
 ) {
 	// Extract webhook rules from config
 	rules := webhook.ExtractWebhookRules(cfg)
-	if len(rules) == 0 {
+	if len(rules) == 0 && configValidator == nil {
 		logger.Debug("No webhook rules extracted (webhook enabled but no matching resources)")
 		return
 	}
 
 	logger.Info("Webhook validation enabled",
-		"rule_count", len(rules))
+		"rule_count", len(rules),
+		"haproxytemplateconfig_validator", configValidator != nil)
 
 	// Create RESTMapper for resolving resource kinds from GVR
 	// This uses the Kubernetes API discovery to get authoritative mappings
@@ -97,6 +101,7 @@ func setupWebhook(
 			CertPEM:         webhookCerts.CertPEM,
 			KeyPEM:          webhookCerts.KeyPEM,
 			DryRunValidator: dryrunValidator, // Direct validation, nil = fail-open
+			ConfigValidator: configValidator, // HAProxyTemplateConfig admission, nil = fail-open
 		},
 		mapper,
 		metricsRecorder,
@@ -139,8 +144,22 @@ func setupWebhook(
 // each CRD/credentials/cert rotation that triggers a fresh iteration would leak
 // another `haptic-webhook-validation-*` directory into the pod's /tmp.
 //
-// Returns (nil, errNoWebhookRules) if webhook rules are empty (no resources to validate).
-// Returns (nil, error) if engine creation fails.
+// Returns (nil, nil, error) if engine creation or shared-dependency
+// construction fails.
+//
+// Returns (dryRunValidator, configValidator, nil) on success, where:
+//   - dryRunValidator is non-nil iff at least one watched resource has
+//     enableValidationWebhook=true (i.e., the watched-resource admission
+//     path is active). nil otherwise.
+//   - configValidator is ALWAYS non-nil — the HAProxyTemplateConfig
+//     admission webhook is independent of watched-resource rules. The
+//     chart-side ValidatingWebhookConfiguration may or may not route
+//     HAProxyTemplateConfig admission to the controller (chart-side
+//     `webhook.haproxyTemplateConfig.enabled`), but the controller is
+//     always ready to handle it. If the cluster routes the admission
+//     and we returned a nil validator, the request would silently
+//     succeed at the pure server's fail-open path — exactly the bug
+//     Gitar flagged on commit 8d326660.
 func createDryRunValidator(
 	iterCtx context.Context,
 	cfg *coreconfig.Config,
@@ -151,15 +170,10 @@ func createDryRunValidator(
 	pluggableValidator *pluggablevalidator.Manager,
 	engineWiring typedRendererWiring,
 	logger *slog.Logger,
-) (*dryrunvalidator.Component, error) {
-	// Check if there are any webhook rules - if not, no validator needed
+) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
 	rules := webhook.ExtractWebhookRules(cfg)
-	if len(rules) == 0 {
-		logger.Debug("No webhook rules extracted, skipping DryRunValidator creation")
-		return nil, errNoWebhookRules
-	}
 
-	logger.Debug("Creating DryRunValidator for webhook validation")
+	logger.Debug("Creating webhook validators", "watched_resource_rules", len(rules))
 
 	// Create template engine using helper (handles template extraction, filters, engine type parsing)
 	// Note: DryRunValidator does NOT use currentConfig at runtime - it validates hypothetical future state.
@@ -174,46 +188,7 @@ func createDryRunValidator(
 	// the failure mode Phase 11.5 CI surfaced.
 	engine, err := helpers.NewEngineFromConfigWithOptions(cfg, nil, nil, engineWiring.Declarations, helpers.EngineOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
-	}
-
-	// Create validation paths for the embedded test runner.
-	//
-	// IMPORTANT: We deliberately do NOT reuse cfg.Dataplane.* here. Those
-	// paths point at the production HAProxy directory (`/etc/haproxy/...`),
-	// which is mounted read-only on the controller pod for security. The
-	// test runner derives its scratch base from `filepath.Dir(ConfigFile)`
-	// and tries to `mkdir <base>/worker-N/test-M/...` — that fails with
-	// EROFS the moment the webhook handles its first admission request.
-	//
-	// Instead, allocate a fresh directory under os.TempDir() that the
-	// pod has write access to. The test runner will create per-worker /
-	// per-test subdirectories inside it. Using just a basename (`maps`,
-	// `ssl`, `general`) for the subdir parts mirrors how production
-	// tooling shapes ValidationPaths from real Dataplane paths.
-	//
-	// Each iteration creates its own scratch directory so a CRD reload,
-	// credentials rotation, or webhook-cert rotation doesn't see stale
-	// files from the previous iteration. The directory is cleaned up
-	// when iterCtx ends — without that, every iteration restart would
-	// leak another tempdir into the pod's /tmp until the pod itself
-	// restarts.
-	webhookValidationTempDir, err := os.MkdirTemp("", "haptic-webhook-validation-*")
-	if err != nil {
-		return nil, fmt.Errorf("creating webhook validation temp directory: %w", err)
-	}
-	go func() {
-		<-iterCtx.Done()
-		if err := os.RemoveAll(webhookValidationTempDir); err != nil {
-			logger.Warn("Failed to remove webhook validation temp directory",
-				"path", webhookValidationTempDir, "error", err)
-		}
-	}()
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:           filepath.Join(webhookValidationTempDir, "maps"),
-		SSLCertsDir:       filepath.Join(webhookValidationTempDir, "ssl"),
-		GeneralStorageDir: filepath.Join(webhookValidationTempDir, "general"),
-		ConfigFile:        filepath.Join(webhookValidationTempDir, "haproxy.cfg"),
+		return nil, nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
 
 	// Create base store provider from resourcestore.Manager
@@ -262,26 +237,116 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	// Create Pipeline (composes render + validate)
+	// ConfigValidator is ALWAYS built when this function runs. The
+	// HAProxyTemplateConfig admission webhook is independent of
+	// watched-resource webhook rules — even when no Ingress / HTTPRoute
+	// admission is configured, the chart's ValidatingWebhookConfiguration
+	// may still route HAProxyTemplateConfig admission here, and the
+	// controller must be ready to handle it. (Gitar caught this on
+	// commit 8d326660 — the previous shape early-returned when
+	// `len(rules) == 0` and left ConfigValidator nil.)
+	configValidator := webhook.NewConfigValidator(&webhook.ConfigValidatorConfig{
+		Logger:             logger,
+		StrictValidator:    validationService,
+		StoreProvider:      baseStoreProvider,
+		Capabilities:       capabilities,
+		HTTPStoreComponent: httpStoreComponent,
+		Declarations:       engineWiring.Declarations,
+		TypedResourceTypes: engineWiring.TypedResourceTypes,
+	})
+
+	// DryRunValidator is only needed when at least one watched resource
+	// has `enableValidationWebhook: true`. With no such rules, no GVK is
+	// routed to the watched-resource path, and the test runner's temp
+	// directory + ProposalValidator are wasted setup.
+	if len(rules) == 0 {
+		logger.Debug("No watched-resource webhook rules; DryRunValidator skipped, only HAProxyTemplateConfig admission wired")
+		return nil, configValidator.ValidateDirect, nil
+	}
+
+	dryrun, err := buildDryRunValidator(iterCtx, cfg, bus, engine, renderService, validationService, baseStoreProvider, capabilities, pluggableValidator, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dryrun, configValidator.ValidateDirect, nil
+}
+
+// buildDryRunValidator constructs the watched-resource admission validator.
+// Separate from createDryRunValidator so the call-site logic can decide
+// whether to build it based on whether any watched resource has
+// `enableValidationWebhook: true`. Wraps the per-iteration temp-dir setup
+// for the embedded test runner, the ProposalValidator (sync-only,
+// distinct from the leader-side instance to avoid duplicate event
+// subscriptions), and the DryRunValidator itself.
+func buildDryRunValidator(
+	iterCtx context.Context,
+	cfg *coreconfig.Config,
+	bus *busevents.EventBus,
+	engine helpersEngineForDryRunValidator,
+	renderService *renderer.RenderService,
+	validationService *validation.ValidationService,
+	baseStoreProvider stores.StoreProvider,
+	capabilities dataplane.Capabilities,
+	pluggableValidator *pluggablevalidator.Manager,
+	logger *slog.Logger,
+) (*dryrunvalidator.Component, error) {
+	// Create validation paths for the embedded test runner.
+	//
+	// IMPORTANT: We deliberately do NOT reuse cfg.Dataplane.* here. Those
+	// paths point at the production HAProxy directory (`/etc/haproxy/...`),
+	// which is mounted read-only on the controller pod for security. The
+	// test runner derives its scratch base from `filepath.Dir(ConfigFile)`
+	// and tries to `mkdir <base>/worker-N/test-M/...` — that fails with
+	// EROFS the moment the webhook handles its first admission request.
+	//
+	// Instead, allocate a fresh directory under os.TempDir() that the
+	// pod has write access to. The test runner will create per-worker /
+	// per-test subdirectories inside it. Using just a basename (`maps`,
+	// `ssl`, `general`) for the subdir parts mirrors how production
+	// tooling shapes ValidationPaths from real Dataplane paths.
+	//
+	// Each iteration creates its own scratch directory so a CRD reload,
+	// credentials rotation, or webhook-cert rotation doesn't see stale
+	// files from the previous iteration. The directory is cleaned up
+	// when iterCtx ends — without that, every iteration restart would
+	// leak another tempdir into the pod's /tmp until the pod itself
+	// restarts.
+	webhookValidationTempDir, err := os.MkdirTemp("", "haptic-webhook-validation-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating webhook validation temp directory: %w", err)
+	}
+	go func() {
+		<-iterCtx.Done()
+		if err := os.RemoveAll(webhookValidationTempDir); err != nil {
+			logger.Warn("Failed to remove webhook validation temp directory",
+				"path", webhookValidationTempDir, "error", err)
+		}
+	}()
+	validationPaths := &dataplane.ValidationPaths{
+		MapsDir:           filepath.Join(webhookValidationTempDir, "maps"),
+		SSLCertsDir:       filepath.Join(webhookValidationTempDir, "ssl"),
+		GeneralStorageDir: filepath.Join(webhookValidationTempDir, "general"),
+		ConfigFile:        filepath.Join(webhookValidationTempDir, "haproxy.cfg"),
+	}
+
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
 		Renderer:  renderService,
 		Validator: validationService,
 		Logger:    logger,
 	})
 
-	// Create ProposalValidator in sync-only mode (only ValidateSync() is used for webhook)
-	// This avoids duplicate event subscriptions since the main ProposalValidator
-	// in createReconciliationComponents handles async HTTP content validation events.
+	// ProposalValidator in sync-only mode (only ValidateSync() is used for
+	// webhook). This avoids duplicate event subscriptions since the main
+	// ProposalValidator in createReconciliationComponents handles async
+	// HTTP content validation events.
 	proposalValidatorInstance := proposalvalidator.New(&proposalvalidator.ComponentConfig{
 		EventBus:          bus,
 		Pipeline:          pipelineInstance,
 		BaseStoreProvider: baseStoreProvider,
 		Logger:            logger,
-		SyncOnly:          true, // Webhook only uses ValidateSync(), no event subscription
+		SyncOnly:          true,
 	})
 
-	// Create DryRunValidator (subscribes in constructor).
-	//
 	// SkipValidationTests is true: the admission webhook only validates
 	// the *submitted* Ingress / HTTPRoute / etc. by rendering with an
 	// overlay store. The chart's embedded `validationTests` are
@@ -303,6 +368,11 @@ func createDryRunValidator(
 		PluggableValidator:  pluggableValidator,
 	}), nil
 }
+
+// helpersEngineForDryRunValidator is a type alias to keep the
+// buildDryRunValidator signature short. dryrunvalidator.ComponentConfig
+// takes templating.Engine; this matches.
+type helpersEngineForDryRunValidator = templating.Engine
 
 // setupReconciliation creates and starts the reconciliation components (Stage 5).
 //

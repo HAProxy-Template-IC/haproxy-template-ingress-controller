@@ -26,6 +26,11 @@ watchedResources:
     apiVersion: discovery.k8s.io/v1
     resources: endpointslices
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
+    # "0" = no per-watcher debounce: the reconciler fires on every
+    # EndpointSlice change so a pod-IP rotation reaches HAProxy inside the
+    # kubelet Ready→SIGTERM window. The reconciler-level refractory still
+    # batches across resource kinds.
+    debounceInterval: "0"
 
 templateSnippets:
   # ============================================================================
@@ -818,23 +823,25 @@ validationTests:
         description: TLS certificate file must be generated from Secret
 
   test-ingress-slot-preservation:
-    description: Server slots should be preserved during rolling deployments when currentConfig is available
+    description: |
+      Existing pods keep their slot across renders; new pods land in
+      slot N+1 after highestUsedSlot (no reuse of freshly-vacated slots).
+      Existing pod parked at SRV_3 so the assertion is sensitive to actual
+      preservation vs. lowest-free-slot luck.
     currentConfig: |
-      # Previous HAProxy configuration with backend and server assignments
-      # SRV_1: existing pod that will remain (10.0.0.1)
-      # SRV_2: old pod being replaced (10.0.0.2) - will be replaced by new pod (10.0.0.3)
-      # SRV_3-10: placeholders
+      # SRV_3: existing pod (10.0.0.1) — preserved across rollout.
+      # SRV_4: old pod (10.0.0.2) being replaced → placeholder; new pod → SRV_5.
       backend default_slot-test_svc_slot-svc_80
-          server SRV_1 10.0.0.1:8080 check
-          server SRV_2 10.0.0.2:8080 check
-          server SRV_3 127.0.0.1:1 disabled
-          server SRV_4 127.0.0.1:1 disabled
-          server SRV_5 127.0.0.1:1 disabled
-          server SRV_6 127.0.0.1:1 disabled
-          server SRV_7 127.0.0.1:1 disabled
-          server SRV_8 127.0.0.1:1 disabled
-          server SRV_9 127.0.0.1:1 disabled
-          server SRV_10 127.0.0.1:1 disabled
+          server SRV_1 192.0.2.1:1 disabled
+          server SRV_2 192.0.2.1:1 disabled
+          server SRV_3 10.0.0.1:8080 check
+          server SRV_4 10.0.0.2:8080 check
+          server SRV_5 192.0.2.1:1 disabled
+          server SRV_6 192.0.2.1:1 disabled
+          server SRV_7 192.0.2.1:1 disabled
+          server SRV_8 192.0.2.1:1 disabled
+          server SRV_9 192.0.2.1:1 disabled
+          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -896,42 +903,46 @@ validationTests:
         pattern: "backend default_slot-test_svc_slot-svc_80"
         description: Backend must be generated
 
-      # Slot preservation assertions: existing pod 10.0.0.1 keeps its original slot (SRV_1)
-      # Note: check option is now on default-server, not on individual server lines
       - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_3 10\\.0\\.0\\.1:8080"
+        description: Existing pod keeps SRV_3 (not re-allocated)
+      - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10\\.0\\.0\\.1:8080"
-        description: Existing pod 10.0.0.1 must preserve its slot (SRV_1)
-
-      # New pod 10.0.0.3 should take the freed slot from removed pod 10.0.0.2 (SRV_2)
+        description: Existing pod must NOT shift to SRV_1
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.3:8080"
-        description: New pod 10.0.0.3 should take the freed slot (SRV_2) from removed pod
-
-      # Remaining slots should be placeholders
+        pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
+        description: Vacated SRV_4 stays placeholder (no rotation)
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
-        description: Unused slots should remain as placeholders
+        pattern: "server SRV_5 10\\.0\\.0\\.3:8080"
+        description: New pod lands in SRV_5 (highestUsedSlot+1)
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_[12] 10\\.0\\.0\\.3:8080"
+        description: New pod must NOT land in low placeholder slots
 
   test-ingress-slot-preservation-lower-ip:
-    description: Slot preservation must work regardless of IP ordering (new pod has lower IP)
+    description: |
+      Slot assignment must be insensitive to IP sort order — existing pod
+      keeps its parked slot even when the new pod's IP sorts lower.
+      Existing pod at SRV_3 forces the assertion to be sensitive to
+      actual preservation vs. iteration-order luck.
     currentConfig: |
-      # Previous config: SRV_1=10.0.0.5, SRV_2=10.0.0.6
-      # After rolling: 10.0.0.6 removed, 10.0.0.2 added (lower IP than existing)
-      # Expected: SRV_1 keeps 10.0.0.5, SRV_2 gets 10.0.0.2 (takes freed slot)
+      # SRV_3=10.0.0.5 stays; SRV_4=10.0.0.6 vacated → placeholder; 10.0.0.2 → SRV_5.
       backend default_slot-lower_svc_slot-svc_80
-          server SRV_1 10.0.0.5:8080 check
-          server SRV_2 10.0.0.6:8080 check
-          server SRV_3 127.0.0.1:1 disabled
-          server SRV_4 127.0.0.1:1 disabled
-          server SRV_5 127.0.0.1:1 disabled
-          server SRV_6 127.0.0.1:1 disabled
-          server SRV_7 127.0.0.1:1 disabled
-          server SRV_8 127.0.0.1:1 disabled
-          server SRV_9 127.0.0.1:1 disabled
-          server SRV_10 127.0.0.1:1 disabled
+          server SRV_1 192.0.2.1:1 disabled
+          server SRV_2 192.0.2.1:1 disabled
+          server SRV_3 10.0.0.5:8080 check
+          server SRV_4 10.0.0.6:8080 check
+          server SRV_5 192.0.2.1:1 disabled
+          server SRV_6 192.0.2.1:1 disabled
+          server SRV_7 192.0.2.1:1 disabled
+          server SRV_8 192.0.2.1:1 disabled
+          server SRV_9 192.0.2.1:1 disabled
+          server SRV_10 192.0.2.1:1 disabled
     fixtures:
       services:
         - apiVersion: v1
@@ -987,21 +998,132 @@ validationTests:
       - type: haproxy_valid
         description: HAProxy config must be valid
 
-      # Note: check option is now on default-server, not on individual server lines
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_1 10\\.0\\.0\\.5:8080"
-        description: Existing pod 10.0.0.5 must preserve its slot (SRV_1)
+        pattern: "server SRV_3 10\\.0\\.0\\.5:8080"
+        description: Existing pod keeps SRV_3 regardless of new pod IP
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "server SRV_[12] 10\\.0\\.0\\.2:8080"
+        description: Lower-IP new pod must NOT sort into low slots
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
+        description: Vacated SRV_4 stays placeholder
+      - type: contains
+        target: haproxy.cfg
+        pattern: "server SRV_5 10\\.0\\.0\\.2:8080"
+        description: New pod lands in SRV_5 (highestUsedSlot+1)
+
+  test-ingress-endpoint-conditions-filter:
+    description: |
+      EndpointSlice entries with conditions.ready=false (pod starting up,
+      not yet listening) or conditions.terminating=true (pod being shut
+      down by kubelet) MUST be excluded from the rendered backend.
+      Otherwise HAProxy dispatches requests to a not-yet-listening
+      container (→ 503 SC-- during pod startup) or to a terminating
+      container that has already stopped accepting connections
+      (→ 503 SC-- during rolling restart drain window). Reproduces the
+      single-replica rolling-restart 503 pattern observed in production.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: cond-svc
+            namespace: default
+          spec:
+            ports:
+              - port: 80
+                targetPort: 8080
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: cond-svc-xyz
+            namespace: default
+            labels:
+              kubernetes.io/service-name: cond-svc
+          addressType: IPv4
+          endpoints:
+            # Healthy steady-state pod — must appear.
+            - addresses: ["10.0.0.1"]
+              conditions: {ready: true, serving: true, terminating: false}
+              targetRef: {kind: Pod, name: cond-pod-ready}
+            # New pod with sandbox up but container not yet listening
+            # (kubelet has added it to the slice as not-ready). MUST NOT
+            # appear — including it puts a dead IP in the backend until
+            # the readiness probe finally flips Ready=true.
+            - addresses: ["10.0.0.2"]
+              conditions: {ready: false, serving: false, terminating: false}
+              targetRef: {kind: Pod, name: cond-pod-starting}
+            # Old pod after SIGTERM: kubelet keeps the entry in the slice
+            # for the grace window but flags it terminating. MUST NOT
+            # appear — most apps stop accepting new connections on
+            # SIGTERM, so HAProxy dispatching to this pod produces
+            # connection-refused 503s.
+            - addresses: ["10.0.0.3"]
+              conditions: {ready: false, serving: false, terminating: true}
+              targetRef: {kind: Pod, name: cond-pod-terminating}
+            # Endpoint with no conditions block at all — per the
+            # EndpointSlice spec, nil Ready is treated as Ready=true (the
+            # producer didn't fill it in). MUST appear.
+            - addresses: ["10.0.0.4"]
+              targetRef: {kind: Pod, name: cond-pod-noconds}
+          ports:
+            - port: 8080
+              protocol: TCP
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: cond-test
+            namespace: default
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cond-test.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cond-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_2 10\\.0\\.0\\.2:8080"
-        description: New pod 10.0.0.2 (lower IP) must take freed slot (SRV_2), not be sorted first
+        pattern: "server SRV_1 10\\.0\\.0\\.1:8080 .*enabled"
+        description: Healthy ready pod (10.0.0.1) must be enabled
 
       - type: contains
         target: haproxy.cfg
-        pattern: "server SRV_3 127\\.0\\.0\\.1:1 .*disabled"
-        description: Unused slots should remain as placeholders
+        pattern: "server SRV_2 10\\.0\\.0\\.4:8080 .*enabled"
+        description: |
+          Pod without a conditions block (10.0.0.4) defaults to ready per
+          the EndpointSlice spec and must be enabled.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "10\\.0\\.0\\.2:8080"
+        description: |
+          Not-yet-ready pod (10.0.0.2, conditions.ready=false) must NOT
+          appear in the backend — including it causes 503 SC-- during
+          pod startup.
+
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "10\\.0\\.0\\.3:8080"
+        description: |
+          Terminating pod (10.0.0.3, conditions.terminating=true) must
+          NOT appear — including it causes 503 SC-- during the rolling-
+          restart drain window when the pod has already stopped
+          accepting connections.
 
   test-ingress-status-patches:
     description: Ingress status patches register LoadBalancer addresses from controller service

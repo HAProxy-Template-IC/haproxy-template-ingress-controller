@@ -77,7 +77,14 @@ type HAProxyCfgStatus struct {
 	//
 	// Pods are automatically added when configuration is applied and removed when
 	// the pod terminates.
+	//
+	// The list is keyed by podName so each pod's status update can land via
+	// Server-Side Apply with its own field manager — concurrent updates from
+	// different pods merge naturally instead of last-write-wins on the
+	// full-object UpdateStatus path that preceded this CRD shape.
 	// +optional
+	// +listType=map
+	// +listMapKey=podName
 	DeployedToPods []PodDeploymentStatus `json:"deployedToPods,omitempty"`
 
 	// AuxiliaryFiles references the associated map files and certificates.

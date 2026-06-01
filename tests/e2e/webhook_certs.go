@@ -43,15 +43,32 @@ const webhookServiceName = HelmReleaseName + "-webhook"
 // for the dev-loop equivalent).
 const defaultSSLCertSecretName = "default-ssl-cert"
 
-// setupWebhookCerts generates a fresh self-signed CA and server certificate
-// for the chart's admission webhook, then creates the Secret the chart
-// mounts. Returns the base64-encoded CA bundle, which the caller passes to
-// helm via --set webhook.caBundle=...
+// setupWebhookCerts returns the base64-encoded CA bundle the helm install
+// step passes via `--set webhook.caBundle=...`. Tries to reuse the
+// existing webhook-cert Secret first; if found and still valid (cert
+// parses + chains + is not within `webhookCertReuseWindow` of expiry),
+// returns its CA bundle without touching the Secret. Otherwise generates
+// a fresh self-signed CA + server cert and writes the Secret.
+//
+// Why reuse: cert rotation now actually propagates to the running
+// controller (see commit 07876141 — the missing watcher + SingleWatcher
+// generation-filter fix), but propagation takes a few seconds. The e2e
+// harness used to regenerate the CA on every test run unconditionally;
+// against a kept cluster (KEEP_CLUSTER=true, the default), that
+// guaranteed every iteration's first test failed with
+// `x509: certificate signed by unknown authority` because the test
+// created its Ingress before the controller had rotated to the new cert.
+// Reusing the existing Secret across runs keeps the same CA bundle on
+// both ends, so admission works immediately.
 //
 // Mirrors what scripts/dev-env-assets/generate-webhook-certs.sh does for
 // the dev environment, but in Go (crypto/x509) so the e2e suite stays
 // self-contained without shelling out to openssl.
 func setupWebhookCerts(ctx context.Context) (caBundleB64 string, err error) {
+	if caCertPEM, ok := readReusableWebhookCABundle(ctx); ok {
+		return base64.StdEncoding.EncodeToString(caCertPEM), nil
+	}
+
 	caKey, caCertDER, err := generateCA()
 	if err != nil {
 		return "", fmt.Errorf("generate CA: %w", err)
@@ -74,6 +91,56 @@ func setupWebhookCerts(ctx context.Context) (caBundleB64 string, err error) {
 		return "", fmt.Errorf("apply webhook secret: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(caCertPEM), nil
+}
+
+// webhookCertReuseWindow is the minimum remaining validity an existing
+// webhook cert must have for setupWebhookCerts to reuse it. Cert is
+// regenerated when remaining validity drops below this; otherwise we
+// reuse to avoid the rotation propagation window biting the first test
+// in every kept-cluster iteration.
+const webhookCertReuseWindow = 10 * time.Minute
+
+// readReusableWebhookCABundle reads the existing webhook-cert Secret and
+// returns its `ca.crt` if every required key is present, the cert
+// parses, and it stays valid for at least webhookCertReuseWindow. Any
+// failure (Secret missing, key missing, cert unparseable, expired/near-
+// expiry) returns ok=false so the caller regenerates from scratch.
+//
+// Errors are intentionally swallowed: this is a fast-path optimisation
+// for KEEP_CLUSTER=true iteration, not a correctness check. The
+// regeneration path that follows handles every "no usable cert" case
+// identically.
+func readReusableWebhookCABundle(ctx context.Context) ([]byte, bool) {
+	output, err := kubectlGetSecretData(ctx, ControllerNamespace, webhookSecretName)
+	if err != nil {
+		return nil, false
+	}
+	caB64 := output["ca.crt"]
+	tlsB64 := output["tls.crt"]
+	keyB64 := output["tls.key"]
+	if caB64 == "" || tlsB64 == "" || keyB64 == "" {
+		return nil, false
+	}
+	caCertPEM, err := base64.StdEncoding.DecodeString(caB64)
+	if err != nil {
+		return nil, false
+	}
+	tlsPEM, err := base64.StdEncoding.DecodeString(tlsB64)
+	if err != nil {
+		return nil, false
+	}
+	block, _ := pem.Decode(tlsPEM)
+	if block == nil {
+		return nil, false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, false
+	}
+	if time.Until(cert.NotAfter) < webhookCertReuseWindow {
+		return nil, false
+	}
+	return caCertPEM, true
 }
 
 // applyWebhookSecret creates the haptic namespace (if needed) and the

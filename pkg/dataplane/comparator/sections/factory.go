@@ -14,58 +14,30 @@
 
 // Package sections provides factory functions for creating HAProxy configuration operations.
 //
-// These factory functions use generic operation types to eliminate repetitive boilerplate
-// while maintaining type safety and compile-time verification.
+// Operations describe a single diff entry produced by the comparator. They are
+// consumed by:
+//   - the orchestrator (to decide whether the diff is fully runtime-eligible,
+//     and to build the X-Runtime-Actions header for server field updates),
+//   - logging / metrics (Section + Describe).
+//
+// They do NOT execute themselves: the orchestrator pushes the full rendered
+// config via the dataplane API's raw endpoint, no per-section API call exists.
 package sections
 
 import (
-	"context"
-
 	"github.com/haproxytech/client-native/v6/models"
-
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 )
 
-// Operation defines the interface for all HAProxy configuration operations.
-// This interface is implemented by all generic operation types (TopLevelOp, IndexChildOp, etc.)
+// Operation describes a single diff entry produced by the comparator.
 type Operation interface {
-	// Type returns the operation type (Create, Update, Delete)
+	// Type returns the operation type (Create, Update, Delete).
 	Type() OperationType
 
-	// Section returns the configuration section this operation affects
+	// Section returns the configuration section this operation affects.
 	Section() string
 
-	// Priority returns the execution priority (lower = first for creates, higher = first for deletes)
-	Priority() int
-
-	// Parent returns the name of the parent resource this operation acts on,
-	// or "" for top-level / singleton operations. Used by the synchronizer
-	// to serialize operations on the same parent within a priority group:
-	// HAProxy 3.0's Dataplane API has been observed returning 404 on one
-	// of two concurrent DELETE calls against children of the same parent
-	// (test_integration:[3.0] frontend-remove-binds, 2026-05-20), even
-	// though both children existed when the transaction opened. Operations
-	// with the same parent are now run sequentially; operations on
-	// different parents still run in parallel.
-	Parent() string
-
-	// Execute performs the operation via the Dataplane API
-	Execute(ctx context.Context, c *client.DataplaneClient, txID string) error
-
-	// Describe returns a human-readable description of the operation
+	// Describe returns a human-readable description of the operation.
 	Describe() string
-}
-
-// RuntimeReloadTracker is an optional interface for operations that can track
-// whether they triggered a HAProxy reload during runtime execution.
-// Only server update operations implement this interface since they can be
-// executed via the runtime API without a transaction.
-type RuntimeReloadTracker interface {
-	// TriggeredReload returns true if the operation triggered a HAProxy reload
-	// during its last execution. This is only meaningful for runtime-eligible
-	// operations (server updates with empty transaction ID).
-	TriggeredReload() bool
 }
 
 // ptrStr safely dereferences a string pointer, returning empty string if nil.
@@ -81,18 +53,9 @@ const unknownIdentifier = "<unknown>"
 
 // Top-level CRUD builders for core sections.
 var (
-	backendOps = NewTopLevelCRUD(
-		"backend", "backend", PriorityBackend, BackendName,
-		executors.BackendCreate(), executors.BackendUpdate(), executors.BackendDelete(),
-	)
-	frontendOps = NewTopLevelCRUD(
-		"frontend", "frontend", PriorityFrontend, FrontendName,
-		executors.FrontendCreate(), executors.FrontendUpdate(), executors.FrontendDelete(),
-	)
-	defaultsOps = NewTopLevelCRUD(
-		"defaults", "defaults section", PriorityDefaults, DefaultsName,
-		executors.DefaultsCreate(), executors.DefaultsUpdate(), executors.DefaultsDelete(),
-	)
+	backendOps  = NewTopLevelCRUD("backend", "backend", BackendName)
+	frontendOps = NewTopLevelCRUD("frontend", "frontend", FrontendName)
+	defaultsOps = NewTopLevelCRUD("defaults", "defaults section", DefaultsName)
 )
 
 // NewBackendCreate creates an operation to create a backend.
@@ -123,14 +86,10 @@ func NewDefaultsUpdate(defaults *models.Defaults) Operation { return defaultsOps
 func NewDefaultsDelete(defaults *models.Defaults) Operation { return defaultsOps.Delete(defaults) }
 
 // NewGlobalUpdate creates an operation to update the global section.
-func NewGlobalUpdate(global *models.Global) Operation {
-	return NewSingletonOp(
+func NewGlobalUpdate(_ *models.Global) Operation {
+	return NewSingletonOp[*models.Global](
 		OperationUpdate,
 		"global",
-		PriorityGlobal,
-		global,
-		Identity[*models.Global],
-		executors.GlobalUpdate(),
 		func() string { return "Update global section" },
 	)
 }

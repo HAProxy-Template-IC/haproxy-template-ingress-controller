@@ -18,10 +18,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+
+	"github.com/haproxytech/client-native/v6/models"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/enterprise"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
@@ -33,8 +37,12 @@ type ConfigParser interface {
 	ParseFromString(config string) (*parserconfig.StructuredConfig, error)
 }
 
-// Poll interval for reload verification (not exposed as config option).
-const defaultReloadVerificationPollInterval = 500 * time.Millisecond
+const (
+	defaultReloadVerificationPollInterval = 500 * time.Millisecond
+
+	stateEnabled  = "enabled"
+	stateDisabled = "disabled"
+)
 
 // orchestrator handles the complete sync workflow.
 type orchestrator struct {
@@ -51,7 +59,6 @@ func newOrchestrator(c *client.DataplaneClient, logger *slog.Logger) (*orchestra
 	var p ConfigParser
 	var err error
 
-	// Use EE parser when connected to HAProxy Enterprise
 	if c.Clientset().IsEnterprise() {
 		logger.Info("Using Enterprise Edition parser for HAProxy EE")
 		p, err = enterprise.NewParser()
@@ -71,6 +78,279 @@ func newOrchestrator(c *client.DataplaneClient, logger *slog.Logger) (*orchestra
 		comparator: comparator.New(),
 		logger:     logger,
 	}, nil
+}
+
+// sync implements the complete sync workflow. There are only two outgoing
+// shapes against the dataplane API:
+//
+//  1. Pure-runtime path (no structural diff, no aux changes): one
+//     PushRawConfigurationSkipReload with X-Runtime-Actions. The dataplane
+//     writes the new config to disk *and* applies `set server …` socket
+//     commands to the live worker. No reload.
+//
+//  2. Reload path (any structural op, or any aux change): if any
+//     runtime-eligible ops are present, a best-effort skip_reload push
+//     seeds the old worker with the new state before the drain begins;
+//     then a PushRawConfiguration with force_reload triggers the reload.
+//
+// The auxiliary file phases run on either side of the config push:
+// pre-config uploads create/update files referenced by the new config;
+// post-config cleanup deletes orphaned files only after the reload has
+// been verified, so a delete can't race a worker that's still reading
+// the on-disk config.
+func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *SyncOptions, auxFiles *AuxiliaryFiles) (result *SyncResult, err error) {
+	startTime := time.Now()
+
+	// Cache the pod's actual post-sync state for the caller (see SyncResult
+	// for the cross-pod-drift rationale). Only fetch when ops applied — the
+	// no-changes path already left the pod where the cache says it is.
+	defer func() {
+		if err != nil || result == nil || len(result.AppliedOperations) == 0 {
+			return
+		}
+		o.populatePostSyncParsedConfig(ctx, result)
+	}()
+
+	currentConfigStr, preParsedCurrent, preCachedVersion, fetchErr := o.fetchCurrentConfig(ctx, opts)
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
+
+	diff, err := o.parseAndCompareConfigs(currentConfigStr, desiredConfig, opts.PreParsedConfig, preParsedCurrent)
+	if err != nil {
+		return nil, err
+	}
+
+	o.logger.Debug("Sync diff computed", "op_count", len(diff.Operations))
+	logOperationDetail(o.logger, "Sync.diff", diff.Operations)
+
+	auxDiffs, err := o.checkForChanges(ctx, diff, auxFiles, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if !auxDiffs.hasChanges {
+		result := o.createNoChangesResult(startTime, &diff.Summary)
+		if preCachedVersion > 0 {
+			result.PostSyncVersion = preCachedVersion
+		}
+		return result, nil
+	}
+
+	return o.applyChanges(ctx, desiredConfig, diff, auxDiffs, opts, preCachedVersion, startTime)
+}
+
+// applyChanges executes the config + aux changes against the dataplane API
+// using the two-shape strategy documented on sync().
+func (o *orchestrator) applyChanges(
+	ctx context.Context,
+	desiredConfig string,
+	diff *comparator.ConfigDiff,
+	auxDiffs *auxiliaryFileDiffs,
+	opts *SyncOptions,
+	preCachedVersion int64,
+	startTime time.Time,
+) (*SyncResult, error) {
+	// PhasePreConfig: create/update aux files before the config that
+	// references them. Update* sends skip_reload=true; CREATE responses may
+	// briefly reload, in which case verifyAuxiliaryReloads waits.
+	auxReloadIDs, err := o.syncAuxiliaryFilesPreConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.verifyAuxiliaryReloads(ctx, auxReloadIDs, opts, "before config push"); err != nil {
+		return nil, err
+	}
+
+	runtimeOps, structuralOps := partitionByRuntimeEligibility(diff.Operations)
+	needsReload := len(structuralOps) > 0 || auxDiffs.anyDiffHasChanges()
+	actions := buildRuntimeActions(runtimeOps)
+
+	version := o.resolveCurrentVersion(ctx, preCachedVersion)
+	if version <= 0 {
+		return nil, &SyncError{
+			Stage:   "version_resolve",
+			Message: "failed to fetch dataplane config version",
+			Hints:   []string{"Dataplane API unreachable or returned non-integer version"},
+		}
+	}
+
+	logOperationDetail(o.logger, "runtime", runtimeOps)
+	logOperationDetail(o.logger, "structural", structuralOps)
+
+	if !needsReload {
+		return o.applyRuntimeOnly(ctx, desiredConfig, diff, runtimeOps, actions, version, startTime)
+	}
+	return o.applyWithReload(ctx, desiredConfig, diff, runtimeOps, structuralOps, auxDiffs, actions, version, opts, startTime)
+}
+
+// applyRuntimeOnly issues one PushRawConfigurationSkipReload with the batched
+// X-Runtime-Actions header. The dataplane writes the new config to disk and
+// applies `set server …` socket commands to the live worker. No reload.
+func (o *orchestrator) applyRuntimeOnly(
+	ctx context.Context,
+	desiredConfig string,
+	diff *comparator.ConfigDiff,
+	runtimeOps []comparator.Operation,
+	actions string,
+	version int64,
+	startTime time.Time,
+) (*SyncResult, error) {
+	o.logger.Debug("Pure-runtime sync: single skip_reload push with X-Runtime-Actions",
+		"op_count", len(runtimeOps),
+		"action_count", actionCount(actions))
+
+	if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
+		return nil, wrapApplyError(err)
+	}
+
+	appliedOps := convertOperationsToApplied(runtimeOps)
+	return &SyncResult{
+		Success:           true,
+		AppliedOperations: appliedOps,
+		ReloadTriggered:   false,
+		SyncMode:          SyncModeRuntime,
+		Duration:          time.Since(startTime),
+		Details:           convertDiffSummary(&diff.Summary),
+		PostSyncVersion:   version + 1,
+		Message:           fmt.Sprintf("Applied %d server updates via runtime path", len(appliedOps)),
+	}, nil
+}
+
+// applyWithReload issues a best-effort skip_reload+actions push (when any
+// runtime-eligible ops exist, to seed the old worker before drain) followed
+// by a force_reload push. After verifying the reload, deletes orphaned aux
+// files.
+func (o *orchestrator) applyWithReload(
+	ctx context.Context,
+	desiredConfig string,
+	diff *comparator.ConfigDiff,
+	runtimeOps, structuralOps []comparator.Operation,
+	auxDiffs *auxiliaryFileDiffs,
+	actions string,
+	version int64,
+	opts *SyncOptions,
+	startTime time.Time,
+) (*SyncResult, error) {
+	o.logger.Debug("Reload sync: optional skip_reload+actions then force_reload push",
+		"runtime_ops", len(runtimeOps),
+		"structural_ops", len(structuralOps),
+		"aux_changed", auxDiffs.anyDiffHasChanges())
+
+	if actions != "" {
+		// Best-effort: write the new config to disk and seed the live
+		// worker with `set server …` socket commands before force_reload
+		// drains it. Failure here doesn't break correctness — force_reload
+		// re-stages the config and the new worker reads it from disk —
+		// but loses the in-flight-drain benefit.
+		if err := o.client.PushRawConfigurationSkipReload(ctx, desiredConfig, version, actions); err != nil {
+			o.logger.Warn("skip_reload+actions push failed; force_reload will converge state",
+				"error", err)
+		} else {
+			// Successful skip_reload push bumped the version.
+			refetched, vErr := o.client.GetVersion(ctx)
+			if vErr != nil {
+				return nil, &SyncError{
+					Stage:   "version_refetch",
+					Message: "failed to refetch version after skip_reload push",
+					Cause:   vErr,
+				}
+			}
+			version = refetched
+		}
+	}
+
+	reloadID, err := o.client.PushRawConfiguration(ctx, desiredConfig, version)
+	if err != nil {
+		return nil, wrapApplyError(err)
+	}
+
+	reloadVerified := reloadID == "" // sync 200 means reload already finished
+	if !reloadVerified && opts.VerifyReload {
+		if verifyErr := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); verifyErr != nil {
+			// Skip the orphan-delete: deleting aux files while the new
+			// worker is still loading the on-disk config can turn a
+			// recoverable failure into a stuck reload loop.
+			o.logger.Error("Reload verification failed; skipping orphan aux-file delete to avoid mid-reload race",
+				"reload_id", reloadID, "error", verifyErr)
+			return &SyncResult{
+					Success:                 false,
+					AppliedOperations:       o.buildAppliedOps(runtimeOps, structuralOps, auxDiffs),
+					ReloadTriggered:         true,
+					ReloadID:                reloadID,
+					ReloadVerified:          false,
+					ReloadVerificationError: verifyErr.Error(),
+					SyncMode:                SyncModeReload,
+					Duration:                time.Since(startTime),
+					Details:                 o.buildDetails(diff, auxDiffs),
+				}, &SyncError{
+					Stage:   "reload_verification",
+					Message: "reload verification failed",
+					Cause:   verifyErr,
+					Hints: []string{
+						"HAProxy reload failed, config may have been reverted",
+						hintCheckHAProxyLogs,
+					},
+				}
+		}
+		reloadVerified = true
+	}
+
+	// Safe to delete orphaned aux files only after the reload is verified.
+	o.deleteUnreferencedFilesPostConfig(ctx, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff)
+
+	appliedOps := o.buildAppliedOps(runtimeOps, structuralOps, auxDiffs)
+	return &SyncResult{
+		Success:           true,
+		AppliedOperations: appliedOps,
+		ReloadTriggered:   true,
+		ReloadID:          reloadID,
+		ReloadVerified:    reloadVerified,
+		SyncMode:          SyncModeReload,
+		Duration:          time.Since(startTime),
+		Details:           o.buildDetails(diff, auxDiffs),
+		PostSyncVersion:   version + 1,
+		Message:           fmt.Sprintf("Successfully applied %d operations", len(appliedOps)),
+	}, nil
+}
+
+func (o *orchestrator) buildAppliedOps(runtimeOps, structuralOps []comparator.Operation, auxDiffs *auxiliaryFileDiffs) []AppliedOperation {
+	out := make([]AppliedOperation, 0, len(runtimeOps)+len(structuralOps))
+	out = append(out, convertOperationsToApplied(runtimeOps)...)
+	out = append(out, convertOperationsToApplied(structuralOps)...)
+	out = append(out, auxDiffsToOperations(auxDiffs)...)
+	return out
+}
+
+func (o *orchestrator) buildDetails(diff *comparator.ConfigDiff, auxDiffs *auxiliaryFileDiffs) DiffDetails {
+	details := convertDiffSummary(&diff.Summary)
+	addAuxiliaryFileCounts(&details, auxDiffs)
+	return details
+}
+
+// resolveCurrentVersion returns the pod's current config version, reusing the
+// pre-cached value when fetchCurrentConfig already called GetVersion(),
+// otherwise issuing a retried GetVersion call. Returns -1 on persistent
+// failure.
+func (o *orchestrator) resolveCurrentVersion(ctx context.Context, preCachedVersion int64) int64 {
+	if preCachedVersion > 0 {
+		return preCachedVersion
+	}
+	retry := client.RetryConfig{
+		MaxAttempts: 3,
+		RetryIf:     client.IsConnectionError(),
+		Backoff:     client.BackoffExponential,
+		BaseDelay:   100 * time.Millisecond,
+		Logger:      o.logger.With("operation", "fetch_version"),
+	}
+	version, err := client.WithRetry(ctx, retry, func(attempt int) (int64, error) {
+		return o.client.GetVersion(ctx)
+	})
+	if err != nil {
+		o.logger.Warn("Failed to get config version", "error", err)
+		return -1
+	}
+	return version
 }
 
 // verifyReload polls the reload status until it succeeds, fails, or times out.
@@ -93,9 +373,7 @@ func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeou
 		case <-ticker.C:
 			info, err := o.client.GetReloadStatus(ctx, reloadID)
 			if err != nil {
-				// Log and continue polling - transient errors shouldn't fail immediately
-				o.logger.Warn("Reload status check failed, retrying",
-					"reload_id", reloadID, "error", err)
+				o.logger.Warn("Reload status check failed, retrying", "reload_id", reloadID, "error", err)
 				continue
 			}
 
@@ -104,9 +382,7 @@ func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeou
 				o.logger.Debug("Reload verified successful", "reload_id", reloadID)
 				return nil
 			case client.ReloadStatusFailed:
-				o.logger.Error("Reload failed",
-					"reload_id", reloadID,
-					"response", info.Response)
+				o.logger.Error("Reload failed", "reload_id", reloadID, "response", info.Response)
 				return fmt.Errorf("reload failed: %s", info.Response)
 			case client.ReloadStatusInProgress:
 				o.logger.Debug("Reload still in progress", "reload_id", reloadID)
@@ -118,26 +394,14 @@ func (o *orchestrator) verifyReload(ctx context.Context, reloadID string, timeou
 	}
 }
 
-// verifyAuxiliaryReloads verifies that all auxiliary file reloads completed successfully.
-// Called after PhasePreConfig aux file sync and before PhaseConfig operations to prevent
-// race conditions where config operations reference files before their reloads complete.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - reloadIDs: List of reload IDs to verify
-//   - opts: Sync options (must have VerifyReload=true for verification to occur)
-//   - context: Description of the context (e.g., "before config sync") for log messages
-//
-// Returns error if any reload verification fails.
+// verifyAuxiliaryReloads waits for any aux-file uploads that triggered reloads
+// to finish before the config push references those files.
 func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []string, opts *SyncOptions, logContext string) error {
 	if !opts.VerifyReload || len(reloadIDs) == 0 {
 		return nil
 	}
 
-	o.logger.Debug("Verifying auxiliary file reloads",
-		"context", logContext,
-		"count", len(reloadIDs),
-		"reload_ids", reloadIDs)
+	o.logger.Debug("Verifying auxiliary file reloads", "context", logContext, "count", len(reloadIDs), "reload_ids", reloadIDs)
 
 	for _, reloadID := range reloadIDs {
 		if err := o.verifyReload(ctx, reloadID, opts.ReloadVerificationTimeout); err != nil {
@@ -154,162 +418,23 @@ func (o *orchestrator) verifyAuxiliaryReloads(ctx context.Context, reloadIDs []s
 		}
 	}
 
-	o.logger.Debug("all auxiliary file reloads verified",
-		"count", len(reloadIDs))
 	return nil
 }
 
-// sync implements the complete sync workflow with automatic fallback.
-func (o *orchestrator) sync(ctx context.Context, desiredConfig string, opts *SyncOptions, auxFiles *AuxiliaryFiles) (result *SyncResult, err error) {
-	startTime := time.Now()
-
-	// Cache the pod's actual post-sync state for the caller. Without this,
-	// the deployer's version-cache would store the caller's desired intent
-	// instead of what the dataplane API actually wrote — and two pods that
-	// reached "logically desired" from different starting baselines (e.g. a
-	// rolling Deployment where pod A is synced twice and pod B is synced
-	// once) would end up with byte-different on-disk configs that the next
-	// drift check would never detect (cache says "you're at desired", live
-	// pod says "I'm at something close-but-not-equal"). Only fetch when ops
-	// were actually applied — no-changes paths already left the pod where
-	// the existing cache says it is.
-	defer func() {
-		if err != nil || result == nil || len(result.AppliedOperations) == 0 {
-			return
-		}
-		o.populatePostSyncParsedConfig(ctx, result)
-	}()
-
-	// Step 1: Fetch current configuration (with optional version cache optimization)
-	currentConfigStr, preParsedCurrent, preCachedVersion, fetchErr := o.fetchCurrentConfig(ctx, opts)
-	if fetchErr != nil {
-		return nil, fetchErr
-	}
-
-	// Step 2-4: Parse and compare configurations
-	diff, err := o.parseAndCompareConfigs(currentConfigStr, desiredConfig, opts.PreParsedConfig, preParsedCurrent)
-	if err != nil {
-		return nil, err
-	}
-
-	// Step 5: Compare auxiliary files and check if sync is needed
-	auxDiffs, err := o.checkForChanges(ctx, diff, auxFiles, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Early return if no changes
-	if !auxDiffs.hasChanges {
-		result := o.createNoChangesResult(startTime, &diff.Summary)
-		// Capture version for cache: use pre-cached version if available, otherwise fetch
-		if preCachedVersion > 0 {
-			result.PostSyncVersion = preCachedVersion
-		}
-		return result, nil
-	}
-
-	// Step 6: Resolve current config version (reused across raw-push gating below).
-	version := o.resolveCurrentVersion(ctx, preCachedVersion)
-
-	// Step 7: Check if raw push should be used instead of fine-grained sync
-	// Priority: version=1 > threshold exceeded > fine-grained sync
-	if version == 1 {
-		o.logger.Info("Using raw push for initial configuration", "version", version)
-		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawInitial, false)
-	}
-
-	// Use TotalOperations() for threshold check - this includes all operations including
-	// runtime-eligible server UPDATEs. While server UPDATEs don't require HAProxy reload,
-	// they are processed sequentially and can take a long time for large deployments.
-	// A raw push (single reload) is faster than processing 100+ individual operations.
-	totalOps := diff.Summary.TotalOperations()
-	if opts.RawPushThreshold > 0 && totalOps > opts.RawPushThreshold {
-		o.logger.Info("Using raw push due to high change count",
-			"total_changes", totalOps,
-			"structural_changes", diff.Summary.StructuralOperations(),
-			"threshold", opts.RawPushThreshold)
-		return o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawThreshold, false)
-	}
-
-	// Step 8: If all operations are server-only updates with runtime-eligible field changes
-	// and no aux file changes, use the optimized path: single raw push with skip_reload=true
-	// + X-Runtime-Actions. This replaces N serial ReplaceServerBackend calls (each re-reads
-	// haproxy.cfg) with one atomic write + N runtime socket commands. No reload triggered.
-	if result := o.tryRuntimeOptimizedPath(ctx, desiredConfig, diff, auxDiffs, version, startTime); result != nil {
-		return result, nil
-	}
-
-	// Step 9: Run a fine-grained sync (pass pre-computed diffs).
-	// Returns whether PhasePreConfig (aux files) completed, so the fallback
-	// below can skip re-syncing them if the failure happened later.
-	result, auxFilesSynced, err := o.executeFineGrainedSync(ctx, desiredConfig, diff, opts, auxDiffs.fileDiff, auxDiffs.sslDiff, auxDiffs.caFileDiff, auxDiffs.mapDiff, auxDiffs.crtlistDiff, startTime)
-
-	// Step 9: If fine-grained sync failed and fallback is enabled, try raw config push
-	if err != nil && opts.FallbackToRaw {
-		o.logger.Warn("Fine-grained sync failed, attempting fallback to raw config push",
-			"error", err)
-
-		fallbackResult, fallbackErr := o.executeRawPush(ctx, desiredConfig, diff, auxDiffs, opts, startTime, version, SyncModeRawFallback, auxFilesSynced)
-		if fallbackErr != nil {
-			return nil, NewFallbackError(err, fallbackErr)
-		}
-
-		return fallbackResult, nil
-	}
-
-	return result, err
-}
-
-// resolveCurrentVersion returns the pod's current config version. Reuses
-// the pre-cached value when fetchCurrentConfig already called GetVersion()
-// during cache validation, otherwise issues a retried GetVersion call.
-// Returns -1 on persistent failure (the caller then skips the
-// version-based raw-push gating heuristic — a sync still proceeds, just
-// via the fine-grained path).
-func (o *orchestrator) resolveCurrentVersion(ctx context.Context, preCachedVersion int64) int64 {
-	if preCachedVersion > 0 {
-		return preCachedVersion
-	}
-	retry := client.RetryConfig{
-		MaxAttempts: 3,
-		RetryIf:     client.IsConnectionError(),
-		Backoff:     client.BackoffExponential,
-		BaseDelay:   100 * time.Millisecond,
-		Logger:      o.logger.With("operation", "fetch_version"),
-	}
-	version, err := client.WithRetry(ctx, retry, func(attempt int) (int64, error) {
-		return o.client.GetVersion(ctx)
-	})
-	if err != nil {
-		o.logger.Warn("Failed to get config version, skipping version-based raw push decision",
-			"error", err)
-		return -1
-	}
-	return version
-}
-
 // populatePostSyncParsedConfig fetches the pod's actual configuration after a
-// successful sync and parses it into result.PostSyncParsedConfig.
-//
-// Best-effort: a failed fetch or parse is logged at Debug and leaves the
-// field nil. Callers that fall back to the input desired config still get
-// correct behaviour for that reconcile — they just don't get the
-// cross-pod-drift detection improvement this method enables. We don't
-// fail the sync over a post-sync read error; the actual config change has
-// already committed by the time we get here.
+// successful sync and parses it into result.PostSyncParsedConfig. Best-effort:
+// a failed fetch or parse logs at Debug and leaves the field nil.
 func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result *SyncResult) {
 	rawConfig, err := o.client.GetRawConfiguration(ctx)
 	if err != nil {
-		o.logger.Debug("Failed to fetch post-sync config for caller's cache (proceeding without)",
-			"endpoint", o.client.Endpoint.URL,
-			"error", err)
+		o.logger.Debug("Failed to fetch post-sync config for caller's cache",
+			"endpoint", o.client.Endpoint.URL, "error", err)
 		return
 	}
 	parsed, err := o.parser.ParseFromString(rawConfig)
 	if err != nil {
-		o.logger.Debug("Failed to parse post-sync config for caller's cache (proceeding without)",
-			"endpoint", o.client.Endpoint.URL,
-			"error", err)
+		o.logger.Debug("Failed to parse post-sync config for caller's cache",
+			"endpoint", o.client.Endpoint.URL, "error", err)
 		return
 	}
 	result.PostSyncParsedConfig = parsed
@@ -317,13 +442,11 @@ func (o *orchestrator) populatePostSyncParsedConfig(ctx context.Context, result 
 
 // diff generates a diff without applying any changes.
 func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffResult, error) {
-	// Step 1: Fetch current configuration
 	currentConfigStr, err := o.client.GetRawConfiguration(ctx)
 	if err != nil {
 		return nil, NewConnectionError(o.client.Endpoint.URL, err)
 	}
 
-	// Step 2: Parse current configuration
 	currentConfig, err := o.parser.ParseFromString(currentConfigStr)
 	if err != nil {
 		snippet := currentConfigStr
@@ -333,10 +456,6 @@ func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffRes
 		return nil, NewParseError(configTypeCurrent, snippet, err)
 	}
 
-	// Metadata-format normalization is handled by the parser during caching;
-	// both currentConfig and desiredParsed arrive here pre-normalized.
-
-	// Step 3: Parse desired configuration
 	desiredParsed, err := o.parser.ParseFromString(desiredConfig)
 	if err != nil {
 		snippet := desiredConfig
@@ -346,8 +465,7 @@ func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffRes
 		return nil, NewParseError("desired", snippet, err)
 	}
 
-	// Step 4: Compare configurations
-	diff, err := o.comparator.Compare(currentConfig, desiredParsed)
+	d, err := o.comparator.Compare(currentConfig, desiredParsed)
 	if err != nil {
 		return nil, &SyncError{
 			Stage:   "compare",
@@ -356,12 +474,194 @@ func (o *orchestrator) diff(ctx context.Context, desiredConfig string) (*DiffRes
 		}
 	}
 
-	// Convert to DiffResult
-	plannedOps := convertOperationsToPlanned(diff.Operations)
-
 	return &DiffResult{
-		HasChanges:        diff.Summary.HasChanges(),
-		PlannedOperations: plannedOps,
-		Details:           convertDiffSummary(&diff.Summary),
+		HasChanges:        d.Summary.HasChanges(),
+		PlannedOperations: convertOperationsToPlanned(d.Operations),
+		Details:           convertDiffSummary(&d.Summary),
 	}, nil
+}
+
+// partitionByRuntimeEligibility splits ops into runtime-eligible server
+// updates (apply via X-Runtime-Actions, no reload) and everything else
+// (requires force_reload).
+func partitionByRuntimeEligibility(ops []comparator.Operation) (runtime, structural []comparator.Operation) {
+	for _, op := range ops {
+		serverOp, ok := op.(*sections.ServerUpdateOp)
+		if op.Type() == sections.OperationUpdate && ok && serverOp.IsFullyRuntimeEligible() {
+			runtime = append(runtime, op)
+			continue
+		}
+		structural = append(structural, op)
+	}
+	return runtime, structural
+}
+
+// buildRuntimeActions converts runtime-eligible server update operations into
+// the semicolon-separated X-Runtime-Actions string expected by the DataPlane
+// API's skip_reload endpoint. Every action generated here is a valid stats
+// socket command verified in dataplaneapi handlers/raw.go:executeRuntimeActions.
+//
+// It is a *delta* function: for each ServerUpdateOp it emits one action per
+// field that actually differs between current and desired. A diff that only
+// touches the inline `# Pod: …` metadata comment produces no actions; a diff
+// that only changes weight produces only `SetServerWeight`. Without this gate
+// the chart's typical 30-slot backend would spam ~30 redundant `SetServerAddr`
+// calls per render during pod churn.
+//
+// Action ordering within a single server respects maintenance transitions to
+// avoid serving traffic at a half-applied state:
+//
+//   - Entering maint  (cur != "enabled", des == "enabled"):
+//     `SetServerState … maint` is emitted FIRST, then addr/weight/agent.
+//     Live worker drains before its destination changes.
+//   - Leaving maint   (cur != "disabled", des == "disabled"):
+//     addr/weight/agent are emitted first, then `SetServerState … ready`.
+//     Server is fully configured before traffic resumes.
+//   - No transition:  setup actions first, then any state action (this branch
+//     never fires under the current chart, but documents the fallback).
+//
+// Keep in sync with serverRuntimeSupportedJSONFields in
+// pkg/dataplane/comparator/sections/factory_server.go: every field listed
+// there must produce a corresponding action, otherwise IsFullyRuntimeEligible
+// approves a change this function silently ignores. Conversely, fields with
+// no runtime command (metadata, or clearing a previously-set agent string)
+// are intentionally absent — the on-disk config the skip_reload push wrote
+// converges on the next reload.
+func buildRuntimeActions(operations []comparator.Operation) string {
+	var actions []string
+	for _, op := range operations {
+		serverOp, ok := op.(*sections.ServerUpdateOp)
+		if !ok {
+			continue
+		}
+		actions = append(actions, serverDeltaActions(serverOp)...)
+	}
+	return strings.Join(actions, ";")
+}
+
+// serverDeltaActions returns the X-Runtime-Actions commands needed to take a
+// single server from its current to its desired state. See buildRuntimeActions
+// for the ordering and emission rules.
+func serverDeltaActions(op *sections.ServerUpdateOp) []string {
+	cur := op.CurrentServer()
+	des := op.Server()
+	backend := op.BackendName()
+	name := op.ServerName()
+
+	enterMaint := des.Maintenance == stateEnabled && cur.Maintenance != stateEnabled
+	leaveMaint := des.Maintenance == stateDisabled && cur.Maintenance != stateDisabled
+
+	stateAction := ""
+	switch {
+	case enterMaint:
+		stateAction = fmt.Sprintf("SetServerState %s %s maint", backend, name)
+	case leaveMaint:
+		stateAction = fmt.Sprintf("SetServerState %s %s ready", backend, name)
+	}
+
+	setup := serverDeltaSetupActions(cur, des, backend, name)
+
+	switch {
+	case enterMaint:
+		// Drain first, then reconfigure.
+		return append([]string{stateAction}, setup...)
+	case leaveMaint:
+		// Reconfigure first, then accept traffic.
+		return append(setup, stateAction)
+	default:
+		return setup
+	}
+}
+
+// serverDeltaSetupActions emits the non-state runtime actions (addr/port,
+// weight, check-port, agent fields) for the delta between cur and des.
+// Each action is gated on "this field actually changed". Fields whose new
+// value is not representable as a runtime command (empty address with set
+// port, AgentAddr/AgentSend containing the parser's whitespace/semicolon
+// delimiters, a now-cleared field that has no clear-style command) are
+// skipped — the on-disk config carries the new value into the next reload.
+func serverDeltaSetupActions(cur, des *models.Server, backend, name string) []string {
+	var actions []string
+
+	if (cur.Address != des.Address || !int64PtrEqual(cur.Port, des.Port)) &&
+		des.Address != "" && des.Port != nil {
+		actions = append(actions, fmt.Sprintf("SetServerAddr %s %s %s %d", backend, name, des.Address, *des.Port))
+	}
+
+	if !int64PtrEqual(cur.Weight, des.Weight) && des.Weight != nil {
+		actions = append(actions, fmt.Sprintf("SetServerWeight %s %s %d", backend, name, *des.Weight))
+	}
+
+	if !int64PtrEqual(cur.HealthCheckPort, des.HealthCheckPort) && des.HealthCheckPort != nil {
+		actions = append(actions, fmt.Sprintf("SetServerCheckPort %s %s %d", backend, name, *des.HealthCheckPort))
+	}
+
+	if cur.AgentCheck != des.AgentCheck {
+		switch des.AgentCheck {
+		case stateEnabled:
+			actions = append(actions, fmt.Sprintf("EnableAgentCheck %s %s", backend, name))
+		case stateDisabled:
+			actions = append(actions, fmt.Sprintf("DisableAgentCheck %s %s", backend, name))
+		}
+	}
+
+	// AgentAddr / AgentSend: dataplane parses actions by splitting on " " and
+	// the actions list by splitting on ";", so either delimiter in the value
+	// silently corrupts the command. Refuse to emit; rely on the reload to
+	// pick up the on-disk value.
+	if cur.AgentAddr != des.AgentAddr && des.AgentAddr != "" && safeRuntimeArg(des.AgentAddr) {
+		actions = append(actions, fmt.Sprintf("SetServerAgentAddr %s %s %s", backend, name, des.AgentAddr))
+	}
+	if cur.AgentSend != des.AgentSend && des.AgentSend != "" && safeRuntimeArg(des.AgentSend) {
+		actions = append(actions, fmt.Sprintf("SetServerAgentSend %s %s %s", backend, name, des.AgentSend))
+	}
+
+	return actions
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// safeRuntimeArg reports whether s can be safely embedded as a single argument
+// in the semicolon-separated, space-tokenized X-Runtime-Actions string the
+// dataplane parses in handlers/raw.go:executeRuntimeActions.
+func safeRuntimeArg(s string) bool {
+	return !strings.ContainsAny(s, " ;")
+}
+
+func actionCount(actions string) int {
+	if actions == "" {
+		return 0
+	}
+	return strings.Count(actions, ";") + 1
+}
+
+func logOperationDetail(logger interface {
+	Debug(msg string, args ...any)
+}, partition string, ops []comparator.Operation) {
+	for i, op := range ops {
+		logger.Debug("diff op",
+			"partition", partition,
+			"i", i,
+			"type", op.Type(),
+			"section", op.Section(),
+			"describe", op.Describe())
+	}
+}
+
+func wrapApplyError(err error) error {
+	return &SyncError{
+		Stage:   stageApply,
+		Message: "failed to apply configuration changes",
+		Cause:   err,
+		Hints: []string{
+			"Review the error message for specific operation failures",
+			hintCheckHAProxyLogs,
+			"Verify all resource references are valid",
+		},
+	}
 }

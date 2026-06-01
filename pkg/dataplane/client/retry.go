@@ -126,6 +126,78 @@ func IsConnectionError() RetryCondition {
 	}
 }
 
+// IsReloadInProgress returns a RetryCondition that retries a runtime apply that
+// failed because HAProxy was mid-reload. While the dataplaneapi drives a reload
+// its master socket is briefly unavailable, so runtime commands fail transiently
+// with signatures like:
+//
+//   - "cannot execute SetServerState: ... haproxy-master.sock: connect: connection refused"
+//   - "runtime server '<be>/<srv>' not found" (the runtime view is reloading)
+//
+// A reload completes in tens-to-low-hundreds of ms, so a short bounded retry
+// lets the runtime change land right after it — instead of leaving the new
+// slot unset until the next reconcile, which is the rolling-restart gap that
+// produced 503s under parallel-test reload churn. Version conflicts (409) and
+// other genuine 4xx do NOT match these markers, so they fall through to the
+// caller unchanged.
+func IsReloadInProgress() RetryCondition {
+	return func(err error) bool {
+		if err == nil {
+			return false
+		}
+		return containsAny(err.Error(),
+			"connection refused",
+			"cannot execute",
+			"master.sock",
+			"not found",
+		)
+	}
+}
+
+// reloadInProgressTimeout bounds how long a runtime apply keeps retrying across
+// a concurrent HAProxy reload before giving up to the scheduled deploy. A reload
+// re-execs the master (src/mworker.c mworker_reexec → execvp), which drops the
+// -S master CLI socket only for the re-exec + worker handoff — well under a
+// second in practice — so 2s is generous headroom.
+const reloadInProgressTimeout = 2 * time.Second
+
+// retryWhileReloadInProgress re-runs fn with NO backoff — the dataplaneapi HTTP
+// round-trip is the natural spacing — while fn keeps failing with a reload-in-
+// progress signature, until fn succeeds, returns any other error, ctx is
+// cancelled, or reloadInProgressTimeout elapses.
+//
+// While HAProxy re-execs its master on reload, mworker_cli_proxy_stop() closes
+// the -S master CLI socket listener, so a fresh connect gets ECONNREFUSED until
+// the new master re-creates it. Retrying tightly re-lands the runtime change
+// within ~one round-trip of the listener returning — inside option redispatch's
+// rescue window — instead of waiting out a fixed backoff that can miss it. A
+// fixed delay isn't needed: the round-trip (even a refused one goes
+// controller→dataplaneapi→controller) already paces the loop. The scheduled
+// deploy is the correctness floor if the budget is exhausted.
+func retryWhileReloadInProgress(ctx context.Context, logger *slog.Logger, fn func() error) error {
+	deadline := time.Now().Add(reloadInProgressTimeout)
+	isReload := IsReloadInProgress()
+	for attempt := 1; ; attempt++ {
+		err := fn()
+		if err == nil || !isReload(err) {
+			return err
+		}
+		if ctx.Err() != nil || time.Now().After(deadline) {
+			if logger != nil {
+				logger.Debug("reload-in-progress retry exhausted; scheduled deploy will converge",
+					"attempts", attempt, "error", err.Error())
+			}
+			return err
+		}
+		// Minimal pause so a completely-unreachable dataplaneapi (ECONNREFUSED
+		// returns in µs, not paced by an HTTP round-trip) can't spin this loop at
+		// CPU speed for the whole reloadInProgressTimeout budget. Under a normal
+		// reload the round-trip dominates this sleep, so recovery latency is
+		// unchanged.
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // containsAny checks if the string s contains any of the substrings.
 func containsAny(s string, substrings ...string) bool {
 	for _, substr := range substrings {

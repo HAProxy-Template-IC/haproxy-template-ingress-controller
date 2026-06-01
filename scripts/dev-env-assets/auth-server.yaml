@@ -72,6 +72,23 @@ spec:
         image: nginx:alpine
         ports:
         - containerPort: 80
+        # K8s contract: Ready means responding to traffic. nginx
+        # is generally fast to bind, but the contract still has to
+        # be honoured — any consumer (HAPTIC + the SPOA hub's
+        # external-auth dispatcher in this case) watches
+        # EndpointSlice and routes the instant ready flips true.
+        # Without this probe, kubelet marks Running before nginx
+        # has parsed the configmap-mounted config and bound the
+        # listener; the dispatcher gets RST. The auth path is
+        # latency-sensitive — every request hitting an Ingress
+        # with external-auth waits on the auth response, so a
+        # transient RST here cascades into request timeouts.
+        readinessProbe:
+          httpGet: {path: /allow, port: 80}
+          periodSeconds: 1
+          successThreshold: 1
+          failureThreshold: 1
+          timeoutSeconds: 1
         volumeMounts:
         - name: nginx-conf
           mountPath: /etc/nginx/conf.d

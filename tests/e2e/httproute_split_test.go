@@ -87,6 +87,14 @@ func TestHTTPRouteSplit(t *testing.T) {
 					},
 				}},
 			})
+
+			// Wait until the controller has rendered the route AND deployed it
+			// to EVERY HAProxy pod before sampling. With minDeploymentInterval
+			// throttling reloads, the initial structural deploy can take a couple
+			// seconds; the 50-attempt warmup alone races it (the b48f3c9d CI run
+			// failed here with "warmup: failed to achieve 5 consecutive 200s").
+			// Same convergence wait the rolling-restart test uses.
+			waitForControllerDeployed(ctx, t, client, ns)
 			return ctx
 		}).
 		Assess("traffic split converges to the configured 70/30 within ±15pp over 200 samples", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {

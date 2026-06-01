@@ -3,6 +3,7 @@ package auxiliaryfiles
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -260,6 +261,12 @@ func TestCRTListDiff_HasChanges(t *testing.T) {
 
 // mockFileOps is a mock implementation of FileOperations for testing.
 type mockFileOps[T FileItem] struct {
+	// mu serializes the closure invocations below. Production (Sync) now runs
+	// the per-file Create/Update/Delete concurrently within a phase, so tests
+	// whose closures record into a shared slice would otherwise data-race. The
+	// lock keeps the mock's bookkeeping safe without forcing every test to add
+	// its own synchronization; assertions remain order-independent.
+	mu             sync.Mutex
 	getAllFunc     func(ctx context.Context) ([]string, error)
 	getContentFunc func(ctx context.Context, id string) (string, error)
 	createFunc     func(ctx context.Context, id, content string) (string, error)
@@ -268,6 +275,8 @@ type mockFileOps[T FileItem] struct {
 }
 
 func (m *mockFileOps[T]) GetAll(ctx context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.getAllFunc != nil {
 		return m.getAllFunc(ctx)
 	}
@@ -275,6 +284,8 @@ func (m *mockFileOps[T]) GetAll(ctx context.Context) ([]string, error) {
 }
 
 func (m *mockFileOps[T]) GetContent(ctx context.Context, id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.getContentFunc != nil {
 		return m.getContentFunc(ctx, id)
 	}
@@ -282,6 +293,8 @@ func (m *mockFileOps[T]) GetContent(ctx context.Context, id string) (string, err
 }
 
 func (m *mockFileOps[T]) Create(ctx context.Context, id, content string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.createFunc != nil {
 		return m.createFunc(ctx, id, content)
 	}
@@ -289,6 +302,8 @@ func (m *mockFileOps[T]) Create(ctx context.Context, id, content string) (string
 }
 
 func (m *mockFileOps[T]) Update(ctx context.Context, id, content string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.updateFunc != nil {
 		return m.updateFunc(ctx, id, content)
 	}
@@ -296,6 +311,8 @@ func (m *mockFileOps[T]) Update(ctx context.Context, id, content string) (string
 }
 
 func (m *mockFileOps[T]) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.deleteFunc != nil {
 		return m.deleteFunc(ctx, id)
 	}
@@ -1210,11 +1227,15 @@ func TestSync_ReturnsReloadIDs(t *testing.T) {
 	reloadIDs, err := Sync[GeneralFile](ctx, ops, diff)
 	require.NoError(t, err)
 
-	// Should have 3 reload IDs: 2 creates + 1 update
+	// Should have 3 reload IDs: 2 creates + 1 update. Within a phase the
+	// per-file ops run concurrently, so reload IDs arrive in completion order,
+	// not input order — assert membership, not position.
 	require.Len(t, reloadIDs, 3)
-	assert.Equal(t, "reload-create-new1.http", reloadIDs[0])
-	assert.Equal(t, "reload-create-new2.http", reloadIDs[1])
-	assert.Equal(t, "reload-update-existing.http", reloadIDs[2])
+	assert.ElementsMatch(t, []string{
+		"reload-create-new1.http",
+		"reload-create-new2.http",
+		"reload-update-existing.http",
+	}, reloadIDs)
 }
 
 func TestSync_FiltersEmptyReloadIDs(t *testing.T) {

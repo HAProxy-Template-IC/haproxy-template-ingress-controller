@@ -80,6 +80,8 @@ watchedResources:
     apiVersion: discovery.k8s.io/v1
     resources: endpointslices
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
+    # "0" = no debounce; see ingress.yaml endpoints entry.
+    debounceInterval: "0"
 
   namespaces:
     apiVersion: v1

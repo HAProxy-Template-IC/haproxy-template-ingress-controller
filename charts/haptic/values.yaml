@@ -353,34 +353,38 @@ controller:
         # Interval between leadership refresh attempts
         # Default: 2s (should be < renew_deadline, typically 1/5 of it)
         retryPeriod: 2s
-      # Reconciler refractory window between resource-change events and a
-      # render+deploy cycle. Leading-edge: the first change after the window
-      # fires immediately; further changes within the window are batched.
-      # Lower it for faster response on small clusters; raise it on
-      # high-churn clusters to absorb more changes per render.
-      # Default: 5s (shared with the per-watcher debounce default)
-      # reconciliationDebounceInterval: 5s
     dataplane:
       # Port is defined in haproxy.ports.dataplane and referenced here
       port: 5555 # Must match haproxy.ports.dataplane value
-      # Minimum time between consecutive deployments (rate limiting)
-      # Prevents rapid-fire deployments from hammering HAProxy instances
-      # Default: 2s
-      minDeploymentInterval: 2s
+      # Minimum time between reload-inducing (structural) deployments.
+      # A new or changed Ingress / Gateway route reloads HAProxy at most
+      # once per this interval; bursts coalesce (latest-wins) into the
+      # next window. This deliberately does NOT gate endpoint changes:
+      # pod IP / admin-state changes (rolling restart, scale up/down)
+      # apply instantly via the runtime fast path, which fires OUTSIDE
+      # the deployment scheduler's rate limit. So endpoints converge
+      # instantly while structural changes are batched — matching the
+      # operator expectation that endpoints react immediately but
+      # ingress/gateway changes can take a moment.
+      #
+      # 5s throttles the reload storm that parallel-test churn — or a busy
+      # production cluster — otherwise produces. Frequent reloads (a) leave
+      # brief windows where the HAProxy master socket is unavailable and a
+      # coincident runtime push is clobbered, and (b) churn worker
+      # generations fast enough that a request looped through the
+      # http-tcp -> unix-socket -> http_frontend path can land on a stale
+      # draining worker mid-reload and be rejected as a <BADREQ> 400.
+      # 5s matches the official haproxytech/kubernetes-ingress --sync-period
+      # default. An earlier 0s default predates the fast path, when this
+      # gate also delayed the endpoint *deploy*; it no longer does, so
+      # throttling reloads here costs endpoints nothing (they bypass it).
+      # Default: 5s
+      minDeploymentInterval: 5s
       # Interval for periodic drift prevention deployments
       # Triggers deployment if no deployment occurred within this interval
       # Helps detect and correct configuration drift from external changes
       # Default: 60s
       driftPreventionInterval: 60s
-      # Maximum parallel Dataplane API operations during sync.
-      # Prevents overwhelming the API when syncing large configurations.
-      # Values:
-      #   - null/omitted: auto-calculated as dataplane GOMAXPROCS * 10
-      #   - 0: unlimited (explicitly disable limiting - not recommended)
-      #   - N > 0: use that exact limit
-      # Auto-calculation uses the dataplane container's CPU/memory to determine
-      # an appropriate parallelism level that balances throughput and API stability.
-      # maxParallel: null
       # Directory paths for HAProxy auxiliary files
       # These paths are used for both validation and deployment
       # See: https://www.haproxy.com/documentation/haproxy-data-plane-api/reference/configuration-file/#resources
@@ -474,6 +478,10 @@ controller:
         apiVersion: discovery.k8s.io/v1
         resources: endpointslices
         indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
+        # "0" = no per-watcher debounce: fire on every EndpointSlice change so
+        # a pod-IP rotation reaches HAProxy inside the kubelet Ready→SIGTERM
+        # window. The reconciler-level refractory still batches across kinds.
+        debounceInterval: "0"
       secrets:
         apiVersion: v1
         resources: secrets
@@ -481,7 +489,7 @@ controller:
         indexBy: ["metadata.namespace", "metadata.name"]
         #
         # Add custom or override library-defined entries. Per-resource
-        # debounceInterval is supported (default 5s). See
+        # debounceInterval is supported (default 100ms). See
         # docs/configuration/watched-resources.md.
     # Override or extend the library-provided templateSnippets / maps /
     # files / haproxyConfig / validationTests sections by defining the
@@ -546,6 +554,22 @@ webhook:
   caBundle: "" # Base64-encoded CA certificate
   # Example:
   # caBundle: LS0tLS1CRUdJTi...
+
+  # HAProxyTemplateConfig CRD admission validator. Validates the controller's
+  # own CRD at kubectl apply time — operators see template errors with
+  # line-numbered haproxy -c diagnostics before the resource lands in etcd.
+  # With this upstream gate active, the leader-side reconcile pipeline can
+  # safely skip haproxy -c on every render (saves ~94 ms on the rolling-
+  # restart hot path).
+  #
+  # failurePolicy is Ignore (not configurable here): the controller being
+  # down must never block operators from applying HAProxyTemplateConfig
+  # updates (the chicken-and-egg of first install, and any recovery scenario
+  # where the fix lives in a CRD update). When the webhook is unreachable,
+  # the dataplane API still runs haproxy -c server-side before accepting a
+  # raw push, surfacing a delayed but clear failure via HAProxyCfg.status.
+  haproxyTemplateConfig:
+    enabled: true
 # IngressClass resource
 # Creates an IngressClass resource for Kubernetes 1.18+
 # Only created when ingress library is enabled and API is available
@@ -1164,7 +1188,14 @@ haproxy:
         mode http
         log global
         option httplog
-        timeout connect 5000
+        # 100ms matches the controller-rendered default in
+        # libraries/base.yaml defaults-settings-300-timeouts; the
+        # bootstrap config doesn't have real backends (only the status
+        # frontend + default_backend returning 404) so this value
+        # rarely matters in practice, but staying consistent prevents
+        # confusion if an operator inspects the live config before the
+        # first controller-rendered push lands.
+        timeout connect 100
         timeout client 50000
         timeout server 50000
 

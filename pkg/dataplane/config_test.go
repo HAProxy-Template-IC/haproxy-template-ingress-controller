@@ -76,20 +76,17 @@ func TestDefaultSyncOptions(t *testing.T) {
 	opts := DefaultSyncOptions()
 
 	require.NotNil(t, opts)
-	assert.Equal(t, 3, opts.MaxRetries)
 	assert.Equal(t, 2*time.Minute, opts.Timeout)
-	assert.False(t, opts.ContinueOnError)
-	assert.True(t, opts.FallbackToRaw)
+	assert.True(t, opts.VerifyReload)
+	assert.Equal(t, 10*time.Second, opts.ReloadVerificationTimeout)
 }
 
 func TestDryRunOptions(t *testing.T) {
 	opts := DryRunOptions()
 
 	require.NotNil(t, opts)
-	assert.Equal(t, 0, opts.MaxRetries)
 	assert.Equal(t, 1*time.Minute, opts.Timeout)
-	assert.False(t, opts.ContinueOnError)
-	assert.False(t, opts.FallbackToRaw)
+	assert.False(t, opts.VerifyReload)
 }
 
 func TestDefaultAuxiliaryFiles(t *testing.T) {

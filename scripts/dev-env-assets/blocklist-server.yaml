@@ -33,6 +33,16 @@ spec:
         image: nginx:alpine
         ports:
         - containerPort: 80
+        # K8s contract: Ready means responding to traffic. Without
+        # this probe nginx is marked Ready before it has parsed
+        # the configmap-mounted blocklist file, and the chart's
+        # `http.Fetch()` template path hits a pod that RSTs.
+        readinessProbe:
+          httpGet: {path: /blocklist.txt, port: 80}
+          periodSeconds: 1
+          successThreshold: 1
+          failureThreshold: 1
+          timeoutSeconds: 1
         volumeMounts:
         - name: blocklist
           mountPath: /usr/share/nginx/html

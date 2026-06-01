@@ -48,6 +48,7 @@ func TestComponent_ConfigPublishedEvent(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -138,6 +139,71 @@ eventLoop:
 	assert.Contains(t, runtimeConfig.Spec.Content, "global")
 }
 
+// TestComponent_DeployedConfigPublishRequest verifies the CR self-consistency
+// fix: a DeployedConfigPublishRequest (the bytes the deployer just applied)
+// publishes those exact bytes as the HAProxyCfg spec. Because the publisher
+// derives spec.Checksum from spec.Content with the same ComputeContentChecksum
+// the deployer used for status.deployedToPods[].Checksum, publishing the
+// deployed content guarantees the deployed checksum becomes an observable
+// published spec.Checksum — even though no validation-driven publish ran for it
+// in this test (mirroring a render coalesced away under churn).
+func TestComponent_DeployedConfigPublishRequest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	k8sClient := k8sfake.NewClientset()
+	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
+	eventBus := busevents.NewEventBus(100)
+
+	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
+	component := New(publisher, eventBus, testutil.NewTestLogger())
+
+	eventChan := eventBus.Subscribe("test-sub", 50)
+	eventBus.Start()
+	go component.Start(ctx)
+	time.Sleep(100 * time.Millisecond)
+
+	// Cache the template config — handleDeployedConfigPublishRequest drops the
+	// request if no template config is cached yet.
+	templateConfig := &v1alpha1.HAProxyTemplateConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default", UID: "uid-deployed"},
+	}
+	eventBus.Publish(events.NewConfigValidatedEvent(nil, templateConfig, "v1", "secret-v1"))
+	time.Sleep(50 * time.Millisecond)
+
+	// A render the deployer applied but whose validation-driven publish never ran.
+	deployedConfig := "global\n  daemon\n\nbackend marker-be\n  server s1 1.2.3.4:80\n"
+	eventBus.Publish(events.NewDeployedConfigPublishRequest(
+		"test-config-haproxycfg", "default", deployedConfig, nil, "deployed-checksum-abc",
+	))
+
+	var published *events.ConfigPublishedEvent
+	timeout := time.After(2 * time.Second)
+eventLoop:
+	for {
+		select {
+		case ev := <-eventChan:
+			if p, ok := ev.(*events.ConfigPublishedEvent); ok {
+				published = p
+				break eventLoop
+			}
+		case <-timeout:
+			t.Fatal("timeout waiting for ConfigPublishedEvent from a DeployedConfigPublishRequest")
+		}
+	}
+	require.NotNil(t, published)
+	assert.Equal(t, "test-config-haproxycfg", published.RuntimeConfigName)
+
+	cr, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
+		Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, deployedConfig, cr.Spec.Content,
+		"the deployer's exact bytes must be published as spec.Content")
+	assert.NotEmpty(t, cr.Spec.Checksum,
+		"spec.Checksum must be set so the deployed checksum is observable")
+}
+
 func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -145,6 +211,7 @@ func TestComponent_ConfigAppliedToPodEvent(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -202,6 +269,7 @@ func TestComponent_HAProxyPodTerminatedEvent(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -279,6 +347,7 @@ func TestComponent_MultiplePods(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -364,6 +433,7 @@ func TestComponent_Name(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -381,6 +451,7 @@ func TestComponent_LostLeadership(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -474,6 +545,7 @@ func TestComponent_ValidationFailed(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -553,6 +625,7 @@ func TestComponent_ValidationFailed_NoCachedState(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -593,6 +666,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -619,11 +693,9 @@ func TestComponent_ConfigAppliedToPodEvent_WithSyncMetadata(t *testing.T) {
 
 	// Publish ConfigAppliedToPodEvent with SyncMetadata including operations and reload
 	syncMetadata := &events.SyncMetadata{
-		ReloadTriggered:        true,
-		ReloadID:               "reload-123",
-		SyncDuration:           100 * time.Millisecond,
-		VersionConflictRetries: 2,
-		FallbackUsed:           false,
+		ReloadTriggered: true,
+		ReloadID:        "reload-123",
+		SyncDuration:    100 * time.Millisecond,
 		OperationCounts: events.OperationCounts{
 			TotalAPIOperations: 5,
 			BackendsAdded:      2,
@@ -665,6 +737,7 @@ func TestComponent_ConfigAppliedToPodEvent_DriftCheck_WithChanges(t *testing.T) 
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -730,6 +803,7 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	// Setup
 	k8sClient := k8sfake.NewClientset()
 	crdClient := crdclientfake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	eventBus := busevents.NewEventBus(100)
 
 	publisher := configpublisher.New(k8sClient, crdClient, testutil.NewTestLogger())
@@ -758,7 +832,6 @@ func TestComponent_ConfigAppliedToPodEvent_WithError(t *testing.T) {
 	syncMetadata := &events.SyncMetadata{
 		ReloadTriggered: false,
 		SyncDuration:    50 * time.Millisecond,
-		FallbackUsed:    true,
 		OperationCounts: events.OperationCounts{
 			TotalAPIOperations: 0, // No operations due to error
 		},

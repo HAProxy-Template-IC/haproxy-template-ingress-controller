@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -169,4 +170,21 @@ func TestCheckResponse_BodyReadError(t *testing.T) {
 	err := CheckResponse(resp, "test operation")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "test operation failed with status 400")
+}
+
+func TestTruncateForError(t *testing.T) {
+	// Short input is returned trimmed, unchanged.
+	assert.Equal(t, "hello", truncateForError("  hello  "))
+
+	// Long ASCII is truncated with the marker and stays valid UTF-8.
+	got := truncateForError(strings.Repeat("a", 1000))
+	assert.True(t, utf8.ValidString(got))
+	assert.True(t, strings.HasSuffix(got, "…(truncated)"))
+
+	// A 3-byte rune ("€") repeated so the 512-byte cut lands mid-rune: the
+	// result must NOT be invalid UTF-8 (the bug the Gitar review flagged —
+	// s[:512] splits a multi-byte rune).
+	got = truncateForError(strings.Repeat("€", 300)) // 900 bytes; 512 is mid-rune
+	assert.True(t, utf8.ValidString(got), "truncation must not split a multi-byte rune")
+	assert.True(t, strings.HasSuffix(got, "…(truncated)"))
 }

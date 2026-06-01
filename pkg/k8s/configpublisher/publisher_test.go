@@ -43,6 +43,7 @@ func TestPublishConfig_CreateNew(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -123,6 +124,7 @@ func TestPublishConfig_Update(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -168,6 +170,7 @@ func TestUpdateDeploymentStatus_AddPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -211,6 +214,7 @@ func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -267,6 +271,7 @@ func TestUpdateDeploymentStatus_MultiplePods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -319,6 +324,7 @@ func TestCleanupPodReferences_RemovePod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -371,6 +377,7 @@ func TestCleanupPodReferences_NonexistentPod(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -411,6 +418,7 @@ func TestUpdateDeploymentStatus_RuntimeConfigNotFound(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -432,6 +440,7 @@ func TestPublishConfig_GeneralFiles(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -476,6 +485,7 @@ func TestPublishConfig_CRTListFiles(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -519,6 +529,7 @@ func TestPublishConfig_WithCompression(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -563,6 +574,7 @@ func TestPublishConfig_CompressionDisabled(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -602,6 +614,7 @@ func TestPublishConfig_SSLSecretCompressionAnnotation(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -651,6 +664,7 @@ func TestReconcileDeployedToPods_RemovesStalePods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -699,6 +713,7 @@ func TestReconcileDeployedToPods_NoRunningPods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -746,6 +761,7 @@ func TestReconcileDeployedToPods_NoStalePods(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -793,6 +809,7 @@ func TestReconcileDeployedToPods_EmptyStatus(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 
 	publisher := New(k8sClient, crdClient, testLogger())
 
@@ -962,6 +979,7 @@ func TestUpdateDeploymentStatus_AuxiliaryFilesUseOwnChecksum(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	publisher := New(k8sClient, crdClient, testLogger())
 
 	// Create runtime config with auxiliary files
@@ -1066,6 +1084,7 @@ func TestAuxiliaryFileSpec_NoUpdateWhenChecksumUnchanged(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	publisher := New(k8sClient, crdClient, testLogger())
 
 	// Create runtime config with auxiliary files
@@ -1139,6 +1158,7 @@ func TestAuxiliaryFileSpec_UpdateWhenChecksumChanges(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := k8sfake.NewClientset()
 	crdClient := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crdClient)
 	publisher := New(k8sClient, crdClient, testLogger())
 
 	// Create runtime config with auxiliary files

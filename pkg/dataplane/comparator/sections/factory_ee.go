@@ -8,41 +8,14 @@
 package sections
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/comparator/sections/executors"
 	v32ee "gitlab.com/haproxy-haptic/haptic/pkg/generated/dataplaneapi/v32ee"
-)
-
-// Priority constants for Enterprise Edition sections.
-const (
-	// PriorityEEBotMgmtProfile is the priority for bot management profile operations.
-	// These are top-level EE sections, similar to resolvers and caches.
-	PriorityEEBotMgmtProfile = 15
-
-	// PriorityEECaptcha is the priority for captcha operations.
-	PriorityEECaptcha = 15
-
-	// PriorityEEWAFGlobal is the priority for WAF global operations.
-	// WAF global should be created before WAF profiles.
-	PriorityEEWAFGlobal = 12
-
-	// PriorityEEWAFProfile is the priority for WAF profile operations.
-	PriorityEEWAFProfile = 15
 )
 
 // Top-level CRUD builders for Enterprise Edition sections.
 var (
-	botMgmtProfileOps = NewTopLevelCRUD(
-		"botmgmt-profile", "botmgmt-profile", PriorityEEBotMgmtProfile, BotMgmtProfileName,
-		executors.BotMgmtProfileCreate(), executors.BotMgmtProfileUpdate(), executors.BotMgmtProfileDelete(),
-	)
-	captchaOps = NewTopLevelCRUD(
-		"captcha", "captcha", PriorityEECaptcha, CaptchaEEName,
-		executors.CaptchaCreate(), executors.CaptchaUpdate(), executors.CaptchaDelete(),
-	)
-	wafProfileOps = NewTopLevelCRUD(
-		"waf-profile", "waf-profile", PriorityEEWAFProfile, WAFProfileName,
-		executors.WAFProfileCreate(), executors.WAFProfileUpdate(), executors.WAFProfileDelete(),
-	)
+	botMgmtProfileOps = NewTopLevelCRUD("botmgmt-profile", "botmgmt-profile", BotMgmtProfileName)
+	captchaOps        = NewTopLevelCRUD("captcha", "captcha", CaptchaEEName)
+	wafProfileOps     = NewTopLevelCRUD("waf-profile", "waf-profile", WAFProfileName)
 )
 
 // NewBotMgmtProfileCreate creates an operation to create a bot management profile.
@@ -89,28 +62,25 @@ func NewWAFProfileDelete(profile *v32ee.WafProfile) Operation {
 
 // NewWAFGlobalCreate creates an operation to create the WAF global configuration.
 // WAF global is a singleton section (only one per configuration).
-func NewWAFGlobalCreate(wafGlobal *v32ee.WafGlobal) Operation {
-	return NewSingletonOp(
-		OperationCreate, "waf-global", PriorityEEWAFGlobal, wafGlobal,
-		Identity[*v32ee.WafGlobal], executors.WAFGlobalCreate(),
+func NewWAFGlobalCreate(_ *v32ee.WafGlobal) Operation {
+	return NewSingletonOp[*v32ee.WafGlobal](
+		OperationCreate, "waf-global",
 		DescribeSingleton(OperationCreate, "waf-global"),
 	)
 }
 
 // NewWAFGlobalUpdate creates an operation to update the WAF global configuration.
-func NewWAFGlobalUpdate(wafGlobal *v32ee.WafGlobal) Operation {
-	return NewSingletonOp(
-		OperationUpdate, "waf-global", PriorityEEWAFGlobal, wafGlobal,
-		Identity[*v32ee.WafGlobal], executors.WAFGlobalUpdate(),
+func NewWAFGlobalUpdate(_ *v32ee.WafGlobal) Operation {
+	return NewSingletonOp[*v32ee.WafGlobal](
+		OperationUpdate, "waf-global",
 		DescribeSingleton(OperationUpdate, "waf-global"),
 	)
 }
 
 // NewWAFGlobalDelete creates an operation to delete the WAF global configuration.
-func NewWAFGlobalDelete(wafGlobal *v32ee.WafGlobal) Operation {
-	return NewSingletonOp(
-		OperationDelete, "waf-global", PriorityEEWAFGlobal, wafGlobal,
-		Identity[*v32ee.WafGlobal], executors.WAFGlobalDelete(),
+func NewWAFGlobalDelete(_ *v32ee.WafGlobal) Operation {
+	return NewSingletonOp[*v32ee.WafGlobal](
+		OperationDelete, "waf-global",
 		DescribeSingleton(OperationDelete, "waf-global"),
 	)
 }

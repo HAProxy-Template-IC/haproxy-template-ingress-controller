@@ -25,12 +25,16 @@ import (
 // but with three additional load-bearing contracts that are
 // distinct from the failure path:
 //
-//  1. The no-op deployment optimization: when isNoOpDeployment
-//     returns true (no reload, no operations), the
-//     ConfigAppliedToPodEvent MUST be skipped — even with
-//     runtime config set. This prevents flooding the K8s API with
-//     redundant status updates for no-change reconciliations
-//     during steady-state.
+//  1. ConfigAppliedToPodEvent is published unconditionally on
+//     every successful endpoint sync, regardless of whether the
+//     sync did any HAProxy operations. The earlier "skip no-op"
+//     optimisation broke the spec.checksum ↔
+//     status.deployedToPods[].checksum invariant — a deploy with
+//     content X but zero HAProxy ops (because pod was already in
+//     sync at the directive level) would advance spec.checksum
+//     via the publisher path while leaving deployedToPods[] stale.
+//     See the comment in deployment.go's handleEndpointSuccess for
+//     the failure trace.
 //
 //  2. reloadsTriggered counter is conditionally incremented based
 //     on syncResult.ReloadTriggered. The aggregator uses this to
@@ -103,12 +107,20 @@ func TestHandleEndpointSuccess_PublishesInstanceDeployedAndAppliedWhenNotNoOp(t 
 		"totalOperations MUST be added from syncResult.Details.TotalOperations")
 }
 
-func TestHandleEndpointSuccess_SkipsAppliedEventOnNoOpDeployment(t *testing.T) {
-	// No-op result (no reload, no operations) — even with runtime
-	// config set, the ConfigAppliedToPodEvent MUST be skipped.
-	// Without this branch, every steady-state reconciliation that
-	// produced a deduplicated config would hammer the K8s status
-	// subresource with no-change updates.
+func TestHandleEndpointSuccess_PublishesAppliedEventOnNoOpDeployment(t *testing.T) {
+	// No-op result (no reload, no operations). Pre-change, this
+	// suppressed ConfigAppliedToPodEvent — that was wrong: it broke
+	// the spec.checksum ↔ status.deployedToPods[].checksum invariant.
+	// A deploy with content X but zero HAProxy ops (because the pod
+	// was already directive-identical) advanced spec.checksum via the
+	// publisher path while leaving deployedToPods[] stuck at the
+	// previous checksum. Repro: pipeline 2559825226 e2e [3.1] /
+	// TestIngressBasicAuthHaproxyIngress et al — pod stuck reporting
+	// `5f1f6d0…` while spec sat at `b8fac3…` for 90+ s.
+	//
+	// The fix is to always publish: SSA Apply is idempotent against
+	// byte-identical managedFields entries (no resourceVersion bump)
+	// so the API cost is bounded to a round-trip per pod per deploy.
 	bus := testutil.NewTestBus()
 	eventChan := bus.Subscribe("test-sub", 50)
 	bus.Start()
@@ -136,9 +148,19 @@ func TestHandleEndpointSuccess_SkipsAppliedEventOnNoOpDeployment(t *testing.T) {
 		"InstanceDeployedEvent MUST fire even for no-op deploys so per-pod "+
 			"latency metrics keep updating")
 
-	// ConfigAppliedToPodEvent MUST be suppressed on no-op.
-	testutil.AssertNoEvent[*events.ConfigAppliedToPodEvent](
-		t, eventChan, testutil.NoEventTimeout)
+	// ConfigAppliedToPodEvent MUST fire on a no-op too. status-applier
+	// consumes this to record the deployed checksum on the runtime
+	// config's status subresource; suppressing it leaves
+	// status.deployedToPods[].checksum stale while spec.checksum
+	// advances via the publisher path on the same content.
+	applied := testutil.WaitForEvent[*events.ConfigAppliedToPodEvent](
+		t, eventChan, testutil.LongTimeout)
+	require.NotNil(t, applied,
+		"ConfigAppliedToPodEvent MUST fire on a no-op success — without "+
+			"it, status.deployedToPods[].checksum diverges from spec.checksum")
+	assert.Equal(t, "checksum-abc", applied.Checksum,
+		"the event MUST carry the contentChecksum of THIS deploy, so the "+
+			"status-applier records the correct value (not a stale one)")
 
 	// Counters: success counted, reload NOT counted (false), no ops.
 	assert.Equal(t, int32(1), atomic.LoadInt32(&state.successCount))

@@ -95,21 +95,8 @@ func (a *AuxiliaryFiles) Sort() {
 
 // SyncOptions configures synchronization behavior.
 type SyncOptions struct {
-	// MaxRetries for 409 version conflict errors (default: 3)
-	// These are always retried as they're recoverable errors.
-	MaxRetries int
-
 	// Timeout for the entire sync operation (default: 2 minutes)
 	Timeout time.Duration
-
-	// ContinueOnError continues applying operations even if some fail (default: false)
-	// When false, the first error stops execution.
-	ContinueOnError bool
-
-	// FallbackToRaw enables automatic fallback to raw config push on non-409 errors (default: true)
-	// When enabled, if fine-grained sync fails with non-recoverable errors,
-	// the library automatically falls back to pushing the complete raw configuration.
-	FallbackToRaw bool
 
 	// VerifyReload enables async reload verification after sync (default: true)
 	// When true, polls the reload status endpoint until succeeded/failed/timeout.
@@ -121,53 +108,34 @@ type SyncOptions struct {
 	// Only used when VerifyReload is true.
 	ReloadVerificationTimeout time.Duration
 
-	// MaxParallel limits concurrent Dataplane API operations during sync.
-	// This prevents overwhelming the API when syncing large configurations.
-	// 0 means unlimited (not recommended for large configs).
-	MaxParallel int
-
-	// RawPushThreshold triggers raw config push when change count exceeds this value.
-	// When set to 0, this threshold check is disabled (fine-grained sync always used).
-	// Note: Version 1 (initial state) always triggers raw push regardless of this setting.
-	RawPushThreshold int
-
-	// PreParsedConfig is an optional pre-parsed desired configuration.
-	// If provided, sync skips parsing the desiredConfig string, saving CPU and allocations.
-	// If nil, the config will be parsed normally (backward compatible).
-	// This is typically set by the validation pipeline which already parsed the config.
+	// PreParsedConfig is an optional pre-parsed desired configuration. When
+	// non-nil, sync skips parsing the desiredConfig string.
 	PreParsedConfig *parserconfig.StructuredConfig
 
-	// CachedCurrentConfig is an optional cached parsed current configuration from a previous sync.
-	// When set together with CachedConfigVersion, the orchestrator calls GetVersion() first
-	// and skips the expensive GetRawConfiguration() + parse if the version matches.
-	// On mismatch or error, falls through to the full fetch+parse path.
+	// CachedCurrentConfig is an optional cached parsed current configuration
+	// from a previous sync. When set with CachedConfigVersion, sync calls
+	// GetVersion() first and reuses the cached config if the version matches.
 	CachedCurrentConfig *parserconfig.StructuredConfig
 
-	// CachedConfigVersion is the expected config version on the pod.
-	// Only used when CachedCurrentConfig is also set.
+	// CachedConfigVersion is the expected config version on the pod. Only
+	// used when CachedCurrentConfig is also set.
 	CachedConfigVersion int64
 
-	// ContentChecksum is the pre-computed checksum of the desired config + aux files.
-	// When set together with LastDeployedChecksum, the orchestrator skips the
-	// expensive auxiliary file comparison (which downloads content from HAProxy via
-	// Dataplane API) if both checksums match — the desired state hasn't changed
-	// since the last successful sync.
+	// ContentChecksum is the pre-computed checksum of the desired config +
+	// aux files. When it matches LastDeployedChecksum, the expensive aux
+	// file comparison is skipped because the desired state is identical
+	// to what was last deployed.
 	ContentChecksum string
 
-	// LastDeployedChecksum is the content checksum from the last successful sync
-	// to this endpoint. When it matches ContentChecksum, auxiliary file comparison
-	// is skipped because the desired state is identical to what was last deployed.
-	// Drift prevention syncs should leave this empty to force comparison.
+	// LastDeployedChecksum is the content checksum from the last successful
+	// sync to this endpoint. Drift prevention syncs leave this empty.
 	LastDeployedChecksum string
 }
 
 // DefaultSyncOptions returns sensible default sync options.
 func DefaultSyncOptions() *SyncOptions {
 	return &SyncOptions{
-		MaxRetries:                3,
 		Timeout:                   2 * time.Minute,
-		ContinueOnError:           false,
-		FallbackToRaw:             true,
 		VerifyReload:              true,
 		ReloadVerificationTimeout: 10 * time.Second,
 	}
@@ -176,11 +144,8 @@ func DefaultSyncOptions() *SyncOptions {
 // DryRunOptions returns options configured for dry-run mode.
 func DryRunOptions() *SyncOptions {
 	return &SyncOptions{
-		MaxRetries:      0,
-		Timeout:         1 * time.Minute,
-		ContinueOnError: false,
-		FallbackToRaw:   false,
-		VerifyReload:    false, // No reload happens in dry-run
+		Timeout:      1 * time.Minute,
+		VerifyReload: false, // No reload happens in dry-run
 	}
 }
 

@@ -77,7 +77,8 @@ func TestCompareEditedItems(t *testing.T) {
 			rec := func(kind string) func(string, int) Operation {
 				return func(v string, i int) Operation {
 					calls = append(calls, call{kind: kind, value: v, index: i})
-					return &mockOperation{desc: kind + ":" + v, priority: i, section: "test"}
+					_ = i // index retained for test parity; mockOperation no longer carries priority
+					return &mockOperation{desc: kind + ":" + v, section: "test"}
 				}
 			}
 

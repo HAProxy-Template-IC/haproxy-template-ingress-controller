@@ -191,11 +191,8 @@ func (c *Comparator) Compare(current, desired *parser.StructuredConfig) (*Config
 	// Update summary counts from operations
 	updateSummaryFromOperations(&summary, operations)
 
-	// Order operations by dependencies
-	orderedOps := OrderOperations(operations)
-
 	return &ConfigDiff{
-		Operations: orderedOps,
+		Operations: operations,
 		Summary:    summary,
 	}, nil
 }
