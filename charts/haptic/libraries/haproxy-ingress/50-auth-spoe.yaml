@@ -53,16 +53,20 @@ templateSnippets:
               during render and two direct GetSingle calls can observe
               different states.
             -#}
-            {%- var secret, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
+            {%- var secretAny, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
               return resources.secrets.GetSingle(secretNs, secretName)
             }) %}
+            {#- Assert to the typed pointer BEFORE the nil check. GetSingle returns a
+                typed *resources.secrets.T — a typed-nil when the Secret is absent —
+                and boxing that through the closure's `any` yields a NON-nil interface,
+                so `secretAny != nil` would pass for an absent Secret and the `.Data`
+                access below would dereference a nil pointer. Nil-checking the asserted
+                pointer is correct: a boxed typed-nil asserts to a nil *T. -#}
+            {%- var secret, _ = secretAny.(*resources.secrets.T) %}
             {%- if secret != nil %}
       # haproxy-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}
-              {#- secret is `any` from shared.ComputeIfAbsent; type-assert
-                  to the typed pointer the closure returned so .Data
-                  field access compiles. -#}
-              {% var secretData = secret.(*resources.secrets.T).Data -%}
+              {% var secretData = secret.Data -%}
               {%- var hashRegex = extraContext | dig_string("^.*$", "password_hash_validation_regex") %}
               {%- var hashErrMsg = extraContext | dig_string("Invalid password hash", "password_hash_validation_error_message") %}
               {%- for _, username := range keys(secretData) %}
@@ -516,9 +520,15 @@ templateSnippets:
             snippets see the same store state (live stores can mutate
             between two direct GetSingle calls in one render).
           -#}
-          {%- var hiAuthSecret, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
+          {%- var hiAuthSecretAny, _ = shared.ComputeIfAbsent("haproxy_ingress_auth_secret:" + secretNs + "/" + secretName, func() any {
             return resources.secrets.GetSingle(secretNs, secretName)
           }) %}
+          {#- Assert to the typed pointer before the nil check (see the userlist
+              snippet above): a boxed typed-nil *resources.secrets.T passes `!= nil`,
+              which would emit an http_auth ref to a userlist the (correctly-skipping)
+              userlist snippet never produced — `haproxy -c` then fails with
+              "unable to find userlist". -#}
+          {%- var hiAuthSecret, _ = hiAuthSecretAny.(*resources.secrets.T) %}
           {%- if hiAuthSecret != nil %}
       # haproxy-ingress/backend-directives-auth ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }

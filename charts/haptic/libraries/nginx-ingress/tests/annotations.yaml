@@ -580,6 +580,71 @@ validationTests:
         pattern: "cookie SERVERID insert indirect nocache dynamic"
         description: Must generate cookie directive with custom name
 
+  test-nginx-ingress-auth-basic-missing-secret:
+    description: >-
+      nginx.ingress.kubernetes.io/auth-secret referencing a Secret absent from
+      the render snapshot (informer lag / cascade-delete) must skip the userlist
+      + auth ACL cleanly, not panic. Regression for the typed-nil gotcha
+      (GetSingle returns a typed-nil *resources.secrets.T when absent; boxing it
+      through shared.ComputeIfAbsent's func() any made `!= nil` pass, then
+      `.Data["auth"]` dereferenced nil).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: auth-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: auth-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: auth-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: auth-ingress-missing-secret
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "absent-secret"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: auth-missing.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: auth-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+        description: render must succeed (auth cleanly skipped), NOT panic on the absent Secret
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "userlist ni_auth_default_absent-secret"
+        description: no userlist is emitted when the referenced Secret is absent
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http_auth(ni_auth_default_absent-secret)"
+        description: no http_auth ACL ref is emitted when the referenced Secret is absent
+
   test-nginx-ingress-auth-basic:
     description: Nginx Ingress basic auth generates userlist and auth directive
     fixtures:
