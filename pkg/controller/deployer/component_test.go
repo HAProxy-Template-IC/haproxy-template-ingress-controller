@@ -32,9 +32,8 @@ import (
 func createTestDeployer(eventBus *busevents.EventBus) *Component {
 	logger := testutil.NewTestLogger()
 	// Zero-value SyncOptions is intentional: every per-sync knob falls back to
-	// dataplane.DefaultSyncOptions() in deployToSingleEndpoint (timeouts via the
-	// > 0 guards, MaxRetries via the *int nil check). This is the contract the
-	// deployer gives test code.
+	// dataplane.DefaultSyncOptions() in deployToSingleEndpoint (timeouts applied
+	// only via the > 0 guards). This is the contract the deployer gives test code.
 	return New(eventBus, logger, SyncOptions{})
 }
 

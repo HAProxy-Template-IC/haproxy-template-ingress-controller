@@ -198,9 +198,9 @@ func TestGetSSLCertificateContent_InvalidJSON(t *testing.T) {
 }
 
 // TestUpdateSSLCertificate_SendsSkipReload mirrors the spoe.conf and map tests.
-// The fine-grained sync's post-sync force-reload (see executeFineGrainedSync)
-// is what loads the new PEM into HAProxy; the dataplane API must not auto-reload
-// here, otherwise an in-flight haproxy.cfg push could race the cert reload.
+// The sync's post-sync force-reload is what loads the new PEM into HAProxy; the
+// dataplane API must not auto-reload here, otherwise an in-flight haproxy.cfg
+// push could race the cert reload.
 func TestUpdateSSLCertificate_SendsSkipReload(t *testing.T) {
 	var capturedQuery string
 	server := newMockServer(t, mockServerConfig{

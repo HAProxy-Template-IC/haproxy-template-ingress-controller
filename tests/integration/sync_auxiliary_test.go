@@ -238,7 +238,7 @@ func TestSyncAuxiliary(t *testing.T) {
 				"Updated map file domains.map",
 			},
 			expectedReload: true, // Map file PUT skips auto-reload; the orchestrator
-			// now force-reloads at the end of fine-grained sync when aux content
+			// now force-reloads at the end of the sync when aux content
 			// changed but no config-side reload fired. Without this force-reload
 			// the new map content would persist to disk but HAProxy would keep
 			// the pre-update map in memory until the next reload. SyncResult
