@@ -437,6 +437,62 @@ func TestSchedulerLanes_Case7_MidIntervalRuntimeChange_AppliesResponsively(t *te
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 100*time.Millisecond)
 }
 
+// Case 8 (the residual fix's non-gated half): the SAME structural+runtime render
+// as Case 6, but the last deploy ended long enough ago that no interval remains
+// (wait<=0). The runtime-eligible subset must STILL fast-apply via runtime-raw
+// here — this is the gap the fix closes. Before it, applyRuntimePreInterval ran
+// only on the wait>0 path (after the `if wait <= 0 { return true }` short-circuit),
+// so when the deploy was NOT interval-gated the pod-IP swap rode the structural
+// reload's worker-swap window instead of reaching the live worker first → the
+// residual rolling-restart 503. Unlike Case 6, the structural reload here is NOT
+// gated, so it dispatches immediately (DeploymentScheduledEvent fires) — the
+// subset apply must land BEFORE that reload.
+func TestSchedulerLanes_Case8_StructuralWaitZero_AppliesRuntimeSubset(t *testing.T) {
+	const interval = 5 * time.Second
+	s, scheduledCh, applied, cancel := newLaneScheduler(t, interval)
+	defer cancel()
+
+	baseline, _, _ := laneRenders(t)
+
+	// Same mixed render as Case 6: SRV_1 address change (runtime-eligible) PLUS a
+	// brand-new backend (structural).
+	mixed := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.2:8080")+laneStructuralExtra)
+
+	upd, err := dataplane.ComputeRuntimeServerUpdates(baseline, mixed)
+	require.NoError(t, err)
+	require.False(t, upd.IsRuntimeEligible(), "mixed render must classify structural")
+	require.Greater(t, upd.ServerOpCount(), 0, "mixed render must still carry a runtime-eligible server op")
+	require.Greater(t, upd.StructuralOpCount(), 0, "mixed render must carry a structural op")
+
+	// The last deploy ended 2 intervals ago → remainingInterval returns 0, so the
+	// structural deploy is NOT gated (wait<=0). Seed the baseline so the render
+	// diffs against it (not cold-start).
+	s.schedulerMutex.Lock()
+	s.lastDispatchedParsed = baseline
+	s.state.lastDeploymentEndTime = time.Now().Add(-2 * interval)
+	s.schedulerMutex.Unlock()
+
+	start := time.Now()
+	s.scheduleOrQueue(context.Background(), "mixed-config", nil, mixed, oneEndpoint(),
+		"endpoint-change+churn", "corr-8", nil, true, "")
+
+	// The runtime-eligible subset must apply within ms even though no interval
+	// gates the deploy — proving the apply is no longer trapped behind the
+	// wait<=0 short-circuit.
+	select {
+	case <-applied:
+		assert.Less(t, time.Since(start), time.Second,
+			"runtime subset of a non-gated structural render must still fast-apply (wait<=0 path)")
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime subset was not applied on the wait<=0 path — the fix regressed")
+	}
+
+	// The structural reload is NOT gated here (wait<=0) → it dispatches. This is
+	// the distinguishing behaviour vs Case 6, where the same render's reload stays
+	// gated for the full interval.
+	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, time.Second)
+}
+
 // TestScheduler_ApplyRuntimePreInterval_NilPendingNoPanic guards the
 // leadership-loss race: handleLostLeadership clears s.state.pending to nil, but
 // waitDeployInterval's select can still pick a buffered pendingSignal before it
