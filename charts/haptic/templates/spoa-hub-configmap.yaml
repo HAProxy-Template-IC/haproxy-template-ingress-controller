@@ -28,7 +28,7 @@ data:
     blocking_thread_keep_alive_secs = {{ $hub.blockingThreadKeepAliveSecs }}
     {{- with $hub.metricsAddr }}
     {{- /* Bootstrap-side metrics_addr — mirrors the runtime-rendered
-           libraries/spoa-hub.yaml `metrics_addr` line so the /metrics
+           libraries/spoa-hub/ `metrics_addr` line so the /metrics
            endpoint is bound from process start, not just after the
            controller pushes the first runtime config. The two have to
            stay in sync: the bootstrap is what the sidecar loads on pod
@@ -70,7 +70,7 @@ data:
 
     [plugins.params]
     {{- /* Coraza's directives lives in its own values field so the
-           controller-rendered TOML (rendered by libraries/spoa-hub.yaml)
+           controller-rendered TOML (rendered by libraries/spoa-hub/)
            can append per-Ingress modsecurity-snippet values into it.
            The bootstrap placeholder rendered here is just enough to let
            the hub start; the controller pushes the real config via the

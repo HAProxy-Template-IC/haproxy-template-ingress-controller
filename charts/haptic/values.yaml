@@ -396,7 +396,6 @@ controller:
       # configPublishInterval: 30s     # observability CRD republish throttle
       # reloadVerificationTimeout: 10s # wait for HAProxy reload to complete
       # syncTimeout: 2m                # per-endpoint sync budget
-      # syncMaxRetries: 3              # HTTP 409 commit-conflict retries
     # Frontend path-matching order. "default" = Exact>Regex>Prefix-exact>
     # Prefix. "last" = Exact>Prefix-exact>Prefix>Regex (faster matchers
     # first; swaps in the regex-last frontend-routing-logic variant).
@@ -1582,10 +1581,6 @@ spoaHub:
       params: |
         max_providers = 10
         max_session_age_seconds = 3600
-
-  # Pod-level securityContext additions. Merged into the existing
-  # haproxy.podSecurityContext at render time.
-  podSecurityContext: {}
 
   # Container-level securityContext for the spoa-hub container. runAsUser=99
   # matches the pod's existing fsGroup (99) so the unix socket the hub

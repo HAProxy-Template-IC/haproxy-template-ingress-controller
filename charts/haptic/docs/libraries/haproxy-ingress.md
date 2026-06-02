@@ -981,7 +981,7 @@ This library does not add additional watched resources. It uses Ingress resource
 
 ## Implementation Status Summary
 
-The library processes **66** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress/`).
+The library processes **68** `haproxy-ingress.github.io/*` annotations (verified against `libraries/haproxy-ingress/`).
 
 **Supported by category:**
 
@@ -1006,6 +1006,7 @@ The library processes **66** `haproxy-ingress.github.io/*` annotations (verified
 | Basic auth | 2 | `auth-secret`, `auth-realm` |
 | External auth | 6 | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` (requires SPOA hub `external-auth` plugin) |
 | Client mTLS | 4 | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` (incoming client-cert verification via crt-list per-line ca-file/verify options) |
+| WAF | 2 | `waf`, `waf-mode` (requires SPOA hub `coraza` plugin; `waf: modsecurity` to opt in, `waf-mode: deny`/`detect` for shadow mode) |
 | Backend config | 1 | `config-backend` |
 
 All annotations are fully supported.

@@ -29,6 +29,10 @@ mkdocs.yml
 # Chart-level CHANGELOG and README — informational, not chart-functional.
 CHANGELOG.md
 README.md
+# Development-only values override (local kind cluster, used as
+# `helm install -f values-dev.yaml` from the source tree). Operators
+# installing the packaged chart never consume it.
+values-dev.yaml
 # helm-unittest suite (read from source tree by `helm unittest`, never
 # from the packaged chart) and chart-testing config (`ct lint`, also
 # read from the source tree). Neither runs at runtime.

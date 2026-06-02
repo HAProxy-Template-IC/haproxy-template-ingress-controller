@@ -55,6 +55,9 @@
 #
 # mTLS:
 #   - auth-tls-pass-certificate-to-upstream, auth-tls-error-page
+#
+# WAF (Coraza, requires spoaHub.plugins.coraza):
+#   - modsecurity-snippet, enable-modsecurity
 
 # Chart-time loading rules (consumed by haptic.mergeLibraries; stripped from output).
 _helm_load:
