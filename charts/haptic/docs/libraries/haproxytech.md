@@ -46,7 +46,7 @@ The haproxytech library implements these extension points from base.yaml. All sn
 
 | Snippet | Purpose |
 |---------|---------|
-| `features-100-haproxytech-ssl-redirect` | Registers SSL-redirect host/code pairs in `gf["sslRedirect"]` |
+| `features-100-haproxytech-ssl-redirect` | Registers SSL-redirect host/code pairs in `gf["sslRedirectHosts"]` |
 | `features-100-haproxytech-ssl-passthrough` | Scans ingresses for `haproxy.org/ssl-passthrough` and registers backends in `gf["sslPassthroughBackends"]` |
 
 ### frontend-filters-* (HTTP-frontend request/response filters)

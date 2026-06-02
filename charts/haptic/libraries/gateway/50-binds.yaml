@@ -128,7 +128,7 @@ templateSnippets:
   # claimed route causes a TCP RST. This is what closes the
   # TLSRouteInvalidBackendRef* conformance assertions — a route with
   # an unresolvable backend never enters the SNI allowlist (Pass 2
-  # filters those at the ResolvedRefs gate, line ~1474), so the SNI
+  # filters those at the ResolvedRefs gate), so the SNI
   # arrives at the frontend, fails the allowlist check, and gets
   # rejected.
   frontends-600-gateway-tls-listener:

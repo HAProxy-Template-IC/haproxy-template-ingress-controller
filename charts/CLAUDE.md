@@ -13,12 +13,12 @@ Merge Order (lowest to highest priority):
 1. base.yaml               - Core HAProxy template and snippets
 2. ssl.yaml                - HTTPS frontend, TLS certs, SSL passthrough infra
 3. ingress.yaml            - Kubernetes Ingress support
-4. gateway.yaml            - Gateway API (only when GatewayClass CRD is present)
+4. gateway/                - Gateway API (only when GatewayClass CRD is present)
 5. ingress-annotations-compat.yaml  - Shared scaffold for Ingress vendor annotation libraries (level 2.5)
 6. haproxytech.yaml        - haproxy.org/* annotation compatibility
-7. haproxy-ingress.yaml    - haproxy-ingress.github.io/* annotation compatibility
-8. nginx-ingress.yaml      - nginx.ingress.kubernetes.io/* compat (disabled by default)
-9. spoa-hub.yaml           - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
+7. haproxy-ingress/        - haproxy-ingress.github.io/* annotation compatibility
+8. nginx-ingress/          - nginx.ingress.kubernetes.io/* compat (disabled by default)
+9. spoa-hub/               - SPOA hub sidecar wiring (auto-enabled when sidecar is on)
 10. controller.config.*    - User overrides from values.yaml (highest priority)
 ```
 
@@ -33,7 +33,7 @@ The loader iterates a fixed ordered list of library files. The merge order is a 
 ```yaml
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
-{{- $libraryFiles := list "libraries/base.yaml" ... "libraries/spoa-hub.yaml" }}
+{{- $libraryFiles := list "libraries/base.yaml" ... "libraries/spoa-hub/" }}
 {{- range $file := $libraryFiles }}
   {{- $library := $context.Files.Get $file | fromYaml }}
   {{- $loadHints := $library._helm_load | default dict }}
@@ -79,9 +79,9 @@ _helm_load:
 Real examples in the source:
 
 - `libraries/ingress.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
-- `libraries/gateway.yaml` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + one `inject` for the gateway-class field selector.
+- `libraries/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + one `inject` for the gateway-class field selector.
 - `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
-- `libraries/spoa-hub.yaml` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
+- `libraries/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
 Adding a new library: drop a new file under `libraries/`, give it a `_helm_load:` block, and append its path to `$libraryFiles` in `_libraries.tpl`'s `mergeLibraries`. The merge function does not need a new branch.
 
@@ -532,7 +532,7 @@ helm template charts/haptic \
   > /tmp/gateway-config.yaml
 ```
 
-This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check in its `_helm_load.enable` predicate (`libraries/gateway.yaml`) to only merge when Gateway API CRDs are detected.
+This flag is already used in CI (see `.gitlab-ci.yml`). The gateway library uses a Capabilities check in its `_helm_load.enable` predicate (`libraries/gateway/_index.yaml`) to only merge when Gateway API CRDs are detected.
 
 ### Testing Specific Libraries
 

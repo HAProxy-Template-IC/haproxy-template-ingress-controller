@@ -92,9 +92,8 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.config.dataplane.port` | int | `5555` | Dataplane API port |
-| `controller.config.dataplane.minDeploymentInterval` | duration | `2s` | Minimum time between deployments |
+| `controller.config.dataplane.minDeploymentInterval` | duration | `5s` | Minimum time between deployments |
 | `controller.config.dataplane.driftPreventionInterval` | duration | `60s` | Periodic drift prevention interval |
-| `controller.config.dataplane.maxParallel` | int/null | `null` | Maximum concurrent Dataplane API operations during sync. `null` auto-calculates as `dataplane GOMAXPROCS × 10` from the sidecar's CPU/memory limits. `0` disables limiting (not recommended). A positive integer pins the value |
 | `controller.config.dataplane.mapsDir` | string | `/etc/haproxy/maps` | HAProxy maps directory |
 | `controller.config.dataplane.sslCertsDir` | string | `/etc/haproxy/ssl` | SSL certificates directory |
 | `controller.config.dataplane.generalStorageDir` | string | `/etc/haproxy/general` | General storage directory |

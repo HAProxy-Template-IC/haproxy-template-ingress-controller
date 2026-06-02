@@ -1226,7 +1226,7 @@ templateSnippets:
   # The mirror plugin always reads its target from
   # `var(txn.gw_mirror_target_<i>)` via the message body's
   # `arg_target=var(...)` (see spoe-message-mirror-body in
-  # libraries/spoa-hub.yaml, which derives <i> from the message name's
+  # libraries/spoa-hub/, which derives <i> from the message name's
   # `mirror-<i>` suffix). Each triple sets its indexed variable to the
   # resolved backendRef, fires the SPOE NOTIFY via the indexed group,
   # and the plugin dispatches a fire-and-forget HTTP request.

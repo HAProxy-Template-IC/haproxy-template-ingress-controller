@@ -59,13 +59,13 @@ tests:
           path: spec.groups[0].rules
           content:
             alert: HAProxyControllerHighQueueDepth
-            expr: haptic_reconciliation_queue_size > 100
+            expr: histogram_quantile(0.95, sum(rate(haptic_reconciliation_queue_wait_seconds_bucket[5m])) by (le)) > 5
             for: 5m
             labels:
               severity: warning
             annotations:
               summary: "HAProxy controller reconciliation queue is backing up"
-              description: "Queue depth is {{ $value }} items, indicating processing delays"
+              description: "p95 reconciliation queue wait is {{ $value | humanizeDuration }}, indicating processing delays"
 
   - it: should include default no leader alert
     asserts:
@@ -73,7 +73,7 @@ tests:
           path: spec.groups[0].rules
           content:
             alert: HAProxyControllerNoLeader
-            expr: sum(haptic_leader_election_status) == 0
+            expr: sum(haptic_leader_election_is_leader) == 0
             for: 1m
             labels:
               severity: critical
