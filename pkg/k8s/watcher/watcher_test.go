@@ -327,6 +327,21 @@ func TestWatcher_Stop(t *testing.T) {
 	}
 }
 
+func TestWatcher_StopIdempotency(t *testing.T) {
+	k8sClient := newTestClient(t)
+	cfg := validWatcherConfig()
+
+	w, err := New(cfg, k8sClient, nil)
+	require.NoError(t, err)
+
+	// Stop() must be idempotent — a double close of stopCh would otherwise
+	// panic ("close of closed channel"). Mirrors SingleWatcher.Stop's
+	// documented contract (see TestSingleWatcher_StopIdempotency).
+	require.NoError(t, w.Stop())
+	require.NoError(t, w.Stop())
+	require.NoError(t, w.Stop())
+}
+
 func TestWatcher_ForceSync(t *testing.T) {
 	k8sClient := newTestClient(t)
 

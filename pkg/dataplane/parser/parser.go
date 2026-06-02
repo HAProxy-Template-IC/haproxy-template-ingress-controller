@@ -13,7 +13,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +20,7 @@ import (
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/sectionextract"
 )
 
 // parserMutex protects against concurrent calls to the client-native parser.
@@ -159,11 +159,6 @@ type Parser struct {
 // New code should import from haptic/pkg/dataplane/parser/parserconfig.
 type StructuredConfig = parserconfig.StructuredConfig
 
-// logSectionParseError logs a warning when a configuration section fails to parse.
-func logSectionParseError(sectionType, sectionName string, err error) {
-	slog.Warn("Failed to parse section", "type", sectionType, "section", sectionName, "error", err)
-}
-
 // New creates a new Parser instance.
 //
 // The parser uses client-native's config-parser which provides robust parsing
@@ -278,141 +273,12 @@ func (p *Parser) ParseFromString(config string) (*StructuredConfig, error) {
 func (p *Parser) extractConfiguration() (*StructuredConfig, error) {
 	conf := parserconfig.NewStructuredConfig()
 
-	// Extract core sections (global, defaults, frontends, backends)
-	if err := p.extractCoreSections(conf); err != nil {
-		return nil, err
-	}
-
-	// Extract peer and service discovery sections (peers, resolvers, mailers)
-	p.extractPeerAndDiscoverySections(conf)
-
-	// Extract service sections (caches, rings, http-errors, userlists)
-	if err := p.extractServiceSections(conf); err != nil {
-		return nil, err
-	}
-
-	// Extract program and application sections (programs, log-forwards, fcgi-apps, crt-stores)
-	if err := p.extractProgramSections(conf); err != nil {
-		return nil, err
-	}
-
-	// Extract observability sections (log-profiles, traces) - v3.1+ features
-	if err := p.extractObservabilitySections(conf); err != nil {
-		return nil, err
-	}
-
-	// Extract certificate automation sections (acme) - v3.2+ features
-	if err := p.extractCertificateSections(conf); err != nil {
+	// Section extraction is shared with the Enterprise parser via the
+	// sectionextract package: both operate on the same config-parser
+	// interface, so the standard (CE) section pass is identical.
+	if err := sectionextract.All(p.parser, conf); err != nil {
 		return nil, err
 	}
 
 	return conf, nil
-}
-
-// extractCoreSections extracts core HAProxy sections (global, defaults, frontends, backends).
-func (p *Parser) extractCoreSections(conf *StructuredConfig) error {
-	global, err := p.extractGlobal()
-	if err != nil {
-		return fmt.Errorf("extracting global section: %w", err)
-	}
-	conf.Global = global
-
-	defaults, err := p.extractDefaults()
-	if err != nil {
-		return fmt.Errorf("extracting defaults sections: %w", err)
-	}
-	conf.Defaults = defaults
-
-	p.extractFrontendsWithIndexes(conf)
-	p.extractBackendsWithIndexes(conf)
-
-	return nil
-}
-
-// extractPeerAndDiscoverySections extracts peer and service discovery sections
-// and builds pointer indexes for nested entries.
-func (p *Parser) extractPeerAndDiscoverySections(conf *StructuredConfig) {
-	p.extractPeersWithIndexes(conf)
-	p.extractResolversWithIndexes(conf)
-	p.extractMailersWithIndexes(conf)
-}
-
-// extractServiceSections extracts service sections (caches, rings, http-errors, userlists).
-func (p *Parser) extractServiceSections(conf *StructuredConfig) error {
-	caches, err := p.extractCaches()
-	if err != nil {
-		return fmt.Errorf("extracting caches: %w", err)
-	}
-	conf.Caches = caches
-
-	rings, err := p.extractRings()
-	if err != nil {
-		return fmt.Errorf("extracting rings: %w", err)
-	}
-	conf.Rings = rings
-
-	httpErrors, err := p.extractHTTPErrors()
-	if err != nil {
-		return fmt.Errorf("extracting http-errors: %w", err)
-	}
-	conf.HTTPErrors = httpErrors
-
-	p.extractUserlistsWithIndexes(conf)
-
-	return nil
-}
-
-// extractProgramSections extracts program and application sections.
-func (p *Parser) extractProgramSections(conf *StructuredConfig) error {
-	programs, err := p.extractPrograms()
-	if err != nil {
-		return fmt.Errorf("extracting programs: %w", err)
-	}
-	conf.Programs = programs
-
-	logForwards, err := p.extractLogForwards()
-	if err != nil {
-		return fmt.Errorf("extracting log-forwards: %w", err)
-	}
-	conf.LogForwards = logForwards
-
-	fcgiApps, err := p.extractFCGIApps()
-	if err != nil {
-		return fmt.Errorf("extracting fcgi-apps: %w", err)
-	}
-	conf.FCGIApps = fcgiApps
-
-	crtStores, err := p.extractCrtStores()
-	if err != nil {
-		return fmt.Errorf("extracting crt-stores: %w", err)
-	}
-	conf.CrtStores = crtStores
-
-	return nil
-}
-
-// extractObservabilitySections extracts observability sections (log-profiles, traces).
-// These are v3.1+ features for advanced logging and request tracing.
-func (p *Parser) extractObservabilitySections(conf *StructuredConfig) error {
-	logProfiles, err := p.extractLogProfiles()
-	if err != nil {
-		return fmt.Errorf("extracting log-profiles: %w", err)
-	}
-	conf.LogProfiles = logProfiles
-
-	conf.Traces = p.extractTraces()
-
-	return nil
-}
-
-// extractCertificateSections extracts certificate automation sections (acme).
-// These are v3.2+ features for ACME/Let's Encrypt certificate automation.
-func (p *Parser) extractCertificateSections(conf *StructuredConfig) error {
-	acmeProviders, err := p.extractAcmeProviders()
-	if err != nil {
-		return fmt.Errorf("extracting acme providers: %w", err)
-	}
-	conf.AcmeProviders = acmeProviders
-
-	return nil
 }

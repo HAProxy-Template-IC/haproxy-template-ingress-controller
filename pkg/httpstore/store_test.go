@@ -852,6 +852,72 @@ func TestHTTPStore_RefreshURLError(t *testing.T) {
 	assert.Contains(t, err.Error(), "server error")
 }
 
+// A 200 OK with an empty body and no ETag must be treated as a real content
+// change (non-empty → empty), NOT misclassified as 304 Not Modified. Regression
+// guard for the old `content == "" && newEtag == etag` heuristic, which (when
+// the cached etag was also empty, i.e. an ETag-less server) silently dropped the
+// update and kept serving the stale non-empty content.
+func TestHTTPStore_RefreshURL_EmptyBodyNoETagIsChange(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		callCount++
+		if callCount == 1 {
+			_, _ = w.Write([]byte("initial-content")) // 200, no ETag
+			return
+		}
+		w.WriteHeader(http.StatusOK) // 200, empty body, no ETag
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+	ctx := context.Background()
+
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute, Retries: 0}, nil)
+	require.NoError(t, err)
+
+	changed, err := store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	assert.True(t, changed, "non-empty → empty (200, no ETag) must be detected as a change, not a 304")
+
+	store.mu.RLock()
+	entry := store.cache[server.URL]
+	hasPending, pending := entry.HasPending, entry.PendingContent
+	store.mu.RUnlock()
+	assert.True(t, hasPending, "the empty-body update must be staged as pending")
+	assert.Equal(t, "", pending, "pending content is the new empty body")
+}
+
+// A genuine 304 Not Modified (server honours If-None-Match) must report no
+// change and preserve the accepted content — the sentinel path.
+func TestHTTPStore_RefreshURL_NotModified304(t *testing.T) {
+	const etag = `"v1"`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write([]byte("content"))
+	}))
+	defer server.Close()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store := New(logger, 0)
+	ctx := context.Background()
+
+	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute, Retries: 0}, nil)
+	require.NoError(t, err)
+
+	changed, err := store.RefreshURL(ctx, server.URL)
+	require.NoError(t, err)
+	assert.False(t, changed, "304 must report no change")
+
+	got, ok := store.Get(server.URL)
+	require.True(t, ok)
+	assert.Equal(t, "content", got, "accepted content preserved on 304")
+}
+
 func TestHTTPStore_FetchNonCriticalError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

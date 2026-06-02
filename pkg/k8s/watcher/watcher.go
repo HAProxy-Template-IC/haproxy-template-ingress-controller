@@ -42,7 +42,8 @@ type Watcher struct {
 	debouncer            *Debouncer
 	informer             cache.SharedIndexInformer
 	stopCh               chan struct{}
-	synced               bool // True after initial sync completes
+	stopOnce             sync.Once // guards stopCh close so Stop() is idempotent
+	synced               bool      // True after initial sync completes
 	syncMu               sync.RWMutex
 	initialCount         int // Number of resources loaded during initial sync
 	logger               *slog.Logger
@@ -271,12 +272,17 @@ func (w *Watcher) Start(ctx context.Context) error {
 }
 
 // Stop stops watching resources.
+//
+// This method is idempotent and safe to call multiple times (mirrors
+// SingleWatcher.Stop) — a double close of stopCh would otherwise panic.
 func (w *Watcher) Stop() error {
-	// Stop informer
-	close(w.stopCh)
+	w.stopOnce.Do(func() {
+		// Stop informer
+		close(w.stopCh)
 
-	// Flush pending changes
-	w.debouncer.Flush()
+		// Flush pending changes
+		w.debouncer.Flush()
+	})
 
 	return nil
 }

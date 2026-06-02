@@ -40,17 +40,6 @@ func (e *Endpoint) HasCachedVersion() bool {
 	return e.DetectedMajorVersion > 0
 }
 
-// Redacted returns a redacted version of the endpoint for safe logging.
-// Credentials are masked to prevent exposure in logs.
-func (e *Endpoint) Redacted() map[string]string {
-	return map[string]string{
-		"url":      e.URL,
-		"username": e.Username,
-		"password": "***REDACTED***",
-		"pod":      e.PodName,
-	}
-}
-
 // AuxiliaryFiles contains files to synchronize alongside configuration changes.
 // Diffs are applied in two of the three sync phases (see SyncPhase in phases.go):
 //   - PhasePreConfig:  creates and updates (files must exist before config references them)

@@ -238,22 +238,22 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	// Fetch with conditional headers
 	content, newEtag, newLastModified, err := s.fetchWithRetry(ctx, url, opts, auth, etag, lastModified)
 	if err != nil {
-		// Check for 304 Not Modified (handled by fetchWithRetry returning empty content)
+		// 304 Not Modified: the server confirmed our cached copy is current.
+		// This is distinct from a 200 OK whose body happens to be empty.
+		if errors.Is(err, errNotModified) {
+			s.logger.Log(context.Background(), levelTrace, "content not modified (304)",
+				"url", url,
+				"etag", etag)
+			return false, nil
+		}
 		s.logger.Warn("Refresh fetch failed",
 			"url", url,
 			"error", err)
 		return false, err
 	}
 
-	// Empty content with no error means 304 Not Modified
-	if content == "" && newEtag == etag {
-		s.logger.Log(context.Background(), levelTrace, "content not modified (304)",
-			"url", url,
-			"etag", etag)
-		return false, nil
-	}
-
-	// Check if content actually changed
+	// 200 OK — the body is fresh content (an empty body is a real change to
+	// empty, no longer misread as a 304). Check if it actually changed.
 	newChecksum := checksum(content)
 	if newChecksum == acceptedChecksum {
 		s.logger.Log(context.Background(), levelTrace, "content unchanged (same checksum)",
