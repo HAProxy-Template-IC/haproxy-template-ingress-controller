@@ -62,7 +62,7 @@ Registration happens once at `Start`:
 
 - **Upstream** — `pkg/controller/certloader` watches the cert-manager-provisioned Secret and publishes `CertParsedEvent` with `CertPEM`/`KeyPEM`. The controller iterates on cert updates by restarting this component with the new bytes.
 - **Downstream** — `pkg/controller/dryrunvalidator` is the only implementation of the `DryRunValidator` interface in the tree. It in turn delegates the actual render+validate to `pkg/controller/proposalvalidator`, which is the same pipeline the leader-side reconciler uses — so anything that passes admission will also pass at deploy time.
-- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration`: `failurePolicy: Fail`, `timeoutSeconds: 10`, and (when `webhook.certManager.enabled`) cert-manager's `cert-manager.io/inject-ca-from` annotation for CA bundle injection. The chart does **not** set an `objectSelector`; multi-controller isolation comes from each release deploying its own webhook configuration whose `clientConfig.service` points at that release's controller `Service`.
+- **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration` with two webhook entries: watched-resource webhooks use `failurePolicy: Fail`, `timeoutSeconds: 10`; the HAProxyTemplateConfig webhook uses `failurePolicy: Ignore`, `timeoutSeconds: 5`. When `webhook.certManager.enabled`, cert-manager's `cert-manager.io/inject-ca-from` annotation is added. The chart does **not** set an `objectSelector`; multi-controller isolation comes from each release deploying its own webhook configuration whose `clientConfig.service` points at that release's controller `Service`.
 
 ## See Also
 

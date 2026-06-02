@@ -95,19 +95,23 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
         // 3. Hard internal deadline — the controller imposes 5s here, in
         //    addition to the API server's `timeoutSeconds` on the
         //    ValidatingWebhookConfiguration.
-        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        parent := c.serverCtx  // allows iteration shutdown to cancel in-flight validations
+        if parent == nil {
+            parent = context.Background()  // nil only in unit tests that skip Start()
+        }
+        ctx, cancel := context.WithTimeout(parent, 5*time.Second)
         defer cancel()
 
         // 4. Direct synchronous call into the proposal pipeline.
         //    ValidationContext has flat fields — no Request / Context wrapper.
-        allowed, reason := c.dryRunValidator.ValidateDirect(
+        allowed, reason, warnings := c.dryRunValidator.ValidateDirect(
             ctx, gvk,
             valCtx.Namespace,
             valCtx.Name,
             valCtx.Object,        // *unstructured.Unstructured
             valCtx.Operation,     // already a string ("CREATE" / "UPDATE" / "DELETE")
         )
-        return allowed, reason, nil
+        return allowed, reason, warnings, nil
     }
 }
 ```

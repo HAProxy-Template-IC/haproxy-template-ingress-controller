@@ -21,7 +21,7 @@ For controller architecture and behavior documentation, see the [controller docs
 
 ## Prerequisites
 
-- Kubernetes 1.19+
+- Kubernetes 1.21+ (the default `PodDisruptionBudget` uses `policy/v1` and the controller watches `discovery.k8s.io/v1` EndpointSlices)
 - Helm 3.0+
 - **HAProxy 3.0 or newer** (the chart deploys HAProxy by default; template libraries require 3.0+ for SSL/TLS features)
 

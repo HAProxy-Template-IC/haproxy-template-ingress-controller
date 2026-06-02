@@ -8,8 +8,7 @@ For each test case:
 
 1. Build a fixture-driven render context (the test's `fixtures` are injected as a parallel resource store, no cluster calls).
 2. Render every template in the config.
-3. Run `haproxy -c` against the rendered output using the supplied `ValidationPaths`.
-4. Evaluate each assertion in the test (`haproxy_valid`, `contains`, `not_contains`, `match_count`, `equals`, `jsonpath`, `match_order`, `deterministic`).
+3. Evaluate each assertion in the test (`haproxy_valid`, `contains`, `not_contains`, `match_count`, `equals`, `jsonpath`, `match_order`, `deterministic`). The `haproxy_valid` assertion type runs `haproxy -c` against the rendered output using the supplied `ValidationPaths`; other assertion types do not invoke the HAProxy binary.
 5. Collect timing, rendered content, and assertion results into a `TestResult`.
 
 The whole suite runs in a worker pool (`Options.Workers`, defaults to `runtime.NumCPU`). `TestResults` aggregates pass/fail/skip counts and optional summary timings.

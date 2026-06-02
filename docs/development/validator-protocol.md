@@ -183,4 +183,4 @@ A new validator (whether a haproxy-cfg validator, a third-party WAF, or anything
 6. Implement validation as a **pure function** of the input: no goroutine fan-out, no network I/O, no file I/O outside what the request carries, no global state mutation. The HAPTIC-side cache assumes purity.
 7. Surface line numbers via the 1-based `line` field, columns via the 1-based `column` field, or `0` for "file-level". Self-explanatory `message` text — operators see this in `kubectl apply` denial reasons.
 
-Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/specs/pluggable-validator-sidecar/spec.md`](../../openspec/specs/pluggable-validator-sidecar/spec.md).
+Conforming implementations SHOULD pass the protocol-level conformance scenarios in [`openspec/changes/pluggable-validator-sidecar/specs/pluggable-validator-sidecar/spec.md`](../../openspec/changes/pluggable-validator-sidecar/specs/pluggable-validator-sidecar/spec.md).

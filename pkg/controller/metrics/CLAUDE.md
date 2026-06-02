@@ -498,7 +498,7 @@ type Metrics struct {
 2. **Create in New() constructor**
 
 ```go
-func New(registry *prometheus.Registry) *Metrics {
+func NewMetrics(registry prometheus.Registerer) *Metrics {
     return &Metrics{
         // ... existing metrics ...
 
@@ -583,17 +583,17 @@ func TestComponent_CacheEvents(t *testing.T) {
 ```markdown
 ### Cache Metrics
 
-**haptic_cache_hit_total** (counter)
+**haptic_parser_cache_hits_total** (counter)
 - Total number of cache hits
 
-**haptic_cache_miss_total** (counter)
+**haptic_parser_cache_misses_total** (counter)
 - Total number of cache misses
 
 **Example Queries:**
 \`\`\`promql
 # Cache hit rate
-rate(haptic_cache_hit_total[5m]) /
-(rate(haptic_cache_hit_total[5m]) + rate(haptic_cache_miss_total[5m]))
+rate(haptic_parser_cache_hits_total[5m]) /
+(rate(haptic_parser_cache_hits_total[5m]) + rate(haptic_parser_cache_misses_total[5m]))
 \`\`\`
 ```
 

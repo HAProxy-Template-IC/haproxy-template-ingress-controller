@@ -48,6 +48,7 @@ Syncing HAProxy configuration...
 Sync completed successfully!
 Duration: 1.234s
 Operations applied: 5
+Sync mode: reload
 HAProxy reloaded: reload-123
 
 Applied operations:
@@ -112,11 +113,8 @@ fmt.Printf("applied %d operations in %v\n", len(result.AppliedOperations), resul
 if result.ReloadTriggered {
     fmt.Printf("reload: %s\n", result.ReloadID)
 }
-if result.Retries > 0 {
-    fmt.Printf("%d version-conflict retries\n", result.Retries)
-}
-if result.UsedRawPush() {
-    fmt.Println("fell back to raw config push")
+if result.SyncMode == dataplane.SyncModeRuntime {
+    fmt.Println("applied via runtime API (no reload)")
 }
 
 for _, op := range result.AppliedOperations {

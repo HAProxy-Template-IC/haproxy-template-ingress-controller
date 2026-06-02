@@ -8,7 +8,7 @@ For the complete metrics reference, alerting rules, and dashboard examples, see 
 
 ## Metrics Overview
 
-The controller exposes **31 Prometheus metrics**. The authoritative list lives in [`pkg/controller/metrics/metrics.go`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/controller/metrics/metrics.go); a representative subset is asserted by `TestMetrics_AllMetricsRegistered`. The full catalogue with types, labels, and update semantics is in [`pkg/controller/metrics/README.md`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/controller/metrics/README.md). High-level coverage:
+The controller exposes **36 Prometheus metrics**. The authoritative list lives in [`pkg/controller/metrics/metrics.go`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/controller/metrics/metrics.go); a representative subset is asserted by `TestMetrics_AllMetricsRegistered`. The full catalogue with types, labels, and update semantics is in [`pkg/controller/metrics/README.md`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/controller/metrics/README.md). High-level coverage:
 
 - **Reconciliation pipeline**: cycles, errors, duration, queue wait
 - **Deployment**: operations, errors, duration

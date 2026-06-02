@@ -80,7 +80,7 @@ nav:
       - SSL: libraries/ssl.md
       - Ingress: libraries/ingress.md
       - Gateway API: libraries/gateway.md
-      - Annotation Compat (scaffold): libraries/annotation-compat.md
+      - Annotation Compat (scaffold): libraries/ingress-annotations-compat.md
       - HAProxy Annotations: libraries/haproxytech.md
       - HAProxy Ingress: libraries/haproxy-ingress.md
       - Nginx Ingress: libraries/nginx-ingress.md

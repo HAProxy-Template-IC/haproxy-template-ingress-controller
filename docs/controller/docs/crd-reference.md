@@ -82,7 +82,7 @@ Controller-level settings for ports and leader election.
 controller:
   leaderElection:
     enabled: true
-    leaseName: ""        # empty = defaults to the CRD name; Helm overrides with the release fullname
+    leaseName: ""        # empty = defaults to "haptic-leader"; the Helm chart sets this to the release fullname
     leaseDuration: 15s   # default (DefaultLeaderElectionLeaseDuration)
     renewDeadline: 10s   # default (DefaultLeaderElectionRenewDeadline)
     retryPeriod: 2s      # default (DefaultLeaderElectionRetryPeriod)
@@ -150,12 +150,9 @@ dataplane:
   minDeploymentInterval: 2s          # Minimum gap between deployments (default 2s)
   driftPreventionInterval: 60s       # Periodic redeploy to correct drift (default 60s)
   deploymentTimeout: 30s             # Safety net for lost deployments (default 30s)
-  configPublishInterval: 30s         # Throttle for HAProxyCfg CRD republishes (default 30s)
+  configPublishInterval: 10s         # Throttle for HAProxyCfg CRD republishes (default 10s)
   reloadVerificationTimeout: 10s     # Wait for HAProxy to confirm graceful reload (default 10s)
   syncTimeout: 2m                    # Per-endpoint sync timeout (default 2m)
-  syncMaxRetries: 3                  # Retries on HTTP 409 transaction conflicts; 0 disables retries (default 3)
-  maxParallel: 0                     # Concurrent Dataplane ops; 0 = unlimited (not recommended for large configs)
-  rawPushThreshold: 100              # Switch to raw config push when change count exceeds this (default 100)
   mapsDir: /etc/haproxy/maps         # Used for both validation and deployment
   sslCertsDir: /etc/haproxy/ssl
   generalStorageDir: /etc/haproxy/general
@@ -191,7 +188,7 @@ watchedResources:
       - metadata.name
     labelSelector: "app=myapp"  # Optional, equality-only ("k=v[,k=v]"); set-based syntax not supported
     store: full  # or "on-demand" for cached store
-    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 1s default
+    debounceInterval: ""  # Optional Go duration string; empty / invalid uses the 2s default
 ```
 
 See [Watching Resources](./watching-resources.md) for detailed configuration.
@@ -402,6 +399,22 @@ validationTests:
 ```
 
 See [Validation Tests](./validation-tests.md) for the full test-framework reference (fixtures, assertion types, CLI usage) and [CRD & Validation Design](./development/crd-validation-design.md) for the design rationale.
+
+### validators
+
+Pluggable validator sidecars consulted by the admission webhook (optional). Each entry names a validator (RFC 1123 label), points at a Unix domain socket inside the controller pod, and lists file-glob patterns matched against rendered file paths to decide which files to send to that validator.
+
+```yaml
+validators:
+  - name: spoa-hub
+    socketPath: /var/run/haptic-validators/spoa-hub.sock
+    files:
+      - "/etc/haproxy-spoa-hub/*.toml"
+    timeoutMs: 5000        # optional per-call deadline
+    maxConnections: 4      # optional connection-pool ceiling
+```
+
+See [Pluggable Validators](./operations/pluggable-validators.md) for the wire protocol, sidecar wiring, and full field reference.
 
 ## Status Subresource
 

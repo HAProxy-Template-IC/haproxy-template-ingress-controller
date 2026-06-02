@@ -633,18 +633,21 @@ if resource.GetKind() == "" {
 
 ### StoreWrapper Usage
 
-Fixtures are wrapped with `rendercontext.StoreWrapper` for template access:
+Fixtures are wrapped with `rendercontext.StoreWrapper` for template access via the centralized `rendercontext.Builder`:
 
 ```go
-resources := make(map[string]any)
-for resourceTypeName, store := range stores {
-    resources[resourceTypeName] = &rendercontext.StoreWrapper{
-        Store:        store,
-        ResourceType: resourceTypeName,
-        Logger:       r.logger,
-    }
-}
+builder := rendercontext.NewBuilder(
+    r.config, pathResolver, r.logger,
+    rendercontext.WithStores(resourceStores),
+    rendercontext.WithHAProxyPodStore(haproxyPodStore),
+    rendercontext.WithHTTPFetcher(httpStore),
+    rendercontext.WithCurrentConfig(currentConfig),
+    rendercontext.WithTypedResources(r.typedResourceTypes), // nil unless CLI wired typebootstrap
+)
+renderCtx := builder.Build().Context
 ```
+
+The Builder wraps each store entry into a `*rendercontext.StoreWrapper` with the configured `IndexBy` paths. Direct `StoreWrapper` construction is not used in the testrunner.
 
 **Template Usage**:
 

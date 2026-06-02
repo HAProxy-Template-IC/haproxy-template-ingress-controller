@@ -43,10 +43,10 @@ haptic/
 │   │   │   └── enterprise/  # Enterprise-only operations (WAF, Bot, ALOHA, Keepalived, ...)
 │   │   ├── comparator/      # Fine-grained config comparison (per-section logic)
 │   │   │   └── sections/    # Section factories
-│   │   │       └── executors/ # Per-section Dispatch/DispatchEnterpriseOnly closures
+│   │   │       # Operations are descriptors only; execution is raw-push via orchestrator
 │   │   ├── parser/          # client-native wrapper for syntax parsing
 │   │   │   └── enterprise/  # Enterprise section extensions
-│   │   ├── synchronizer/    # Operation execution with retries
+│   │   # Operation execution lives in orchestrator.go / orchestrator_execution.go
 │   │   └── validators/      # Per-model validators generated from OpenAPI specs
 │   │   # Public types (Endpoint, SyncOptions, AuxiliaryFiles, SyncResult,
 │   │   # Capabilities, Version, ValidationPaths) live at the top level —

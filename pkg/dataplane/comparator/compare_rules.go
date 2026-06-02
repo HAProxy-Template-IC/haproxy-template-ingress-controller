@@ -80,9 +80,8 @@ func (c *Comparator) compareACLs(parentType, parentName string, currentACLs, des
 //
 // Same root cause as the compareIndexedItems descending-delete fix in
 // compare_features.go — both functions previously emitted ascending deletes
-// that were silently saved by non-deterministic arrival order under parallel
-// execution. The synchronizer's per-parent serialisation made the order
-// deterministically ascending, so the failure became deterministic too.
+// that wipe the wrong rules when applied sequentially against the live index
+// layout.
 // Symptom in the e2e suite: a redirect rule from an Ingress with
 // nginx.ingress.kubernetes.io/{temporal,permanent}-redirect would briefly
 // land in HAProxy then disappear during a sibling-test cleanup reconcile

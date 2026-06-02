@@ -17,7 +17,7 @@ The `localdev.me` domain resolves to `127.0.0.1`, making it useful for local dev
 
 ```bash
 # Install cert-manager (if not already installed)
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.2/cert-manager.yaml
 
 # Install the chart - SSL works out of the box
 helm install my-release oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.1.0
@@ -168,7 +168,7 @@ kubectl get secret default-ssl-cert -n haptic -o jsonpath='{.data.tls\.key}' | b
 
 **Certificate not being updated:**
 
-The controller watches Secrets via an in-memory store (the default). Secret changes are detected immediately and trigger a reconciliation within the 5s debounce window; HAProxy deployment then follows the configured `dataplane.minDeploymentInterval` (2s default) plus the normal render → validate → deploy pipeline. If deployments appear stuck, the `dataplane.driftPreventionInterval` (60s default) will also force a push.
+The controller watches Secrets via an in-memory store (the default). Secret changes are detected immediately and trigger a reconciliation within the 2s per-watcher debounce window; HAProxy deployment then follows the configured `dataplane.minDeploymentInterval` (5s in the chart's default values; the controller's own field default is 2s) plus the normal render → validate → deploy pipeline. If deployments appear stuck, the `dataplane.driftPreventionInterval` (60s default) will also force a push.
 
 For very large cert Secrets that you don't want to keep resident in memory, you can override the watched-resource store to `on-demand` via `controller.config.watchedResources.secrets.store: on-demand` — but this is not the chart default.
 

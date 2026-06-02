@@ -149,7 +149,7 @@ func New(
 		// Create watcher configuration. DebounceInterval comes from the per-resource
 		// override on the CRD; GetDebounceInterval returns 0 when the field is empty
 		// or unparseable, and WatcherConfig.SetDefaults treats zero as "use the
-		// 100ms pkg/k8s/types.DefaultDebounceInterval".
+		// 2s pkg/k8s/types.DefaultDebounceInterval".
 		watcherConfig := &types.WatcherConfig{
 			GVR:              gvr,
 			Namespace:        determineNamespace(resourceTypeName, k8sClient),

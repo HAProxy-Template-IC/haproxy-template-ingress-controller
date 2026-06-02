@@ -169,14 +169,14 @@ The `util-macros` snippet provides reusable macros imported by other libraries:
 |-------|---------|
 | `SanitizeRegex(pattern)` | Escapes `$` for HAProxy's double-quoted context |
 | `CalculateShardCount(resourceCount, itemsPerShard)` | Computes `clamp(count / itemsPerShard, 1, 2*GOMAXPROCS)` |
-| `HostMatchCondition(hosts)` | Builds a host-match ACL condition |
-| `BuildServerOptions(serverOpts)` | Renders server-line option flags |
-| `BackendServers(serviceName, maxSlots, port, opts, portName, backendName, namespace)` | Generates the full server pool with reserved slots |
+| `HostMatchCondition(hosts)` | Builds a host-match ACL condition (in `util-ingress-helpers`) |
+| `BuildServerOptions(serverOpts)` | Renders server-line option flags (in `util-backend-servers-helpers`) |
+| `BackendServers(serviceName, maxSlots, port, opts, portName, backendName, namespace)` | Generates the full server pool with reserved slots (in `util-backend-servers`) |
 
 Usage:
 
 ```scriggo
-{%- import "util-macros" for BackendServers %}
+{%- import "util-backend-servers" for BackendServers %}
 {{ BackendServers(serviceName, 10, port, serverOpts, nil, backendKey, namespace) }}
 ```
 
@@ -350,7 +350,7 @@ frontend status
     # Health check endpoints
 
 frontend http_frontend
-    bind *:8080
+    bind *:80
     # frontend-extra-* snippets (options, captures, ACLs)
     # Routing logic
     # frontend-matchers-advanced-* snippets

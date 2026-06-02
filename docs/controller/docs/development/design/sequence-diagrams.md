@@ -90,7 +90,7 @@ sequenceDiagram
     ResourceWatcher->>EventBus: Publish(ResourceIndexUpdatedEvent)
 
     EventBus->>Reconciler: ResourceIndexUpdatedEvent
-    Note over Reconciler: Leading-edge: fire immediately<br/>if no recent reconciliation,<br/>otherwise batch within 5s window
+    Note over Reconciler: Fires immediately on every event;<br/>no reconciler-level debounce or refractory window
 
     Reconciler->>EventBus: Publish(ReconciliationTriggeredEvent)
 
@@ -222,20 +222,13 @@ sequenceDiagram
 
     alt Only runtime changes
         Note over Client: Server weight/address/port/maintenance only
-        Client->>DP: PUT /v3/services/haproxy/runtime/servers/{name}
-        DP->>HAProxy: Runtime API command
+        Client->>DP: POST /v3/services/haproxy/configuration/raw?skip_reload=true (+ X-Runtime-Actions header)
+        DP->>HAProxy: Runtime API commands via master socket
         HAProxy-->>DP: Updated
         DP-->>Client: Success (no reload)
-    else Mixed changes
-        Note over Client: Runtime-supported + config changes
-        Client->>DP: PUT /v3/services/haproxy/runtime/servers/{name}
-        Client->>DP: POST /v3/services/haproxy/transactions
-        DP->>HAProxy: Apply config
-        HAProxy-->>DP: Reload triggered
-        DP-->>Client: Success (reload)
     else Structural changes
-        Note over Client: Backends, frontends, binds, ACLs, etc.
-        Client->>DP: POST /v3/services/haproxy/transactions
+        Note over Client: Backends, frontends, binds, ACLs, or mixed
+        Client->>DP: POST /v3/services/haproxy/configuration/raw?force_reload=true
         DP->>HAProxy: Replace config + reload
         HAProxy-->>DP: Reload complete
         DP-->>Client: Success (reload)
@@ -248,8 +241,8 @@ sequenceDiagram
 
 `pkg/dataplane.Client.Sync` analyses configuration changes to determine the optimal deployment strategy:
 
-1. **Runtime-Only Updates**: Server weight/address/port/maintenance changes → no reload
-2. **Mixed Updates**: Apply runtime-supported changes first, then transactional config changes → single reload
-3. **Structural Updates**: Backend/frontend/bind/ACL changes → transactional commit → reload required
+1. **Runtime-Only Updates**: Server weight/address/port/maintenance changes → a single `skip_reload` raw push carrying `X-Runtime-Actions` → no reload
+2. **Mixed Updates**: Apply runtime-eligible server changes via the Runtime API first, then ship the rendered config in one `force_reload` raw push → single reload
+3. **Structural Updates**: Backend/frontend/bind/ACL changes → one `force_reload` raw config push → reload required
 
-The Dataplane API itself decides per-field whether a change is runtime-eligible (see `dataplaneapi/handlers/runtime.go`), so the controller delegates that decision rather than maintaining its own table. This minimises service disruption by avoiding unnecessary HAProxy process reloads.
+The controller maintains its own `serverRuntimeSupportedJSONFields` table in `pkg/dataplane/comparator/sections/factory_server.go`, mirroring the Dataplane API's `RuntimeSupportedFields["server"]`. The comparator uses this table to classify each server-field change as runtime-eligible (no reload) or structural (reload required). This minimises service disruption by avoiding unnecessary HAProxy process reloads.

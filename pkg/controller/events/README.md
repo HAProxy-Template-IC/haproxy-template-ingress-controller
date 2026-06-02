@@ -29,6 +29,7 @@ One file per category. The full list as of writing, with representative types:
 | `proposal.go` | Admission-time proposal validation | `ProposalValidationRequestedEvent`, `ProposalValidationCompletedEvent` |
 | `http.go` | HTTP resource fetcher | `HTTPResourceUpdatedEvent` |
 | `status.go` | Status-patch application | `StatusUpdateCompletedEvent`, `StatusUpdateFailedEvent` |
+| `runtime_fast_path.go` | Runtime fast-path result | `RuntimeFastPathResultEvent` |
 
 `types.go` plus the event-category files enumerate every constant — if the list above looks incomplete, check `grep -E "^type [A-Z].*Event " pkg/controller/events/*.go` rather than trusting this README.
 

@@ -6,12 +6,12 @@ The `haptic-controller` binary provides three subcommands: `run` (main controlle
 
 ### Requirement: Run Command
 
-The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig CRD name), `--secret-name` (credentials Secret name), `--webhook-cert-secret-name` (webhook TLS certificate Secret name), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
+The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig CRD name), `--secret-name` (credentials Secret name), `--webhook-cert-secret-name` (webhook TLS certificate Secret name; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
 
 #### Scenario: Flag and environment variable defaults
 
 WHEN the `run` command is invoked without flags
-THEN `--crd-name` SHALL default to `CRD_NAME` env var or `"haproxy-config"`, `--secret-name` SHALL default to `SECRET_NAME` env var or `"haproxy-credentials"`, `--webhook-cert-secret-name` SHALL default to `WEBHOOK_CERT_SECRET_NAME` env var or `"haproxy-webhook-certs"`, and `--debug-port` SHALL default to `DEBUG_PORT` env var or `0`.
+THEN `--crd-name` SHALL default to `CRD_NAME` env var or `"haproxy-config"`, `--secret-name` SHALL default to `SECRET_NAME` env var or `"haproxy-credentials"`, `--webhook-cert-secret-name` SHALL default to `WEBHOOK_CERT_SECRET_NAME` env var or `""` (empty, disabling webhooks), and `--debug-port` SHALL default to `DEBUG_PORT` env var or `0`.
 
 #### Scenario: Configuration priority order
 
@@ -26,11 +26,11 @@ THEN it SHALL initiate graceful shutdown, wait up to 25 seconds for goroutines t
 #### Scenario: Five-stage startup sequence
 
 WHEN the controller starts successfully
-THEN it SHALL execute a 5-stage startup: (1) Config management components start and EventBus replays buffered events, (2) block until a valid configuration is received, (3) resource watchers start, (4) block until all resource indexes are synchronized, (5) reconciliation components start.
+THEN it SHALL execute an 8-stage startup: (1) Config management components start, (2) block until a valid configuration is received, (3) resource watchers start and initial indexes sync, (4) config watchers (CRD and credentials SingleWatchers) start, (5) reconciliation and observability components start (EventBus.Start() runs immediately after this stage, once all components have subscribed), (6) leader election initializes, (7) webhook validation server starts (if enabled), (8) debug variables and health checker are wired.
 
 ### Requirement: Run Command Logging
 
-The `run` command SHALL configure structured logging with a dynamic level. The log level SHALL be read from the `LOG_LEVEL` environment variable (values: TRACE, DEBUG, INFO, WARN, ERROR, case-insensitive) with a default of INFO. The log format SHALL be read from the `LOG_FORMAT` environment variable. On startup, the controller SHALL log its version, source hash, CRD name, secret name, debug port, log level, GOMAXPROCS, and GOMEMLIMIT.
+The `run` command SHALL configure structured logging with a dynamic level. The log level SHALL be read from the `LOG_LEVEL` environment variable (values: TRACE, DEBUG, INFO, WARN, ERROR, case-insensitive) with a default of INFO. On startup, the controller SHALL log its version, source hash, CRD name, secret name, debug port, log level, GOMAXPROCS, and GOMEMLIMIT.
 
 #### Scenario: Log level from environment variable
 
@@ -87,7 +87,7 @@ The validate command SHALL accept both full Kubernetes resource YAML (with `apiV
 
 #### Scenario: Full Kubernetes resource YAML loaded
 
-WHEN the input file contains `apiVersion: haproxy-template-ic.github.io/v1alpha1` and `kind: HAProxyTemplateConfig`
+WHEN the input file contains `apiVersion: haproxy-haptic.org/v1alpha1` and `kind: HAProxyTemplateConfig`
 THEN the command SHALL parse it as a typed Kubernetes resource and extract the `.spec`.
 
 #### Scenario: Spec-only YAML loaded as fallback

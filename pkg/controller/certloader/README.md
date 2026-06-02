@@ -24,12 +24,13 @@ The component is built on `pkg/controller/resourceloader.BaseLoader`, sharing th
 - Subscribes: `CertResourceChangedEvent`
 - Publishes: `CertParsedEvent` (carrying `CertPEM`, `KeyPEM`, `Version`)
 
-The watcher that produces `CertResourceChangedEvent` is wired in `pkg/controller/iteration.go` from a `pkg/k8s/watcher.SingleWatcher` pointed at the Secret named by `--webhook-cert-secret-name`.
+The watcher that produces `CertResourceChangedEvent` is wired in `pkg/controller/watchers.go` (`newWebhookCertWatcher`, called from `setupConfigWatchers`) from a `pkg/k8s/watcher.SingleWatcher` pointed at the Secret named by `--webhook-cert-secret-name`.
 
 ## See Also
 
 - [`pkg/controller/configloader`](../configloader/) / [`credentialsloader`](../credentialsloader/) — sibling loaders built on the same `BaseLoader` scaffold
-- [`pkg/controller/webhook`](../webhook/) — downstream consumer of `CertParsedEvent` (the controller restarts the webhook adapter when fresh PEM bytes arrive)
+- [`pkg/controller/configchange`](../configchange/) — direct subscriber of `CertParsedEvent`; triggers an iteration restart that rebuilds the webhook adapter with the new PEM bytes
+- [`pkg/controller/webhook`](../webhook/) — ultimate beneficiary: the restarted iteration constructs a fresh webhook server with the rotated cert
 - [`pkg/controller/resourceloader`](../resourceloader/) — shared event-loop scaffold
 
 ## License

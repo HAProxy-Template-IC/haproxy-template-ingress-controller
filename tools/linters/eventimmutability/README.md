@@ -67,17 +67,20 @@ The analyzer is integrated into the project's linting workflow:
 # Run all linters including eventimmutability
 make lint
 
-# Run only eventimmutability
-go run ./tools/linters/eventimmutability/cmd/eventimmutability ./...
+# Run only eventimmutability (build binary first, then run from repo root)
+cd tools/linters/eventimmutability && go build -o ../../../bin/eventimmutability ./cmd/eventimmutability
+cd ../../.. && ./bin/eventimmutability ./...
 ```
 
 ### Standalone
 
-You can also run the analyzer directly:
+You can also run the analyzer directly by building a binary first:
 
 ```bash
 cd tools/linters/eventimmutability
-go run ./cmd/eventimmutability ../../...
+go build -o ../../../bin/eventimmutability ./cmd/eventimmutability
+cd ../../..
+./bin/eventimmutability ./...
 ```
 
 ## Testing
@@ -93,9 +96,9 @@ go test -v
 
 The analyzer uses the `golang.org/x/tools/go/analysis` framework and works by:
 
-1. Identifying all struct types in `pkg/controller/events`
-2. Tracking function parameters of these types
-3. Detecting assignment statements to fields of parameter variables
+1. Visiting every function declaration and checking each parameter's type to determine if it originates from `pkg/controller/events`
+2. Tracking those parameters as event parameters
+3. Detecting assignment statements to fields of those tracked event parameters
 4. Reporting violations with clear error messages
 
 ## Future Enhancements

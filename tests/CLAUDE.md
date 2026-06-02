@@ -65,8 +65,8 @@ tests/
 │   ├── httpclient/              # Fluent HTTP/HTTPS/mTLS client (DinD-aware)
 │   └── *_test.go                # ~30 full-stack routing tests (Ingress, HTTPRoute, mTLS, …)
 └── conformance/                  # Gateway API upstream conformance suite
-                                  # (gated on `gateway_conformance` build tag, currently t.Skip
-                                  #  pending chart-side HTTPRoute fixes — see package doc)
+                                  # (gated on `gateway_conformance` build tag; run via
+                                  #  `make test-gateway-conformance` after `make test-e2e`)
 ```
 
 ## Test Types
@@ -226,10 +226,10 @@ This runs:
 
 ### All Tests (Including Integration and Acceptance)
 
-There is no single `make test-all` target -- run the three top-level targets in sequence when you need full coverage:
+There is no single `make test-all` target -- run the top-level targets in sequence when you need full coverage:
 
 ```bash
-make test && make test-integration && make test-acceptance
+make test && make test-integration && make test-acceptance && make test-e2e
 ```
 
 **Duration**: ~5-10 minutes depending on cluster state. Use `make test-acceptance-parallel` to share a single Kind cluster across acceptance test cases (~half the wall-clock time).
@@ -500,9 +500,9 @@ Test data lives in subdirectories:
 
 ```
 tests/integration/testdata/
-    ├── configs/           # HAProxy configurations
-    ├── templates/         # Template files
-    └── resources/         # Kubernetes manifests
+    # One subdirectory per HAProxy concept: acls/, backends/, binds/,
+    # frontends/, global/, rules/, servers/, ssl-certs/, etc.
+    # See directory listing for the full set.
 ```
 
 ## Resources

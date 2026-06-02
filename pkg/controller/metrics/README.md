@@ -111,7 +111,7 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 
 ## Component
 
-`Component` embeds `*component.Base` and subscribes to reconciliation, deployment, validation, resource, event-bus, webhook, leader-election, and parser events. Metric updates happen inside `HandleEvent` — there's no direct caller path into the `Metrics` struct from other components; they emit events and this component records them.
+`Component` subscribes to reconciliation, deployment, validation, resource, event-bus, webhook, leader-election, and parser events. Metric updates happen inside the internal `handleEvent` dispatcher — there's no direct caller path into the `Metrics` struct from other components; they emit events and this component records them.
 
 ```go
 import (

@@ -45,7 +45,7 @@ const HAProxyTemplateConfigGVK = "haproxy-haptic.org/v1alpha1.HAProxyTemplateCon
 //  4. Mapping the result to an admission decision.
 //
 // This is the upstream gate that lets the leader-side reconcile pipeline
-// safely skip `haproxy -c` — see project_haptic_rolling_restart_root_cause.md.
+// safely skip `haproxy -c`.
 //
 // Failure-policy on the chart-side ValidatingWebhookConfiguration is `Ignore`,
 // so this validator MUST be safe to be entirely absent: when the webhook is

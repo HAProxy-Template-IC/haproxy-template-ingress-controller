@@ -3,7 +3,7 @@
 Development context for core shared functionality.
 
 **API Documentation**: See `pkg/core/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Core Packages section)
+**Architecture**: See `/docs/controller/docs/development/design/package-structure.md` (package organization)
 
 ## When to Work Here
 

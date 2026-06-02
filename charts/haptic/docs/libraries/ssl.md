@@ -47,6 +47,7 @@ The SSL library implements these extension points from base.yaml:
 | Extension Point | This Library's Snippet | What It Generates |
 |-----------------|------------------------|-------------------|
 | `features-*` | `features-050-ssl-initialization` | Initializes shared state (`gf["tlsCertificates"]`, `gf["sslPassthroughBackends"]`) |
+| `features-*` | `features-140-ssl-passthrough-binds` | Sets `gf["bindHTTPSDefault"]` / `gf["needHTTPSFrontend"]` when passthrough backends are registered (ensures the ssl-tcp frontend binds on the https port even without HTTPS termination) |
 | `features-*` | `features-150-ssl-crtlist` | Generates `certificate-list.txt` (runs after resource libraries have registered certs) |
 | `features-*` | `features-160-ssl-redirect-map` | Builds the HTTP→HTTPS redirect map consumed by `frontend-filters-050-ssl-redirect` |
 | `frontend-filters-*` | `frontend-filters-050-ssl-redirect` | HTTP→HTTPS redirect rules |
@@ -109,7 +110,7 @@ The SSL library generates an HTTPS frontend that:
 ```haproxy
 frontend https
     mode http
-    bind *:8443 ssl crt-list general/certificate-list.txt alpn h2,http/1.1
+    bind *:443 ssl crt-list general/certificate-list.txt alpn h2,http/1.1
 
     # Routing logic (same as HTTP frontend)
     # ...
@@ -195,6 +196,8 @@ The SSL library includes these validation tests:
 | `test-ssl-certificate-loading` | Verifies default SSL certificate loads correctly |
 | `test-ssl-https-frontend-basic` | Verifies HTTPS frontend with SSL bind options |
 | `test-ssl-crtlist-basic` | Verifies CRT-list generation with OCSP configuration |
+| `test-ssl-certificate-dots-in-name` | Secret names containing dots are encoded correctly in the PEM filename |
+| `test-ssl-certificate-custom-namespace` | TLS secret in a non-default namespace is loaded and referenced correctly |
 
 Run tests with:
 

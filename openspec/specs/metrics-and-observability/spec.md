@@ -76,12 +76,12 @@ THEN the response status code SHALL be 200.
 
 ### Requirement: Structured JSON Logging
 
-The controller SHALL use the `slog` structured logging package. Log output SHALL be formatted as JSON. Each log entry SHALL include structured fields (component, resource identifiers, durations) as key-value attributes rather than interpolated strings.
+The controller SHALL use the `slog` structured logging package. Log output SHALL be formatted as logfmt (key=value text). Each log entry SHALL include structured fields (component, resource identifiers, durations) as key-value attributes rather than interpolated strings.
 
-#### Scenario: Log entries formatted as JSON
+#### Scenario: Log entries formatted as logfmt
 
 WHEN the controller emits a log message
-THEN the output SHALL be a valid JSON object containing at minimum a level, message, and timestamp.
+THEN the output SHALL be a logfmt-formatted line containing at minimum a level, message, and timestamp as key=value pairs.
 
 #### Scenario: Structured fields included in log entries
 

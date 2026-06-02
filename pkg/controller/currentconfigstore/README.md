@@ -28,7 +28,7 @@ cfg := store.Get() // *parserconfig.StructuredConfig (nil if not yet populated)
 `Update` is called every time the `HAProxyCfg` CRD changes, including no-op status updates. Two short-circuits keep the parsing cost bounded:
 
 1. **Generation check** — if `metadata.generation` matches the last-seen value, the spec hasn't changed and the cached config is returned without re-parsing.
-2. **Content hash** — if the generation moved but the rendered content (after decompression) hashes to the same value, parsing is again skipped.
+2. **Content hash** — if the generation moved, a `spec.checksum` field (set by the config-publisher) is compared against the cached hash; if it matches, parsing is skipped without even decompressing. If no `spec.checksum` is present the content is decompressed and SHA-256'd, and parsing is skipped if the hash matches.
 
 A single `*parser.Parser` is reused across calls to avoid the per-call `parser.New()` overhead.
 

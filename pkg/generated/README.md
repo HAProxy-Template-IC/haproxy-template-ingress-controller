@@ -12,7 +12,7 @@ Everything under this directory is generated — never edit by hand. There are t
 | `dataplaneapi/v3{0,1,2,3}/` + `dataplaneapi/v3{0,1,2}ee/` | DataPlane API OpenAPI spec at each subtree's `spec.json` | `oapi-codegen` (`make generate-dataplaneapi-v3<x>` / `…ee`) |
 | `validators/` | The same OpenAPI specs, used for zero-allocation request validation | `make generate-validators` |
 
-All of the above run together via `make generate`. CI runs `make verify-generate` to make sure the committed code matches the generated output for the current source.
+All of the above run together via `make generate`. Run `make verify-generate` locally to verify that CRD manifests and DeepCopy methods are up-to-date (the dataplaneapi clients and validators are not checked by that target).
 
 ## Refreshing the DataPlane API Clients
 

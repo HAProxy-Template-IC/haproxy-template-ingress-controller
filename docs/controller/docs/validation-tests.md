@@ -68,6 +68,10 @@ Each test consists of:
 | **Description** | What the test verifies |
 | **Fixtures** | Simulated Kubernetes resources |
 | **Assertions** | Checks on rendered output |
+| **HTTP fixtures** (`httpResources`) | Optional — mocked responses for `http.Fetch()` URLs (see [HTTP Fixtures](#http-fixtures)) |
+| **Min HAProxy version** (`minHAProxyVersion`) | Optional — skip the test unless the HAProxy version under test is at least this (for version-gated features) |
+| **Extra context** (`extraContext`) | Optional — per-test values merged into the render context, overriding the global `templatingSettings.extraContext` |
+| **Current config** (`currentConfig`) | Optional — an existing `haproxy.cfg` the render treats as the current config, exercising slot-preservation / reload-vs-runtime logic |
 
 ### Fixtures
 

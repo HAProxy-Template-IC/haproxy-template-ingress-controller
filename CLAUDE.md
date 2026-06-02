@@ -29,7 +29,7 @@ Architecture documentation: `docs/controller/docs/development/design.md`
 
 **Sweep rule.** If you touch one resource-coupled helper anywhere in `pkg/`, sweep ALL helpers in that package and remove every other one too. The rule is per-package, not per-helper. See `pkg/templating/CLAUDE.md` for the in-engine version.
 
-**Corollary on the chart side.** Resource-specific behaviour lives in resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, etc.), never in `base.yaml`. Vendor annotation libraries (`haproxy-ingress.yaml`, `nginx-ingress.yaml`, etc.) follow the same pattern. See `charts/CLAUDE.md` for the chart-side version.
+**Corollary on the chart side.** Resource-specific behaviour lives in resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, etc.), never in `base.yaml`. Vendor annotation libraries (`haproxy-ingress/`, `nginx-ingress/`, etc.) follow the same pattern. See `charts/CLAUDE.md` for the chart-side version.
 
 ## Coding Standards
 
@@ -182,8 +182,8 @@ Business logic should be pure (no event dependencies):
 
 ```go
 // pkg/templating/engine_interface.go - Pure component
-type Renderer interface {
-    Render(ctx context.Context, templateName string, templateContext map[string]interface{}) (string, error)
+type Engine interface {
+    Render(ctx context.Context, templateName string, templateContext map[string]any) (string, error)
 }
 ```
 
@@ -277,14 +277,14 @@ Not all dependencies require event-driven coordination. The codebase distinguish
 #### Examples of Direct Utility Calls
 
 ```go
-// Good - direct utility component calls
-func (c *DryRunValidator) handleValidationRequest(req *events.WebhookValidationRequest) {
+// Good - direct utility component calls (illustrative pseudocode)
+func (c *SomeComponent) handleRequest(namespace, name string, obj any, op resourcestore.Operation) {
     // StoreManager is a utility component - direct call is acceptable
-    overlayStores, err := c.storeManager.CreateOverlayMap(resourceType, req.Namespace, req.Name, req.Object, operation)
+    overlayStores, err := c.storeManager.CreateOverlayMap(resourceType, namespace, name, obj, op)
 
     // Metrics is a utility component - direct call
     if c.metrics != nil {
-        c.metrics.RecordValidation(result)
+        c.metrics.RecordValidation(true)
     }
 
     // RestMapper is a utility component - direct call
@@ -332,20 +332,20 @@ When adding new components, explicitly document if they are "pure" or "utility" 
 
 ```go
 // Core packages (minimal dependencies)
-import "haptic/pkg/core/config"
-import "haptic/pkg/core/logging"
+import "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 
 // Infrastructure (no domain knowledge)
-import "haptic/pkg/events"
+import "gitlab.com/haproxy-haptic/haptic/pkg/events"
 
 // Domain packages (depends on core + infrastructure)
-import "haptic/pkg/templating"
-import "haptic/pkg/k8s"
-import "haptic/pkg/dataplane"
+import "gitlab.com/haproxy-haptic/haptic/pkg/templating"
+import "gitlab.com/haproxy-haptic/haptic/pkg/k8s"
+import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 
 // Coordination (depends on everything)
-import "haptic/pkg/controller"
-import "haptic/pkg/controller/events"  // Event type catalog
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller"
+import "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"  // Event type catalog
 ```
 
 ### Dependency Rules
@@ -556,9 +556,9 @@ The source hash is calculated from all `.go` files in `pkg/` and `cmd/`. It chan
 
 **Build-time** (what CI builds):
 
-- `versions.env` defines supported versions (`HAPROXY_VERSIONS="3.0 3.1 3.2"`)
+- `versions.env` defines supported versions (`HAPROXY_VERSIONS="3.0 3.1 3.2 3.3"`)
 - `Dockerfile` uses `DEFAULT_HAPROXY` for local builds
-- CI builds controller images for each version: `0.1.0-haproxy3.0`, `0.1.0-haproxy3.1`, `0.1.0-haproxy3.2`
+- CI builds controller images for each version: `0.1.0-haproxy3.0`, `0.1.0-haproxy3.1`, `0.1.0-haproxy3.2`, `0.1.0-haproxy3.3`
 
 **Deploy-time** (what the chart uses):
 

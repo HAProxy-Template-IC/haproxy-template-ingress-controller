@@ -20,7 +20,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `commonLabels` | map | `{}` | Labels added to every chart-rendered resource on top of the standard `app.kubernetes.io/*` set |
 | `commonAnnotations` | map | `{}` | Annotations added to every chart-rendered resource that has an `annotations` block |
 | `deploymentAnnotations` | map | `{}` | Annotations added only to the controller `Deployment` (in addition to `commonAnnotations`); useful for hooks like reloader's `reloader.stakater.com/auto: "true"` |
-| `extraDeploy` | list or map | `[]` | Free-form Kubernetes resources to render alongside the chart. Each entry is rendered through `tpl` so it can reference chart values. Map form (keys → manifests) is convenient for composing across multiple values files |
+| `extraDeploy` | list or map | `{}` | Free-form Kubernetes resources to render alongside the chart. Each entry is rendered through `tpl` so it can reference chart values. Map form (keys → manifests) is convenient for composing across multiple values files |
 
 ## Controller Core
 
@@ -28,7 +28,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 |-----------|------|---------|-------------|
 | `controller.crdName` | string | `haptic-config` | Name of HAProxyTemplateConfig CRD resource |
 | `controller.debugPort` | int | `8080` | Introspection HTTP server port (/healthz, /debug/*) |
-| `controller.logLevel` | string | `INFO` | Initial controller log level (`LOG_LEVEL` env var) — see [Logging & Templating](#logging--templating) for the runtime override |
+| `controller.logLevel` | string | `INFO` | Initial controller log level (`LOG_LEVEL` env var) — see [Logging and Templating](#logging-and-templating) for the runtime override |
 | `controller.ports.healthz` | int | `8080` | Health check endpoint port |
 | `controller.ports.metrics` | int | `9090` | Prometheus metrics endpoint port |
 | `controller.ports.webhook` | int | `9443` | Admission webhook HTTPS port |
@@ -75,7 +75,7 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `controller.config.credentialsSecretRef.namespace` | string | `""` | Credentials secret namespace |
 | `controller.config.podSelector.matchLabels` | map | `{app.kubernetes.io/component: loadbalancer}` | Labels to match HAProxy pods |
 | `controller.config.controller.healthzPort` | int | `8080` | **Display only** — the chart strips this from the serialized CRD. The actual health-check port is set by the container port `controller.ports.healthz` and the controller doesn't read this field |
-| `controller.config.controller.metricsPort` | int | `9090` | **Display only** — the chart strips this from the serialized CRD. The actual metrics port is set by the `METRICS_PORT` env var (default `9090`); set `METRICS_PORT=0` via `controller.extraEnv` to disable the metrics server. `controller.ports.metrics` declares the matching container port and Service port |
+| `controller.config.controller.metricsPort` | int | `9090` | **Display only** — the chart strips this from the serialized CRD. The actual metrics port is set by the `METRICS_PORT` env var (default `9090`); set `METRICS_PORT=0` via the top-level `extraEnv` to disable the metrics server. `controller.ports.metrics` declares the matching container port and Service port |
 
 ## Leader Election
 
@@ -113,22 +113,23 @@ Complete reference of all Helm values with types, defaults, and descriptions.
 | `enableValidationWebhook` | bool | `false` | Include this resource in the chart-rendered `ValidatingWebhookConfiguration` |
 | `statusPatch` | bool | `false` | Allow the controller to patch this resource's `/status` subresource |
 | `store` | string | `full` | `full` keeps all resources in memory; `on-demand` fetches with caching (lower memory, slower lookups). Useful for very large Secret stores |
-| `debounceInterval` | duration | `""` (5s) | Per-resource debounce window; empty/unparseable falls back to the controller-wide default. Lower for fast-reacting resources (e.g. `500ms` on httproutes during canaries). Avoid raising the value for resources that drive backend membership — `EndpointSlices` and `pods` in particular — because the debounce delays Pod removal from the HAProxy server pool by that whole window, so live traffic continues hitting Terminating pods until the next render fires |
+| `debounceInterval` | duration | `""` (2s) | Per-resource debounce window; empty/unparseable falls back to the controller-wide default (`DefaultDebounceInterval`, 2s). Lower for fast-reacting resources (e.g. `500ms` on httproutes during canaries). Avoid raising the value for resources that drive backend membership — `EndpointSlices` and `pods` in particular — because the debounce delays Pod removal from the HAProxy server pool by that whole window, so live traffic continues hitting Terminating pods until the next render fires |
 
-## Logging & Templating
+## Logging and Templating
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.logLevel` | string | `INFO` | Initial log level (`LOG_LEVEL` env var): TRACE, DEBUG, INFO, WARN, ERROR (case-insensitive) |
 | `controller.config.logging.level` | string | `""` | Log level in the `HAProxyTemplateConfig` CRD (`spec.logging.level`); overrides `controller.logLevel` at runtime when non-empty |
 | `controller.config.templatingSettings.extraContext.debug` | bool | `true` | Enable debug headers in HAProxy responses |
-| `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields]` | Fields to ignore in watched resources |
+| `controller.config.watchedResourcesIgnoreFields` | list | `[metadata.managedFields, metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']]` | Fields to ignore in watched resources |
 
 ## Webhook Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `webhook.enabled` | bool | `true` | Enable admission webhook validation |
+| `webhook.haproxyTemplateConfig.enabled` | bool | `true` | Also validate `HAProxyTemplateConfig` CRD updates via the webhook (`failurePolicy: Ignore`, not configurable — controller downtime never blocks CRD edits). When active, the leader-side reconcile can skip `haproxy -c` on every render |
 | `webhook.secretName` | string | Auto-generated | Webhook TLS certificate secret name |
 | `webhook.service.port` | int | `443` | Webhook service port |
 | `webhook.certManager.enabled` | bool | `true` | Use cert-manager for certificates (set to `false` for manual cert management via `webhook.caBundle`) |
@@ -264,8 +265,8 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `sidecars` | list | `[]` | Additional sidecar containers in the controller pod; rendered through `tpl` |
 | `lifecycle` | map | `{}` | Container lifecycle hooks (`preStop`, `postStart`) for the controller container |
 | `updateStrategy.type` | string | `RollingUpdate` | Controller Deployment update strategy |
-| `updateStrategy.rollingUpdate.maxSurge` | int/string | `1` | Maximum surge during rolling updates |
-| `updateStrategy.rollingUpdate.maxUnavailable` | int/string | `0` | Maximum unavailable during rolling updates |
+| `updateStrategy.rollingUpdate.maxSurge` | int/string | `25%` | Maximum surge during rolling updates |
+| `updateStrategy.rollingUpdate.maxUnavailable` | int/string | `25%` | Maximum unavailable during rolling updates |
 | `minReadySeconds` | int | `0` | Minimum seconds a new controller pod must be ready before counting as available |
 | `revisionHistoryLimit` | int | `10` | Number of old ReplicaSets to retain |
 
@@ -326,6 +327,7 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `haproxy.enterprise.version` | string | `3.2` | Enterprise version |
 | `haproxy.haproxyBin` | string | Auto-detected | HAProxy binary path |
 | `haproxy.dataplaneBin` | string | Auto-detected | Dataplane API binary path |
+| `haproxy.initialConfig` | string | See values.yaml | HAProxy bootstrap config served until the controller pushes the first rendered config; processed via Helm `tpl`. Keep the `/ready` 503 gate or clients hit an empty backend set — see [HAProxy Deployment](./haproxy-deployment.md) |
 
 ## HAProxy Pod Configuration
 
@@ -355,8 +357,8 @@ Pod-spec scheduling, runtime, and metadata fields live under `haproxy.podSpec.*`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `haproxy.ports.http` | int | `8080` | HTTP frontend container port |
-| `haproxy.ports.https` | int | `8443` | HTTPS frontend container port |
+| `haproxy.ports.http` | int | `80` | HTTP frontend container port |
+| `haproxy.ports.https` | int | `443` | HTTPS frontend container port |
 | `haproxy.ports.stats` | int | `8404` | Stats/health page port |
 | `haproxy.ports.dataplane` | int | `5555` | Dataplane API port |
 

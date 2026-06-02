@@ -53,8 +53,8 @@ cached, _ := store.NewCachedStore(&store.CachedStoreConfig{
 })
 ```
 
-- Stores only `resourceRef` tuples (index keys + namespace/name + GVK) in memory.
-- `Get` / `GetSingle` cache hits return immediately; cache misses call the dynamic client, cache the result with `CacheTTL`, and return it.
+- Stores only `resourceRef` tuples (index keys + namespace/name) in memory.
+- `Get` cache hits return immediately; cache misses call the dynamic client, cache the result with `CacheTTL`, and return it.
 - The cache is keyed by `namespace/name`, separate from the index composite key — multiple references can share the same index key while each has its own cache entry.
 - **`List` forces a fetch for every reference.** Use it only for small collections or debugging; prefer `MemoryStore` for templates that iterate everything.
 - The implementation releases the store lock *before* dispatching API calls so one slow fetch doesn't block other lookups.

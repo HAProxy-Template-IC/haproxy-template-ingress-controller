@@ -25,7 +25,7 @@ func ParseSecretData(raw map[string]any) (map[string][]byte, error)
 func ValidateExtraContext(ctx map[string]any) error
 ```
 
-The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `CRTLists`, `HAProxyConfig`, `ValidationTests`. Three serialisation forms exist for the same struct, and they don't all agree:
+The Go fields are `PodSelector`, `Controller`, `Logging`, `Dataplane`, `TemplatingSettings`, `WatchedResources`, `WatchedResourcesIgnoreFields`, `Validators`, `TemplateSnippets`, `Maps`, `Files`, `SSLCertificates`, `K8sResources`, `CRTLists`, `HAProxyConfig`, `ValidationTests`. Three serialisation forms exist for the same struct, and they don't all agree:
 
 - **Go field names** — PascalCase (`PodSelector`).
 - **YAML keys consumed by `LoadConfig`** — snake_case at the top level (`pod_selector`, `templating_settings`, `watched_resources`, `haproxy_config`); a few nested fields use camelCase (`httpResources`, `currentConfig`, `extraContext`, `minHAProxyVersion`). `types.go`'s `yaml:` tags are authoritative.
@@ -60,7 +60,6 @@ Authoritative list is `defaults.go`. Ones operators commonly look up:
 - `dataplane.minDeploymentInterval`: 2s
 - `dataplane.driftPreventionInterval`: 60s
 - `dataplane.deploymentTimeout`: 30s
-- `dataplane.rawPushThreshold`: 100
 - `dataplane.{mapsDir,sslCertsDir,generalStorageDir,configFile}`: `/etc/haproxy/...`
 - `controller.leaderElection.{leaseName,leaseDuration,renewDeadline,retryPeriod}`: `haptic-leader`, 15s, 10s, 2s (matches Kubernetes' recommended fast-failover triplet — defaults.go:54-60)
 - `controller.configPublishing.compressionThreshold`: 1 MiB

@@ -58,7 +58,7 @@ THEN the engine SHALL create a new map with a default SharedContext and render s
 
 ### Requirement: Profiling Support
 
-The ProfilingRenderer interface SHALL provide RenderWithProfiling, which returns the rendered output and an aggregated slice of IncludeStats. Stats SHALL be aggregated by template name so that multiple renders of the same template produce a single entry with count > 1. Stats SHALL be sorted by TotalMs descending. When profiling is not enabled (engine created via NewScriggo), RenderWithProfiling SHALL return nil stats. Profiling SHALL be enabled by constructing the engine with NewScriggoWithProfiling or NewScriggoWithProfilingAndDeclarations.
+The Engine interface SHALL provide RenderWithProfiling, which returns the rendered output and an aggregated slice of IncludeStats. Stats SHALL be aggregated by template name so that multiple renders of the same template produce a single entry with count > 1. Stats SHALL be sorted by TotalMs descending. When profiling is not enabled (engine created via NewScriggo), RenderWithProfiling SHALL return nil stats. Profiling SHALL be enabled by constructing the engine with NewScriggoWithProfiling or NewScriggoWithProfilingAndDeclarations.
 
 #### Scenario: IncludeStats aggregated by template name
 

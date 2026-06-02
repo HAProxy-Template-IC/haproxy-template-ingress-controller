@@ -106,8 +106,8 @@ func (e *ReconciliationStartedEvent) EventType() string { return EventTypeReconc
 type ReconciliationCompletedEvent struct {
 	DurationMs int64
 
-	// RenderedResources are the Kubernetes resources the templates emitted
-	// via the renderResource() template function in this cycle. The
+	// RenderedResources are the Kubernetes resources the templates declared
+	// under spec.k8sResources in this cycle. The
 	// ResourceApplier reads them directly from the event so it stays
 	// stateless on the success path — patches/resources travel with the
 	// event that triggers their apply, never via a side-channel cache. May
@@ -122,8 +122,8 @@ type ReconciliationCompletedEvent struct {
 
 // NewReconciliationCompletedEvent creates a new ReconciliationCompletedEvent.
 //
-// renderedResources is the slice of resources the templates emitted via
-// renderResource() in this cycle. The outer slice is defensively cloned so
+// renderedResources is the slice of resources the templates declared under
+// spec.k8sResources in this cycle. The outer slice is defensively cloned so
 // publishers reusing a cached slice (e.g. coordinator forwarding
 // PipelineResult.RenderedResources) can't mutate published events.
 //

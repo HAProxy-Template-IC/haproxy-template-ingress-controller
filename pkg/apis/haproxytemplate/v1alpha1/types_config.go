@@ -340,8 +340,8 @@ type DataplaneConfig struct {
 	// throttling republishes reduces that write load while leaving the
 	// event-driven push to HAProxy pods untouched.
 	//
-	// Format: Go duration string (e.g., "30s", "1m").
-	// Default: 30s
+	// Format: Go duration string (e.g., "10s", "1m").
+	// Default: 10s
 	// +optional
 	ConfigPublishInterval string `json:"configPublishInterval,omitempty"`
 
@@ -355,7 +355,7 @@ type DataplaneConfig struct {
 	ReloadVerificationTimeout string `json:"reloadVerificationTimeout,omitempty"`
 
 	// SyncTimeout is the overall timeout for a single Dataplane sync to one
-	// HAProxy endpoint. The sync covers parse + diff + transactional apply +
+	// HAProxy endpoint. The sync covers parse + diff + raw config push +
 	// optional reload-verification. If exceeded, the sync is cancelled and the
 	// scheduler retries on the next reconciliation.
 	//
@@ -461,7 +461,7 @@ type WatchedResource struct {
 	Store string `json:"store,omitempty"`
 
 	// DebounceInterval overrides the watcher's refractory window.
-	// "0" disables debouncing; default 100ms.
+	// "0" disables debouncing; default 2s.
 	// +optional
 	DebounceInterval string `json:"debounceInterval,omitempty"`
 }

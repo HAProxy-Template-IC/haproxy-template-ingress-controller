@@ -85,7 +85,7 @@ Used for code generation — after saving a new spec, run `make generate-datapla
 
 ## fetch-k8s-openapi-schemas.sh
 
-Refreshes the K8s built-in schemas under `tests/schemas/` from a running cluster. These power offline typed-watched-resources access (`controller validate --schema-dir tests/schemas`) for the K8s built-ins the chart watches alongside its CRDs — Namespace, Service, Secret, EndpointSlice, Ingress. Run when the kube-apiserver version bumps or when adding a new K8s built-in to the bundle.
+Refreshes the K8s built-in schemas under `tests/schemas/` from a running cluster. These power offline typed-watched-resources access (`controller validate --schema-dir tests/schemas`) for the K8s built-ins the chart watches alongside its CRDs — Namespace, Service, Secret, ConfigMap, EndpointSlice, Ingress. Run when the kube-apiserver version bumps or when adding a new K8s built-in to the bundle.
 
 ```bash
 # Uses KUBE_CONTEXT (defaults to kind-haptic-e2e); needs `kubectl` reachable.

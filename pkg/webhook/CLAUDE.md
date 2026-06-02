@@ -3,7 +3,7 @@
 Development context for the admission webhook library.
 
 **API Documentation**: See `pkg/webhook/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Webhook section - to be added)
+**Architecture**: See `/docs/controller/docs/development/design.md` (design documentation index)
 
 ## When to Work Here
 
@@ -101,9 +101,9 @@ func TestServer_RegisterValidator(t *testing.T) {
 
     called := false
     server.RegisterValidator("networking.k8s.io/v1.Ingress",
-        func(ctx *ValidationContext) (bool, string, error) {
+        func(ctx *ValidationContext) (bool, string, []string, error) {
             called = true
-            return true, "", nil
+            return true, "", nil, nil
         })
 
     // Then send a fake AdmissionReview through the HTTPS handler
@@ -158,14 +158,14 @@ func TestWebhookEndToEnd(t *testing.T) {
 // ctx.Context — if you need a deadline, call context.WithTimeout(context.Background(), …)
 // inside the validator (the controller's own bridge in pkg/controller/webhook
 // imposes a 5s timeout this way).
-func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
+func validateIngress(ctx *webhook.ValidationContext) (bool, string, []string, error) {
     if ctx.Object == nil {
-        return false, "object missing", nil
+        return false, "object missing", nil, nil
     }
     if ctx.Operation == "DELETE" {
         // No body for DELETE; reject immediately or fall through depending on policy.
     }
-    return true, "", nil
+    return true, "", nil, nil
 }
 ```
 
@@ -175,9 +175,9 @@ func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
 
 ```go
 // Bad
-func validate(ctx *webhook.ValidationContext) (bool, string, error) {
+func validate(ctx *webhook.ValidationContext) (bool, string, []string, error) {
     time.Sleep(15 * time.Second) // exceeds default timeoutSeconds
-    return true, "", nil
+    return true, "", nil, nil
 }
 ```
 
@@ -289,10 +289,10 @@ server.RegisterValidator("networking.k8s.io/v1.Ingress",
     })
 ```
 
-The `ValidationFunc` signature is `func(ctx *ValidationContext) (bool, string, error)`.
+The `ValidationFunc` signature is `func(ctx *ValidationContext) (allowed bool, reason string, warnings []string, err error)`.
 Everything lives on `ctx` as a flat field — no `ctx.Request`, no `ctx.Context`. Available
 fields: `Object` / `OldObject` (`*unstructured.Unstructured`), `Operation` (string),
-`Namespace`, `Name`, `UID`, `UserInfo`.
+`Namespace`, `Name`, `UID`, `UserInfo`. The `warnings` return value surfaces as `AdmissionResponse.Warnings`.
 
 ### Async Validation
 

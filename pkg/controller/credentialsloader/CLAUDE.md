@@ -67,7 +67,7 @@ There are two ways to watch a Secret in this codebase:
 
 | Path | Used by production? | What publishes `SecretResourceChangedEvent`? |
 |------|--------------------|-----------------------------------------------|
-| `pkg/k8s/watcher.NewSingle` (typed via `types.SingleWatcherConfig`) | **Yes** — see `pkg/controller/watchers.go:124` | Yes (`bus.Publish(events.NewSecretResourceChangedEvent(obj))`) |
+| `pkg/k8s/watcher.NewSingle` (typed via `types.SingleWatcherConfig`) | **Yes** — see `pkg/controller/watchers.go:137` | Yes (`bus.Publish(events.NewSecretResourceChangedEvent(obj))`) |
 | `pkg/controller/credentialsloader.NewSecretWatcher` | No — unused outside its own package | Yes, but nothing wires it up |
 
 If you're wiring a new component that needs Secret events, follow `watchers.go`; don't reach for `credentialsloader.NewSecretWatcher`.

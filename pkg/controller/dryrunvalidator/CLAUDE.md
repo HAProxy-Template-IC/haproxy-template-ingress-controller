@@ -119,10 +119,10 @@ func (c *Component) validateWithOverlay(
 
     if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
         if err := c.runValidationTests(requestID); err != nil {
-            return false, err.Error()
+            return false, err.Error(), nil
         }
     }
-    return true, ""
+    return true, "", nil
 }
 ```
 

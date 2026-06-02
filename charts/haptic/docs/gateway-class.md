@@ -9,7 +9,7 @@ The chart automatically creates a GatewayClass resource when the gateway library
 Install Gateway API CRDs (standard channel) before enabling the gateway library:
 
 ```bash
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 ```
 
 Check [Gateway API releases](https://github.com/kubernetes-sigs/gateway-api/releases) for newer versions.

@@ -3,7 +3,7 @@
 Development context for the controller coordination layer.
 
 **API Documentation**: See `pkg/controller/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Controller Internal Architecture section)
+**Architecture**: See `/docs/controller/docs/development/design/architecture-overview.md` (controller internal architecture)
 
 ## When to Work Here
 
@@ -39,7 +39,7 @@ pkg/controller/
 ├── pipeline/             # Render-validate pipeline (pure service)
 │   └── pipeline.go      # Composes renderer + validator services
 ├── reconciler/           # Reconciliation coordination (Stage 5)
-│   ├── reconciler.go    # Debounces changes, triggers reconciliation
+│   ├── reconciler.go    # Triggers reconciliation immediately (no debounce)
 │   ├── coordinator.go   # Orchestrates pipeline execution
 │   └── *_test.go        # Tests
 ├── resourcewatcher/      # Resource watcher lifecycle management
@@ -172,7 +172,7 @@ type Component struct {
 }
 
 // pkg/controller/webhook calls this synchronously per admission request.
-func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string) {
+func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string) {
     // Build a *stores.StoreOverlay representing the admission request, hand it to
     // proposalValidator.ValidateSync, return a flat allow/deny answer. No event hop.
 }
@@ -263,20 +263,18 @@ Subscribes to all events and produces domain-aware logs:
 
 ```go
 // pkg/controller/commentator/commentator.go
-func (c *EventCommentator) Run(ctx context.Context) error {
-    eventChan := c.eventBus.Subscribe("commentator", 500)  // Large buffer - high volume
-
+// Subscription happens in NewEventCommentator (constructor), not in Start.
+func (c *EventCommentator) Start(ctx context.Context) error {
     for {
         select {
-        case event := <-eventChan:
+        case event := <-c.eventChan:  // c.eventChan subscribed in constructor via SubscribeLossy
             c.ringBuffer.Add(event)  // Track recent events
 
             // Domain-aware logging
             switch e := event.(type) {
-            case ConfigValidatedEvent:
+            case *events.ConfigValidatedEvent:
                 c.logger.Info("configuration validated successfully",
                     "version", e.Version,
-                    "templates", len(e.Config.Templates),
                 )
 
             case *ReconciliationStartedEvent:
@@ -332,7 +330,7 @@ func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger) *Te
 
 When adding a new validator, register it in the `ConfigChangeHandler.validators` list so the scatter-gather waits for its response.
 
-### reconciler/ - Reconciliation Debouncer
+### reconciler/ - Reconciliation Trigger
 
 Triggers reconciliation events immediately on every change (Stage 5 component 1):
 
@@ -678,16 +676,21 @@ func (v *Coordinator) validate(ctx context.Context, config Config) bool {
 
 ```go
 // pkg/controller/commentator/commentator.go
-func (c *EventCommentator) Run(ctx context.Context) error {
-    for event := range eventChan {
-        switch e := event.(type) {
-        // ... existing cases ...
+func (c *EventCommentator) Start(ctx context.Context) error {
+    for {
+        select {
+        case event := <-c.eventChan:
+            switch e := event.(type) {
+            // ... existing cases ...
 
-        case NewEventType:  // Add case for new event
-            c.logger.Info("new event occurred",
-                "field1", e.Field1,
-                "field2", e.Field2,
-            )
+            case NewEventType:  // Add case for new event
+                c.logger.Info("new event occurred",
+                    "field1", e.Field1,
+                    "field2", e.Field2,
+                )
+            }
+        case <-ctx.Done():
+            return ctx.Err()
         }
     }
 }

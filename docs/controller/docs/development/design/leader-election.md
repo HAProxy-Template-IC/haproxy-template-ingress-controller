@@ -189,7 +189,8 @@ constructors before EventBus.Start() is called)
   - Coordinator (LEADER ONLY) — runs the synchronous render+validate Pipeline
   - Discovery, HTTPStore, ProposalValidator (all replicas)
   - DeploymentScheduler, Deployer, DriftPreventionMonitor,
-    ConfigPublisher, StatusApplier (LEADER ONLY)
+    ConfigPublisher (LEADER ONLY)
+  - StatusApplier (all replicas — subscribes to pipeline lifecycle events carrying status patches; only the leader applies writes)
   - Metrics, Commentator (all replicas)
   → EventBus.Start() runs here, releasing the pre-start buffer to every
     subscriber that registered during construction.
@@ -239,7 +240,7 @@ OnStartedLeading: func(ctx context.Context) {
 
     // Create and start leader-only components (real signatures take more knobs;
     // see pkg/controller/deployer for the production constructors).
-    leaderComponents.deployer = deployer.New(bus, logger, maxParallel, rawPushThreshold)
+    leaderComponents.deployer = deployer.New(bus, logger, syncOpts)
     leaderComponents.deploymentScheduler = deployer.NewDeploymentScheduler(bus, logger, minInterval, deploymentTimeout)
     leaderComponents.driftMonitor = deployer.NewDriftPreventionMonitor(bus, logger, driftInterval)
 
@@ -441,17 +442,14 @@ func TestLeaderElector_GracefulShutdown(t *testing.T)
 **Multi-replica tests** (`tests/acceptance/leader_election_test.go` — these run against a real Kind cluster, not the unit-style fixtures in `tests/integration/`):
 
 ```go
-// Deploy 2 replicas, verify only one deploys configs
-func TestLeaderElection_OnlyLeaderDeploys(t *testing.T)
+// Deploy 2 replicas, verify leader election behavior
+func TestLeaderElection_TwoReplicas(t *testing.T)
 
 // Kill leader pod, verify follower takes over
 func TestLeaderElection_Failover(t *testing.T)
 
-// Verify both replicas watch resources
-func TestLeaderElection_BothReplicasWatchResources(t *testing.T)
-
-// Verify both replicas render configs
-func TestLeaderElection_BothReplicasRenderConfigs(t *testing.T)
+// Verify behavior when leader election is disabled
+func TestLeaderElection_DisabledMode(t *testing.T)
 ```
 
 **Test setup**:
@@ -505,7 +503,7 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 4. New leader starts deployment components
 5. Reconciliation continues from hot cache
 
-**Downtime**: ~15-20 seconds (RenewDeadline + startup time)
+**Downtime**: ~15-20 seconds (LeaseDuration + startup time)
 
 ### Network Partition
 
@@ -514,7 +512,7 @@ kubectl logs -l app.kubernetes.io/name=haptic | grep "deployment completed"
 **Behavior**:
 
 1. Leader cannot renew lease
-2. After RenewDeadline (15s), leader voluntarily releases leadership
+2. After RenewDeadline (10s), leader voluntarily releases leadership
 3. Leader stops deployment components
 4. Connected replica acquires lease
 5. System continues with new leader

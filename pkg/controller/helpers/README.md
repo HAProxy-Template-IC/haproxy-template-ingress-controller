@@ -4,7 +4,7 @@ Shared utility for constructing a template engine from a `*config.Config`.
 
 ## Overview
 
-Four code paths need to build a template engine from the controller's loaded config: production rendering (`pkg/controller/renderer`), webhook dry-run validation (`pkg/controller/dryrunvalidator`), the test runner (`pkg/controller/testrunner`), and the `haptic-controller validate` CLI command. They previously did this inline; this package consolidates the construction so a change to template-extraction or filter-registration policy lands in one place.
+Several code paths need to build a template engine from the controller's loaded config: the reconciliation wiring (`pkg/controller/reconciliation.go`), the webhook wiring (`pkg/controller/webhook.go`), the template validator (`pkg/controller/validator/template.go`), the CRD admission webhook (`pkg/controller/webhook/configvalidator.go`), and the `haptic-controller validate` CLI command. This package consolidates the construction so a change to template-extraction or filter-registration policy lands in one place.
 
 This is a **utility package** — pure functions, no event-bus dependency, no goroutines.
 
@@ -45,7 +45,7 @@ For Scriggo with `inherit_context`, only entry points are compiled explicitly; s
 ## See Also
 
 - [`pkg/templating`](../../templating/) — the engine this helper constructs
-- [`pkg/controller/renderer`](../renderer/) / [`dryrunvalidator`](../dryrunvalidator/) / [`testrunner`](../testrunner/) — the four production callers
+- [`pkg/controller/reconciliation.go`](../reconciliation.go) / [`webhook.go`](../webhook.go) / [`validator/template.go`](../validator/template.go) — the main production callers
 - `pkg/controller/helpers/CLAUDE.md` — design notes (why all filters live inside the engine, etc.)
 
 ## License

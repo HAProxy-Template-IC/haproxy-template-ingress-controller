@@ -104,6 +104,12 @@ haproxy -c -f current.cfg
 diff expected.cfg current.cfg
 ```
 
+Or read the last *published* config straight from the `HAProxyCfg` CRD — this works even when the debug port is disabled, and the controller binary decompresses it for you (a raw `kubectl get haproxycfg -o yaml` only shows the zstd+base64 blob):
+
+```bash
+kubectl exec -n haptic deployment/haptic-controller -- haptic-controller config view > current.cfg
+```
+
 **Why did the last reconciliation fail?**
 
 ```bash

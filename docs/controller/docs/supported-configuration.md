@@ -4,7 +4,7 @@ This document provides an overview of HAProxy configuration sections and child c
 
 ## Overview
 
-The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied using fine-grained operations to minimize HAProxy reloads and maximize use of the Runtime API for zero-downtime updates.
+The controller supports all configuration sections that can be managed through the [HAProxy Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Configuration changes are applied by pushing the full rendered config to the Dataplane API in a single request; a fine-grained comparison classifies each change so the push can skip the HAProxy reload — and apply the change through the Runtime API for zero-downtime updates — whenever every change is a runtime-eligible server update.
 
 **API Version Support:** The controller supports Dataplane API versions 3.0, 3.1, 3.2, and 3.3. The API version is auto-detected at runtime.
 
@@ -181,7 +181,7 @@ The controller uses fine-grained comparison to detect changes at the attribute l
 3. **Server Health Check Changes**: Triggers reload (not supported by Runtime API)
 4. **Other Changes**: Evaluated individually; structural changes trigger reloads
 
-**Important:** The Dataplane API automatically determines whether a change can use the Runtime API. If any modified field is not runtime-supported, a reload is triggered. The controller delegates this decision to the Dataplane API's `changeThroughRuntimeAPI` function.
+**Important:** The controller makes this decision itself, using its own `serverRuntimeSupportedJSONFields` table (`pkg/dataplane/comparator/sections/factory_server.go`) that mirrors the Dataplane API's `RuntimeSupportedFields["server"]`. If any modified field is not runtime-supported, the config push carries `force_reload`; when every change is runtime-eligible it carries `skip_reload` plus the `X-Runtime-Actions` header so the live worker is updated without a reload.
 
 **Reference:** See [HAProxy Dataplane API runtime.go](https://github.com/haproxytech/dataplaneapi/blob/master/handlers/runtime.go) for the complete Runtime API field support logic.
 
@@ -251,9 +251,9 @@ The implementation uses two approaches for optimal performance:
 
 1. **Fine-Grained Child Resource Management** (frequently-changing resources)
    - Frontends and backends expose per-child operations (binds, ACLs, rules, servers, health checks, …)
-   - Each child resource has individual Create/Update/Delete operations
-   - Changes to individual ACLs, rules, or servers are applied independently
-   - **Benefit:** Minimizes API calls and reduces reload frequency
+   - Each child resource is diffed as an individual Create/Update/Delete operation
+   - These per-child operations drive change classification and the `X-Runtime-Actions` for runtime-eligible server updates; the config itself ships as one raw push
+   - **Benefit:** Lets the controller skip the HAProxy reload whenever no structural change is present
 
 2. **Whole-Section Replacement** (infrequently-changing resources)
    - Sections without exposed child operations: Rings, HTTPErrors, Userlists, Programs, LogForwards, FCGIApps, CrtStores
@@ -274,6 +274,6 @@ Operations are automatically ordered by:
 2. **Type** (Delete → Create → Update)
 3. **Dependencies** (parent sections before child components)
 
-This ensures that, for example, a Backend is created before its Servers, and Servers are deleted before the Backend is removed.
+This keeps the generated operation stream internally consistent — a Backend's create precedes its Servers' creates, and Server deletes precede the Backend's delete. Because production applies the whole config in a single raw push (see Comparison Strategies above), this ordering doesn't sequence the live apply; it keeps the diff correct for change classification and for any consumer that applies the operations in order.
 
 The comparator uses the `haproxytech/client-native` models' built-in `.Equal()` methods for comprehensive attribute comparison, ensuring zero-maintenance compatibility with future HAProxy features.

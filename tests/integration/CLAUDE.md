@@ -195,7 +195,7 @@ func TestDataplaneClient(env fixenv.Env) *client.DataplaneClient {
     return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*client.DataplaneClient], error) {
         endpoint := haproxy.GetDataplaneEndpoint()
 
-        dataplaneClient, err := client.New(client.Config{
+        dataplaneClient, err := client.New(context.Background(), &client.Config{
             BaseURL:  endpoint.URL,
             Username: endpoint.Username,
             Password: endpoint.Password,
@@ -214,11 +214,12 @@ func TestDataplaneHighLevelClient(env fixenv.Env) *dataplane.Client {
     return fixenv.CacheResult(env, func() (*fixenv.GenericResult[*dataplane.Client], error) {
         endpoint := haproxy.GetDataplaneEndpoint()
 
-        client, err := dataplane.NewClient(context.Background(), dataplane.Endpoint{
+        dpEndpoint := dataplane.Endpoint{
             URL:      endpoint.URL,
             Username: endpoint.Username,
             Password: endpoint.Password,
-        })
+        }
+        client, err := dataplane.NewClient(context.Background(), &dpEndpoint)
         // ...
     })
 }

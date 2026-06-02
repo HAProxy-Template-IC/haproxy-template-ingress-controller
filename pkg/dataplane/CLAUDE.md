@@ -3,7 +3,7 @@
 Development context for HAProxy Dataplane API integration.
 
 **API Documentation**: See `pkg/dataplane/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Dataplane Integration section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (design documentation index)
 
 ## When to Work Here
 
@@ -34,7 +34,6 @@ pkg/dataplane/
 │   └── sections/               # Per-section comparators (frontends, backends, rules, ...)
 ├── parser/                     # Config parsing using client-native
 │   └── enterprise/             # Enterprise section parsing
-├── synchronizer/               # Priority-grouped parallel operation execution
 ├── validators/                 # OpenAPI schema validators with cached-result wrapping
 ├── capabilities.go             # HAProxy version → Capabilities (CRT lists, WAF, ...)
 ├── checksum.go                 # ComputeContentChecksum (config + auxFiles → SHA-256)
@@ -69,10 +68,11 @@ Phase 1: Pre-Config Sync
 
 Phase 2: Config Sync
   - Parse rendered HAProxy config
-  - Compare with current config
-  - Generate minimal operations (add/update/delete)
-  - Execute via transactions
-  - Leverage runtime API when possible (zero-reload)
+  - Compare with current config to compute a fine-grained diff
+  - Classify the diff: runtime-eligible server fields vs. structural
+  - Push the full config in one request (no per-operation transactions):
+    runtime-eligible-only -> skip-reload raw push + X-Runtime-Actions (zero-reload);
+    otherwise -> force-reload raw push
 
 Phase 3: Post-Config Sync
   - Delete unused auxiliary files
@@ -158,7 +158,7 @@ backend my-backend
     default-server check proto h2
     server SRV_1 10.0.0.1:8080 enabled      # Active server
     server SRV_2 10.0.0.2:8080 enabled      # Active server
-    server SRV_3 127.0.0.1:1 disabled       # Reserved slot
+    server SRV_3 192.0.2.1:1 disabled       # Reserved slot
 ```
 
 This allows endpoint changes (pod IP/port) and server state changes (enabled/disabled) to be applied via runtime API without reloading HAProxy.
@@ -444,28 +444,27 @@ dpClient, err := client.New(ctx, &client.Config{
 })
 defer dpClient.Close()
 
-// Layer 2 — VersionAdapter wraps DataplaneClient with retry-on-version-conflict
-// and the callback-based ExecuteTransaction pattern. This is what every
-// section comparator in pkg/dataplane/comparator/ uses.
-adapter := client.NewVersionAdapter(dpClient, 3 /* maxRetries */)
-result, err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-    if err := operations[0].Execute(ctx, dpClient, tx.ID); err != nil {
-        return err  // Adapter aborts the transaction
-    }
-    return operations[1].Execute(ctx, dpClient, tx.ID)
-    // Adapter commits when the callback returns nil
-})
+// Layer 2 — transactions are opened directly on the DataplaneClient. The
+// production sync path does NOT use them — it pushes the full config (see
+// orchestrator). Transactions are exercised only by the enterprise
+// integration paths.
+tx, err := dpClient.CreateTransaction(ctx, version)
+if err != nil {
+    // handle error
+}
+defer tx.Abort(ctx) // cancels on the error path; nothing under tx.ID takes effect
+// issue client calls against tx.ID here, then commit via the dataplane API.
 ```
 
-There is **no** public `client.StartTransaction() / tx.Commit() / tx.Rollback()` API — all transaction lifecycle is owned by `VersionAdapter.ExecuteTransaction`. If you need version-explicit control (e.g. retrying with a known-good version after a 409), use `ExecuteTransactionWithVersion` instead.
+There is **no** `VersionAdapter` / `ExecuteTransaction` wrapper, and no `tx.Commit()` / `tx.Rollback()` methods — the lifecycle is `dpClient.CreateTransaction(ctx, version)` → issue ops against `tx.ID` → commit (or `tx.Abort(ctx)` to cancel). Production configuration changes don't go through a transaction at all; they're full-config pushes via `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
 **When to modify:**
 
 - Adding new Dataplane API endpoint support → look at the dispatcher pattern below
-- Changing retry logic → `VersionAdapter.executeTransactionWithRetry`
+- Changing connection-retry behavior → `client.WithRetry` / `client.RetryConfig` in `pkg/dataplane/client/retry.go`
 - Improving error handling → `errors.go` (`VersionConflictError`, `OperationError`, etc.)
 
-**Common pitfall**: Calling `dpClient.CreateTransaction(ctx, version)` directly outside the adapter. You then have to handle the `*Transaction` lifecycle yourself; you almost always want `adapter.ExecuteTransaction` instead.
+**Common pitfall**: Opening a transaction for a configuration change at all. Production changes are full-config raw pushes — reach for `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`, not `CreateTransaction` (which exists for the enterprise integration paths).
 
 ### parser/ - Configuration Parser
 
@@ -569,21 +568,21 @@ comparators["mycustomsection"] = &MyCustomSectionComparator{}
 
 All section operations (Create, Delete, Update) use generic operation types defined in `operations_generic.go` and section-specific factories in `factory_*.go`. The current generation does **not** generate one struct per `(section, op)` pair — there is no `CreateBackendOperation` type. Instead each section's factory wires up the right generic type with closures that supply the section-specific dispatch.
 
-The two top-level shapes:
+The five operation types (all pure descriptors, no execute closure):
 
 | Type | Use for | Wiring |
 |------|---------|--------|
-| `TopLevelOp[TModel, TAPI]` | Single-name resources: backend, frontend, defaults, peer, resolver, mailers, ... | `transformFn func(TModel) TAPI` + `nameFn func(TModel) string` + `executeFn ExecuteTopLevelFunc[TAPI]` |
-| `IndexChildOp[TModel, TAPI]` | Index-keyed children inside a parent: binds, ACLs, HTTP/TCP rules, captures, ... | similar shape plus a `parentName string` and an index |
-| `ContainerChildOp[TModel, TAPI]` | Named children inside a container (servers, server templates, peer entries, mailer entries) | shape plus `containerName string` + `childName string` |
+| `TopLevelOp[TModel]` | Single-name resources: backend, frontend, defaults, peer, resolver, mailers, ... | pure descriptor — `opType`, `sectionName`, `describeFn`; no execute closure |
+| `SingletonOp[TModel]` | Unnamed singleton sections (global, traces, waf_global, ...) | pure descriptor |
+| `IndexChildOp[TModel]` | Index-keyed children inside a parent: ACLs, HTTP/TCP rules, filters, QUIC rules, ... | pure descriptor |
+| `NameChildOp[TModel]` | Named children inside a parent (binds, servers, server templates) | pure descriptor |
+| `ContainerChildOp[TModel]` | Named children inside a container (user, mailer entries, peer entries, nameservers) | pure descriptor |
 
 Each section file (`factory_backend.go`-equivalent inside `factory_sections.go`, plus `factory_acl.go`, `factory_bind.go`, `factory_server.go`, `factory_http_rules.go`, `factory_filter_log.go`, `factory_switching.go`, `factory_tcp.go`, `factory_quic.go`, `factory_ee.go`) calls one of the generic constructors with:
 
 - The model from `client-native` (e.g. `*models.Backend`)
 - A transform that turns it into the unified `dataplaneapi.*` shape
-- An executor closure from `executors/` that knows which `Dispatch` / `DispatchEnterpriseOnly` call to make for the relevant API version
-
-The executors live under `comparator/sections/executors/` — `container.go`, `indexed_child*.go`, `named_child.go`, plus topic-specific files (`certificate.go`, `enterprise.go`, `observability.go`, `quic.go`, `server_update_test.go`, ...). They hold the per-section `Dispatch` / `DispatchEnterpriseOnly` switch statements that select between v3.0 / v3.1 / v3.2 / v3.3 / Enterprise client methods. Read one executor to see the pattern; all sections follow the same shape.
+Operations are pure descriptors (no execute closure). The orchestrator applies changes by pushing the full rendered config via `PushRawConfiguration` (for structural changes) or `PushRawConfigurationSkipReload` with runtime actions (for server field updates). There is no `executors/` subdirectory.
 
 **Why JSON marshaling is required:**
 
@@ -596,40 +595,20 @@ HAProxy DataPlane API version-specific types (v30.Backend, v31.Backend, v32.Back
 
 This pattern trades ~10µs per operation for type safety and compatibility across all HAProxy versions.
 
-### synchronizer/ - Operation Execution
+### Operation Execution (orchestrator)
 
-Executes a list of comparator operations inside an already-open Dataplane API
-transaction. Operations are grouped by priority and run in parallel within each
-priority group; groups execute sequentially. Stops at the first error.
+The `synchronizer/` sub-package no longer exists. The orchestrator applies changes in two modes:
 
-```go
-// Callers open the transaction (via VersionAdapter) and call SyncOperations
-// from within the transaction callback.
-adapter := client.NewVersionAdapter(dpClient, 3)
-err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-    _, err := synchronizer.SyncOperations(ctx, dpClient, diff.Operations, tx, maxParallel)
-    return err
-})
-```
+1. **Structural changes** (server creation/deletion, frontend/backend changes, etc.): pushed via `client.PushRawConfiguration`, which triggers a HAProxy reload.
+2. **Runtime-eligible changes** (server address/port/maintenance/weight/agent-check fields): pushed via `client.PushRawConfigurationSkipReload` with X-Runtime-Actions header, which updates the live HAProxy instance without a reload.
 
-Common errors surfaced from `SyncOperations`:
+Transactions are retained only for enterprise integration tests; new production callers should use `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
-- Operation-level failures from the Dataplane API (validation, not found, etc.)
-- Context cancellation
-- Transaction conflict (version mismatch) — usually handled by the VersionAdapter retry loop
+**Retry logic:**
 
-**Transaction retry logic:**
+The raw-push paths don't open Dataplane API transactions, so there's no 409 version-conflict retry loop. Instead the orchestrator wraps its version resolution and pushes in `client.WithRetry(ctx, client.RetryConfig{...})` with `RetryIf: client.IsConnectionError()` — transient connection failures (the master socket is briefly closed while HAProxy re-execs on reload) are retried; any other error propagates. `PushRawConfigurationSkipReload` additionally retries its runtime `set server …` actions across a concurrent reload, since those fail with a 500 / connection-refused while the `-S` stats socket is momentarily down.
 
-The retry loop lives inside `client.VersionAdapter.executeTransactionWithRetry` (in `pkg/dataplane/client/adapter.go`). On each attempt it:
-
-1. Resolves the current config version via `dpClient.GetVersion(ctx)`.
-2. Calls `dpClient.CreateTransaction(ctx, version)`.
-3. Runs the user's `TransactionFunc` callback.
-4. Commits.
-5. On `*VersionConflictError` (HTTP 409), increments the attempt counter and loops, up to `MaxRetries`.
-6. Any other error aborts the transaction and propagates.
-
-Callers should not write a parallel retry loop — `ExecuteTransaction(ctx, fn)` already provides this. If you need explicit version control (e.g. retrying with a known-good version after pre-fetching it), use `ExecuteTransactionWithVersion(ctx, version, fn)` instead.
+The transaction primitives (`CreateTransaction` / `Transaction.Abort`) still live in `pkg/dataplane/client` but are exercised only by the enterprise integration paths; new production callers go through `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`.
 
 ### auxiliaryfiles/ - Auxiliary File Management
 
@@ -665,7 +644,7 @@ err := syncer.SyncPostConfig(ctx, files, endpoints)
 
 - Maps: `/etc/haproxy/maps/`
 - SSL certs: `/etc/haproxy/ssl/`
-- General files: `/etc/haproxy/files/`
+- General files: `/etc/haproxy/general/`
 
 **When to modify:**
 
@@ -982,7 +961,7 @@ result, err := client.Sync(ctx, haproxyConfig, nil, nil)
 // → semantic validation fails on the first map/cert reference
 ```
 
-**Solution**: Build a single `*dataplane.AuxiliaryFiles` and pass it to `Sync` (or to `client.Sync`). The orchestrator sequences the three phases internally — pre-config aux upload, then config sync inside a transaction, then post-config cleanup of orphaned aux files.
+**Solution**: Build a single `*dataplane.AuxiliaryFiles` and pass it to `Sync` (or to `client.Sync`). The orchestrator sequences the three phases internally — pre-config aux upload, then config sync via a full-config raw push, then post-config cleanup of orphaned aux files.
 
 ```go
 // Good — orchestrator handles all three phases
@@ -1001,28 +980,14 @@ There is no separate `client.SyncMaps` / `client.CleanupMaps` API; everything au
 **Problem**: Calling `dpClient.CreateTransaction(ctx, version)` directly and trying to commit/abort manually. The Dataplane API has no rollback verb — you "abort" a transaction by issuing a `DELETE /v3/services/haproxy/transactions/<id>`, and you have to track the version-conflict retry loop yourself.
 
 ```go
-// Bad — bypasses VersionAdapter, you own all the edge cases
+// Bad — hand-rolling the transaction lifecycle; you own all the edge cases
 tx, err := dpClient.CreateTransaction(ctx, version)
 // ... operations ...
 // Now you have to: commit on success, delete on failure, retry on 409,
 // re-resolve the version on retry, …
 ```
 
-**Solution**: Use `VersionAdapter.ExecuteTransaction`. The callback signature makes commit/abort flow obvious — return `nil` to commit, return any error to abort — and the adapter handles 409 retries (`MaxRetries`) plus per-attempt version resolution internally.
-
-```go
-// Good
-adapter := client.NewVersionAdapter(dpClient, 3)
-result, err := adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-    if err := op1.Execute(ctx, dpClient, tx.ID); err != nil {
-        return err  // → adapter aborts the transaction
-    }
-    return op2.Execute(ctx, dpClient, tx.ID)
-    // → adapter commits and returns the CommitResult (reload-id, etc.)
-})
-```
-
-Layered over that, `synchronizer.SyncOperations(ctx, dpClient, ops, tx, maxParallel)` (called from inside the `ExecuteTransaction` callback) groups operations by priority and runs them in parallel within each group. Don't reimplement that loop in new code.
+**Solution**: Use `dataplane.Sync` or `client.Sync` for all production configuration changes. The controller no longer uses per-section transactions; the orchestrator pushes the full rendered config via `PushRawConfiguration` (reload path) or `PushRawConfigurationSkipReload` (runtime path for server field updates). `CreateTransaction` is retained only for enterprise integration tests.
 
 ### Not Validating Before Parsing
 
@@ -1144,33 +1109,26 @@ func TestHTTPErrorFilesComparator(t *testing.T) {
 ### Minimize API Calls
 
 ```go
-// Bad — N standalone HTTP requests, each fetching the version + opening
-// and committing its own transaction. The Dataplane API serializes commits
-// per HAProxy instance, so this is O(N) network round-trips and O(N) reloads.
+// Bad — N standalone config pushes, each a separate HTTP round-trip that
+// fetches the version and triggers its own reload. O(N) round-trips, O(N) reloads.
 for _, backend := range backends {
-    adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-        return createBackend(ctx, dpClient, tx.ID, backend)
-    })
+    cfg := renderConfigWith(backend)
+    dpClient.PushRawConfiguration(ctx, cfg, version) // a reload each time
 }
 
-// Good — single ExecuteTransaction, one commit, one reload (if needed).
-adapter.ExecuteTransaction(ctx, func(ctx context.Context, tx *client.Transaction) error {
-    for _, backend := range backends {
-        if err := createBackend(ctx, dpClient, tx.ID, backend); err != nil {
-            return err
-        }
-    }
-    return nil
-})
+// Good — render the full desired config once and push it in a single call;
+// one round-trip, at most one reload. This is what the orchestrator's Sync does.
+desired := renderFullConfig(backends)
+_, err := dpClient.PushRawConfiguration(ctx, desired, version)
 ```
 
 ### Parallel Endpoint Sync
 
-`pkg/dataplane.Sync` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, `pkg/controller/deployer.Component.deployToEndpoints` spawns one goroutine per endpoint via `sync.WaitGroup` (no across-endpoint cap; `maxParallel` is passed _into_ each `dataplane.Sync` call as `SyncOptions.MaxParallel` to limit operations _within_ that single pod). For one-off scripts that need to push to multiple HAProxies in parallel with a global cap, an `errgroup` with `SetLimit(maxParallel)` is the natural shape:
+`pkg/dataplane.Sync` is per-endpoint by design; cross-endpoint fan-out is the deployer's responsibility. Inside the controller, `pkg/controller/deployer.Component.deployToEndpoints` spawns one goroutine per endpoint via `sync.WaitGroup` (no across-endpoint cap — the raw-push model issues one config push per pod, so there is nothing to parallelize _within_ a single pod). For one-off scripts that need to push to multiple HAProxies in parallel with a global cap, an `errgroup` with `SetLimit(parallelism)` is the natural shape:
 
 ```go
 g, gCtx := errgroup.WithContext(ctx)
-g.SetLimit(maxParallel)
+g.SetLimit(parallelism)
 
 results := make([]*dataplane.SyncResult, len(endpoints))
 for i, endpoint := range endpoints {

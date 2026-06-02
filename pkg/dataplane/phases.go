@@ -16,10 +16,10 @@ package dataplane
 
 import "fmt"
 
-// SyncPhase identifies one of the three phases of a fine-grained sync.
+// SyncPhase identifies one of the three phases of a configuration sync.
 //
 // HAProxy configs can reference auxiliary files (maps, SSL certs, error
-// pages, etc.). A single fine-grained sync therefore runs in three phases,
+// pages, etc.). A single sync therefore runs in three phases,
 // sequenced so that referenced files exist before the config mentions them
 // and orphaned files are only cleaned up after the config that stopped
 // referencing them has been applied:
@@ -27,8 +27,9 @@ import "fmt"
 //  1. PhasePreConfig  — create or update auxiliary files. Includes verifying
 //     any reloads those operations trigger, so the next phase's config
 //     operations don't race against pending reloads.
-//  2. PhaseConfig     — apply HAProxy configuration changes (via fine-grained
-//     Dataplane API operations or raw push).
+//  2. PhaseConfig     — apply HAProxy configuration changes by pushing the full
+//     rendered config (raw push), reloading only when structural changes are
+//     present.
 //  3. PhasePostConfig — delete auxiliary files that the new config no longer
 //     references. Must run after PhaseConfig succeeds.
 //

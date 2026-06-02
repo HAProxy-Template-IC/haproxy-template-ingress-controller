@@ -14,7 +14,7 @@ For the complete list of all Helm values, see the [Configuration Reference](./re
 | `image.repository` | Controller image repository | `registry.gitlab.com/haproxy-haptic/haptic` |
 | `image.tag` | Controller image tag (empty = `<chart appVersion>-haproxy<haproxyVersion>`) | `""` |
 | `controller.templateLibraries.ingress.enabled` | Enable Ingress resource support | `true` |
-| `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute) | `true` |
+| `controller.templateLibraries.gateway.enabled` | Enable Gateway API support (HTTPRoute, GRPCRoute, TLSRoute) | `true` |
 | `ingressClass.enabled` | Create IngressClass resource | `true` |
 | `ingressClass.name` | IngressClass name | `haptic` |
 | `gatewayClass.enabled` | Create GatewayClass resource | `true` |
@@ -107,7 +107,7 @@ The controller uses a modular template library system where configuration files 
 | Base | Enabled | `base` | Core HAProxy configuration, extension points; disabling drops the `haproxyConfig` the other libraries plug into |
 | SSL | Enabled | `ssl` | TLS certificates, HTTPS frontend |
 | Ingress | Enabled | `ingress` | Kubernetes Ingress support |
-| Gateway | Enabled | `gateway` | Gateway API (HTTPRoute, GRPCRoute) |
+| Gateway | Enabled | `gateway` | Gateway API (HTTPRoute, GRPCRoute, TLSRoute) |
 | ingress-annotations-compat | Enabled | `ingressAnnotationsCompat` | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | haproxytech | Enabled | `haproxytech` | `haproxy.org/*` annotation support |
 | haproxy-ingress | Enabled | `haproxyIngress` | `haproxy-ingress.github.io/*` annotation compatibility |

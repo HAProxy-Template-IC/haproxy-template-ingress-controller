@@ -23,7 +23,7 @@ handler := configchange.NewConfigChangeHandler(
     logger,
     configChangeCh,
     []string{"basic", "template", "jsonpath"}, // validator names that must respond
-    0,                                         // 0 → DefaultReinitDebounceInterval (5s)
+    0,                                         // 0 → DefaultReinitDebounceInterval (2s)
 )
 go handler.Start(ctx)
 
@@ -37,9 +37,9 @@ The handler also exposes `SetInitialConfigVersion` and `EnableReinitialization` 
 
 ## Events
 
-- Subscribes: `ConfigParsedEvent`, `ConfigValidatedEvent`, `BecameLeaderEvent`
+- Subscribes: `ConfigParsedEvent`, `ConfigValidatedEvent`, `BecameLeaderEvent`, `CredentialsUpdatedEvent`, `CertParsedEvent`
 - Publishes: `ConfigValidationRequest` (scatter), `ConfigValidatedEvent`, `ConfigInvalidEvent`
-- Adds responders to: `ConfigValidationResponse` (gather)
+- Receives: `ConfigValidationResponse` (gather — collected via `bus.Request`, not a registered responder)
 
 ## License
 

@@ -6,12 +6,12 @@ YAML-based library system providing composable HAProxy configuration through a s
 
 ### Requirement: Library Merge Order
 
-Libraries SHALL be merged using mustMergeOverwrite in the following fixed order: base, ssl, ingress, gateway, haproxytech, haproxy-ingress, path-regex-last, values.yaml. Later libraries SHALL override earlier ones for the same keys. Each library SHALL be independently enableable via values.yaml under controller.templateLibraries.<name>.enabled. The gateway library SHALL additionally require Gateway API CRDs to be present (Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass").
+Libraries SHALL be merged using mustMergeOverwrite in the following fixed order: base, ssl, ingress, gateway, ingress-annotations-compat, haproxytech, haproxy-ingress, nginx-ingress, spoa-hub, values.yaml. Later libraries SHALL override earlier ones for the same keys. Each library SHALL be independently enableable via values.yaml under controller.templateLibraries.<name>.enabled. The gateway library SHALL additionally require Gateway API CRDs to be present (Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1/GatewayClass"). The regex-last path matching order is NOT a separate library; it is selected via controller.config.routing.regexMatchOrder ("default" or "last") which swaps a snippet inside base.yaml at Helm render time.
 
 #### Scenario: Later library overrides earlier for same snippet name
 
-WHEN base.yaml defines a snippet "frontend-routing-logic" and path-regex-last.yaml also defines "frontend-routing-logic"
-THEN the merged result SHALL contain the path-regex-last version because it is merged later.
+WHEN an earlier library and a later library both define a templateSnippet with the same name
+THEN the merged result SHALL contain the later library's version because it is merged last.
 
 #### Scenario: Disabled library excluded from merge
 
@@ -162,16 +162,16 @@ THEN the path SHALL be added to path-regex.map instead of path-prefix.map.
 
 ### Requirement: Path Regex Last Library
 
-The path-regex-last library SHALL override the base library's frontend-routing-logic snippet to change the path matching order from Exact > Regex > Prefix-exact > Prefix (default) to Exact > Prefix-exact > Prefix > Regex. This SHALL be opt-in via controller.templateLibraries.pathRegexLast.enabled. The overriding snippet SHALL preserve all other routing logic (host extraction, wildcard matching, MULTIBACKEND/BACKEND qualifier handling).
+The regex-last routing order SHALL change path matching from Exact > Regex > Prefix-exact > Prefix (default) to Exact > Prefix-exact > Prefix > Regex. This SHALL be opt-in via the Helm value controller.config.routing.regexMatchOrder set to "last" (default is "default"). The alternate snippet is defined in base.yaml and swapped in at Helm render time; there is no separate path-regex-last library file. The overriding snippet SHALL preserve all other routing logic (host extraction, wildcard matching, MULTIBACKEND/BACKEND qualifier handling).
 
 #### Scenario: Regex evaluated after prefix when enabled
 
-WHEN the path-regex-last library is enabled
+WHEN controller.config.routing.regexMatchOrder is set to "last"
 THEN the frontend-routing-logic SHALL evaluate path-prefix.map before path-regex.map.
 
 #### Scenario: Default order without library
 
-WHEN the path-regex-last library is disabled
+WHEN controller.config.routing.regexMatchOrder is set to "default" (or left unset)
 THEN the frontend-routing-logic SHALL evaluate path-regex.map before path-prefix-exact.map and path-prefix.map.
 
 ### Requirement: Cross-Library Shared State
@@ -213,7 +213,7 @@ THEN references to the map file in haproxyConfig SHALL use the path "maps/host.m
 
 ### Requirement: Backend Server Generation
 
-The base library's BackendServers macro SHALL resolve service endpoints from EndpointSlices, perform targetPort resolution via Service port name lookup, assign endpoints to numbered server slots (SRV_1 through SRV_N), and fill unused slots with disabled placeholder servers (127.0.0.1:1). When currentConfig is available, the macro SHALL preserve existing slot assignments to enable zero-reload updates via HAProxy runtime API. The default slot count SHALL be 10, overridable via macro parameter or serverOpts.serverSlotsValue.
+The base library's BackendServers macro SHALL resolve service endpoints from EndpointSlices, perform targetPort resolution via Service port name lookup, assign endpoints to numbered server slots (SRV_1 through SRV_N), and fill unused slots with disabled placeholder servers (192.0.2.1:1, the RFC 5737 TEST-NET-1 sentinel). When currentConfig is available, the macro SHALL preserve existing slot assignments to enable zero-reload updates via HAProxy runtime API. The default slot count SHALL be 10, overridable via macro parameter or serverOpts.serverSlotsValue.
 
 #### Scenario: Server slots with placeholder padding
 
@@ -227,7 +227,7 @@ THEN the new render SHALL assign the same endpoint to SRV_3 to preserve the slot
 
 ### Requirement: Library Enable/Disable via Values
 
-Each library SHALL be independently toggleable via values.yaml at controller.templateLibraries.<name>.enabled. The base and ssl libraries SHALL be enabled by default. The ingress library SHALL be enabled by default. The gateway library SHALL be enabled by default (subject to CRD availability). The haproxytech, haproxy-ingress, and path-regex-last libraries SHALL have their default enabled state defined in values.yaml.
+Each library SHALL be independently toggleable via values.yaml at controller.templateLibraries.<name>.enabled. The base and ssl libraries SHALL be enabled by default. The ingress library SHALL be enabled by default. The gateway library SHALL be enabled by default (subject to CRD availability). The haproxytech, haproxy-ingress, nginx-ingress, ingress-annotations-compat, and spoa-hub libraries SHALL have their default enabled state defined in values.yaml. The path-regex-last library no longer exists; the regex-last routing variant is activated via controller.config.routing.regexMatchOrder.
 
 #### Scenario: All libraries disabled except base
 

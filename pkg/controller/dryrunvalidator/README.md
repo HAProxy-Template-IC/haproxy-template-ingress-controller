@@ -52,9 +52,10 @@ The webhook adapter then registers a `webhook.ValidationFunc` per GVK that pulls
 
 ## Failure Modes
 
-- `(false, reason)` — proposed change failed render or validation; the webhook denies and the API server forwards `reason` to the user.
-- `(true, "")` — proposed change is admissible.
-- `ValidateDirect` only returns `(bool, string)`. Internal errors (e.g. a render panic) are logged and surface as a deny with a descriptive reason — the webhook never returns HTTP 500 from this path. Configure `failurePolicy: Fail` in the `ValidatingWebhookConfiguration` if you want the API server to reject on transport failures (TLS handshake, dial errors); deny-with-reason is for application-level rejections.
+- `(false, reason, nil)` — proposed change failed render or validation; the webhook denies and the API server forwards `reason` to the user.
+- `(true, "", nil)` — proposed change is admissible with no warnings.
+- `(true, "", warnings)` — proposed change is admissible; `warnings` are soft diagnostics from pluggable validators, surfaced via `AdmissionResponse.Warnings`.
+- `ValidateDirect` returns `(allowed bool, reason string, warnings []string)`. Internal errors (e.g. a render panic) are logged and surface as a deny with a descriptive reason — the webhook never returns HTTP 500 from this path. Configure `failurePolicy: Fail` in the `ValidatingWebhookConfiguration` if you want the API server to reject on transport failures (TLS handshake, dial errors); deny-with-reason is for application-level rejections.
 
 ## See Also
 

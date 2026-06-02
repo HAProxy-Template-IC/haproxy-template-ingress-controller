@@ -58,8 +58,8 @@ The service fields (`svcName`, `svcPort`, `svcPortName`) are captured at scan ti
 **Used by:**
 
 - `haproxytech.yaml` → `util-haproxytech-ssl-passthrough` (annotation: `haproxy.org/ssl-passthrough`)
-- `haproxy-ingress.yaml` → `util-haproxy-ingress-ssl-passthrough` (annotation: `haproxy-ingress.github.io/ssl-passthrough`)
-- `nginx-ingress.yaml` → `util-nginx-ingress-ssl-passthrough` (annotation: `nginx.ingress.kubernetes.io/ssl-passthrough`)
+- `haproxy-ingress/` → `util-haproxy-ingress-ssl-passthrough` (annotation: `haproxy-ingress.github.io/ssl-passthrough`)
+- `nginx-ingress/` → `util-nginx-ingress-ssl-passthrough` (annotation: `nginx.ingress.kubernetes.io/ssl-passthrough`)
 
 The protocol library still owns the per-library `ComputeIfAbsent` cache key, so the data slots stay distinct.
 
@@ -83,8 +83,8 @@ EmitAnnotationAccessControl(
 **Used by:**
 
 - `haproxytech.yaml` → `frontend-filters-200-haproxytech-access-control`
-- `haproxy-ingress.yaml` → `frontend-filters-740-haproxy-ingress-access-control`
-- `nginx-ingress.yaml` → `frontend-filters-700-nginx-ingress-access-control`
+- `haproxy-ingress/` → `frontend-filters-610-haproxy-ingress-access-control`
+- `nginx-ingress/` → `frontend-filters-700-nginx-ingress-access-control`
 
 Validation tests assert on ACL names (`ni_allowlist_*`, `hi_allowlist_*`, `haproxytech_allowlist_*`), so each library passes its distinct `aclPrefix`.
 

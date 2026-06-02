@@ -6,7 +6,7 @@ Full documentation: see [`docs/`](./docs/index.md) in this directory.
 
 ## Prerequisites
 
-- Kubernetes **1.19+**
+- Kubernetes **1.21+** (default `PodDisruptionBudget` is `policy/v1`; watches `discovery.k8s.io/v1` EndpointSlices)
 - Helm **3.0+**
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
 
@@ -43,7 +43,7 @@ The full values reference lives in [`docs/reference.md`](./docs/reference.md). T
 | `haproxy.enabled` | `true` | Disable to manage HAProxy pods separately |
 | `haproxy.enterprise.enabled` | `false` | Switch to HAProxy Enterprise images |
 | `controller.templateLibraries.ingress.enabled` | `true` | Kubernetes Ingress support |
-| `controller.templateLibraries.gateway.enabled` | `true` | Gateway API (HTTPRoute / GRPCRoute) support |
+| `controller.templateLibraries.gateway.enabled` | `true` | Gateway API (HTTPRoute / GRPCRoute / TLSRoute) support |
 | `controller.templateLibraries.haproxytech.enabled` | `true` | `haproxy.org/*` annotation compatibility |
 | `controller.templateLibraries.haproxyIngress.enabled` | `true` | `haproxy-ingress.github.io/*` annotation compatibility |
 | `controller.templateLibraries.nginxIngress.enabled` | `false` | `nginx.ingress.kubernetes.io/*` annotation compatibility |
@@ -63,7 +63,7 @@ Templates are merged at Helm render time in a fixed priority order (later librar
 | `base` | on | Core `haproxyConfig`, extension points (`render_glob` patterns) — must stay resource-agnostic; disabling drops the haproxyConfig the other libraries plug into |
 | `ssl` | on | Terminate TLS, crt-list management, SSL passthrough |
 | `ingress` | on | Kubernetes `networking.k8s.io/v1` Ingress |
-| `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` (requires Gateway CRDs installed) |
+| `gateway` | on | Gateway API `HTTPRoute` / `GRPCRoute` / `TLSRoute` (requires Gateway CRDs installed) |
 | `ingressAnnotationsCompat` | on | Shared scaffold consumed by the Ingress vendor annotation libraries below (level 2.5) |
 | `haproxytech` | on | `haproxy.org/*` annotation compatibility ([haproxytech/kubernetes-ingress](https://github.com/haproxytech/kubernetes-ingress)) |
 | `haproxy-ingress` | on | `haproxy-ingress.github.io/*` annotation compatibility ([jcmoraisjr/haproxy-ingress](https://haproxy-ingress.github.io/)) |

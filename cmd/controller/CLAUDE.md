@@ -2,7 +2,7 @@
 
 Development context for the controller application entry point.
 
-**Architecture**: See `/docs/controller/docs/development/design.md` (Startup and Initialization section)
+**Architecture**: See `/docs/controller/docs/development/design/sequence-diagrams.md` (startup and initialization)
 
 ## When to Work Here
 
@@ -173,14 +173,13 @@ Stage 2: Wait for Valid Config
 
 Stage 3: Resource Watchers
   - Create a watcher.Watcher for each spec.watchedResources entry
-  - Start the CRD and credentials SingleWatchers (immediate-callback mode)
   - IndexSynchronizationTracker waits for every store's initial sync
 
-Stage 4: EventBus.Start()
-  - Replays the pre-start buffer to all components that subscribed during construction
-  - Without this step, leader-only components miss the events that fired during init
+Stage 4: Config Watchers
+  - Start the CRD and credentials SingleWatchers (immediate-callback mode)
 
 Stage 5: Reconciliation & Observability Components
+  (EventBus.Start() runs immediately after this stage, once all components have subscribed)
   - Reconciler (debounces resource-index updates)
   - Coordinator (drives the render → validate → publish pipeline; leader-only)
   - DeploymentScheduler, Deployer, DriftMonitor, ConfigPublisher, StatusApplier (leader-only)
@@ -228,10 +227,10 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 | `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
 | — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |
 
-The controller's namespace is auto-detected from the in-cluster service-account token mount; there is no `CONTROLLER_NAMESPACE` env var. Other surfaces:
+The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef` to `metadata.name` / `metadata.namespace`). `POD_NAMESPACE` is the controller's own namespace — used for owned-resource `OwnerReference`s and the leader-election lease — and falls back to the service-account token mount (`/var/run/secrets/kubernetes.io/serviceaccount/namespace`) when unset; `POD_NAME` is the leader-election lease identity and falls back to the OS hostname. There is no `CONTROLLER_NAMESPACE` env var. Other surfaces:
 
 - **Log output** — always structured slog (logfmt-ish text on stdout); no `LOG_FORMAT` env var.
-- **Metrics port** — read from the `METRICS_PORT` env var (default `9090`; set to `0` to disable). The CRD has a `controller.metricsPort` field but the controller does **not** read it; the chart strips it before serialising the CRD. To change the port, set `METRICS_PORT` (via `controller.extraEnv` in Helm).
+- **Metrics port** — read from the `METRICS_PORT` env var (default `9090`; set to `0` to disable). The CRD has a `controller.metricsPort` field but the controller does **not** read it; the chart strips it before serialising the CRD. To change the port, set `METRICS_PORT` (via the top-level `extraEnv` in Helm).
 - **Healthz port** — runs on the same listener as `--debug-port` (default `0` = disabled when running the binary directly; the chart sets `8080`). There is no separate healthz listener: setting `--debug-port` / `controller.debugPort` to `0` disables both `/debug/*` and `/healthz` (and breaks Kubernetes probes). The chart's `controller.ports.healthz` only configures the Service port and the container-port declaration used by probes — the actual listener is still the introspection server.
 - **Webhook port** — hardcoded `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag for it. Disabled entirely when `--webhook-cert-secret-name` is empty.
 - **pprof** — always mounted at `/debug/pprof/*` whenever the introspection server is enabled; no `ENABLE_PPROF` env var.
@@ -331,11 +330,11 @@ func TestController_Startup(t *testing.T) {
         done <- controller.Run(ctx, k8sClient, "haproxy-config", "haproxy-credentials", "", 0)
     }()
 
-    // Wait for the iteration to publish ControllerStartedEvent (subscribed via
-    // the EventBus) — there is no public `IsReady()` method.
-    waitForEvent[*events.ControllerStartedEvent](t, ctx, eventBus, 5*time.Second)
-
-    // Trigger shutdown
+    // There is no readiness event and no public `IsReady()` method, and Run
+    // owns its EventBus internally (a test can't subscribe to it), so there is
+    // nothing to wait on here — cancel and assert a clean shutdown. Behavioural
+    // assertions on what a full iteration does belong in the integration suite
+    // (tests/integration), which drives a real apiserver.
     cancel()
     require.NoError(t, <-done)
 }
@@ -532,12 +531,11 @@ For runtime changes without a pod restart, set `spec.logging.level` on the `HAPr
 kubectl logs -f -n haptic deployment/haptic-controller | grep -i "stage\|operational"
 
 # Expected progression:
-# Stage 1: Config management
-# Stage 2: Waiting for valid config
-# Stage 3: Resource watchers
-# Stage 4: Waiting for index sync
-# Stage 5: Reconciliation components
-# Controller fully operational
+# Stage 5: Creating reconciliation components
+# Stage 6: Initializing leader election
+# Stage 7: Setting up webhook validation  (only if webhook enabled)
+# Stage 8: Registering debug variables and updating health checker
+# Controller iteration initialized successfully - entering event loop
 ```
 
 ### Identify Stuck Stage
@@ -550,7 +548,7 @@ kubectl logs -n haptic deployment/haptic-controller | tail -1
 kubectl get htplcfg -n haptic
 kubectl get htplcfg -n haptic haproxy-config -o yaml | yq '.status'
 
-# Stage 4 stuck → at least one watcher's initial sync isn't completing
+# Startup stuck before 'Stage 5' log → at least one watcher's initial sync isn't completing
 kubectl logs -n haptic deployment/haptic-controller | grep -i "sync\|watcher"
 ```
 

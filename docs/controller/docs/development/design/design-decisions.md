@@ -168,7 +168,7 @@ factory.Start(stopCh)
 3. **Context Propagation**: All operations use context.Context for cancellation
 
    ```go
-   func (s *Synchronizer) Deploy(ctx context.Context, config Config) error {
+   func (d *Deployer) Deploy(ctx context.Context, config Config) error {
        ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
        defer cancel()
        // ... deployment logic
@@ -210,7 +210,7 @@ metricsServer := pkgmetrics.NewServer(":9090", metricsRegistry)
 go metricsServer.Start(ctx)
 ```
 
-**Metrics exposed** (31 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue; `pkg/controller/metrics/metrics.go` itself is the authoritative list. `TestMetrics_AllMetricsRegistered` covers a representative subset, not every metric). Key groups:
+**Metrics exposed** (36 metrics total — see `pkg/controller/metrics/README.md` for the full catalogue; `pkg/controller/metrics/metrics.go` itself is the authoritative list. `TestMetrics_AllMetricsRegistered` covers a representative subset, not every metric). Key groups:
 
 1. **Reconciliation**:
    - `haptic_reconciliation_total`, `haptic_reconciliation_errors_total`, `haptic_reconciliation_duration_seconds`
@@ -478,21 +478,22 @@ result, err := client.Sync(ctx, config, auxFiles, opts)      // *dataplane.SyncR
 // Subscribes inside Start() (leader-only contract); calls dataplane.Sync via
 // the per-endpoint clients it constructs from HAProxyPodsDiscoveredEvent.
 type Component struct {
-    eventBus         *busevents.EventBus
-    logger           *slog.Logger
-    maxParallel      int
-    rawPushThreshold int
-    // ... per-endpoint clients, in-flight tracking, ...
+    eventBus                  *busevents.EventBus
+    logger                    *slog.Logger
+    reloadVerificationTimeout time.Duration
+    syncTimeout               time.Duration
+    // ... per-endpoint clients, version cache, in-flight tracking, ...
 }
 
-func New(eventBus *busevents.EventBus, logger *slog.Logger, maxParallel, rawPushThreshold int) *Component { ... }
+func New(eventBus *busevents.EventBus, logger *slog.Logger, opts SyncOptions) *Component { ... }
 
 // Sketch of one Sync invocation, distilled from pkg/controller/deployer/component.go:
 func (c *Component) deployToEndpoint(ctx context.Context, ep dataplane.Endpoint, cfg string, aux *dataplane.AuxiliaryFiles) {
     c.eventBus.Publish(events.NewDeploymentStartedEvent(...))
-    result, err := dataplane.Sync(ctx, &ep, cfg, aux, &dataplane.SyncOptions{
-        MaxParallel:      c.maxParallel,
-        RawPushThreshold: c.rawPushThreshold,
+    result, err := client.Sync(ctx, cfg, aux, &dataplane.SyncOptions{
+        Timeout:                   c.syncTimeout,
+        VerifyReload:              true,
+        ReloadVerificationTimeout: c.reloadVerificationTimeout,
     })
     if err != nil {
         c.eventBus.Publish(events.NewInstanceDeploymentFailedEvent(ep, err))

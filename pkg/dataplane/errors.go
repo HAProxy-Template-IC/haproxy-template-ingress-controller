@@ -186,26 +186,6 @@ func (e *OperationError) Unwrap() error {
 	return e.Cause
 }
 
-// FallbackError represents a failure during raw config fallback.
-type FallbackError struct {
-	// OriginalError is the error that triggered the fallback
-	OriginalError error
-
-	// FallbackCause is the error that occurred during fallback
-	FallbackCause error
-}
-
-// Error implements the error interface.
-func (e *FallbackError) Error() string {
-	return fmt.Sprintf("fine-grained sync failed (%v) and fallback to raw config also failed (%v)",
-		e.OriginalError, e.FallbackCause)
-}
-
-// Unwrap returns the fallback cause for error unwrapping.
-func (e *FallbackError) Unwrap() error {
-	return e.FallbackCause
-}
-
 // Helper functions to create common error scenarios
 
 // NewConnectionError creates a ConnectionError.
@@ -267,7 +247,6 @@ func NewConflictError(retries int, expectedVersion int64, actualVersion string) 
 		Cause:   &ConflictError{Retries: retries, ExpectedVersion: expectedVersion, ActualVersion: actualVersion},
 		Hints: []string{
 			"Another process is modifying the HAProxy configuration concurrently",
-			"Consider increasing MaxRetries in SyncOptions",
 			"Coordinate configuration updates to avoid conflicts",
 			"Check if there are other automation tools modifying HAProxy",
 		},
@@ -284,21 +263,6 @@ func NewOperationError(opType, section, resource string, cause error) *SyncError
 			fmt.Sprintf("Check if %s '%s' exists and is accessible", section, resource),
 			"Review the operation details for invalid values",
 			"Verify resource dependencies are satisfied",
-		},
-	}
-}
-
-// NewFallbackError creates a FallbackError.
-func NewFallbackError(originalErr, fallbackCause error) *SyncError {
-	return &SyncError{
-		Stage:   "fallback",
-		Message: "both fine-grained sync and raw config fallback failed",
-		Cause:   &FallbackError{OriginalError: originalErr, FallbackCause: fallbackCause},
-		Hints: []string{
-			"The desired configuration may have fundamental issues",
-			"Check HAProxy logs for detailed error messages",
-			hintValidateConfig,
-			"Review both the fine-grained sync error and fallback error",
 		},
 	}
 }

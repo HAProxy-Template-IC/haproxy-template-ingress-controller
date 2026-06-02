@@ -82,9 +82,8 @@ controller:
     # minDeploymentInterval, 30s configPublishInterval, 60s
     # driftPreventionInterval) target steady-state load on real
     # clusters; in CI they only add latency. Safety ceilings
-    # (reloadVerificationTimeout, syncTimeout, deploymentTimeout,
-    # syncMaxRetries) stay at chart defaults — they only matter on
-    # failure paths.
+    # (reloadVerificationTimeout, syncTimeout, deploymentTimeout)
+    # stay at chart defaults — they only matter on failure paths.
     #
     # 100/100/200ms is the historical pre-conformance setting that
     # works cleanly for the e2e suite. The conformance suite has a

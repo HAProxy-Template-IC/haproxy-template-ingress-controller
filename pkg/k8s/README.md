@@ -59,7 +59,7 @@ Key `WatcherConfig` fields (see `pkg/k8s/types/types.go` for full docs):
 - `StoreType` — `StoreTypeMemory` (default) or `StoreTypeCached`. `CacheTTL` only applies to the cached store and defaults to ~2 min (auto-derived from drift prevention at the controller layer).
 - `DebounceInterval` — default `types.DefaultDebounceInterval` (2s). Set to 0 for default, or a positive duration to override.
 - `CallOnChangeDuringSync` — when true, `OnChange` fires during initial bulk load with `stats.IsInitialSync == true`; when false, only `OnSyncComplete` fires for the initial set.
-- `LabelSelector` / `FieldSelector` — server-side filters. `LabelSelector` is a `*metav1.LabelSelector` here at the watcher layer, not a string. Two earlier conversions land its value: the CRD's `labelSelector` is a *string* like `"app=foo,env=prod"` (see `pkg/apis/haproxytemplate/v1alpha1/types_config.go`), `pkg/controller/conversion.parseLabelSelector` turns it into a `map[string]string` on the internal `config.WatchedResource`, and `pkg/controller/resourcewatcher/watcher.go:134` finally wraps that map as `&metav1.LabelSelector{MatchLabels: m}` for this layer. For richer selectors (`MatchExpressions`) construct the `*metav1.LabelSelector` directly when bypassing the CRD path.
+- `LabelSelector` / `FieldSelector` — `LabelSelector` is a server-side filter (`*metav1.LabelSelector`, pushed to the API server). `FieldSelector` is a client-side JSONPath filter (evaluated after the list is fetched); it supports any expression but fetches more data than `LabelSelector`. Two earlier conversions land its value: the CRD's `labelSelector` is a *string* like `"app=foo,env=prod"` (see `pkg/apis/haproxytemplate/v1alpha1/types_config.go`), `pkg/controller/conversion.parseLabelSelector` turns it into a `map[string]string` on the internal `config.WatchedResource`, and `pkg/controller/resourcewatcher/watcher.go:134` finally wraps that map as `&metav1.LabelSelector{MatchLabels: m}` for this layer. For richer selectors (`MatchExpressions`) construct the `*metav1.LabelSelector` directly when bypassing the CRD path.
 
 **`watcher.SingleWatcher`** — for one specific named resource (the controller's own `HAProxyTemplateConfig`, its credentials `Secret`, etc.). No indexing, no debounce, immediate callbacks.
 
@@ -97,7 +97,7 @@ Every watcher distinguishes the initial bulk load from live changes. Call `WaitF
 - **Not waiting for sync.** Calling `store.List()` before `WaitForSync` returns can miss pre-existing resources.
 - **Field selectors on labels.** `"metadata.labels['app']=x"` is not valid — use `LabelSelector` instead.
 - **Long work in callbacks.** Callbacks run on the watcher's informer goroutine. Hand work off to a channel / goroutine; don't block.
-- **`List()` on a cached store.** Force-fetches every reference. Use `Get()` / `GetSingle()`.
+- **`List()` on a cached store.** Force-fetches every reference. Use `Get()` with the exact composite key instead. (In templates, use `resources.X.GetSingle()` / `resources.X.Fetch()` from the render-context layer.)
 - **Invalid JSONPath.** `indexer.ValidateJSONPath()` is called at watcher construction — invalid expressions fail fast with the field name in the error.
 
 See `pkg/k8s/CLAUDE.md` for the detailed pitfall catalogue, testing patterns (fake clientset, initial-sync assertions), and the walkthrough for adding a new watched resource type.
