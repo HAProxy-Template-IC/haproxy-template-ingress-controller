@@ -76,8 +76,12 @@ The gateway library declares these resources in its `watchedResources`:
 | Resource | API Version | Purpose |
 |----------|-------------|---------|
 | Gateways | gateway.networking.k8s.io/v1 | Gateway definitions (filtered by `gatewayClass.name`) |
+| GatewayClasses | gateway.networking.k8s.io/v1 | GatewayClass definitions (field-selector scoped to owned class) |
 | HTTPRoutes | gateway.networking.k8s.io/v1 | HTTP routing rules |
 | GRPCRoutes | gateway.networking.k8s.io/v1 | gRPC routing rules |
+| TLSRoutes | gateway.networking.k8s.io/v1 | TLS passthrough routing rules |
+| ListenerSets | gateway.networking.k8s.io/v1alpha2 | Additional listeners attached to Gateways (GEP-1713) |
+| Namespaces | v1 | Namespace metadata for listener attachment evaluation |
 | Services | v1 | Service discovery |
 | EndpointSlices | discovery.k8s.io/v1 | Backend endpoints |
 
@@ -85,7 +89,7 @@ TLS Secrets are watched by the SSL library (not gateway), and controller-service
 
 ## Architecture
 
-The `gateway.yaml` library:
+The `gateway/` library:
 
 - Declares `httproutes` and `grpcroutes` as watched resources
 - Implements backend generation for Gateway routes
@@ -107,7 +111,7 @@ This architecture allows the controller to remain resource-agnostic while the ch
 | `parentRefs[].name` | ✅ Supported | Gateway reference |
 | `parentRefs[].namespace` | ⚠️ Partial | Field exists but cross-namespace not tested |
 | `parentRefs[].sectionName` | ⚠️ Partial | Used for listener-level `attachedRoutes` counting in status; routing not listener-specific |
-| `parentRefs[].port` | ❌ Not Implemented | Port override not supported |
+| `parentRefs[].port` | ✅ Supported | Pins the route to Gateway listeners on the named port (attachment selection per spec); a route only attaches to listeners whose port matches |
 
 ### spec.hostnames
 
@@ -337,8 +341,8 @@ spec:
 | `ResponseHeaderModifier` | Extended | ✅ Supported | Add/Set/Remove response headers |
 | `RequestRedirect` | Core | ✅ Supported | HTTP redirects with scheme/hostname/port/path/statusCode |
 | `URLRewrite` | Extended | ✅ Supported | Path and hostname rewriting |
-| `RequestMirror` | Extended | ❌ Not Implemented | Requires external SPOE agent (see [Criteo traffic-mirroring](https://github.com/criteo/traffic-mirroring)) |
-| `ExtensionRef` | Implementation-specific | ❌ Not Implemented | Planned as Gateway API equivalent of Ingress annotations |
+| `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
+| `ExtensionRef` | Implementation-specific | ⚠️ Partial | Only `kind: SSLPassthrough` is honored (flags the HTTPRoute for TLS passthrough); other kinds planned as the Gateway API equivalent of Ingress annotations |
 
 #### RequestHeaderModifier Filter
 
@@ -580,7 +584,7 @@ http-request replace-path "^/api/v1(.*)" "/\1" if <route-conditions>
 | `backendRefs[].namespace` | ⚠️ Partial | Not explicitly handled, likely defaults to route namespace |
 | `backendRefs[].port` | ✅ Supported | Service port number |
 | `backendRefs[].weight` | ✅ Supported | Traffic splitting with weighted distribution |
-| `backendRefs[].filters[]` | ❌ Not Implemented | Per-backend filters not supported |
+| `backendRefs[].filters[]` | ⚠️ Partial | `RequestHeaderModifier` emitted per-backend (rule-scoped via `gw_rule_id`); other filter types not handled at the backendRef level |
 | Multiple backends | ✅ Supported | Weighted traffic splitting using MULTIBACKEND qualifier |
 | Single backend | ✅ Supported | Optimized with BACKEND qualifier (avoids weighted logic) |
 | Omitted weight | ✅ Supported | Defaults to weight 1 |
@@ -716,7 +720,7 @@ spec:
 | `ResponseHeaderModifier` | Extended | ✅ Supported | Same implementation as HTTPRoute |
 | `RequestRedirect` | Core | N/A | HTTPRoute only - not applicable to gRPC |
 | `URLRewrite` | Extended | N/A | HTTPRoute only - not applicable to gRPC |
-| `RequestMirror` | Extended | ❌ Not Implemented | Requires external SPOE agent (see [Criteo traffic-mirroring](https://github.com/criteo/traffic-mirroring)) |
+| `RequestMirror` | Extended | ✅ Supported | Per-route request mirroring via the bundled spoa-hub `mirror` plugin (enable `spoaHub.plugins.mirror`); supports percent/fraction sampling and multiple mirrors per rule |
 | `ExtensionRef` | Implementation-specific | ❌ Not Implemented | Planned as Gateway API equivalent of Ingress annotations |
 
 ### spec.rules[].backendRefs
@@ -779,7 +783,7 @@ Two Gateway-API features cause the gateway library to emit additional Kubernetes
 | `gateway-static-addresses` | A Gateway's `spec.addresses[]` lists at least one valid `IPAddress` entry — `SupportGatewayStaticAddresses` (Extended). | One `LoadBalancer` Service per such Gateway in the controller's namespace, named `gw-<gateway-namespace>-<gateway-name>`, carrying the requested addresses via `metallb.universe.tf/loadBalancerIPs` annotation (and `spec.loadBalancerIP` for non-MetalLB cloud LBs). The Service selects the chart's shared HAProxy pods, so the per-Gateway IP routes to the same data plane the rest of the cluster uses. |
 | `gateway-infrastructure-propagation` | A Gateway sets `spec.infrastructure` (labels and / or annotations) but no `spec.addresses[]` — `SupportGatewayInfrastructurePropagation` (Extended). | One headless `ClusterIP` Service per such Gateway, also named `gw-<gateway-namespace>-<gateway-name>`. The Service has a placeholder `marker` port and an empty selector — its only purpose is to surface the propagated `spec.infrastructure` labels and annotations on a discoverable Kubernetes object. |
 
-Both templates draw their data from the per-Gateway computation that already runs during `haproxy.cfg` rendering (the listener-status block in `frontends-500-gateway-listener-status`). That block stashes the per-Gateway Service spec into the per-render `shared` cache (`shared.Get("gatewayStaticAddressServices")` / `gatewayInfrastructureServices`) keyed by `<namespace>/<name>`; the `k8sResources` templates read the same map back during their post-`haproxyConfig` render pass and emit one Service per entry. Multi-doc YAML (`---`-separated) is used because a single template emits zero, one, or many Services depending on cluster state.
+Both templates draw their data from the per-Gateway computation that already runs during `haproxy.cfg` rendering (the `status-patches-200-gateway` block in `70-status-gateway.yaml`). That block stashes the per-Gateway Service spec into the per-render `shared` cache (`shared.Get("gatewayStaticAddressServices")` / `gatewayInfrastructureServices`) keyed by `<namespace>/<name>`; the `k8sResources` templates read the same map back during their post-`haproxyConfig` render pass and emit one Service per entry. Multi-doc YAML (`---`-separated) is used because a single template emits zero, one, or many Services depending on cluster state.
 
 These templates replace the previous in-template `renderResource()` calls. The semantics on the cluster are unchanged: same Service name, same selector, same ownership story. The wire-up is now declarative — anyone reading the rendered `HAProxyTemplateConfig` sees the templates explicitly under `spec.k8sResources`, and the controller's overlay-store dry-run path can validate them like any other rendered output.
 
@@ -842,11 +846,11 @@ Status patches use outcome-keyed variants:
 
 ### Not Implemented
 
-1. **RequestMirror filter** - Requires external SPOE (Stream Processing Offload Engine) agent running alongside HAProxy. Cannot be implemented with configuration templates alone. Consider using [Criteo traffic-mirroring](https://github.com/criteo/traffic-mirroring) for modular traffic mirroring with HAProxy SPOE support.
+1. **ExtensionRef filter** - General custom-filter extension mechanism not yet implemented (planned as the Gateway API equivalent of Ingress annotations). One narrow internal use exists: an `ExtensionRef` selecting SSL passthrough is honored.
 
-2. **ExtensionRef filter** - Custom filter extension mechanism not yet implemented. This is planned as the Gateway API equivalent of Ingress annotations, enabling custom functionality beyond standard filters.
+2. **Per-backend filters** (`backendRefs[].filters[]`) - Partially implemented: a `RequestHeaderModifier` on a backendRef **is** emitted per-backend (rule-scoped via `gw_rule_id`; see `test-httproute-backend-request-header-modifier`). Other filter types (ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror) apply at the rule level only, not per-backend.
 
-3. **Per-backend filters** (`backendRefs[].filters[]`) - Filters currently apply at the rule level only, not per-backend. This Gateway API feature allows different filter behavior for different backends within the same rule.
+(The `RequestMirror` filter, previously listed here, **is** implemented — per-route mirroring via the bundled spoa-hub `mirror` plugin with percent/fraction sampling and multiple mirrors per rule.)
 
 ### Untested Features
 
@@ -870,7 +874,7 @@ The gateway library includes comprehensive validation tests:
 - HTTPRoute weighted backends (various weight combinations, defaults)
 - HTTPRoute default behaviors (no matches → PathPrefix /)
 - HTTPRoute match precedence and tie-breaking rules
-- HTTPRoute filters (RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite)
+- HTTPRoute filters (RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite, RequestMirror — single/percent/fraction/multiple)
 - Backend deduplication (multiple routes to same service+port)
 - GRPCRoute backend generation with HTTP/2
 - GRPCRoute method-based routing (service and method matching)
@@ -881,9 +885,7 @@ The gateway library includes comprehensive validation tests:
 
 - Cross-namespace references
 - Wildcard hostnames
-- Per-backend filters (`backendRefs[].filters[]`)
-- RequestMirror filter (requires external SPOE agent)
-- ExtensionRef filter (not yet implemented)
+- ExtensionRef filter (general mechanism not yet implemented)
 
 ---
 
@@ -893,7 +895,7 @@ Priority areas for future enhancement:
 
 1. **ExtensionRef support** - Implement custom filter extension mechanism as the Gateway API equivalent of Ingress annotations. This will enable custom functionality beyond standard filters.
 
-2. **Per-backend filters** - Support `backendRefs[].filters[]` to allow different filter behavior for different backends within the same rule.
+2. **Per-backend filters** - Extend `backendRefs[].filters[]` beyond the already-supported `RequestHeaderModifier` to the remaining filter types, for different filter behavior per backend within the same rule.
 
 3. **Request mirroring** - Investigate integration with external SPOE agents (e.g., [Criteo traffic-mirroring](https://github.com/criteo/traffic-mirroring)) for traffic shadowing capabilities.
 

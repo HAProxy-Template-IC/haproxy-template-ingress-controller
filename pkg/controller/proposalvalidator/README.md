@@ -34,7 +34,7 @@ sync := proposalvalidator.New(&proposalvalidator.ComponentConfig{
 overlays := map[string]*stores.StoreOverlay{
     "ingresses": stores.NewStoreOverlayForCreate(newIngressObj),
 }
-result := sync.ValidateSync(ctx, overlays) // *validation.ValidationResult
+pipelineResult, result := sync.ValidateSync(ctx, overlays) // (*pipeline.PipelineResult, *validation.ValidationResult)
 
 // Async mode (subscribes to ProposalValidationRequestedEvent during construction).
 async := proposalvalidator.New(&proposalvalidator.ComponentConfig{
@@ -46,7 +46,7 @@ async := proposalvalidator.New(&proposalvalidator.ComponentConfig{
 go async.Start(ctx)
 ```
 
-`ValidateSync` returns the same `*validation.ValidationResult` the underlying validation service produces:
+`ValidateSync` returns `(*pipeline.PipelineResult, *validation.ValidationResult)`. The `PipelineResult` carries the rendered HAProxy config and auxiliary files (populated only on success); the `*validation.ValidationResult` carries the validation outcome:
 
 ```go
 type ValidationResult struct {

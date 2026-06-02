@@ -94,8 +94,8 @@ A Service (`<fullname>-haproxy`, e.g. `<release>-haptic-haproxy`, `NodePort` by 
 
 | Name | Service port | Container port | nodePort default |
 |------|--------------|----------------|------------------|
-| `http` | 80 | 8080 | 30080 |
-| `https` | 443 | 8443 | 30443 |
+| `http` | 80 | 80 | 30080 |
+| `https` | 443 | 443 | 30443 |
 | `stats` | 8404 | 8404 | 30404 |
 
 The Dataplane API sidecar gets its own internal-only `ClusterIP` Service (`haproxy.dataplane.service`) on port 5555.
@@ -131,8 +131,8 @@ haproxy:
 haproxy:
   enabled: true
   ports:
-    http: 8080       # HAProxy container HTTP bind
-    https: 8443      # HAProxy container HTTPS bind
+    http: 80         # HAProxy container HTTP bind
+    https: 443       # HAProxy container HTTPS bind
     stats: 8404      # Stats/health page
     dataplane: 5555  # Dataplane API
   service:

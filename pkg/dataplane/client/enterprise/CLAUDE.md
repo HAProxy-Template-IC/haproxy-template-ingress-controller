@@ -90,7 +90,7 @@ if err := keepalived.CommitTransaction(ctx, txID); err != nil {
 }
 ```
 
-The HAProxy `client.VersionAdapter` does **not** wrap Keepalived transactions — there is no equivalent retry loop here. Callers own the lifecycle. If you need to extend this, mirror the four entry points (`StartTransaction`, `CommitTransaction`, `DeleteTransaction`, `GetTransaction`) in `keepalived.go`.
+There is **no** automatic retry or lifecycle wrapper around Keepalived transactions — callers own the lifecycle. If you need to extend this, mirror the four entry points (`StartTransaction`, `CommitTransaction`, `DeleteTransaction`, `GetTransaction`) in `keepalived.go`.
 
 ## Error Handling
 

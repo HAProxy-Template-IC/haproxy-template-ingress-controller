@@ -1,6 +1,6 @@
 # pkg/dataplane
 
-Pure library for synchronising HAProxy configurations over the [Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Given a target endpoint and a desired config string (plus optional auxiliary files), the library brings HAProxy into that state using fine-grained operations that avoid reloads whenever possible.
+Pure library for synchronising HAProxy configurations over the [Dataplane API](https://www.haproxy.com/documentation/haproxy-data-plane-api/). Given a target endpoint and a desired config string (plus optional auxiliary files), the library brings HAProxy into that state by pushing the full rendered config, applying runtime-eligible server changes via the runtime API to avoid reloads whenever possible.
 
 Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go doc ./pkg/dataplane`); this README is a short map.
 
@@ -8,10 +8,10 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go do
 
 1. Parse the desired config with [`haproxytech/client-native`](https://github.com/haproxytech/client-native) (syntax).
 2. Optionally run `haproxy -c` on it (semantics) — see `validator.go`.
-3. Fetch the current config from the Dataplane API, compare section-by-section, and emit a minimal list of create/update/delete operations.
-4. Execute the operations inside a Dataplane API transaction, falling back to a raw config push if fine-grained sync hits a non-recoverable error.
+3. Fetch the current config from the Dataplane API and compare section-by-section to classify the changes as runtime-eligible (server field updates) or structural.
+4. Push the full rendered config in one request: a `skip_reload` push carrying `X-Runtime-Actions` when every change is a runtime-eligible server-field update (no reload), otherwise a `force_reload` push.
 5. Sync auxiliary files (maps, SSL certs, general files, crt-lists) in three phases — pre-config, config, post-config — so the main config never references a file that doesn't exist yet.
-6. Retry on `409` version conflicts and surface structured errors (`ValidationError`, `ParseError`, `ConflictError`, etc.).
+6. Retry transient connection errors and surface structured errors (`ValidationError`, `ParseError`, `ConflictError`, etc.).
 
 ## Top-level API
 
@@ -56,14 +56,9 @@ The `DefaultSyncOptions()` constructor returns the recommended baseline. Behavio
 
 ```go
 opts := &dataplane.SyncOptions{
-    MaxRetries:                3,                  // 409-conflict retries (default 3)
     Timeout:                   2 * time.Minute,    // overall sync deadline (default 2m)
-    ContinueOnError:           false,              // first error stops execution (default false)
-    FallbackToRaw:             true,               // fall back to raw push on non-recoverable failure (default true)
     VerifyReload:              true,               // poll reload-status until done (default true)
     ReloadVerificationTimeout: 10 * time.Second,   // upper bound on the reload poll (default 10s)
-    RawPushThreshold:          0,                  // raw push when fine-grained op count exceeds N; 0 = disabled (default). Controller wires this from spec.dataplane.rawPushThreshold (chart default 100).
-    MaxParallel:               0,                  // cap concurrent Dataplane API ops; 0 = unlimited (not recommended for large configs)
 }
 ```
 
@@ -75,7 +70,7 @@ opts := &dataplane.SyncOptions{
 | `CachedCurrentConfig *parser.StructuredConfig` + `CachedConfigVersion int64` | Used together: `GetVersion()` is consulted first, and the expensive `GetRawConfiguration()`+parse round-trip is skipped if the live version on the pod matches `CachedConfigVersion`. |
 | `ContentChecksum string` + `LastDeployedChecksum string` | Used together: when both are set and equal, the orchestrator skips the auxiliary-file comparison entirely (no downloads from HAProxy). Drift-prevention syncs should leave `LastDeployedChecksum` empty to force a real check. |
 
-`DryRunOptions()` returns the preview variant — `MaxRetries: 0`, `FallbackToRaw: false`, `VerifyReload: false` (no reload happens), shorter timeout.
+`DryRunOptions()` returns the preview variant — `VerifyReload: false` (no reload happens) and a shorter timeout (1m).
 
 ### `AuxiliaryFiles`
 
@@ -96,13 +91,13 @@ aux := &dataplane.AuxiliaryFiles{
 | Purpose | Package |
 |---------|---------|
 | Public types and entry points (`Sync`, `DryRun`, `Diff`, `Client`, `Endpoint`, `SyncOptions`, `AuxiliaryFiles`) | `pkg/dataplane` (top level) |
-| Three-phase sync workflow (orchestrator + comparison + execution + raw-push fallback + per-version cache + runtime API) | `orchestrator_*.go` |
+| Three-phase sync workflow (orchestrator + comparison + raw-push apply [runtime / reload] + per-version cache + runtime API) | `orchestrator_*.go` |
 | HAProxy three-phase validation (`haproxy -c` + OpenAPI schema + client-native syntax) | `validate_haproxy.go`, `validate_schema.go`, `validate_syntax.go`, `validator.go` |
 | Version detection (local binary + remote API) and capability matrix for DP API v3.0 / v3.1 / v3.2 / v3.3 | `version.go`, `capabilities.go` |
 | Dataplane API client (dispatcher pattern, transactions, retries) | `client/` (+ `client/enterprise/` for ALOHA / WAF / Bot / UDP / Keepalived / git / dynamic-update / logging / misc) |
 | Config parsing via client-native | `parser/` (+ `parser/enterprise/` for Enterprise sections) |
-| Fine-grained diff engine | `comparator/` + `comparator/sections/` (+ `comparator/sections/executors/` for the per-section dispatch) |
-| Priority-grouped operation executor | `synchronizer/` |
+| Fine-grained diff engine | `comparator/` + `comparator/sections/` (operations are pure descriptors; execution is raw push in `orchestrator_*.go`) |
+| Raw-push execution (structural + runtime paths) | `orchestrator_*.go` (integrated) |
 | Auxiliary file sync (maps, SSL, SSL-CA, general files, crt-list) | `auxiliaryfiles/` |
 | Generated per-model OpenAPI validators | `validators/` |
 
@@ -128,7 +123,7 @@ All public client methods route through a single `Dispatch()` dispatcher so addi
 ```go
 var syncErr *dataplane.SyncError
 if errors.As(err, &syncErr) {
-    // transaction-level failure with a hint and phase context
+    // top-level sync failure with a hint and phase (stage) context
 }
 
 var valErr *dataplane.ValidationError
@@ -136,7 +131,6 @@ var parseErr *dataplane.ParseError
 var connErr *dataplane.ConnectionError
 var conflictErr *dataplane.ConflictError
 var opErr *dataplane.OperationError
-var fallbackErr *dataplane.FallbackError
 ```
 
 For user-facing surfaces (webhook responses, CLI output), call `dataplane.SimplifyValidationError(err)` / `dataplane.SimplifyRenderingError(err)` to turn verbose library errors into a single readable line. Internal logs and metrics should keep the full chain.
@@ -144,12 +138,12 @@ For user-facing surfaces (webhook responses, CLI output), call `dataplane.Simpli
 ## Common Pitfalls
 
 - **Skipping aux-file pre-sync.** If `haproxy.cfg` references `maps/host.map` and the file hasn't been uploaded yet, HAProxy validation fails. `AuxiliaryFiles` plus the orchestrator handle this automatically; bypassing them is almost always a bug.
-- **Leaking transactions.** If you reach into `pkg/dataplane/client` and call `dpClient.CreateTransaction(ctx, version)` yourself, you take on commit/abort responsibility (the Dataplane API has no rollback verb — abort = `DELETE /v3/.../transactions/<id>`). Almost always you want `client.NewVersionAdapter(dpClient, maxRetries).ExecuteTransaction(ctx, fn)` instead — it owns the lifecycle and the 409-retry loop. A leaked transaction blocks future writes until it times out on the Dataplane API side.
-- **Comparing on 409.** Version conflicts (`409`) mean someone else moved the current config forward. The orchestrator re-fetches and retries up to `MaxRetries`; don't layer your own retry loop on top.
+- **Leaking transactions.** The controller does not use transactions in its sync path — all production changes go through `Sync` / `PushRawConfiguration` / `PushRawConfigurationSkipReload`. `CreateTransaction` is retained only for enterprise integration tests; if you call it directly you own commit/abort responsibility (abort = `DELETE /v3/.../transactions/<id>`).
+- **Hand-rolling a retry loop.** The orchestrator re-resolves the config version on each sync and retries transient connection errors via `client.WithRetry` (3 attempts); don't layer your own retry loop on top.
 - **Pushing aux-file deletes before config.** Phase 3 must run *after* the main config is applied so we're not deleting files the live config still references.
 - **Using `List()` patterns at the dataplane layer.** This package operates on parsed config structures, not on Kubernetes stores — the `.List()` / `.Fetch()` semantics from `pkg/k8s` are irrelevant here.
 
-`pkg/dataplane/CLAUDE.md` has the longer catalogue (transaction retry, parser error wrapping, per-section comparator examples) plus the multi-version dispatch pattern and the three-phase sync rationale.
+`pkg/dataplane/CLAUDE.md` has the longer catalogue (retry logic, parser error wrapping, per-section comparator examples) plus the multi-version dispatch pattern and the three-phase sync rationale.
 
 ## Zero-Reload Rules of Thumb
 
@@ -160,7 +154,7 @@ A small set of server-level changes can apply through the runtime API without re
 - Frontend `Maxconn`
 - Map file content, ACL file content, SSL certificate content (via storage API)
 
-Everything else — creating or deleting a server, changing `check` / `inter` / `ssl` settings, touching bind addresses, frontend/backend structure, rules, filters — triggers a reload. The comparator detects this and the synchronizer picks the cheapest path. To maximise zero-reload updates, templates should keep individual `server` lines to `address:port [enabled|disabled]` and push all other options into `default-server`.
+Everything else — creating or deleting a server, changing `check` / `inter` / `ssl` settings, touching bind addresses, frontend/backend structure, rules, filters — triggers a reload. The comparator detects this and the orchestrator picks the cheapest path. To maximise zero-reload updates, templates should keep individual `server` lines to `address:port [enabled|disabled]` and push all other options into `default-server`.
 
 ## Testing
 

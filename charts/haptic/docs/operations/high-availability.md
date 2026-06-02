@@ -99,3 +99,5 @@ autoscaling:
   maxReplicas: 10
   targetCPUUtilizationPercentage: 80
 ```
+
+Because the controller is leader-elected, autoscaling the controller deployment adds webhook-serving and warm-cache capacity (and faster failover) — **not** render/validate/deploy throughput. The reconciliation pipeline always runs on the single elected leader regardless of replica count, so CPU-based scaling driven by the leader's reconcile load adds standbys rather than parallel workers. To scale HAProxy data-plane throughput, scale HAProxy instead (`haproxy.keda` autoscaling or more HAProxy replicas).

@@ -419,7 +419,8 @@ Archived changes become your project's decision history—you can always find th
 
 **DO:**
 ```bash
-openspec archive "<name>"
+mkdir -p openspec/changes/archive
+mv openspec/changes/<name> openspec/changes/archive/$(date +%Y-%m-%d)-<name>
 ```
 
 **SHOW:**

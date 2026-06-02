@@ -104,8 +104,8 @@ non-letter/digit characters mapped to `_`.
 | `apiVersion`           | `ApiVersion`       |
 | `tls`                  | `Tls`              |
 | `ingressClassName`     | `IngressClassName` |
-| `clusterIP`            | `ClusterIp`        |
-| `loadBalancerIP`       | `LoadBalancerIp`   |
+| `clusterIP`            | `ClusterIP`        |
+| `loadBalancerIP`       | `LoadBalancerIP`   |
 | `kubernetes.io/foo`    | `Kubernetes_io_foo` |
 
 No acronym dictionary is deliberate. K8s API conventions name things

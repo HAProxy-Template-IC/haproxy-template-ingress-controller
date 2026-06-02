@@ -10,7 +10,7 @@ Two recurring string identifiers that several packages reference. Keeping them i
 
 | Name | Value | Use for |
 |------|-------|---------|
-| `MainTemplateName` | `"haproxy.cfg"` | The primary HAProxy configuration template's key in `cfg.HAProxyConfig` and the rendered-output key on `*PipelineResult` |
+| `MainTemplateName` | `"haproxy.cfg"` | The template-engine key for the primary HAProxy configuration — used when registering `cfg.HAProxyConfig.Template` in the engine's template map and when calling `engine.Render` |
 | `HAProxyPodsResourceType` | `"haproxy-pods"` | The auto-injected pod watcher's resource-type key — appears in store maps, event filters, and the `controller.haproxy_pods` template context |
 
 If you find yourself string-typing either of these somewhere, replace it with the constant from this package.

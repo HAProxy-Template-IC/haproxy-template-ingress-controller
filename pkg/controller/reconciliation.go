@@ -161,8 +161,7 @@ func createReconciliationComponents(
 	//     passed strict validation (admission webhook or HTTP-store), and
 	//     the dataplane API server-side runs its own `haproxy -c` before
 	//     accepting a `/raw` push. Skipping shaves ~94 ms per render off
-	//     the rolling-restart reaction path — see
-	//     project_haptic_rolling_restart_root_cause.md.
+	//     the rolling-restart reaction path.
 	strictPipeline, fastPipeline := buildValidationPipelines(cfg, localVersion, renderService, logger)
 
 	// Create StoreProvider from storeManager for the Coordinator

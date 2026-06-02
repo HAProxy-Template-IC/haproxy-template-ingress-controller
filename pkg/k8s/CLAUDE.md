@@ -3,7 +3,7 @@
 Development context for Kubernetes resource watching and indexing.
 
 **API Documentation**: See `pkg/k8s/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Kubernetes Integration section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (design documentation index)
 
 ## When to Work Here
 
@@ -126,7 +126,7 @@ type Store interface {
 type WatcherConfig struct {
     GVR           schema.GroupVersionResource
     Namespace     string
-    LabelSelector string
+    LabelSelector *metav1.LabelSelector
     IndexBy       []string
     StoreType     StoreType
     Callbacks     ...
@@ -145,11 +145,11 @@ Wraps client-go for simplified usage:
 
 ```go
 // Auto-detects in-cluster vs out-of-cluster
-client, err := client.New()
+client, err := client.New(client.Config{})
 
 // Provides both typed and dynamic clients
 typedClient := client.Clientset()
-dynamicClient := client.Dynamic()
+dynamicClient := client.DynamicClient()
 ```
 
 **Common tasks:**
@@ -158,15 +158,14 @@ Adding custom client configuration:
 
 ```go
 // client/client.go
+// Config has two fields only; QPS/burst are hardcoded inside New.
 type Config struct {
-    QPS       float32
-    Burst     int
-    UserAgent string
+    Kubeconfig string // empty = in-cluster
+    Namespace  string // empty = auto-detect from SA token
 }
 
-func NewWithConfig(cfg Config) (*Client, error) {
-    // Custom configuration
-}
+// New is the only constructor; NewWithConfig does not exist.
+func New(cfg Config) (*Client, error) { ... }
 ```
 
 ### indexer/ - JSONPath and Field Filtering
@@ -174,18 +173,24 @@ func NewWithConfig(cfg Config) (*Client, error) {
 Extracts index keys and filters unnecessary fields:
 
 ```go
-// Extract index keys from resource
-keys, err := indexer.ExtractKeys(resource, []string{
-    "metadata.namespace",
-    "metadata.labels['app']",
+// Create an indexer (validates expressions at construction time)
+idx, err := indexer.New(indexer.Config{
+    IndexBy: []string{
+        "metadata.namespace",
+        "metadata.labels['app']",
+    },
+    IgnoreFields: []string{
+        "metadata.managedFields",
+        "metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']",
+    },
 })
+
+// Extract index keys — method on *Indexer, resource arg only
+keys, err := idx.ExtractKeys(resource)
 // Result: ["default", "myapp"]
 
-// Remove unnecessary fields
-filtered := indexer.FilterFields(resource, []string{
-    "metadata.managedFields",
-    "metadata.annotations['kubectl.kubernetes.io/last-applied-configuration']",
-})
+// Remove unnecessary fields — mutates in place, returns error
+err = idx.FilterFields(resource)
 ```
 
 **JSONPath Validation:**
@@ -686,7 +691,7 @@ log.Info("store contents", "count", len(resources))
 
 // Verify indexing
 for _, res := range resources {
-    keys, _ := indexer.ExtractKeys(res, config.IndexBy)
+    keys, _ := idx.ExtractKeys(res)
     log.Info("resource indexed", "keys", keys)
 }
 ```

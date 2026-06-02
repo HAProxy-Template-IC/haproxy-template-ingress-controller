@@ -325,12 +325,13 @@ controller:
         # app.kubernetes.io/name and app.kubernetes.io/instance are set dynamically by template
     controller:
       # Health check and metrics ports — display-only.
-      # The chart strips these before serialising the CRD; the controller
-      # reads the actual ports from the HEALTHZ_PORT and METRICS_PORT env
-      # vars (defaults 8080 / 9090; set 0 to disable). To change them,
-      # set the env var via controller.extraEnv and update
-      # controller.ports.{healthz,metrics} so the container port and
-      # Service still line up.
+      # The chart strips these before serialising the CRD. The actual
+      # health/debug port comes from controller.debugPort (DEBUG_PORT env,
+      # default 8080); the actual metrics port comes from the METRICS_PORT
+      # env var (default 9090, settable via the top-level extraEnv). Set
+      # controller.debugPort or METRICS_PORT to 0 to disable. Keep
+      # controller.debugPort / controller.ports.{healthz,metrics} aligned so
+      # the container port and Service still line up.
       healthzPort: 8080
       metricsPort: 9090
       # Leader election for high availability
@@ -393,7 +394,7 @@ controller:
       generalStorageDir: /etc/haproxy/general
       configFile: /etc/haproxy/haproxy.cfg
       # Optional sync knobs (uncomment to override):
-      # configPublishInterval: 30s     # observability CRD republish throttle
+      # configPublishInterval: 10s     # observability CRD republish throttle
       # reloadVerificationTimeout: 10s # wait for HAProxy reload to complete
       # syncTimeout: 2m                # per-endpoint sync budget
     # Frontend path-matching order. "default" = Exact>Regex>Prefix-exact>
@@ -488,7 +489,7 @@ controller:
         indexBy: ["metadata.namespace", "metadata.name"]
         #
         # Add custom or override library-defined entries. Per-resource
-        # debounceInterval is supported (default 100ms). See
+        # debounceInterval is supported (default 2s). See
         # docs/configuration/watched-resources.md.
     # Override or extend the library-provided templateSnippets / maps /
     # files / haproxyConfig / validationTests sections by defining the
@@ -592,7 +593,7 @@ ingressClass:
 # Creates a GatewayClass resource for Gateway API
 # Only created when gateway library is enabled and Gateway API CRDs are installed
 # Prerequisites: Gateway API CRDs must be installed first:
-#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+#   kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
 gatewayClass:
   # Enable GatewayClass creation
   enabled: true
@@ -887,8 +888,7 @@ haproxy:
   enabled: true
   # HAProxy container ports. http/https default to the literal Gateway
   # listener-port numbers (80/443) so Gateway listeners on those ports
-  # never collide with the chart-static internal binds. Rationale +
-  # plumbing detail: docs/development/haproxy-ports.md.
+  # never collide with the chart-static internal binds.
   ports:
     http: 80 # HTTP frontend
     https: 443 # HTTPS frontend
@@ -1090,9 +1090,15 @@ haproxy:
     # Termination grace period in seconds
     terminationGracePeriodSeconds: 30
     # Pod security context for HAProxy deployment
-    # Complies with Pod Security Standards (PSS) Restricted profile
-    # NO NET_BIND_SERVICE capability required - HAProxy binds to unprivileged ports (8080, 8443, 8404)
-    # Kubernetes Service handles mapping to privileged ports (80, 443)
+    # Complies with Pod Security Standards (PSS) Restricted profile.
+    # HAProxy binds the literal 80/443 (+8404 stats) — see haproxy.ports.
+    # Enterprise images add CAP_NET_BIND_SERVICE (their binaries carry file
+    # capabilities requiring it; see templates/haproxy-deployment.yaml).
+    # Community images drop ALL capabilities and run non-root, so binding the
+    # privileged 80/443 ports relies on the node permitting non-root binds to
+    # low ports (net.ipv4.ip_unprivileged_port_start <= 80, as in kind and
+    # Docker's default). A cluster keeping the kernel default (1024) would need
+    # CAP_NET_BIND_SERVICE added for community HAProxy or the sysctl lowered.
     #
     # UIDs are auto-derived based on enterprise.enabled:
     #   Community: runAsUser=99, runAsGroup=99, fsGroup=99 (haproxy user)

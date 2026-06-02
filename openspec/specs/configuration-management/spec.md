@@ -29,7 +29,7 @@ THEN the controller SHALL fail to start with an error indicating the missing Sec
 
 ### Requirement: Environment Variables
 
-The controller SHALL support configuration via environment variables: CRD_NAME (name of the HAProxyTemplateConfig resource), SECRET_NAME (name of the credentials Secret), WEBHOOK_CERT_SECRET_NAME (TLS certificate Secret for the validating webhook), LOG_LEVEL (logging verbosity), and LOG_FORMAT (log output format).
+The controller SHALL support configuration via environment variables: CRD_NAME (name of the HAProxyTemplateConfig resource), SECRET_NAME (name of the credentials Secret), WEBHOOK_CERT_SECRET_NAME (TLS certificate Secret for the validating webhook), and LOG_LEVEL (logging verbosity).
 
 #### Scenario: CRD_NAME selects the configuration resource
 
@@ -47,8 +47,8 @@ CLI flags SHALL take precedence over environment variables, which SHALL take pre
 
 #### Scenario: CLI flag overrides environment variable
 
-WHEN LOG_LEVEL environment variable is set to "INFO" and the `--log-level=DEBUG` CLI flag is provided
-THEN the effective log level SHALL be DEBUG.
+WHEN LOG_LEVEL environment variable is set to "INFO"
+THEN the effective log level SHALL be INFO (there is no `--log-level` CLI flag; log level is controlled exclusively via the LOG_LEVEL environment variable).
 
 #### Scenario: Environment variable overrides default
 
@@ -57,22 +57,22 @@ THEN the effective log level SHALL be WARN.
 
 ### Requirement: WatchedResources Configuration
 
-The CRD SHALL define WatchedResources as an array, where each entry specifies: apiVersion (e.g., "networking.k8s.io/v1"), resources (e.g., ["ingresses"]), indexBy (JSONPath expressions for store keys), storeType ("memory" or "cached"), and ignoreFields (fields to strip before storage).
+The CRD SHALL define WatchedResources as a map keyed by a name (e.g., "ingresses", "services"), where each entry specifies: apiVersion (e.g., "networking.k8s.io/v1"), resources (e.g., "ingresses" — a singular string, the plural resource name), indexBy (JSONPath expressions for store keys), store ("full" or "on-demand"), and debounceInterval (per-watcher debounce window override).
 
 #### Scenario: WatchedResources with memory store
 
-WHEN a WatchedResources entry specifies storeType "memory"
+WHEN a WatchedResources entry specifies store "full"
 THEN the controller SHALL store those resources in a full in-memory store.
 
 #### Scenario: WatchedResources with cached store
 
-WHEN a WatchedResources entry specifies storeType "cached" with TTL and maxSize
-THEN the controller SHALL store those resources in a cached store that evicts entries based on TTL and size limits.
+WHEN a WatchedResources entry specifies store "on-demand"
+THEN the controller SHALL store those resources in a cached store that fetches resources on demand with caching (slower, lower memory usage).
 
-#### Scenario: Default storeType is memory
+#### Scenario: Default store is full
 
-WHEN a WatchedResources entry does not specify storeType
-THEN the controller SHALL default to "memory".
+WHEN a WatchedResources entry does not specify store
+THEN the controller SHALL default to "full".
 
 ### Requirement: HAProxyConfig Main Template
 

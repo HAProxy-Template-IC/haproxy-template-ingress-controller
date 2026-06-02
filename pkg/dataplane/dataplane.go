@@ -18,9 +18,15 @@
 // The library handles all complexity internally:
 //   - Fetches current configuration from the Dataplane API
 //   - Parses both current and desired configurations
-//   - Generates fine-grained operations to transform current → desired
-//   - Executes operations with automatic retry on version conflicts (409 errors)
-//   - Falls back to raw config push on non-recoverable errors
+//   - Computes a fine-grained ConfigDiff to classify changes as runtime-eligible
+//     server-field updates (weight, address, port, maintenance, agent checks) vs.
+//     structural changes
+//   - Applies the desired configuration by pushing it in full in a single request
+//     (no per-operation transactions): a skip-reload raw push carrying an
+//     X-Runtime-Actions header when every change is runtime-eligible, otherwise a
+//     force-reload raw push
+//   - Retries transient connection failures (the master socket is briefly down
+//     while HAProxy re-execs on reload)
 //   - Returns detailed results including applied changes and reload information
 //
 // # Basic Usage (Recommended)
@@ -82,10 +88,9 @@
 //	defer client.Close()
 //
 //	opts := &dataplane.SyncOptions{
-//	    MaxRetries:      5,                 // Retry 409 conflicts up to 5 times
-//	    Timeout:         3 * time.Minute,   // Overall timeout
-//	    ContinueOnError: false,             // Stop on first error
-//	    FallbackToRaw:   true,              // Fall back to raw push on errors
+//	    Timeout:                   3 * time.Minute, // Overall timeout
+//	    VerifyReload:              true,            // Poll reload status after sync
+//	    ReloadVerificationTimeout: 10 * time.Second,
 //	}
 //
 //	result, err := client.Sync(ctx, desiredConfig, nil, opts)
@@ -250,9 +255,13 @@ func (c *Client) Close() error {
 // This method:
 //  1. Fetches the current configuration from the Dataplane API
 //  2. Parses both current and desired configurations
-//  3. Compares them to generate fine-grained operations
-//  4. Executes operations with automatic retry on 409 version conflicts
-//  5. Falls back to raw config push on non-recoverable errors (if enabled)
+//  3. Compares them to compute a fine-grained ConfigDiff, classifying changes
+//     as runtime-eligible server-field updates vs. structural changes
+//  4. Applies the desired configuration with a single full-config push (no
+//     per-operation transactions): a skip-reload raw push carrying
+//     X-Runtime-Actions when every change is runtime-eligible, otherwise a
+//     force-reload raw push
+//  5. Retries transient connection failures across HAProxy's reload re-exec
 //  6. Returns detailed results including applied changes and reload information
 //
 // Parameters:

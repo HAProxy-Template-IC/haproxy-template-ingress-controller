@@ -3,7 +3,7 @@
 Development context for the template engine library.
 
 **API Documentation**: See `pkg/templating/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Template Engine section)
+**Architecture**: See `/docs/controller/docs/development/design/design-decisions.md` (template engine selection)
 
 ## Engine
 
@@ -98,7 +98,7 @@ pkg/templating/
 ├── engine_scriggo.go           # Scriggo engine core: constructors, Render, RenderWithProfiling
 ├── engine_scriggo_fs.go        # Virtual filesystem for template compilation
 ├── engine_scriggo_tracing.go   # Tracing + filter-debug enable/disable plumbing
-├── globals.go                  # buildScriggoGlobals — runtime-variable nil-pointer typedefs
+├── globals.go                  # FailFunction — the fail() template function that aborts rendering with an error message
 ├── func_types.go               # FilterFunc / GlobalFunc signatures
 ├── types.go                    # Type definitions (EngineType, PathResolver, ResourceStore, etc.)
 ├── errors.go                   # *CompilationError / *RenderError / *TemplateNotFoundError / *RenderTimeoutError
@@ -106,13 +106,13 @@ pkg/templating/
 ├── filter_names.go             # Constants for every filter name (one source of truth)
 ├── filters.go                  # Filter registration entry point
 ├── filters_scriggo.go          # Scriggo-specific filter wiring + custom-filter dispatch
-├── filters_collection.go       # group_by / sort_by / glob_match
+├── filters_collection.go       # sort_by / glob_match / shard_slice / first_seen / append_any
 ├── filters_navigation.go       # dig / fallback / coalesce / merge / keys
-├── filters_string.go           # toLower / replace / split / join / trim / hasPrefix / hasSuffix
+├── filters_string.go           # toLower / replace / split / trim / hasPrefix / hasSuffix / strip / b64decode / debug / indent
 ├── filters_type.go             # tostring / toint / tofloat / toSlice
-├── filters_status.go           # Status-patch helpers for ingress/Gateway status updates
+├── filters_status.go           # Generic resource status-patch helpers (statusPatch, condition, transitionTime functions)
 ├── filters_version.go          # semver_gte and friends
-├── filters_guid.go             # first_seen + correlation-ID helpers
+├── filters_guid.go             # GUID generation helpers (make_guid)
 ├── postprocessor.go            # Post-processor pipeline runner
 ├── postprocessor_indent.go     # Indent post-processor
 ├── postprocessor_regex.go      # regex_replace post-processor
@@ -122,6 +122,7 @@ pkg/templating/
 ├── sorting.go                  # Comparator construction for sort_by
 ├── sorting_helpers.go          # Sort-modifier parsing (:desc / :exists / | length)
 ├── status_patch.go             # Apply* helpers consumed by filters_status.go
+├── rendered_resource.go        # RenderedResourceCollector — accumulates k8sResources rendered by the renderer
 └── *_test.go                   # Unit tests + benchmark_pool_test.go / benchmark_test.go
 ```
 
@@ -502,7 +503,7 @@ if err != nil {
 log.Error("compilation failed", "template", templateContent)
 ```
 
-**Solution**: CompilationError already includes snippet (first 50 chars).
+**Solution**: CompilationError already includes snippet (first 200 chars).
 
 ```go
 // Good - error contains context snippet
@@ -1423,4 +1424,4 @@ Engines must:
 - Scriggo fork: `gitlab.com/haproxy-haptic/scriggo` (fork with `{% include %}` statement)
 - Scriggo upstream documentation: <https://scriggo.com/templates>
 - Jinja2 template documentation: <https://jinja.palletsprojects.com/>
-- HAProxy template examples: `/examples/templates/`
+- HAProxy template examples: `/examples/`

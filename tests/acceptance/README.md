@@ -21,10 +21,10 @@ Framework-bits files (`env.go`, `fixtures.go`, `debug_client.go`, `constants.go`
 
 Built on [`kubernetes-sigs/e2e-framework`](https://github.com/kubernetes-sigs/e2e-framework):
 
-- `env.go` — `Setup(t)` returns a ready `env.Environment` with a Kind cluster, the controller image pre-loaded, and CRDs installed.
+- `env.go` — shared test helpers (`GetControllerPod`, `SetupDebugClient`, `SetupMetricsAccess`, `WaitForControllerReadyWithMetrics`, and constants). The `env.Environment` is created in `TestMain` (`main_test.go`), not here.
 - `fixtures.go` — factories for `HAProxyTemplateConfig`, `Secret`, Deployment, and the ClusterIP Services used by the API-proxy access pattern below.
 - `debug_client.go` — typed wrapper around the controller's `/debug/vars/*` endpoints with wait helpers (`WaitForConfigVersion`, `WaitForControllerReadyWithMetrics`, `GetPipelineStatus`, …).
-- `main_test.go` — sigtrap cleanup so the cluster tears down even on `Ctrl-C`.
+- `main_test.go` — `TestMain` entry point: creates the `env.NewParallel()` environment, provisions the Kind cluster (or reuses a CI-pre-created one), loads the controller image, installs CRDs, and registers teardown.
 
 ### API-server Proxy, Not Port-forward
 

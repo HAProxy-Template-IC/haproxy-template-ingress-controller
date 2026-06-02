@@ -38,12 +38,11 @@ func compareIndexedItems[T any](
 	// implements Delete(idx) by shifting every later element down one slot
 	// (see haproxytech/client-native config-parser/parsers/http/http-request_generated.go's
 	// `(*Requests).Delete`: it `copy(p.data[index:], p.data[index+1:])` then
-	// truncates). When the synchronizer applies a batch of deletes
-	// sequentially under a single parent (which it must, after the per-parent
-	// serialisation fix in pkg/dataplane/synchronizer), ascending-order
-	// deletes cascade: Delete(N) shifts what used to be at N+1 down to N,
-	// so the subsequent Delete(N+1) removes a different rule than the
-	// comparator intended, and eventually we run off the end of the slice.
+	// truncates). If a delete batch is applied sequentially under a single
+	// parent, ascending-order deletes cascade: Delete(N) shifts what used to
+	// be at N+1 down to N, so the subsequent Delete(N+1) removes a different
+	// rule than the comparator intended, and eventually we run off the end of
+	// the slice.
 	//
 	// Descending order avoids the shift entirely: Delete(highest) only
 	// shifts indices that we no longer care about (we're about to delete
@@ -51,14 +50,12 @@ func compareIndexedItems[T any](
 	// the descending sequence). Updates and creates don't shift the list
 	// length, so their order is unchanged.
 	//
-	// Before my per-parent-serialisation change, the same bug was latent —
-	// parallel deletes were serialised by the dataplane's per-transaction
-	// lock in arrival order, which is non-deterministic across goroutines.
-	// The test suite happened to land on a working order often enough that
-	// the failure looked like a flake. Per-parent serialisation made the
-	// order deterministically ascending, so the failure became
-	// deterministic too. Emitting deletes descending makes the operation
-	// stream correct under any execution model.
+	// Emitting deletes descending keeps the operation stream correct under
+	// any execution model. The current production apply replaces the whole
+	// config in one raw push (structural changes never reach the API as
+	// individual Delete(idx) calls), so this ordering is belt-and-suspenders
+	// today — but it keeps the comparator correct for any consumer that does
+	// apply operations in order.
 	var ops []Operation
 	var deletes []Operation
 	maxLen := max(len(desired), len(current))

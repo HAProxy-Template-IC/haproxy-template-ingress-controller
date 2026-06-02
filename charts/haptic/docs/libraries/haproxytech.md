@@ -1183,7 +1183,7 @@ server SRV_1 10.0.1.5:8080 enabled
 
 **Status**: ❌ Not Implemented
 
-**Description**: Intended to override the number of pre-allocated server slots, but the annotation is currently a silent no-op. The library reads it in `backend-directives-900-haproxytech-advanced`, validates it (must be a positive integer), and writes the value to `serverOpts["serverSlotsValue"]`. However, `backends-500-ingress` calls `BackendServers(svcName, 0, port, nil, nil, backendKey, ns)` with `nil` instead of `serverOpts`, so the macro never consults the value and falls back to the default 10 slots.
+**Description**: Intended to override the number of pre-allocated server slots, but the annotation is currently a silent no-op. The library reads it in `backend-directives-900-haproxytech-advanced`, validates it (must be a positive integer), and writes the value to `serverOpts["serverSlotsValue"]`. However, `backends-500-ingress` calls `BackendServers(svcName, 0, port, nil, portName, backendKey, ns)` with `nil` instead of `serverOpts` for the 4th argument, so the macro never consults the value and falls back to the default 10 slots.
 
 **Default**: `10` slots (always — overrides via this annotation are dropped today).
 

@@ -139,22 +139,6 @@ func TestOperationError(t *testing.T) {
 	assert.Equal(t, cause, unwrapped)
 }
 
-func TestFallbackError(t *testing.T) {
-	originalErr := errors.New("fine-grained sync failed")
-	fallbackCause := errors.New("raw config push also failed")
-	fallbackErr := &FallbackError{
-		OriginalError: originalErr,
-		FallbackCause: fallbackCause,
-	}
-
-	errMsg := fallbackErr.Error()
-	assert.Contains(t, errMsg, "fine-grained sync failed")
-	assert.Contains(t, errMsg, "fallback to raw config also failed")
-
-	unwrapped := fallbackErr.Unwrap()
-	assert.Equal(t, fallbackCause, unwrapped)
-}
-
 func TestNewConnectionError(t *testing.T) {
 	cause := errors.New("connection refused")
 	syncErr := NewConnectionError("http://haproxy:5555", cause)
@@ -258,23 +242,6 @@ func TestNewOperationError(t *testing.T) {
 	assert.Equal(t, "create", opErr.OperationType)
 	assert.Equal(t, "server", opErr.Section)
 	assert.Equal(t, "web1", opErr.Resource)
-}
-
-func TestNewFallbackError(t *testing.T) {
-	originalErr := errors.New("fine-grained failed")
-	fallbackCause := errors.New("raw also failed")
-	syncErr := NewFallbackError(originalErr, fallbackCause)
-
-	require.NotNil(t, syncErr)
-	assert.Equal(t, "fallback", syncErr.Stage)
-	assert.Contains(t, syncErr.Message, "fine-grained sync")
-	assert.Contains(t, syncErr.Message, "fallback failed")
-	require.NotEmpty(t, syncErr.Hints)
-
-	fallbackErr, ok := errors.AsType[*FallbackError](syncErr)
-	require.True(t, ok)
-	assert.Equal(t, originalErr, fallbackErr.OriginalError)
-	assert.Equal(t, fallbackCause, fallbackErr.FallbackCause)
 }
 
 func TestSimplifyValidationError(t *testing.T) {

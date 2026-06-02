@@ -51,6 +51,7 @@ Events are organized into separate files by category:
 | `correlation.go` | Correlation ID helpers for tracing events |
 | `timestamped.go` | Embedded `timestamped` mixin used by all events |
 | `internal_copy.go` | Internal helpers for defensive slice/map copying |
+| `runtime_fast_path.go` | Runtime fast-path result events |
 
 ## Event Categories
 

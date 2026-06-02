@@ -102,7 +102,7 @@ Scriggo needs to know the *type* of each runtime variable at compile time even t
 | `fileRegistry` | `*FileRegistrar` | Templates can register dynamically generated auxiliary files via this |
 | `templateSnippets` | `*[]string` | Names of available snippets; useful with `render_glob` |
 | `shared` | `*SharedContext` | Per-render cache; `shared.ComputeIfAbsent(key, fn)` memoises expensive work |
-| `dataplane` | `*map[string]any` | The CRD's `spec.dataplane` block — port, max-parallel, timeouts, paths |
+| `dataplane` | `*map[string]any` | The CRD's `spec.dataplane` block — port, timeouts, paths |
 | `capabilities` | `*map[string]any` | HAProxy feature flags derived from the local HAProxy version |
 | `http` | `*HTTPFetcher` | `http.Fetch(url, opts)` for HTTP resources |
 | `runtimeEnvironment` | `*RuntimeEnvironment` | Runtime info (`GOMAXPROCS`, etc.) |

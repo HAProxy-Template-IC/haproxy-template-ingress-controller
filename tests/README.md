@@ -7,12 +7,17 @@ Everything that isn't a unit test. Unit tests live beside their code under `pkg/
 ```
 tests/
 ├── architecture_test.go   # arch-go validation (runs on every `go test ./tests`)
+├── defaults_consistency_test.go  # cross-package constant-parity checks
 ├── kindutil/              # Kind cluster helpers shared by integration & acceptance
 ├── testutil/              # Generic helpers (fixtures, assertions) shared across suites
+├── schemas/               # Kubernetes OpenAPI schema files used by e2e tests
 ├── integration/           # Integration tests (fixenv + Kind, //go:build integration)
 │   └── CLAUDE.md / README.md
-└── acceptance/            # End-to-end tests (e2e-framework + Kind)
-    └── CLAUDE.md / README.md
+├── acceptance/            # Controller-only acceptance tests (e2e-framework + Kind)
+│   └── CLAUDE.md / README.md
+├── e2e/                   # Full-stack e2e tests (helm + HAProxy, //go:build e2e)
+│   └── CLAUDE.md
+└── conformance/           # Gateway API upstream conformance suite (//go:build gateway_conformance)
 ```
 
 ## Running
@@ -25,10 +30,11 @@ From the root of the repo:
 | `make test-integration` | Integration suite (creates/uses a persistent Kind cluster) | ~2min cold, ~30s warm |
 | `make test-acceptance` | Acceptance suite (builds controller image, creates Kind cluster, runs tests sequentially) | 3–5min |
 | `make test-acceptance-parallel` | Same as above but shares one cluster across test cases | ~half the above |
+| `make test-e2e` | Full-stack e2e suite (self-contained — kind + helm install + fixtures + real HTTP routing) | ~5–10min |
 | `make test-coverage` / `test-integration-coverage` / `test-coverage-combined` | Same suites with coverage output | as above + small overhead |
 | `make check-all` | `make lint` + `make audit` + `make test` (the CI baseline) | under a minute |
 
-There is no `test-all` target — run the three top-level ones in sequence if you need them all.
+There is no `test-all` target — run the four top-level ones in sequence if you need them all.
 
 Environment knobs used by the integration suite:
 

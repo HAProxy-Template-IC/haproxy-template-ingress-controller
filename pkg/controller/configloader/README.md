@@ -48,7 +48,7 @@ type ConfigParsedEvent struct {
     Config         any    // *config.Config — internal struct (any to avoid circular deps)
     TemplateConfig any    // typed CRD (metadata + spec) — used by ConfigPublisher for k8s metadata
     Version        string // CRD resourceVersion
-    SecretVersion  string // empty here; populated later by ConfigChangeHandler when correlating with credentials
+    SecretVersion  string // always empty; ConfigChangeHandler passes it through unchanged
 }
 ```
 

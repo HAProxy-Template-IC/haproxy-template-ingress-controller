@@ -81,8 +81,9 @@ func (s *DiffSummary) TotalOperations() int {
 // This excludes server UPDATE operations which are runtime-eligible and can be
 // applied without reload via the HAProxy Runtime API.
 //
-// Use this for threshold decisions (e.g., when to fall back to raw config push)
-// since runtime-eligible operations should not trigger reloads.
+// Use this to choose the apply strategy: zero structural operations means the
+// diff can be applied with a skip-reload runtime push, since runtime-eligible
+// operations should not trigger reloads.
 func (s *DiffSummary) StructuralOperations() int {
 	// Count server modifications (runtime-eligible, no reload needed)
 	serverModifications := 0

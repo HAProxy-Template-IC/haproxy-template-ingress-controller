@@ -6,7 +6,7 @@ This page covers the security-relevant knobs the controller actually exposes. An
 
 ### RBAC
 
-The Helm chart provisions a `ServiceAccount` and `ClusterRole` (names derive from the Helm release fullname). The ClusterRole grants:
+The Helm chart provisions a `ServiceAccount`, a `ClusterRole`, and a namespace-scoped `Role` (names derive from the Helm release fullname). The ClusterRole grants:
 
 | Resource | Verbs | Why |
 |----------|-------|-----|
@@ -14,14 +14,27 @@ The Helm chart provisions a `ServiceAccount` and `ClusterRole` (names derive fro
 | `<each watched resource>` | get, list, watch | Generated per `watchedResources` entry — Ingress, Service, EndpointSlice, Secret, etc. depending on the enabled libraries |
 | `<watched resource>/status` | patch | Generated for watched resources with `statusPatch: true` (e.g. Ingress LoadBalancer status, Gateway / HTTPRoute conditions) |
 | `leases` (coordination.k8s.io) | get, create, update | Leader election |
+| `customresourcedefinitions` (apiextensions.k8s.io) | get, list, watch | Fetch watched-resource OpenAPI schemas from their CRDs so typed template access stays full-fidelity (degrades to the public OpenAPI endpoint otherwise) |
 | `haproxytemplateconfigs.haproxy-haptic.org` | get, list, watch | Primary config CRD |
 | `haproxytemplateconfigs/status` | update, patch | Report validation status back onto the CRD |
 | `haproxycfgs`, `haproxygeneralfiles`, `haproxycrtlistfiles`, `haproxymapfiles` (.haproxy-haptic.org) | get, list, watch, create, update, patch, delete | Publish rendered config + auxiliary files as observable CRDs (full CRUD because the controller owns these resources and prunes stale entries) |
 | `<above CRDs>/status` | update, patch | Report deployment status on the published artifacts |
+| `services` | get, list, watch, create, update, patch, delete | **Gateway library only** — cluster-wide Service writes for Gateway-API templates that emit owned Services into a Gateway's own namespace (e.g. the per-Gateway infrastructure-propagation marker Service) |
 
 Anything else referenced from `watchedResources` needs matching RBAC. The Helm chart auto-generates the watched-resource rules from `controller.config.watchedResources` and the enabled libraries; if you manage RBAC yourself (`rbac.create: false`), keep it in sync. The full template is `charts/haptic/templates/clusterrole.yaml`.
 
 Narrow the cluster-wide watch to a single namespace by pinning `namespace:` on each watched-resource entry — see [Watching Resources](../watching-resources.md). For multi-namespace filtering by labels, fall back to per-namespace `Role`/`RoleBinding` instead of a `ClusterRole`, or filter inside the template against a watched `namespaces` resource.
+
+A namespace-scoped `Role` (bound only in the controller's own namespace) additionally grants the writes the controller performs locally — kept off the `ClusterRole` to tighten the blast radius:
+
+| Resource | Verbs | Why |
+|----------|-------|-----|
+| `secrets` | get, list, watch, create, update, patch, delete | Read Dataplane API credentials; read/write SSL certificate Secrets |
+| `haproxycfgs`, `haproxymapfiles` | get, list, watch, create, update, patch, delete | Publish rendered config + map files as observable CRDs in the controller's own namespace |
+| `haproxycfgs/status`, `haproxymapfiles/status` | get, update, patch | Status on the published artifacts |
+| `services` | get, list, watch, create, update, patch, delete | Namespace-scoped counterpart to the gateway Service grant above — Gateway StaticAddresses LoadBalancer Services emitted into the controller's own namespace |
+
+The full template is `charts/haptic/templates/role.yaml`.
 
 ### Credentials
 
@@ -79,12 +92,12 @@ The controller pod exposes three HTTP ports (all chart defaults):
 | Port | Endpoint | Notes |
 |------|----------|-------|
 | `8080` | `/healthz`, `/debug/vars`, `/debug/pprof/` | `/healthz` and `/debug/*` share the same listener; setting `controller.debugPort: 0` disables both and breaks the liveness/readiness probes. To shield `/debug/*` in production, restrict access with a NetworkPolicy (example below) instead of disabling the port |
-| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (e.g. `controller.extraEnv` in Helm); the `metricsPort` field on the CRD is *not* read by the controller — the chart strips it before serializing |
+| `9090` | `/metrics` | Disable by setting the `METRICS_PORT=0` env var on the controller container (e.g. `extraEnv` in Helm); the `metricsPort` field on the CRD is *not* read by the controller — the chart strips it before serializing |
 | `9443` | Validating webhook | Required when the webhook is enabled |
 
 Outbound, the controller talks to the Kubernetes API server and to each HAProxy pod's Dataplane API (default port `5555`). Dataplane API traffic is plain HTTP over the pod network — the controller has no TLS client configuration for the Dataplane API. Rely on pod-network protection (NetworkPolicy, service mesh, CNI encryption) rather than transport-level authentication for that hop.
 
-Example egress-restriction NetworkPolicy:
+**The chart already ships default-on `NetworkPolicy` resources** for both the controller (`networkPolicy.enabled`) and HAProxy (`haproxy.networkPolicy.enabled`) pods — both default `true` — restricting ingress to the exposed ports and egress to DNS, the Kubernetes API server, and the HAProxy Dataplane/stats ports. Set the relevant flag to `false` to manage your own; the example below mirrors the controller policy's shape:
 
 ```yaml
 apiVersion: networking.k8s.io/v1

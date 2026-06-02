@@ -162,8 +162,11 @@ driftInterval := cfg.Dataplane.GetDriftPreventionInterval()
 httpStoreEvictionMaxAge := 2 * driftInterval
 httpStoreComponent := httpstore.New(eventBus, logger, httpStoreEvictionMaxAge)
 
-// Attached to renderer for template access
-rendererComponent.SetHTTPStoreComponent(httpStoreComponent)
+// HTTPStoreComponent is passed to RenderService via the config struct.
+// renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
+//     ...
+//     HTTPStoreComponent: httpStoreComponent,
+// })
 
 // Started as all-replica component
 go httpStoreComponent.Start(ctx)
@@ -221,8 +224,8 @@ component := httpstore.New(bus, logger, 2*time.Minute) // eviction maxAge
 // Start component
 go component.Start(ctx)
 
-// Simulate validation completion
-bus.Publish(events.NewValidationCompletedEvent(...))
+// Simulate proposal validation completion
+bus.Publish(events.NewProposalValidationCompletedEvent(...))
 
 // Verify accepted content is now available
 ```

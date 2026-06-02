@@ -36,6 +36,7 @@ The table is generated from `versions-spoa.env` at the repository root. CI fails
 - **fingerprinting** — computes JA3, JA3N, and JA4 TLS fingerprints from the ClientHello.
 - **maxmind** — performs in-memory MaxMind MMDB lookups (City, Country, ASN, etc.) against operator-provided database files.
 - **otel** — emits OpenTelemetry traces, metrics, and log records via OTLP gRPC or HTTP.
+- **mirror** — mirrors HTTP requests to a secondary backend for traffic shadowing; used by the gateway library to implement the Gateway API `HTTPRouteFilter` of type `RequestMirror`.
 - **sso-auth** — handles OIDC and SAML2 SSO flows with encrypted session cookies.
 
 ## Verifying the published image
@@ -64,7 +65,7 @@ The chart's `spoaHub.haproxy.*` values map directly to HAProxy directives the ch
 | Values key                          | HAProxy directive                                                  | Default              | When to change                                                                                                        |
 | ----------------------------------- | ------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `spoaHub.haproxy.socketPath`        | `server hub <path>` in `backend spoa-hub`                          | `/run/spoa/hub.sock` | Match a different bind path the sidecar listens on (e.g. when `securityContext.runAsUser` blocks `/run/spoa`).        |
-| `spoaHub.haproxy.modeSpop`          | `mode spop` (true) vs. `mode tcp` + filter (false) on the backend  | `true`               | Set `false` only on HAProxy 2.x where native SPOP backends are unavailable.                                           |
+| `spoaHub.haproxy.modeSpop`          | `mode spop` (true) vs. `mode tcp` + filter (false) on the backend  | `true`               | Auto-falls back to `mode tcp` on HAProxy 3.0 (`mode spop` was introduced in 3.1). Set `false` to force `mode tcp` on 3.1+ as well — rare, mostly compat testing.                                           |
 | `spoaHub.haproxy.timeoutHello`      | `timeout hello` on `spoe-agent`                                    | `2s`                 | Raise if the hub regularly logs HELLO timeouts under cold-start (e.g. heavy plugin init like MaxMind DB load).        |
 | `spoaHub.haproxy.timeoutIdle`       | `timeout idle` on `spoe-agent` and `timeout server` on the backend | `5m`                 | Lower to free pooled connections faster in low-traffic clusters; raise to match upstream auth-service idle budgets.   |
 | `spoaHub.haproxy.timeoutProcessing` | `timeout processing` on `spoe-agent`                               | `500ms`              | Raise per slow plugin (Coraza WAF inspection, large MaxMind lookups). Keep tight to fail fast on hub regressions.     |

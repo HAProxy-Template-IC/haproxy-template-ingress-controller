@@ -24,8 +24,9 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithCurrentConfig(parsedCurrent),
 )
 
-ctx, fileRegistry, statusPatchCollector := builder.Build()
-// ctx is map[string]any ready to pass to engine.Render
+res := builder.Build()
+// res.Context is map[string]any ready to pass to engine.Render
+// res.FileRegistry, res.StatusPatchCollector, res.RenderedResourceCollector are also available
 ```
 
 `cfg`, `pathResolver`, and `logger` are required positional arguments; everything else is supplied through functional options. Omitting an option just leaves the corresponding context key unset (templates that try to read it will see `nil`).
@@ -55,7 +56,7 @@ Adding a new context key means updating `Build()` plus the `pkg/templating/globa
 ## See Also
 
 - [`pkg/templating`](../../templating/) — runtime variable typing and the engine that consumes this context
-- [`pkg/controller/renderer`](../renderer/) — production caller (event adapter + render service)
+- [`pkg/controller/renderer`](../renderer/) — production caller (synchronous render service; builds context directly via its own `buildRenderingContext`, not via `NewBuilder`)
 - [`pkg/controller/testrunner`](../testrunner/) — validation-test caller
 - [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — webhook caller
 - `pkg/controller/rendercontext/CLAUDE.md` — developer notes on adding new context keys

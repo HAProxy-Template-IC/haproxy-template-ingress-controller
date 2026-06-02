@@ -131,7 +131,8 @@ Thread-safe integer variable.
 
 ```go
 type StringVar struct {
-    value atomic.Value  // stores string
+    mu    sync.RWMutex
+    value string
 }
 
 func (v *StringVar) Set(value string)
@@ -206,7 +207,7 @@ Creates a new HTTP server bound to `addr` (e.g., ":6060"). Server binds to 0.0.0
 func (s *Server) Start(ctx context.Context) error
 ```
 
-Starts the HTTP server. Blocks until context is cancelled. Performs graceful shutdown with 30s timeout.
+Starts the HTTP server. Blocks until context is cancelled. Performs graceful shutdown with 10s timeout.
 
 Exposes endpoints:
 
@@ -261,7 +262,8 @@ Lists all registered variable paths.
 
 ```json
 {
-  "vars": ["config", "uptime", "metrics"]
+  "paths": ["config", "uptime", "metrics"],
+  "count": 3
 }
 ```
 

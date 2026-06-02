@@ -25,7 +25,7 @@ The config is in v2 format (`version: "2"`), so formatters and linters are separ
 | Style | `revive`, `gocritic`, `misspell`, `unconvert`, `unparam`, `nakedret`, `whitespace`, `godot`, `importas`, `goprintffuncname` |
 | Complexity | `gocyclo`, `goconst`, `dupl` |
 | Performance | `prealloc`, `copyloopvar` |
-| Hygiene | `godox` (TODO/FIXME/HACK), `asciicheck`, `bidichk`, `dogsled`, `makezero`, `nolintlint` |
+| Hygiene | `godox` (BUG/FIXME/HACK), `asciicheck`, `bidichk`, `dogsled`, `makezero`, `nolintlint` |
 | Tests | `thelper` |
 
 Plus one project-local analyzer built in `tools/linters/eventimmutability` that enforces pointer receivers on all `events.Event` implementations. The analyzer is compiled and invoked as part of `make lint`.
@@ -84,7 +84,7 @@ pre-commit run --all-files
 
 ## Tooling
 
-Linter versions are pinned via Go's `tool` directive in `go.mod`; `make install-tools` rebuilds the local cache. The Go version is pinned in `.tool-versions` (asdf) — see the top-level `CLAUDE.md` for the `env -u GOROOT` note if you invoke Go commands directly.
+Linter versions are pinned via Go's `tool` directive in `go.mod`; `make install-tools` rebuilds the local cache. The Go version is pinned in `.tool-versions` (asdf) — see `tests/README.md` for the `env -u GOROOT` note if you invoke Go commands directly.
 
 ## References
 

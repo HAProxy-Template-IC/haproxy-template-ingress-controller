@@ -102,8 +102,8 @@ func NewServer(addr string, registry prometheus.Gatherer) *Server {
 func (s *Server) Start(ctx context.Context) error {
     go func() {
         <-ctx.Done()
-        // Graceful shutdown with 5s timeout
-        shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        // Graceful shutdown with 10s timeout
+        shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
         defer cancel()
         s.server.Shutdown(shutdownCtx)
     }()

@@ -303,7 +303,7 @@ type WatcherConfig struct {
 	// Rapid resource changes within this interval are batched into a single callback
 	// with aggregated statistics.
 	//
-	// Default: DefaultDebounceInterval (100ms) — applied in WatcherConfig.SetDefaults
+	// Default: DefaultDebounceInterval (2s) — applied in WatcherConfig.SetDefaults
 	// when DebounceInterval is zero. With leading-edge triggering, the first
 	// change in a quiet period fires immediately; only subsequent changes
 	// within the window are batched. Override only when a specific resource

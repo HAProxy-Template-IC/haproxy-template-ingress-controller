@@ -3,7 +3,7 @@
 Development context for Kubernetes resource storage implementations.
 
 **API Documentation**: See `pkg/k8s/store/README.md`
-**Architecture**: See `/docs/controller/docs/development/design.md` (Resource Indexing section)
+**Architecture**: See `/docs/controller/docs/development/design.md` (design documentation index)
 
 ## When to Work Here
 
@@ -298,7 +298,7 @@ func (s *CachedStore) Get(keys ...string) ([]any, error) {
 
         // 3. Fetch from API (no lock held — fetchResource does its own
         //    locking around s.cache.Add).
-        resource, err := s.fetchResource(ref)
+        resource, err := s.fetchResourceByRef(ref)
         if err != nil {
             s.logger.Warn("failed to fetch resource", "ref", ref, "error", err)
             continue
@@ -613,9 +613,9 @@ path, and it almost never calls `List()`. The cache that benefits from
 modCount lives one layer up in `pkg/k8s/store/cached.go`, not inside
 `MemoryStore` itself.
 
-If you find yourself wanting a memoized `List()`, look at `CachedStoreWrapper`
-or read the modCount via `(stores.ModCounter).ModCount()` and rebuild only
-when the counter changes — don't add a `dirty` flag inside `MemoryStore`.
+If you find yourself wanting a memoized `List()`, read the modCount via
+`(stores.ModCounter).ModCount()` and rebuild only when the counter changes —
+don't add a `dirty` flag inside `MemoryStore`.
 
 ### CachedStore Memory Bounds
 

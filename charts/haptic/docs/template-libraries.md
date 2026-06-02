@@ -59,12 +59,12 @@ Libraries are merged in a specific order, with later libraries overriding earlie
 1. base.yaml             (lowest priority)
 2. ssl.yaml
 3. ingress.yaml
-4. gateway.yaml
+4. gateway/
 5. ingress-annotations-compat.yaml  (level 2.5 - Ingress-only shared scaffold)
 6. haproxytech.yaml
-7. haproxy-ingress.yaml
-8. nginx-ingress.yaml
-9. spoa-hub.yaml         (auto-loaded when SPOA hub sidecar is enabled)
+7. haproxy-ingress/
+8. nginx-ingress/
+9. spoa-hub/             (auto-loaded when SPOA hub sidecar is enabled)
 10. controller.config.*  (highest priority - your values.yaml overrides for templateSnippets / maps / files / sslCertificates / haproxyConfig / validationTests / watchedResources)
 ```
 
@@ -251,7 +251,7 @@ applied last and overrides anything below it.
                                    ▲
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Level 3 — Vendor annotation libraries                                │
-│   haproxytech.yaml      haproxy-ingress.yaml      nginx-ingress.yaml │
+│   haproxytech.yaml      haproxy-ingress/          nginx-ingress/     │
 │   (each compat-layer for one ingress controller's annotation set)    │
 └──────────────────────────────────────────────────────────────────────┘
                                    ▲
@@ -263,7 +263,7 @@ applied last and overrides anything below it.
                                    ▲
 ┌──────────────────────────────────────────────────────────────────────┐
 │ Level 2 — Resource libraries                                         │
-│   ingress.yaml                          gateway.yaml                 │
+│   ingress.yaml                          gateway/                     │
 │   (Kubernetes Ingress)                  (Gateway API HTTPRoute /     │
 │                                          GRPCRoute)                  │
 └──────────────────────────────────────────────────────────────────────┘
@@ -279,7 +279,7 @@ applied last and overrides anything below it.
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-The `spoa-hub.yaml` library wires the SPOA hub sidecar into HAProxy
+The `spoa-hub/` library wires the SPOA hub sidecar into HAProxy
 and is auto-loaded whenever the sidecar is enabled (by an explicit
 `spoaHub.enabled: true` or any `spoaHub.plugins.<X>.enabled` truthy).
 It plugs into the same extension points as the level-3 libraries

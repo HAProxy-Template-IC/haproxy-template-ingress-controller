@@ -16,7 +16,7 @@ The entire process takes approximately 15-20 minutes on a local Kubernetes clust
 
 ## Prerequisites
 
-- Kubernetes cluster (1.19+) - kind, minikube, or cloud provider
+- Kubernetes cluster (1.21+) - kind, minikube, or cloud provider
 - kubectl configured to access your cluster
 - Helm 3.0+
 
@@ -217,8 +217,8 @@ When you created the Ingress resource, the controller:
 2. **Triggered a reconciliation** through a leading-edge debouncer (so a single change fires immediately)
 3. **Rendered templates** using the default HAProxyTemplateConfig with your Ingress data
 4. **Validated the rendered config** in three phases: client-native syntax parse → OpenAPI schema check → `haproxy -c` semantic validation. All three must pass before the change reaches HAProxy.
-5. **Compared the validated config** with the live config on each HAProxy pod to compute a minimal set of operations
-6. **Deployed updates** to all HAProxy pods via the Dataplane API in parallel, falling back to a raw config push if the fine-grained sync would be too large
+5. **Compared the validated config** with each pod's live config to classify the change (runtime-eligible server-field updates vs structural changes)
+6. **Deployed the change** to all HAProxy pods in parallel via the Dataplane API, pushing the full rendered config in a single request per pod
 7. **Used the runtime API** where possible (server address/weight changes, map updates, etc.) to avoid HAProxy process reloads
 
 The entire process typically completes in under 1 second.

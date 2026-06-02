@@ -17,15 +17,15 @@ Modify this package when:
 
 ## Package Purpose
 
-Single source of truth for template-rendering context construction. Four
-call sites use the same `Builder`:
+Single source of truth for template-rendering context construction. Two
+call sites use `NewBuilder` directly:
 
 | Call site | Usage |
 |-----------|-------|
-| `pkg/controller/renderer/service.go` | Production rendering |
-| `pkg/controller/testrunner/runner.go` | Validation tests |
-| `cmd/controller/benchmark.go` | Performance benchmarks |
-| `pkg/controller/dryrunvalidator/component.go` | Webhook admission |
+| `pkg/controller/testrunner/rendering.go` | Validation tests |
+| `cmd/controller/benchmark_render.go` | Performance benchmarks |
+
+The production renderer (`pkg/controller/renderer/service.go`) builds its context directly via its own `buildRenderingContext` method. The dry-run validator delegates to `proposalvalidator` → pipeline → renderer and therefore also does not call `NewBuilder` directly.
 
 ## Usage
 
@@ -43,10 +43,10 @@ builder := rendercontext.NewBuilder(
     rendercontext.WithCurrentConfig(currentConfig), // optional; nil on first deploy
 )
 
-// Build returns three things — the rendering context map, the dynamic file
-// registry that templates can register into during the render, and the
-// status-patch collector that captures status mutations from filters_status.go.
-ctx, fileRegistry, statusPatches := builder.Build()
+// Build returns a *BuildResult with four fields: Context (map[string]any),
+// FileRegistry, StatusPatchCollector, and RenderedResourceCollector.
+res := builder.Build()
+ctx := res.Context
 ```
 
 ## Context Structure

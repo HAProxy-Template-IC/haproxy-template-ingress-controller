@@ -1,12 +1,12 @@
 # Dataplane Sync
 
-Orchestrates HAProxy configuration synchronization through a fetch-parse-compare-apply pipeline with three-phase auxiliary file management, transaction-based operations, retry logic, and automatic fallback to raw config push.
+Orchestrates HAProxy configuration synchronization through a fetch-parse-compare-apply pipeline with three-phase auxiliary file management, full-config push (a runtime-action push with no reload, or a force-reload push), and connection-error retry logic.
 
 ## ADDED Requirements
 
 ### Requirement: Orchestrator Sync Workflow
 
-The orchestrator SHALL implement a multi-step sync workflow: (1) fetch current configuration from the Dataplane API, (2) parse current and desired configurations into structured form, (3) compare configurations to produce a ConfigDiff, (4) compare auxiliary files, (5) check if any changes exist, (6) decide sync mode (fine-grained or raw push), (7) execute the sync, and (8) verify reload if configured. When no configuration or auxiliary file changes are detected, the orchestrator SHALL return a success result with no applied operations and no reload.
+The orchestrator SHALL implement a multi-step sync workflow: (1) fetch current configuration from the Dataplane API, (2) parse current and desired configurations into structured form, (3) compare configurations to produce a ConfigDiff, (4) compare auxiliary files, (5) check if any changes exist, (6) classify the changes to decide the sync mode (runtime or reload), (7) push the full configuration, and (8) verify reload if configured. When no configuration or auxiliary file changes are detected, the orchestrator SHALL return a success result with no applied operations and no reload.
 
 #### Scenario: No changes detected returns early
 
@@ -201,86 +201,38 @@ THEN the orchestrator SHALL verify all auxiliary reload IDs complete successfull
 WHEN a reload verification exceeds the configured timeout
 THEN the orchestrator SHALL return a SyncError indicating the timeout.
 
-### Requirement: Transaction-Based Config Sync with Retry
+### Requirement: Full-Config Apply
 
-Configuration operations SHALL be executed within a Dataplane API transaction managed by the VersionAdapter. On version conflict, the VersionAdapter SHALL retry up to MaxRetries times. The transaction commit status SHALL determine whether a HAProxy reload was triggered (HTTP 202) or not (HTTP 200). The SyncResult SHALL include the ReloadID when a reload is triggered.
+Production configuration changes SHALL be applied by pushing the full rendered configuration to the Dataplane API in a single request; the orchestrator SHALL NOT execute per-operation Dataplane API transactions. From the ConfigDiff the orchestrator SHALL partition changes into runtime-eligible server-field updates and structural changes, and choose one of two apply shapes:
 
-#### Scenario: Successful transaction with reload
+- Runtime path: when every change is a runtime-eligible server-field update, a single `PushRawConfigurationSkipReload` carrying an `X-Runtime-Actions` header, which writes the new config to disk and applies the server changes to the live worker without a reload.
+- Reload path: otherwise, a `PushRawConfiguration` with `force_reload`; when runtime-eligible changes are also present, a best-effort skip-reload push MAY precede the reload to seed the running worker.
 
-WHEN configuration operations are applied and the transaction commit returns HTTP 202
-THEN the SyncResult SHALL have ReloadTriggered=true and a non-empty ReloadID.
+The SyncResult SHALL record the SyncMode as one of `no_changes`, `runtime`, or `reload`, and SHALL include the ReloadID when a reload is triggered.
 
-#### Scenario: Version conflict triggers retry
+#### Scenario: Runtime-eligible diff applies without reload
 
-WHEN a transaction commit fails with a version conflict
-THEN the VersionAdapter SHALL retry with a new transaction up to MaxRetries times.
+WHEN the diff contains only runtime-eligible server-field updates (e.g. address, port, maintenance, weight)
+THEN the orchestrator SHALL apply them via a single skip-reload push with `X-Runtime-Actions` and SyncMode=runtime, with no reload.
 
-#### Scenario: Version conflict exhausts retries
+#### Scenario: Structural change triggers reload
 
-WHEN version conflicts persist beyond MaxRetries
-THEN the orchestrator SHALL return a SyncError at the "commit" stage with a ConflictError cause.
+WHEN the diff contains any structural change (server creation/deletion, frontend/backend/bind/rule/filter changes)
+THEN the orchestrator SHALL push the full config with `force_reload`, set SyncMode=reload, and the SyncResult SHALL have a non-empty ReloadID.
 
-### Requirement: Parallel Operation Execution by Priority
+### Requirement: Connection-Error Retry
 
-Operations within a transaction SHALL be grouped by priority and executed in priority order (ascending). Operations within the same priority group SHALL execute in parallel. A configurable MaxParallel limit SHALL control concurrency within each priority group. When ContinueOnError is false, execution SHALL stop on the first failure. When ContinueOnError is true, all operations SHALL be attempted and failures collected.
+The orchestrator SHALL wrap its version resolution and config pushes in a bounded retry (`client.WithRetry`, 3 attempts) that retries only transient connection errors — the master socket is briefly unavailable while HAProxy re-execs on reload. Runtime-action pushes SHALL additionally retry across a concurrent reload, since runtime commands fail while the stats socket is momentarily down. The orchestrator SHALL re-resolve the config version on each sync rather than reusing a stale version across conflicts.
 
-#### Scenario: Operations at same priority run in parallel
+#### Scenario: Transient connection error is retried
 
-WHEN 5 operations share priority level 100 and MaxParallel is 0 (unlimited)
-THEN all 5 operations SHALL execute concurrently.
+WHEN fetching the config version or pushing the configuration fails with a transient connection error
+THEN the orchestrator SHALL retry up to 3 times before surfacing the error.
 
-#### Scenario: MaxParallel limits concurrency
+#### Scenario: Runtime push retries across a concurrent reload
 
-WHEN 10 operations share a priority level and MaxParallel is 3
-THEN at most 3 operations SHALL execute concurrently within that priority group.
-
-#### Scenario: Stop on first error
-
-WHEN ContinueOnError is false and one operation in a priority group fails
-THEN remaining operations in the errgroup SHALL be cancelled and the error returned.
-
-### Requirement: Runtime API Optimization
-
-When all operations in a diff are server UPDATE operations, the orchestrator SHALL execute them via the Runtime API without a transaction, avoiding HAProxy reload. The Runtime API path SHALL use version caching: fetch the version once, pass it to each operation, and increment after success. On 409 version conflict, the orchestrator SHALL re-fetch the version and retry up to 3 times. Runtime operations that modify non-runtime-supported server fields SHALL trigger a reload (HTTP 202 response).
-
-#### Scenario: All server updates use runtime path
-
-WHEN the diff contains only server UPDATE operations
-THEN the orchestrator SHALL execute via Runtime API without creating a transaction.
-
-#### Scenario: Mixed operations use transaction path
-
-WHEN the diff contains both server updates and frontend creates
-THEN the orchestrator SHALL use the transaction path for all operations.
-
-#### Scenario: Runtime version conflict retried
-
-WHEN a runtime server update fails with a 409 version conflict
-THEN the orchestrator SHALL re-fetch the version and retry the operation.
-
-### Requirement: Raw Config Push
-
-The orchestrator SHALL fall back to raw configuration push via PushRawConfiguration when: (a) the config version is 1 (initial deployment), (b) the total operation count exceeds RawPushThreshold, or (c) fine-grained sync fails and FallbackToRaw is enabled. Raw push SHALL always trigger a reload. The SyncResult SHALL record the SyncMode (RawInitial, RawThreshold, or RawFallback). When falling back after a failed fine-grained sync where Phase 1 (auxiliary files) completed, the raw push SHALL skip re-syncing auxiliary files.
-
-#### Scenario: Initial deployment uses raw push
-
-WHEN the current configuration version is 1
-THEN the orchestrator SHALL use raw push with SyncMode=RawInitial.
-
-#### Scenario: High operation count triggers raw push
-
-WHEN RawPushThreshold is 50 and the diff contains 60 operations
-THEN the orchestrator SHALL use raw push with SyncMode=RawThreshold.
-
-#### Scenario: Fallback skips auxiliary re-sync
-
-WHEN fine-grained sync fails after Phase 1 (auxiliary files) completed and FallbackToRaw is enabled
-THEN the raw push fallback SHALL skip auxiliary file sync.
-
-#### Scenario: Both fine-grained and fallback fail
-
-WHEN fine-grained sync fails and the subsequent raw push fallback also fails
-THEN the orchestrator SHALL return a FallbackError containing both the original and fallback errors.
+WHEN a runtime-action push fails because the stats socket is momentarily closed during a sibling reload
+THEN the orchestrator SHALL retry the push until the socket is available again or the attempt budget is exhausted.
 
 ### Requirement: Reload Verification
 
@@ -359,14 +311,9 @@ THEN the orchestrator SHALL use the standard parser for configuration parsing.
 
 ### Requirement: Post-Sync Version Capture
 
-After a successful sync, the orchestrator SHALL capture the post-sync configuration version in the SyncResult.PostSyncVersion field for use in subsequent version cache checks. For raw push, the post-sync version SHALL be the pre-push version plus 1. For fine-grained sync, the version SHALL be fetched from the API after operations complete.
+After a successful sync, the orchestrator SHALL capture the post-sync configuration version in the SyncResult.PostSyncVersion field for use in subsequent version cache checks. A config push that writes a new on-disk version header SHALL set the post-sync version to the pre-push version plus 1.
 
-#### Scenario: Fine-grained sync captures post-sync version
-
-WHEN a fine-grained sync completes successfully
-THEN the SyncResult.PostSyncVersion SHALL be the version obtained from GetVersion after operations.
-
-#### Scenario: Raw push calculates post-sync version
+#### Scenario: Config push calculates post-sync version
 
 WHEN a raw push completes with pre-push version 5
 THEN the SyncResult.PostSyncVersion SHALL be 6.

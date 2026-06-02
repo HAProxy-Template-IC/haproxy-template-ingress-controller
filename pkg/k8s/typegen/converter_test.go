@@ -373,6 +373,12 @@ func TestGoFieldName(t *testing.T) {
 		{"name", "Name"},
 		{"apiVersion", "ApiVersion"},
 		{"namespace", "Namespace"},
+		// Uppercase acronyms in the source are preserved as-is — only rune 0
+		// is uppercased, every other letter is written unchanged. So
+		// clusterIP → ClusterIP (not ClusterIp). Pins the convention the
+		// typed-field table in charts/CLAUDE.md documents.
+		{"clusterIP", "ClusterIP"},
+		{"loadBalancerIP", "LoadBalancerIP"},
 		// Hyphens / dots aren't normal in K8s JSON keys but show up
 		// in annotation key parsing; we still tolerate them.
 		{"my-field", "My_field"},

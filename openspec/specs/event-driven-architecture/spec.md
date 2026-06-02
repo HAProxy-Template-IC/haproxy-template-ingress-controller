@@ -34,25 +34,25 @@ THEN all buffered events SHALL be delivered to subscribers in the order they wer
 
 ### Requirement: Subscribe with Buffer Size
 
-`Subscribe(bufferSize)` SHALL return a channel of events with the specified buffer capacity. The subscriber SHALL receive all events published after subscription.
+`Subscribe(name, bufferSize)` SHALL return a channel of events with the specified buffer capacity. The `name` parameter identifies the subscriber for drop accounting and debug logging. The subscriber SHALL receive all events published after subscription.
 
 #### Scenario: Subscriber receives events after subscription
 
-WHEN a subscriber calls Subscribe(100) and events are subsequently published
+WHEN a subscriber calls Subscribe("mycomponent", 100) and events are subsequently published
 THEN the subscriber SHALL receive those events on the returned channel.
 
 #### Scenario: Buffer size determines channel capacity
 
-WHEN Subscribe is called with bufferSize 50
+WHEN Subscribe is called with name "mycomponent" and bufferSize 50
 THEN the returned channel SHALL have a buffer capacity of 50.
 
 ### Requirement: Type-Filtered Subscriptions
 
-`SubscribeTypes(bufferSize, typeNames...)` SHALL return a channel that only receives events whose type name matches one of the specified type names. Events of non-matching types SHALL NOT be delivered to the subscriber.
+`SubscribeTypes(name, bufferSize, typeNames...)` SHALL return a channel that only receives events whose type name matches one of the specified type names. The `name` parameter identifies the subscriber for drop accounting and debug logging. Events of non-matching types SHALL NOT be delivered to the subscriber.
 
 #### Scenario: Filtered subscriber receives only matching types
 
-WHEN a subscriber calls SubscribeTypes(100, "ReconciliationTriggered") and events of various types are published
+WHEN a subscriber calls SubscribeTypes("mycomponent", 100, "ReconciliationTriggered") and events of various types are published
 THEN the subscriber SHALL only receive events of type "ReconciliationTriggered".
 
 #### Scenario: Non-matching events not delivered

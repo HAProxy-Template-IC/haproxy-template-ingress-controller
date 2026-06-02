@@ -17,8 +17,8 @@
 //
 // Mirrors statusapplier's leader-only / checksum-cached / event-driven shape
 // exactly — it just operates on full resources rather than status sub-paths.
-// Templates emit desired resources via the renderResource() template
-// function (filters_resource.go); the renderer surfaces them on
+// Templates declare desired resources under spec.k8sResources; the renderer
+// renders each and surfaces them on
 // ReconciliationCompletedEvent.RenderedResources; this component applies
 // them on the cluster after the render+validate pipeline succeeds.
 //

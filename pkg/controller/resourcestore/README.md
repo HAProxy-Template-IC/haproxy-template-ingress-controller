@@ -51,7 +51,7 @@ provider := newStoreProviderFromManager(m) // returns stores.StoreProvider
 - [`pkg/k8s/types`](../../k8s/types/) — the `Store` interface this manager keys on
 - [`pkg/stores`](../../stores/) — the **production** overlay machinery (`NewStoreOverlayForCreate` / `…Update` / `…Delete`) used by the dryrun + proposal validators
 - [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) / [`proposalvalidator`](../proposalvalidator/) — go through `pkg/stores`, not the `OverlayStore` defined here
-- [`pkg/controller/helpers`](../helpers/) — `newStoreProviderFromManager` adapter
+- `pkg/controller/helpers.go` — `newStoreProviderFromManager` adapter (unexported, in the `controller` package)
 
 ## License
 

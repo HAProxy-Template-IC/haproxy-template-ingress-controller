@@ -218,7 +218,7 @@ func (v *CredentialsVar) Get() (any, error) {
 
 The debug server should be:
 
-- Bound to localhost in production (kubectl port-forward for access)
+- Accessible on all interfaces (0.0.0.0); restrict access via NetworkPolicy rather than relying on bind-address filtering
 - Protected by network policies
 - Disabled or restricted in multi-tenant environments
 

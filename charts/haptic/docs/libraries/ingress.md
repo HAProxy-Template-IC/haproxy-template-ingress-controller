@@ -33,6 +33,7 @@ The Ingress library hooks into these extension points from base.yaml. Snippet na
 
 | Extension Point | Snippet | What It Generates |
 |-----------------|---------|-------------------|
+| `features-*` | `features-100-ingress-bind` | Sets `gf["bindHTTPDefault"]` / `gf["needHTTPFrontend"]`; for Ingresses with `spec.tls` also sets `gf["bindHTTPSDefault"]`, `gf["needHTTPSFrontend"]`, `gf["needHTTPSTermination"]` |
 | `features-*` | `features-100-ingress-tls` | Registers TLS Secrets from `ingress.spec.tls[]` into `gf["tlsCertificates"]` for the SSL library's CRT-list |
 | `backends-*` | `backends-500-ingress` | Backend blocks per unique `(namespace, service, port)` referenced by an Ingress |
 | `map-host-*` | `map-host-500-ingress` | Host → group entries derived from `ingress.spec.rules[].host` |
@@ -169,7 +170,7 @@ backend default_my-app_svc_api-service_http
     default-server check
     server SRV_1 10.0.0.1:8080 enabled    # Pod: api-pod-1
     server SRV_2 10.0.0.2:8080 enabled    # Pod: api-pod-2
-    server SRV_3 127.0.0.1:1 disabled     # Reserved slot for future scale-up
+    server SRV_3 192.0.2.1:1 disabled     # Reserved slot for future scale-up
 ```
 
 `check` lives on `default-server` (not on individual server lines) so endpoint changes can be applied via the runtime API without a HAProxy reload. Reserved `disabled` slots get filled in at runtime when the backend scales up.
@@ -222,6 +223,12 @@ The Ingress library includes these validation tests:
 | `test-ingress-slot-preservation` | Existing pod slots survive a rolling deployment when `currentConfig` is provided |
 | `test-ingress-slot-preservation-lower-ip` | Slot preservation is order-independent (new pod with a lower IP still gets the freed slot) |
 | `test-ingress-status-patches` | LoadBalancer addresses from the controller Service propagate to `status.loadBalancer.ingress` |
+| `test-ingress-endpoint-conditions-filter` | EndpointSlice endpoints with non-Ready conditions are excluded from the backend |
+| `test-ingress-named-port` | Ingress referencing a service port by name resolves to the correct pod port |
+| `test-ingress-named-port-typo-fails` | Ingress referencing a non-existent named port fails cleanly |
+| `test-ingress-default-backend-rules-less` | Default backend on a rule-less Ingress generates a backend |
+| `test-ingress-default-backend-with-rules-per-host` | Default backend coexists with per-host rules |
+| `test-ingress-default-backend-newest-wins-per-host` | When multiple Ingresses supply a default backend for a host, the newest one wins |
 
 Run a specific test with:
 

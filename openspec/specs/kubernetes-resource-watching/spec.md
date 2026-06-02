@@ -97,7 +97,7 @@ THEN OnSyncComplete SHALL be called once with a nil resource argument.
 
 ### Requirement: Change Debouncing
 
-The Bulk Watcher SHALL debounce OnChange callbacks using a leading-edge triggering strategy with a configurable refractory period (default 5 seconds). The first change after the refractory period has elapsed SHALL trigger an immediate callback. Subsequent changes within the refractory period SHALL be batched until the interval expires.
+The Bulk Watcher SHALL debounce OnChange callbacks using a leading-edge triggering strategy with a configurable refractory period (default 2 seconds). The first change after the refractory period has elapsed SHALL trigger an immediate callback. Subsequent changes within the refractory period SHALL be batched until the interval expires.
 
 #### Scenario: Leading-edge trigger fires immediately
 

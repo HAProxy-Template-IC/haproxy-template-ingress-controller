@@ -76,7 +76,7 @@ The script:
 - Aborts unless `CHANGELOG.md` already contains a `## [<version>]` entry from Step 1
 - Writes `<version>` to the `VERSION` file
 - Updates `Chart.yaml` `appVersion` and the `artifacthub.io/images` annotation (the latter is rewritten to `haptic:<version>-haproxy<DEFAULT_HAPROXY>` from `versions.env`)
-- Stages and commits those three files as `release: haptic-controller v<version>`
+- Stages and commits those two files as `release: haptic-controller v<version>`
 
 The script does **not** create a tag — that happens in CI after the MR merges.
 

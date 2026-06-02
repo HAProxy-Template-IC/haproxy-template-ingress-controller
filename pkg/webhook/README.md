@@ -37,11 +37,11 @@ func main() {
     }
 }
 
-func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
+func validateIngress(ctx *webhook.ValidationContext) (bool, string, []string, error) {
     // ctx.Object / ctx.OldObject are *unstructured.Unstructured.
     // ctx.Operation is "CREATE" / "UPDATE" / "DELETE" / "CONNECT".
     // ctx.UserInfo carries the requester identity.
-    return true, "", nil
+    return true, "", nil, nil
 }
 ```
 
@@ -52,7 +52,7 @@ func validateIngress(ctx *webhook.ValidationContext) (bool, string, error) {
 - **`ServerConfig`** — port (default `9443`), bind address, path (default `/validate`), read/write timeouts, and the PEM-encoded server cert + key. Cert and key bytes are read once in `Start`; to rotate, restart the server with new bytes.
 - **`Server`** — wraps an `http.Server`, maintains a GVK → `ValidationFunc` map under an `RWMutex`.
 - **`ValidationContext`** — everything the server extracts from an `AdmissionRequest`: `Object`, `OldObject`, `Operation`, `Namespace`, `Name`, `UID`, `UserInfo`. `Object` and `OldObject` are `*unstructured.Unstructured` so validators don't need their own typed decoders.
-- **`ValidationFunc`** — `func(*ValidationContext) (allowed bool, reason string, err error)`. The `allowed`/`reason` pair maps to `AdmissionResponse.Allowed` and `.Status.Message`. A non-nil error is treated as a *denied* decision (`Allowed: false`, `Result.Code: 500`, `Result.Message: "validation error: <err>"`) — *not* a transport-layer HTTP 500. The HTTP response itself is always 200 OK with a well-formed `AdmissionReview`. The API server's `failurePolicy` only kicks in when the webhook fails to *respond* (TLS handshake failure, malformed body, etc.); a `ValidationFunc` returning an error never triggers it.
+- **`ValidationFunc`** — `func(*ValidationContext) (allowed bool, reason string, warnings []string, err error)`. The `allowed`/`reason` pair maps to `AdmissionResponse.Allowed` and `.Status.Message`; `warnings` surfaces as `AdmissionResponse.Warnings` (visible to `kubectl` users even when `allowed` is true). A non-nil error is treated as a *denied* decision (`Allowed: false`, `Result.Code: 500`, `Result.Message: "validation error: <err>"`) — *not* a transport-layer HTTP 500. The HTTP response itself is always 200 OK with a well-formed `AdmissionReview`. The API server's `failurePolicy` only kicks in when the webhook fails to *respond* (TLS handshake failure, malformed body, etc.); a `ValidationFunc` returning an error never triggers it.
 
 ## GVK Keys
 

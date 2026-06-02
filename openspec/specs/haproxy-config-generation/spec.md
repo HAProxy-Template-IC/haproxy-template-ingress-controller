@@ -20,7 +20,7 @@ THEN the RenderService SHALL return an error wrapping the template engine error 
 
 ### Requirement: Template Context Construction
 
-The RenderService SHALL build a template rendering context containing the following keys: `resources` (map of StoreWrappers keyed by resource type), `controller` (map containing `haproxy_pods` StoreWrapper when available), `pathResolver` (PathResolver instance), `templateSnippets` (sorted list of snippet names), `fileRegistry` (FileRegistry for dynamic file registration), `capabilities` (pre-computed map of HAProxy version capabilities), `dataplane` (dataplane configuration), `shared` (cross-template shared context), `runtimeEnvironment` (containing GOMAXPROCS), `http` (HTTP fetcher when available), and `extraContext` (user-defined variables from config). The `extraContext` key SHALL always be present, defaulting to an empty map when not configured.
+The RenderService SHALL build a template rendering context containing the following keys: `resources` (map of StoreWrappers keyed by resource type), `controller` (map containing `haproxy_pods` StoreWrapper when available), `pathResolver` (PathResolver instance), `templateSnippets` (sorted list of snippet names), `fileRegistry` (FileRegistry for dynamic file registration), `capabilities` (pre-computed map of HAProxy version capabilities), `dataplane` (dataplane configuration), `shared` (cross-template shared context), `runtimeEnvironment` (containing GOMAXPROCS), `http` (HTTP fetcher when available), and `extraContext` (user-defined variables from config). The `extraContext` key SHALL be present when the config contains extra context entries. In the production renderer (`pkg/controller/renderer/service.go`), `extraContext` is only populated when `ExtraContext` is non-nil; when not configured, the key is absent. In the test runner and benchmark paths (via `rendercontext.MergeExtraContextInto`), an empty map is always injected so templates can safely chain `extraContext | dig("k") | fallback("v")`.
 
 #### Scenario: Resources map wraps all stores from provider
 
@@ -32,10 +32,10 @@ THEN the template context `resources` map SHALL contain StoreWrappers for each o
 WHEN a RenderService is constructed with Capabilities
 THEN the capabilities map SHALL be computed once during construction and reused for every subsequent render call without recomputation.
 
-#### Scenario: ExtraContext always present in template context
+#### Scenario: ExtraContext present when configured
 
-WHEN the RenderService builds a template context with no extraContext configured
-THEN the template context SHALL contain an `extraContext` key with an empty map value.
+WHEN the RenderService builds a template context with extraContext configured
+THEN the template context SHALL contain an `extraContext` key with the configured map value.
 
 #### Scenario: RuntimeEnvironment exposes GOMAXPROCS
 

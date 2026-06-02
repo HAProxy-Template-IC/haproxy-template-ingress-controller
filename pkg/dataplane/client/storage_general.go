@@ -106,7 +106,7 @@ func (c *DataplaneClient) CreateGeneralFile(ctx context.Context, path, content s
 // in-memory copy until the next reload. This matches Create's 201-with-no-reload
 // behavior and lets the orchestrator batch every aux-file change into the
 // single reload that the main config sync triggers (or, when only aux files
-// changed, the explicit force-reload at the end of fine-grained sync).
+// changed, the explicit force-reload at the end of the config sync).
 //
 // The previous behavior (default reload after PUT) caused an auxiliary-reload
 // race on route deletion: the new spoe.conf could land before the new

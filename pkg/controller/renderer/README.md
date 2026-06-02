@@ -41,7 +41,7 @@ Path resolution uses *relative* paths derived from `cfg.Dataplane.{MapsDir,SSLCe
 
 ## Template Context
 
-The rendering context is assembled by `pkg/controller/rendercontext.Builder` (see its README for the full key list). The `resources` map exposes one `*rendercontext.StoreWrapper` per `spec.watchedResources` entry; templates iterate them with `.List()` / `.Get(keys...)` / `.GetSingle(keys...)`.
+The rendering context is assembled by `service.go`'s own `buildRenderingContext` method (not via `rendercontext.NewBuilder`; see `pkg/controller/rendercontext` README for the full key list). The `resources` map exposes one `*rendercontext.StoreWrapper` per `spec.watchedResources` entry; templates iterate them with `.List()` / `.Fetch(keys...)` / `.GetSingle(keys...)`.
 
 `StoreWrapper` lazy-caches `.List()` per render — every resource is unwrapped from `*unstructured.Unstructured` to a plain map on the first call and reused for the rest of the reconciliation. `.Get` / `.GetSingle` unwrap on demand for the matched subset only.
 

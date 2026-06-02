@@ -671,7 +671,7 @@ spoaHub:
       enabled: true
 ```
 
-The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/operations/spoa-hub/) for the full deployment surface.
+The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/latest/operations/spoa-hub/) for the full deployment surface.
 
 !!! warning "Host-less rules error at render time"
     All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` cannot be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress; add a `host:` to the rule to fix.
@@ -747,7 +747,7 @@ annotations:
 ```
 
 !!! note "Body-having methods carry an empty body"
-    `POST` / `PUT` / `PATCH` go to the auth service with an empty body — the plugin does not forward the original request payload. Auth services that need the body should read it via sample-fetch args (see [SPOA hub operations](https://haproxy-haptic.org/controller/operations/spoa-hub/)) or use header-based auth.
+    `POST` / `PUT` / `PATCH` go to the auth service with an empty body — the plugin does not forward the original request payload. Auth services that need the body should read it via sample-fetch args (see [SPOA hub operations](https://haproxy-haptic.org/controller/latest/operations/spoa-hub/)) or use header-based auth.
 
 ---
 
@@ -975,6 +975,12 @@ The `ssl_fc_has_crt` gate ensures the headers only flow when a cert was actually
 
 ---
 
+## Web Application Firewall (ModSecurity / Coraza)
+
+Opt an Ingress into the SPOA hub **Coraza** WAF with `haproxy-ingress.github.io/waf: "modsecurity"` (the only supported value). Each `<host><path>` is added to `haproxy-ingress-waf.map`, whose value is the enforcement mode from `haproxy-ingress.github.io/waf-mode`: `deny` (default) blocks on a rule hit, `detect` runs the WAF in shadow mode (logs without blocking). Setting `waf-mode` to anything other than `deny`/`detect`, or setting it without `waf`, fails the render. The Coraza plugin auto-enables when the haproxy-ingress or nginx-ingress library is on. See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/latest/operations/spoa-hub/) for the plugin's configuration surface.
+
+---
+
 ## Watched Resources
 
 This library does not add additional watched resources. It uses Ingress resources already watched by the [Ingress library](ingress.md).
@@ -1006,7 +1012,7 @@ The library processes **68** `haproxy-ingress.github.io/*` annotations (verified
 | Basic auth | 2 | `auth-secret`, `auth-realm` |
 | External auth | 6 | `auth-url`, `auth-signin`, `auth-method`, `auth-headers-request`, `auth-headers-succeed`, `auth-headers-fail` (requires SPOA hub `external-auth` plugin) |
 | Client mTLS | 4 | `auth-tls-secret`, `auth-tls-verify-client`, `auth-tls-error-page`, `auth-tls-cert-header` (incoming client-cert verification via crt-list per-line ca-file/verify options) |
-| WAF | 2 | `waf`, `waf-mode` (requires SPOA hub `coraza` plugin; `waf: modsecurity` to opt in, `waf-mode: deny`/`detect` for shadow mode) |
+| WAF | 2 | `waf` (opt-in, only `"modsecurity"`), `waf-mode` (`deny`/`detect` shadow mode, default `deny`) — ModSecurity `SecRule` enforcement via the SPOA hub `coraza` plugin |
 | Backend config | 1 | `config-backend` |
 
 All annotations are fully supported.

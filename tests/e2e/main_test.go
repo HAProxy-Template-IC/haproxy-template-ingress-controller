@@ -15,7 +15,7 @@
 //go:build e2e
 
 // Package e2e is the full-stack end-to-end test suite for
-// haproxy-template-ic. It is self-contained: TestMain creates its own kind
+// HAPTIC. It is self-contained: TestMain creates its own kind
 // cluster, helm-installs the chart, and deploys backend fixtures. Nothing
 // outside the test binary needs to run first.
 package e2e

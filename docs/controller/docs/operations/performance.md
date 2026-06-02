@@ -97,12 +97,11 @@ CRD fields on `spec.dataplane` bound how often the controller pushes configurati
 
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `dataplane.minDeploymentInterval` | 2s | Minimum time between consecutive deployments; rate-limits rapid-fire pushes |
+| `dataplane.minDeploymentInterval` | 2s (Helm chart ships `5s`) | Minimum time between consecutive deployments; rate-limits rapid-fire pushes |
 | `dataplane.driftPreventionInterval` | 60s | Forces a deployment if none has happened within this window; corrects external drift |
-| `dataplane.configPublishInterval` | 30s | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
+| `dataplane.configPublishInterval` | 10s | Throttle for republishing the rendered config as the `HAProxyCfg` observability CRD; not on the deployment hot path |
 | `dataplane.reloadVerificationTimeout` | 10s | Maximum time the sync waits for HAProxy to confirm a graceful reload completed |
 | `dataplane.syncTimeout` | 2m | Overall per-endpoint sync timeout (parse + diff + apply + reload-verify) |
-| `dataplane.syncMaxRetries` | 3 | Automatic retries on HTTP 409 transaction-version conflicts; 0 disables retries |
 
 ```yaml
 apiVersion: haproxy-haptic.org/v1alpha1
@@ -120,7 +119,6 @@ spec:
 - Raise `minDeploymentInterval` in very high-churn environments to absorb more updates per push (trades latency for fewer Dataplane API calls).
 - Keep `driftPreventionInterval` at or below 2 minutes so that a misbehaving external client cannot hold HAProxy in a drifted state for long.
 - Raise `reloadVerificationTimeout` if your Dataplane API has a high `reload-delay` setting; the verification timeout must exceed it.
-- `syncMaxRetries: 0` is a valid choice when you want sync failures to surface immediately rather than be retried.
 
 ### Reconciliation Metrics
 
@@ -527,14 +525,13 @@ A sustained non-zero `haptic_events_dropped_total` rate means a subscriber is to
 - Check Dataplane API health (`/v3/info` from inside the pod)
 - Verify network latency to HAProxy pods
 - Reduce config size by avoiding unnecessary nested loops in templates
-- Consider lowering `dataplane.maxParallel` if the Dataplane API is overwhelmed by parallel ops
 
 ## Performance Checklist
 
 ### Initial Deployment
 
 - [ ] Set appropriate resource requests/limits
-- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the 1s default is wrong for a specific kind (e.g. slower on EndpointSlice on large clusters)
+- [ ] Tune `dataplane.minDeploymentInterval` for workload, plus `spec.watchedResources.<name>.debounceInterval` per resource if the 2s default is wrong for a specific kind (e.g. slower on EndpointSlice on large clusters)
 - [ ] Set HAProxy maxconn based on expected load
 - [ ] Match nbthread to CPU allocation
 

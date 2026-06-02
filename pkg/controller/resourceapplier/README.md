@@ -75,11 +75,11 @@ aux files, but **does not read the collectors back** — see
 `pkg/controller/testrunner/rendering.go`:
 
 ```go
-renderCtx, _, _, _ := builder.Build()
+renderCtx := builder.Build().Context
 ```
 
-The third and fourth return values (status collector and rendered-resource
-collector) are explicitly discarded. The collectors fall out of scope,
+The `BuildResult` also carries `.StatusPatchCollector` and `.RenderedResourceCollector`;
+the testrunner reads only `.Context`, so both collectors fall out of scope. The collectors fall out of scope,
 GC eats them, and no API call ever happens.
 
 **The structural property to preserve:** any future code that wires a
@@ -211,10 +211,12 @@ applier:
 resourceApplierComponent := resourceapplier.New(&resourceapplier.Config{
     EventBus:               bus,
     DynamicClient:          k8sClient.DynamicClient(),
+    DiscoveryClient:        k8sClient.Clientset().Discovery(),
     GVRResolver:            statusapplier.NewRestMapperResolver(),
     Logger:                 logger,
     OwnNamespace:           ownNamespace,
-    RestrictToOwnNamespace: true,
+    RestrictToOwnNamespace: false,
+    OwnerRef:               ownerRef,
 })
 registry.Build().AllReplica(..., resourceApplierComponent).LeaderOnly(...).Done()
 ```

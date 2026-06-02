@@ -249,6 +249,7 @@ bind *:443 ssl crt-list {{ pathResolver.GetPath("cert-list.txt", "crt-list") }}
 | `b64decode` | Decode base64 strings | `{{ secret.data.password \| b64decode() }}` |
 | `glob_match` | Filter strings by glob pattern | `{{ templateSnippets \| glob_match("backend-*") }}` |
 | `group_by` | Group items by JSONPath | `{{ ingresses \| group_by("$.metadata.namespace") }}` |
+| `map_extract` | Pluck one field (dotted key path) from each item into a flat slice | `{{ routes \| map_extract("routeId") }}` |
 | `indent` | Indent each line by N spaces | `{{ render("snippet") \| indent(4) }}` |
 | `sanitize_regex` | Escape regex special characters | `{{ path \| sanitize_regex() }}` |
 | `sort_by` | Sort by JSONPath expressions | `{{ routes \| sort_by(["$.priority:desc"]) }}` |
@@ -284,7 +285,7 @@ All templates have access to the following top-level variables:
 | `pathResolver` | object | Resolves filenames to HAProxy paths — use `GetPath(name, type)` |
 | `capabilities` | map of bools | HAProxy feature flags derived from the local HAProxy version (e.g. `capabilities.SupportsCrtList`). Use for `{% if capabilities.SupportsCrtList %}…{% end %}` branches. |
 | `currentConfig` | parsed config (or nil) | The previously-deployed HAProxy configuration as a `*parser.StructuredConfig`. **Nil on first deployment** — guard with `{% if !isNil(currentConfig) %}`. Used for slot-preserving updates. |
-| `dataplane` | `config.Dataplane` block | The CRD's `spec.dataplane` block — port, max-parallel, timeouts, paths |
+| `dataplane` | `config.Dataplane` block | The CRD's `spec.dataplane` block — port, timeouts, paths |
 | `shared` | `*SharedContext` | Thread-safe compute-once cache for expensive computations (`shared.ComputeIfAbsent(key, factory)` + `shared.Get(key)`; no `Set` — prevents racy check-then-act patterns) |
 | `templateSnippets` | list | Names of all available template snippets — useful for dynamic `render_glob` patterns |
 | `runtimeEnvironment` | object | Runtime info exposed by the controller (e.g. `runtimeEnvironment.GOMAXPROCS`) |
@@ -366,7 +367,7 @@ Without a schema (e.g. `controller validate` without `--schema-dir`), the same c
 
 The type-switch case-clause form is the canonical pattern for chart code that crosses a polymorphic `any` boundary — the chart's `gateway` library uses it inside `60-frontend.yaml` to dispatch on HTTPRoute / GRPCRoute / TLSRoute. `shard_slice` is type-preserving: when its input is a typed slice, the result is the same typed slice (not `[]any`), so the downstream loop variable stays statically typed.
 
-**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. The rule lives in `pkg/k8s/typegen/converter.go::goFieldName` and matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`, `LoadBalancerIP`) — those don't apply here.
+**Field name convention:** Go-PascalCase of the JSON tag, with NO acronym preservation. The rule lives in `pkg/k8s/typegen/converter.go::goFieldName` and matters because chart authors are used to upstream Go-style names (`APIVersion`, `IPBlock`) — those don't apply here. (Where the JSON tag already has an uppercase acronym, like `loadBalancerIP`, the typed field keeps it — `LoadBalancerIP` — which happens to match upstream; only rune 0 is ever changed.)
 
 | JSON tag (source YAML)   | Typed field          |
 |--------------------------|----------------------|
@@ -376,8 +377,8 @@ The type-switch case-clause form is the canonical pattern for chart code that cr
 | `tls`                    | `Tls`                |
 | `ingressClassName`       | `IngressClassName`   |
 | `matchLabels`            | `MatchLabels`        |
-| `clusterIP`              | `ClusterIp`          |
-| `loadBalancerIP`         | `LoadBalancerIp`     |
+| `clusterIP`              | `ClusterIP`          |
+| `loadBalancerIP`         | `LoadBalancerIP`     |
 | `kubernetes.io/foo`      | `Kubernetes_io_foo` (non-letter/digit → `_`) |
 
 The no-acronym-dictionary choice is deliberate: there is no translation table to keep in sync. Templates write `gw.ApiVersion`, not `gw.APIVersion`.
@@ -473,7 +474,7 @@ default-server check
     {%- var ep = active_endpoints[i-1] %}
 server SRV_{{ i }} {{ ep["address"] }}:{{ ep["port"] }} enabled
   {%- else %}
-server SRV_{{ i }} 127.0.0.1:1 disabled
+server SRV_{{ i }} 192.0.2.1:1 disabled
   {%- end %}
 {%- end %}
 ```
@@ -488,7 +489,7 @@ server SRV_{{ i }} 127.0.0.1:1 disabled
         default-server check proto h2
         server SRV_1 10.0.0.1:8080 enabled
         server SRV_2 10.0.0.2:8080 enabled
-        server SRV_3 127.0.0.1:1 disabled
+        server SRV_3 192.0.2.1:1 disabled
     ```
 
     The Dataplane API can update Address, Port, and enabled/disabled state at runtime without reloading HAProxy. Both `enabled` and `disabled` are runtime-supported, enabling the reserved slots pattern. Options like `check` on individual server lines trigger reloads on any change.
@@ -722,7 +723,7 @@ templateSnippets:
         {%- if i-1 < len(active_endpoints) %}
       server SRV_{{ i }} {{ active_endpoints[i-1]["addr"] }}:{{ port }} check
         {%- else %}
-      server SRV_{{ i }} 127.0.0.1:1 disabled
+      server SRV_{{ i }} 192.0.2.1:1 disabled
         {%- end %}
       {%- end %}
 

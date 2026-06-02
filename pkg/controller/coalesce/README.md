@@ -54,7 +54,7 @@ func (c *Component) handleSomeEvent(event *events.SomeEvent) {
 
 - [`pkg/events`](../../events/) — defines the `CoalescibleEvent` interface
 - [`pkg/controller/reconciler`](../reconciler/) — primary *producer*: marks `ReconciliationTriggeredEvent` coalescible (or not, depending on the trigger reason) before publishing
-- Consumers (grep `coalesce.DrainLatest[`): `pkg/controller/renderer`, `pkg/controller/validator`, `pkg/controller/deployer`
+- Consumers (grep `coalesce.DrainLatest[`): `pkg/controller/deployer`
 
 ## License
 

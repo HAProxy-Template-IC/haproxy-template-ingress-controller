@@ -20,16 +20,16 @@ graph TB
 
             subgraph "HAProxy Deployment (2+ replicas)"
                 subgraph "haproxy pod A"
-                    HAP1[HAProxy<br/>:8080, :8443, :8404]
+                    HAP1[HAProxy<br/>:80, :443, :8404]
                     DP1[Dataplane API<br/>:5555]
                 end
                 subgraph "haproxy pod B"
-                    HAP2[HAProxy<br/>:8080, :8443, :8404]
+                    HAP2[HAProxy<br/>:80, :443, :8404]
                     DP2[Dataplane API<br/>:5555]
                 end
             end
 
-            HAP_SVC[HAProxy Service<br/>NodePort by default<br/>:80 → :8080<br/>:443 → :8443]
+            HAP_SVC[HAProxy Service<br/>NodePort by default<br/>:80 → :80<br/>:443 → :443]
         end
 
         subgraph "Application Namespaces"
@@ -81,7 +81,7 @@ graph TB
    - Ready pods are auto-discovered via `controller.config.podSelector`
 
 4. **HAProxy Service** — NodePort by default; set `haproxy.service.type: LoadBalancer` for cloud providers
-   - Service port 80 maps to HAProxy container port 8080, service port 443 maps to 8443
+   - Service port 80 maps to HAProxy container port 80, service port 443 maps to 443 (the chart binds HAProxy on the literal 80/443; set `haproxy.ports.http`/`https` to override)
 
 5. **HAProxyTemplateConfig CRD** — holds every piece of configuration the controller needs
    - Template bodies (`haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`)
@@ -101,9 +101,9 @@ graph TB
     end
 
     subgraph "HAProxy Pod (Deployment member)"
-        HAP_PROC[HAProxy Process<br/>:8080 HTTP<br/>:8443 HTTPS<br/>:8404 Stats]
+        HAP_PROC[HAProxy Process<br/>:80 HTTP<br/>:443 HTTPS<br/>:8404 Stats]
         DP_PROC[Dataplane API<br/>:5555 API<br/>Unix master socket]
-        HAP_VOL[Shared config emptyDir<br/>/etc/haproxy<br/>maps/, ssl/, files/]
+        HAP_VOL[Shared config emptyDir<br/>/etc/haproxy<br/>maps/, ssl/, general/]
     end
 
     HTPLCFG[HAProxyTemplateConfig CRD] -. watch .-> CTRL_MAIN
@@ -152,12 +152,12 @@ graph LR
 
             subgraph "HAProxy Instances"
                 subgraph "haproxy pod A<br/>10.0.1.10"
-                    HAP1[HAProxy Process<br/>:8080, :8443, :8404]
+                    HAP1[HAProxy Process<br/>:80, :443, :8404]
                     DP1[Dataplane API<br/>:5555]
                 end
 
                 subgraph "haproxy pod B<br/>10.0.1.11"
-                    HAP2[HAProxy Process<br/>:8080, :8443, :8404]
+                    HAP2[HAProxy Process<br/>:80, :443, :8404]
                     DP2[Dataplane API<br/>:5555]
                 end
             end

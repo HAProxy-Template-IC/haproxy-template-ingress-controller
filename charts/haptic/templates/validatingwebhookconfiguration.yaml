@@ -69,8 +69,7 @@ webhooks:
   CRD at apply time — operators see template errors with line-numbered
   haproxy -c output before the resource ever lands in etcd. With this
   upstream gate in place, the leader-side reconcile pipeline can safely
-  skip haproxy -c (saves ~94 ms on every render — see
-  project_haptic_rolling_restart_root_cause.md).
+  skip haproxy -c (saves ~94 ms on every render).
 
   failurePolicy: Ignore is intentional — the worst case of webhook
   unavailability is "operator gets a delayed error from the dataplane API

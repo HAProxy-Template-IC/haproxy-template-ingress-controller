@@ -299,8 +299,8 @@ Check these areas in order of likelihood:
 # Check leader logs for deployment activity
 kubectl logs -n haptic <leader-pod> | grep -i "deploy"
 
-# Verify leader-only components started
-kubectl logs -n haptic <leader-pod> | grep "Started.*Deployer\|DeploymentScheduler"
+# Verify leader-only components started (requires debug log level)
+kubectl logs -n haptic <leader-pod> | grep -i "deployer starting\|deployment scheduler starting\|starting deployment components"
 ```
 
 **Common causes:**
@@ -324,7 +324,7 @@ kubectl logs -n haptic <leader-pod> | grep "Started.*Deployer\|DeploymentSchedul
 **Production:**
 
 - 2-3 replicas across multiple availability zones
-- Enable PodDisruptionBudget:
+- A `PodDisruptionBudget` (`minAvailable: 1`) is created automatically once `replicaCount > 1` — no action needed. Tune or disable it via:
 
   ```yaml
   podDisruptionBudget:

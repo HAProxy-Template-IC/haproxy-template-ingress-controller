@@ -14,18 +14,20 @@ The controller exposes Prometheus metrics via an HTTP endpoint, providing visibi
 - Kubernetes resource counts
 - Leader election for HA deployments
 
+!!! note "Two metric sources"
+    Most of this guide is about the **controller's** metrics — the `haptic_*` family on port `9090`, which describe reconciliation, deployment, and leader-election health. HAProxy itself exposes a *separate* Prometheus endpoint on port `8404` carrying live traffic, backend health, and response-code data — see [HAProxy Data-Plane Metrics](#haproxy-data-plane-metrics). The chart's bundled `ServiceMonitor`/`PodMonitor` scrape the controller only.
+
 ## Enabling Metrics
 
 Metrics are enabled by default. The controller serves Prometheus metrics at `/metrics` on the metrics port (separate from the debug port — by default `:9090`). No additional configuration is needed beyond pointing Prometheus at this endpoint.
 
-The controller reads its metrics port from the `METRICS_PORT` env var (default `9090`). To disable the metrics server, set `METRICS_PORT=0` on the controller container. Via Helm, use `controller.extraEnv`:
+The controller reads its metrics port from the `METRICS_PORT` env var (default `9090`). To disable the metrics server, set `METRICS_PORT=0` on the controller container. Via Helm, use `extraEnv`:
 
 ```yaml
 # values.yaml — disable the metrics server entirely
-controller:
-  extraEnv:
-    - name: METRICS_PORT
-      value: "0"
+extraEnv:
+  - name: METRICS_PORT
+    value: "0"
 ```
 
 The CRD has a `controller.metricsPort` field, but the chart strips it from the serialized CRD (it's only used for chart-side templating like `NOTES.txt`). Setting `controller.config.controller.metricsPort: 0` in Helm values does *not* disable the metrics server.
@@ -63,6 +65,8 @@ monitoring:
     labels:
       release: prometheus  # Match your Prometheus selector
 ```
+
+The chart also ships a `PodMonitor` (`monitoring.podMonitor.enabled`) for setups that scrape pods directly instead of via the Service — enable whichever your Prometheus setup uses.
 
 ### Manual Access
 
@@ -123,6 +127,28 @@ histogram_quantile(0.95, rate(haptic_deployment_duration_seconds_bucket[5m]))
   rate(haptic_deployment_errors_total[5m]) /
   rate(haptic_deployment_total[5m])
 ))
+```
+
+### Runtime Fast-Path Metrics
+
+The runtime fast path applies runtime-eligible server changes (address, port, admin state) directly to the running HAProxy worker via the Dataplane API, bypassing a config reload. `applies` stuck at 0 while `fires` climbs means the fast path runs but the render diff never carries a runtime-eligible change.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `haptic_runtime_fast_path_fires_total` | Counter | Runtime-eligible fast-path apply attempts (one per pod per reconcile) |
+| `haptic_runtime_fast_path_applies_total` | Counter | Fast-path attempts that applied at least one runtime-eligible server update |
+| `haptic_runtime_fast_path_failures_total` | Counter | Fast-path attempts that errored (best-effort; the scheduled deploy converges) |
+| `haptic_runtime_fast_path_server_updates_total` | Counter | Total runtime-eligible server updates applied via the fast path |
+
+**Key queries:**
+
+```promql
+# Fraction of fast-path attempts that carried a runtime-eligible change
+rate(haptic_runtime_fast_path_applies_total[5m]) /
+rate(haptic_runtime_fast_path_fires_total[5m])
+
+# Runtime server updates applied without a reload
+rate(haptic_runtime_fast_path_server_updates_total[5m])
 ```
 
 ### Validation Metrics
@@ -287,7 +313,70 @@ These complement `haptic_events_published_total` / `haptic_event_subscribers` fr
 haptic_reconciliation_total * on() group_left(version) haptic_build_info{version="0.1.0"}
 ```
 
+## HAProxy Data-Plane Metrics
+
+Every metric above comes from the **controller** (`haptic_*`, port `9090`) — they describe reconciliation, deployment, and leader-election health, not live traffic. HAProxy itself exposes a separate Prometheus endpoint carrying the data-plane signals operators usually watch most closely: per-frontend request rates, per-backend response-code breakdowns, and session counts.
+
+The bundled config enables HAProxy's built-in [Prometheus exporter](https://github.com/haproxy/haproxy/tree/master/addons/promex) on the status frontend (port `8404`, path `/metrics`) by default — it is served from the always-on `status-extra-100-prometheus-exporter` snippet, so no extra flag is required. The HAProxy Service exposes that port under the name `stats`.
+
+!!! warning "The chart's ServiceMonitor / PodMonitor do not scrape HAProxy"
+    Both bundled monitors collect the controller's `haptic_*` metrics only: the `PodMonitor` selects `app.kubernetes.io/component: controller`, and the `ServiceMonitor` scrapes the `metrics` port (`9090`) that only the controller Service exposes. Neither targets HAProxy's `8404`. To collect HAProxy's `haproxy_*` metrics, add a separate scrape (or `ServiceMonitor`) pointed at the HAProxy pods.
+
+### Scrape Configuration
+
+Plain Prometheus — keep HAProxy pods (`component: loadbalancer`) and scrape their `8404` container port:
+
+```yaml
+scrape_configs:
+  - job_name: 'haproxy'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+        regex: loadbalancer
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8404"
+        action: keep
+```
+
+Prometheus Operator — a `ServiceMonitor` against the HAProxy Service's `stats` port:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: haproxy
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haptic
+      app.kubernetes.io/component: loadbalancer
+  endpoints:
+    - port: stats   # 8404
+      path: /metrics
+```
+
+### Key Queries
+
+HAProxy labels frontend/backend metrics with `proxy` (the section name) and server metrics with `server`:
+
+```promql
+# Request rate per frontend
+sum by (proxy) (rate(haproxy_frontend_http_requests_total[5m]))
+
+# 5xx response rate per backend
+sum by (proxy) (rate(haproxy_backend_http_responses_total{code="5xx"}[5m]))
+
+# Active sessions per backend
+sum by (proxy) (haproxy_backend_current_sessions)
+```
+
+The full metric set is HAProxy's own, not HAPTIC's — see the [HAProxy Prometheus exporter reference](https://github.com/haproxy/haproxy/tree/master/addons/promex) for every exposed series and its labels.
+
 ## Alerting Rules
+
+If you deploy via the Helm chart, it ships a built-in `PrometheusRule` (enable with `monitoring.prometheusRule.enabled`) covering a core set of controller alerts. The rules below are a broader recommended set you can copy and adapt for any Prometheus setup.
 
 ### Recommended Alerts
 
@@ -404,6 +493,8 @@ groups:
     The thresholds above suit typical production environments. For high-churn environments (frequent deployments, many short-lived resources), increase the `for` duration on reconciliation and deployment alerts to avoid noise. For development clusters, consider relaxing error rate thresholds or disabling non-critical alerts entirely.
 
 ## Dashboard Examples
+
+The chart ships a complete built-in Grafana dashboard (29 panels) — enable it with `monitoring.grafanaDashboard.enabled: true` (the default `useBuiltIn: true` renders `dashboards/haptic.json` into a `<release>-grafana-dashboard` ConfigMap that the Grafana sidecar auto-discovers; set a custom one via `grafanaDashboard.customDashboard`). The queries and JSON template below are for building your own dashboard or extending the bundled one.
 
 ### Grafana Dashboard Queries
 

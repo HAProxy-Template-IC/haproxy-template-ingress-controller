@@ -108,10 +108,10 @@ bus.Publish(events.NewConfigResourceChangedEvent(crdResource))  // *unstructured
 
 Controller creates and starts component in Stage 1:
 
-The real wiring lives in `pkg/controller/iteration.go`; the loader is one of the components constructed during the Stage 1 setup (alongside `configchange.NewConfigChangeHandler`, `credentialsloader.NewCredentialsLoaderComponent`, and the validators) before `bus.Start()` is called.
+The real wiring lives in `pkg/controller/controller.go` (`setupComponents`); the loader is one of the components constructed during the Stage 1 setup (alongside `configchange.NewConfigChangeHandler`, `credentialsloader.NewCredentialsLoaderComponent`, and the validators) before `bus.Start()` is called.
 
 ```go
-// Sketch — see pkg/controller/iteration.go for actual sequencing.
+// Sketch — see pkg/controller/controller.go (setupComponents) for actual sequencing.
 configLoader := configloader.NewConfigLoaderComponent(bus, logger)
 // ... other Stage 1 components also constructed here, all subscribing during construction ...
 bus.Start()

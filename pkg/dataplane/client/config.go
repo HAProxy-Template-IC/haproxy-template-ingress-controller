@@ -142,9 +142,11 @@ func (c *DataplaneClient) GetRawConfiguration(ctx context.Context) (string, erro
 
 // PushRawConfiguration pushes a new HAProxy configuration to the Dataplane API.
 //
-// WARNING: This triggers a full HAProxy reload. Use this only as a last resort
-// when fine-grained operations are not possible. Prefer using transactions with
-// specific API endpoints to avoid reloads.
+// This triggers a full HAProxy reload and is the production apply path for
+// structural changes (anything outside the runtime-eligible server-field set).
+// When every change is runtime-eligible, prefer PushRawConfigurationSkipReload,
+// which writes the new config to disk and applies the server changes to the
+// running worker without a reload.
 // Works with all HAProxy DataPlane API versions (v3.0+).
 //
 // Parameters:

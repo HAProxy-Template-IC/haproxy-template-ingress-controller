@@ -85,45 +85,20 @@ Tests access controller debug and metrics endpoints via the Kubernetes API serve
 Uses e2e-framework for test orchestration:
 
 ```go
-// env.go
-func Setup(t *testing.T) env.Environment {
-    if testEnv != nil {
-        return testEnv
+// main_test.go — TestMain is the entry point; env.go holds shared helpers.
+func TestMain(m *testing.M) {
+    testEnv = env.NewParallel()
+
+    // Detects DinD (CI) vs local and calls setupForDind / setupForLocal
+    // which provision the Kind cluster named "haproxy-test", install CRDs,
+    // and register teardown.
+    if os.Getenv("SKIP_PARALLEL_RUNNER") == "true" {
+        setupForCISharding()
+    } else {
+        setupForLocalDevelopment()
     }
 
-    testEnv = env.New()
-
-    // Create Kind cluster
-    kindCluster := kind.NewProvider().WithName("haproxy-test")
-
-    testEnv.Setup(
-        func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-            kubeconfigPath, err := kindCluster.Create(ctx)
-            if err != nil {
-                return ctx, fmt.Errorf("failed to create kind cluster: %w", err)
-            }
-
-            cfg.WithKubeconfigFile(kubeconfigPath)
-            return ctx, nil
-        },
-        func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-            // Create test namespace
-            // ...
-        },
-    )
-
-    testEnv.Finish(
-        func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-            // Cleanup namespace
-            // ...
-        },
-        func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-            // Destroy Kind cluster
-            // ...
-        },
-    )
-
-    return testEnv
+    os.Exit(testEnv.Run(m))
 }
 ```
 

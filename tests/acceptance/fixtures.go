@@ -502,15 +502,15 @@ func (b *HAProxyTemplateConfigBuilder) Build() *haproxyv1alpha1.HAProxyTemplateC
 	enabled := b.leaderElection
 
 	// Fast-timings preset: see the doc comment on WithFastTestTimings.
-	// reloadVerificationTimeout, syncTimeout, deploymentTimeout, syncMaxRetries,
+	// reloadVerificationTimeout, syncTimeout, deploymentTimeout,
 	// and the leader-election lease durations are intentionally NOT touched —
 	// they're either safety ceilings or paid once per cluster (see the
 	// evaluation in tests/acceptance/CLAUDE.md / repo plan).
 	var (
-		minDeploymentInterval    string
-		configPublishInterval    string
-		driftPreventionInterval  string
-		watchedResourceDebounce  string
+		minDeploymentInterval   string
+		configPublishInterval   string
+		driftPreventionInterval string
+		watchedResourceDebounce string
 	)
 	if b.fastTimings {
 		minDeploymentInterval = "100ms"

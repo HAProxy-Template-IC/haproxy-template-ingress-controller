@@ -22,8 +22,11 @@ evictionMaxAge := 2 * cfg.Dataplane.GetDriftPreventionInterval()
 hsComponent := httpstore.New(eventBus, logger, evictionMaxAge)
 go hsComponent.Start(ctx)
 
-// Then attach the component to the renderer so templates get the wrapper:
-rendererComponent.SetHTTPStoreComponent(hsComponent)
+// Then pass the component to the renderer via RenderServiceConfig:
+// renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
+//     ...
+//     HTTPStoreComponent: hsComponent,
+// })
 ```
 
 The component runs on every replica (not leader-only) so all replicas have warm HTTP caches and the proposal validator on any pod can render templates that depend on remote content.

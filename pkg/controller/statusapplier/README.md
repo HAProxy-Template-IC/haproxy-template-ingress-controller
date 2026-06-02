@@ -4,9 +4,9 @@ Applies template-driven status patches to Kubernetes resources via Server-Side A
 
 ## Overview
 
-Templates can register status patches against arbitrary Kubernetes resources (typically the Ingress / HTTPRoute / Gateway whose configuration was just rendered) using the `pkg/templating.StatusPatch` API. Each registered patch carries variants keyed by pipeline outcome — `rendered` (rendering succeeded), `deployed` (deployment succeeded), `renderFailed`, `deployFailed`. This component subscribes to the lifecycle events, picks the right variant, and applies it via SSA with `fieldManager: "haptic"` so it composes cleanly with patches from other controllers.
+Templates can register status patches against arbitrary Kubernetes resources (typically the Ingress / HTTPRoute / Gateway whose configuration was just rendered) using the `pkg/templating.StatusPatch` API. Each registered patch carries variants keyed by pipeline outcome — `rendered` (rendering succeeded), `deployed` (deployment succeeded), `renderFailed`, `deployFailed`. This component subscribes to the lifecycle events, picks the right variant, and applies it via SSA with a phase-scoped field manager (`haptic-rendered`, `haptic-deployed`, `haptic-renderFailed`, `haptic-validateFailed`, or `haptic-deployFailed`) so each phase owns disjoint condition entries and composes cleanly with patches from other controllers.
 
-It runs on **every replica** (subscribes in the constructor like other all-replica components) but only the leader actually issues SSA patches — followers cache state so they're ready to take over instantly on `BecameLeaderEvent`.
+It runs on **every replica** (subscribes in the constructor like other all-replica components) but only the leader actually issues SSA patches. The component is stateless — patches travel on the events that trigger each apply, so a new leader simply relies on the `Reconciler` to fire a fresh reconciliation.
 
 ## Quick Start
 
@@ -33,14 +33,15 @@ go applier.Start(ctx)
 | Event | Action |
 |-------|--------|
 | `TemplateRenderedEvent` | Cache the patches (registered by templates during rendering); apply the `rendered` variant if leader |
-| `ReconciliationCompletedEvent` | Apply the `deployed` variant if leader |
+| `DeploymentCompletedEvent` | Apply the `deployed` variant if leader |
+| `DeploymentSkippedEvent` | Apply the `deployed` variant if leader (deployment skipped because config unchanged) |
 | `ReconciliationFailedEvent` | Apply `renderFailed` or `deployFailed` variant (depending on which phase failed) if leader |
-| `BecameLeaderEvent` | Clear the per-pod checksum cache and re-apply the cached `rendered` variant |
-| `LostLeadershipEvent` | Clear pending per-pod state |
+| `BecameLeaderEvent` | Flip the leader flag on; clear the SSA checksum cache so the new leader writes at least once for every active resource on the next reconciliation (triggered by the `Reconciler`) |
+| `LostLeadershipEvent` | Flip the leader flag off; in-flight handlers re-check via `leaderRLocked()` |
 
 ## SSA Conflict Handling
 
-Each apply uses `fieldManager: "haptic"`. If another controller has set a conflicting field, SSA returns a 409 Conflict — the component logs the conflict and continues; the next reconciliation cycle will retry. Persistent conflicts indicate a configuration mistake (two controllers both claiming ownership of the same status field) and need human attention.
+Each apply uses a phase-scoped field manager (e.g. `haptic-rendered`, `haptic-deployed`). The SSA calls use `Force: true` (`metav1.PatchOptions{Force: new(true)}`), so conflicting field ownership is taken from any other manager rather than returning a 409 Conflict. This means haptic always wins field-ownership races; there is no conflict-retry path.
 
 ## See Also
 

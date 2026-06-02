@@ -3,7 +3,7 @@
 Three components that together get validated configurations onto HAProxy pods:
 
 - **`DeploymentScheduler`** — decides *when* to deploy. Keeps the last validated config + last discovered endpoints, rate-limits to `minDeploymentInterval`, and queues at most one pending deployment ("latest wins"). Also times out deployments that take longer than `deploymentTimeout` so a dropped `DeploymentCompletedEvent` can't wedge the pipeline forever.
-- **`Component`** (the deployer itself) — stateless executor. Consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. `maxParallel` and `rawPushThreshold` are passed through to the dataplane client.
+- **`Component`** (the deployer itself) — stateless executor. Consumes `DeploymentScheduledEvent` and deploys to every discovered HAProxy endpoint in parallel using `pkg/dataplane.Client`. Its `SyncOptions` (`ReloadVerificationTimeout`, `Timeout`) are passed through to each `pkg/dataplane` sync.
 - **`DriftPreventionMonitor`** — fires a synthetic `DriftPreventionTriggeredEvent` every `driftPreventionInterval` when nothing has deployed recently, so an out-of-band change applied directly via the Dataplane API gets overwritten by the controller's last-known-good config.
 
 All three are leader-only — only the replica holding the `Lease` deploys, observers on other replicas stay idle.
@@ -24,16 +24,9 @@ scheduler := deployer.NewDeploymentScheduler(
     2*time.Second,   // minDeploymentInterval
     30*time.Second,  // deploymentTimeout
 )
-// MaxRetries is *int so a zero-value SyncOptions{} preserves the
-// dataplane default (3) instead of silently disabling retries; pass
-// e.g. &zero for an explicit "no retries" configuration.
-maxRetries := 3
 exec := deployer.New(bus, logger, deployer.SyncOptions{
-    MaxParallel:               0,                // 0 = unlimited
-    RawPushThreshold:          100,
     ReloadVerificationTimeout: 10 * time.Second,
     Timeout:                   2 * time.Minute,
-    MaxRetries:                &maxRetries,
 })
 monitor := deployer.NewDriftPreventionMonitor(bus, logger, 60*time.Second)
 
@@ -42,7 +35,7 @@ go exec.Start(ctx)
 go monitor.Start(ctx)
 ```
 
-All durations / ints come from `spec.dataplane` and `spec.controller` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `maxParallel`, `rawPushThreshold`, `driftPreventionInterval`, `reloadVerificationTimeout`, `syncTimeout`, `syncMaxRetries`.
+All durations / ints come from `spec.dataplane` and `spec.controller` on the CRD: `minDeploymentInterval`, `deploymentTimeout`, `driftPreventionInterval`, `reloadVerificationTimeout`, `syncTimeout`.
 
 ## Event Flow
 

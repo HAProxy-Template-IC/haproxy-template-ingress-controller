@@ -45,6 +45,7 @@ contract drives the start, not an event handler.
 | `TemplateRenderedEvent` | Cache the rendered config + aux files, keyed by correlation ID |
 | `ValidationCompletedEvent` | Match against the cached render; queue a `publishWorkItem` for the publish worker |
 | `ValidationFailedEvent` | Queue a `validationFailedWorkItem` so the failure shows up as an `-invalid` `HAProxyCfg` |
+| `DeployedConfigPublishRequest` | Publish, as the HAProxyCfg spec, the exact bytes the deployer just applied (deploy-driven publish path; uses a separate pending slot so a validation publish cannot coalesce it away) |
 | `ConfigAppliedToPodEvent` | Coalesce per-pod status updates (last-wins) and signal the status worker |
 | `HAProxyPodTerminatedEvent` | Same channel — clears stale per-pod status when a pod goes away |
 | `HAProxyPodsDiscoveredEvent` | Same channel — refreshes the known-pod set used to scope status writes |

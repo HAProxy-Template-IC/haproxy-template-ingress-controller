@@ -42,11 +42,10 @@ channel was drained. The `Active()` accessor (true when a timer is currently
 running) is the same predicate, exposed read-only for components that want to
 log the state.
 
-The `Reset` and `EnsureRunning` modes correspond to trailing-edge vs leading-edge debouncing — the controller's `pkg/controller/reconciler` is the canonical leading-edge user.
+The `Reset` and `EnsureRunning` modes correspond to trailing-edge vs leading-edge debouncing — `pkg/controller/configchange` is the only current production user (trailing-edge `Reset`); `EnsureRunning` is available for future leading-edge callers.
 
 ## See Also
 
-- [`pkg/controller/reconciler`](../reconciler/) — leading-edge refractory debouncer built on `EnsureRunning`
 - [`pkg/controller/configchange`](../configchange/) — uses trailing-edge `Reset` for reinit coalescing
 
 ## License

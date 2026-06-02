@@ -6,7 +6,7 @@ Shared event-loop scaffold consumed by every controller component that subscribe
 
 The pattern most controller components share — subscribe to the EventBus during `New(...)` so events buffered during startup aren't lost, run a single goroutine that dispatches one event at a time, recover from panics inside the handler, and shut down cleanly when the context is cancelled — used to be duplicated in `pkg/controller/resourceloader.BaseLoader` and `pkg/controller/validator.BaseValidator`. This package consolidates it. The two `Base*` types still exist as thin wrappers for familiarity, but new components should embed `*Base` directly.
 
-`*ReadySignal` (in `ready.go`) is a small one-shot helper for components that need to signal "I'm ready" exactly once — used by the renderer, deployer, and a few others.
+`*ReadySignal` (in `ready.go`) is a small one-shot helper for components that need to signal "I'm ready" exactly once — used by the deployer, coordinator, config publisher, and a few others.
 
 ## Quick Start
 

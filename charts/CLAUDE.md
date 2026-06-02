@@ -79,7 +79,7 @@ _helm_load:
 Real examples in the source:
 
 - `libraries/ingress.yaml` — simple `enable` + one `inject` for the dynamic `ingressClassName` field selector.
-- `libraries/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + one `inject` for the gateway-class field selector.
+- `libraries/gateway/` — compound `enable` (values flag AND `Capabilities.APIVersions.Has`) + `inject`s for the gateway and gateway-class field selectors.
 - `libraries/base.yaml` — `enable` + the `controller_services` label-selector inject + a conditional `from:`-style inject that swaps `frontend-routing-logic` to its `-regex-last` variant when `controller.config.routing.regexMatchOrder=last`, and `unset` that always strips the alternate variant from output.
 - `libraries/spoa-hub/` — compound `enable` (explicit flag OR derived from `haptic.spoaHub.enabled` helper).
 
@@ -110,7 +110,7 @@ Level 1: ssl.yaml
          │
          ├── Know: base
          │
-Level 2: ingress.yaml, gateway.yaml
+Level 2: ingress.yaml, gateway/
          │
          ├── Know: base, ssl
          ├── Don't know: each other
@@ -127,7 +127,7 @@ Level 2.5: ingress-annotations-compat.yaml
          │             Vendor libraries for non-Ingress CRDs write their
          │             own equivalents.
          │
-Level 3: haproxy-ingress.yaml, haproxytech.yaml, nginx-ingress.yaml
+Level 3: haproxy-ingress/, haproxytech.yaml, nginx-ingress/
          │
          ├── Know: all libraries above (including ingress-annotations-compat)
          └── Don't know: each other
@@ -210,9 +210,9 @@ The Go-side guarantee (engine ignores all resource specifics; schemas come from 
 - `grpcroute.metadata.*`, `grpcroute.spec.*`
 - Any other resource-specific fields or annotations
 
-The bundled resource-specific libraries (`ingress.yaml`, `gateway/*.yaml`, `haproxytech.yaml`, `haproxy-ingress.yaml`, `nginx-ingress.yaml`) are illustrative implementations of the pattern; an operator using a different CRD writes their own library file alongside, and `base.yaml` consumes its output through the same shared-context seam without modification.
+The bundled resource-specific libraries (`ingress.yaml`, `gateway/`, `haproxytech.yaml`, `haproxy-ingress/`, `nginx-ingress/`) are illustrative implementations of the pattern; an operator using a different CRD writes their own library file alongside, and `base.yaml` consumes its output through the same shared-context seam without modification.
 
-Resource-specific libraries (ingress.yaml, gateway.yaml, haproxytech.yaml) are responsible for:
+Resource-specific libraries (ingress.yaml, gateway/, haproxytech.yaml) are responsible for:
 
 1. Extracting annotations and resource-specific data
 2. Performing resource-specific calculations
@@ -275,11 +275,13 @@ In addition to the snippet-based extension points below, libraries may declare f
 | `frontends-*` | Additional frontends (HTTPS, TCP) | ssl |
 | `http-bind-extra-*` | Additional HTTP-frontend `bind *:<port>` directives (Gateway HTTP listener ports) | gateway |
 | `https-bind-extra-*` | Additional HTTPS-frontend `bind *:<port> ssl crt-list ...` directives (Gateway HTTPS listener ports) | gateway |
+| `frontend-routing-listener-port-*` | Per-listener-port frontend routing logic (Gateway listener ports) | gateway |
 | `frontend-extra-*` | Early frontend directives after bind (options, captures, ACLs) | (user) |
 | `frontend-matchers-advanced-*` | Advanced route matching (method, headers) | gateway |
 | `frontend-filters-*` | Request/response filters (after routing) | gateway, haproxytech |
 | `backend-directives-*` | Backend configuration directives | haproxytech |
 | `map-host-*` | Host map entries | gateway, ingress |
+| `map-host-regex-*` | Regex host map entries (wildcard/regex hostnames) | gateway |
 | `map-path-exact-*` | Exact path map entries | gateway, ingress |
 | `map-path-prefix-*` | Prefix path map entries | gateway, ingress |
 | `map-pfxexact-*` | Prefix-exact map entries | gateway, haproxy-ingress, ingress |
@@ -327,7 +329,7 @@ Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control executio
 | 100-199 | Feature registration, basic config | `features-100-gateway-tls`, `frontend-filters-100-haproxytech-basic-headers` |
 | 200-299 | Access control, security | `frontend-filters-200-haproxytech-access-control` |
 | 300-399 | CORS, header manipulation | `frontend-filters-300-haproxytech-cors` |
-| 400-499 | Redirects, rewrites | `frontend-filters-400-haproxytech-ssl-redirect` |
+| 400-499 | Redirects, rewrites | `frontend-filters-450-haproxytech-redirects` |
 | 500-599 | Core functionality | `backends-500-ingress`, `map-host-500-gateway` |
 | 600-699 | Compatibility layers | `map-path-regex-600-haproxy-ingress` |
 | 700-799 | Compatibility layers (nginx) | `backend-directives-700-nginx-ingress-timeouts` |
@@ -360,13 +362,13 @@ Snippets use numeric prefixes (e.g., `backends-500-ingress`) to control executio
 
 ```scriggo
 {# Definition in util-gateway-analysis #}
-{%- var _, _ = shared.ComputeIfAbsent("gateway_analysis", func() any {
+{%- var _, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any {
     return expensive_computation()
 }) %}
 
 {# Usage from any snippet — re-fetch (and re-cache if needed) in one call. #}
 {{ render "util-gateway-analysis" }}
-{%- var ga, _ = shared.ComputeIfAbsent("gateway_analysis", func() any {
+{%- var ga, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any {
     return expensive_computation() {# only runs if util- snippet wasn't rendered first #}
 }) %}
 ```
@@ -383,7 +385,7 @@ global
     # ... other global settings
 ```
 
-The directive lives in the `global-settings-300-paths` snippet of `charts/haptic/libraries/base.yaml` (around line 458). It tells HAProxy to resolve relative paths from the explicit base directory passed as an argument, **not** from the config file's directory or HAProxy's working directory. We use `origin <baseDir>` rather than `default-path config` because the validation pipeline rewrites this single directive (replacing the production base with a per-call temp dir) instead of mutating every file path in the rendered config.
+The directive lives in the `global-settings-300-paths` snippet of `charts/haptic/libraries/base.yaml` (around line 863). It tells HAProxy to resolve relative paths from the explicit base directory passed as an argument, **not** from the config file's directory or HAProxy's working directory. We use `origin <baseDir>` rather than `default-path config` because the validation pipeline rewrites this single directive (replacing the production base with a per-call temp dir) instead of mutating every file path in the rendered config.
 
 ### How Path Resolution Works
 
@@ -710,8 +712,8 @@ Without a schema, the same calls fall back to `[]any` / `map[string]any` as befo
 | `tls`                  | `Tls`              |
 | `ingressClassName`     | `IngressClassName` |
 | `matchLabels`          | `MatchLabels`      |
-| `clusterIP`            | `ClusterIp`        |
-| `loadBalancerIP`       | `LoadBalancerIp`   |
+| `clusterIP`            | `ClusterIP`        |
+| `loadBalancerIP`       | `LoadBalancerIP`   |
 | `kubernetes.io/foo`    | `Kubernetes_io_foo` (non-letter/digit → `_`) |
 
 The rule is canonicalised in `pkg/k8s/typegen/converter.go::goFieldName`. Templates write `gw.ApiVersion`, not `gw.APIVersion`. The reason for no acronym dictionary is in [ADR-0010](../docs/adr/0010-typed-watched-resources.md).
@@ -790,7 +792,7 @@ templateSnippets:
 
 **Real Example:**
 
-See `libraries/haproxytech.yaml` lines 18-57 for the `top-level-annotation-haproxytech-auth` template which demonstrates proper documentation including:
+See `libraries/haproxytech.yaml` for the `global-top-500-haproxytech-ingress-auth` template (around line 237) which demonstrates proper documentation including:
 
 - Link to HAProxy Ingress documentation
 - List of all annotations
@@ -812,7 +814,7 @@ Proper documentation prevents bugs and makes templates self-documenting.
 
 ### Cross-Library Shared State (globalFeatures / gf)
 
-Libraries communicate across boundaries using the `globalFeatures` map (commonly aliased as `gf`). This enables features like SSL to be configured in one library (ingress.yaml, gateway.yaml) and consumed by another (ssl.yaml).
+Libraries communicate across boundaries using the `globalFeatures` map (commonly aliased as `gf`). This enables features like SSL to be configured in one library (ingress.yaml, gateway/) and consumed by another (ssl.yaml).
 
 **Pattern:**
 
@@ -825,7 +827,7 @@ Libraries communicate across boundaries using the `globalFeatures` map (commonly
   {%- gf["tlsCertificates"] = []any{} %}
 {%- end %}
 
-{#- ingress.yaml or gateway.yaml: Append data to shared state -#}
+{#- ingress.yaml or gateway/: Append data to shared state -#}
 {%- var sslBackends []any = gf["sslPassthroughBackends"].([]any) %}
 {%- gf["sslPassthroughBackends"] = append(sslBackends, backend) %}
 
@@ -836,12 +838,14 @@ Libraries communicate across boundaries using the `globalFeatures` map (commonly
 {%- end %}
 ```
 
-**Available Shared State Keys:**
+**Canonical Shared State Keys** (the SSL examples — the cross-library set is larger; see the note below):
 
 | Key | Type | Purpose | Initialized By | Written By |
 |-----|------|---------|----------------|------------|
-| `sslPassthroughBackends` | `[]any` | SSL passthrough backend definitions | ssl.yaml | gateway.yaml, haproxytech.yaml |
-| `tlsCertificates` | `[]any` | TLS certificate references for crt-list | ssl.yaml | gateway.yaml, ingress.yaml |
+| `sslPassthroughBackends` | `[]any` | SSL passthrough backend definitions | ssl.yaml | gateway/, haproxytech.yaml |
+| `tlsCertificates` | `[]any` | TLS certificate references for crt-list | ssl.yaml | gateway/, ingress.yaml |
+
+This table is illustrative, not exhaustive — other genuinely cross-library keys include `sslRedirectHosts`, `clientCertVerifyHosts`, and `needHTTPSTermination`. Before introducing a new key, check it isn't an existing one under a different spelling — grep the authoritative set: `grep -rhoE '(gf|globalFeatures)\["[a-zA-Z_]+"\]' charts/haptic/libraries/ | sort -u`.
 
 !!! warning "Map Key Consistency is Critical"
     All libraries **MUST** use the exact same map key names. The codebase uses **camelCase** for shared state keys. Using different key names (e.g., `tls_certificates` vs `tlsCertificates`) will cause silent failures where data written by one library is invisible to another.
@@ -910,7 +914,7 @@ backend default_my-ingress_svc_my-service_http
     default-server check proto h2
     server SRV_1 10.0.0.1:8080 enabled
     server SRV_2 10.0.0.2:8080 enabled
-    server SRV_3 127.0.0.1:1 disabled
+    server SRV_3 192.0.2.1:1 disabled
 ```
 
 **Why this matters:** When pods scale up/down, only the server's Address, Port, and enabled/disabled state change. If these are the only fields on server lines, the controller updates them via runtime API (no reload, no connection drops). If options like `check` are on server lines, any change requires a reload.
@@ -942,7 +946,7 @@ Utility snippets handle all caching internally. Just render them and use the res
 {{ render "util-gateway-analysis" }}
 
 {# The gateway_analysis variable is now available with cached data #}
-{%- for _, route := range gateway_analysis.sorted_routes %}
+{%- for _, route := range gateway_analysis.sortedRoutes %}
   ... process route ...
 {%- end %}
 ```
@@ -951,16 +955,16 @@ Utility snippets handle all caching internally. Just render them and use the res
 
 | Snippet | Library | Provides | Description |
 |---------|---------|----------|-------------|
-| `util-gateway-analysis` | gateway.yaml | `gateway_analysis` | HTTPRoute sorting, grouping, conflict detection |
-| `util-gateway-ssl-passthrough` | gateway.yaml | `gateway_ssl_passthrough` | Gateway SSL passthrough backend scanning |
-| `util-haproxytech-ssl-passthrough` | haproxytech.yaml | `haproxytech_ssl_passthrough` | Ingress SSL passthrough backend scanning |
+| `util-gateway-analysis` | gateway/ | `gatewayAnalysis` | HTTPRoute sorting, grouping, conflict detection |
+| `util-gateway-ssl-passthrough` | gateway/ | `gateway_ssl_passthrough` | Gateway SSL passthrough backend scanning |
+| `util-haproxytech-ssl-passthrough` | haproxytech.yaml | `haproxytech_sslPassthrough` | Ingress SSL passthrough backend scanning |
 
 **Example Usage:**
 
 ```go
 {# Gateway route analysis - used by 7+ snippets #}
 {{ render "util-gateway-analysis" }}
-{%- for _, route := range gateway_analysis.sorted_routes %}
+{%- for _, route := range gateway_analysis.sortedRoutes %}
 backend {{ route.metadata.namespace }}_{{ route.metadata.name }}
     {# ... backend config ... #}
 {%- end %}
@@ -987,7 +991,7 @@ cached data is reused without re-running the expensive computation:
 {# Inside util-gateway-analysis (simplified) #}
 {# ComputeIfAbsent runs the closure at most once per render, even with
    parallel sub-renders — singleflight serialises duplicate keys. #}
-{% var gateway_analysis, _ = shared.ComputeIfAbsent("gateway_analysis", func() any {
+{% var gateway_analysis, _ = shared.ComputeIfAbsent("gatewayAnalysis", func() any {
     {% import "util-analyze-routes" for analyze_routes %}
     return analyze_routes(resources)
 }) %}
@@ -1394,12 +1398,17 @@ Scriggo supports both function call syntax and pipe syntax:
 | `merge(m1, m2)` | Merge maps | `merge(base, overrides)` |
 | `dig(obj, keys...)` | Navigate nested maps **and** typed structs (via JSON-tag → Go-field lookup); optional `omitempty` fields with zero values normalise to nil | `dig(obj, "meta", "name")` |
 | `fallback(v, default)` | Return default if nil | `fallback(obj.field, "")` |
+| `dig_string(obj, default, keys...)` | Fused `dig + fallback + tostring` — string access at polymorphic boundaries (annotation / metadata lookups on `any`-typed values) | `v \| dig_string("", "metadata", "name")` |
 | `append(slice, item)` | Append to slice | `append(items, newItem)` |
 | `toSlice(v)` | Convert to []any | `toSlice(maybeNil)` |
+| `toStringSlice(v)` | Convert `[]any` to `[]string` | `toStringSlice(items)` |
+| `ceil(n)` | Ceiling of a float | `ceil(1.2)` → `2` |
 | `to_str_map(v)` | Normalise any string-keyed map (`map[string]string` from typegen, `map[string]any` from the untyped store path) into `map[string]string` — use on labels / matchLabels / annotations | `route.Metadata.Labels \| to_str_map()` |
 | `shard_slice(items, idx, n)` | Type-preserving slice shard for parallel rendering (AdaptiveFunc; return element type matches input) | `shard_slice([]*resources.gateways.T, i, n)` |
 | `sort_by(slice, criteria)` | Sort by JSONPath | See sorting section |
+| `sort_ints(slice)` | Sort `[]any` of ints numerically (non-ints coerced via `toint`, sort to front) — use for ports/IDs where `sort_strings` would misorder (`"10"` before `"2"`) | `sort_ints(ports)` |
 | `glob_match(names, pattern)` | Filter by glob | `glob_match(templates, "backend-*")` |
+| `selectattr(items, attr[, op, v])` | Jinja2-style filter: items where `attr` is truthy, or where `op` ∈ {`eq`,`ne`,`in`} matches `v` | `selectattr(rules, "host", "eq", h)` |
 | `first_seen(prefix, keys...)` | Deduplication helper | See deduplication section |
 | `regex_search(s, pattern)` | Regex match | `regex_search(name, "^test")` |
 | `sanitize_regex(s)` | Escape regex chars | `sanitize_regex("a.b")` → `"a\\.b"` |
@@ -2030,16 +2039,16 @@ templateSnippets:
 
 - Violates separation of concerns
 - Makes annotation documentation harder to find
-- Prevents gateway.yaml from using the same annotations
+- Prevents the gateway/ library from using the same annotations
 
 **Solution**: Process annotations in the library that owns them:
 
 | Annotation Prefix | Owner Library |
 |-------------------|---------------|
 | `haproxy.org/*` | haproxytech.yaml |
-| `haproxy-ingress.github.io/*` | haproxy-ingress.yaml |
-| `nginx.ingress.kubernetes.io/*` | nginx-ingress.yaml |
-| (none - standard fields) | ingress.yaml, gateway.yaml |
+| `haproxy-ingress.github.io/*` | haproxy-ingress/ |
+| `nginx.ingress.kubernetes.io/*` | nginx-ingress/ |
+| (none - standard fields) | ingress.yaml, gateway/ |
 
 **Pattern for Annotation Libraries:**
 
@@ -2088,10 +2097,14 @@ charts/haptic/
 │
 ├── libraries/                   # Template libraries (merged at render time)
 │   ├── base.yaml               # Core HAProxy template (defines haproxyConfig)
+│   ├── ssl.yaml                # HTTPS frontend, TLS certs, SSL passthrough
 │   ├── ingress.yaml            # Kubernetes Ingress support
-│   ├── gateway.yaml            # Gateway API support
+│   ├── gateway/                # Gateway API support (split-library directory)
+│   ├── ingress-annotations-compat.yaml  # Shared scaffold for Ingress vendor annotation libraries
 │   ├── haproxytech.yaml        # HAProxy annotation compatibility
-│   └── nginx-ingress.yaml      # nginx-ingress annotation compatibility (disabled by default)
+│   ├── haproxy-ingress/        # haproxy-ingress annotation compatibility
+│   ├── nginx-ingress/          # nginx-ingress annotation compatibility (disabled by default)
+│   └── spoa-hub/               # SPOA hub sidecar wiring (auto-enabled with spoaHub)
 │
 ├── templates/                   # Helm templates
 │   ├── _libraries.tpl          # Library merging (haptic.mergeLibraries)
@@ -2108,7 +2121,11 @@ charts/haptic/
 │   └── ...                     # Other K8s resources
 │
 └── crds/                        # Custom Resource Definitions
-    └── haproxy-haptic.org_haproxytemplateconfigs.yaml
+    ├── haproxy-haptic.org_haproxytemplateconfigs.yaml
+    ├── haproxy-haptic.org_haproxycfgs.yaml
+    ├── haproxy-haptic.org_haproxymapfiles.yaml
+    ├── haproxy-haptic.org_haproxygeneralfiles.yaml
+    └── haproxy-haptic.org_haproxycrtlistfiles.yaml
 ```
 
 ## Debugging Tips

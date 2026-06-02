@@ -32,10 +32,12 @@ Creates a template engine from configuration with all standard filters and the
 
 **Used by:**
 
-- `pkg/controller/renderer` - Main HAProxy config rendering
-- `pkg/controller/dryrunvalidator` - Webhook validation rendering
-- `pkg/controller/testrunner` - Validation test execution
+- `pkg/controller/reconciliation.go` - Engine creation for the reconciliation pipeline
+- `pkg/controller/webhook.go` - Engine creation for the webhook validation pipeline
+- `pkg/controller/validator/template.go` - Template syntax validation
+- `pkg/controller/webhook/configvalidator.go` - CRD admission webhook engine
 - `cmd/controller/validate.go` - CLI validation command
+- `cmd/controller/benchmark_render.go` - Benchmark rendering
 
 ```go
 engine, err := helpers.NewEngineFromConfig(cfg, nil, nil)
@@ -49,7 +51,7 @@ if err != nil {
 Same as above plus two extras: `additionalDeclarations map[string]any` for
 domain-specific Scriggo type declarations (e.g. `currentConfig`), and an
 `EngineOptions` struct that currently only carries `EnableProfiling bool`. Use
-this when you need profile data (`renderer.IncludeStats`) or when a caller
+this when you need profile data (`templating.IncludeStats`) or when a caller
 needs to pass a runtime variable that the templating package shouldn't have to
 know about.
 

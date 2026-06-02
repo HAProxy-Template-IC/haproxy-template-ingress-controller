@@ -16,10 +16,10 @@ Structured logfmt logs on stdout (via `slog.NewTextHandler`) round out the opera
 
 `HAProxyTemplateConfig.spec` is the single source of truth for controller behaviour. It has four top-level groups:
 
-- **Runtime settings** — `controller`, `dataplane`, `logging`, `templatingSettings`, `configPublishing`.
+- **Runtime settings** — `controller` (including `controller.configPublishing`), `dataplane`, `logging`, `templatingSettings`.
 - **Resource watching** — `podSelector`, `watchedResources`, `watchedResourcesIgnoreFields`. (HTTP fetching is driven by the `http.Fetch()` template function — URLs that appear in templates are auto-registered; there is no top-level `spec.httpResources` field, only `validationTests[].httpResources` (a sibling of `fixtures`, not nested inside it) for mocking responses during tests.)
-- **Templates** — `haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`.
-- **Validation** — `validationTests` plus the per-resource `enableValidationWebhook` flag.
+- **Templates** — `haproxyConfig`, `templateSnippets`, `maps`, `files`, `sslCertificates`, `k8sResources` (declarative Kubernetes resources rendered and applied via Server-Side Apply).
+- **Validation** — `validationTests`, the per-resource `enableValidationWebhook` flag, and `validators` (pluggable external validator sidecars).
 
 The full field reference (types, defaults, validation rules) lives in [CRD Reference](../../crd-reference.md). This page focuses on how the pieces fit together; the reference page tells you what every field does.
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The chart automatically creates an IngressClass resource when the ingress library is enabled and the cluster exposes `networking.k8s.io/v1/IngressClass` (Kubernetes 1.19+, the chart's minimum supported version). This page covers IngressClass configuration, capability detection, and multi-controller environments.
+The chart automatically creates an IngressClass resource when the ingress library is enabled and the cluster exposes `networking.k8s.io/v1/IngressClass` (available since Kubernetes 1.19, below the chart's 1.21 minimum). This page covers IngressClass configuration, capability detection, and multi-controller environments.
 
 For ingress class filtering (controlling which Ingress resources the controller watches), see [Configuration](./configuration.md#ingress-class-filtering).
 

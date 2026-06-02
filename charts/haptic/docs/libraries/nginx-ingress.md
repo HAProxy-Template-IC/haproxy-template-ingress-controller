@@ -636,7 +636,7 @@ spoaHub:
       enabled: true
 ```
 
-The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. Note: enabling `controller.templateLibraries.nginxIngress.enabled` ALSO auto-enables `external-auth` (the nginx-ingress library is opt-in for this reason). See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/operations/spoa-hub/) for the full deployment surface.
+The hub auto-enables when any plugin is on, and the spoa-hub template library auto-loads when the hub is enabled. Note: enabling `controller.templateLibraries.nginxIngress.enabled` ALSO auto-enables `external-auth` (the nginx-ingress library is opt-in for this reason). See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/latest/operations/spoa-hub/) for the full deployment surface.
 
 !!! warning "Host-less rules error at render time"
     All external-auth annotations key their per-route lookup tables by `host+path`. An Ingress rule without an explicit `host` cannot be enforced — silently skipping auth on a route the operator marked protected would be a security failure mode. The chart fails the Helm render with an explicit error identifying the offending Ingress.
@@ -954,14 +954,19 @@ http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { hdr(host) -i ex
 
 ---
 
+## Web Application Firewall (ModSecurity)
+
+`nginx.ingress.kubernetes.io/modsecurity-snippet` and `enable-modsecurity` **are** supported, via the bundled SPOA hub **Coraza** WAF plugin (auto-enabled when the nginx-ingress or haproxy-ingress library is on). The `modsecurity-snippet` body (ModSecurity `SecRule` directives) is scanned into a per-Ingress `coraza-app.map` entry; `enable-modsecurity: "false"` adds the route to `coraza-disabled.map` so the WAF skips it. See the [SPOA Hub operations guide](https://haproxy-haptic.org/controller/latest/operations/spoa-hub/) for the Coraza plugin's full configuration surface.
+
+---
+
 ## Unsupported Annotations
 
 The following nginx-ingress annotations are not supported:
 
 | Annotation | Reason |
 |------------|--------|
-| `enable-modsecurity`, `modsecurity-*` | ModSecurity integration requires SPOE agent |
-| `mirror-*` | Traffic mirroring has no native HAProxy equivalent |
+| `mirror-*` | No nginx mirror annotation is wired; for request mirroring use the Gateway API `RequestMirror` filter (spoa-hub mirror plugin) |
 | `enable-opentelemetry`, `opentelemetry-*` | Requires OpenTelemetry module |
 | `enable-opentracing`, `opentracing-*` | Requires OpenTracing module |
 | `server-snippet` | Nginx server-level directives have no HAProxy equivalent |
