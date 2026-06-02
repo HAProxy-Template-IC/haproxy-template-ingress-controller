@@ -175,6 +175,13 @@ func (c *Component) Name() string {
 func (c *Component) Start(ctx context.Context) error {
 	c.logger.Debug("discovery starting")
 
+	// Stop any pending version-probe retry timer on shutdown so a queued
+	// AfterFunc can't fire after this (per-iteration) component's context is
+	// cancelled — which would publish discovery events onto the torn-down
+	// iteration's EventBus and keep the dead Component reachable for up to
+	// maxRetryInterval. Mirrors drift_monitor's stopDriftTimer teardown.
+	defer c.stopRetryTimer()
+
 	for {
 		select {
 		case event := <-c.eventChan:
@@ -184,6 +191,18 @@ func (c *Component) Start(ctx context.Context) error {
 			c.logger.Info("Discovery shutting down", "reason", ctx.Err())
 			return ctx.Err()
 		}
+	}
+}
+
+// stopRetryTimer stops any pending version-probe retry timer. Safe to call when
+// no timer is armed. time.Timer.Stop does not cancel an already-running
+// callback, but it prevents an armed-but-not-yet-fired timer from firing after
+// teardown, which is the leak this guards against.
+func (c *Component) stopRetryTimer() {
+	c.retryTimerMu.Lock()
+	defer c.retryTimerMu.Unlock()
+	if c.retryTimer != nil {
+		c.retryTimer.Stop()
 	}
 }
 

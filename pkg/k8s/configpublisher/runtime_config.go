@@ -32,7 +32,7 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 	runtimeConfig := p.buildRuntimeConfig(name, req)
 
 	var result *haproxyv1alpha1.HAProxyCfg
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
 		// Get existing resource (must be inside retry loop for fresh resourceVersion)
 		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCfgs(req.TemplateConfigNamespace).
@@ -42,13 +42,11 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 			if !apierrors.IsNotFound(err) {
 				return fmt.Errorf("getting existing runtime config: %w", err)
 			}
-			// Create new resource
+			// Create new resource. An AlreadyExists here (a racing writer created
+			// it after our Get) is retriable via retriableWrite, so the retry
+			// re-Gets and takes the update path below.
 			created, createErr := p.createRuntimeConfig(ctx, req, runtimeConfig)
 			if createErr != nil {
-				// If AlreadyExists, another reconciler created it - retry to update
-				if apierrors.IsAlreadyExists(createErr) {
-					return createErr
-				}
 				return createErr
 			}
 			result = created

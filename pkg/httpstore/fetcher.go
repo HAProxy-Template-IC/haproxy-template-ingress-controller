@@ -24,6 +24,15 @@ import (
 	"time"
 )
 
+// errNotModified is a sentinel returned by doFetch (and propagated by
+// fetchWithRetry) for an HTTP 304 Not Modified response. It is a control
+// signal, not a failure: callers use errors.Is to distinguish "the server
+// confirmed our cached copy is current" from a genuine fetch error or from a
+// 200 OK that legitimately carries empty content. Modelling 304 this way
+// (rather than as "empty content") avoids conflating it with a 200 whose body
+// is empty and whose response carries no ETag.
+var errNotModified = errors.New("http 304 not modified")
+
 // fetchWithRetry performs an HTTP GET with retry logic and conditional request headers.
 //
 // Parameters:
@@ -35,10 +44,12 @@ import (
 //   - lastModified: Previous Last-Modified for conditional request (empty to skip)
 //
 // Returns:
-//   - content: The response body (empty string for 304 Not Modified)
+//   - content: The response body
 //   - newEtag: The ETag header from response
 //   - newLastModified: The Last-Modified header from response
-//   - err: Error if all retries failed
+//   - err: errNotModified for a 304 (use errors.Is); otherwise an error if all
+//     retries failed, or nil on a 200 OK
+
 func (s *HTTPStore) fetchWithRetry(
 	ctx context.Context,
 	url string,
@@ -71,6 +82,12 @@ func (s *HTTPStore) fetchWithRetry(
 		content, newEtag, newLastModified, err = s.doFetch(ctx, url, opts, auth, etag, lastModified)
 		if err == nil {
 			return content, newEtag, newLastModified, nil
+		}
+
+		// 304 Not Modified is a terminal, expected outcome — not a transient
+		// failure to retry. Propagate the sentinel so the caller can branch on it.
+		if errors.Is(err, errNotModified) {
+			return content, newEtag, newLastModified, err
 		}
 
 		lastErr = err
@@ -147,8 +164,9 @@ func (s *HTTPStore) doFetch(
 		return string(body), etagResult, lastModifiedResult, nil
 
 	case http.StatusNotModified:
-		// Content unchanged - return empty content but preserve original etag
-		return "", etag, lastModifiedResult, nil
+		// Content unchanged — preserve the original etag and signal via the
+		// errNotModified sentinel (distinct from a 200 OK with an empty body).
+		return "", etag, lastModifiedResult, errNotModified
 
 	case http.StatusUnauthorized:
 		return "", "", "", errors.New("authentication failed (401 Unauthorized)")

@@ -55,6 +55,19 @@ func runtimeConfigLabels(owner *haproxyv1alpha1.HAProxyCfg) map[string]string {
 	}
 }
 
+// retriableWrite reports whether a create/update error is a transient write
+// conflict worth retrying within retry.OnError:
+//
+//   - a resourceVersion Conflict (409, the case retry.RetryOnConflict covers), or
+//   - an AlreadyExists (409 with a different reason): a racing writer created the
+//     object between our Get-returns-NotFound and our Create. retry.RetryOnConflict
+//     does NOT cover this (it only matches IsConflict), so the "retry to update"
+//     create paths below use this predicate to actually re-Get and take the update
+//     branch instead of surfacing the AlreadyExists to the caller.
+func retriableWrite(err error) bool {
+	return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+}
+
 // createOrUpdateMapFile creates or updates a HAProxyMapFile resource.
 func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishRequest, owner *haproxyv1alpha1.HAProxyCfg, mapFile auxiliaryfiles.MapFile) (string, error) {
 	name := p.generateMapFileName(filepath.Base(mapFile.Path))
@@ -75,7 +88,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 	ownerRefs := runtimeConfigOwnerRefs(owner)
 
 	var resultName string
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
 		// Get existing resource (must be inside retry loop for fresh resourceVersion)
 		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyMapFiles(req.TemplateConfigNamespace).
@@ -148,65 +161,85 @@ func (p *Publisher) createOrUpdateSSLSecret(ctx context.Context, req *PublishReq
 	// Compress if content exceeds threshold
 	result := p.compressIfNeeded(cert.Content, req.CompressionThreshold, "Secret/"+name)
 
+	// Build data, labels and annotations once (these don't change between retries).
 	labels := runtimeConfigLabels(owner)
 	labels["haproxy-haptic.org/type"] = "ssl-certificate"
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: req.TemplateConfigNamespace,
-			Labels:    labels,
-			Annotations: map[string]string{
-				"haproxy-haptic.org/compressed": strconv.FormatBool(result.compressed),
-				"haproxy-haptic.org/checksum":   checksum,
-			},
-			OwnerReferences: runtimeConfigOwnerRefs(owner),
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"certificate": []byte(result.content),
-			"path":        []byte(cert.Path),
-		},
+	annotations := map[string]string{
+		"haproxy-haptic.org/compressed": strconv.FormatBool(result.compressed),
+		"haproxy-haptic.org/checksum":   checksum,
+	}
+	data := map[string][]byte{
+		"certificate": []byte(result.content),
+		"path":        []byte(cert.Path),
 	}
 
-	// Try to get existing secret
-	existing, err := p.k8sClient.CoreV1().
-		Secrets(req.TemplateConfigNamespace).
-		Get(ctx, name, metav1.GetOptions{})
-
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("getting existing secret: %w", err)
-		}
-
-		// Create new secret
-		created, err := p.k8sClient.CoreV1().
+	var resultName string
+	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
+		// Get existing secret (must be inside retry loop for fresh resourceVersion).
+		existing, err := p.k8sClient.CoreV1().
 			Secrets(req.TemplateConfigNamespace).
-			Create(ctx, secret, metav1.CreateOptions{})
+			Get(ctx, name, metav1.GetOptions{})
+
 		if err != nil {
-			return "", fmt.Errorf("creating secret: %w", err)
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("getting existing secret: %w", err)
+			}
+
+			// Create new secret.
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            name,
+					Namespace:       req.TemplateConfigNamespace,
+					Labels:          labels,
+					Annotations:     annotations,
+					OwnerReferences: runtimeConfigOwnerRefs(owner),
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: data,
+			}
+
+			created, createErr := p.k8sClient.CoreV1().
+				Secrets(req.TemplateConfigNamespace).
+				Create(ctx, secret, metav1.CreateOptions{})
+			if createErr != nil {
+				// If AlreadyExists, another reconciler created it - retry to update.
+				if apierrors.IsAlreadyExists(createErr) {
+					return createErr
+				}
+				return fmt.Errorf("creating secret: %w", createErr)
+			}
+
+			resultName = created.Name
+			return nil
 		}
 
-		return created.Name, nil
-	}
+		// Skip update if checksum hasn't changed.
+		if existing.Annotations != nil && existing.Annotations["haproxy-haptic.org/checksum"] == checksum {
+			resultName = existing.Name
+			return nil
+		}
 
-	// Skip update if checksum hasn't changed
-	if existing.Annotations != nil && existing.Annotations["haproxy-haptic.org/checksum"] == checksum {
-		return existing.Name, nil
-	}
+		// Update existing secret with fresh copy.
+		existing.Data = data
+		existing.Labels = labels
+		existing.Annotations = annotations
 
-	// Update existing secret
-	existing.Data = secret.Data
-	existing.Labels = secret.Labels
-	existing.Annotations = secret.Annotations
+		updated, updateErr := p.k8sClient.CoreV1().
+			Secrets(req.TemplateConfigNamespace).
+			Update(ctx, existing, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("updating secret: %w", updateErr)
+		}
 
-	updated, err := p.k8sClient.CoreV1().
-		Secrets(req.TemplateConfigNamespace).
-		Update(ctx, existing, metav1.UpdateOptions{})
+		resultName = updated.Name
+		return nil
+	})
+
 	if err != nil {
-		return "", fmt.Errorf("updating secret: %w", err)
+		return "", err
 	}
 
-	return updated.Name, nil
+	return resultName, nil
 }
 
 // createOrUpdateGeneralFile creates or updates a HAProxyGeneralFile resource.
@@ -229,7 +262,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 	ownerRefs := runtimeConfigOwnerRefs(owner)
 
 	var resultName string
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
 		// Get existing resource (must be inside retry loop for fresh resourceVersion)
 		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyGeneralFiles(req.TemplateConfigNamespace).
@@ -314,7 +347,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 	ownerRefs := runtimeConfigOwnerRefs(owner)
 
 	var resultName string
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
 		// Get existing resource (must be inside retry loop for fresh resourceVersion)
 		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
 			HAProxyCRTListFiles(req.TemplateConfigNamespace).

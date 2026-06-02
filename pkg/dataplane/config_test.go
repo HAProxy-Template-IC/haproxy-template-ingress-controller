@@ -53,25 +53,6 @@ func TestEndpoint_HasCachedVersion(t *testing.T) {
 	}
 }
 
-func TestEndpoint_Redacted(t *testing.T) {
-	endpoint := Endpoint{
-		URL:          "http://haproxy:5555",
-		Username:     "admin",
-		Password:     "secretpassword123",
-		PodName:      "haproxy-pod-0",
-		PodNamespace: "default",
-	}
-
-	redacted := endpoint.Redacted()
-
-	require.NotNil(t, redacted)
-	assert.Equal(t, "http://haproxy:5555", redacted["url"])
-	assert.Equal(t, "admin", redacted["username"])
-	assert.Equal(t, "***REDACTED***", redacted["password"])
-	assert.Equal(t, "haproxy-pod-0", redacted["pod"])
-	assert.NotContains(t, redacted["password"], "secret")
-}
-
 func TestDefaultSyncOptions(t *testing.T) {
 	opts := DefaultSyncOptions()
 

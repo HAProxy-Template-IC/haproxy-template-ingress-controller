@@ -243,7 +243,18 @@ func New(cfg *Config) *Component {
 	}
 
 	bus := cfg.EventBus
-	eventChan := bus.Subscribe(ComponentName, EventBufferSize)
+	// SubscribeTypes (not Subscribe) — the bus prefilters by event type at
+	// publish, so the buffer holds ONLY the events we dispatch on. With a plain
+	// Subscribe the buffer fills within seconds during conformance setup
+	// (resource.index.updated and reconciliation.* fire at kHz) and overflows,
+	// silently dropping reconciliation.completed — the event carrying the owned
+	// resources to apply. statusapplier hit exactly that in CI and uses the same
+	// narrowed subscription; this is its sibling.
+	eventChan := bus.SubscribeTypes(ComponentName, EventBufferSize,
+		events.EventTypeReconciliationCompleted,
+		events.EventTypeBecameLeader,
+		events.EventTypeLostLeadership,
+	)
 
 	return &Component{
 		eventBus:               bus,
