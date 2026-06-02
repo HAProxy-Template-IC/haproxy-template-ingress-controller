@@ -197,17 +197,21 @@ func (s *DeploymentScheduler) applyRuntimePreInterval(ctx context.Context, dep *
 // flowing to the live workers throughout the wait.
 //
 // A runtime-raw pending SKIPS the wait entirely (wait==0) — its server changes
-// apply via dispatchPending with no reload. For a STRUCTURAL pending it sleeps
-// the remaining interval, but FIRST applies that render's runtime-eligible server
-// subset (set server + skip_reload push, no reload) and then RE-applies the
-// latest render's subset every time a newer pending arrives mid-wait. This is
-// what stops a pod-IP rotation coalesced with another tenant's structural change
-// from waiting out the whole interval (the rolling-restart 503 gap): the address
-// reaches the live worker in ~ms while the reload stays gated. The original timer
+// apply via dispatchPending with no reload. For a STRUCTURAL pending it ALWAYS
+// applies that render's runtime-eligible server subset FIRST (set server +
+// skip_reload push, no reload) — whether or not any interval remains to sleep —
+// and then, if it does sleep, RE-applies the latest render's subset every time a
+// newer pending arrives mid-wait. Applying unconditionally (not only on the
+// wait>0 path) is what stops a pod-IP rotation coalesced with another tenant's
+// structural change from riding the reload's worker-swap window when the deploy
+// is NOT interval-gated (the residual rolling-restart 503 gap): the address
+// reaches the live worker in ~ms before the immediately-following reload, instead
+// of only via the new worker generation. When it does sleep, the original timer
 // is never reset, so the structural reload still fires at the interval deadline
-// and reloads can't burst. Flap-safe: no deploy is in flight during the wait, so
-// no reload can revert the just-applied address before the gated structural
-// deploy (which re-renders the same address) runs.
+// and reloads can't burst. Flap-safe: no deploy is in flight when the subset is
+// applied (the loop applies it before dispatchPending marks the deploy in-flight),
+// so no reload can revert the just-applied address before the structural deploy
+// (which re-renders the same address) runs.
 //
 // Returns false only on ctx cancellation.
 func (s *DeploymentScheduler) waitDeployInterval(ctx context.Context) bool {
@@ -218,16 +222,25 @@ func (s *DeploymentScheduler) waitDeployInterval(ctx context.Context) bool {
 		wait = s.remainingInterval(s.state.lastDeploymentEndTime)
 	}
 	s.schedulerMutex.Unlock()
+
+	// Fast-track the structural render's runtime-eligible server subset to the
+	// live workers immediately — BEFORE the wait<=0 short-circuit below — so a
+	// pod-IP rotation coalesced into a structural render reaches HAProxy even when
+	// the deploy is NOT interval-gated. When wait<=0 the loop dispatches the
+	// structural reload right away; applying the subset here first keeps an
+	// in-flight request from being left bound to a just-vacated server slot during
+	// the reload's worker swap (the residual rolling-restart 503 gap that survived
+	// when this apply only ran on the wait>0 path). No-op for laneRuntimeRaw
+	// (dispatchPending applies that) and for renders with no runtime-eligible
+	// server change (ServerOpCount 0).
+	s.applyRuntimePreInterval(ctx, pending)
+
 	if wait <= 0 {
 		return true
 	}
 	s.logger.Debug("Enforcing minimum deployment interval",
 		"sleep_duration_ms", wait.Milliseconds(),
 		"min_interval_ms", s.minDeploymentInterval.Milliseconds())
-
-	// Apply the current structural render's runtime subset before sleeping, so
-	// the address is live for the whole interval rather than only after it.
-	s.applyRuntimePreInterval(ctx, pending)
 
 	timer := time.NewTimer(wait)
 	defer timer.Stop()

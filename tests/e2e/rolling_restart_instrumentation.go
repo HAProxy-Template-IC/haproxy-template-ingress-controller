@@ -568,6 +568,21 @@ func newContinuousTailer(t *testing.T, namespace string) *continuousTailer {
 		ct.tailPodLog(ctx, ControllerNamespace, pod, "haproxy", "haproxy-"+pod+".log")
 	}
 
+	// Controller pod log (the `controller` container) — streamed for the
+	// whole test. THE load-bearing capture for correlating a 503 against
+	// haptic's own decisions: render correlation IDs, the deploy lane
+	// chosen (runtime-raw vs structural), applyRuntimePreInterval /
+	// waitDeployInterval timing, and whether a structural reload coalesced
+	// with the rolling-restart endpoint change. The point-in-time failure
+	// snapshot's `--tail=500 --all-containers` only reaches back a few
+	// seconds (and, via the harness `kubectl logs --tail`, sometimes <5 s),
+	// so it could not byte-prove "wait<=0 short-circuit vs in-flight
+	// request" for the residual 503. A from-setup `-f` stream has no such
+	// truncation — every reconcile in the test window is on disk. Reconciled
+	// dynamically so a controller restart or leadership change (new pod)
+	// gets its own tailer.
+	ct.startControllerLogReconciler(ctx)
+
 	// Backend pod stdout — managed dynamically since pods come and go
 	// during a rolling restart.
 	ct.startBackendPodReconciler(ctx)
@@ -806,6 +821,50 @@ crictl inspect $CONT | grep -m1 '"pid"' | sed 's/.*: //; s/,//; s/ //g'`,
 			cmd.Stderr = errF
 		}
 		_ = cmd.Run()
+	}()
+}
+
+// startControllerLogReconciler watches for controller pods and tails the
+// `controller` container of each to its own file. Reconciled (not a
+// one-shot list at setup) so a controller restart, image reload, or
+// leadership transition that spawns a new pod gets a tailer too — the new
+// pod's stdout would otherwise be invisible exactly when a leadership
+// change is the thing under investigation. `--tail=1000` backfill (in
+// tailPodLog) covers stdout emitted before the 500 ms reconcile attaches.
+// Container name `controller` matches the chart's deployment.yaml; the
+// render/deploy/scheduler logs we correlate 503s against all land there
+// (the `validators`/`webhook`/`debug` sidecars are captured by the broader
+// `--all-containers` failure snapshot, not here).
+func (ct *continuousTailer) startControllerLogReconciler(ctx context.Context) {
+	ct.wg.Add(1)
+	go func() {
+		defer ct.wg.Done()
+		active := make(map[string]bool)
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			listCtx, listCancel := context.WithTimeout(ctx, 3*time.Second)
+			out, err := exec.CommandContext(listCtx, "kubectl",
+				"--kubeconfig", kubeconfigPath, "-n", ControllerNamespace,
+				"get", "pods", "-l", LabelSelectorController,
+				"-o", "jsonpath={.items[*].metadata.name}").Output()
+			listCancel()
+			if err != nil {
+				continue
+			}
+			for _, p := range strings.Fields(string(out)) {
+				if active[p] {
+					continue
+				}
+				active[p] = true
+				ct.tailPodLog(ctx, ControllerNamespace, p, "controller", "controller-"+p+".log")
+			}
+		}
 	}()
 }
 
