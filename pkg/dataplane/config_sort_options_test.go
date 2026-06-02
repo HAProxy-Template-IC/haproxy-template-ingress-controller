@@ -186,9 +186,6 @@ func TestAuxiliaryFiles_Sort_HandlesEmptyAndSingleElement(t *testing.T) {
 //   - DryRunOptions.VerifyReload=false — dry-run never reloads HAProxy,
 //     so polling reload status is a guaranteed timeout. Flipping to
 //     true would make every dry-run hit the reload-verification timeout.
-//   - DryRunOptions.MaxRetries=0 / FallbackToRaw=false — dry-run must
-//     NOT mutate state on conflict and must NOT silently fall back to
-//     a raw push (which would defeat the dry-run guarantee).
 //   - DefaultSyncOptions.ReloadVerificationTimeout=10s — values higher
 //     than this serialize sync behind reloads; lower values race with
 //     the DataPlane API's own reload-delay setting.

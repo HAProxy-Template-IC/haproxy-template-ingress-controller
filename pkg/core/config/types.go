@@ -316,7 +316,7 @@ type DataplaneConfig struct {
 	ReloadVerificationTimeout string `yaml:"reload_verification_timeout"`
 
 	// SyncTimeout is the overall timeout for one Dataplane sync to a single
-	// HAProxy endpoint (parse + diff + transactional apply + optional reload-verify).
+	// HAProxy endpoint (parse + diff + raw-push apply + optional reload-verify).
 	// Format: Go duration string (e.g., "2m", "30s")
 	// Default: 2m
 	SyncTimeout string `yaml:"sync_timeout"`
