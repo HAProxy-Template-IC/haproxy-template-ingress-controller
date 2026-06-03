@@ -12,7 +12,7 @@ ARG GO_VERSION=1.26
 # tags `vX.Y-devN` during development and `vX.Y.Z` at release; we skip series
 # that have no stable release yet).
 # renovate: datasource=github-tags depName=haproxy/haproxy versioning=loose
-ARG HAPROXY_VERSION=3.3
+ARG HAPROXY_VERSION=3.4
 
 # Stage 1: Go toolchain source
 FROM golang:${GO_VERSION}-bookworm AS go-toolchain
