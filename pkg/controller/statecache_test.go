@@ -29,6 +29,8 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
 
 // testEndpoint implements fmt.Stringer for endpoint URL conversion.
@@ -554,6 +556,100 @@ func TestStateCache_GetResourcesByType_NoWatcher(t *testing.T) {
 	_, err := cache.GetResourcesByType("ingresses")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resource watcher not initialized")
+}
+
+// listCountingStore implements types.Store and records List() calls. It does
+// NOT implement Size() — used to exercise the resourceCounts List() fallback.
+type listCountingStore struct {
+	items     []any
+	listCalls int
+}
+
+func (s *listCountingStore) Get(_ ...string) ([]any, error) { return s.items, nil }
+func (s *listCountingStore) List() ([]any, error)           { s.listCalls++; return s.items, nil }
+func (s *listCountingStore) Add(_ any, _ []string) error    { return nil }
+func (s *listCountingStore) Update(_ any, _ []string) error { return nil }
+func (s *listCountingStore) Delete(_ ...string) error       { return nil }
+func (s *listCountingStore) Clear() error                   { return nil }
+
+// sizedStore implements types.Store and Size(). Its List() fails the test if
+// called — resourceCounts must use the cheap Size() path and never trigger the
+// per-item API fetch storm.
+type sizedStore struct {
+	t    *testing.T
+	size int
+}
+
+func (s *sizedStore) Get(_ ...string) ([]any, error) { return nil, nil }
+func (s *sizedStore) List() ([]any, error) {
+	s.t.Fatal("List() must not be called when the store implements Size()")
+	return nil, nil
+}
+func (s *sizedStore) Add(_ any, _ []string) error    { return nil }
+func (s *sizedStore) Update(_ any, _ []string) error { return nil }
+func (s *sizedStore) Delete(_ ...string) error       { return nil }
+func (s *sizedStore) Clear() error                   { return nil }
+func (s *sizedStore) Size() int                      { return s.size }
+
+func TestResourceCounts_UsesSizeAndAvoidsListStorm(t *testing.T) {
+	listOnly := &listCountingStore{items: []any{"a", "b", "c"}}
+	sized := &sizedStore{t: t, size: 347}
+
+	counts, err := resourceCounts(map[string]types.Store{
+		"ingresses": listOnly, // no Size() → List() fallback
+		"secrets":   sized,    // Size() → cheap path, List() would t.Fatal
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, counts["ingresses"])
+	assert.Equal(t, 347, counts["secrets"])
+	assert.Equal(t, 1, listOnly.listCalls, "fallback store should be listed exactly once")
+}
+
+func TestResourceCounts_RealMemoryStore(t *testing.T) {
+	ms := store.NewMemoryStore(2)
+	require.NoError(t, ms.Add(map[string]any{"id": "1"}, []string{"default", "a"}))
+	require.NoError(t, ms.Add(map[string]any{"id": "2"}, []string{"default", "b"}))
+
+	counts, err := resourceCounts(map[string]types.Store{"things": ms})
+	require.NoError(t, err)
+	assert.Equal(t, 2, counts["things"])
+}
+
+// cachedListerStore implements types.Store and ListCached(). Its List() fails
+// the test if called — listResources must prefer ListCached() for on-demand
+// stores so introspection never fans out per-reference API fetches.
+type cachedListerStore struct {
+	t      *testing.T
+	cached []any
+}
+
+func (s *cachedListerStore) Get(_ ...string) ([]any, error) { return nil, nil }
+func (s *cachedListerStore) List() ([]any, error) {
+	s.t.Fatal("List() must not be called when the store implements ListCached()")
+	return nil, nil
+}
+func (s *cachedListerStore) Add(_ any, _ []string) error    { return nil }
+func (s *cachedListerStore) Update(_ any, _ []string) error { return nil }
+func (s *cachedListerStore) Delete(_ ...string) error       { return nil }
+func (s *cachedListerStore) Clear() error                   { return nil }
+func (s *cachedListerStore) ListCached() ([]any, error)     { return s.cached, nil }
+
+func TestListResources_PrefersListCachedForOnDemandStore(t *testing.T) {
+	cached := &cachedListerStore{t: t, cached: []any{"warm-1", "warm-2"}}
+
+	got, err := listResources(cached)
+	require.NoError(t, err)
+	assert.Equal(t, []any{"warm-1", "warm-2"}, got)
+}
+
+func TestListResources_FallsBackToListForPlainStore(t *testing.T) {
+	listOnly := &listCountingStore{items: []any{"x"}}
+
+	got, err := listResources(listOnly)
+	require.NoError(t, err)
+	assert.Equal(t, []any{"x"}, got)
+	assert.Equal(t, 1, listOnly.listCalls)
 }
 
 func TestStateCache_GetPipelineStatus_Empty(t *testing.T) {

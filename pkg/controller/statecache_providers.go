@@ -22,7 +22,20 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
 )
+
+// sizer is implemented by stores that can report their resource count cheaply,
+// without the per-item API fetches that CachedStore.List() would trigger.
+type sizer interface {
+	Size() int
+}
+
+// cachedLister is implemented by on-demand (CachedStore) stores that can return
+// only the resources currently warm in their LRU cache — no API fetches.
+type cachedLister interface {
+	ListCached() ([]any, error)
+}
 
 // GetConfig implements debug.StateProvider.
 func (sc *StateCache) GetConfig() (*coreconfig.Config, string, error) {
@@ -79,10 +92,22 @@ func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 		return nil, errors.New("resource watcher not initialized")
 	}
 
-	stores := sc.resourceWatcher.GetAllStores()
+	return resourceCounts(sc.resourceWatcher.GetAllStores())
+}
+
+// resourceCounts counts each store without forcing a full List(). On-demand
+// (CachedStore) stores expose Size() (tracked-ref count, no API calls), so
+// counting a debug endpoint no longer fans out one kube-apiserver GET per
+// resource. The List() fallback only runs for stores that don't implement sizer.
+func resourceCounts(stores map[string]types.Store) (map[string]int, error) {
 	counts := make(map[string]int, len(stores))
 
 	for name, store := range stores {
+		if s, ok := store.(sizer); ok {
+			counts[name] = s.Size()
+			continue
+		}
+
 		items, err := store.List()
 		if err != nil {
 			return nil, fmt.Errorf("listing resources for %q: %w", name, err)
@@ -94,6 +119,11 @@ func (sc *StateCache) GetResourceCounts() (map[string]int, error) {
 }
 
 // GetResourcesByType implements debug.StateProvider.
+//
+// For `store: on-demand` types the result is the warm-cache subset only, not
+// the full tracked set (see the partial-result contract on the interface
+// declaration and listResources below). GetResourceCounts() remains the
+// authoritative total.
 func (sc *StateCache) GetResourcesByType(resourceType string) ([]any, error) {
 	if sc.resourceWatcher == nil {
 		return nil, errors.New("resource watcher not initialized")
@@ -103,6 +133,18 @@ func (sc *StateCache) GetResourcesByType(resourceType string) ([]any, error) {
 	store, ok := stores[resourceType]
 	if !ok {
 		return nil, fmt.Errorf("resource type %q not found", resourceType)
+	}
+
+	return listResources(store)
+}
+
+// listResources returns the resources in a store for introspection. On-demand
+// (cached) stores return only the warm LRU subset via ListCached(); calling
+// List() on them would fan out one API call per reference — the storm we want
+// to avoid on a debug path.
+func listResources(store types.Store) ([]any, error) {
+	if cl, ok := store.(cachedLister); ok {
+		return cl.ListCached()
 	}
 
 	return store.List()

@@ -97,9 +97,19 @@ type StateProvider interface {
 	//   }
 	GetResourceCounts() (map[string]int, error)
 
-	// GetResourcesByType returns all resources of a specific type.
+	// GetResourcesByType returns the resources of a specific type.
 	//
 	// The resourceType parameter should match a key from GetResourceCounts().
+	//
+	// Partial-result contract: for `store: on-demand` resource types, the
+	// returned slice is the subset currently warm in the store's cache only —
+	// NOT the full set of tracked references. Listing the full set would fan
+	// out one kube-apiserver lookup per reference, which this method
+	// deliberately avoids. The count from GetResourceCounts() is therefore the
+	// authoritative total; this slice may be shorter. Callers wiring this to a
+	// user-facing endpoint must surface that the result is the warm subset so
+	// consumers don't mistake it for the complete set. For `store: full`
+	// resource types the result is complete.
 	//
 	// Returns error if the resource type is not found.
 	//
