@@ -39,7 +39,7 @@ pkg/webhook/
 └── CLAUDE.md        # This file
 ```
 
-This package contains *only* the HTTPS server. Certificate generation, rotation, and `ValidatingWebhookConfiguration` management live elsewhere — see "Out of Scope" below — so don't go looking for `certs.go` or `config.go`; they don't exist here.
+This package contains *only* the HTTPS server. Certificate *provisioning* (issuance, the Secret, the CA bundle) and `ValidatingWebhookConfiguration` management live elsewhere — see "Out of Scope" below — so don't go looking for `certs.go` or `config.go`; they don't exist here. The server does serve and hot-reload the mounted cert files it's pointed at via `ServerConfig.CertDir`, but it never fetches or issues them.
 
 ## Core Concepts
 
@@ -47,11 +47,11 @@ This package contains *only* the HTTPS server. Certificate generation, rotation,
 
 | Concern | Where it lives |
 |---------|----------------|
-| TLS certificate generation / rotation | `pkg/controller/certloader` (event adapter) and the controller's startup code that mounts the cert Secret |
+| TLS certificate provisioning (issuance, the Secret) | cert-manager + the Helm chart that provisions and mounts the cert Secret; the controller passes the mounted directory in via `ServerConfig.CertDir` |
 | Injecting the CA bundle into `ValidatingWebhookConfiguration` | controller startup code (`pkg/controller`) — uses `client-go` directly |
 | Validator implementations and overlay-store rendering | `pkg/controller/dryrunvalidator` |
 
-If you find yourself wanting to add cert handling here, that's a sign the boundary has slipped — keep `pkg/webhook` as a pure HTTPS+AdmissionReview transport.
+The server *does* serve and hot-reload the mounted cert files via `ServerConfig.CertDir` (re-reads `tls.crt`/`tls.key` on content change). What it must never do is *fetch* or *issue* certs — if you find yourself reaching for a Kubernetes client or a CSR flow here, the boundary has slipped; keep `pkg/webhook` as a pure HTTPS+AdmissionReview transport that serves the files it's handed.
 
 ### Webhook Server
 
@@ -77,9 +77,10 @@ Resources are identified by "group/version.Kind" strings:
 
 `pkg/webhook` does **not** create, update, or own a `ValidatingWebhookConfiguration`
 resource — there's no `CreateOrUpdate`, no rule-builder, no CA-bundle injector
-here. The Helm chart ships the `ValidatingWebhookConfiguration`, and the
-controller's certloader (`pkg/controller/certloader`) is responsible for keeping
-the CA bundle aligned with the certificate this server is serving.
+here. The Helm chart ships the `ValidatingWebhookConfiguration` and provisions and
+mounts the cert Secret (with cert-manager's CA-bundle injection); the controller
+passes that mounted directory to this server via `ServerConfig.CertDir`, and the
+server reads and hot-reloads the cert files from it on rotation.
 
 If you change the rules (which resources to validate, failure policy, timeouts),
 that change goes in `charts/haptic` — not here. This package only sees the
@@ -251,13 +252,13 @@ This package is just the HTTPS server, so most operational issues sit one layer 
 1. **Validator dispatch** — does the GVK string passed to `RegisterValidator` match what the server computes from the AdmissionReview? Common mistake: registering `"v1.Ingress"` when the resource is actually `"networking.k8s.io/v1.Ingress"`.
 2. **Path** — does the `ValidatingWebhookConfiguration`'s `clientConfig.service.path` match `ServerConfig.Path` (default `/validate`)?
 3. **Validator latency** — server logs the duration of each validation. Anything close to the API server's `timeoutSeconds` (default 10s) is a fail.
-4. **TLS handshake** — `tls: bad certificate` means the API server's CA bundle doesn't match the certificate served here; that's a `pkg/controller/certloader` / `ValidatingWebhookConfiguration` problem, not a `pkg/webhook` problem.
+4. **TLS handshake** — `tls: bad certificate` means the API server's CA bundle doesn't match the certificate served here; that's a cert Secret / CA-bundle / `ValidatingWebhookConfiguration` problem (chart-provisioned, served from `ServerConfig.CertDir`), not a `pkg/webhook` problem.
 
 ### Where to Look for Each Class of Error
 
 | Symptom | Likely package |
 |---------|----------------|
-| `x509: certificate signed by unknown authority` | `pkg/controller/certloader` (cert generation) and the CA-bundle injection in `pkg/controller` startup |
+| `x509: certificate signed by unknown authority` | The cert Secret (chart-provisioned, mounted and served from `ServerConfig.CertDir`) and the CA-bundle injection on the `ValidatingWebhookConfiguration` |
 | `no such host` | The Service object in the chart, not this package |
 | `context deadline exceeded` mid-request | The validator closure (usually `pkg/controller/dryrunvalidator`) |
 | `connection refused` | The webhook Pod isn't ready, or the configured Port doesn't match the Service's targetPort |

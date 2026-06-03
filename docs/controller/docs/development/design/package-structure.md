@@ -55,7 +55,6 @@ haptic/
 │   └── controller/          # Event-driven orchestration (adapters + components)
 │       ├── component/       # Shared event-loop scaffold embedded by most components
 │       ├── buffers/         # Byte-buffer pool used by render/validation hot paths
-│       ├── certloader/      # Parses TLS certificates from referenced Secrets
 │       ├── coalesce/        # Coalesces bursts of events into a single work item
 │       ├── commentator/     # Structured domain-aware log producer
 │       ├── configchange/    # Reacts to config changes and coordinates reloads
@@ -84,7 +83,7 @@ haptic/
 │       ├── rendercontext/   # Builds the template context from stores and HTTP resources
 │       ├── renderer/        # Template rendering adapter
 │       ├── resourceloader/  # Thin wrapper over component.Base for loader components
-│       │                    #   (configloader, credentialsloader, certloader)
+│       │                    #   (configloader, credentialsloader)
 │       ├── resourcestore/   # Store manager (wraps typed k8s stores for overlays)
 │       ├── resourcewatcher/ # Lifecycle manager for all configured resource watchers
 │       ├── statusapplier/   # Applies status subresources on CRDs

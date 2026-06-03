@@ -425,7 +425,7 @@ func TestHTTPStore_EvictUnused(t *testing.T) {
 	store.LoadFixture("http://example.com/old", "old content")
 	store.LoadFixture("http://example.com/new", "new content")
 
-	assert.Equal(t, 2, store.size())
+	assert.Equal(t, 2, len(store.cache))
 
 	// Access one of them to update its LastAccessTime
 	time.Sleep(50 * time.Millisecond)
@@ -440,7 +440,7 @@ func TestHTTPStore_EvictUnused(t *testing.T) {
 
 	assert.Equal(t, 1, len(evictedURLs))
 	assert.Equal(t, "http://example.com/old", evictedURLs[0])
-	assert.Equal(t, 1, store.size())
+	assert.Equal(t, 1, len(store.cache))
 
 	// Verify correct entry was evicted
 	_, ok = store.Get("http://example.com/old")
@@ -485,7 +485,7 @@ func TestHTTPStore_EvictUnused_NeverEvictsPending(t *testing.T) {
 	// Evict - should not evict entry with pending content
 	evictedURLs := store.EvictUnused()
 	assert.Empty(t, evictedURLs)
-	assert.Equal(t, 1, store.size())
+	assert.Equal(t, 1, len(store.cache))
 }
 
 func TestHTTPStore_EvictUnused_DisabledWithZeroMaxAge(t *testing.T) {
@@ -499,7 +499,7 @@ func TestHTTPStore_EvictUnused_DisabledWithZeroMaxAge(t *testing.T) {
 	// Evict returns nil when disabled
 	evictedURLs := store.EvictUnused()
 	assert.Nil(t, evictedURLs)
-	assert.Equal(t, 1, store.size())
+	assert.Equal(t, 1, len(store.cache))
 }
 
 func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
@@ -521,7 +521,7 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	// Should not be evicted because access reset the timer
 	evictedURLs := store.EvictUnused()
 	assert.Empty(t, evictedURLs)
-	assert.Equal(t, 1, store.size())
+	assert.Equal(t, 1, len(store.cache))
 
 	// Wait for the full maxAge from last access
 	time.Sleep(40 * time.Millisecond)
@@ -530,75 +530,7 @@ func TestHTTPStore_AccessResetsEvictionTime(t *testing.T) {
 	evictedURLs = store.EvictUnused()
 	assert.Equal(t, 1, len(evictedURLs))
 	assert.Equal(t, "http://example.com/test", evictedURLs[0])
-	assert.Equal(t, 0, store.size())
-}
-
-func TestHTTPStore_getPending(t *testing.T) {
-	// Create test server
-	content := "original"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(content))
-	}))
-	defer server.Close()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger, 0)
-
-	ctx := context.Background()
-
-	// Initial fetch
-	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: time.Minute}, nil)
-	require.NoError(t, err)
-
-	// No pending content yet
-	pending, ok := store.getPending(server.URL)
-	assert.False(t, ok)
-	assert.Empty(t, pending)
-
-	// Unknown URL returns false
-	pending, ok = store.getPending("http://unknown")
-	assert.False(t, ok)
-	assert.Empty(t, pending)
-
-	// Update content and refresh to create pending
-	content = "updated"
-	changed, err := store.RefreshURL(ctx, server.URL)
-	require.NoError(t, err)
-	require.True(t, changed)
-
-	// Now getPending should return the pending content
-	pending, ok = store.getPending(server.URL)
-	assert.True(t, ok)
-	assert.Equal(t, "updated", pending)
-}
-
-func TestHTTPStore_getURLsWithDelay(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("content"))
-	}))
-	defer server.Close()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger, 0)
-
-	ctx := context.Background()
-
-	// Initially empty
-	urls := store.getURLsWithDelay()
-	assert.Empty(t, urls)
-
-	// Fetch with delay
-	_, err := store.Fetch(ctx, server.URL, FetchOptions{Delay: 5 * time.Minute}, nil)
-	require.NoError(t, err)
-
-	// Fetch without delay using fixture
-	store.LoadFixture("http://example.com/no-delay", "content")
-
-	// Only URL with delay should be returned
-	urls = store.getURLsWithDelay()
-	assert.Equal(t, 1, len(urls))
-	assert.Equal(t, server.URL, urls[0])
+	assert.Equal(t, 0, len(store.cache))
 }
 
 func TestHTTPStore_GetEntry(t *testing.T) {
@@ -639,27 +571,6 @@ func TestHTTPStore_GetEntry(t *testing.T) {
 	entry.Auth.Headers["X-API-Key"] = "modified"
 	entry2 := store.GetEntry(server.URL)
 	assert.Equal(t, "secret", entry2.Auth.Headers["X-API-Key"])
-}
-
-func TestHTTPStore_Clear(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	store := New(logger, 0)
-
-	// Load fixtures
-	store.LoadFixture("http://example.com/1", "content1")
-	store.LoadFixture("http://example.com/2", "content2")
-	store.LoadFixture("http://example.com/3", "content3")
-
-	assert.Equal(t, 3, store.size())
-
-	// Clear store
-	store.clear()
-
-	assert.Equal(t, 0, store.size())
-
-	// Verify entries are gone
-	_, ok := store.Get("http://example.com/1")
-	assert.False(t, ok)
 }
 
 func TestValidationState_String(t *testing.T) {

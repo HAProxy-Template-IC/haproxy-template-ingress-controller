@@ -133,7 +133,8 @@ Used by every place that points at the webhook TLS material —
 templates/webhook-certificate.yaml (Certificate metadata.name and
 spec.secretName), templates/validatingwebhookconfiguration.yaml
 (cert-manager.io/inject-ca-from), and templates/deployment.yaml
-(WEBHOOK_CERT_SECRET_NAME env var and the webhook-certs volume).
+(the webhook-certs volume mounted at /etc/webhook/certs, which the
+controller reads via WEBHOOK_CERT_DIR).
 Centralising this here keeps those references aligned when an
 operator sets webhook.secretName.
 */}}

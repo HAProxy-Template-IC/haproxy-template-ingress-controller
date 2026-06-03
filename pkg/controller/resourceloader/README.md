@@ -1,10 +1,10 @@
 # pkg/controller/resourceloader
 
-Thin event-loop wrapper around `pkg/controller/component.Base` for resource-loading components (configloader, credentialsloader, certloader).
+Thin event-loop wrapper around `pkg/controller/component.Base` for resource-loading components (configloader, credentialsloader).
 
 ## Overview
 
-The three Stage-1 loaders share an identical pattern: subscribe to one resource-changed event type, type-assert the payload, parse / validate it, publish a "parsed" event. Before this package they each duplicated the subscribe-on-construction + dispatch-with-recover scaffold; now they share `BaseLoader`.
+Both Stage-1 loaders share an identical pattern: subscribe to one resource-changed event type, type-assert the payload, parse / validate it, publish a "parsed" event. Before this package they each duplicated the subscribe-on-construction + dispatch-with-recover scaffold; now they share `BaseLoader`.
 
 `BaseLoader` is just `*component.Base` with one extra layer: it accepts an `EventProcessor` interface (a single `ProcessEvent(event)` method) instead of `component.EventHandler`. The split exists because the loaders predate the consolidated `component` package — keeping the older method name avoids a cross-package rename. New components should use `component.New` directly; the existing loaders use this wrapper for source-stability.
 
@@ -42,7 +42,7 @@ The variadic `eventTypes` argument at the end is the typed-subscription filter �
 ## See Also
 
 - [`pkg/controller/component`](../component/) — underlying `Base` + `EventHandler` scaffold this package wraps
-- [`pkg/controller/configloader`](../configloader/) / [`credentialsloader`](../credentialsloader/) / [`certloader`](../certloader/) — the three loaders built on this base
+- [`pkg/controller/configloader`](../configloader/) / [`credentialsloader`](../credentialsloader/) — the loaders built on this base
 
 ## License
 

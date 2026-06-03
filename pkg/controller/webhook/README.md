@@ -2,7 +2,7 @@
 
 Event adapter that mounts the pure HTTPS server from `pkg/webhook` on the controller's lifecycle, registers one `ValidationFunc` per webhook rule, and routes each admission request through the dry-run validator.
 
-Certificates are supplied ready-to-use — cert-manager provisions the Secret, `pkg/controller/certloader` watches it and pushes the PEM bytes into this component's `Config`. This package does **not** manage certs, CA bundles, or `ValidatingWebhookConfiguration` resources (the Helm chart provisions those).
+Certificates are supplied ready-to-use — cert-manager provisions the Secret, the chart mounts it, and the controller passes that mounted directory into this component's `Config.CertDir`. The pure server reads `tls.crt`/`tls.key` from there and hot-reloads them on rotation (a cert-manager renewal is served without a restart). This package does **not** manage certs, CA bundles, or `ValidatingWebhookConfiguration` resources (the Helm chart provisions those).
 
 ## Minimal Usage
 
@@ -17,8 +17,7 @@ import (
 cfg := &webhook.Config{
     Port:            9443,                    // default
     Path:            "/validate",             // default
-    CertPEM:         cert,                    // from cert-manager via certloader
-    KeyPEM:          key,
+    CertDir:         "/etc/webhook/certs",    // mounted cert Secret; server reads + hot-reloads tls.crt/tls.key
     Rules:           rules,                   // built by ExtractWebhookRules(cfg)
     DryRunValidator: dryRunValidator,         // pkg/controller/dryrunvalidator.Component
 }
@@ -37,7 +36,8 @@ if err := comp.Start(ctx); err != nil {
 |-------|-------|
 | `Port` | TCP port for the HTTPS listener (default `9443`) |
 | `Path` | URL path that handles `POST /…` AdmissionReview calls (default `/validate`) |
-| `CertPEM` / `KeyPEM` | PEM-encoded TLS material. Empty values cause `Start` to return an error. Rotate by restarting the component with new bytes — the server reads them once at `Start` time. |
+| `CertDir` | Directory holding the mounted cert Secret (`tls.crt`/`tls.key`). In production the controller sets this to the mount path. The pure server resolves the cert per handshake and hot-reloads it on rotation — a cert-manager renewal is served without a restart. |
+| `CertPEM` / `KeyPEM` | Fixed PEM-encoded TLS material, used only when `CertDir` is unset (e.g. unit tests). Empty values with no `CertDir` cause `Start` to return an error. |
 | `Rules` | `[]pkg/webhook.WebhookRule`, one per kind to register. Built from the CRD via `webhook.ExtractWebhookRules(cfg *config.Config)`. |
 | `DryRunValidator` | Interface with a single method: `ValidateDirect(ctx, gvk, namespace, name, object, operation) (allowed bool, reason string, warnings []string)`. Satisfied by `pkg/controller/dryrunvalidator.Component`. Warnings flow through to `AdmissionResponse.Warnings` on both allow and deny paths (e.g. soft diagnostics from pluggable validator sidecars). If `nil`, the component fails open (accepts everything) — useful only in tests. |
 
@@ -60,7 +60,7 @@ Registration happens once at `Start`:
 
 ## Integration Points
 
-- **Upstream** — `pkg/controller/certloader` watches the cert-manager-provisioned Secret and publishes `CertParsedEvent` with `CertPEM`/`KeyPEM`. The controller iterates on cert updates by restarting this component with the new bytes.
+- **Upstream** — cert-manager provisions the Secret, the chart mounts it, and the controller passes the mount path into this component's `Config.CertDir`. There is no API fetch of the Secret and no dedicated cert event: the pure server reads `tls.crt`/`tls.key` from `CertDir` and hot-reloads them when cert-manager renews the cert — served within ~a minute, no controller iteration restart or pod restart needed.
 - **Downstream** — `pkg/controller/dryrunvalidator` is the only implementation of the `DryRunValidator` interface in the tree. It in turn delegates the actual render+validate to `pkg/controller/proposalvalidator`, which is the same pipeline the leader-side reconciler uses — so anything that passes admission will also pass at deploy time.
 - **Chart** — `charts/haptic/templates/validatingwebhookconfiguration.yaml` defines the `ValidatingWebhookConfiguration` with two webhook entries: watched-resource webhooks use `failurePolicy: Fail`, `timeoutSeconds: 10`; the HAProxyTemplateConfig webhook uses `failurePolicy: Ignore`, `timeoutSeconds: 5`. When `webhook.certManager.enabled`, cert-manager's `cert-manager.io/inject-ca-from` annotation is added. The chart does **not** set an `objectSelector`; multi-controller isolation comes from each release deploying its own webhook configuration whose `clientConfig.service` points at that release's controller `Service`.
 
@@ -69,7 +69,7 @@ Registration happens once at `Start`:
 - [`pkg/webhook`](../../webhook/) — pure HTTPS server + AdmissionReview protocol
 - [`pkg/controller/dryrunvalidator`](../dryrunvalidator/) — the `DryRunValidator` implementation this component calls into
 - [`pkg/controller/proposalvalidator`](../proposalvalidator/) — the speculative render+validate pipeline shared by `dryrunvalidator` (synchronous, this webhook path) and the background HTTP-content refresh in `pkg/controller/httpstore` (asynchronous)
-- [`pkg/controller/certloader`](../certloader/) — supplies `CertPEM`/`KeyPEM`
+- The controller supplies the mounted Secret directory via `Config.CertDir`, which the pure server reads and hot-reloads; the Helm chart provisions and mounts the cert Secret
 - `docs/controller/docs/development/crd-validation-design.md` — why the webhook fails closed, lives in the controller pod, and runs the same render/validate code as the reconciler
 
 ## License

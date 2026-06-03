@@ -43,7 +43,8 @@ component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
 ```go
 // In iteration.go (sketch)
 webhookComp := webhook.New(logger, &webhook.Config{
-    // ... TLS material from certloader, rules from ExtractWebhookRules ...
+    // ... TLS material from the cert Secret loaded at controller startup,
+    //     rules from ExtractWebhookRules ...
     DryRunValidator: dryRunComp, // <- this package's *Component
 }, restMapper, metricsRecorder)
 ```

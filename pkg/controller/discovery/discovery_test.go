@@ -15,7 +15,6 @@
 package discovery
 
 import (
-	"os/exec"
 	"testing"
 	"time"
 
@@ -28,20 +27,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 )
-
-func TestNewDiscoveryEngine(t *testing.T) {
-	// Skip if haproxy is not available (newDiscoveryEngine detects local version)
-	if _, err := exec.LookPath("haproxy"); err != nil {
-		t.Skip("skipping test: haproxy binary not found in PATH")
-	}
-
-	discovery, err := newDiscoveryEngine(5555)
-
-	require.NoError(t, err)
-	assert.NotNil(t, discovery)
-	assert.Equal(t, 5555, discovery.dataplanePort)
-	assert.NotNil(t, discovery.localVersion)
-}
 
 // createTestDiscovery creates a Discovery instance for testing without requiring haproxy.
 // This is used by tests that only test DiscoverEndpoints, which doesn't need localVersion.

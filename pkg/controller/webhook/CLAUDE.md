@@ -15,8 +15,8 @@ Modify this package when:
 
 **DO NOT** modify this package for:
 
-- HTTPS server / `RegisterValidator` / `Start` mechanics → `pkg/webhook`
-- TLS certificate generation or rotation → `pkg/controller/certloader` (and the chart's CSR/Secret plumbing)
+- HTTPS server / `RegisterValidator` / `Start` mechanics (including cert hot-reload from `CertDir`) → `pkg/webhook`
+- TLS certificate provisioning → the chart's cert-manager `Certificate`/Secret plumbing and the mount the controller points `CertDir` at
 - `ValidatingWebhookConfiguration` lifecycle → handled outside the controller (chart + cluster admin)
 - Validation business logic (overlay stores, render+validate) → `pkg/controller/dryrunvalidator`
 
@@ -28,7 +28,7 @@ Thin glue between three things:
 2. The `DryRunValidator` interface (synchronous `ValidateDirect` call into the validation pipeline).
 3. The controller's metrics surface (per-GVK request and decision counters).
 
-It does **not** generate certificates, manage `ValidatingWebhookConfiguration`, or publish webhook-lifecycle events. CertPEM/KeyPEM come into the component via `Config`; the chart owns the `ValidatingWebhookConfiguration` and the CA-bundle injection.
+It does **not** generate or fetch certificates, manage `ValidatingWebhookConfiguration`, or publish webhook-lifecycle events. The mounted cert directory comes into the component via `Config.CertDir`, and the pure server reads + hot-reloads the cert files from it; the chart owns the `ValidatingWebhookConfiguration` and the CA-bundle injection.
 
 ## Architecture Pattern
 
@@ -57,8 +57,7 @@ TLS request ─────► │ Server       │ ──register── │ Com
 component := webhook.New(logger, &webhook.Config{
     Port:            9443,
     Path:            "/validate",
-    CertPEM:         certPEM,             // already loaded from Secret by certloader
-    KeyPEM:          keyPEM,
+    CertDir:         "/etc/webhook/certs", // mounted cert Secret; server reads + hot-reloads tls.crt/tls.key
     Rules:           rules,               // []webhook.WebhookRule -- per-GVK list
     DryRunValidator: dryRunComponent,     // implements ValidateDirect
 }, restMapper, metricsRecorder)
@@ -70,7 +69,7 @@ There are no `Namespace`, `ServiceName`, or `CABundle` fields on the config — 
 
 `Start(ctx)` instantiates the underlying `*pkg/webhook.Server`, registers one bridge `ValidationFunc` per GVK in `Rules`, then blocks inside `server.Start(ctx)` until the context is cancelled. Cancelling triggers the pure server's graceful shutdown.
 
-There is no certificate-rotation loop in this component. Rotation is observed externally: `pkg/controller/certloader` watches the Secret, publishes `CertParsedEvent`, and the controller's iteration restart picks up the new PEM and re-constructs this component.
+This component does not run its own rotation loop, but the cert is still hot-reloaded: the controller points `Config.CertDir` at the mounted cert Secret, and the underlying `pkg/webhook.Server` reads `tls.crt`/`tls.key` from that directory and re-parses them on content change. A cert-manager renewal written to the mounted Secret is served within ~a minute, with no iteration restart, pod restart, or dedicated cert event.
 
 ## Validator Bridge
 
@@ -170,5 +169,5 @@ The component depends on the small `MetricsRecorder` interface, not the heavy `*
 
 - Pure webhook library: `pkg/webhook/CLAUDE.md`
 - DryRunValidator: `pkg/controller/dryrunvalidator/CLAUDE.md`
-- Cert lifecycle: `pkg/controller/certloader/` (loader) and the chart-managed Secret/`ValidatingWebhookConfiguration`
+- Cert lifecycle: the chart-managed cert-manager Secret/`ValidatingWebhookConfiguration`, mounted and pointed at via `Config.CertDir`, then served + hot-reloaded by `pkg/webhook`
 - Architecture: `/docs/controller/docs/development/design.md`

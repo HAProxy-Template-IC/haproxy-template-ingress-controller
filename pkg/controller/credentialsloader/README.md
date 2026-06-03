@@ -2,7 +2,7 @@
 
 Stage-1 event adapter that turns `Secret` updates into internal `Credentials`. Subscribes to `SecretResourceChangedEvent`, calls `config.ParseSecretData` + `config.LoadCredentials` (which rejects missing or empty `dataplane_username` / `dataplane_password`), and publishes `CredentialsUpdatedEvent` or `CredentialsInvalidEvent`. Stronger structural validation (`config.ValidateCredentials`) is applied separately at controller startup in `pkg/controller/config.go`.
 
-Like its siblings [`configloader`](../configloader/) and [`certloader`](../certloader/), it's built on the `pkg/controller/resourceloader.BaseLoader` scaffold — the event-loop plumbing is shared, only the parse step differs.
+Like its sibling [`configloader`](../configloader/), it's built on the `pkg/controller/resourceloader.BaseLoader` scaffold — the event-loop plumbing is shared, only the parse step differs.
 
 ## Minimal Usage
 
@@ -45,7 +45,7 @@ stringData:
 
 - [`pkg/core/config`](../../core/config/) — `ParseSecretData` / `LoadCredentials` (the functions this adapter wraps), and `ValidateCredentials` for the startup-time structural check
 - [`pkg/controller/resourceloader`](../resourceloader/) — shared event-loop base
-- [`pkg/controller/configloader`](../configloader/) / [`certloader`](../certloader/) — sibling loaders built on the same pattern
+- [`pkg/controller/configloader`](../configloader/) — sibling loader built on the same pattern
 - `docs/controller/docs/operations/security.md` — operator-facing credential rotation + secret-management guidance
 
 ## License

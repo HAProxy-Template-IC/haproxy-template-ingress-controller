@@ -726,32 +726,6 @@ func TestEventCommentator_GenerateInsight_ValidationEvents(t *testing.T) {
 	})
 }
 
-func TestEventCommentator_GenerateInsight_CertEvents(t *testing.T) {
-	bus := busevents.NewEventBus(100)
-	logger := slog.Default()
-	ec := NewEventCommentator(bus, logger, 100)
-
-	t.Run("CertResourceChangedEvent", func(t *testing.T) {
-		// The event takes an any representing the resource
-		event := events.NewCertResourceChangedEvent("cert-secret")
-
-		insight, _ := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "certificate Secret changed")
-	})
-
-	t.Run("CertParsedEvent", func(t *testing.T) {
-		// Signature: (certPEM, keyPEM []byte, version string)
-		event := events.NewCertParsedEvent([]byte("cert-data"), []byte("key-data"), "v1.0.0")
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "certificates parsed")
-		assert.Contains(t, insight, "v1.0.0")
-		assertContainsAttr(t, attrs, "version", "v1.0.0")
-	})
-}
-
 func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	logger := slog.Default()

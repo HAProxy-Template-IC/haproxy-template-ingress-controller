@@ -222,7 +222,7 @@ Authoritative source: `cmd/controller/run.go` (`init()` registers flags) and `cm
 |------|---------|---------|---------|
 | `--crd-name` | `CRD_NAME` | `haproxy-config` | Name of the `HAProxyTemplateConfig` CRD the controller reads. |
 | `--secret-name` | `SECRET_NAME` | `haproxy-credentials` | Name of the `Secret` with `dataplane_username` / `dataplane_password`. |
-| `--webhook-cert-secret-name` | `WEBHOOK_CERT_SECRET_NAME` | `""` (disabled) | TLS Secret for the validating-admission-webhook server. Empty disables the webhook entirely. |
+| `--webhook-cert-dir` | `WEBHOOK_CERT_DIR` | `""` (disabled) | Directory holding the validating-admission-webhook server's TLS cert (`tls.crt`/`tls.key`); the chart mounts the cert Secret here and sets this to `/etc/webhook/certs`. The server reads and hot-reloads the files on rotation. Empty disables the webhook entirely. |
 | `--debug-port` | `DEBUG_PORT` | `0` (disabled) | Port for the introspection HTTP server (`/healthz` + `/debug/vars` + `/debug/pprof`). The Helm chart sets this to `8080` by default. |
 | `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
 | — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |
@@ -232,7 +232,7 @@ The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef
 - **Log output** — always structured slog (logfmt-ish text on stdout); no `LOG_FORMAT` env var.
 - **Metrics port** — read from the `METRICS_PORT` env var (default `9090`; set to `0` to disable). The CRD has a `controller.metricsPort` field but the controller does **not** read it; the chart strips it before serialising the CRD. To change the port, set `METRICS_PORT` (via the top-level `extraEnv` in Helm).
 - **Healthz port** — runs on the same listener as `--debug-port` (default `0` = disabled when running the binary directly; the chart sets `8080`). There is no separate healthz listener: setting `--debug-port` / `controller.debugPort` to `0` disables both `/debug/*` and `/healthz` (and breaks Kubernetes probes). The chart's `controller.ports.healthz` only configures the Service port and the container-port declaration used by probes — the actual listener is still the introspection server.
-- **Webhook port** — hardcoded `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag for it. Disabled entirely when `--webhook-cert-secret-name` is empty.
+- **Webhook port** — hardcoded `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag for it. Disabled entirely when `--webhook-cert-dir` is empty.
 - **pprof** — always mounted at `/debug/pprof/*` whenever the introspection server is enabled; no `ENABLE_PPROF` env var.
 
 ## Signal Handling
@@ -248,7 +248,7 @@ ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, sysca
 defer cancel()
 
 if err := controller.Run(ctx, k8sClient,
-    runCRDName, runSecretName, runWebhookCertSecretName, runDebugPort,
+    runCRDName, runSecretName, runWebhookCertDir, runDebugPort,
 ); err != nil {
     // Only surface the error if it's not just the signal-driven cancellation
     if ctx.Err() == nil {
@@ -271,7 +271,7 @@ The controller doesn't hand-roll its HTTP servers — three reusable infra packa
 
 - **`pkg/introspection`** — `/healthz` (also aliased as `/health`), `/debug/vars`, `/debug/vars/<name>?field={…}`, `/debug/events`, `/debug/pprof/*`. Backed by an instance-based registry of `Var` implementations. Listening port comes from `--debug-port` / `DEBUG_PORT` (default 0 = disabled; the Helm chart sets 8080). Setting it to 0 disables both `/debug/*` and `/healthz` (no separate healthz listener exists), so probes break — restrict access via NetworkPolicy instead. The chart's `controller.ports.healthz` only configures the Service port and container-port declaration used by probes; it doesn't open an extra listener. There is no separate `/readyz` — Kubernetes readiness probes hit `/healthz` too.
 - **`pkg/metrics`** — `/metrics` via Prometheus `promhttp` against an instance-based `prometheus.Registerer`. Port comes from the `METRICS_PORT` env var (default 9090, set to 0 to disable; the CRD's `controller.metricsPort` field is **not** read by the controller — the chart strips it before serialising). The instance-scoped registry is critical: every reinitialization iteration creates a fresh registry so metrics get GC'd cleanly when the iteration ends.
-- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-secret-name` is empty. Port is **hardcoded** `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag override.
+- **`pkg/webhook`** — admission webhook HTTPS (`/validate`) and a sidecar `/healthz`. Disabled when `--webhook-cert-dir` is empty. Port is **hardcoded** `9443` in `pkg/controller/webhook.go`; there is no CRD field, env var, or flag override.
 
 Don't add new HTTP surfaces in `cmd/controller`. Add a `Var` to `pkg/introspection`, a metric to `pkg/controller/metrics`, or a handler on the existing webhook server.
 
@@ -315,7 +315,7 @@ func TestController_Startup(t *testing.T) {
 
     // Start controller. There is no struct + NewController() — the entry point
     // is a package-level function `controller.Run(ctx, k8sClient, crdName,
-    // secretName, webhookCertSecretName, debugPort)`. Build a `*client.Client`
+    // secretName, webhookCertDir, debugPort)`. Build a `*client.Client`
     // around the fake clients and pass it in.
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()

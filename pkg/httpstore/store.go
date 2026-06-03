@@ -163,22 +163,6 @@ func (s *HTTPStore) Get(url string) (string, bool) {
 	return entry.AcceptedContent, true
 }
 
-// getPending returns the pending content for a URL if it exists.
-// This is used during validation to render with pending content.
-// Returns empty string and false if no pending content.
-// Updates LastAccessTime to track usage for cache eviction.
-func (s *HTTPStore) getPending(url string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	entry, exists := s.cache[url]
-	if !exists || !entry.HasPending {
-		return "", false
-	}
-	entry.LastAccessTime = time.Now()
-	return entry.PendingContent, true
-}
-
 // GetForValidation returns content for validation rendering.
 // If pending content exists, returns pending; otherwise returns accepted.
 // Updates LastAccessTime to track usage for cache eviction.
@@ -292,21 +276,6 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	return true, nil
 }
 
-// getURLsWithDelay returns all cached URLs that have a refresh delay configured.
-// This is used by the event adapter to schedule refresh timers.
-func (s *HTTPStore) getURLsWithDelay() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var urls []string
-	for url, entry := range s.cache {
-		if entry.Options.Delay > 0 {
-			urls = append(urls, url)
-		}
-	}
-	return urls
-}
-
 // GetDelay returns the configured delay for a URL.
 // Returns 0 if URL not in cache or no delay configured.
 func (s *HTTPStore) GetDelay(url string) time.Duration {
@@ -341,22 +310,6 @@ func (s *HTTPStore) GetEntry(url string) *CacheEntry {
 		entryCopy.Auth = &authCopy
 	}
 	return &entryCopy
-}
-
-// clear removes all entries from the cache.
-func (s *HTTPStore) clear() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.cache = make(map[string]*CacheEntry)
-	s.logger.Info("cleared HTTP store cache")
-}
-
-// size returns the number of cached URLs.
-func (s *HTTPStore) size() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.cache)
 }
 
 // LoadFixture loads a single HTTP fixture directly into the store as accepted content.

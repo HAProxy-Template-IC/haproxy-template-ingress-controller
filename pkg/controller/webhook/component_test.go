@@ -193,7 +193,7 @@ func TestComponent_Start_MissingCertificate(t *testing.T) {
 	err := component.Start(ctx)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tls certificate is empty")
+	assert.Contains(t, err.Error(), "no webhook TLS certificate configured")
 }
 
 func TestComponent_Start_MissingKey(t *testing.T) {

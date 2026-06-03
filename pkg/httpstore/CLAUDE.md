@@ -151,7 +151,7 @@ The HTTP store automatically evicts cache entries that haven't been accessed for
 
 ### Eviction Rules
 
-1. **Access time tracking**: Every `Get()` and `GetForValidation()` call (plus the internal `getPending()` and the cache-hit branch of `Fetch()`) updates the entry's `LastAccessTime`. There is no exported `GetPending()` method — listing pending URLs is done via `GetPendingURLs()`, which is a snapshot and does *not* touch access time.
+1. **Access time tracking**: Every `Get()` and `GetForValidation()` call (plus the cache-hit branch of `Fetch()`) updates the entry's `LastAccessTime`. There is no exported `GetPending()` method — listing pending URLs is done via `GetPendingURLs()`, which is a snapshot and does *not* touch access time.
 2. **Never evict pending**: Entries with pending validation (`HasPending=true`) are never evicted, even if expired
 3. **Configurable maxAge**: Set via constructor parameter, typically 2x the drift prevention interval
 4. **Periodic cleanup**: The event adapter runs eviction at regular intervals

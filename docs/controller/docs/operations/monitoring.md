@@ -250,7 +250,6 @@ Exposed when the validating admission webhook is enabled (`webhook.enabled=true`
 | `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
 | `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
 | `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes (allowed / rejected / error) per GVK |
-| `haptic_webhook_cert_expiry_timestamp_seconds` | Gauge | — | Unix timestamp at which the webhook serving cert expires |
 | `haptic_webhook_cert_rotations_total` | Counter | — | Number of times the webhook serving cert was reloaded |
 
 **Key queries:**
@@ -258,9 +257,6 @@ Exposed when the validating admission webhook is enabled (`webhook.enabled=true`
 ```promql
 # Reject rate per resource kind
 sum by (gvk) (rate(haptic_webhook_validation_total{result="rejected"}[5m]))
-
-# Days until webhook cert expires (alert when < 14)
-(haptic_webhook_cert_expiry_timestamp_seconds - time()) / 86400
 
 # 95th percentile webhook latency (must stay well under the 10s admission timeout)
 histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]))
@@ -477,16 +473,6 @@ groups:
         annotations:
           summary: "Critical events dropped from event bus"
           description: "A critical subscriber's buffer overflowed; reconciliation work has been lost"
-
-      # Webhook certificate expiring soon
-      - alert: HAProxyICWebhookCertExpiringSoon
-        expr: (haptic_webhook_cert_expiry_timestamp_seconds - time()) / 86400 < 14
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Webhook certificate expires in less than 14 days"
-          description: "Renew or rotate the webhook serving cert before it expires"
 ```
 
 !!! note "Tuning alert thresholds"

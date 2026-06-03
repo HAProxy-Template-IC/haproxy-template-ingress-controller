@@ -95,7 +95,7 @@ func runIteration(
 	k8sClient *client.Client,
 	crdName string,
 	secretName string,
-	webhookCertSecretName string,
+	webhookCertDir string,
 	debugPort int,
 	infra *persistentInfra,
 	logger *slog.Logger,
@@ -136,20 +136,20 @@ func runIteration(
 
 	// 2. Fetch and validate initial configuration (now guaranteed to exist)
 	bundle, err := fetchAndValidateInitialConfig(
-		ctx, k8sClient, crdName, secretName, webhookCertSecretName,
+		ctx, k8sClient, crdName, secretName,
 		crdGVR, secretGVR, logger,
 	)
 	if err != nil {
 		return err
 	}
-	cfg, crd, creds, webhookCerts := bundle.Config, bundle.CRD, bundle.Credentials, bundle.WebhookCerts
+	cfg, crd, creds := bundle.Config, bundle.CRD, bundle.Credentials
 
 	// Mark config as loaded and record initial CRD/Secret versions so the
 	// bootstrap watcher events don't trigger redundant reinitialization.
 	// Later events with different versions still flow through
 	// configChangeCh and trigger iteration restart — that's how
-	// credentials/webhook-cert rotation reaches the controller.
-	finalizeConfigLoad(state, setup, crd.GetResourceVersion(), bundle.CredentialsVersion, bundle.WebhookCertVersion)
+	// credentials rotation reaches the controller.
+	finalizeConfigLoad(state, setup, crd.GetResourceVersion(), bundle.CredentialsVersion)
 
 	// 3. Setup resource watchers
 	resourceWatcher, err := setupResourceWatchers(setup.IterCtx, cfg, k8sClient, setup.Bus, logger, setup.Cancel, setup.ErrGroup)
@@ -162,7 +162,7 @@ func runIteration(
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
-		setup.IterCtx, k8sClient, crdName, secretName, webhookCertSecretName,
+		setup.IterCtx, k8sClient, crdName, secretName,
 		crdGVR, secretGVR, setup.Bus, logger, setup.Cancel, setup.ErrGroup,
 	); err != nil {
 		return err
@@ -224,7 +224,7 @@ func runIteration(
 	)
 
 	// 8. Setup webhook validation if enabled (start pre-created DryRunValidator)
-	maybeSetupWebhook(cfg, webhookCerts, setup, k8sClient, dryrunValidator, configValidator, logger)
+	maybeSetupWebhook(cfg, webhookCertDir, setup, k8sClient, dryrunValidator, configValidator, logger)
 
 	// 9. Setup debug and metrics infrastructure (start pre-created EventBuffer)
 	// Note: The introspection server is already started by startEarlyInfrastructureServers
@@ -322,8 +322,8 @@ func maybeCreateWebhookValidators(
 	pluggableMgr *pluggablevalidator.Manager,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
-	// The webhook server runs whenever the chart provisioned a TLS cert
-	// (the maybeSetupWebhook caller gates on `webhookCerts != nil`).
+	// The webhook server runs whenever the chart mounted a TLS cert
+	// directory (the maybeSetupWebhook caller gates on `webhookCertDir != ""`).
 	// Construction is NOT gated on whether any watched resource enables
 	// validation: the HAProxyTemplateConfig admission webhook is independent
 	// of watched resources, and the chart may have provisioned a cert +
@@ -339,24 +339,25 @@ func maybeCreateWebhookValidators(
 	return dryrunValidator, configValidator, nil
 }
 
-// maybeSetupWebhook sets up the webhook server when the chart has
-// provisioned a TLS cert. Cert availability — not the CRD's watchedResources
+// maybeSetupWebhook sets up the webhook server when the chart has mounted a
+// TLS cert directory. The cert-dir path — not the CRD's watchedResources
 // section — is the operative gate: the chart's `webhook.enabled` toggle
-// controls cert provisioning, and the ValidatingWebhookConfiguration may
-// cover HAProxyTemplateConfig admission even when no watched-resource has
-// `enableValidationWebhook: true`. Without a cert, the server can't bind
-// the TLS listener regardless of what we'd want to register.
+// controls the cert Secret mount + WEBHOOK_CERT_DIR, and the
+// ValidatingWebhookConfiguration may cover HAProxyTemplateConfig admission
+// even when no watched-resource has `enableValidationWebhook: true`. Without a
+// cert dir, the server can't bind the TLS listener regardless of what we'd
+// want to register.
 func maybeSetupWebhook(
 	cfg *coreconfig.Config,
-	webhookCerts *WebhookCertificates,
+	webhookCertDir string,
 	setup *componentSetup,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component,
 	configValidator webhook.ConfigValidatorFunc,
 	logger *slog.Logger,
 ) {
-	if webhookCerts == nil {
-		logger.Debug("No webhook TLS cert configured; skipping webhook setup")
+	if webhookCertDir == "" {
+		logger.Debug("No webhook TLS cert directory configured; skipping webhook setup")
 		return
 	}
 	if dryrunValidator == nil && configValidator == nil {
@@ -364,5 +365,5 @@ func maybeSetupWebhook(
 		return
 	}
 	logger.Info("Stage 7: Setting up webhook validation")
-	setupWebhook(setup.IterCtx, cfg, webhookCerts, k8sClient, dryrunValidator, configValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
+	setupWebhook(setup.IterCtx, cfg, webhookCertDir, k8sClient, dryrunValidator, configValidator, logger, setup.MetricsComponent.Metrics(), setup.Cancel, setup.ErrGroup)
 }

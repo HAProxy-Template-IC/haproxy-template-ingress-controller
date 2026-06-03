@@ -51,8 +51,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 	switch event.(type) {
 	// Configuration Events
 	case *events.ConfigParsedEvent, *events.ConfigValidationRequest, *events.ConfigValidationResponse,
-		*events.ConfigValidatedEvent, *events.ConfigInvalidEvent,
-		*events.CertResourceChangedEvent, *events.CertParsedEvent:
+		*events.ConfigValidatedEvent, *events.ConfigInvalidEvent:
 		return ec.configInsight(event, attrs)
 
 	// Resource Events
@@ -97,13 +96,4 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		// Fallback for unknown event types
 		return fmt.Sprintf("Event: %s", eventType), attrs
 	}
-}
-
-// namespacedName returns "namespace/name" for namespaced resources, or just "name"
-// for cluster-scoped resources where namespace is empty.
-func namespacedName(namespace, name string) string {
-	if namespace == "" {
-		return name
-	}
-	return namespace + "/" + name
 }

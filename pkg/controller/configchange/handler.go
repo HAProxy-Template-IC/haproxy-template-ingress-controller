@@ -88,16 +88,14 @@ type ConfigChangeHandler struct {
 	// for the bootstrap event, creating an infinite loop.
 	initialConfigVersion string
 
-	// Initial credentials and webhook-cert Secret versions tracked the same
-	// way, for the same reason. The credentialsloader / certloader emit
-	// CredentialsUpdatedEvent / CertParsedEvent on every Secret resync —
-	// including the bootstrap event the watcher fires the moment it
-	// observes the existing Secret at iteration startup. Filtering by
-	// version means we only signal reinitialization when the Secret
+	// Initial credentials Secret version tracked the same way, for the same
+	// reason. The credentialsloader emits CredentialsUpdatedEvent on every
+	// Secret resync — including the bootstrap event the watcher fires the
+	// moment it observes the existing Secret at iteration startup. Filtering
+	// by version means we only signal reinitialization when the Secret
 	// content actually changed (rotation), not when the watcher just
 	// re-observes the same Secret.
 	initialCredentialsVersion string
-	initialCertVersion        string
 
 	// reinitializationEnabled controls whether ConfigValidatedEvents trigger reinitialization.
 	// During startup, multiple ConfigValidatedEvents can occur:
@@ -143,7 +141,6 @@ func NewConfigChangeHandler(
 		events.EventTypeConfigValidated,
 		events.EventTypeBecameLeader,
 		events.EventTypeCredentialsUpdated,
-		events.EventTypeCertParsed,
 	)
 
 	return &ConfigChangeHandler{
@@ -186,17 +183,6 @@ func (h *ConfigChangeHandler) SetInitialCredentialsVersion(version string) {
 	defer h.mu.Unlock()
 	h.initialCredentialsVersion = version
 	h.logger.Debug("Set initial credentials Secret version for bootstrap skip",
-		"version", version)
-}
-
-// SetInitialCertVersion records the resourceVersion of the webhook-cert
-// Secret as observed at iteration startup, so the bootstrap CertParsedEvent
-// doesn't trigger a redundant reinitialization loop.
-func (h *ConfigChangeHandler) SetInitialCertVersion(version string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.initialCertVersion = version
-	h.logger.Debug("Set initial webhook-cert Secret version for bootstrap skip",
 		"version", version)
 }
 
@@ -251,8 +237,6 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 				h.handleBecameLeader(e)
 			case *events.CredentialsUpdatedEvent:
 				h.handleSecretRotation("credentials", e.SecretVersion, &h.initialCredentialsVersion)
-			case *events.CertParsedEvent:
-				h.handleSecretRotation("webhook-cert", e.Version, &h.initialCertVersion)
 			}
 		}
 	}

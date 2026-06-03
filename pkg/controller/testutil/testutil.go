@@ -151,9 +151,9 @@ func DrainChannel(eventChan <-chan busevents.Event) {
 //
 // Example:
 //
-//	func TestCertLoaderComponent_StartAndStop(t *testing.T) {
+//	func TestMyComponent_StartAndStop(t *testing.T) {
 //	    bus, logger := testutil.NewTestBusAndLogger()
-//	    component := NewCertLoaderComponent(bus, logger)
+//	    component := NewMyComponent(bus, logger)
 //	    testutil.RunComponentStartStop(t, bus, component.Start, component.Stop)
 //	}
 func RunComponentStartStop(t *testing.T, bus *busevents.EventBus, startFunc func(context.Context) error, stopFunc func()) {
@@ -184,9 +184,9 @@ func RunComponentStartStop(t *testing.T, bus *busevents.EventBus, startFunc func
 //
 // Example:
 //
-//	func TestCertLoaderComponent_StartWithContextCancel(t *testing.T) {
+//	func TestMyComponent_StartWithContextCancel(t *testing.T) {
 //	    bus, logger := testutil.NewTestBusAndLogger()
-//	    component := NewCertLoaderComponent(bus, logger)
+//	    component := NewMyComponent(bus, logger)
 //	    testutil.RunComponentContextCancel(t, bus, component.Start)
 //	}
 func RunComponentContextCancel(t *testing.T, bus *busevents.EventBus, startFunc func(context.Context) error) {
