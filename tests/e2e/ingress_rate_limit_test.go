@@ -254,29 +254,41 @@ func rateLimitBurstFromCluster(ctx context.Context, t *testing.T, namespace, hos
 		return result
 	}
 
-	// Burst once; retry once after a 1s gap if the result looks like
-	// reload-window churn (no 429s, fewer than half the curls landed).
-	// The parallel-test e2e suite drives haproxy reloads every ~1-2s as
-	// other tests create / delete ingresses; a single burst that races a
-	// reload window produces all-000 codes (each curl `--max-time 5`'s
-	// out before the new worker binds the socket). Two bursts with a 1s
-	// gap clear that race for the vast majority of cases without
-	// changing the chart's reload cadence. A sustained 0×429 across both
-	// bursts is a real test failure the caller fatals on.
-	result := runOnce()
-	if result.byCode["429"] > 0 {
-		return result
+	// Burst, retrying while the result looks like reload-window churn (no
+	// 429s AND fewer than half the curls landed). The parallel-test e2e
+	// suite drives haproxy reloads every ~1-2s as other tests create /
+	// delete ingresses; a burst that races a reload window produces mostly
+	// empty lines (each curl `--max-time 5`'s out, or is killed before
+	// writing its status, before the new worker binds the socket). Under
+	// sustained load a single retry is not enough — the churn can persist
+	// across consecutive attempts (observed: 5/20 then 8/20 landed, both
+	// all-200, fataling on a churn result that merely looked like
+	// "rate-limit not engaging"). Retry up to maxBurstAttempts with a 1s
+	// gap; only a *clean* burst (more than half the curls landed) with no
+	// 429 is a real failure the caller fatals on, so a genuine rate-limit
+	// regression still fails fast. If every attempt churns, the last result
+	// is returned and the caller fatals with the full distribution, so a
+	// persistent environment problem is visible rather than masked.
+	const maxBurstAttempts = 4
+	var result rateLimitBurstResult
+	for attempt := 1; attempt <= maxBurstAttempts; attempt++ {
+		result = runOnce()
+		if result.byCode["429"] > 0 {
+			return result // limit tripped — success
+		}
+		landed := result.byCode["200"] + result.byCode["429"]
+		if landed > total/2 {
+			// Burst landed cleanly but no 429 — real failure, don't retry.
+			return result
+		}
+		if attempt < maxBurstAttempts {
+			t.Logf("rate-limit burst attempt %d looks like reload-window churn (%s); retrying after 1s", attempt, result)
+			select {
+			case <-time.After(1 * time.Second):
+			case <-ctx.Done():
+				return result
+			}
+		}
 	}
-	landed := result.byCode["200"] + result.byCode["429"]
-	if landed > total/2 {
-		// Burst landed cleanly but no 429 — real failure, don't retry.
-		return result
-	}
-	t.Logf("rate-limit burst attempt 1 looks like reload-window churn (%s); retrying once after 1s", result)
-	select {
-	case <-time.After(1 * time.Second):
-	case <-ctx.Done():
-		return result
-	}
-	return runOnce()
+	return result
 }
