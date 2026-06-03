@@ -852,6 +852,19 @@ templateSnippets:
       hard-stop-after {{ hsa }}
       {%- end %}
 
+  global-settings-220-localpeer:
+    template: |
+      {#- Deterministic local-peer name so the always-on `peers localinstance` -#}
+      {#- section (global-top-050-peers) recognises `peer local ...` as THIS -#}
+      {#- process and LISTENS on it. On a master-worker reload the old worker -#}
+      {#- then teaches the new worker its stick-table contents over that local -#}
+      {#- peer, so per-source counters (e.g. rate-limit http_req_rate) survive -#}
+      {#- the reload instead of resetting to zero. A static name keeps offline -#}
+      {#- `haproxy -c` validation deterministic (no $HOSTNAME dependency); the -#}
+      {#- single 127.0.0.1 peer never connects to other pods, so stick-tables -#}
+      {#- stay per-replica (matches haproxytech/kubernetes-ingress). -#}
+      localpeer local
+
   global-settings-250-shm-stats:
     template: |
       {%- var shmEnabled bool = extraContext | dig("shmStatsEnabled") | fallback(false) -%}
@@ -1049,11 +1062,18 @@ templateSnippets:
 
   global-top-050-peers:
     template: |
-      {%- var peersConfig = extraContext | dig("peers") | fallback(nil) -%}
-      {%- if peersConfig != nil %}
-      peers {{ peersConfig | dig_string("localinstance", "name") }}
-          peer "${HOSTNAME}" 127.0.0.1:{{ peersConfig | dig("port") | fallback(10000) | tostring() }}
-      {%- end %}
+      {#- Always-on local peers section. Stick-tables opt in by appending -#}
+      {#- `peers localinstance` to their definition (e.g. the haproxytech -#}
+      {#- rate-limit table); HAProxy then replicates their contents from the -#}
+      {#- old worker to the new worker on every reload, so per-source counters -#}
+      {#- survive config churn instead of resetting to zero. The single peer -#}
+      {#- `local` matches `localpeer local` (global-settings-220-localpeer), so -#}
+      {#- HAProxy LISTENS on the socket and resyncs locally; it never connects -#}
+      {#- to other replicas, so tables stay per-pod. The listener is a UNIX -#}
+      {#- socket (not a TCP port) so it can never collide with a frontend or -#}
+      {#- dynamic Gateway listener bind and take the whole proxy down. -#}
+      peers localinstance
+          peer local unix@{{ pathResolver.GetBaseDir() }}/peers.sock
 
   status-extra-100-prometheus-exporter:
     template: |
