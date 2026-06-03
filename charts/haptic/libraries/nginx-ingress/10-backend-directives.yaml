@@ -296,12 +296,12 @@ templateSnippets:
         stick-table per backend). A comment notes the limitation.
 
         For limit-rps:
-          stick-table type ip size 100k expire 1s store http_req_rate(1s)
+          stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
           http-request track-sc0 src
           http-request deny deny_status 429 if { sc_http_req_rate(0) gt <rps> }
 
         For limit-connections:
-          stick-table type ip size 100k expire 30s store conn_cur
+          stick-table type ip size 100k expire 30s store conn_cur peers localinstance
           http-request track-sc0 src
           http-request deny deny_status 429 if { sc_conn_cur(0) gt <connections> }
       -#}
@@ -317,12 +317,14 @@ templateSnippets:
           {%- else %}
       # nginx-ingress/rate-limiting ({{ key }})
           {%- end %}
-      stick-table type ip size 100k expire 1s store http_req_rate(1s)
+      {#- `peers localinstance` (base.yaml) preserves the per-source counter -#}
+      {#- across reloads so the limit isn't reset to zero on config churn. -#}
+      stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
       http-request track-sc0 src
       http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ limitRps }} }
         {%- else if limitConn != "" %}
       # nginx-ingress/rate-limiting ({{ key }})
-      stick-table type ip size 100k expire 30s store conn_cur
+      stick-table type ip size 100k expire 30s store conn_cur peers localinstance
       http-request track-sc0 src
       http-request deny deny_status 429 if { sc_conn_cur(0) gt {{ limitConn }} }
         {%- end %}
