@@ -157,8 +157,9 @@ func runIteration(
 		return err
 	}
 
-	// Register stores with ResourceStoreManager for webhook validation
-	registerResourceStores(resourceWatcher, setup.StoreManager, logger)
+	// Build the store provider (used for webhook dry-run validation) from the
+	// resource watcher's live stores.
+	storeProvider := buildStoreProvider(resourceWatcher)
 
 	// 4. Setup config watchers
 	if err := setupConfigWatchers(
@@ -181,7 +182,7 @@ func runIteration(
 	// 6. Create reconciliation components (Stage 5)
 	// Components subscribe during construction, before EventBus.Start()
 	logger.Info("Stage 5: Creating reconciliation components")
-	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, setup.StoreManager, setup.Bus, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
+	reconComponents, err := setupReconciliation(setup.IterCtx, cfg, crd, creds, k8sClient, resourceWatcher, currentConfigStore, storeProvider, setup.Bus, setup.Registry, logger, setup.Cancel, setup.ErrGroup)
 	if err != nil {
 		return err
 	}
@@ -332,7 +333,7 @@ func maybeCreateWebhookValidators(
 	// tuple is nil when no watched-resource rules exist; the ConfigValidator
 	// is always present so HAProxyTemplateConfig admissions land on a real
 	// handler instead of the pure server's fail-open path.
-	dryrunValidator, configValidator, err := createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, reconComponents.gvrMapper, logger)
+	dryrunValidator, configValidator, err := createDryRunValidator(setup.IterCtx, cfg, setup.Bus, reconComponents.storeProvider, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, reconComponents.gvrMapper, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating webhook validators: %w", err)
 	}

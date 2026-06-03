@@ -102,17 +102,20 @@ func NewEngineFromConfigWithOptions(
 		postProcessorConfigs = ExtractPostProcessorConfigs(cfg)
 	}
 
-	// Validate engine type (defaults to Scriggo if not specified)
-	_, err := templating.ParseEngineType(cfg.TemplatingSettings.Engine)
-	if err != nil {
-		return nil, fmt.Errorf("invalid template engine type: %w", err)
+	// Validate engine type. Empty defaults to scriggo, the only supported engine
+	// (the CRD also enforces this via +kubebuilder:validation:Enum=scriggo).
+	if engineName := cfg.TemplatingSettings.Engine; engineName != "" && engineName != templating.EngineNameScriggo {
+		return nil, fmt.Errorf("invalid template engine type: %q (valid: %s)", engineName, templating.EngineNameScriggo)
 	}
 
 	// Create engine with all components
 	// Note: All standard filters and the fail() function are registered internally.
 	// We pass nil for filters since none are needed beyond the engine's built-in set.
 	// The *WithDeclarations constructors handle nil additionalDeclarations gracefully.
-	var engine templating.Engine
+	var (
+		engine templating.Engine
+		err    error
+	)
 	if options.EnableProfiling {
 		engine, err = templating.NewScriggoWithProfilingAndDeclarations(
 			extraction.AllTemplates,

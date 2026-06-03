@@ -39,7 +39,6 @@ import (
 // This engine offers excellent performance and low memory usage with Go-style
 // template syntax.
 type ScriggoEngine struct {
-	engineType        EngineType
 	rawTemplates      map[string]string
 	compiledTemplates map[string]*scriggo.Template
 	postProcessors    map[string][]PostProcessor
@@ -55,27 +54,18 @@ type ScriggoEngine struct {
 // Verify ScriggoEngine implements Engine interface at compile time.
 var _ Engine = (*ScriggoEngine)(nil)
 
-// New creates a new template engine of the specified type.
-// Currently only EngineTypeScriggo is supported.
-//
-// All provided templates are compiled as entry points. This is the simplest API
-// for creating a template engine. For more control over which templates are
-// compiled vs discovered on-demand, use NewScriggo directly.
+// New creates a Scriggo template engine, compiling all provided templates as
+// entry points. This is the simplest constructor. For control over which
+// templates are compiled explicitly vs discovered on-demand, use NewScriggo; for
+// domain-specific type declarations (e.g. currentConfig), use
+// NewScriggoWithDeclarations.
 //
 // Parameters:
-//   - engineType: The type of engine to create (must be EngineTypeScriggo)
 //   - templates: All template content (all are compiled as entry points)
 //   - customFilters: Additional filters beyond built-in ones (can be nil)
 //   - customFunctions: Additional global functions beyond built-in ones (can be nil)
 //   - postProcessorConfigs: Post-processor configurations (can be nil)
-//
-// Returns an error if an unsupported engine type is specified.
-//
-// For domain-specific type declarations (e.g., currentConfig), use NewScriggoWithDeclarations.
-func New(engineType EngineType, templates map[string]string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (Engine, error) {
-	if engineType != EngineTypeScriggo {
-		return nil, NewUnsupportedEngineError(engineType)
-	}
+func New(templates map[string]string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig) (Engine, error) {
 	// Extract all template names as entry points (compile everything)
 	entryPoints := make([]string, 0, len(templates))
 	for name := range templates {
@@ -172,7 +162,6 @@ func NewScriggoWithProfilingAndDeclarations(templates map[string]string, entryPo
 // via render/render_glob statements with inherit_context.
 func newScriggoEngine(templates map[string]string, entryPoints []string, customFilters map[string]FilterFunc, customFunctions map[string]GlobalFunc, postProcessorConfigs map[string][]PostProcessorConfig, additionalDeclarations map[string]any, enableProfiling bool) (*ScriggoEngine, error) {
 	engine := &ScriggoEngine{
-		engineType:        EngineTypeScriggo,
 		rawTemplates:      make(map[string]string, len(templates)),
 		compiledTemplates: make(map[string]*scriggo.Template, len(entryPoints)),
 		postProcessors:    make(map[string][]PostProcessor),
@@ -377,11 +366,6 @@ func (e *ScriggoEngine) applyPostProcessors(templateName, output string) (string
 		}
 	}
 	return result, nil
-}
-
-// EngineType returns the type of this engine.
-func (e *ScriggoEngine) EngineType() EngineType {
-	return e.engineType
 }
 
 // TemplateNames returns the names of all available templates, sorted alphabetically.

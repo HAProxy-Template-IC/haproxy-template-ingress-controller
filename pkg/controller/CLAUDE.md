@@ -158,7 +158,6 @@ func New(bus *events.EventBus, engine templating.Engine) *Component {
 Utility components provide infrastructure services and can be called directly without events:
 
 - **EventBus**: Event infrastructure (`pkg/events`)
-- **StoreManager**: Resource storage (`pkg/controller/resourcestore`)
 - **Metrics**: Prometheus metrics (`pkg/controller/metrics`)
 - **RestMapper**: Kubernetes API mapping (`k8s.io/apimachinery/pkg/api/meta`)
 
@@ -499,7 +498,7 @@ Key non-obvious points:
 // Illustrative — using the examplerenderer skeleton from above.
 func TestExampleRenderer(t *testing.T) {
     bus := busevents.NewEventBus(100)
-    engine, _ := templating.New(templating.EngineTypeScriggo, testTemplates, nil, nil, nil)
+    engine, _ := templating.New(testTemplates, nil, nil, nil)
     component := examplerenderer.New(bus, engine)
 
     // Subscribe to output events BEFORE starting the bus

@@ -84,7 +84,6 @@ haptic/
 │       ├── renderer/        # Template rendering adapter
 │       ├── resourceloader/  # Thin wrapper over component.Base for loader components
 │       │                    #   (configloader, credentialsloader)
-│       ├── resourcestore/   # Store manager (wraps typed k8s stores for overlays)
 │       ├── resourcewatcher/ # Lifecycle manager for all configured resource watchers
 │       ├── statusapplier/   # Applies status subresources on CRDs
 │       ├── testrunner/      # Runs embedded validation tests from template libraries

@@ -97,14 +97,6 @@ func TestRenderTimeoutError(t *testing.T) {
 	assert.Same(t, cause, err.Unwrap())
 }
 
-func TestNewUnsupportedEngineError(t *testing.T) {
-	err := NewUnsupportedEngineError(EngineType(99))
-
-	require.NotNil(t, err)
-	assert.Equal(t, EngineType(99), err.EngineType)
-	assert.Equal(t, "unsupported template engine type: unknown", err.Error())
-}
-
 // TestErrorsAs verifies all custom error types unwrap correctly via errors.As,
 // which is the documented use case for the helper functions: callers do
 // `errors.As(err, &compErr)` to get the structured fields.
@@ -120,7 +112,6 @@ func TestErrorsAs(t *testing.T) {
 		{name: "RenderError", err: NewRenderError("t", cause), want: new(*RenderError)},
 		{name: "TemplateNotFoundError", err: NewTemplateNotFoundError("t", nil), want: new(*TemplateNotFoundError)},
 		{name: "RenderTimeoutError", err: &RenderTimeoutError{TemplateName: "t", Cause: cause}, want: new(*RenderTimeoutError)},
-		{name: "UnsupportedEngineError", err: NewUnsupportedEngineError(EngineType(99)), want: new(*UnsupportedEngineError)},
 	}
 
 	for _, tt := range tests {

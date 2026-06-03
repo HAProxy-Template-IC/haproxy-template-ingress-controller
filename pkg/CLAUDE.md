@@ -304,7 +304,7 @@ Test pure components in isolation:
 package templating
 
 func TestEngine_Render(t *testing.T) {
-    engine, _ := New(EngineTypeScriggo, map[string]string{
+    engine, _ := New(map[string]string{
         "test": "Hello {{ name }}",
     }, nil, nil, nil)
 
@@ -432,7 +432,6 @@ var base64DecodeFilter templating.FilterFunc = func(in any, args ...any) (any, e
 // Step 2: Pass the filter map at engine construction (callers usually
 // merge built-in and CRD-provided filters here).
 engine, err := templating.New(
-    templating.EngineTypeScriggo,
     templates,
     map[string]templating.FilterFunc{"b64decode": base64DecodeFilter}, // customFilters
     nil,                                                                // customFunctions

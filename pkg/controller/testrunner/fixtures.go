@@ -21,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
@@ -271,7 +270,7 @@ func (r *Runner) populateWatchedResourceStore(storeMap map[string]stores.Store, 
 			resource.SetAPIVersion(watchedResource.APIVersion)
 		}
 		if resource.GetKind() == "" {
-			kind := resourcestore.SingularizeResourceType(watchedResource.Resources)
+			kind := SingularizeResourceType(watchedResource.Resources)
 			resource.SetKind(kind)
 		}
 

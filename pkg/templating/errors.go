@@ -80,17 +80,6 @@ func (e *RenderTimeoutError) Unwrap() error {
 	return e.Cause
 }
 
-// UnsupportedEngineError represents an unsupported template engine type.
-type UnsupportedEngineError struct {
-	// EngineType is the unsupported engine type
-	EngineType EngineType
-}
-
-// Error implements the error interface.
-func (e *UnsupportedEngineError) Error() string {
-	return fmt.Sprintf("unsupported template engine type: %s", e.EngineType)
-}
-
 // Helper functions for creating errors with actionable context
 
 // NewCompilationError creates a CompilationError for a template compilation failure.
@@ -120,12 +109,5 @@ func NewTemplateNotFoundError(templateName string, availableTemplates []string) 
 	return &TemplateNotFoundError{
 		TemplateName:       templateName,
 		AvailableTemplates: availableTemplates,
-	}
-}
-
-// NewUnsupportedEngineError creates an UnsupportedEngineError for an invalid engine type.
-func NewUnsupportedEngineError(engineType EngineType) *UnsupportedEngineError {
-	return &UnsupportedEngineError{
-		EngineType: engineType,
 	}
 }

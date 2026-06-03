@@ -51,7 +51,7 @@ func createTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 		},
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": template},
 		nil, nil, nil)
 	require.NoError(t, err)
@@ -299,7 +299,6 @@ func TestValidationResult_ErrorMessage(t *testing.T) {
 func TestComponent_Start_AsyncPath_DeniesOnFailure(t *testing.T) {
 	bus := busevents.NewEventBus(100)
 	failingEngine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": `{{ fail("pretend HTTP content is bad") }}`},
 		nil, nil, nil,
 	)

@@ -39,7 +39,6 @@ func TestNewEngineFromConfig_ScriggoDefault(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, engine)
-	assert.Equal(t, templating.EngineTypeScriggo, engine.EngineType())
 }
 
 func TestNewEngineFromConfig_Scriggo(t *testing.T) {
@@ -56,7 +55,6 @@ func TestNewEngineFromConfig_Scriggo(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, engine)
-	assert.Equal(t, templating.EngineTypeScriggo, engine.EngineType())
 	assert.True(t, engine.HasTemplate("haproxy.cfg"))
 }
 

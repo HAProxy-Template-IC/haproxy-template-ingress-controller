@@ -102,7 +102,7 @@ func TestNewRenderService(t *testing.T) {
 		Dataplane: testDataplaneConfig(),
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
 		nil, nil, nil)
 	require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestNewRenderService_CrtListDir(t *testing.T) {
 				Dataplane: testDataplaneConfig(),
 			}
 
-			engine, err := templating.New(templating.EngineTypeScriggo,
+			engine, err := templating.New(
 				map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
 				nil, nil, nil)
 			require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestRenderService_Render_SimpleConfig(t *testing.T) {
 		Dataplane: testDataplaneConfig(),
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
 		nil, nil, nil)
 	require.NoError(t, err)
@@ -288,7 +288,7 @@ func TestRenderService_Render_WithMapFiles(t *testing.T) {
 		Dataplane: testDataplaneConfig(),
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{
 			"haproxy.cfg": cfg.HAProxyConfig.Template,
 			"domains.map": cfg.Maps["domains.map"].Template,
@@ -330,7 +330,7 @@ func TestRenderService_Render_WithGeneralFiles(t *testing.T) {
 		Dataplane: testDataplaneConfig(),
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{
 			"haproxy.cfg":     cfg.HAProxyConfig.Template,
 			"errors/503.http": cfg.Files["errors/503.http"].Template,
@@ -368,7 +368,7 @@ func TestRenderService_Render_Error(t *testing.T) {
 	}
 
 	// Create engine without haproxy.cfg template to trigger error
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"other.cfg": "content"},
 		nil, nil, nil)
 	require.NoError(t, err)
@@ -401,7 +401,7 @@ func TestRenderService_Render_PathResolverAvailable(t *testing.T) {
 		Dataplane: testDataplaneConfig(),
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
 		nil, nil, nil)
 	require.NoError(t, err)
@@ -451,7 +451,7 @@ func TestRenderService_buildRenderingContext_PropagatesIndexBy(t *testing.T) {
 			// for a present store.
 		},
 	}
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": cfg.HAProxyConfig.Template},
 		nil, nil, nil)
 	require.NoError(t, err)

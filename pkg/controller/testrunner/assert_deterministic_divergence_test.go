@@ -78,7 +78,6 @@ func determinismRenderDeps(t *testing.T, template string) *RenderDependencies {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": template},
 		nil, nil, nil,
 	)

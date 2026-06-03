@@ -24,23 +24,24 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-// registerResourceStores registers all resource stores from the watcher with the store manager.
-func registerResourceStores(
-	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
-	storeManager *resourcestore.Manager,
-	logger *slog.Logger,
-) {
-	logger.Debug("Registering resource stores with ResourceStoreManager")
+// buildStoreProvider builds a stores.StoreProvider from the resource watcher's
+// live k8s stores. Each types.Store is wrapped in a stores.TypesStoreAdapter so
+// it satisfies the stores.Store interface — Go treats the two identical method
+// sets as distinct types. Nil stores are skipped.
+func buildStoreProvider(resourceWatcher *resourcewatcher.ResourceWatcherComponent) stores.StoreProvider {
 	k8sStores := resourceWatcher.GetAllStores()
+	converted := make(map[string]stores.Store, len(k8sStores))
 	for resourceType, store := range k8sStores {
-		storeManager.RegisterStore(resourceType, store)
-		logger.Debug("Registered store", "resource_type", resourceType)
+		if store == nil {
+			continue
+		}
+		converted[resourceType] = &stores.TypesStoreAdapter{Inner: store}
 	}
+	return stores.NewRealStoreProvider(converted)
 }
 
 // startBackgroundComponents starts the StateCache and metrics component in background goroutines.
@@ -136,39 +137,5 @@ func waitForGoroutinesToFinish(errGroup *errgroup.Group, logger *slog.Logger, pr
 				"goroutine_count", runtime.NumGoroutine())
 			return
 		}
-	}
-}
-
-// resourceStoreManagerAdapter adapts resourcestore.Manager to stores.StoreProvider.
-//
-// This adapter is needed because resourcestore.Manager uses k8s/types.Store
-// while stores.StoreProvider expects stores.Store. Although both interfaces
-// have identical methods, Go's type system treats them as different types.
-type resourceStoreManagerAdapter struct {
-	manager    *resourcestore.Manager
-	storeNames []string
-}
-
-// GetStore implements stores.StoreProvider.
-func (a *resourceStoreManagerAdapter) GetStore(name string) stores.Store {
-	store, exists := a.manager.GetStore(name)
-	if !exists || store == nil {
-		return nil
-	}
-	// Wrap the types.Store to satisfy stores.Store interface
-	return &stores.TypesStoreAdapter{Inner: store}
-}
-
-// StoreNames implements stores.StoreProvider.
-func (a *resourceStoreManagerAdapter) StoreNames() []string {
-	return a.storeNames
-}
-
-// newStoreProviderFromManager creates a stores.StoreProvider from a resourcestore.Manager.
-// This extracts the pattern used in multiple places to avoid duplication.
-func newStoreProviderFromManager(manager *resourcestore.Manager) stores.StoreProvider {
-	return &resourceStoreManagerAdapter{
-		manager:    manager,
-		storeNames: manager.StoreNames(),
 	}
 }

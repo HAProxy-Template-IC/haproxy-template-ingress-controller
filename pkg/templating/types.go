@@ -8,49 +8,9 @@
 // and early detection of syntax errors.
 package templating
 
-import (
-	"fmt"
-	"strings"
-)
-
-// Engine name constants used for parsing and display.
-const (
-	// EngineNameScriggo is the string identifier for the Scriggo engine.
-	EngineNameScriggo = "scriggo"
-
-	// EngineNameUnknown is used when an engine type is not recognized.
-	EngineNameUnknown = "unknown"
-)
-
-// EngineType represents the template engine to use for rendering.
-type EngineType int
-
-const (
-	// EngineTypeScriggo uses the Scriggo template engine (Go template syntax).
-	// This is the default and only supported engine for HAProxy configuration templating.
-	EngineTypeScriggo EngineType = iota
-)
-
-// String returns the string representation of the engine type.
-func (e EngineType) String() string {
-	switch e {
-	case EngineTypeScriggo:
-		return EngineNameScriggo
-	default:
-		return EngineNameUnknown
-	}
-}
-
-// ParseEngineType converts a string to an EngineType.
-// Empty string defaults to EngineTypeScriggo.
-func ParseEngineType(s string) (EngineType, error) {
-	switch strings.ToLower(s) {
-	case EngineNameScriggo, "":
-		return EngineTypeScriggo, nil
-	default:
-		return 0, fmt.Errorf("unknown engine type: %q (valid: %s)", s, EngineNameScriggo)
-	}
-}
+// EngineNameScriggo is the canonical name of the (only) supported template
+// engine. Used to validate the configured engine string in callers.
+const EngineNameScriggo = "scriggo"
 
 // FileRegistrar is an interface for dynamic file registration during template rendering.
 // This interface is implemented by rendercontext.FileRegistry, allowing templates to

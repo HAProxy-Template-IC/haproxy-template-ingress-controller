@@ -38,7 +38,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourceapplier"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
@@ -51,6 +50,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 // reconciliationComponents holds all reconciliation-related components.
@@ -85,6 +85,11 @@ type reconciliationComponents struct {
 	// startup). Sharing one deferred mapper avoids duplicate discovery caches
 	// and keeps GVR resolution resource-agnostic (RULE #1).
 	gvrMapper meta.RESTMapper
+
+	// storeProvider is the base store provider (built from the resource
+	// watcher's live stores) shared by the coordinator/proposal-validator here
+	// and the dry-run validator constructed later in iteration startup.
+	storeProvider stores.StoreProvider
 }
 
 // createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
@@ -95,7 +100,7 @@ func createReconciliationComponents(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
-	storeManager *resourcestore.Manager,
+	storeProvider stores.StoreProvider,
 	bus *busevents.EventBus,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
@@ -175,14 +180,11 @@ func createReconciliationComponents(
 	//     the rolling-restart reaction path.
 	strictPipeline, fastPipeline := buildValidationPipelines(cfg, localVersion, renderService, logger)
 
-	// Create StoreProvider from storeManager for the Coordinator
-	baseStoreProvider := newStoreProviderFromManager(storeManager)
-
 	// Coordinator: leader-side render + validate + deploy. Uses fast pipeline.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
 		EventBus:      bus,
 		Pipeline:      fastPipeline,
-		StoreProvider: baseStoreProvider,
+		StoreProvider: storeProvider,
 		Logger:        logger,
 	})
 
@@ -191,7 +193,7 @@ func createReconciliationComponents(
 	proposalValidatorComponent := proposalvalidator.New(&proposalvalidator.ComponentConfig{
 		EventBus:          bus,
 		Pipeline:          strictPipeline,
-		BaseStoreProvider: baseStoreProvider,
+		BaseStoreProvider: storeProvider,
 		Logger:            logger,
 	})
 
@@ -302,6 +304,7 @@ func createReconciliationComponents(
 		capabilities:        capabilities,
 		engineWiring:        wiring,
 		gvrMapper:           gvrMapper,
+		storeProvider:       storeProvider,
 	}, nil
 }
 

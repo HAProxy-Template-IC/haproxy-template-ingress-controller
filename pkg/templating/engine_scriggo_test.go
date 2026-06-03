@@ -36,7 +36,6 @@ func TestNewScriggo_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 
-	assert.Equal(t, EngineTypeScriggo, engine.EngineType())
 	assert.Equal(t, 2, engine.TemplateCount())
 	assert.True(t, engine.HasTemplate("greeting"))
 	assert.True(t, engine.HasTemplate("farewell"))
@@ -377,11 +376,9 @@ func TestNew_Scriggo(t *testing.T) {
 		"greeting": "Hello World!",
 	}
 
-	engine, err := New(EngineTypeScriggo, templates, nil, nil, nil)
+	engine, err := New(templates, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, engine)
-
-	assert.Equal(t, EngineTypeScriggo, engine.EngineType())
 }
 
 func TestScriggoEngine_FormatDuration(t *testing.T) {
@@ -500,18 +497,6 @@ func TestScriggoEngine_TemplateCount(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 3, engine.TemplateCount())
-}
-
-func TestScriggoEngine_EngineType(t *testing.T) {
-	templates := map[string]string{
-		"test": "content",
-	}
-
-	entryPoints := []string{"test"}
-	engine, err := NewScriggo(templates, entryPoints, nil, nil, nil)
-	require.NoError(t, err)
-
-	assert.Equal(t, EngineTypeScriggo, engine.EngineType())
 }
 
 func TestScriggoFileInfo(t *testing.T) {

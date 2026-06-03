@@ -136,7 +136,7 @@ Templates are compiled once at initialization for optimal runtime performance:
 
 ```go
 // Compilation happens once (Scriggo is default)
-engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, err := templating.New(templates, nil, nil, nil)
 if err != nil {
     // Compilation errors caught early
     log.Fatal(err)
@@ -157,7 +157,7 @@ for i := 0; i < 1000; i++ {
 
 ### Error Types
 
-Five distinct error types for clear error handling (`pkg/templating/errors.go` is authoritative):
+Four distinct error types for clear error handling (`pkg/templating/errors.go` is authoritative):
 
 ```go
 // CompilationError - template has syntax errors
@@ -185,11 +185,6 @@ type TemplateNotFoundError struct {
 type RenderTimeoutError struct {
     TemplateName string
     Cause        error
-}
-
-// UnsupportedEngineError - invalid engine type
-type UnsupportedEngineError struct {
-    EngineType EngineType
 }
 ```
 
@@ -384,7 +379,7 @@ func TestEngine_Render(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            engine, err := templating.New(templating.EngineTypeScriggo,
+            engine, err := templating.New(
                 map[string]string{"test": tt.template}, nil, nil, nil)
 
             if tt.wantErr {
@@ -411,7 +406,7 @@ func TestEngine_CompilationError(t *testing.T) {
         "invalid": "{% if true %}\n{% end extra text %}",
     }
 
-    _, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    _, err := templating.New(templates, nil, nil, nil)
 
     require.Error(t, err)
 
@@ -422,7 +417,7 @@ func TestEngine_CompilationError(t *testing.T) {
 }
 
 func TestEngine_TemplateNotFound(t *testing.T) {
-    engine, _ := templating.New(templating.EngineTypeScriggo, map[string]string{
+    engine, _ := templating.New(map[string]string{
         "exists": "content",
     }, nil, nil, nil)
 
@@ -446,7 +441,7 @@ func TestEngine_TemplateNotFound(t *testing.T) {
 ```go
 // Bad - compiles templates every time (milliseconds)
 for _, context := range contexts {
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, _ := templating.New(templates, nil, nil, nil)
     output, _ := engine.Render(ctx, "template", context)
 }
 ```
@@ -455,7 +450,7 @@ for _, context := range contexts {
 
 ```go
 // Good - compile once, render many times (microseconds)
-engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, err := templating.New(templates, nil, nil, nil)
 if err != nil {
     log.Fatal(err)
 }
@@ -471,7 +466,7 @@ for _, context := range contexts {
 
 ```go
 // Bad - ignoring compilation errors
-engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, _ := templating.New(templates, nil, nil, nil)
 
 // Later in production...
 output, err := engine.Render(ctx, "template", context)
@@ -482,7 +477,7 @@ output, err := engine.Render(ctx, "template", context)
 
 ```go
 // Good - fail fast on invalid templates
-engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, err := templating.New(templates, nil, nil, nil)
 if err != nil {
     var compErr *templating.CompilationError
     if errors.As(err, &compErr) {
@@ -562,7 +557,7 @@ The template engine provides execution tracing for observability and performance
 ### Enabling Tracing
 
 ```go
-engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, _ := templating.New(templates, nil, nil, nil)
 
 // Enable tracing
 engine.EnableTracing()
@@ -730,7 +725,7 @@ func TestEngine_Tracing(t *testing.T) {
         "sub":  "content",
     }
 
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, _ := templating.New(templates, nil, nil, nil)
     engine.EnableTracing()
 
     _, err := engine.Render(context.Background(), "main", nil)
@@ -758,7 +753,7 @@ func TestTracing_ConcurrentRenders(t *testing.T) {
         "template2": `Output: {{ toUpper(value) }}`,
     }
 
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, _ := templating.New(templates, nil, nil, nil)
     engine.EnableTracing()
 
     // Run concurrent renders
@@ -802,7 +797,7 @@ The template engine provides detailed debug logging for filter operations, parti
 ### Enabling Filter Debug
 
 ```go
-engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, _ := templating.New(templates, nil, nil, nil)
 
 // Enable filter debug logging
 engine.EnableFilterDebug()
@@ -998,7 +993,7 @@ func TestDebugFilter(t *testing.T) {
         "test": `{{ debug(item, "test-item") }}`,
     }
 
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, _ := templating.New(templates, nil, nil, nil)
     output, _ := engine.Render(context.Background(), "test", map[string]any{
         "item": map[string]any{"key": "value"},
     })
@@ -1040,7 +1035,7 @@ func BenchmarkEngine_Render(b *testing.B) {
         `,
     }
 
-    engine, _ := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, _ := templating.New(templates, nil, nil, nil)
 
     contexts := map[string]map[string]any{
         "simple": {"name": "World"},

@@ -43,9 +43,6 @@ type Engine interface {
 
 	// --- Template introspection ---
 
-	// EngineType returns the type of this engine.
-	EngineType() EngineType
-
 	// TemplateNames returns the names of all available templates, sorted alphabetically.
 	TemplateNames() []string
 
