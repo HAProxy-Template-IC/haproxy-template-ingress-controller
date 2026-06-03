@@ -142,10 +142,10 @@ func (s *DeploymentScheduler) handleValidationCompleted(ctx context.Context, eve
 			"last_deployed", s.lastDeployedTime.Format(time.RFC3339))
 		// Publish a DeploymentSkippedEvent so consumers that need to know
 		// "the data plane is converged on this config" can react. The
-		// status-applier uses this to write the Programmed=True condition
-		// on resources whose addition didn't change the rendered HAProxy
-		// config (e.g. a Gateway with no attached routes yet) — without
-		// this signal the status would stay at the CRD default forever.
+		// status-applier uses this to write the template's "deployed"
+		// status variant on resources whose addition didn't change the
+		// rendered HAProxy config (a status-only delta) — without this
+		// signal the status would stay at the CRD default forever.
 		s.eventBus.Publish(events.NewDeploymentSkippedEvent(
 			len(endpoints),
 			"config_unchanged",

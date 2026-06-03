@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
@@ -30,9 +32,6 @@ const (
 	operationDelete = "DELETE"
 
 	phaseRender = "render"
-
-	resourceTypeIngresses = "ingresses"
-	resourceTypeEndpoints = "endpoints"
 )
 
 // createOverlay builds the StoreOverlay that represents the admission
@@ -91,51 +90,48 @@ func (c *Component) simplifyError(phase string, err error) string {
 	}
 }
 
-// mapGVKToResourceType maps a GVK string to a resource type name.
+// mapGVKToResourceType resolves an admission GVK string to the watched
+// resource's plural name — the key the overlay store is registered under.
 //
-// Examples:
-//   - "networking.k8s.io/v1.Ingress" -> "ingresses"
-//   - "v1.Service" -> "services"
-//   - "v1.ConfigMap" -> "configmaps"
+// Resolution goes through the cluster's RESTMapper, so the plural comes from
+// discovery data (and, for CRDs, each CRD's own spec.names.plural). Any watched
+// resource resolves correctly, including CRDs with irregular or fully custom
+// plurals, with no hardcoded pluralization table (RULE #1: the controller stays
+// resource-agnostic). An unrecognised kind returns an error rather than a
+// guessed plural.
 //
-// Returns the plural, lowercase resource type name used as store keys.
+// The GVK string is "group/version.Kind" or "version.Kind" — the identifier the
+// webhook registers its validators under.
 func (c *Component) mapGVKToResourceType(gvk string) (string, error) {
-	// Extract Kind from GVK
-	// Format: "group/version.Kind" or "version.Kind"
+	// Split off the Kind (the segment after the final dot); everything before
+	// it is the apiVersion ("group/version" or "version").
 	parts := strings.Split(gvk, ".")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("invalid GVK format: %s", gvk)
 	}
-
 	kind := parts[len(parts)-1]
+	apiVersion := strings.Join(parts[:len(parts)-1], ".")
 
-	// Convert Kind to plural resource type
-	// Handle common irregular plurals and special cases
-	kindLower := strings.ToLower(kind)
-
-	// Map of irregular plurals and special cases for Kubernetes resources.
-	// The default rule (append 's') doesn't work for:
-	// - Words ending in -ss need -es suffix (ingress -> ingresses, not ingresss)
-	// - Words ending in consonant + y need -ies suffix (policy -> policies)
-	// - Words that are already plural (endpoints)
-	irregularPlurals := map[string]string{
-		// -ss ending needs -es suffix
-		"ingress":       resourceTypeIngresses,
-		"ingressclass":  "ingressclasses",
-		"storageclass":  "storageclasses",
-		"priorityclass": "priorityclasses",
-		"runtimeclass":  "runtimeclasses",
-		// -y ending (after consonant) needs -ies suffix
-		"networkpolicy":     "networkpolicies",
-		"podsecuritypolicy": "podsecuritypolicies",
-		// Already plural (no change needed)
-		resourceTypeEndpoints: resourceTypeEndpoints,
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return "", fmt.Errorf("invalid GVK %q: %w", gvk, err)
 	}
 
-	if plural, ok := irregularPlurals[kindLower]; ok {
-		return plural, nil
+	gk := schema.GroupKind{Group: gv.Group, Kind: kind}
+	mapping, err := c.restMapper.RESTMapping(gk, gv.Version)
+	if err != nil && meta.IsNoMatchError(err) {
+		// A deferred discovery mapper caches discovery for its lifetime, so a
+		// CRD registered after that cache was first populated would resolve to
+		// NoMatch permanently. Refresh discovery once and retry so a
+		// late-registered watched resource validates without a controller
+		// iteration restart.
+		if resettable, ok := c.restMapper.(meta.ResettableRESTMapper); ok {
+			resettable.Reset()
+			mapping, err = c.restMapper.RESTMapping(gk, gv.Version)
+		}
 	}
-
-	// Default: add 's' for regular plurals
-	return kindLower + "s", nil
+	if err != nil {
+		return "", fmt.Errorf("resolving resource type for GVK %q: %w", gvk, err)
+	}
+	return mapping.Resource.Resource, nil
 }

@@ -221,9 +221,8 @@ func (b *Builder) Build() *BuildResult {
 	statusPatchCollector := templating.NewStatusPatchCollector()
 
 	// Create rendered resource collector for template-driven owned-resource
-	// reconciliation (per-Gateway Services for SupportGatewayStaticAddresses,
-	// Listener-set membership, etc. — anything where the chart needs the
-	// controller to spawn / update / prune Kubernetes resources). The
+	// reconciliation — anything where the chart needs the controller to spawn /
+	// update / prune Kubernetes resources alongside the HAProxy config. The
 	// collector is resource-agnostic: templates pass any apiVersion / kind.
 	renderedResourceCollector := templating.NewRenderedResourceCollector()
 
@@ -305,13 +304,13 @@ func (b *Builder) Build() *BuildResult {
 //
 //   - Return types are typed (`*GeneratedT` / `[]*GeneratedT`) when
 //     the resource's schema resolved, so Scriggo type-checks chart
-//     field access at engine boot (`gw.Metadata.Namespace`).
+//     field access at engine boot (`res.Metadata.Namespace`).
 //   - The per-resource `indexBy` from the chart's
 //     `watchedResources` configuration is honoured by Fetch and
 //     GetSingle (closures delegate to the underlying StoreWrapper,
-//     which already knows the indexBy keys). EndpointSlice-by-label
-//     and ReferenceGrant-by-namespace lookups keep working without
-//     per-call-site JSONPath plumbing.
+//     which already knows the indexBy keys). Resources indexed by a
+//     non-default key (e.g. by label or by namespace) keep working
+//     without per-call-site JSONPath plumbing.
 //
 // Method receiver rather than free function so the closures can
 // capture `b.stores` / `b.config.WatchedResources` / `b.logger`

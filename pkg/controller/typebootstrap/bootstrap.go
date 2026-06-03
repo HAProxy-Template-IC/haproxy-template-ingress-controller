@@ -96,10 +96,10 @@ type Result struct {
 	// Kinds maps the resource's user-defined name to the GVK.Kind
 	// string captured from cfg.Resources. Used by
 	// [BuildEngineDeclarations] to name the per-resource type
-	// declarations (`Gateway`, `HTTPRoute`, `Ingress`, …) at
-	// engine-declaration time so chart authors can write typed
-	// macro signatures (`(gw *Gateway)`, `(routes []*HTTPRoute)`)
-	// instead of `any`/`[]any`.
+	// declarations (one per watched Kind — e.g. for a CRD named
+	// `Widget` the declaration is `Widget`) at engine-declaration
+	// time so chart authors can write typed macro signatures
+	// (`(w *Widget)`, `(items []*Widget)`) instead of `any`/`[]any`.
 	//
 	// The Kind is the canonical singular noun for the resource —
 	// K8s naming preserves acronyms (HTTPRoute, BackendTLSPolicy)
@@ -222,9 +222,9 @@ func bootstrapOne(ctx context.Context, cfg *Config, res *Resource) (reflect.Type
 	// with no properties (or omit it entirely). Without this
 	// pre-process the converter degrades the empty-properties
 	// metadata to interface{}, and chart templates lose typed
-	// access to gw.Metadata.{Name,Namespace,...} on every
+	// access to <resource>.Metadata.{Name,Namespace,...} on every
 	// CRD-backed resource — which is most of what watchedResources
-	// contains (Gateway, HTTPRoute, Ingress, …).
+	// typically contains.
 	sch = injectObjectMetaIfMissing(sch)
 
 	// Components nil for CRD-backed schemas (they inline every

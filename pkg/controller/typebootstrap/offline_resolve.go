@@ -26,11 +26,10 @@ import (
 // offline validate path has no cluster, so it threads this through
 // instead.
 //
-// The mapping is intentionally hardcoded rather than rule-based:
-// Kubernetes pluralisation has too many irregular cases (HTTPRoute →
-// httproutes lowercases the acronym; Endpoints is already plural,
-// EndpointSlices is doubly so; IngressClass → ingressclasses runs the
-// final s straight on) to derive from a single rule reliably.
+// The mapping is never derived from a pluralisation rule: kinds have
+// too many irregular and fully custom plurals to guess reliably, so
+// the resolver takes its entries from authoritative schema data rather
+// than guessing.
 //
 // The resolver starts empty. Callers populate it from the user's
 // `--schema-dir`: every CRD YAML in the directory contributes its
@@ -46,8 +45,8 @@ type OfflineGVKResolver struct {
 	// entries is the runtime lookup table. Constructors return an
 	// empty map; callers populate via Register before passing to
 	// Bootstrap. The capacity hint is the typical chart's count of
-	// typed-watched resources (Gateway API + haptic CRDs); the map
-	// grows on demand for larger schema directories.
+	// typed-watched resources; the map grows on demand for larger
+	// schema directories.
 	entries map[offlineKey]schema.GroupVersionKind
 }
 

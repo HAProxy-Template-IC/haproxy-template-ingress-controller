@@ -314,7 +314,7 @@ func (r *Runner) assertJSONPath(
 }
 
 // assertMatchOrder validates that patterns appear in the specified order in the target content.
-// This is critical for Gateway API precedence rules where more specific routes must be checked
+// This matters whenever ordering encodes precedence — more specific match rules must be emitted
 // before less specific ones (first match wins in HAProxy).
 func (r *Runner) assertMatchOrder(
 	haproxyConfig string,

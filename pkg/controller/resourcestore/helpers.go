@@ -22,10 +22,10 @@ import "strings"
 // For proper kind resolution, use RESTMapper.KindFor().
 //
 // Examples:
-//   - "ingresses" → "Ingress"
-//   - "services" → "Service"
-//   - "pods" → "Pod"
+//   - "services"   → "Service"
+//   - "pods"       → "Pod"
 //   - "configmaps" → "ConfigMap"
+//   - "namespaces" → "Namespace"
 func SingularizeResourceType(plural string) string {
 	// "-es" is only the plural suffix when the singular ends in a sibilant
 	// (s, x, z, ch, sh). Otherwise "-es" is just "-s" plural after a non-sibilant

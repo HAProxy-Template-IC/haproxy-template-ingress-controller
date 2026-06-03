@@ -23,7 +23,8 @@ import (
 // ResourceIndexUpdatedEvent is published when a watched Kubernetes resource.
 // has been added, updated, or deleted in the local index.
 type ResourceIndexUpdatedEvent struct {
-	// ResourceTypeName identifies the resource type from config (e.g., "ingresses", "services").
+	// ResourceTypeName identifies the watched resource type as configured in
+	// spec.watchedResources (the plural form, e.g. "services").
 	ResourceTypeName string
 
 	// ChangeStats provides detailed change statistics including Created, Modified, Deleted counts

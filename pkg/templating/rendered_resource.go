@@ -29,7 +29,7 @@ import (
 // This mirrors the StatusPatch / StatusPatchCollector pattern in
 // status_patch.go but for whole-resource lifecycle instead of status-only
 // updates. The same resource-agnostic principle applies: the controller
-// never names "Service" or "Gateway" in code — it just applies whatever the
+// never names a specific resource kind in code — it just applies whatever the
 // template emits. Templates decide *what* to emit; the controller is the
 // generic vehicle.
 //

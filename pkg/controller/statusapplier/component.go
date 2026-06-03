@@ -39,9 +39,9 @@
 //     event.StatusPatches. Same data-plane-is-converged semantics as
 //     DeploymentCompletedEvent, reached by the scheduler determining the
 //     data plane is already at this config. Without this branch, any
-//     resource whose addition or update produces no config change (Gateway
-//     with no routes attached, status-only deltas) would stay at the
-//     CRD-default condition state indefinitely.
+//     resource whose addition or update produces no config change (a
+//     status-only delta) would stay at the CRD-default condition state
+//     indefinitely.
 //   - ReconciliationFailedEvent: apply the failure variant ("renderFailed" /
 //     "deployFailed") from event.StatusPatches. The Coordinator forwards
 //     the patches from the last successful render — failure paths don't
@@ -62,11 +62,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -286,8 +286,8 @@ func (c *Component) handleDeploymentCompleted(ctx context.Context, event *events
 // match the config that the data plane is already serving.
 //
 // This covers the case where a resource is added/modified but the rendered
-// HAProxy config is byte-identical to the last deployed config (e.g. a
-// Gateway with no attached HTTPRoutes, status-only deltas) — without this,
+// HAProxy config is byte-identical to the last deployed config (a
+// status-only delta) — without this,
 // the deployed-variant patches would never be applied and the resource
 // would stay at the CRD-default condition state indefinitely.
 func (c *Component) handleDeploymentSkipped(ctx context.Context, event *events.DeploymentSkippedEvent) {
@@ -535,60 +535,48 @@ func isRetriable(err error) bool {
 	return true
 }
 
-// RestMapperResolver implements GVRResolver using a Kubernetes REST mapper.
+// RestMapperResolver implements GVRResolver by consulting a Kubernetes
+// RESTMapper. The kind→resource mapping comes from the cluster's discovery
+// data, so any watched resource — including a CRD with an irregular or fully
+// custom plural — resolves correctly, with no hardcoded or guessed
+// pluralization (RULE #1: the controller stays resource-agnostic).
 type RestMapperResolver struct {
-	// restMapper is used internally but we parse apiVersion+kind ourselves
-	// to produce a GVR without needing the full meta.RESTMapper interface.
+	mapper meta.RESTMapper
 }
 
-// NewRestMapperResolver creates a GVRResolver that maps apiVersion+kind to GVR
-// using static conventions (pluralized lowercase kind).
-//
-// For production use, consider implementing a resolver backed by a real REST mapper
-// if custom resources use non-standard pluralization.
-func NewRestMapperResolver() *RestMapperResolver {
-	return &RestMapperResolver{}
+// NewRestMapperResolver creates a GVRResolver backed by the given RESTMapper.
+func NewRestMapperResolver(mapper meta.RESTMapper) *RestMapperResolver {
+	return &RestMapperResolver{mapper: mapper}
 }
 
-// Resolve maps apiVersion + kind to a GroupVersionResource.
-//
-// This uses the standard Kubernetes convention of pluralizing the lowercase kind
-// as the resource name. For example:
-//   - networking.k8s.io/v1 + Ingress → networking.k8s.io/v1/ingresses
-//   - gateway.networking.k8s.io/v1 + Gateway → gateway.networking.k8s.io/v1/gateways
-//   - gateway.networking.k8s.io/v1 + HTTPRoute → gateway.networking.k8s.io/v1/httproutes
+// Resolve maps apiVersion + kind to a GroupVersionResource by consulting the
+// RESTMapper. The resource name comes from the cluster's discovery data (and,
+// for CRDs, each CRD's own spec.names.plural), so irregular and fully custom
+// plurals resolve correctly — there are no resource-specific pluralization
+// rules in Go (RULE #1). An unknown kind returns an error rather than a
+// guessed plural.
 func (r *RestMapperResolver) Resolve(apiVersion, kind string) (schema.GroupVersionResource, error) {
 	gv, err := schema.ParseGroupVersion(apiVersion)
 	if err != nil {
 		return schema.GroupVersionResource{}, fmt.Errorf("invalid apiVersion %q: %w", apiVersion, err)
 	}
 
-	// Standard Kubernetes pluralization: lowercase + "s"
-	// Handles common cases like Ingress→ingresses, Gateway→gateways
-	resource := pluralize(kind)
-
-	return gv.WithResource(resource), nil
-}
-
-// pluralize returns the standard Kubernetes plural form of a kind.
-func pluralize(kind string) string {
-	lower := strings.ToLower(kind)
-	switch {
-	case strings.HasSuffix(lower, "s"):
-		return lower + "es" // e.g., Ingress → ingresses
-	case strings.HasSuffix(lower, "y") && len(lower) >= 2 && isConsonant(lower[len(lower)-2]):
-		return lower[:len(lower)-1] + "ies" // e.g., Policy → policies
-	default:
-		return lower + "s" // e.g., Gateway → gateways, HTTPRoute → httproutes
+	gk := schema.GroupKind{Group: gv.Group, Kind: kind}
+	mapping, err := r.mapper.RESTMapping(gk, gv.Version)
+	if err != nil && meta.IsNoMatchError(err) {
+		// A deferred discovery mapper caches discovery for its lifetime, so a
+		// CRD (or apiVersion) registered after that cache was first populated
+		// would resolve to NoMatch permanently. Refresh discovery once and
+		// retry so a late-registered kind resolves without a controller
+		// iteration restart.
+		if resettable, ok := r.mapper.(meta.ResettableRESTMapper); ok {
+			resettable.Reset()
+			mapping, err = r.mapper.RESTMapping(gk, gv.Version)
+		}
 	}
-}
-
-// isConsonant returns true if the byte is a lowercase ASCII consonant.
-func isConsonant(c byte) bool {
-	switch c {
-	case 'a', 'e', 'i', 'o', 'u':
-		return false
-	default:
-		return c >= 'a' && c <= 'z'
+	if err != nil {
+		return schema.GroupVersionResource{}, fmt.Errorf("resolving resource for apiVersion %q Kind %q: %w", apiVersion, kind, err)
 	}
+
+	return mapping.Resource, nil
 }

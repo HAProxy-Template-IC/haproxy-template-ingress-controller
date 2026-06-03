@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/restmapper"
 
@@ -169,6 +170,7 @@ func createDryRunValidator(
 	httpStoreComponent *ctrlhttpstore.Component,
 	pluggableValidator *pluggablevalidator.Manager,
 	engineWiring typedRendererWiring,
+	gvrMapper meta.RESTMapper,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, webhook.ConfigValidatorFunc, error) {
 	rules := webhook.ExtractWebhookRules(cfg)
@@ -264,7 +266,7 @@ func createDryRunValidator(
 		return nil, configValidator.ValidateDirect, nil
 	}
 
-	dryrun, err := buildDryRunValidator(iterCtx, cfg, bus, engine, renderService, validationService, baseStoreProvider, capabilities, pluggableValidator, logger)
+	dryrun, err := buildDryRunValidator(iterCtx, cfg, bus, engine, renderService, validationService, baseStoreProvider, capabilities, pluggableValidator, gvrMapper, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,6 +290,7 @@ func buildDryRunValidator(
 	baseStoreProvider stores.StoreProvider,
 	capabilities dataplane.Capabilities,
 	pluggableValidator *pluggablevalidator.Manager,
+	gvrMapper meta.RESTMapper,
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	// Create validation paths for the embedded test runner.
@@ -363,6 +366,7 @@ func buildDryRunValidator(
 		Engine:              engine,
 		ValidationPaths:     validationPaths,
 		Capabilities:        capabilities,
+		RESTMapper:          gvrMapper,
 		Logger:              logger,
 		SkipValidationTests: true,
 		PluggableValidator:  pluggableValidator,

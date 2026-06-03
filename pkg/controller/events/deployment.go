@@ -262,8 +262,7 @@ func (e *DeploymentCompletedEvent) EventType() string { return EventTypeDeployme
 //   - statusapplier, which treats this equivalently to DeploymentCompletedEvent
 //     for the purpose of applying the "deployed" status-patch variant — the
 //     data plane is serving the latest config, so Kubernetes status conditions
-//     gated on data-plane readiness (e.g. Gateway.Programmed) should reflect
-//     the current generation.
+//     gated on data-plane readiness should reflect the current generation.
 //
 // Other consumers (metrics, commentator, drift_monitor, scheduler,
 // statecache) do not subscribe by design — skipped deployments are a
@@ -299,8 +298,7 @@ type DeploymentSkippedEvent struct {
 	// already-deployed configuration. The StatusApplier reads them from
 	// this event to write the "deployed" variant — the data plane is
 	// serving this exact config, so conditions gated on data-plane
-	// readiness (e.g. Gateway.Programmed) should reflect the current
-	// generation.
+	// readiness should reflect the current generation.
 	StatusPatches []templating.StatusPatch
 
 	timestamped

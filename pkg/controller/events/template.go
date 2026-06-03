@@ -43,9 +43,9 @@ type TemplateRenderedEvent struct {
 	StatusPatches []templating.StatusPatch
 
 	// RenderedResources contains full Kubernetes resources the templates declared
-	// the controller should own and reconcile (e.g. per-Gateway LoadBalancer
-	// Services for SupportGatewayStaticAddresses). The applier compares each
-	// against the last-applied checksum and skips unchanged entries to avoid
+	// the controller should own and reconcile (e.g. an auxiliary Service or other
+	// object a template emits alongside the HAProxy config). The applier compares
+	// each against the last-applied checksum and skips unchanged entries to avoid
 	// hammering the API server.
 	RenderedResources []templating.RenderedResource
 
