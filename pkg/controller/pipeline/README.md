@@ -42,15 +42,12 @@ re-running render or validate:
 
 `pipeline.New` panics if `Renderer` or `Validator` is nil — these are required dependencies and a missing one is a configuration bug, not a runtime error to be surfaced later.
 
-### Three Entry Points
+### Entry Points
 
 | Method | Use case |
 |--------|----------|
 | `Execute(ctx, provider) (*PipelineResult, error)` | Standard reconciliation / proposal validation. Render + validate. |
 | `ExecuteWithResult(ctx, provider) (*PipelineResult, *validation.ValidationResult, error)` | Same render+validate flow but also returns the raw `*validation.ValidationResult` so callers can inspect warnings / phase details without parsing the wrapped error. Used by the proposal validator's webhook path. |
-| `RenderOnly(ctx, provider) (*renderer.RenderResult, error)` | Render without validation. Used by tooling that just needs the rendered output (e.g. `haptic-controller benchmark`). |
-
-There is also `ValidateConfig(ctx, config, auxFiles)` for the symmetric case — validating a pre-rendered config without re-rendering.
 
 ## What `Execute` Does
 

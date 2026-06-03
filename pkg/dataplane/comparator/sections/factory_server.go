@@ -114,7 +114,7 @@ var serverTemplateOps = NewNameChildCRUD[*models.ServerTemplate](
 
 // NewServerCreate creates an operation to create a server in a backend.
 func NewServerCreate(backendName string, server *models.Server) Operation {
-	return NewNameChildOp[*models.Server](
+	return newOp(
 		OperationCreate, "server",
 		DescribeNamedChild(OperationCreate, "server", server.Name, "backend", backendName),
 	)
@@ -171,7 +171,7 @@ func (op *ServerUpdateOp) Server() *models.Server { return op.server }
 
 // NewServerDelete creates an operation to delete a server from a backend.
 func NewServerDelete(backendName string, server *models.Server) Operation {
-	return NewNameChildOp[*models.Server](
+	return newOp(
 		OperationDelete, "server",
 		DescribeNamedChild(OperationDelete, "server", server.Name, "backend", backendName),
 	)

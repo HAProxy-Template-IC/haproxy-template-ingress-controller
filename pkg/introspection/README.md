@@ -34,10 +34,7 @@ func main() {
     // Create registry
     registry := introspection.NewRegistry()
 
-    // Publish variables
-    counter := &introspection.IntVar{}
-    registry.Publish("requests", counter)
-
+    // Publish a computed variable
     startTime := time.Now()
     registry.Publish("uptime", introspection.Func(func() (any, error) {
         return time.Since(startTime).Seconds(), nil
@@ -112,62 +109,6 @@ type Var interface {
 Interface for debug variables. Implementations should be thread-safe and return JSON-serializable values.
 
 ### Built-in Variable Types
-
-#### IntVar
-
-```go
-type IntVar struct {
-    value atomic.Int64
-}
-
-func (v *IntVar) Add(delta int64)
-func (v *IntVar) Set(value int64)
-func (v *IntVar) Get() (any, error)
-```
-
-Thread-safe integer variable.
-
-#### StringVar
-
-```go
-type StringVar struct {
-    mu    sync.RWMutex
-    value string
-}
-
-func (v *StringVar) Set(value string)
-func (v *StringVar) Get() (any, error)
-```
-
-Thread-safe string variable.
-
-#### FloatVar
-
-```go
-type FloatVar struct {
-    mu    sync.RWMutex
-    value float64
-}
-
-func (v *FloatVar) Set(value float64)
-func (v *FloatVar) Get() (any, error)
-```
-
-Thread-safe float64 variable.
-
-#### MapVar
-
-```go
-type MapVar struct {
-    mu   sync.RWMutex
-    data map[string]any
-}
-
-func (v *MapVar) Set(key string, value any)
-func (v *MapVar) Get() (any, error)
-```
-
-Thread-safe map variable.
 
 #### Func
 

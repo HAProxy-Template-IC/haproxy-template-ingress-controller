@@ -17,119 +17,29 @@ const (
 	OperationDelete
 )
 
-// opBase carries the fields and trivial accessor methods shared by every
-// generic operation type. Embedding it removes ~30 lines of identical struct
-// fields, getter methods, and constructor assignments per operation type.
-type opBase struct {
+// genericOp is the descriptor used by every section operation except the
+// data-carrying ServerUpdateOp: the kind of change, the section it touches, and
+// a lazily-computed human-readable string. There is deliberately only one such
+// type — the earlier per-shape structs (top-level, index-child, name-child,
+// singleton, container-child) embedded nothing but these fields and carried a
+// phantom type parameter that no code ever read, so they collapsed to one.
+// Section-specific behaviour lives in the factory closures (see crud_builders.go
+// and factory_*.go), not in the operation type.
+type genericOp struct {
 	opType      OperationType
 	sectionName string
 	describeFn  func() string
 }
 
-func (b *opBase) Type() OperationType { return b.opType }
-func (b *opBase) Section() string     { return b.sectionName }
-func (b *opBase) Describe() string    { return b.describeFn() }
-
-// TopLevelOp describes operations for top-level named resources like backend,
-// frontend, defaults.
-type TopLevelOp[TModel any] struct {
-	opBase
-}
-
-// NewTopLevelOp creates a new top-level operation descriptor.
-func NewTopLevelOp[TModel any](
-	opType OperationType,
-	sectionName string,
-	describeFn func() string,
-) *TopLevelOp[TModel] {
-	return &TopLevelOp[TModel]{
-		opBase: opBase{
-			opType:      opType,
-			sectionName: sectionName,
-			describeFn:  describeFn,
-		},
+// newOp builds a generic operation descriptor.
+func newOp(opType OperationType, sectionName string, describeFn func() string) *genericOp {
+	return &genericOp{
+		opType:      opType,
+		sectionName: sectionName,
+		describeFn:  describeFn,
 	}
 }
 
-// IndexChildOp describes operations for index-based child resources like ACL,
-// HTTP rules, TCP rules.
-type IndexChildOp[TModel any] struct {
-	opBase
-}
-
-// NewIndexChildOp creates a new index-based child operation descriptor.
-func NewIndexChildOp[TModel any](
-	opType OperationType,
-	sectionName string,
-	describeFn func() string,
-) *IndexChildOp[TModel] {
-	return &IndexChildOp[TModel]{
-		opBase: opBase{
-			opType:      opType,
-			sectionName: sectionName,
-			describeFn:  describeFn,
-		},
-	}
-}
-
-// NameChildOp describes operations for name-based child resources like bind,
-// server_template.
-type NameChildOp[TModel any] struct {
-	opBase
-}
-
-// NewNameChildOp creates a new name-based child operation descriptor.
-func NewNameChildOp[TModel any](
-	opType OperationType,
-	sectionName string,
-	describeFn func() string,
-) *NameChildOp[TModel] {
-	return &NameChildOp[TModel]{
-		opBase: opBase{
-			opType:      opType,
-			sectionName: sectionName,
-			describeFn:  describeFn,
-		},
-	}
-}
-
-// SingletonOp describes operations for singleton sections like global.
-type SingletonOp[TModel any] struct {
-	opBase
-}
-
-// NewSingletonOp creates a new singleton operation descriptor.
-func NewSingletonOp[TModel any](
-	opType OperationType,
-	sectionName string,
-	describeFn func() string,
-) *SingletonOp[TModel] {
-	return &SingletonOp[TModel]{
-		opBase: opBase{
-			opType:      opType,
-			sectionName: sectionName,
-			describeFn:  describeFn,
-		},
-	}
-}
-
-// ContainerChildOp describes operations for container child resources like
-// user, mailer_entry.
-type ContainerChildOp[TModel any] struct {
-	opBase
-}
-
-// NewContainerChildOp creates a new container child operation descriptor.
-func NewContainerChildOp[TModel any](
-	opType OperationType,
-	sectionName string,
-	describeFn func() string,
-) *ContainerChildOp[TModel] {
-	return &ContainerChildOp[TModel]{
-		opBase: opBase{
-			opType:      opType,
-			sectionName: sectionName,
-			describeFn:  describeFn,
-		},
-	}
-}
+func (o *genericOp) Type() OperationType { return o.opType }
+func (o *genericOp) Section() string     { return o.sectionName }
+func (o *genericOp) Describe() string    { return o.describeFn() }
