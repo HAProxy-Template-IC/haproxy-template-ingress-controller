@@ -47,6 +47,7 @@ For Helm chart changes, see [Chart CHANGELOG](./charts/haptic/CHANGELOG.md).
 - Renderer now fails fast when the config references a map file it didn't register, instead of deleting it as unreferenced and breaking every subsequent reload.
 - Render-time view of the watched-resource stores is pinned per render across `List()`/`Fetch()`/`GetSingle()`, so one snippet can no longer iterate a different resource set than another within a single render.
 - `StoreWrapper` no longer triggers a full `Store.List()` on per-key reads against `store: on-demand` resources (was one API fetch per cached reference on every drift cycle).
+- Debug introspection endpoints (`/debug/vars/resources`, `/debug/vars/state`, `/debug/vars/all`) no longer trigger one kube-apiserver lookup per resource for `store: on-demand` types; resource counts are read from the in-memory reference index instead.
 - Deployer's per-pod version cache now stores each pod's actual post-sync state, so cross-pod drift is detected and fixed up instead of silently serving a stale config.
 - Deployment scheduler no longer skips a deployment after a render race left a stale `lastDeployedConfigHash`, which could keep a newer render from ever reaching HAProxy.
 - HTTP resource store no longer misclassifies an empty `200 OK` (no ETag) as `304 Not Modified`, which kept serving stale content.
