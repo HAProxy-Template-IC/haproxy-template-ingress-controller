@@ -64,7 +64,7 @@ func createTestPipeline(t *testing.T, template string) *Pipeline {
 		},
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": template},
 		nil, nil, nil)
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestNew(t *testing.T) {
 		},
 	}
 
-	engine, err := templating.New(templating.EngineTypeScriggo,
+	engine, err := templating.New(
 		map[string]string{"haproxy.cfg": template},
 		nil, nil, nil)
 	require.NoError(t, err)

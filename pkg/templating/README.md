@@ -19,7 +19,7 @@ templates := map[string]string{
     "config":   "server {{ host }}:{{ port }}",
 }
 
-engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+engine, err := templating.New(templates, nil, nil, nil)
 if err != nil {
     log.Fatal(err)   // compilation errors surface here, fail fast
 }
@@ -34,7 +34,6 @@ The engine is safe for concurrent use — compile once at startup, render concur
 
 ```go
 func New(
-    engineType EngineType,
     templates map[string]string,
     customFilters map[string]FilterFunc,
     customFunctions map[string]GlobalFunc,
@@ -42,7 +41,7 @@ func New(
 ) (Engine, error)
 ```
 
-`EngineTypeScriggo` is the only implemented backend. `customFilters` plug into the pipe syntax (`{{ value | myFilter }}`), `customFunctions` into the call syntax (`{{ myFunc(value) }}`), and `postProcessorConfigs` chain per-template transformations (regex replace, or a Scriggo template whose `input` variable is the previously rendered output). Passing `nil` for any of the three is fine.
+`New` compiles every template as an entry point; use `NewScriggo` for explicit entry points or `NewScriggoWithDeclarations` for domain-specific type declarations. `customFilters` plug into the pipe syntax (`{{ value | myFilter }}`), `customFunctions` into the call syntax (`{{ myFunc(value) }}`), and `postProcessorConfigs` chain per-template transformations (regex replace, or a Scriggo template whose `input` variable is the previously rendered output). Passing `nil` for any of the three is fine.
 
 ## Engine Interface (Highlights)
 
@@ -73,7 +72,6 @@ var compErr *templating.CompilationError     // syntax error; has TemplateName +
 var renderErr *templating.RenderError        // runtime failure during Render
 var timeoutErr *templating.RenderTimeoutError // ctx deadline exceeded
 var notFoundErr *templating.TemplateNotFoundError // unknown name; has .AvailableTemplates
-var engineErr *templating.UnsupportedEngineError  // invalid EngineType
 ```
 
 Always check with `errors.As`; the wrapped `.Cause` carries the underlying Scriggo diagnostic.

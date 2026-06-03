@@ -37,7 +37,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
@@ -165,7 +164,7 @@ func createDryRunValidator(
 	iterCtx context.Context,
 	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
-	storeManager *resourcestore.Manager,
+	storeProvider stores.StoreProvider,
 	capabilities dataplane.Capabilities,
 	httpStoreComponent *ctrlhttpstore.Component,
 	pluggableValidator *pluggablevalidator.Manager,
@@ -192,9 +191,6 @@ func createDryRunValidator(
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating template engine for dry-run validation: %w", err)
 	}
-
-	// Create base store provider from resourcestore.Manager
-	baseStoreProvider := newStoreProviderFromManager(storeManager)
 
 	// Create RenderService (pure service for rendering).
 	//
@@ -250,7 +246,7 @@ func createDryRunValidator(
 	configValidator := webhook.NewConfigValidator(&webhook.ConfigValidatorConfig{
 		Logger:             logger,
 		StrictValidator:    validationService,
-		StoreProvider:      baseStoreProvider,
+		StoreProvider:      storeProvider,
 		Capabilities:       capabilities,
 		HTTPStoreComponent: httpStoreComponent,
 		Declarations:       engineWiring.Declarations,
@@ -266,7 +262,7 @@ func createDryRunValidator(
 		return nil, configValidator.ValidateDirect, nil
 	}
 
-	dryrun, err := buildDryRunValidator(iterCtx, cfg, bus, engine, renderService, validationService, baseStoreProvider, capabilities, pluggableValidator, gvrMapper, logger)
+	dryrun, err := buildDryRunValidator(iterCtx, cfg, bus, engine, renderService, validationService, storeProvider, capabilities, pluggableValidator, gvrMapper, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -397,7 +393,7 @@ func setupReconciliation(
 	k8sClient *client.Client,
 	resourceWatcher *resourcewatcher.ResourceWatcherComponent,
 	currentConfigStore *currentconfigstore.Store,
-	storeManager *resourcestore.Manager,
+	storeProvider stores.StoreProvider,
 	bus *busevents.EventBus,
 	registry *lifecycle.Registry,
 	logger *slog.Logger,
@@ -405,7 +401,7 @@ func setupReconciliation(
 	errGroup *errgroup.Group,
 ) (*reconciliationComponents, error) {
 	// Create all components
-	components, err := createReconciliationComponents(iterCtx, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeManager, bus, registry, logger)
+	components, err := createReconciliationComponents(iterCtx, cfg, crd, k8sClient, resourceWatcher, currentConfigStore, storeProvider, bus, registry, logger)
 	if err != nil {
 		return nil, err
 	}

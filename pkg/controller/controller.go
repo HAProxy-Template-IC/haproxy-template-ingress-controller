@@ -41,7 +41,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configloader"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/credentialsloader"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcestore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
 	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
@@ -279,8 +278,7 @@ type componentSetup struct {
 	MetricsComponent      *metrics.Component
 	MetricsRegistry       *prometheus.Registry
 	IntrospectionRegistry *introspection.Registry
-	IntrospectionServer   *introspection.Server // Server reference for custom handler registration
-	StoreManager          *resourcestore.Manager
+	IntrospectionServer   *introspection.Server             // Server reference for custom handler registration
 	ConfigChangeHandler   *configchange.ConfigChangeHandler // For setting initial config version
 	IterCtx               context.Context
 	Cancel                context.CancelFunc
@@ -359,9 +357,6 @@ func setupComponents(
 		)
 		domainMetrics.RecordEventDrop(info.SubscriberName, info.EventType)
 	})
-
-	// Create ResourceStoreManager for webhook validation
-	storeManager := resourcestore.NewManager()
 
 	// Create components
 	eventCommentator := commentator.NewEventCommentator(bus, logger, 500)
@@ -465,7 +460,6 @@ func setupComponents(
 		MetricsComponent:      metricsComponent,
 		MetricsRegistry:       registry,
 		IntrospectionRegistry: introspectionRegistry,
-		StoreManager:          storeManager,
 		ConfigChangeHandler:   configChangeHandlerComponent,
 		IterCtx:               gCtx, // Use errgroup context so cancellation propagates
 		Cancel:                cancel,

@@ -29,7 +29,7 @@ import (
 cfg, _ := config.LoadConfig(configYAML)
 config.SetDefaults(cfg)
 
-engine, _ := templating.New(templating.EngineTypeScriggo, buildTemplates(cfg), nil, nil, nil)
+engine, _ := templating.New(buildTemplates(cfg), nil, nil, nil)
 
 paths := &dataplane.ValidationPaths{
     TempDir:           tempDir,                               // created + cleaned up by the caller

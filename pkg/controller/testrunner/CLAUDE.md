@@ -167,7 +167,7 @@ func TestRunner_Feature(t *testing.T) {
     }
 
     // 2. Create template engine
-    engine, err := templating.New(templating.EngineTypeScriggo, templates, nil, nil, nil)
+    engine, err := templating.New(templates, nil, nil, nil)
 
     // 3. Create test runner — validationPaths can be nil for tests that don't
     //    exercise the HAProxy binary; pass real paths for "haproxy -c" assertions.
@@ -622,7 +622,7 @@ if resource.GetAPIVersion() == "" {
     resource.SetAPIVersion(watchedResource.APIVersion)
 }
 if resource.GetKind() == "" {
-    kind := resourcestore.SingularizeResourceType(watchedResource.Resources)
+    kind := SingularizeResourceType(watchedResource.Resources)
     resource.SetKind(kind)
 }
 ```

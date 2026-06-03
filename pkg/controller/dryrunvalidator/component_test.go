@@ -455,7 +455,6 @@ func TestNew(t *testing.T) {
 
 	// Create minimal engine for test
 	engine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"test.cfg": "test content"},
 		nil, // customFilters
 		nil, // customFunctions
@@ -498,7 +497,6 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 		Config:            cfg,
 		Engine: func() templating.Engine {
 			e, _ := templating.New(
-				templating.EngineTypeScriggo,
 				map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
 				nil, nil, nil,
 			)
@@ -541,7 +539,6 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 		Config:            cfg,
 		Engine: func() templating.Engine {
 			e, _ := templating.New(
-				templating.EngineTypeScriggo,
 				map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
 				nil, nil, nil,
 			)
@@ -579,7 +576,6 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 
 	// Create proposal validator with store provider that has NO stores
 	engine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
 		nil, nil, nil,
 	)
@@ -647,7 +643,6 @@ func TestValidateDirect_Success(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
 		nil, nil, nil,
 	)
@@ -689,7 +684,6 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 	}
 
 	engine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
 		nil, nil, nil,
 	)
@@ -746,7 +740,6 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 	}
 
 	failingEngine, err := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`},
 		nil, nil, nil,
 	)
@@ -815,7 +808,6 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 func createMockProposalValidator(bus *busevents.EventBus, logger *slog.Logger) *proposalvalidator.Component {
 	// Create minimal render service
 	engine, _ := templating.New(
-		templating.EngineTypeScriggo,
 		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
 		nil, nil, nil,
 	)
