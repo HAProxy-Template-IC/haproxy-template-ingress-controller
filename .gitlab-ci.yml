@@ -656,6 +656,11 @@ publish-chart-snapshot:
         - "**/*.go"
         - go.mod
         - go.sum
+        # Makefile: `test-ingress-conformance` lists Makefile in its own
+        # `changes:` and also hard-`needs:` `build-spoa-image-snapshot`,
+        # so a Makefile-only change (e.g. the codegen targets) must build
+        # the SPOA image too, or GitLab rejects the MR pipeline at creation.
+        - Makefile
         # Chart files that drive SPOE wiring. Without these in the
         # change list, MRs that touch only chart YAML never trigger
         # `build-spoa-image-snapshot`, which `test-e2e` `needs:` —
