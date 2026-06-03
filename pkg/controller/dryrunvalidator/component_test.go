@@ -22,7 +22,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
@@ -38,10 +40,68 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
+// newTestRESTMapper builds a RESTMapper knowing the kinds the dryrunvalidator
+// tests exercise, plus a CRD ("Mesh") whose real plural a naive English
+// pluralizer gets wrong ("meshs" instead of "meshes"). The resolver must take
+// the mapper's answer, never a guessed plural.
+func newTestRESTMapper() meta.RESTMapper {
+	m := meta.NewDefaultRESTMapper(nil)
+	add := func(group, version, kind, plural, singular string) {
+		m.AddSpecific(
+			schema.GroupVersionKind{Group: group, Version: version, Kind: kind},
+			schema.GroupVersionResource{Group: group, Version: version, Resource: plural},
+			schema.GroupVersionResource{Group: group, Version: version, Resource: singular},
+			meta.RESTScopeNamespace,
+		)
+	}
+	add("networking.k8s.io", "v1", "Ingress", "ingresses", "ingress")
+	add("", "v1", "Service", "services", "service")
+	add("", "v1", "ConfigMap", "configmaps", "configmap")
+	add("", "v1", "Secret", "secrets", "secret")
+	add("", "v1", "Endpoints", "endpoints", "endpoints")
+	add("discovery.k8s.io", "v1", "EndpointSlice", "endpointslices", "endpointslice")
+	add("", "v1", "Pod", "pods", "pod")
+	add("custom.example.io", "v1beta1", "MyResource", "myresources", "myresource")
+	add("example.com", "v1", "Mesh", "meshes", "mesh") // naive pluralizer → "meshs"
+	return m
+}
+
+// resettableFakeMapper simulates a deferred discovery mapper whose cache
+// predates a late-registered CRD: RESTMapping returns NoMatch until Reset()
+// refreshes discovery, after which it delegates to an inner mapper.
+type resettableFakeMapper struct {
+	meta.RESTMapper
+	reset bool
+}
+
+func (m *resettableFakeMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	if !m.reset {
+		return nil, &meta.NoKindMatchError{GroupKind: gk}
+	}
+	return m.RESTMapper.RESTMapping(gk, versions...)
+}
+
+func (m *resettableFakeMapper) Reset() { m.reset = true }
+
+// A late-registered CRD whose kind isn't in the mapper's initial discovery
+// cache must resolve after the validator refreshes discovery via Reset(),
+// rather than denying admission for the iteration's lifetime.
+func TestMapGVKToResourceType_ResetsOnNoMatchThenRetries(t *testing.T) {
+	rm := &resettableFakeMapper{RESTMapper: newTestRESTMapper()}
+	c := &Component{logger: slog.Default(), restMapper: rm}
+
+	resourceType, err := c.mapGVKToResourceType("networking.k8s.io/v1.Ingress")
+
+	require.NoError(t, err)
+	assert.True(t, rm.reset, "validator should Reset() the mapper on a NoMatch error")
+	assert.Equal(t, "ingresses", resourceType)
+}
+
 func TestMapGVKToResourceType(t *testing.T) {
 	// Create a minimal component for testing
 	c := &Component{
-		logger: slog.Default(),
+		logger:     slog.Default(),
+		restMapper: newTestRESTMapper(),
 	}
 
 	tests := []struct {
@@ -54,6 +114,13 @@ func TestMapGVKToResourceType(t *testing.T) {
 			name:        "Ingress - networking.k8s.io",
 			gvk:         "networking.k8s.io/v1.Ingress",
 			expected:    "ingresses",
+			expectError: false,
+		},
+		{
+			// A naive pluralizer produces "meshs"; the mapper knows "meshes".
+			name:        "irregular plural comes from the mapper",
+			gvk:         "example.com/v1.Mesh",
+			expected:    "meshes",
 			expectError: false,
 		},
 		{
@@ -400,6 +467,7 @@ func TestNew(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -425,6 +493,7 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine: func() templating.Engine {
@@ -467,6 +536,7 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine: func() templating.Engine {
@@ -543,6 +613,7 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 	})
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: noStoreProposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -585,6 +656,7 @@ func TestValidateDirect_Success(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -626,6 +698,7 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
 		Config:            cfg,
 		Engine:            engine,
@@ -708,6 +781,7 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 	})
 
 	component := New(&ComponentConfig{
+		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: failingProposalValidator,
 		Config:            cfg,
 		Engine:            failingEngine,

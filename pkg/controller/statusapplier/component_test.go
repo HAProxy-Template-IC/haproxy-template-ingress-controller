@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
@@ -819,45 +820,102 @@ func TestLeadershipTransition_FullCycle(t *testing.T) {
 	testutil.AssertNoEvent[*events.StatusUpdateCompletedEvent](t, eventChan, testutil.NoEventTimeout)
 }
 
+// newFakeRESTMapper builds a RESTMapper that knows a handful of kinds,
+// including resources whose plural a naive English pluralizer would get
+// WRONG ("Mesh" → "meshes", not "meshs") and a fully custom plural
+// ("Widget" → "widgetgrid"). A correct resolver must return the mapper's
+// answer, never a guessed plural.
+func newFakeRESTMapper() meta.RESTMapper {
+	m := meta.NewDefaultRESTMapper(nil)
+	add := func(group, kind, plural, singular string) {
+		m.AddSpecific(
+			schema.GroupVersionKind{Group: group, Version: "v1", Kind: kind},
+			schema.GroupVersionResource{Group: group, Version: "v1", Resource: plural},
+			schema.GroupVersionResource{Group: group, Version: "v1", Resource: singular},
+			meta.RESTScopeNamespace,
+		)
+	}
+	add("networking.k8s.io", "Ingress", "ingresses", "ingress")
+	add("", "Service", "services", "service")
+	add("example.com", "Mesh", "meshes", "mesh")         // naive pluralizer → "meshs"
+	add("example.com", "Widget", "widgetgrid", "widget") // custom plural unrelated to kind
+	return m
+}
+
+// resettableFakeMapper simulates a deferred discovery mapper whose cache
+// predates a late-registered CRD: RESTMapping returns NoMatch until Reset()
+// refreshes discovery, after which it delegates to an inner mapper that knows
+// the kind.
+type resettableFakeMapper struct {
+	meta.RESTMapper
+	reset bool
+}
+
+func (m *resettableFakeMapper) RESTMapping(gk schema.GroupKind, versions ...string) (*meta.RESTMapping, error) {
+	if !m.reset {
+		return nil, &meta.NoKindMatchError{GroupKind: gk}
+	}
+	return m.RESTMapper.RESTMapping(gk, versions...)
+}
+
+func (m *resettableFakeMapper) Reset() { m.reset = true }
+
+// A late-registered CRD whose kind isn't in the mapper's initial discovery
+// cache must resolve after the resolver refreshes discovery via Reset() —
+// rather than failing permanently for the iteration's lifetime.
+func TestRestMapperResolver_Resolve_ResetsOnNoMatchThenRetries(t *testing.T) {
+	rm := &resettableFakeMapper{RESTMapper: newFakeRESTMapper()}
+	resolver := NewRestMapperResolver(rm)
+
+	gvr, err := resolver.Resolve("networking.k8s.io/v1", "Ingress")
+
+	require.NoError(t, err)
+	assert.True(t, rm.reset, "resolver should Reset() the mapper on a NoMatch error")
+	assert.Equal(t, "ingresses", gvr.Resource)
+}
+
 func TestRestMapperResolver_Resolve(t *testing.T) {
-	resolver := NewRestMapperResolver()
+	resolver := NewRestMapperResolver(newFakeRESTMapper())
 
 	tests := []struct {
-		name       string
-		apiVersion string
-		kind       string
-		wantGVR    schema.GroupVersionResource
-		wantErr    bool
+		name         string
+		apiVersion   string
+		kind         string
+		wantResource string
+		wantErr      bool
 	}{
 		{
-			name:       "Ingress",
-			apiVersion: "networking.k8s.io/v1",
-			kind:       "Ingress",
-			wantGVR:    schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
+			name:         "Ingress",
+			apiVersion:   "networking.k8s.io/v1",
+			kind:         "Ingress",
+			wantResource: "ingresses",
 		},
 		{
-			name:       "Gateway",
-			apiVersion: "gateway.networking.k8s.io/v1",
-			kind:       "Gateway",
-			wantGVR:    schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gateways"},
+			name:         "core group Service",
+			apiVersion:   "v1",
+			kind:         "Service",
+			wantResource: "services",
 		},
 		{
-			name:       "HTTPRoute",
-			apiVersion: "gateway.networking.k8s.io/v1",
-			kind:       "HTTPRoute",
-			wantGVR:    schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"},
+			// A naive pluralizer would produce "meshs"; the mapper knows "meshes".
+			name:         "irregular plural comes from the mapper",
+			apiVersion:   "example.com/v1",
+			kind:         "Mesh",
+			wantResource: "meshes",
 		},
 		{
-			name:       "Policy (y suffix)",
-			apiVersion: "gateway.networking.k8s.io/v1alpha2",
-			kind:       "BackendPolicy",
-			wantGVR:    schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1alpha2", Resource: "backendpolicies"},
+			// A CRD may set spec.names.plural to anything; only the mapper knows it.
+			name:         "custom plural comes from the mapper",
+			apiVersion:   "example.com/v1",
+			kind:         "Widget",
+			wantResource: "widgetgrid",
 		},
 		{
-			name:       "core group Service",
-			apiVersion: "v1",
-			kind:       "Service",
-			wantGVR:    schema.GroupVersionResource{Group: "", Version: "v1", Resource: "services"},
+			// Unknown kinds must error, not silently guess a plural.
+			name:       "unknown kind errors",
+			apiVersion: "example.com/v1",
+			kind:       "Unknown",
+			wantErr:    true,
 		},
 		{
 			name:       "invalid apiVersion",
@@ -875,28 +933,8 @@ func TestRestMapperResolver_Resolve(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.wantGVR, gvr)
-		})
-	}
-}
-
-func TestPluralize(t *testing.T) {
-	tests := []struct {
-		kind string
-		want string
-	}{
-		{"Ingress", "ingresses"},
-		{"Gateway", "gateways"},
-		{"HTTPRoute", "httproutes"},
-		{"Service", "services"},
-		{"BackendPolicy", "backendpolicies"},
-		{"Address", "addresses"},
-		{"Endpoints", "endpointses"}, // Known limitation: static pluralization doesn't handle all edge cases
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.kind, func(t *testing.T) {
-			assert.Equal(t, tt.want, pluralize(tt.kind))
+			gv, _ := schema.ParseGroupVersion(tt.apiVersion)
+			assert.Equal(t, gv.WithResource(tt.wantResource), gvr)
 		})
 	}
 }

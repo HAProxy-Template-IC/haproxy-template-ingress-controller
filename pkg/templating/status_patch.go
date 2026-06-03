@@ -42,7 +42,7 @@ type StatusPatch struct {
 	// APIVersion of the target resource (e.g., "networking.k8s.io/v1").
 	APIVersion string
 
-	// Kind of the target resource (e.g., "Ingress", "Gateway", "HTTPRoute").
+	// Kind of the target resource (e.g., "Service", "ConfigMap", or any watched CRD's Kind).
 	Kind string
 
 	// Variants maps pipeline phase names to desired status payloads.

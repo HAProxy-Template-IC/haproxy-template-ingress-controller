@@ -332,7 +332,7 @@ func maybeCreateWebhookValidators(
 	// tuple is nil when no watched-resource rules exist; the ConfigValidator
 	// is always present so HAProxyTemplateConfig admissions land on a real
 	// handler instead of the pure server's fail-open path.
-	dryrunValidator, configValidator, err := createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, logger)
+	dryrunValidator, configValidator, err := createDryRunValidator(setup.IterCtx, cfg, setup.Bus, setup.StoreManager, reconComponents.capabilities, reconComponents.httpStore, pluggableMgr, reconComponents.engineWiring, reconComponents.gvrMapper, logger)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating webhook validators: %w", err)
 	}

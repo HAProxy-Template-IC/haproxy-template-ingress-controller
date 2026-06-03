@@ -37,9 +37,9 @@ import (
 )
 
 // EventBufferSize is the size of the event subscription buffer.
-// High-volume component that receives resource change events from
-// multiple watchers (Ingress, HTTPRoute, Service, Endpoints, Secrets, ConfigMaps),
-// sized to handle bursts when many resources change simultaneously.
+// High-volume component that receives resource change events from every
+// configured watcher, sized to handle bursts when many resources change
+// simultaneously.
 const EventBufferSize = busevents.HighVolumeSubscriberBuffer
 
 // ComponentName is the unique identifier for this component.

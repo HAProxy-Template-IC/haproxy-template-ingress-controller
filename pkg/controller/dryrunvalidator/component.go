@@ -28,6 +28,8 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
@@ -63,6 +65,7 @@ type Component struct {
 	pluggableValidator *pluggablevalidator.Manager
 	config             *config.Config
 	testRunner         *testrunner.Runner
+	restMapper         meta.RESTMapper
 	logger             *slog.Logger
 }
 
@@ -78,6 +81,13 @@ type ComponentConfig struct {
 
 	// Config is the controller configuration containing templates.
 	Config *config.Config
+
+	// RESTMapper resolves an admission request's GVK to the watched
+	// resource's plural (the overlay store key) using the cluster's
+	// discovery data. This keeps the validator resource-agnostic: any
+	// watched CRD — including one with an irregular or custom plural —
+	// resolves correctly, with no hardcoded pluralization table (RULE #1).
+	RESTMapper meta.RESTMapper
 
 	// Engine is the pre-compiled template engine for rendering validation tests.
 	Engine templating.Engine
@@ -144,6 +154,7 @@ func New(cfg *ComponentConfig) *Component {
 		pluggableValidator: cfg.PluggableValidator,
 		config:             cfg.Config,
 		testRunner:         testRunnerInstance,
+		restMapper:         cfg.RESTMapper,
 		logger:             logger.With("component", ComponentName),
 	}
 }

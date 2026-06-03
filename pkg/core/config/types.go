@@ -363,7 +363,7 @@ type WatchedResource struct {
 	// Default: "full"
 	//
 	// Use "on-demand" for large resources that are accessed infrequently (e.g., Secrets).
-	// Use "full" for frequently accessed resources (e.g., Ingress, Service, EndpointSlice).
+	// Use "full" for frequently accessed resources (e.g., Services, EndpointSlices).
 	Store string `yaml:"store"`
 
 	// DebounceInterval overrides the default leading-edge refractory window

@@ -29,9 +29,9 @@
 // so no LATEST-vs-completed race is possible (the same contract that
 // statusapplier's CLAUDE.md spells out for StatusPatches).
 //
-// Resource-agnostic by design: the controller never names "Service" or
-// "Gateway" — it just applies whatever the template emits. Templates decide
-// what to emit; the controller is the generic vehicle.
+// Resource-agnostic by design: the controller never names a specific resource
+// kind — it just applies whatever the template emits. Templates decide what to
+// emit; the controller is the generic vehicle.
 //
 // API-traffic safety:
 //   - SHA-256 checksum cache per (namespace, name, gvr) skips the SSA round-
@@ -144,8 +144,8 @@ type Component struct {
 
 	// ownNamespace is the namespace the controller is deployed into. Used
 	// to enforce RestrictToOwnNamespace; also the safe target for the
-	// "managed-by" label-driven discovery the chart's static-addresses
-	// templates use to locate the per-Gateway Services they create.
+	// "managed-by" label-driven discovery the chart's templates use to
+	// locate the owned resources they create.
 	ownNamespace           string
 	restrictToOwnNamespace bool
 	managedByValue         string
@@ -176,9 +176,9 @@ type Config struct {
 	// applier can rebuild its in-memory `lastAppliedKeys` from cluster
 	// state via the managed-by label selector. Without this, resources
 	// the controller applied before a crash but whose desired state was
-	// removed while the controller was down (e.g. user deleted the
-	// Gateway during a controller upgrade) would leak as orphans until
-	// manually swept. Optional: when nil, startup-orphan recovery is
+	// removed while the controller was down (e.g. the user deleted the
+	// parent resource during a controller upgrade) would leak as orphans
+	// until manually swept. Optional: when nil, startup-orphan recovery is
 	// skipped and operators must rely on the
 	// `kubectl get … -l haproxy-haptic.org/managed-by=<name>` mitigation.
 	DiscoveryClient discovery.DiscoveryInterface

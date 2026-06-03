@@ -20,6 +20,10 @@ import (
 	"log/slog"
 	"os"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/restmapper"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
 	ctrlconfigpublisher "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
@@ -60,7 +64,7 @@ type reconciliationComponents struct {
 	configPublisher     *ctrlconfigpublisher.Component
 	statusUpdater       *configchange.StatusUpdater  // Updates CRD status with validation results
 	statusApplier       *statusapplier.Component     // Applies template-driven status patches via SSA
-	resourceApplier     *resourceapplier.Component   // Applies template-declared owned resources (e.g. per-Gateway LB Services) via SSA
+	resourceApplier     *resourceapplier.Component   // Applies template-declared owned resources via SSA
 	httpStore           *httpstore.Component         // HTTP resource fetcher for dynamic content
 	proposalValidator   *proposalvalidator.Component // Validates HTTP content and webhook proposals
 	capabilities        dataplane.Capabilities       // HAProxy/DataPlane API capabilities
@@ -74,6 +78,13 @@ type reconciliationComponents struct {
 	// typed globals as undefined and admission would reject every
 	// resource.
 	engineWiring typedRendererWiring
+
+	// gvrMapper is the cluster RESTMapper shared by every component that
+	// resolves apiVersion+kind → GroupVersionResource (status/resource
+	// appliers here, and the dry-run validator constructed later in iteration
+	// startup). Sharing one deferred mapper avoids duplicate discovery caches
+	// and keeps GVR resolution resource-agnostic (RULE #1).
+	gvrMapper meta.RESTMapper
 }
 
 // createReconciliationComponents creates all reconciliation components and registers them with the lifecycle registry.
@@ -232,16 +243,24 @@ func createReconciliationComponents(
 	// This allows users to see validation errors via `kubectl describe haproxytemplateconfig`
 	statusUpdaterComponent := configchange.NewStatusUpdater(crdClientset, bus, logger)
 
+	// Build a RESTMapper from the cluster's discovery so the status/resource
+	// appliers resolve apiVersion+kind → GroupVersionResource from authoritative
+	// cluster data, never a hardcoded or guessed plural (RULE #1). Shared by both
+	// appliers; the deferred mapper fetches discovery lazily on first use.
+	gvrMapper := restmapper.NewDeferredDiscoveryRESTMapper(
+		memory.NewMemCacheClient(k8sClient.Clientset().Discovery()),
+	)
+
 	// Create StatusApplier (applies template-driven status patches to Kubernetes resources via SSA)
 	// All-replica: subscribes in constructor to cache patches from renders; only the leader applies.
 	statusApplierComponent := statusapplier.New(&statusapplier.Config{
 		EventBus:      bus,
 		DynamicClient: k8sClient.DynamicClient(),
-		GVRResolver:   statusapplier.NewRestMapperResolver(),
+		GVRResolver:   statusapplier.NewRestMapperResolver(gvrMapper),
 		Logger:        logger,
 	})
 
-	resourceApplierComponent := newResourceApplier(crd, k8sClient, bus, logger)
+	resourceApplierComponent := newResourceApplier(crd, k8sClient, gvrMapper, bus, logger)
 
 	// Register components with the lifecycle registry using builder pattern
 	// Coordinator is leader-only because it performs rendering (state changes).
@@ -282,6 +301,7 @@ func createReconciliationComponents(
 		proposalValidator:   proposalValidatorComponent,
 		capabilities:        capabilities,
 		engineWiring:        wiring,
+		gvrMapper:           gvrMapper,
 	}, nil
 }
 
@@ -351,7 +371,7 @@ func buildValidationPipelines(
 // namespace SSA is allowed at the controller boundary; the security gate is
 // the chart's RBAC (a misbehaving template still gets Forbidden when the
 // granted Role/ClusterRole doesn't cover the target namespace).
-func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.Client, bus *busevents.EventBus, logger *slog.Logger) *resourceapplier.Component {
+func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.Client, gvrMapper meta.RESTMapper, bus *busevents.EventBus, logger *slog.Logger) *resourceapplier.Component {
 	ownNamespace := os.Getenv("POD_NAMESPACE")
 	if ownNamespace == "" {
 		ownNamespace = k8sClient.Namespace()
@@ -370,7 +390,7 @@ func newResourceApplier(crd *v1alpha1.HAProxyTemplateConfig, k8sClient *client.C
 		EventBus:               bus,
 		DynamicClient:          k8sClient.DynamicClient(),
 		DiscoveryClient:        k8sClient.Clientset().Discovery(),
-		GVRResolver:            statusapplier.NewRestMapperResolver(),
+		GVRResolver:            statusapplier.NewRestMapperResolver(gvrMapper),
 		Logger:                 logger,
 		OwnNamespace:           ownNamespace,
 		RestrictToOwnNamespace: false,
