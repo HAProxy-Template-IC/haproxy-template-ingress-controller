@@ -52,7 +52,6 @@ type CachedStore struct {
 	namespace string                          // Namespace for fetching (empty = all)
 	indexer   *indexer.Indexer                // Indexer for processing fetched resources
 	logger    *slog.Logger                    // Logger for debug and warning messages
-	modCount  uint64                          // Incremented on every mutation for cache invalidation
 }
 
 // DefaultMaxCacheSize is the default maximum number of entries in the LRU cache.
@@ -250,7 +249,6 @@ func (s *CachedStore) Add(resource any, keys []string) error {
 	keyStr := makeKeyString(keys)
 	s.refs[keyStr] = append(s.refs[keyStr], resourceRef{namespace: ns, name: name, indexKeys: keys})
 	s.cacheResource(ns, name, resource)
-	s.modCount++
 
 	return nil
 }
@@ -283,7 +281,6 @@ func (s *CachedStore) Update(resource any, keys []string) error {
 	s.refs[keyStr] = refs
 
 	s.cacheResource(ns, name, resource)
-	s.modCount++
 
 	return nil
 }
@@ -313,8 +310,6 @@ func (s *CachedStore) Delete(keys ...string) error {
 	// Delete the refs entry
 	delete(s.refs, keyStr)
 
-	s.modCount++
-
 	return nil
 }
 
@@ -325,7 +320,6 @@ func (s *CachedStore) Clear() error {
 
 	s.refs = make(map[string][]resourceRef)
 	s.cache.Purge()
-	s.modCount++
 
 	return nil
 }
@@ -452,15 +446,6 @@ func (s *CachedStore) EvictExpired() int {
 	}
 
 	return evicted
-}
-
-// ModCount returns the modification counter and whether tracking is supported.
-// The counter is incremented on every mutation (Add, Update, Delete, Clear).
-// This enables external caching layers to detect store changes without polling.
-func (s *CachedStore) ModCount() (uint64, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.modCount, true
 }
 
 // Ensure CachedStore implements types.Store interface.

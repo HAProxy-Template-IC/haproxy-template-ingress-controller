@@ -104,10 +104,9 @@ resources, _ := store.Get("default", "common-label")
 
 ```go
 type MemoryStore struct {
-    mu       sync.RWMutex
-    data     map[string][]any // Composite key -> pre-sorted resource slice
-    numKeys  int              // Expected key count
-    modCount uint64           // Incremented on every mutation; used by ModCounter
+    mu      sync.RWMutex
+    data    map[string][]any // Composite key -> pre-sorted resource slice
+    numKeys int              // Expected key count
 }
 ```
 
@@ -115,9 +114,6 @@ type MemoryStore struct {
 
 - `map[string][]any`: handles non-unique keys naturally; per-bucket slice is kept
   sorted at insert time so reads can return a direct reference (zero-copy).
-- `modCount`: lets caching layers detect mutations without re-walking the store.
-  Stores that expose this counter implement the optional `stores.ModCounter`
-  interface.
 - `sync.RWMutex`: multiple concurrent readers, single writer.
 
 There is **no** `allItems` cache or `dirty` flag — `List()` walks the data map
@@ -147,7 +143,6 @@ type CachedStore struct {
     namespace string
     indexer   *indexer.Indexer
     logger    *slog.Logger
-    modCount  uint64
 }
 ```
 
@@ -159,8 +154,6 @@ type CachedStore struct {
   `MaxCacheSize` (default `DefaultMaxCacheSize = 256`) are evicted LRU. TTL
   (`cfg.CacheTTL`, default `2m10s`) is checked on read.
 - `dynamic.Interface`: fetches any resource type without compiled-in schemas.
-- `modCount`: same role as in `MemoryStore` — a monotonic counter for downstream
-  cache invalidation.
 
 **Cache key vs Index key:**
 
@@ -231,7 +224,6 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
     keyStr := makeKeyString(keys)
     s.data[keyStr] = append(s.data[keyStr], resource)
     sortResourceSlice(s.data[keyStr]) // zero-copy reads later
-    s.modCount++
     return nil
 }
 
@@ -247,7 +239,6 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
     bucket, ok := s.data[keyStr]
     if !ok {
         s.data[keyStr] = []any{resource}
-        s.modCount++
         return nil
     }
 
@@ -256,14 +247,12 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
         existingNs, existingName := extractNamespaceName(existing)
         if existingNs == ns && existingName == name {
             bucket[i] = resource // ns/name unchanged → sort order preserved
-            s.modCount++
             return nil
         }
     }
 
     s.data[keyStr] = append(bucket, resource)
     sortResourceSlice(s.data[keyStr])
-    s.modCount++
     return nil
 }
 ```
@@ -274,7 +263,6 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
   delta logic is wrong. That's by design: cheap insert, dedupe lives in `Update`.
 - Per-bucket sort happens at write time so `Get(exact-key)` can return the
   internal slice directly (see the Immutability Contract in `MemoryStore.Get`).
-- Mutation increments `modCount` so cached layers can invalidate without polling.
 
 ### CachedStore Fetch Pattern
 
@@ -609,13 +597,11 @@ the internal slice directly — callers must respect the Immutability Contract
 (no mutation, no append, no aliasing past the call). `List()` does **not**
 memoize across calls; it rebuilds the aggregate slice every time and sorts it
 by namespace/name. That's an explicit choice — the watcher path is the hot
-path, and it almost never calls `List()`. The cache that benefits from
-modCount lives one layer up in `pkg/k8s/store/cached.go`, not inside
-`MemoryStore` itself.
+path, and it almost never calls `List()`.
 
-If you find yourself wanting a memoized `List()`, read the modCount via
-`(stores.ModCounter).ModCount()` and rebuild only when the counter changes —
-don't add a `dirty` flag inside `MemoryStore`.
+If you ever need a memoized `List()`, add the cache where the expensive
+computation actually lives (the consuming layer that repeatedly calls `List()`),
+not as a `dirty` flag inside `MemoryStore`.
 
 ### CachedStore Memory Bounds
 

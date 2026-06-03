@@ -33,10 +33,9 @@ const opGet = "get"
 // Note: List() returns a fresh slice copy for thread safety, but the resource
 // objects within are still references to internal data and must not be mutated.
 type MemoryStore struct {
-	mu       sync.RWMutex
-	data     map[string][]any // Flat map: composite key -> slice of resources (pre-sorted)
-	numKeys  int              // Number of index keys
-	modCount uint64           // Incremented on every mutation for cache invalidation
+	mu      sync.RWMutex
+	data    map[string][]any // Flat map: composite key -> slice of resources (pre-sorted)
+	numKeys int              // Number of index keys
 }
 
 // NewMemoryStore creates a new memory-backed store.
@@ -145,8 +144,6 @@ func (s *MemoryStore) Add(resource any, keys []string) error {
 	// Keep slice sorted for deterministic Get() results without runtime sorting
 	sortResourceSlice(s.data[keyStr])
 
-	s.modCount++
-
 	return nil
 }
 
@@ -182,7 +179,6 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 	if !ok {
 		// No resources with these keys - add new (single element, already sorted)
 		s.data[keyStr] = []any{resource}
-		s.modCount++
 		return nil
 	}
 
@@ -194,7 +190,6 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 			// Replace existing resource (sort order unchanged since ns/name same)
 			resources[i] = resource
 			s.data[keyStr] = resources
-			s.modCount++
 			return nil
 		}
 	}
@@ -202,7 +197,6 @@ func (s *MemoryStore) Update(resource any, keys []string) error {
 	// Resource not found - append and re-sort
 	s.data[keyStr] = append(resources, resource)
 	sortResourceSlice(s.data[keyStr])
-	s.modCount++
 	return nil
 }
 
@@ -220,10 +214,7 @@ func (s *MemoryStore) Delete(keys ...string) error {
 	}
 
 	keyStr := makeKeyString(keys)
-	if _, ok := s.data[keyStr]; ok {
-		delete(s.data, keyStr)
-		s.modCount++
-	}
+	delete(s.data, keyStr)
 
 	return nil
 }
@@ -234,7 +225,6 @@ func (s *MemoryStore) Clear() error {
 	defer s.mu.Unlock()
 
 	s.data = make(map[string][]any)
-	s.modCount++
 
 	return nil
 }
@@ -249,15 +239,6 @@ func (s *MemoryStore) Size() int {
 		count += len(resources)
 	}
 	return count
-}
-
-// ModCount returns the modification counter and whether tracking is supported.
-// The counter is incremented on every mutation (Add, Update, Delete, Clear).
-// This enables external caching layers to detect store changes without polling.
-func (s *MemoryStore) ModCount() (uint64, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.modCount, true
 }
 
 // Ensure MemoryStore implements types.Store interface.

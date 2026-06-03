@@ -295,8 +295,6 @@ type recordingInner struct {
 	updateCalls []addCall
 	deleteCalls [][]string
 	clearCalled bool
-	modCount    uint64
-	supports    bool
 	returnErr   error
 }
 
@@ -328,9 +326,6 @@ func (r *recordingInner) Delete(keys ...string) error {
 func (r *recordingInner) Clear() error {
 	r.clearCalled = true
 	return r.returnErr
-}
-func (r *recordingInner) ModCount() (uint64, bool) {
-	return r.modCount, r.supports
 }
 
 func TestTypesStoreAdapter_Delegation(t *testing.T) {
@@ -365,24 +360,4 @@ func TestTypesStoreAdapter_PropagatesErrors(t *testing.T) {
 	assert.ErrorIs(t, adapter.Update("r", nil), wantErr)
 	assert.ErrorIs(t, adapter.Delete("k"), wantErr)
 	assert.ErrorIs(t, adapter.Clear(), wantErr)
-}
-
-func TestTypesStoreAdapter_ModCount(t *testing.T) {
-	t.Run("inner supports tracking", func(t *testing.T) {
-		inner := &recordingInner{modCount: 42, supports: true}
-		adapter := &TypesStoreAdapter{Inner: inner}
-		count, ok := adapter.ModCount()
-		assert.Equal(t, uint64(42), count)
-		assert.True(t, ok)
-	})
-
-	t.Run("inner does not support tracking", func(t *testing.T) {
-		// Use a minimal struct that satisfies the embedded interface but
-		// has no ModCount method.
-		nonTracking := &fakeStore{}
-		adapter := &TypesStoreAdapter{Inner: nonTracking}
-		count, ok := adapter.ModCount()
-		assert.Equal(t, uint64(0), count)
-		assert.False(t, ok)
-	})
 }

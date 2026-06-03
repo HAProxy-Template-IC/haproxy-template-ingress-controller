@@ -101,25 +101,6 @@ THEN the resource SHALL be omitted from the Get results without returning an err
 WHEN List is called on a CachedStore
 THEN a warning SHALL be logged indicating that individual API lookups may be expensive.
 
-### Requirement: Modification Tracking
-
-MemoryStore and CachedStore SHALL implement the ModCounter interface. The ModCount method SHALL return a monotonically increasing counter that is incremented on every mutation (Add, Update, Delete, Clear) and a boolean true indicating tracking is supported. This enables external caching layers to detect store changes without polling.
-
-#### Scenario: ModCount increments on Add
-
-WHEN Add is called successfully on a MemoryStore
-THEN ModCount SHALL return a value one greater than before the Add.
-
-#### Scenario: ModCount increments on Clear
-
-WHEN Clear is called on a CachedStore
-THEN ModCount SHALL return a value one greater than before the Clear.
-
-#### Scenario: ModCount stable across reads
-
-WHEN only Get and List operations are performed
-THEN ModCount SHALL return the same value as before those operations.
-
 ### Requirement: Composite Key Matching
 
 Stores SHALL construct composite keys by joining index key values with "/" as separator. Exact-match lookups SHALL use the full composite key. Partial-match lookups SHALL match all entries whose composite key starts with the provided prefix followed by "/".
@@ -231,14 +212,9 @@ THEN IsValidationMode SHALL return false, and GetStore SHALL return base stores 
 
 ### Requirement: TypesStoreAdapter
 
-TypesStoreAdapter SHALL bridge the structurally identical Store interfaces defined in pkg/k8s/types and pkg/stores by delegating all Store method calls to an inner store. If the inner store implements ModCount, the adapter SHALL delegate ModCount. Otherwise, it SHALL return (0, false) to signal that caching based on the count is not supported.
+TypesStoreAdapter SHALL bridge the structurally identical Store interfaces defined in pkg/k8s/types and pkg/stores by delegating all Store method calls to an inner store.
 
 #### Scenario: Adapter delegates Get to inner store
 
 WHEN Get is called on a TypesStoreAdapter
 THEN the call SHALL be forwarded to the inner store's Get method with the same arguments.
-
-#### Scenario: Adapter returns (0, false) for non-ModCounter inner
-
-WHEN ModCount is called on a TypesStoreAdapter whose inner store does not implement ModCount
-THEN it SHALL return (0, false).
