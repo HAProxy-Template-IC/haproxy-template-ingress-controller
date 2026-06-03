@@ -700,57 +700,21 @@ generate-clientset: ## Generate Kubernetes clientset, informers, and listers
 	./hack/update-codegen.sh
 	@echo "✓ Clientset, informers, and listers generated"
 
-generate-dataplaneapi-v30: ## Generate HAProxy DataPlane API v3.0 client
-	@echo "Generating DataPlane API v3.0 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v30
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v30.yaml \
-		pkg/generated/dataplaneapi/v30/spec.json
-	@echo "✓ DataPlane API v3.0 client generated"
+# DataPlane API client versions, derived from versions.env: one entry per
+# HAPROXY_VERSIONS value (community), plus one per value that also has a matching
+# HAPROXY_ENTERPRISE_<n> (enterprise). Adding or removing a HAProxy version is
+# therefore a versions.env edit (plus its spec.json and oapi-codegen-<v>.yaml).
+DATAPLANE_API_VERSIONS := $(shell sh -c '. ./versions.env; \
+	for v in $$HAPROXY_VERSIONS; do printf "v%s " "$$(echo $$v | tr -d .)"; done; \
+	for v in $$HAPROXY_VERSIONS; do n=$$(echo $$v | tr -d .); eval "ee=\$$HAPROXY_ENTERPRISE_$$n"; [ -n "$$ee" ] && printf "v%see " "$$n"; done')
 
-generate-dataplaneapi-v31: ## Generate HAProxy DataPlane API v3.1 client
-	@echo "Generating DataPlane API v3.1 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v31
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v31.yaml \
-		pkg/generated/dataplaneapi/v31/spec.json
-	@echo "✓ DataPlane API v3.1 client generated"
-
-generate-dataplaneapi-v32: ## Generate HAProxy DataPlane API v3.2 client
-	@echo "Generating DataPlane API v3.2 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v32
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v32.yaml \
-		pkg/generated/dataplaneapi/v32/spec.json
-	@echo "✓ DataPlane API v3.2 client generated"
-
-generate-dataplaneapi-v33: ## Generate HAProxy DataPlane API v3.3 client
-	@echo "Generating DataPlane API v3.3 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v33
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v33.yaml \
-		pkg/generated/dataplaneapi/v33/spec.json
-	@echo "✓ DataPlane API v3.3 client generated"
-
-generate-dataplaneapi-v30ee: ## Generate HAProxy Enterprise DataPlane API v3.0 client
-	@echo "Generating Enterprise DataPlane API v3.0 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v30ee
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v30ee.yaml \
-		pkg/generated/dataplaneapi/v30ee/spec.json
-	@echo "✓ Enterprise DataPlane API v3.0 client generated"
-
-generate-dataplaneapi-v31ee: ## Generate HAProxy Enterprise DataPlane API v3.1 client
-	@echo "Generating Enterprise DataPlane API v3.1 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v31ee
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v31ee.yaml \
-		pkg/generated/dataplaneapi/v31ee/spec.json
-	@echo "✓ Enterprise DataPlane API v3.1 client generated"
-
-generate-dataplaneapi-v32ee: ## Generate HAProxy Enterprise DataPlane API v3.2 client
-	@echo "Generating Enterprise DataPlane API v3.2 client (models + client)..."
-	@mkdir -p pkg/generated/dataplaneapi/v32ee
-	$(OAPI_CODEGEN) -config hack/oapi-codegen-v32ee.yaml \
-		pkg/generated/dataplaneapi/v32ee/spec.json
-	@echo "✓ Enterprise DataPlane API v3.2 client generated"
-
-generate-dataplaneapi-all: generate-dataplaneapi-v30 generate-dataplaneapi-v31 generate-dataplaneapi-v32 generate-dataplaneapi-v33 generate-dataplaneapi-v30ee generate-dataplaneapi-v31ee generate-dataplaneapi-v32ee ## Generate all HAProxy DataPlane API versions
-	@echo "✓ All DataPlane API clients generated (Community + Enterprise)"
+generate-dataplaneapi-all: ## Generate all HAProxy DataPlane API clients (community + enterprise)
+	@set -e; for v in $(DATAPLANE_API_VERSIONS); do \
+		echo "Generating DataPlane API $$v client (models + client)..."; \
+		mkdir -p pkg/generated/dataplaneapi/$$v; \
+		$(OAPI_CODEGEN) -config hack/oapi-codegen-$$v.yaml pkg/generated/dataplaneapi/$$v/spec.json; \
+	done
+	@echo "✓ All DataPlane API clients generated (community + enterprise)"
 
 generate-validators: ## Generate zero-allocation OpenAPI validators
 	@echo "Generating zero-allocation validators..."
