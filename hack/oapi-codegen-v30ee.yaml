@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
 #
 # Configuration for oapi-codegen code generation
-# Generates complete HAProxy Enterprise Dataplane API v3.0 client (models + client)
+# Generates the HAProxy Enterprise Dataplane API v3.0 client (models + raw client only)
 #
 # Note: Using compatibility mode to avoid name collisions between
 # enum value "client" (becomes const Client) and HTTP client struct (type Client).
@@ -11,6 +11,19 @@ output: pkg/generated/dataplaneapi/v30ee/api.gen.go
 generate:
   models: true
   client: true
-  embedded-spec: true
+  # HAPTIC pushes config as raw text and never calls GetSwagger(); the embedded
+  # base64 spec blob is dead weight. The on-disk spec.json stays the source of
+  # truth for the validator generator and for regeneration.
+  embedded-spec: false
+output-options:
+  # HAPTIC only uses the raw *Client (-> *http.Response, hand-decoded); the typed
+  # "ClientWithResponses" half (ParseXxxResponse, WithBaseURL, per-op Response
+  # structs) is ~39% of the generated file and has zero consumers. Suppress it by
+  # overriding its template with an empty body. NB: the body must be a rendered
+  # action ({{- "" -}}), not blank/whitespace -- Go text/template silently ignores
+  # a whitespace-only Parse() and would keep the built-in template.
+  user-templates:
+    client-with-responses.tmpl: |
+      {{- "" -}}
 compatibility:
   always-prefix-enum-values: true

@@ -6,7 +6,6 @@ require (
 	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/arch-go/arch-go/v2 v2.1.2
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/getkin/kin-openapi v0.140.0
 	github.com/golangci/golangci-lint/v2 v2.12.2
 	github.com/google/uuid v1.6.0
 	github.com/haproxytech/client-native/v6 v6.3.8
@@ -112,6 +111,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
+	github.com/getkin/kin-openapi v0.140.0 // indirect
 	github.com/ghostiam/protogetter v0.3.20 // indirect
 	github.com/go-critic/go-critic v0.14.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
