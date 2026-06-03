@@ -41,9 +41,21 @@ nodes:
 
 kubeadmConfigPatchesJSON6902:
   # Add "docker" as a Subject Alternative Name to the API server certificate
-  # This allows kubectl to connect using https://docker:<port>
+  # so kubectl can connect using https://docker:<port> in DinD CI.
+  # Both kubeadm config versions are listed because the generated version
+  # depends on the node's k8s version (v1beta3 for <= 1.35, v1beta4 for >= 1.36).
+  # kind applies the matching patch and silently skips the other, so do NOT
+  # collapse this to a single version -- that silently drops the SAN on the
+  # other k8s version and breaks TLS to the apiserver.
   - group: kubeadm.k8s.io
     version: v1beta3
+    kind: ClusterConfiguration
+    patch: |
+      - op: add
+        path: /apiServer/certSANs/-
+        value: docker
+  - group: kubeadm.k8s.io
+    version: v1beta4
     kind: ClusterConfiguration
     patch: |
       - op: add

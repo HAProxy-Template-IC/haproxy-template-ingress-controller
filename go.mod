@@ -36,7 +36,7 @@ require (
 	sigs.k8s.io/e2e-framework v0.7.0
 	sigs.k8s.io/gateway-api v1.5.1
 	sigs.k8s.io/gateway-api/conformance v1.5.1
-	sigs.k8s.io/kind v0.31.0
+	sigs.k8s.io/kind v0.32.0
 	sigs.k8s.io/yaml v1.6.0
 )
 

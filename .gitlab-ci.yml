@@ -27,9 +27,9 @@ variables:
   # renovate: datasource=docker depName=python
   PYTHON_VERSION: "3.14"
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-  KIND_VERSION: "0.31.0"
+  KIND_VERSION: "0.32.0"
   # renovate: datasource=docker depName=kindest/node
-  KIND_NODE_VERSION: "v1.35.1"
+  KIND_NODE_VERSION: "v1.36.1"
   # Container registry
   CI_REGISTRY_IMAGE: registry.gitlab.com/haproxy-haptic/haptic
   # Coverage packages (excludes generated code) - keep in sync with Makefile
