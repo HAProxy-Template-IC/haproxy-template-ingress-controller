@@ -44,17 +44,25 @@ type runtimeSyncer interface {
 
 // runtimeBypass applies runtime-eligible server changes (pod IP / port /
 // admin-state) to each endpoint via a single skip_reload raw push that carries
-// the precomputed render diff's runtime `set server` actions. It serves both the
-// pure runtime-raw lane and the pre-interval apply of a STRUCTURAL render's
-// runtime subset (scheduler.applyRuntimePreInterval). The deploy loop calls
-// applyRuntimeRaw SYNCHRONOUSLY (it waits for every endpoint), serialized AFTER
-// any in-flight structural deploy's reload — so a runtime `set server` can never
-// land on a worker that the reload then replaces.
+// the precomputed render diff's runtime `set server` actions. It serves two
+// callers: the pure runtime-raw lane dispatch (dispatchPending, `partial=false`,
+// authoritative — it IS the complete deploy, so it publishes), and the
+// fast-track apply of a pending render's runtime subset at either deploy-loop
+// wait point (applyRuntimeSubset, `partial=true`). The `partial` flag suppresses
+// the deploy-owning publishes (DeployedConfigPublishRequest /
+// ConfigAppliedToPodEvent) — only the RuntimeFastPathResultEvent metric still
+// fires — because whoever owns the deploy (the eventual authoritative dispatch,
+// or an in-flight/just-completed structural deploy) publishes the CR/status.
 //
-// The apply is content-safe: it pushes the desired config body skip_reload, and
-// is carried across any later structural reload by that deploy's freshly-rendered
-// config (config-driven; no server-state-file — ADR-0011). Every failure here is
-// swallowed to a debug log — the scheduled deploy converges the pod regardless.
+// applyRuntimeRaw is SYNCHRONOUS (it waits for every endpoint). A partial apply may
+// run CONCURRENTLY with a separate structural deploy's reload (awaitCompletion) or
+// during its post-completion interval settle: a `set server` may briefly land on a
+// worker the reload then replaces, but the push retries across the reload (master
+// socket briefly down → connection refused / not found) onto the post-reload worker,
+// and the next structural deploy re-renders the body WITH the new address — so the
+// address is never permanently lost (config-driven; no server-state-file — ADR-0011).
+// Every failure here is swallowed to a debug log — the scheduled deploy converges the pod
+// regardless.
 //
 // Clients are persistent per endpoint (see clientFor): the dataplane client —
 // and the keep-alive HTTP connection underneath it — is opened once and reused
@@ -89,7 +97,14 @@ func newRuntimeBypass(logger *slog.Logger, eventBus *busevents.EventBus) *runtim
 // here) and the desired config body (dep.config); the diff is render-vs-render,
 // identical for every pod, so it is shared across the per-pod pushes. parentCtx
 // is the scheduler's loop context, so applies are cancelled on shutdown.
-func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *scheduledDeployment) {
+//
+// partial marks a fast-track apply whose deploy is owned by someone else — the
+// eventual authoritative dispatch of this pending, or an in-flight/just-completed
+// structural deploy (applyRuntimeSubset): it suppresses the deploy-owning publishes
+// so that owner remains the single authority for completion + CR status. The sole
+// non-partial caller is the runtime-raw lane dispatch (dispatchPending), where this
+// apply IS the complete deploy and publishes per the lane gate.
+func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *scheduledDeployment, partial bool) {
 	b.evictStaleClients(dep.endpoints)
 
 	var wg sync.WaitGroup
@@ -108,18 +123,19 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 						"endpoint", ep.URL, "panic", r)
 				}
 			}()
-			b.applyToEndpoint(parentCtx, dep, &ep, &successes)
+			b.applyToEndpoint(parentCtx, dep, &ep, &successes, partial)
 		}()
 	}
 	wg.Wait()
 
-	// Pure runtime-raw lane only: this apply IS the complete deploy (no reload),
-	// so publish the deployed config as spec — the same invariant the structural
-	// path enforces — making the per-pod checksum (stamped by publishConfigApplied)
-	// observable as a published spec.Checksum. The pre-interval partial apply
-	// (laneStructural) is excluded; its gated structural deploy publishes after
-	// the reload.
-	if dep.lane == laneRuntimeRaw && successes.Load() > 0 {
+	// Pure runtime-raw lane only, and only for an AUTHORITATIVE (non-partial) apply:
+	// this apply IS the complete deploy (no reload), so publish the deployed config
+	// as spec — the same invariant the structural path enforces — making the per-pod
+	// checksum (stamped by publishConfigApplied) observable as a published
+	// spec.Checksum. Excluded: the pre-interval partial apply of a STRUCTURAL render
+	// (laneStructural, gated by lane), and the in-flight partial apply (partial=true)
+	// whose owning structural deploy publishes after its reload.
+	if !partial && dep.lane == laneRuntimeRaw && successes.Load() > 0 {
 		b.publishDeployedConfig(dep)
 	}
 }
@@ -127,7 +143,7 @@ func (b *runtimeBypass) applyRuntimeRaw(parentCtx context.Context, dep *schedule
 // applyToEndpoint runs one endpoint's runtime-raw apply under a bounded timeout.
 // dep.runtimeUpdates is the shared precomputed render diff; dep.config is the
 // desired render body the raw push carries (no per-pod fetch).
-func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *scheduledDeployment, ep *dataplane.Endpoint, successes *atomic.Int32) {
+func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *scheduledDeployment, ep *dataplane.Endpoint, successes *atomic.Int32, partial bool) {
 	ctx, cancel := context.WithTimeout(parentCtx, runtimeBypassTimeout)
 	defer cancel()
 
@@ -153,7 +169,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 		ops = len(result.AppliedOperations)
 	}
 	b.publishResult(ops, false)
-	b.publishConfigApplied(dep, ep, result)
+	b.publishConfigApplied(dep, ep, result, partial)
 	successes.Add(1)
 	if ops > 0 {
 		b.logger.Info("bypass applied runtime server changes ahead of scheduled deploy",
@@ -164,16 +180,20 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 }
 
 // publishConfigApplied advances the pod's status.deployedToPods[].Checksum after
-// a successful runtime-raw apply — but ONLY for the pure runtime-raw lane, where
-// the apply (skip_reload, no reload) IS the complete deploy. The pre-interval
-// apply of a STRUCTURAL render's runtime subset (dep.lane == laneStructural)
-// deliberately stays silent: its reload is still pending, so reporting the pod at
-// this render's checksum would falsely claim the full config is live. The
-// structural deploy publishes the truthful per-pod status after its reload
-// completes (deployment.go). No-op when eventBus is nil (tests) or the HAProxyCfg
-// identity wasn't resolved.
-func (b *runtimeBypass) publishConfigApplied(dep *scheduledDeployment, ep *dataplane.Endpoint, result *dataplane.SyncResult) {
-	if b.eventBus == nil || dep.lane != laneRuntimeRaw {
+// a successful runtime-raw apply — but ONLY for an AUTHORITATIVE pure runtime-raw
+// lane apply (partial=false), where the apply (skip_reload, no reload) IS the
+// complete deploy. It deliberately stays silent for:
+//   - the pre-interval apply of a STRUCTURAL render's runtime subset
+//     (dep.lane == laneStructural): its reload is still pending; and
+//   - the in-flight partial apply (partial=true): the separate in-flight structural
+//     deploy owns the per-pod status and publishes it after its reload.
+//
+// Reporting the pod at this render's checksum in either case would falsely claim
+// the full config is live. The owning structural deploy publishes the truthful
+// per-pod status after its reload completes (deployment.go). No-op when eventBus is
+// nil (tests) or the HAProxyCfg identity wasn't resolved.
+func (b *runtimeBypass) publishConfigApplied(dep *scheduledDeployment, ep *dataplane.Endpoint, result *dataplane.SyncResult, partial bool) {
+	if b.eventBus == nil || partial || dep.lane != laneRuntimeRaw {
 		return
 	}
 	if dep.runtimeConfigName == "" || dep.runtimeConfigNamespace == "" {

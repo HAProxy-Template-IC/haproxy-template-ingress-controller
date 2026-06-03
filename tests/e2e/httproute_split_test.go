@@ -56,8 +56,20 @@ func TestHTTPRouteSplit(t *testing.T) {
 		v2Weight            = 30
 		defaultWeight       = 70
 		warmupConsecutiveOK = 5
-		warmupMaxAttempts   = 50
-		warmupBackoff       = 50 * time.Millisecond
+		// A newly-created Gateway HTTPRoute is a STRUCTURAL change (new backends +
+		// host/path map entries → reload), so it can't take the runtime fast path
+		// and its deploy is rate-limited by minDeploymentInterval (chart default
+		// 5s). Under the heavily-parallel suite, the route's deploy is commonly
+		// gated behind an unrelated tenant's in-flight structural deploy that just
+		// armed the interval, so the host→route map entry can take up to ~one
+		// interval + a reload (~5-8s observed) to actually go live on the workers —
+		// during which requests to the route 404 (default_backend, no map entry).
+		// The warmup budget must cover that legitimate deploy-under-churn window;
+		// 50 attempts × 50ms (~2.5s) did not, and the warmup timed out before the
+		// route was even deployed. (This is a readiness precondition, not the
+		// 70/30 assertion — that is unchanged.)
+		warmupBudget  = 12 * time.Second
+		warmupBackoff = 50 * time.Millisecond
 		sampleMaxAttempts   = 4
 		sampleRetryBackoff  = 50 * time.Millisecond
 	)
@@ -105,7 +117,7 @@ func TestHTTPRouteSplit(t *testing.T) {
 			// into starting right before a reload window — requiring
 			// several in a row ensures HAProxy is in steady state with
 			// both backends healthy.
-			waitWarmedUp(ctx, t, client, host, warmupConsecutiveOK, warmupMaxAttempts, warmupBackoff)
+			waitWarmedUp(ctx, t, client, host, warmupConsecutiveOK, warmupBudget, warmupBackoff)
 
 			counts := map[string]int{"default": 0, "v2": 0}
 			fails := 0
@@ -146,14 +158,24 @@ func TestHTTPRouteSplit(t *testing.T) {
 	testEnv.Test(t, feature)
 }
 
-// waitWarmedUp blocks until `consecutive` requests in a row succeed,
-// or fails the test if that streak isn't reached within `maxAttempts`.
-// Reaching a streak proves HAProxy is past its current reload window
-// and both backends are healthy enough to count from.
-func waitWarmedUp(ctx context.Context, t *testing.T, client *httpclient.Client, host string, consecutive, maxAttempts int, backoff time.Duration) {
+// waitWarmedUp blocks until `consecutive` requests in a row succeed, or fails the
+// test if that streak isn't reached within `budget`. Reaching a streak proves the
+// route's host→backend mapping is live on the serving workers and both backends
+// are healthy enough to count from.
+//
+// It closes idle connections before each attempt so every probe dials a fresh
+// connection: while the route's deploy is still gated (its host-map entry not yet
+// on the workers), a request 404s and pins a keepalive connection to the
+// pre-route (draining) worker, which would keep 404ing on that connection until it
+// closes. Forcing a fresh dial each attempt lets the streak form the moment the
+// route-bearing config reloads, rather than waiting out the stale worker's drain.
+func waitWarmedUp(ctx context.Context, t *testing.T, client *httpclient.Client, host string, consecutive int, budget, backoff time.Duration) {
 	t.Helper()
-	streak := 0
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	deadline := time.Now().Add(budget)
+	streak, attempts := 0, 0
+	for time.Now().Before(deadline) {
+		client.CloseIdleConnections() // escape a stale worker pinned by a prior 404
+		attempts++
 		resp, err := client.GET(host, "/").Do(ctx)
 		if err == nil && resp.Status == 200 && resp.Echo != nil {
 			streak++
@@ -165,7 +187,7 @@ func waitWarmedUp(ctx context.Context, t *testing.T, client *httpclient.Client, 
 		streak = 0
 		time.Sleep(backoff)
 	}
-	t.Fatalf("warmup: failed to achieve %d consecutive 200s within %d attempts", consecutive, maxAttempts)
+	t.Fatalf("warmup: failed to achieve %d consecutive 200s within %s (%d attempts) — the route never became live", consecutive, budget, attempts)
 }
 
 // sampleWithRetry returns a successful response or nil if every retry
