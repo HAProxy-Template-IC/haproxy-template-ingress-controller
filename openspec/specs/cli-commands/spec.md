@@ -6,12 +6,12 @@ The `haptic-controller` binary provides three subcommands: `run` (main controlle
 
 ### Requirement: Run Command
 
-The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig CRD name), `--secret-name` (credentials Secret name), `--webhook-cert-secret-name` (webhook TLS certificate Secret name; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
+The `haptic-controller run` command SHALL start the main controller daemon that watches Kubernetes resources, renders HAProxy configurations from templates, and synchronizes them to HAProxy instances. The command SHALL accept the following flags: `--crd-name` (HAProxyTemplateConfig CRD name), `--secret-name` (credentials Secret name), `--webhook-cert-dir` (directory holding the webhook TLS certificate files; empty disables the webhook), `--kubeconfig` (path to kubeconfig for out-of-cluster development), and `--debug-port` (debug HTTP server port, 0 to disable).
 
 #### Scenario: Flag and environment variable defaults
 
 WHEN the `run` command is invoked without flags
-THEN `--crd-name` SHALL default to `CRD_NAME` env var or `"haproxy-config"`, `--secret-name` SHALL default to `SECRET_NAME` env var or `"haproxy-credentials"`, `--webhook-cert-secret-name` SHALL default to `WEBHOOK_CERT_SECRET_NAME` env var or `""` (empty, disabling webhooks), and `--debug-port` SHALL default to `DEBUG_PORT` env var or `0`.
+THEN `--crd-name` SHALL default to `CRD_NAME` env var or `"haproxy-config"`, `--secret-name` SHALL default to `SECRET_NAME` env var or `"haproxy-credentials"`, `--webhook-cert-dir` SHALL default to `WEBHOOK_CERT_DIR` env var or `""` (empty, disabling webhooks), and `--debug-port` SHALL default to `DEBUG_PORT` env var or `0`.
 
 #### Scenario: Configuration priority order
 

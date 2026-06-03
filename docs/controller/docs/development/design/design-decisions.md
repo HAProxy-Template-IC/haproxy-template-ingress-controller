@@ -235,7 +235,7 @@ go metricsServer.Start(ctx)
 
 7. **Webhook**:
    - `haptic_webhook_requests_total`, `haptic_webhook_request_duration_seconds`, `haptic_webhook_validation_total`
-   - `haptic_webhook_cert_expiry_timestamp_seconds`, `haptic_webhook_cert_rotations_total`
+   - `haptic_webhook_cert_rotations_total`
 
 8. **Parser cache**:
    - `haptic_parser_cache_hits_total`, `haptic_parser_cache_misses_total`
@@ -398,7 +398,7 @@ type EventBus struct {
 
 **Event Type Definitions**:
 
-The full catalog of event-type constants (~45 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `certificate.go`, `http.go`, `proposal.go`, `status.go`).
+The full catalog of event-type constants (~45 in total) lives in `pkg/controller/events/types.go`; the structs and constructors are split across category files (`config.go`, `resource.go`, `reconciliation.go`, `template.go`, `validation.go`, `deployment.go`, `discovery.go`, `credentials.go`, `leader.go`, `publishing.go`, `http.go`, `proposal.go`, `status.go`).
 
 Every event type follows the same shape:
 
@@ -430,7 +430,7 @@ func NewConfigParsedEvent(config, templateConfig any, version, secretVersion str
 func (e *ConfigParsedEvent) EventType() string { return EventTypeConfigParsed }
 ```
 
-Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook certificates, webhook validation (observability only — admission validation itself is a synchronous library call, see ADR-0001), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
+Categories include configuration, resource indexing, reconciliation, template rendering, three-phase validation, deployment, HAProxy pod discovery, credentials, leader election, config publishing, webhook validation (observability only — admission validation itself is a synchronous library call, see ADR-0001), HTTP resources, proposal validation, and status patches. Refer to the source for exact field shapes — they evolve more often than this design doc does.
 
 **Event Immutability Contract**:
 
@@ -1007,7 +1007,7 @@ EventBus (50+ event types)
     │   ├── Reconciler → Coordinator (Coordinator drives RenderService + ValidationService synchronously inside Pipeline.Execute, see ADR-0001)
     │   ├── DeploymentScheduler → Deployer → ConfigPublisher → StatusApplier
     │   ├── Discovery, HTTPStore, ProposalValidator, DriftPreventionMonitor
-    │   └── LeaderElector, CertLoader, ResourceWatcher
+    │   └── LeaderElector, ResourceWatcher
     │
     └─> Event Commentator (observability layer)
         ├── Subscribes to ALL events

@@ -96,15 +96,6 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 				errorCount, len(e.ValidationErrors), detailMsg),
 			append(attrs, "version", e.Version, "validator_count", len(e.ValidationErrors), "error_count", errorCount, "validation_errors", e.ValidationErrors)
 
-	// Webhook Certificate Events
-	case *events.CertResourceChangedEvent:
-		return "Webhook certificate Secret changed",
-			attrs
-
-	case *events.CertParsedEvent:
-		return fmt.Sprintf("Webhook certificates parsed successfully (version %s)", e.Version),
-			append(attrs, "version", e.Version, "cert_size", len(e.CertPEM), "key_size", len(e.KeyPEM))
-
 	default:
 		return "", attrs
 	}

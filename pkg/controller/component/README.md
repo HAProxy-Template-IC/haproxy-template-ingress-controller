@@ -73,7 +73,7 @@ The base always logs the panic and keeps the loop alive regardless of whether th
 
 ## See Also
 
-- [`pkg/controller/resourceloader`](../resourceloader/) — `BaseLoader` thin wrapper used by configloader / credentialsloader / certloader
+- [`pkg/controller/resourceloader`](../resourceloader/) — `BaseLoader` thin wrapper used by configloader / credentialsloader
 - [`pkg/controller/validator`](../validator/) — `BaseValidator` thin wrapper used by the scatter-gather validators
 - [`pkg/events`](../../events/) — the bus this scaffold subscribes to
 - `ready.go` in this package — `ReadySignal` helper for one-shot ready signalling

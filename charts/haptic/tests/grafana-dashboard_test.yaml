@@ -164,12 +164,6 @@ tests:
           path: data["haptic.json"]
           pattern: "haptic_webhook_requests_total"
 
-  - it: should include webhook certificate expiry metrics in dashboard
-    asserts:
-      - matchRegex:
-          path: data["haptic.json"]
-          pattern: "haptic_webhook_cert_expiry_timestamp_seconds"
-
   - it: should use custom dashboard when useBuiltIn is false
     set:
       monitoring.grafanaDashboard.useBuiltIn: false

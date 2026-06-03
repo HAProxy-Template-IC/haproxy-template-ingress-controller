@@ -119,10 +119,6 @@ const (
 	EventTypeCredentialsUpdated    = "credentials.updated"
 	EventTypeCredentialsInvalid    = "credentials.invalid"
 
-	// Webhook certificate event types.
-	EventTypeCertResourceChanged = "cert.resource.changed"
-	EventTypeCertParsed          = "cert.parsed"
-
 	// Leader election event types.
 	EventTypeLeaderElectionStarted = "leader.election.started"
 	EventTypeBecameLeader          = "leader.became"

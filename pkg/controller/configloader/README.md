@@ -2,7 +2,7 @@
 
 Stage-1 event adapter that turns `HAProxyTemplateConfig` CRD changes into internal config. Subscribes to `ConfigResourceChangedEvent`, runs `conversion.ParseCRD` on the unstructured resource, and publishes a `ConfigParsedEvent` with the resulting `*config.Config` plus the typed CRD wrapper.
 
-This is a thin event-loop on top of `pkg/controller/resourceloader.BaseLoader` — same scaffold used by `credentialsloader` and `certloader`. The actual parsing lives in `pkg/controller/conversion`; this package just wires the event flow.
+This is a thin event-loop on top of `pkg/controller/resourceloader.BaseLoader` — same scaffold used by `credentialsloader`. The actual parsing lives in `pkg/controller/conversion`; this package just wires the event flow.
 
 ## Minimal Usage
 
@@ -62,7 +62,7 @@ type ConfigParsedEvent struct {
 
 - [`pkg/controller/conversion`](../conversion/) — `ParseCRD` and `ConvertSpec` implementation
 - [`pkg/controller/resourceloader`](../resourceloader/) — shared event-loop scaffold
-- [`pkg/controller/credentialsloader`](../credentialsloader/) / [`pkg/controller/certloader`](../certloader/) — sibling loaders built on the same base
+- [`pkg/controller/credentialsloader`](../credentialsloader/) — sibling loader built on the same base
 - [`pkg/controller/configchange`](../configchange/) — orchestrator that consumes `ConfigParsedEvent` and runs scatter-gather validation
 - [`pkg/controller/validator`](../validator/) — scatter-gather validation responders
 - [`pkg/core/config`](../../core/config/) — target struct for `ParseCRD`'s conversion

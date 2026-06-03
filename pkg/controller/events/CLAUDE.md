@@ -44,7 +44,6 @@ Events are organized into separate files by category:
 | `credentials.go` | Credentials loading and validation events |
 | `leader.go` | Leader election events |
 | `publishing.go` | Config publishing events (includes SyncMetadata types) |
-| `certificate.go` | Webhook certificate events |
 | `http.go` | HTTP resource events |
 | `status.go` | Status patch application events |
 | `proposal.go` | Proposal validation request/response events (used by both webhook and HTTP store) |
@@ -67,10 +66,9 @@ Events are organized by lifecycle phase:
 8. **Credentials Events** (`credentials.go`) - Credentials management
 9. **Leader Election Events** (`leader.go`) - Leadership transitions
 10. **Publishing Events** (`publishing.go`) - Config publishing (includes auxiliary file sync metadata)
-11. **Certificate Events** (`certificate.go`) - Webhook certificates
-12. **HTTP Resource Events** (`http.go`) - HTTP resource management
-13. **Proposal Events** (`proposal.go`) - Speculative validation of hypothetical configs (used by both the admission webhook's synchronous `ValidateDirect` path and the HTTP store's content-validation cycle)
-14. **Status Events** (`status.go`) - Kubernetes status patch results
+11. **HTTP Resource Events** (`http.go`) - HTTP resource management
+12. **Proposal Events** (`proposal.go`) - Speculative validation of hypothetical configs (used by both the admission webhook's synchronous `ValidateDirect` path and the HTTP store's content-validation cycle)
+13. **Status Events** (`status.go`) - Kubernetes status patch results
 
 ## Key Principles
 

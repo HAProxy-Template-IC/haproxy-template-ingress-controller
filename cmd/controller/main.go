@@ -18,7 +18,7 @@
 //
 //   - HAProxyTemplateConfig CRD name: --crd-name flag, CRD_NAME env var, or "haproxy-config" default
 //   - Secret name: --secret-name flag, SECRET_NAME env var, or "haproxy-credentials" default
-//   - Webhook cert Secret: --webhook-cert-secret-name flag or WEBHOOK_CERT_SECRET_NAME env var (optional, empty disables webhook cert loading)
+//   - Webhook cert directory: --webhook-cert-dir flag or WEBHOOK_CERT_DIR env var (directory holding tls.crt/tls.key; optional, empty disables the webhook)
 //   - Debug HTTP port: --debug-port flag or DEBUG_PORT env var (default 0 = disabled)
 //   - Kubeconfig: --kubeconfig flag (for out-of-cluster development)
 //

@@ -16,7 +16,6 @@ package controller
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -34,13 +33,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 )
 
-// WebhookCertificates holds the TLS certificate and private key for the webhook server.
-type WebhookCertificates struct {
-	CertPEM []byte
-	KeyPEM  []byte
-	Version string
-}
-
 // fetchAndValidateInitialConfig fetches, parses, and validates the initial HAProxyTemplateConfig CRD and credentials Secret.
 //
 // Returns the validated configuration and credentials, or an error if any step fails.
@@ -51,9 +43,7 @@ type InitialConfigBundle struct {
 	Config             *coreconfig.Config
 	CRD                *v1alpha1.HAProxyTemplateConfig
 	Credentials        *coreconfig.Credentials
-	WebhookCerts       *WebhookCertificates
 	CredentialsVersion string
-	WebhookCertVersion string
 }
 
 func fetchAndValidateInitialConfig(
@@ -61,20 +51,14 @@ func fetchAndValidateInitialConfig(
 	k8sClient *client.Client,
 	crdName string,
 	secretName string,
-	webhookCertSecretName string,
 	crdGVR schema.GroupVersionResource,
 	secretGVR schema.GroupVersionResource,
 	logger *slog.Logger,
 ) (*InitialConfigBundle, error) {
-	logFields := []any{"crd_name", crdName}
-	if webhookCertSecretName != "" {
-		logFields = append(logFields, "webhook_cert_secret", webhookCertSecretName)
-	}
-	logger.Info("Fetching initial CRD and credentials", logFields...)
+	logger.Info("Fetching initial CRD and credentials", "crd_name", crdName)
 
 	var crdResource *unstructured.Unstructured
 	var secretResource *unstructured.Unstructured
-	var webhookCertSecretResource *unstructured.Unstructured
 
 	g, gCtx := errgroup.WithContext(ctx)
 
@@ -98,18 +82,6 @@ func fetchAndValidateInitialConfig(
 		return nil
 	})
 
-	// Fetch Secret (webhook certificates) - only if configured
-	if webhookCertSecretName != "" {
-		g.Go(func() error {
-			var err error
-			webhookCertSecretResource, err = k8sClient.GetResource(gCtx, secretGVR, webhookCertSecretName)
-			if err != nil {
-				return fmt.Errorf("fetching webhook certificate Secret %q: %w", webhookCertSecretName, err)
-			}
-			return nil
-		})
-	}
-
 	// Wait for all fetches to complete
 	if err := g.Wait(); err != nil {
 		return nil, err
@@ -128,14 +100,6 @@ func fetchAndValidateInitialConfig(
 		return nil, fmt.Errorf("parsing initial Secret: %w", err)
 	}
 
-	var webhookCerts *WebhookCertificates
-	if webhookCertSecretResource != nil {
-		webhookCerts, err = parseWebhookCertSecret(webhookCertSecretResource)
-		if err != nil {
-			return nil, fmt.Errorf("parsing webhook certificate Secret: %w", err)
-		}
-	}
-
 	// Validate initial configuration
 	logger.Info("Validating initial configuration and credentials")
 
@@ -147,24 +111,15 @@ func fetchAndValidateInitialConfig(
 		return nil, fmt.Errorf("initial credentials validation failed: %w", err)
 	}
 
-	logAttrs := []any{
+	logger.Info("Initial configuration validated successfully",
 		"crd_version", crdResource.GetResourceVersion(),
-		"secret_version", secretResource.GetResourceVersion(),
-	}
-	if webhookCertSecretResource != nil {
-		logAttrs = append(logAttrs, "webhook_cert_version", webhookCertSecretResource.GetResourceVersion())
-	}
-	logger.Info("Initial configuration validated successfully", logAttrs...)
+		"secret_version", secretResource.GetResourceVersion())
 
 	bundle := &InitialConfigBundle{
 		Config:             cfg,
 		CRD:                crd,
 		Credentials:        creds,
-		WebhookCerts:       webhookCerts,
 		CredentialsVersion: secretResource.GetResourceVersion(),
-	}
-	if webhookCertSecretResource != nil {
-		bundle.WebhookCertVersion = webhookCertSecretResource.GetResourceVersion()
 	}
 	return bundle, nil
 }
@@ -233,21 +188,17 @@ func checkConfigExists(ctx context.Context, k8sClient *client.Client, gvr schema
 }
 
 // finalizeConfigLoad marks config as loaded for health checks and records
-// the initial CRD / credentials-Secret / webhook-cert-Secret resource
-// versions so the bootstrap watcher events (which the watcher fires the
-// moment it observes existing resources at iteration startup) don't
-// trigger a redundant reinitialization loop. The handler still triggers
-// reinitialization on later events whose version differs — that's how
-// CRD changes, credentials rotation, and webhook-cert rotation all reach
+// the initial CRD / credentials-Secret resource versions so the bootstrap
+// watcher events (which the watcher fires the moment it observes existing
+// resources at iteration startup) don't trigger a redundant reinitialization
+// loop. The handler still triggers reinitialization on later events whose
+// version differs — that's how CRD changes and credentials rotation reach
 // the iteration restart, going through the same configChangeCh path.
-func finalizeConfigLoad(state *configState, setup *componentSetup, crdVersion, credentialsVersion, webhookCertVersion string) {
+func finalizeConfigLoad(state *configState, setup *componentSetup, crdVersion, credentialsVersion string) {
 	state.SetLoaded()
 	setup.ConfigChangeHandler.SetInitialConfigVersion(crdVersion)
 	if credentialsVersion != "" {
 		setup.ConfigChangeHandler.SetInitialCredentialsVersion(credentialsVersion)
-	}
-	if webhookCertVersion != "" {
-		setup.ConfigChangeHandler.SetInitialCertVersion(webhookCertVersion)
 	}
 }
 
@@ -283,60 +234,6 @@ func parseSecret(resource *unstructured.Unstructured) (*coreconfig.Credentials, 
 	}
 
 	return creds, nil
-}
-
-// parseWebhookCertSecret extracts and decodes webhook TLS certificate data from a Secret.
-func parseWebhookCertSecret(resource *unstructured.Unstructured) (*WebhookCertificates, error) {
-	dataRaw, err := extractSecretData(resource)
-	if err != nil {
-		return nil, err
-	}
-
-	// Extract tls.crt (standard Kubernetes TLS Secret key)
-	tlsCertBase64, ok := dataRaw["tls.crt"]
-	if !ok {
-		return nil, errors.New("secret data missing 'tls.crt' key")
-	}
-
-	// Extract tls.key (standard Kubernetes TLS Secret key)
-	tlsKeyBase64, ok := dataRaw["tls.key"]
-	if !ok {
-		return nil, errors.New("secret data missing 'tls.key' key")
-	}
-
-	// Decode base64 certificate
-	certStr, ok := tlsCertBase64.(string)
-	if !ok {
-		return nil, fmt.Errorf("tls.crt has invalid type: %T", tlsCertBase64)
-	}
-	certPEM, err := base64.StdEncoding.DecodeString(certStr)
-	if err != nil {
-		return nil, fmt.Errorf("decoding base64 tls.crt: %w", err)
-	}
-
-	// Decode base64 private key
-	keyStr, ok := tlsKeyBase64.(string)
-	if !ok {
-		return nil, fmt.Errorf("tls.key has invalid type: %T", tlsKeyBase64)
-	}
-	keyPEM, err := base64.StdEncoding.DecodeString(keyStr)
-	if err != nil {
-		return nil, fmt.Errorf("decoding base64 tls.key: %w", err)
-	}
-
-	// Validate we have non-empty data
-	if len(certPEM) == 0 {
-		return nil, errors.New("tls.crt is empty")
-	}
-	if len(keyPEM) == 0 {
-		return nil, errors.New("tls.key is empty")
-	}
-
-	return &WebhookCertificates{
-		CertPEM: certPEM,
-		KeyPEM:  keyPEM,
-		Version: resource.GetResourceVersion(),
-	}, nil
 }
 
 // validationDirConfig contains directory configuration derived from dataplane settings.

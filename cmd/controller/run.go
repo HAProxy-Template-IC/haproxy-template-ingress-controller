@@ -34,11 +34,11 @@ import (
 )
 
 var (
-	runCRDName               string
-	runSecretName            string
-	runWebhookCertSecretName string
-	runKubeconfig            string
-	runDebugPort             int
+	runCRDName        string
+	runSecretName     string
+	runWebhookCertDir string
+	runKubeconfig     string
+	runDebugPort      int
 )
 
 // runCmd represents the run command (controller main loop).
@@ -76,8 +76,8 @@ func init() {
 		"Name of the HAProxyTemplateConfig CRD containing controller configuration (env: CRD_NAME)")
 	runCmd.Flags().StringVar(&runSecretName, "secret-name", "",
 		"Name of the Secret containing HAProxy Dataplane API credentials (env: SECRET_NAME)")
-	runCmd.Flags().StringVar(&runWebhookCertSecretName, "webhook-cert-secret-name", "",
-		"Name of the Secret containing webhook TLS certificates (env: WEBHOOK_CERT_SECRET_NAME)")
+	runCmd.Flags().StringVar(&runWebhookCertDir, "webhook-cert-dir", "",
+		"Directory holding the webhook TLS cert (tls.crt/tls.key); read per-handshake so a rotated cert is served without restart. Empty disables the webhook (env: WEBHOOK_CERT_DIR)")
 	runCmd.Flags().StringVar(&runKubeconfig, "kubeconfig", "",
 		"Path to kubeconfig file (for out-of-cluster development)")
 	runCmd.Flags().IntVar(&runDebugPort, "debug-port", 0,
@@ -103,9 +103,9 @@ func runController(_ *cobra.Command, _ []string) error {
 		runSecretName = defaultSecretName
 	}
 
-	// Webhook certificate Secret name (optional - empty means webhooks disabled)
-	if runWebhookCertSecretName == "" {
-		runWebhookCertSecretName = os.Getenv("WEBHOOK_CERT_SECRET_NAME")
+	// Webhook certificate directory (optional - empty means webhooks disabled)
+	if runWebhookCertDir == "" {
+		runWebhookCertDir = os.Getenv("WEBHOOK_CERT_DIR")
 	}
 
 	// Debug port
@@ -147,7 +147,7 @@ func runController(_ *cobra.Command, _ []string) error {
 		"source_hash", getSourceHash(),
 		"crd_name", runCRDName,
 		"secret", runSecretName,
-		"webhook_cert_secret", runWebhookCertSecretName,
+		"webhook_cert_dir", runWebhookCertDir,
 		"debug_port", runDebugPort,
 		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
@@ -176,7 +176,7 @@ func runController(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	// Run the controller
-	if err := controller.Run(ctx, k8sClient, runCRDName, runSecretName, runWebhookCertSecretName, runDebugPort); err != nil {
+	if err := controller.Run(ctx, k8sClient, runCRDName, runSecretName, runWebhookCertDir, runDebugPort); err != nil {
 		// Only return error if it's not a graceful shutdown
 		if ctx.Err() == nil {
 			return fmt.Errorf("controller failed: %w", err)

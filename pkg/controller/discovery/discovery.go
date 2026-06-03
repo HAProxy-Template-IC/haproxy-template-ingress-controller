@@ -54,27 +54,6 @@ type Discovery struct {
 	localVersion  *dataplane.Version
 }
 
-// newDiscoveryEngine creates a new Discovery instance.
-//
-// Parameters:
-//   - dataplanePort: The port where Dataplane API is exposed on HAProxy pods
-//
-// Returns a configured Discovery instance and an error if local HAProxy version
-// detection fails (which is fatal - the controller cannot start without knowing
-// its local version for compatibility checking).
-func newDiscoveryEngine(dataplanePort int) (*Discovery, error) {
-	// Detect local HAProxy version at startup
-	localVer, err := dataplane.DetectLocalVersion()
-	if err != nil {
-		return nil, fmt.Errorf("detecting local HAProxy version: %w", err)
-	}
-
-	return &Discovery{
-		dataplanePort: dataplanePort,
-		localVersion:  localVer,
-	}, nil
-}
-
 // LocalVersion returns the detected local HAProxy version.
 // This is used by the event adapter for version compatibility checking.
 func (d *Discovery) LocalVersion() *dataplane.Version {

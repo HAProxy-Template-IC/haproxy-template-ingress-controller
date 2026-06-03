@@ -116,12 +116,18 @@ type Config struct {
 	// Default: "/validate"
 	Path string
 
+	// CertDir, when set, is a directory containing tls.crt and tls.key
+	// (typically the mounted webhook-cert Secret). The server reads them
+	// per-handshake and hot-reloads a rotated certificate without a restart.
+	// Takes precedence over CertPEM/KeyPEM; production uses this path.
+	CertDir string
+
 	// CertPEM is the PEM-encoded TLS certificate.
-	// Fetched from Kubernetes Secret via API.
+	// Used when CertDir is unset (e.g. tests pass certs directly).
 	CertPEM []byte
 
 	// KeyPEM is the PEM-encoded TLS private key.
-	// Fetched from Kubernetes Secret via API.
+	// Used when CertDir is unset.
 	KeyPEM []byte
 
 	// Rules defines which resources the webhook validates.
@@ -189,30 +195,29 @@ func (c *Component) Listening() <-chan struct{} {
 func (c *Component) Start(ctx context.Context) error {
 	c.logger.Info("Starting webhook component",
 		"port", c.config.Port,
-		"path", c.config.Path,
-		"cert_size", len(c.config.CertPEM),
-		"key_size", len(c.config.KeyPEM))
+		"path", c.config.Path)
 
-	// Validate certificates are present
-	if len(c.config.CertPEM) == 0 {
-		return errors.New("tls certificate is empty")
+	// Validate a certificate source is configured.
+	if c.config.CertDir == "" {
+		if len(c.config.CertPEM) == 0 {
+			return errors.New("no webhook TLS certificate configured (set CertDir or CertPEM)")
+		}
+		if len(c.config.KeyPEM) == 0 {
+			return errors.New("tls private key is empty")
+		}
+		c.logger.Info("Loading webhook TLS certificate from configuration",
+			"cert_size", len(c.config.CertPEM), "key_size", len(c.config.KeyPEM))
+	} else {
+		// The mounted Secret directory is read per-handshake, so a
+		// cert-manager rotation is picked up without an iteration restart.
+		c.logger.Info("Loading webhook TLS certificate from directory (hot-reload on rotation)",
+			"cert_dir", c.config.CertDir)
 	}
-	if len(c.config.KeyPEM) == 0 {
-		return errors.New("tls private key is empty")
-	}
 
-	c.logger.Info("TLS certificates validated successfully",
-		"cert_size", len(c.config.CertPEM),
-		"key_size", len(c.config.KeyPEM))
-
-	// Create webhook server with certificates from configuration.
-	// The server's TLS certificate is hot-rotatable via RotateCertificate
-	// (driven by the controller component below subscribing to
-	// CertParsedEvent). New TLS handshakes pick up the rotated cert
-	// without restarting the listening socket.
 	server, err := webhook.NewServer(&webhook.ServerConfig{
 		Port:         c.config.Port,
 		Path:         c.config.Path,
+		CertDir:      c.config.CertDir,
 		CertPEM:      c.config.CertPEM,
 		KeyPEM:       c.config.KeyPEM,
 		ReadTimeout:  timeouts.HTTPServerTimeout,
@@ -257,11 +262,10 @@ func (c *Component) Start(ctx context.Context) error {
 		"port", c.config.Port,
 		"path", c.config.Path)
 
-	// Wait for shutdown or error. Cert rotation is handled at the
-	// iteration boundary by ConfigChangeHandler, which signals
-	// reinitialization on CertParsedEvent — the next iteration
-	// constructs a fresh Server with the new PEM bytes (same flow that
-	// already covers CRD- and credentials-Secret changes).
+	// Wait for shutdown or error. When CertDir is set (production) the
+	// certificate is hot-reloaded in-process by the server's GetCertificate
+	// callback, so a rotation is served without an iteration restart. The
+	// fixed CertPEM/KeyPEM fallback (tests) is only refreshed on restart.
 	select {
 	case err := <-serverErrCh:
 		return fmt.Errorf("webhook server failed: %w", err)

@@ -324,23 +324,6 @@ func TestMetrics_RecordWebhookValidation(t *testing.T) {
 	assert.Equal(t, 3.0, testutil.ToFloat64(validation))
 }
 
-func TestMetrics_SetWebhookCertExpiry(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-
-	// Set certificate expiry
-	expiryTime := int64(1735689600) // Some future timestamp
-	metrics.SetWebhookCertExpiry(expiryTime)
-
-	assert.Equal(t, float64(expiryTime), testutil.ToFloat64(metrics.WebhookCertExpiry))
-
-	// Update certificate expiry
-	newExpiryTime := int64(1767225600) // Later timestamp
-	metrics.SetWebhookCertExpiry(newExpiryTime)
-
-	assert.Equal(t, float64(newExpiryTime), testutil.ToFloat64(metrics.WebhookCertExpiry))
-}
-
 func TestMetrics_RecordWebhookCertRotation(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

@@ -17,7 +17,6 @@ One file per category. The full list as of writing, with representative types:
 | `correlation.go` | Request/response correlation metadata | `Correlation` (struct), `CorrelatedEvent` (interface, exposes `CorrelationID() string`) |
 | `config.go` | CRD parsed / validated / invalid | `ConfigParsedEvent`, `ConfigValidatedEvent` |
 | `credentials.go` | `Secret` ingestion and validation | `CredentialsUpdatedEvent` |
-| `certificate.go` | Webhook TLS cert lifecycle | `CertResourceChangedEvent`, `CertParsedEvent` |
 | `resource.go` | Watched-resource index changes | `ResourceIndexUpdatedEvent`, `IndexSynchronizedEvent` |
 | `reconciliation.go` | Reconciliation pipeline lifecycle | `ReconciliationTriggeredEvent`, `ReconciliationCompletedEvent` |
 | `template.go` | Rendering | `TemplateRenderedEvent`, `TemplateRenderFailedEvent` |

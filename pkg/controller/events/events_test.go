@@ -305,43 +305,6 @@ func TestCredentialsEvents(t *testing.T) {
 	})
 }
 
-func TestCertificateEvents(t *testing.T) {
-	t.Run("CertResourceChangedEvent", func(t *testing.T) {
-		resource := map[string]string{"name": "my-cert"}
-		event := NewCertResourceChangedEvent(resource)
-		require.NotNil(t, event)
-		assert.Equal(t, resource, event.Resource)
-		assert.Equal(t, EventTypeCertResourceChanged, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("CertParsedEvent", func(t *testing.T) {
-		certPEM := []byte("cert-content")
-		keyPEM := []byte("key-content")
-		event := NewCertParsedEvent(certPEM, keyPEM, "v1")
-		require.NotNil(t, event)
-		assert.Equal(t, certPEM, event.CertPEM)
-		assert.Equal(t, keyPEM, event.KeyPEM)
-		assert.Equal(t, "v1", event.Version)
-		assert.Equal(t, EventTypeCertParsed, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("CertParsedEvent_DefensiveCopy", func(t *testing.T) {
-		certPEM := []byte("cert-content")
-		keyPEM := []byte("key-content")
-		event := NewCertParsedEvent(certPEM, keyPEM, "v1")
-
-		// Modify original slices
-		certPEM[0] = 'X'
-		keyPEM[0] = 'Y'
-
-		// Event should have original values
-		assert.Equal(t, byte('c'), event.CertPEM[0])
-		assert.Equal(t, byte('k'), event.KeyPEM[0])
-	})
-}
-
 func TestHTTPEvents(t *testing.T) {
 	t.Run("HTTPResourceUpdatedEvent", func(t *testing.T) {
 		event := NewHTTPResourceUpdatedEvent("https://example.com/resource", "abc123", 1024)
@@ -921,8 +884,6 @@ func TestTimestampNotZero(t *testing.T) {
 		{"SecretResourceChanged", NewSecretResourceChangedEvent(nil)},
 		{"CredentialsUpdated", NewCredentialsUpdatedEvent(nil, "v1")},
 		{"CredentialsInvalid", NewCredentialsInvalidEvent("v1", "error")},
-		{"CertResourceChanged", NewCertResourceChangedEvent(nil)},
-		{"CertParsed", NewCertParsedEvent(nil, nil, "v1")},
 		{"HTTPResourceUpdated", NewHTTPResourceUpdatedEvent("url", "checksum", 0)},
 		{"HTTPResourceAccepted", NewHTTPResourceAcceptedEvent("url", "checksum", 0)},
 		{"HTTPResourceRejected", NewHTTPResourceRejectedEvent("url", "checksum", "error")},

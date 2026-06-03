@@ -29,7 +29,7 @@ THEN the controller SHALL fail to start with an error indicating the missing Sec
 
 ### Requirement: Environment Variables
 
-The controller SHALL support configuration via environment variables: CRD_NAME (name of the HAProxyTemplateConfig resource), SECRET_NAME (name of the credentials Secret), WEBHOOK_CERT_SECRET_NAME (TLS certificate Secret for the validating webhook), and LOG_LEVEL (logging verbosity).
+The controller SHALL support configuration via environment variables: CRD_NAME (name of the HAProxyTemplateConfig resource), SECRET_NAME (name of the credentials Secret), WEBHOOK_CERT_DIR (directory holding the validating webhook's TLS certificate files; empty disables the webhook), and LOG_LEVEL (logging verbosity).
 
 #### Scenario: CRD_NAME selects the configuration resource
 

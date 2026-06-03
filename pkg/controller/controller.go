@@ -204,19 +204,19 @@ type persistentInfra struct {
 //   - k8sClient: Kubernetes client for API access
 //   - crdName: Name of the HAProxyTemplateConfig CRD
 //   - secretName: Name of the Secret containing HAProxy Dataplane API credentials
-//   - webhookCertSecretName: Name of the Secret containing webhook TLS certificates
+//   - webhookCertDir: Directory holding the webhook TLS cert (tls.crt/tls.key); empty disables the webhook
 //   - debugPort: Port for debug HTTP server (0 to disable)
 //
 // Returns:
 //   - Error if the controller cannot start or encounters a fatal error
 //   - nil if the context is cancelled (graceful shutdown)
-func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, webhookCertSecretName string, debugPort int) error {
+func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, webhookCertDir string, debugPort int) error {
 	logger := slog.Default()
 
 	logger.Debug("HAProxy Template Ingress Controller starting",
 		"crd_name", crdName,
 		"secret", secretName,
-		"webhook_cert_secret", webhookCertSecretName,
+		"webhook_cert_dir", webhookCertDir,
 		"namespace", k8sClient.Namespace())
 
 	// Create persistent infrastructure (lives across iterations)
@@ -253,7 +253,7 @@ func Run(ctx context.Context, k8sClient *client.Client, crdName, secretName, web
 			return nil
 		default:
 			// Run one iteration
-			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertSecretName, debugPort, infra, logger)
+			err := runIteration(ctx, k8sClient, crdName, secretName, webhookCertDir, debugPort, infra, logger)
 			if err != nil {
 				// Check if error is context cancellation (graceful shutdown)
 				if ctx.Err() != nil {

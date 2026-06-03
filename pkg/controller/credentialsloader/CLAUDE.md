@@ -13,7 +13,7 @@ Work in this package when:
 **DO NOT** work here for:
 
 - Credential schema (`Credentials` struct, `ParseSecretData`, `LoadCredentials`, `ValidateCredentials`) → `pkg/core/config`
-- Watching the Secret in production → that's `watcher.NewSingle` in `pkg/k8s/watcher`, wired by `pkg/controller/watchers.go` (which publishes `SecretResourceChangedEvent`). The `SecretWatcher` struct that lives in this package (`secret_watcher.go`) is **not** used by the controller — it's a self-contained informer-based alternative kept around for tests and tooling.
+- Watching the Secret in production → that's `watcher.NewSingle` in `pkg/k8s/watcher`, wired by `pkg/controller/watchers.go` (which publishes `SecretResourceChangedEvent`).
 
 ## Package Purpose
 
@@ -60,17 +60,6 @@ Subscription happens inside the constructor (via `BaseLoader`), which is why thi
 ### Adding new required Secret keys
 
 `config.LoadCredentials` is the gate. Do not duplicate that check in the loader — it's already there, and tests live alongside `LoadCredentials` in `pkg/core/config`.
-
-### Confusing the two SecretWatcher implementations
-
-There are two ways to watch a Secret in this codebase:
-
-| Path | Used by production? | What publishes `SecretResourceChangedEvent`? |
-|------|--------------------|-----------------------------------------------|
-| `pkg/k8s/watcher.NewSingle` (typed via `types.SingleWatcherConfig`) | **Yes** — see `pkg/controller/watchers.go:137` | Yes (`bus.Publish(events.NewSecretResourceChangedEvent(obj))`) |
-| `pkg/controller/credentialsloader.NewSecretWatcher` | No — unused outside its own package | Yes, but nothing wires it up |
-
-If you're wiring a new component that needs Secret events, follow `watchers.go`; don't reach for `credentialsloader.NewSecretWatcher`.
 
 ### Logging at the wrong level
 

@@ -2,7 +2,7 @@
 
 A focused HTTPS server for [Kubernetes validating admission webhooks](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/). Given TLS credentials and a set of validator functions keyed by resource GVK, it speaks the `AdmissionReview v1` protocol, dispatches to the right validator, and shuts down cleanly on context cancellation.
 
-The package intentionally does *not* handle certificate issuance, rotation, or `ValidatingWebhookConfiguration` management — those are the controller's concern (see `pkg/controller/certloader` and the Helm chart's `validatingwebhookconfiguration.yaml`). Keeping this library narrow means it can be reused by any controller that already has a cert pipeline.
+The package intentionally does *not* handle certificate *provisioning* — issuance, the Secret, the CA bundle, or `ValidatingWebhookConfiguration` management — those are the controller's and Helm chart's concern (the chart provisions the Secret plus `validatingwebhookconfiguration.yaml`). It *does* serve and hot-reload the mounted cert files it's pointed at: when `ServerConfig.CertDir` is set, the server re-reads `tls.crt`/`tls.key` from that directory on content change, so a cert-manager renewal is picked up without a restart. Keeping this library narrow means it can be reused by any controller that already has a cert pipeline.
 
 Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go doc ./pkg/webhook`); this README is a short map.
 
@@ -17,12 +17,14 @@ import (
 )
 
 func main() {
-    // Caller provides PEM-encoded TLS cert + key (typically from a Secret
-    // written by cert-manager).
+    // In production, point the server at the directory where the TLS Secret
+    // is mounted (cert-manager writes tls.crt/tls.key there). The server
+    // re-reads them per handshake and hot-reloads on rotation — no restart.
     srv := webhook.NewServer(&webhook.ServerConfig{
         Port:    9443,
-        CertPEM: certPEM,
-        KeyPEM:  keyPEM,
+        CertDir: "/etc/webhook/certs",
+        // For unit tests without a mounted Secret, set CertPEM/KeyPEM instead
+        // to serve a fixed cert.
         // BindAddress defaults to 0.0.0.0, Path to /validate,
         // ReadTimeout and WriteTimeout to 10s.
     })
@@ -49,7 +51,7 @@ func validateIngress(ctx *webhook.ValidationContext) (bool, string, []string, er
 
 ## Types at a Glance
 
-- **`ServerConfig`** — port (default `9443`), bind address, path (default `/validate`), read/write timeouts, and the PEM-encoded server cert + key. Cert and key bytes are read once in `Start`; to rotate, restart the server with new bytes.
+- **`ServerConfig`** — port (default `9443`), bind address, path (default `/validate`), read/write timeouts, and the TLS source. In production set `CertDir` to the directory holding `tls.crt`/`tls.key` (typically the mounted cert Secret); the server resolves the cert per handshake via a `tls.Config.GetCertificate` callback and a `certReloader` that re-parses the files on content change — a cert-manager renewal is served without a restart. When `CertDir` is unset (e.g. unit tests), it serves a fixed cert from the PEM-encoded `CertPEM`/`KeyPEM` instead.
 - **`Server`** — wraps an `http.Server`, maintains a GVK → `ValidationFunc` map under an `RWMutex`.
 - **`ValidationContext`** — everything the server extracts from an `AdmissionRequest`: `Object`, `OldObject`, `Operation`, `Namespace`, `Name`, `UID`, `UserInfo`. `Object` and `OldObject` are `*unstructured.Unstructured` so validators don't need their own typed decoders.
 - **`ValidationFunc`** — `func(*ValidationContext) (allowed bool, reason string, warnings []string, err error)`. The `allowed`/`reason` pair maps to `AdmissionResponse.Allowed` and `.Status.Message`; `warnings` surfaces as `AdmissionResponse.Warnings` (visible to `kubectl` users even when `allowed` is true). A non-nil error is treated as a *denied* decision (`Allowed: false`, `Result.Code: 500`, `Result.Message: "validation error: <err>"`) — *not* a transport-layer HTTP 500. The HTTP response itself is always 200 OK with a well-formed `AdmissionReview`. The API server's `failurePolicy` only kicks in when the webhook fails to *respond* (TLS handshake failure, malformed body, etc.); a `ValidationFunc` returning an error never triggers it.
@@ -83,7 +85,7 @@ Deliberate omissions — and where to look instead in this repo:
 
 | Concern | Lives in |
 |---------|----------|
-| Issuing/rotating the TLS cert | cert-manager (chart provisions a `Certificate`), loaded via `pkg/controller/certloader` |
+| Issuing/renewing the TLS cert | cert-manager (chart provisions a `Certificate` and mounts the Secret). The server serves and hot-reloads the mounted files via `ServerConfig.CertDir`, but does not fetch or issue them. |
 | Creating / updating `ValidatingWebhookConfiguration` | `charts/haptic/templates/validatingwebhookconfiguration.yaml` |
 | Multi-controller isolation | Each Helm release deploys its own `ValidatingWebhookConfiguration` whose `clientConfig.service` points at that release's controller `Service`. The chart does **not** set `objectSelector` — add one if you need label-based scoping on top of that. |
 | Fail-policy, scope, operations on each rule | Chart values + `validatingwebhookconfiguration.yaml` |
@@ -104,7 +106,7 @@ Server-level tests bring up a real TLS listener on a random port with a self-sig
 - [Kubernetes admission webhooks reference](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/)
 - [AdmissionReview v1 API](https://kubernetes.io/docs/reference/config-api/apiserver-webhooks.v1/)
 - `pkg/controller/webhook` — event adapter that owns the `Server` lifecycle inside the controller
-- `pkg/controller/certloader` — reads + watches the TLS Secret that feeds `ServerConfig.CertPEM`/`KeyPEM`
+- The controller passes the mounted Secret directory to the server via `ServerConfig.CertDir`, which the server reads and hot-reloads on rotation; the Helm chart provisions and mounts that Secret
 - `docs/controller/docs/development/crd-validation-design.md` — why the webhook lives in the controller pod and fails closed
 
 ## License

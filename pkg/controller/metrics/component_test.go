@@ -16,12 +16,6 @@ package metrics
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"math/big"
 	"testing"
 	"time"
 
@@ -517,45 +511,6 @@ func TestComponent_LostLeadershipWithoutBeingLeader(t *testing.T) {
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.LeaderElectionTimeAsLeaderSeconds))
 
 	cancel()
-}
-
-func TestComponent_CertParsedUpdatesExpiry(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
-	eventBus.Start()
-
-	// Generate a self-signed certificate with a known NotAfter
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	notAfter := time.Now().Add(24 * time.Hour).Truncate(time.Second)
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "test"},
-		NotBefore:    time.Now().Add(-time.Minute),
-		NotAfter:     notAfter,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
-	require.NoError(t, err)
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
-
-	eventBus.Publish(events.NewCertParsedEvent(certPEM, keyPEM, "v1"))
-
-	time.Sleep(100 * time.Millisecond)
-
-	assert.Equal(t, float64(notAfter.Unix()), testutil.ToFloat64(metrics.WebhookCertExpiry))
 }
 
 func TestComponent_TickerUpdatesEventSubscribers(t *testing.T) {

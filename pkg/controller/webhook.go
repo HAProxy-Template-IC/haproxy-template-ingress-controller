@@ -63,7 +63,7 @@ import (
 func setupWebhook(
 	iterCtx context.Context,
 	cfg *coreconfig.Config,
-	webhookCerts *WebhookCertificates,
+	webhookCertDir string,
 	k8sClient *client.Client,
 	dryrunValidator *dryrunvalidator.Component, // Pre-created validator (may be nil)
 	configValidator webhook.ConfigValidatorFunc, // Pre-created HAProxyTemplateConfig validator (may be nil)
@@ -91,16 +91,16 @@ func setupWebhook(
 		memory.NewMemCacheClient(discoveryClient),
 	)
 
-	// Create webhook component with DryRunValidator for direct validation (no scatter-gather)
-	// Certificates are fetched from Secret via Kubernetes API and passed directly to component
+	// Create webhook component with DryRunValidator for direct validation (no scatter-gather).
+	// The TLS certificate is read from the mounted Secret directory
+	// (CertDir) and hot-reloaded on rotation without a restart.
 	webhookComponent := webhook.New(
 		logger,
 		&webhook.Config{
 			Port:            9443, // Default webhook port
 			Path:            "/validate",
 			Rules:           rules,
-			CertPEM:         webhookCerts.CertPEM,
-			KeyPEM:          webhookCerts.KeyPEM,
+			CertDir:         webhookCertDir,
 			DryRunValidator: dryrunValidator, // Direct validation, nil = fail-open
 			ConfigValidator: configValidator, // HAProxyTemplateConfig admission, nil = fail-open
 		},

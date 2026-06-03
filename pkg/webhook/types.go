@@ -155,12 +155,19 @@ type ServerConfig struct {
 	// Default: "0.0.0.0"
 	BindAddress string
 
+	// CertDir, when set, is a directory containing tls.crt and tls.key. The
+	// server reads them through a reloading GetCertificate callback, so a
+	// rotated certificate (e.g. a cert-manager renewal written to a mounted
+	// Secret) is picked up on the next handshake without a restart. Takes
+	// precedence over CertPEM/KeyPEM.
+	CertDir string
+
 	// CertPEM is the PEM-encoded server certificate.
-	// Required.
+	// Required unless CertDir is set.
 	CertPEM []byte
 
 	// KeyPEM is the PEM-encoded private key.
-	// Required.
+	// Required unless CertDir is set.
 	KeyPEM []byte
 
 	// Path is the URL path for the webhook endpoint.

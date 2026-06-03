@@ -261,12 +261,10 @@ func (w *SingleWatcher) handleUpdate(oldObj, newObj any) {
 	// using it as a skip signal — when both are zero, fall through and
 	// honour the resourceVersion-changed signal that already passed above.
 	//
-	// History: until this guard, the webhook-cert Secret watcher
-	// observed rotations from cert-manager / the e2e test harness, but
-	// every update was discarded as "status-only" because generation was
-	// 0/0. The cert pipeline (CertResourceChangedEvent → CertLoader →
-	// CertParsedEvent → ConfigChangeHandler → iteration restart) never
-	// fired, so rotations only took effect on the next pod restart.
+	// History: until this guard, a Secret watched for content changes
+	// (e.g. rotated TLS material) had every update discarded as
+	// "status-only" because Secrets carry generation 0/0, so rotations
+	// only took effect on the next pod restart.
 	if oldResource != nil {
 		oldGen := oldResource.GetGeneration()
 		newGen := resource.GetGeneration()

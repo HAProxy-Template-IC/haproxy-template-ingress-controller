@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -50,18 +51,19 @@ func init() {
 //
 // The server is thread-safe and can handle multiple concurrent requests.
 //
-// The server reads CertPEM/KeyPEM at construction time and validates them
-// eagerly so a malformed cert surfaces in NewServer rather than at the
-// first TLS handshake. The cert lifetime equals the server lifetime —
-// rotation is the controller's job: when the underlying Secret changes,
-// the controller's iteration-restart path constructs a new Server with
-// the fresh PEM bytes (same pattern used for CRD/credentials changes).
+// The certificate is resolved per TLS handshake through getCertificate. When
+// ServerConfig.CertDir is set, that callback reloads tls.crt/tls.key from disk
+// on change, so a rotated certificate (cert-manager renewal written to a
+// mounted Secret) is served without restarting. Otherwise getCertificate
+// returns a fixed certificate parsed once from CertPEM/KeyPEM. Either way the
+// certificate is validated eagerly in NewServer so a malformed cert surfaces
+// there rather than at the first handshake.
 type Server struct {
-	config     ServerConfig
-	validators map[string]ValidationFunc
-	mu         sync.RWMutex
-	httpServer *http.Server
-	cert       tls.Certificate
+	config         ServerConfig
+	validators     map[string]ValidationFunc
+	mu             sync.RWMutex
+	httpServer     *http.Server
+	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
 	// listening is closed once the TLS listener has been bound to the
 	// configured port. Callers that need to know the server is actually
@@ -74,9 +76,10 @@ type Server struct {
 
 // NewServer creates a new webhook server with the given configuration.
 //
-// The server will not start until Start() is called. The CertPEM/KeyPEM in
-// config are parsed eagerly so configuration errors surface here rather
-// than at the first TLS handshake.
+// The server will not start until Start() is called. The certificate is
+// loaded eagerly — from CertDir (reloading, on change) or from CertPEM/KeyPEM
+// (fixed) — so configuration errors surface here rather than at the first TLS
+// handshake.
 func NewServer(config *ServerConfig) (*Server, error) {
 	// Apply defaults
 	if config.Port == 0 {
@@ -95,17 +98,39 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		config.WriteTimeout = 10 * time.Second
 	}
 
+	getCertificate, err := newGetCertificate(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server{
+		config:         *config,
+		validators:     make(map[string]ValidationFunc),
+		getCertificate: getCertificate,
+		listening:      make(chan struct{}),
+	}, nil
+}
+
+// newGetCertificate builds the tls.Config GetCertificate callback: a reloading
+// file source when CertDir is set, otherwise a fixed certificate parsed once
+// from CertPEM/KeyPEM.
+func newGetCertificate(config *ServerConfig) (func(*tls.ClientHelloInfo) (*tls.Certificate, error), error) {
+	if config.CertDir != "" {
+		reloader, err := newCertReloader(
+			filepath.Join(config.CertDir, "tls.crt"),
+			filepath.Join(config.CertDir, "tls.key"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("loading webhook certificate from %s: %w", config.CertDir, err)
+		}
+		return reloader.GetCertificate, nil
+	}
+
 	cert, err := tls.X509KeyPair(config.CertPEM, config.KeyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("loading initial TLS certificate: %w", err)
 	}
-
-	return &Server{
-		config:     *config,
-		validators: make(map[string]ValidationFunc),
-		cert:       cert,
-		listening:  make(chan struct{}),
-	}, nil
+	return func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &cert, nil }, nil
 }
 
 // Listening returns a channel that is closed once the TLS listener has
@@ -151,8 +176,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	addr := fmt.Sprintf("%s:%d", s.config.BindAddress, s.config.Port)
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{s.cert},
-		MinVersion:   tls.VersionTLS12,
+		GetCertificate: s.getCertificate,
+		MinVersion:     tls.VersionTLS12,
 	}
 
 	s.httpServer = &http.Server{

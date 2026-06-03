@@ -16,8 +16,6 @@ package metrics
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -82,7 +80,6 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeResourceIndexUpdated,
 		events.EventTypeBecameLeader,
 		events.EventTypeLostLeadership,
-		events.EventTypeCertParsed,
 		events.EventTypeHAProxyPodRejected,
 	)
 
@@ -168,8 +165,6 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.RecordLeadershipTransition()
 	case *events.LostLeadershipEvent:
 		c.handleLostLeadership(e)
-	case *events.CertParsedEvent:
-		c.handleCertParsed(e)
 	case *events.HAProxyPodRejectedEvent:
 		c.metrics.RecordHAProxyPodRejected(e.Reason)
 	}
@@ -207,16 +202,6 @@ func (c *Component) handleLostLeadership(e *events.LostLeadershipEvent) {
 	if !c.becameLeaderAt.IsZero() {
 		c.metrics.AddTimeAsLeader(e.Timestamp().Sub(c.becameLeaderAt).Seconds())
 		c.becameLeaderAt = time.Time{}
-	}
-}
-
-func (c *Component) handleCertParsed(e *events.CertParsedEvent) {
-	block, _ := pem.Decode(e.CertPEM)
-	if block == nil {
-		return
-	}
-	if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
-		c.metrics.SetWebhookCertExpiry(cert.NotAfter.Unix())
 	}
 }
 

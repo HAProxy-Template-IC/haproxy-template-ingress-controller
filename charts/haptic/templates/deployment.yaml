@@ -109,8 +109,8 @@ spec:
             {{- if $webhookEnabled }}
             - name: WEBHOOK_PORT
               value: {{ $ports.webhook | quote }}
-            - name: WEBHOOK_CERT_SECRET_NAME
-              value: {{ $webhookSecretName | quote }}
+            - name: WEBHOOK_CERT_DIR
+              value: /etc/webhook/certs
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

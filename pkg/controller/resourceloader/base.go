@@ -17,7 +17,7 @@
 //
 // BaseLoader is a thin wrapper over pkg/controller/component.Base that keeps
 // the ProcessEvent naming familiar to existing loader implementations
-// (configloader, credentialsloader, certloader).
+// (configloader, credentialsloader).
 package resourceloader
 
 import (
@@ -32,7 +32,7 @@ import (
 
 // EventProcessor defines the interface for loader-specific event handling logic.
 //
-// Each loader (configloader, credentialsloader, certloader) implements this
+// Each loader (configloader, credentialsloader) implements this
 // interface to provide its specific parsing logic while reusing the common
 // event loop infrastructure.
 type EventProcessor interface {

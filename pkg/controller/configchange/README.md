@@ -37,7 +37,7 @@ The handler also exposes `SetInitialConfigVersion` and `EnableReinitialization` 
 
 ## Events
 
-- Subscribes: `ConfigParsedEvent`, `ConfigValidatedEvent`, `BecameLeaderEvent`, `CredentialsUpdatedEvent`, `CertParsedEvent`
+- Subscribes: `ConfigParsedEvent`, `ConfigValidatedEvent`, `BecameLeaderEvent`, `CredentialsUpdatedEvent`
 - Publishes: `ConfigValidationRequest` (scatter), `ConfigValidatedEvent`, `ConfigInvalidEvent`
 - Receives: `ConfigValidationResponse` (gather — collected via `bus.Request`, not a registered responder)
 

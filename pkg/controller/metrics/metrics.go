@@ -75,7 +75,6 @@ type Metrics struct {
 	WebhookRequestsTotal   *prometheus.CounterVec
 	WebhookRequestDuration prometheus.Histogram
 	WebhookValidationTotal *prometheus.CounterVec
-	WebhookCertExpiry      prometheus.Gauge
 	WebhookCertRotations   prometheus.Counter
 
 	// Leader election metrics
@@ -276,11 +275,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"Total number of webhook validation results",
 			[]string{"gvk", "result"},
 		),
-		WebhookCertExpiry: pkgmetrics.NewGauge(
-			registry,
-			"haptic_webhook_cert_expiry_timestamp_seconds",
-			"Timestamp when webhook certificates expire",
-		),
 		WebhookCertRotations: pkgmetrics.NewCounter(
 			registry,
 			"haptic_webhook_cert_rotations_total",
@@ -427,14 +421,6 @@ func (m *Metrics) RecordWebhookRequest(gvk, result string, durationSeconds float
 //   - result: The validation result ("allowed", "denied", or "error")
 func (m *Metrics) RecordWebhookValidation(gvk, result string) {
 	m.WebhookValidationTotal.WithLabelValues(gvk, result).Inc()
-}
-
-// SetWebhookCertExpiry sets the webhook certificate expiry timestamp.
-//
-// Parameters:
-//   - expiryTime: The time when the certificate expires
-func (m *Metrics) SetWebhookCertExpiry(expiryTime int64) {
-	m.WebhookCertExpiry.Set(float64(expiryTime))
 }
 
 // RecordWebhookCertRotation records a webhook certificate rotation.
