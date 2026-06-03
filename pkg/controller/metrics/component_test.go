@@ -410,33 +410,6 @@ func TestComponent_Metrics(t *testing.T) {
 	assert.Same(t, metrics, got)
 }
 
-func TestComponent_ValidationTestsEvents(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-	eventBus := busevents.NewEventBus(100)
-
-	component := New(metrics, eventBus)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go component.Start(ctx)
-	time.Sleep(10 * time.Millisecond)
-	eventBus.Start()
-
-	// Publish validation tests completed event
-	eventBus.Publish(events.NewValidationTestsCompletedEvent(10, 8, 2, 1500))
-
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify metrics updated
-	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ValidationTestsTotal))
-	assert.Equal(t, 8.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
-
-	cancel()
-}
-
 func TestComponent_LeaderElectionEvents(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

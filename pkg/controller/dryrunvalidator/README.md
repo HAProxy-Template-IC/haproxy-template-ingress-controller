@@ -9,10 +9,10 @@ The validating admission webhook needs a synchronous answer to "would this propo
 1. Receiving the proposed object from the webhook adapter (`ValidateDirect`).
 2. Building a `*stores.StoreOverlay` per admission verb (`NewStoreOverlayForCreate` / `…Update` / `…Delete`) and wrapping it in a `map[string]*stores.StoreOverlay` keyed by the resource type.
 3. Delegating render+validate to `pkg/controller/proposalvalidator.Component`'s `ValidateSync(ctx, overlays)`, which merges the overlay on top of the live stores for the duration of the call.
-4. Optionally running the embedded `validationTests` against the proposed config (when the CRD declares them).
-5. Returning a flat allow/deny + simplified reason string for the webhook response.
+4. Optionally dispatching the rendered file set to any configured pluggable validators (e.g. the SPOA hub in `--validate-socket` mode).
+5. Returning a flat allow/deny + simplified reason string (plus soft warnings) for the webhook response.
 
-The component does not subscribe to any events. `EventBus` is wired in only so the embedded `validationTests` runner can publish `ValidationTestsStarted/Completed/Failed` for the commentator and metrics components.
+The component does not subscribe to any events. It does **not** run the chart's embedded `validationTests` — those are chart-author scenarios with their own fixtures, run in CI via `haptic-controller validate` / `make test-templates`, not per admission request.
 
 ## Quick Start
 
@@ -22,21 +22,16 @@ import (
 )
 
 component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-    EventBus:          bus,                // for ValidationTests* observability events only
-    ProposalValidator: proposalValidator,  // sync-mode *proposalvalidator.Component
-    Config:            cfg,
-    Engine:            templateEngine,     // pre-compiled
-    ValidationPaths:   validationPaths,
-    Capabilities:      caps,
-    Logger:            logger,
+    ProposalValidator:  proposalValidator,  // sync-mode *proposalvalidator.Component
+    RESTMapper:         restMapper,
+    Logger:             logger,
+    PluggableValidator: pluggableValidator, // optional; nil disables sidecar dispatch
 })
 
 // pkg/controller/webhook hands this component as DryRunValidator and
 // calls ValidateDirect synchronously per admission request. There is
 // no Start() — the validator is a library, not a lifecycle component.
 ```
-
-`ValidationTests` is optional — the validator only constructs an internal `*testrunner.Runner` when the CRD has tests. With `Workers: 1` the runner stays lightweight enough for the webhook timeout window.
 
 ## Webhook Wiring
 

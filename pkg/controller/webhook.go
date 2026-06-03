@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -46,7 +44,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 // setupWebhook creates and starts the webhook component if webhook validation is enabled.
@@ -161,7 +158,6 @@ func setupWebhook(
 //     succeed at the pure server's fail-open path — exactly the bug
 //     Gitar flagged on commit 8d326660.
 func createDryRunValidator(
-	iterCtx context.Context,
 	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
 	storeProvider stores.StoreProvider,
@@ -262,72 +258,25 @@ func createDryRunValidator(
 		return nil, configValidator.ValidateDirect, nil
 	}
 
-	dryrun, err := buildDryRunValidator(iterCtx, cfg, bus, engine, renderService, validationService, storeProvider, capabilities, pluggableValidator, gvrMapper, logger)
-	if err != nil {
-		return nil, nil, err
-	}
+	dryrun := buildDryRunValidator(bus, renderService, validationService, storeProvider, pluggableValidator, gvrMapper, logger)
 	return dryrun, configValidator.ValidateDirect, nil
 }
 
 // buildDryRunValidator constructs the watched-resource admission validator.
 // Separate from createDryRunValidator so the call-site logic can decide
 // whether to build it based on whether any watched resource has
-// `enableValidationWebhook: true`. Wraps the per-iteration temp-dir setup
-// for the embedded test runner, the ProposalValidator (sync-only,
-// distinct from the leader-side instance to avoid duplicate event
-// subscriptions), and the DryRunValidator itself.
+// `enableValidationWebhook: true`. Wraps the sync-only ProposalValidator
+// (distinct from the leader-side instance to avoid duplicate event
+// subscriptions) and the DryRunValidator itself.
 func buildDryRunValidator(
-	iterCtx context.Context,
-	cfg *coreconfig.Config,
 	bus *busevents.EventBus,
-	engine helpersEngineForDryRunValidator,
 	renderService *renderer.RenderService,
 	validationService *validation.ValidationService,
 	baseStoreProvider stores.StoreProvider,
-	capabilities dataplane.Capabilities,
 	pluggableValidator *pluggablevalidator.Manager,
 	gvrMapper meta.RESTMapper,
 	logger *slog.Logger,
-) (*dryrunvalidator.Component, error) {
-	// Create validation paths for the embedded test runner.
-	//
-	// IMPORTANT: We deliberately do NOT reuse cfg.Dataplane.* here. Those
-	// paths point at the production HAProxy directory (`/etc/haproxy/...`),
-	// which is mounted read-only on the controller pod for security. The
-	// test runner derives its scratch base from `filepath.Dir(ConfigFile)`
-	// and tries to `mkdir <base>/worker-N/test-M/...` — that fails with
-	// EROFS the moment the webhook handles its first admission request.
-	//
-	// Instead, allocate a fresh directory under os.TempDir() that the
-	// pod has write access to. The test runner will create per-worker /
-	// per-test subdirectories inside it. Using just a basename (`maps`,
-	// `ssl`, `general`) for the subdir parts mirrors how production
-	// tooling shapes ValidationPaths from real Dataplane paths.
-	//
-	// Each iteration creates its own scratch directory so a CRD reload,
-	// credentials rotation, or webhook-cert rotation doesn't see stale
-	// files from the previous iteration. The directory is cleaned up
-	// when iterCtx ends — without that, every iteration restart would
-	// leak another tempdir into the pod's /tmp until the pod itself
-	// restarts.
-	webhookValidationTempDir, err := os.MkdirTemp("", "haptic-webhook-validation-*")
-	if err != nil {
-		return nil, fmt.Errorf("creating webhook validation temp directory: %w", err)
-	}
-	go func() {
-		<-iterCtx.Done()
-		if err := os.RemoveAll(webhookValidationTempDir); err != nil {
-			logger.Warn("Failed to remove webhook validation temp directory",
-				"path", webhookValidationTempDir, "error", err)
-		}
-	}()
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:           filepath.Join(webhookValidationTempDir, "maps"),
-		SSLCertsDir:       filepath.Join(webhookValidationTempDir, "ssl"),
-		GeneralStorageDir: filepath.Join(webhookValidationTempDir, "general"),
-		ConfigFile:        filepath.Join(webhookValidationTempDir, "haproxy.cfg"),
-	}
-
+) *dryrunvalidator.Component {
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
 		Renderer:  renderService,
 		Validator: validationService,
@@ -346,33 +295,18 @@ func buildDryRunValidator(
 		SyncOnly:          true,
 	})
 
-	// SkipValidationTests is true: the admission webhook only validates
-	// the *submitted* Ingress / HTTPRoute / etc. by rendering with an
-	// overlay store. The chart's embedded `validationTests` are
-	// chart-author scenarios with their own fixtures (often referencing
-	// secrets / ingresses that exist only in the fixture set, not the
-	// live cluster) — running them per-admission both wastes work and
-	// surfaces fixture-vs-cluster mismatches as admission denials.
-	// Those tests still run in CI via `haptic-controller validate` and
-	// the `make test-templates` Makefile target.
+	// The admission webhook only validates the *submitted* resource
+	// (Ingress / HTTPRoute / etc.) by rendering with an overlay store and
+	// checking the result. The chart's embedded `validationTests` are NOT
+	// run here — they are chart-author scenarios with their own fixtures,
+	// executed in CI via `haptic-controller validate` / `make test-templates`.
 	return dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-		EventBus:            bus,
-		ProposalValidator:   proposalValidatorInstance,
-		Config:              cfg,
-		Engine:              engine,
-		ValidationPaths:     validationPaths,
-		Capabilities:        capabilities,
-		RESTMapper:          gvrMapper,
-		Logger:              logger,
-		SkipValidationTests: true,
-		PluggableValidator:  pluggableValidator,
-	}), nil
+		ProposalValidator:  proposalValidatorInstance,
+		RESTMapper:         gvrMapper,
+		Logger:             logger,
+		PluggableValidator: pluggableValidator,
+	})
 }
-
-// helpersEngineForDryRunValidator is a type alias to keep the
-// buildDryRunValidator signature short. dryrunvalidator.ComponentConfig
-// takes templating.Engine; this matches.
-type helpersEngineForDryRunValidator = templating.Engine
 
 // setupReconciliation creates and starts the reconciliation components (Stage 5).
 //

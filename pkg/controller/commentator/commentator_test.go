@@ -760,37 +760,6 @@ func TestEventCommentator_GenerateInsight_ValidationTestEvents(t *testing.T) {
 		assert.Contains(t, insight, "3 errors")
 		assertContainsAttr(t, attrs, "error_count", 3)
 	})
-
-	t.Run("ValidationTestsStartedEvent", func(t *testing.T) {
-		event := events.NewValidationTestsStartedEvent(5)
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Starting validation tests")
-		assert.Contains(t, insight, "5 tests")
-		assertContainsAttr(t, attrs, "test_count", 5)
-	})
-
-	t.Run("ValidationTestsCompletedEvent", func(t *testing.T) {
-		event := events.NewValidationTestsCompletedEvent(10, 8, 2, 500)
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Validation tests completed")
-		assert.Contains(t, insight, "8 passed")
-		assert.Contains(t, insight, "2 failed")
-		assertContainsAttr(t, attrs, "total_tests", 10)
-	})
-
-	t.Run("ValidationTestsFailedEvent", func(t *testing.T) {
-		event := events.NewValidationTestsFailedEvent([]string{"test1", "test2"})
-
-		insight, attrs := ec.generateInsight(event)
-
-		assert.Contains(t, insight, "Validation tests failed")
-		assert.Contains(t, insight, "2 tests")
-		assertContainsAttr(t, attrs, "failed_count", 2)
-	})
 }
 
 func TestEventCommentator_GenerateInsight_HAProxyPodEvents(t *testing.T) {

@@ -16,7 +16,7 @@ Modify this package when:
 
 - Template rendering logic → Use `pkg/templating`
 - HAProxy validation → Use `pkg/dataplane`
-- Resource storage → Use `pkg/controller/resourcestore`
+- Resource storage / overlays → Use `pkg/stores`
 - Webhook server → Use `pkg/webhook`
 
 ## Package Purpose
@@ -117,11 +117,6 @@ func (c *Component) validateWithOverlay(
     // returned `warnings` slice. PipelineResult is nil on the
     // baseline-also-fails admit path, in which case dispatch is skipped.
 
-    if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
-        if err := c.runValidationTests(requestID); err != nil {
-            return false, err.Error(), nil
-        }
-    }
     return true, "", nil
 }
 ```
@@ -228,17 +223,15 @@ The DryRunValidator delegates the render+validate work to a `*proposalvalidator.
 
 ```go
 type Component struct {
-    eventBus           *busevents.EventBus            // ValidationTests* observability events only
     proposalValidator  *proposalvalidator.Component   // Performs render + 3-phase validation
     pluggableValidator *pluggablevalidator.Manager    // Optional: external validator sidecar dispatch
-    config             *config.Config                 // Cached for testRunner construction
-    testRunner         *testrunner.Runner             // Optional: only built if ValidationTests is set
+    restMapper         meta.RESTMapper                // GVK -> watched-resource plural (RULE #1)
     logger             *slog.Logger
 }
 
 func (c *Component) ValidateDirect(ctx context.Context, gvk, namespace, name string, object any, operation string) (allowed bool, reason string, warnings []string) {
     // Build the overlay store, delegate render+validate to proposalValidator.ValidateSync,
-    // optionally run embedded validationTests, return a flat allow/deny + reason.
+    // dispatch the rendered files to any pluggable validators, return a flat allow/deny + reason.
     // No event hop — the webhook holds the request open and gets the answer synchronously.
 }
 ```
@@ -272,13 +265,10 @@ The full integration shape is in `component_test.go`. The constructor takes a
 
 ```go
 component := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{
-    EventBus:          bus, // optional unless ValidationTests are configured
-    ProposalValidator: proposalValidator,
-    Config:            cfg,
-    Engine:            engine,
-    ValidationPaths:   validationPaths,
-    Capabilities:      capabilities,
-    Logger:            logger,
+    ProposalValidator:  proposalValidator,
+    RESTMapper:         restMapper,
+    Logger:             logger,
+    PluggableValidator: pluggableValidator, // optional
 })
 ```
 
@@ -346,38 +336,16 @@ case "DELETE": overlay = stores.NewStoreOverlayForDelete(namespace, name)
 }
 ```
 
-## Validation Tests Integration
+## Embedded validationTests are NOT run here
 
-**Status**: IMPLEMENTED ✓
-
-The DryRunValidator now integrates the test runner to automatically execute embedded validation tests during webhook admission control.
-
-**Implementation Details**:
-
-1. **Test Runner Creation**: DryRunValidator creates a test runner instance in the constructor with Workers=1 (sequential execution for webhook context)
-
-2. **Test Execution Flow**: After HAProxy configuration validation passes, if `config.ValidationTests` is non-empty:
-   - Publishes `ValidationTestsStartedEvent`
-   - Runs all validation tests via `testRunner.RunTests()`
-   - Publishes `ValidationTestsCompletedEvent` with results
-   - If tests fail: publishes `ValidationTestsFailedEvent` and rejects admission with detailed error message
-   - If tests pass: continues to admission approval
-
-3. **Error Messages**: Detailed error messages include:
-   - Number of failed tests
-   - Test names that failed
-   - Rendering errors (if any)
-   - Assertion failures with descriptions
-
-**Benefits**:
-
-- Automated validation on every admission request
-- Prevents invalid configurations from being admitted
-- Rich error feedback for debugging
-- Metrics and observability through event publishing
-- No need to run CLI validation separately
-
-**Configuration**: Add `validationTests` to your HAProxyTemplateConfig CRD to enable automatic webhook validation.
+The DryRunValidator validates the *submitted* resource (Ingress/HTTPRoute/etc.)
+by rendering with an overlay store and checking the result. It does **not** run
+the chart's embedded `validationTests`: those are chart-author scenarios with
+their own fixtures (often referencing secrets/ingresses that exist only in the
+fixture set, not the live cluster), so running them per-admission would both
+waste work and surface fixture-vs-cluster mismatches as admission denials. The
+`validationTests` are executed instead by `haptic-controller validate` (CLI /
+CI) and the `make test-templates` target, via `pkg/controller/testrunner`.
 
 ## Future Enhancements
 

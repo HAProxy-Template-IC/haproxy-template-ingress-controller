@@ -446,51 +446,6 @@ func TestValidationEvents(t *testing.T) {
 		require.NotNil(t, event)
 		assert.Nil(t, event.Errors)
 	})
-
-	t.Run("ValidationTestsStartedEvent", func(t *testing.T) {
-		event := NewValidationTestsStartedEvent(10)
-		require.NotNil(t, event)
-		assert.Equal(t, 10, event.TestCount)
-		assert.Equal(t, EventTypeValidationTestsStarted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ValidationTestsCompletedEvent", func(t *testing.T) {
-		event := NewValidationTestsCompletedEvent(10, 8, 2, 500)
-		require.NotNil(t, event)
-		assert.Equal(t, 10, event.TotalTests)
-		assert.Equal(t, 8, event.PassedTests)
-		assert.Equal(t, 2, event.FailedTests)
-		assert.Equal(t, int64(500), event.DurationMs)
-		assert.Equal(t, EventTypeValidationTestsCompleted, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ValidationTestsFailedEvent", func(t *testing.T) {
-		failedTests := []string{"test1", "test2"}
-		event := NewValidationTestsFailedEvent(failedTests)
-		require.NotNil(t, event)
-		assert.Equal(t, failedTests, event.FailedTests)
-		assert.Equal(t, EventTypeValidationTestsFailed, event.EventType())
-		assert.False(t, event.Timestamp().IsZero())
-	})
-
-	t.Run("ValidationTestsFailedEvent_DefensiveCopy", func(t *testing.T) {
-		failedTests := []string{"test1"}
-		event := NewValidationTestsFailedEvent(failedTests)
-
-		// Modify original
-		failedTests[0] = "modified"
-
-		// Event should have original value
-		assert.Equal(t, "test1", event.FailedTests[0])
-	})
-
-	t.Run("ValidationTestsFailedEvent_EmptyTests", func(t *testing.T) {
-		event := NewValidationTestsFailedEvent(nil)
-		require.NotNil(t, event)
-		assert.Nil(t, event.FailedTests)
-	})
 }
 
 func TestDeploymentEvents(t *testing.T) {
@@ -893,9 +848,6 @@ func TestTimestampNotZero(t *testing.T) {
 		// Validation events
 		{"ValidationCompleted", NewValidationCompletedEvent(nil, 0, "", nil, true)},
 		{"ValidationFailed", NewValidationFailedEvent(nil, 0, "")},
-		{"ValidationTestsStarted", NewValidationTestsStartedEvent(0)},
-		{"ValidationTestsCompleted", NewValidationTestsCompletedEvent(0, 0, 0, 0)},
-		{"ValidationTestsFailed", NewValidationTestsFailedEvent(nil)},
 		// Deployment events
 		{"DeploymentStarted", NewDeploymentStartedEvent(nil)},
 		{"InstanceDeployed", NewInstanceDeployedEvent(nil, 0, false)},

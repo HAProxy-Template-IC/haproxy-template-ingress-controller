@@ -51,12 +51,6 @@ type Metrics struct {
 	ValidationTotal  prometheus.Counter
 	ValidationErrors prometheus.Counter
 
-	// Validation test metrics
-	ValidationTestsTotal     prometheus.Counter
-	ValidationTestsPassTotal prometheus.Counter
-	ValidationTestsFailTotal prometheus.Counter
-	ValidationTestDuration   prometheus.Histogram
-
 	// Resource metrics
 	ResourceCount *prometheus.GaugeVec
 
@@ -182,29 +176,6 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_validation_errors_total",
 			"Total number of failed validations",
-		),
-
-		// Validation test metrics
-		ValidationTestsTotal: pkgmetrics.NewCounter(
-			registry,
-			"haptic_validation_tests_total",
-			"Total number of validation tests executed",
-		),
-		ValidationTestsPassTotal: pkgmetrics.NewCounter(
-			registry,
-			"haptic_validation_tests_pass_total",
-			"Total number of validation tests that passed",
-		),
-		ValidationTestsFailTotal: pkgmetrics.NewCounter(
-			registry,
-			"haptic_validation_tests_fail_total",
-			"Total number of validation tests that failed",
-		),
-		ValidationTestDuration: pkgmetrics.NewHistogramWithBuckets(
-			registry,
-			"haptic_validation_test_duration_seconds",
-			"Time spent running validation tests",
-			pkgmetrics.DurationBuckets(),
 		),
 
 		// Resource metrics
@@ -460,20 +431,6 @@ func (m *Metrics) RecordLeadershipTransition() {
 //   - seconds: Time spent as leader in seconds
 func (m *Metrics) AddTimeAsLeader(seconds float64) {
 	m.LeaderElectionTimeAsLeaderSeconds.Add(seconds)
-}
-
-// RecordValidationTests records validation test execution results.
-//
-// Parameters:
-//   - total: Total number of tests executed
-//   - passed: Number of tests that passed
-//   - failed: Number of tests that failed
-//   - durationSeconds: Time spent running tests (use time.Duration.Seconds())
-func (m *Metrics) RecordValidationTests(total, passed, failed int, durationSeconds float64) {
-	m.ValidationTestsTotal.Add(float64(total))
-	m.ValidationTestsPassTotal.Add(float64(passed))
-	m.ValidationTestsFailTotal.Add(float64(failed))
-	m.ValidationTestDuration.Observe(durationSeconds)
 }
 
 // RecordEventDrop records an event drop due to full subscriber buffer.

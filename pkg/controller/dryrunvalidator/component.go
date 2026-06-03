@@ -17,8 +17,8 @@
 //
 // The validator is called synchronously by pkg/controller/webhook via
 // ValidateDirect. It creates an overlay store simulating the admission
-// request's hypothetical state, delegates to ProposalValidator.ValidateSync
-// for rendering and validation, and runs validation tests if configured.
+// request's hypothetical state and delegates to ProposalValidator.ValidateSync
+// for rendering and validation.
 package dryrunvalidator
 
 import (
@@ -26,61 +26,36 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
-const (
-	// ComponentName identifies this validator in log records.
-	ComponentName = "dryrun-validator"
-
-	// TestExecutionTimeout is the maximum time allowed for running validation tests.
-	// Tests run sequentially with Workers=1, so this should accommodate multiple tests.
-	TestExecutionTimeout = 60 * time.Second
-)
+// ComponentName identifies this validator in log records.
+const ComponentName = "dryrun-validator"
 
 // Component implements the dry-run validator.
 //
 // It creates store overlays from admission requests and delegates validation
-// to ProposalValidator. The component also runs validation tests if
-// configured, which is not handled by ProposalValidator. After a successful
-// dry-run, it dispatches the rendered file set to any configured pluggable
-// validators (e.g. the SPOA hub running in --validate-socket mode); their
-// errors deny admission with line/col-precise diagnostics, their warnings
-// flow up to the webhook handler unchanged.
+// to ProposalValidator. After a successful dry-run, it dispatches the rendered
+// file set to any configured pluggable validators (e.g. the SPOA hub running in
+// --validate-socket mode); their errors deny admission with line/col-precise
+// diagnostics, their warnings flow up to the webhook handler unchanged.
 type Component struct {
-	eventBus           *busevents.EventBus
 	proposalValidator  *proposalvalidator.Component
 	pluggableValidator *pluggablevalidator.Manager
-	config             *config.Config
-	testRunner         *testrunner.Runner
 	restMapper         meta.RESTMapper
 	logger             *slog.Logger
 }
 
 // ComponentConfig contains configuration for creating a DryRunValidator.
 type ComponentConfig struct {
-	// EventBus is used to publish validation-tests observability events
-	// (ValidationTestsStarted/Completed/Failed). The component does not
-	// subscribe to anything; ValidateDirect is called synchronously.
-	EventBus *busevents.EventBus
-
 	// ProposalValidator is the component that performs render-validate pipeline.
 	ProposalValidator *proposalvalidator.Component
-
-	// Config is the controller configuration containing templates.
-	Config *config.Config
 
 	// RESTMapper resolves an admission request's GVK to the watched
 	// resource's plural (the overlay store key) using the cluster's
@@ -89,29 +64,8 @@ type ComponentConfig struct {
 	// resolves correctly, with no hardcoded pluralization table (RULE #1).
 	RESTMapper meta.RESTMapper
 
-	// Engine is the pre-compiled template engine for rendering validation tests.
-	Engine templating.Engine
-
-	// ValidationPaths is the filesystem paths for HAProxy validation.
-	ValidationPaths *dataplane.ValidationPaths
-
-	// Capabilities is the HAProxy capabilities determined from local version.
-	Capabilities dataplane.Capabilities
-
 	// Logger is the structured logger.
 	Logger *slog.Logger
-
-	// SkipValidationTests disables the embedded `validationTests` runner
-	// for this validator. Set true for the admission-webhook caller —
-	// `validationTests` are CHART-AUTHOR tests with their own fixtures
-	// (e.g. expecting a `default-ssl-cert` Secret in their fixture set);
-	// running them on every admission request both wastes work (the same
-	// 130+ tests run for every Ingress, regardless of what the
-	// submission contains) and surfaces fixture-vs-cluster mismatches as
-	// admission denials. The chart's own CI / `haptic-controller validate`
-	// path runs those tests; the webhook should only validate the
-	// proposal itself.
-	SkipValidationTests bool
 
 	// PluggableValidator is the optional pluggable-validator manager that
 	// dispatches the rendered file set to external validator sidecars
@@ -129,40 +83,17 @@ func New(cfg *ComponentConfig) *Component {
 		logger = slog.Default()
 	}
 
-	// Create test runner for validation tests.
-	// SkipValidationTests is honoured first: the admission webhook caller
-	// passes true so chart-author tests (which run against their own
-	// fixtures, not the live cluster) don't get re-executed for every
-	// admission request — see the field doc on ComponentConfig.
-	var testRunnerInstance *testrunner.Runner
-	if !cfg.SkipValidationTests && len(cfg.Config.ValidationTests) > 0 {
-		testRunnerInstance = testrunner.New(
-			cfg.Config,
-			cfg.Engine,
-			cfg.ValidationPaths,
-			&testrunner.Options{
-				Logger:       logger.With("component", "test-runner"),
-				Workers:      1, // Sequential execution in webhook context
-				Capabilities: cfg.Capabilities,
-			},
-		)
-	}
-
 	return &Component{
-		eventBus:           cfg.EventBus,
 		proposalValidator:  cfg.ProposalValidator,
 		pluggableValidator: cfg.PluggableValidator,
-		config:             cfg.Config,
-		testRunner:         testRunnerInstance,
 		restMapper:         cfg.RESTMapper,
 		logger:             logger.With("component", ComponentName),
 	}
 }
 
 // validateWithOverlay maps the GVK, builds an overlay store for the affected
-// resource, runs the proposal validator, runs validation tests if
-// configured, and finally dispatches the rendered file set to any
-// pluggable validators. Returns whether the resource is allowed, a
+// resource, runs the proposal validator, and finally dispatches the rendered
+// file set to any pluggable validators. Returns whether the resource is allowed, a
 // user-facing denial reason (empty when allowed), and any soft warnings
 // the pluggable validators surfaced — the latter flow through to the
 // admission response on both allow and deny paths.
@@ -195,12 +126,6 @@ func (c *Component) validateWithOverlay(ctx context.Context, gvk, namespace, nam
 			"phase", result.Phase,
 			"simplified", simplified)
 		return false, simplified, nil
-	}
-
-	if c.testRunner != nil && len(c.config.ValidationTests) > 0 {
-		if err := c.runValidationTests(requestID); err != nil {
-			return false, err.Error(), nil
-		}
 	}
 
 	// Pluggable validator dispatch runs after the standard pipeline

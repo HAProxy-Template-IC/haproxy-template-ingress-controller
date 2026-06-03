@@ -88,11 +88,6 @@ const (
 	EventTypeValidationCompleted = "validation.completed"
 	EventTypeValidationFailed    = "validation.failed"
 
-	// Validation test event types (embedded validation tests).
-	EventTypeValidationTestsStarted   = "validation_tests.started"
-	EventTypeValidationTestsCompleted = "validation_tests.completed"
-	EventTypeValidationTestsFailed    = "validation_tests.failed"
-
 	// Deployment event types.
 	EventTypeDeploymentScheduled      = "deployment.scheduled"
 	EventTypeDeploymentStarted        = "deployment.started"

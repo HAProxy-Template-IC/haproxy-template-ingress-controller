@@ -221,7 +221,6 @@ go metricsServer.Start(ctx)
 
 3. **Validation**:
    - `haptic_validation_total`, `haptic_validation_errors_total`
-   - `haptic_validation_tests_{total,pass_total,fail_total}`, `haptic_validation_test_duration_seconds`
 
 4. **Resources**:
    - `haptic_resource_count` (gauge vector labeled by `type`, including `haproxy-pods` and every `watchedResources` key)
