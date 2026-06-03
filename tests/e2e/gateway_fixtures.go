@@ -277,6 +277,21 @@ spec:
             - name: http
               containerPort: 80
               protocol: TCP
+          # Without a readiness probe, K8s marks the pod Ready the instant the
+          # container process starts — before the echo server calls listen() —
+          # so the EndpointSlice flips ready=true (and waitForServiceEndpointReady
+          # returns) while the kernel still RSTs incoming SYNs. HAProxy then
+          # dispatches to a not-yet-listening pod and the warmup's
+          # 5-consecutive-200 streak breaks (transient SC-- 503). Mirrors the
+          # readiness probe NewEchoServerBackend gained in MR !1019.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 1
+            successThreshold: 1
+            failureThreshold: 1
+            timeoutSeconds: 1
 ---
 apiVersion: v1
 kind: Service

@@ -217,9 +217,15 @@ templateSnippets:
               between the two reads — that's the race commit 60e867fd
               guarded against at the call sites but didn't make coherent.
             -#}
-            {%- var nginxAuthSecret, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
+            {%- var nginxAuthSecretAny, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
               return resources.secrets.GetSingle(secretNs, secretName)
             }) %}
+            {#- Assert to the typed pointer before the nil check (see the userlist
+                snippet below): a boxed typed-nil *resources.secrets.T passes `!= nil`,
+                which would emit an http_auth ref to a userlist the (correctly-skipping)
+                userlist snippet never produced — `haproxy -c` then fails with
+                "unable to find userlist". -#}
+            {%- var nginxAuthSecret, _ = nginxAuthSecretAny.(*resources.secrets.T) %}
             {%- if nginxAuthSecret != nil %}
       # nginx-ingress/backend-directives-auth ({{ key }})
       http-request auth realm "{{ authRealm }}" unless { http_auth({{ userlistName }}) }
@@ -283,14 +289,17 @@ templateSnippets:
                 during render and two direct GetSingle calls can observe
                 different states.
               -#}
-              {%- var secret, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
+              {%- var secretAny, _ = shared.ComputeIfAbsent("nginx_auth_secret:" + secretNs + "/" + secretName, func() any {
                 return resources.secrets.GetSingle(secretNs, secretName)
               }) %}
+              {#- Assert to the typed pointer BEFORE the nil check. GetSingle returns a
+                  typed *resources.secrets.T — a typed-nil when the Secret is absent —
+                  and boxing that through the closure's `any` yields a NON-nil interface,
+                  so `secretAny != nil` would pass for an absent Secret and the `.Data`
+                  access below would dereference a nil pointer. -#}
+              {%- var secret, _ = secretAny.(*resources.secrets.T) %}
               {%- if secret != nil %}
-                {#- secret is `any` from shared.ComputeIfAbsent; type-assert
-                    to the typed pointer the closure returned so .Data
-                    field access compiles. -#}
-                {%- var authData = secret.(*resources.secrets.T).Data["auth"] | b64decode() | tostring() %}
+                {%- var authData = secret.Data["auth"] | b64decode() | tostring() %}
                 {%- if authData != "" %}
       # nginx-ingress/global-top-auth ({{ key }})
       userlist {{ userlistName }}

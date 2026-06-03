@@ -84,7 +84,7 @@ func TestRuntimeBypass_AppliesPerEndpoint(t *testing.T) {
 		}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 
 	// applyRuntimeRaw is synchronous — every endpoint has applied by the time it
 	// returns.
@@ -94,7 +94,7 @@ func TestRuntimeBypass_AppliesPerEndpoint(t *testing.T) {
 	assert.Equal(t, int32(0), closes.Load(), "clients are persistent — not closed per apply")
 
 	// A second apply over the same endpoints reuses the cached clients.
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 	assert.Equal(t, int32(6), calls.Load())
 	assert.Equal(t, int32(3), opens.Load(), "second apply reuses persistent clients — no reopen")
 
@@ -127,7 +127,7 @@ func TestRuntimeBypass_BlocksUntilAllEndpointsDone(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 
 	// On return, all three applies have finished (the call blocked on them).
 	assert.Equal(t, int32(3), completed.Load(), "applyRuntimeRaw must block until every endpoint completes")
@@ -147,13 +147,13 @@ func TestRuntimeBypass_EvictsStaleClients(t *testing.T) {
 		}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 	b.mu.Lock()
 	require.Len(t, b.clients, 3, "three clients cached")
 	b.mu.Unlock()
 
 	// Next apply only mentions endpoint a — b and c are stale and must be closed.
-	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}))
+	b.applyRuntimeRaw(context.Background(), depFor([]dataplane.Endpoint{{URL: "http://a"}}), false)
 	assert.Equal(t, int32(2), closes.Load(), "the two absent endpoints' clients are closed")
 	b.mu.Lock()
 	_, hasA := b.clients["http://a"]
@@ -179,7 +179,7 @@ func TestRuntimeBypass_SwallowsSyncError(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 
 	assert.Equal(t, int32(3), calls.Load(),
 		"the failing endpoint must not prevent the others from applying")
@@ -200,7 +200,7 @@ func TestRuntimeBypass_SwallowsClientOpenError(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+	b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 
 	assert.Equal(t, int32(2), calls.Load(),
 		"two endpoints apply; the one whose client failed to open is skipped")
@@ -224,7 +224,7 @@ func TestRuntimeBypass_RecoversPanic(t *testing.T) {
 
 	// Must not panic out of applyRuntimeRaw (the per-endpoint recover catches it).
 	require.NotPanics(t, func() {
-		b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()))
+		b.applyRuntimeRaw(context.Background(), depFor(threeEndpoints()), false)
 	})
 	assert.Equal(t, int32(2), calls.Load(),
 		"the panicking endpoint is recovered; the others apply")
@@ -244,7 +244,7 @@ func TestRuntimeBypass_CancelledParentStopsSpawning(t *testing.T) {
 		}}, nil
 	})
 
-	b.applyRuntimeRaw(ctx, depFor(threeEndpoints()))
+	b.applyRuntimeRaw(ctx, depFor(threeEndpoints()), false)
 
 	assert.Equal(t, int32(0), calls.Load(), "a cancelled parent context must stop spawning applies")
 }
@@ -276,7 +276,7 @@ func TestRuntimeBypass_PublishesConfigAppliedForRuntimeLane(t *testing.T) {
 			{URL: "http://b", PodName: "pod-b", PodNamespace: "haptic"},
 		},
 	}
-	b.applyRuntimeRaw(context.Background(), dep)
+	b.applyRuntimeRaw(context.Background(), dep, false)
 
 	got := map[string]string{} // podName -> reported checksum
 	timeout := time.After(2 * time.Second)
@@ -323,7 +323,7 @@ func TestRuntimeBypass_NoConfigAppliedForStructuralPreInterval(t *testing.T) {
 		runtimeConfigNamespace: "haptic",
 		endpoints:              []dataplane.Endpoint{{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"}},
 	}
-	b.applyRuntimeRaw(context.Background(), dep)
+	b.applyRuntimeRaw(context.Background(), dep, false)
 
 	select {
 	case ev := <-appliedCh:
@@ -360,7 +360,7 @@ func TestRuntimeBypass_PublishesDeployedConfigForRuntimeLane(t *testing.T) {
 			{URL: "http://b", PodName: "pod-b", PodNamespace: "haptic"},
 		},
 	}
-	b.applyRuntimeRaw(context.Background(), dep)
+	b.applyRuntimeRaw(context.Background(), dep, false)
 
 	select {
 	case ev := <-reqCh:
@@ -404,11 +404,65 @@ func TestRuntimeBypass_StructuralPreInterval_NoDeployedConfigPublish(t *testing.
 		runtimeConfigNamespace: "haptic",
 		endpoints:              []dataplane.Endpoint{{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"}},
 	}
-	b.applyRuntimeRaw(context.Background(), dep)
+	b.applyRuntimeRaw(context.Background(), dep, false)
 
 	select {
 	case ev := <-reqCh:
 		t.Fatalf("structural pre-interval apply must NOT emit DeployedConfigPublishRequest, got %+v", ev)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestRuntimeBypass_PartialSuppressesDeployPublishes verifies the in-flight partial
+// apply (partial=true) of a laneRuntimeRaw render — applied while a SEPARATE
+// structural deploy is mid-reload, which still owns completion + CR/status — keeps
+// only the RuntimeFastPathResultEvent metric and suppresses BOTH deploy-owning
+// publishes (ConfigAppliedToPodEvent, DeployedConfigPublishRequest). The dep is
+// laneRuntimeRaw with a resolved HAProxyCfg identity — exactly the shape that WOULD
+// publish on a non-partial apply — proving it is the `partial` flag, not the lane
+// or a missing identity, that gates the publishes.
+func TestRuntimeBypass_PartialSuppressesDeployPublishes(t *testing.T) {
+	bus := testutil.NewTestBus()
+	appliedCh := bus.SubscribeTypes("test-partial-applied", 50, events.EventTypeConfigAppliedToPod)
+	publishCh := bus.SubscribeTypes("test-partial-publish", 50, events.EventTypeDeployedConfigPublishRequest)
+	metricCh := bus.SubscribeTypes("test-partial-metric", 50, events.EventTypeRuntimeFastPathResult)
+	bus.Start()
+
+	b := newTestBypass(func(_ context.Context, _ *dataplane.Endpoint) (runtimeSyncer, error) {
+		return &fakeRuntimeSyncer{sync: func() (*dataplane.SyncResult, error) {
+			return &dataplane.SyncResult{Success: true, AppliedOperations: []dataplane.AppliedOperation{{}}}, nil
+		}}, nil
+	})
+	b.eventBus = bus
+
+	dep := &scheduledDeployment{
+		config:                 "deployed-config-body",
+		contentChecksum:        "checksum-xyz",
+		lane:                   laneRuntimeRaw, // would publish on a non-partial apply
+		runtimeConfigName:      "haptic-config-haproxycfg",
+		runtimeConfigNamespace: "haptic",
+		endpoints:              []dataplane.Endpoint{{URL: "http://a", PodName: "pod-a", PodNamespace: "haptic"}},
+	}
+	b.applyRuntimeRaw(context.Background(), dep, true) // partial
+
+	// The metric event still fires (fire-vs-apply accounting stays correct).
+	select {
+	case ev := <-metricCh:
+		_, ok := ev.(*events.RuntimeFastPathResultEvent)
+		require.True(t, ok, "expected *RuntimeFastPathResultEvent, got %T", ev)
+	case <-time.After(2 * time.Second):
+		t.Fatal("partial apply must still emit RuntimeFastPathResultEvent")
+	}
+
+	// Neither deploy-owning publish fires — the in-flight structural deploy owns them.
+	select {
+	case ev := <-appliedCh:
+		t.Fatalf("partial apply must NOT publish ConfigAppliedToPodEvent, got %+v", ev)
+	case <-time.After(300 * time.Millisecond):
+	}
+	select {
+	case ev := <-publishCh:
+		t.Fatalf("partial apply must NOT emit DeployedConfigPublishRequest, got %+v", ev)
 	case <-time.After(300 * time.Millisecond):
 	}
 }

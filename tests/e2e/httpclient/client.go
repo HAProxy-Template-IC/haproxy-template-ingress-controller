@@ -189,6 +189,14 @@ func (c *Client) HTTPPort() int { return c.httpPort }
 // HTTPSPort returns the HTTPS NodePort.
 func (c *Client) HTTPSPort() int { return c.httpsPort }
 
+// CloseIdleConnections drops the shared transport's pooled keepalive
+// connections so the next request dials a fresh one. Useful when polling for a
+// not-yet-live route across a reload: a request that 404s on the pre-change
+// HAProxy worker pins a keepalive connection to that (draining) worker, which
+// keeps answering with the old config until it closes; forcing a fresh dial lets
+// the retry reach a current worker generation.
+func (c *Client) CloseIdleConnections() { c.transport.CloseIdleConnections() }
+
 // resolveNodeIP returns an IPv4 NodePort IP, or 127.0.0.1 outside DinD.
 func resolveNodeIP() (string, error) {
 	if !kindutil.IsDockerInDocker() {

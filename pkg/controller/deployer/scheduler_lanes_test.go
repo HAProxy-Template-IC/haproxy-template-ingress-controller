@@ -17,6 +17,7 @@ package deployer
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -166,66 +167,78 @@ func TestSchedulerLanes_Case1_RuntimeEligibleIdle_AppliesRuntimeRawNow(t *testin
 	assert.Equal(t, runtime, s.lastDispatchedParsed, "dispatch baseline advances on runtime-raw")
 }
 
-// Case 2 (headline): structural in flight → its DeploymentScheduledEvent fires;
-// then after handleDeploymentCompleted the queued runtime-raw applyRuntimeRaw
-// fires. Asserts the ordering: structural event BEFORE runtime apply.
-func TestSchedulerLanes_Case2_RuntimeRawAfterInFlightStructuralCompletes(t *testing.T) {
+// Case 2 (headline — the #55 fix): a runtime-eligible render that arrives WHILE a
+// structural deploy is in flight has its server subset applied to the live workers
+// IMMEDIATELY (a partial runtime apply), not queued behind the whole in-flight
+// deploy's execution. This is the residual rolling-restart 503: under cross-tenant
+// churn a structural reload can take ~1s to execute, and a pod that goes Ready in
+// that window must get its reserved-slot address onto HAProxy in ~ms — it cannot
+// wait for the unrelated deploy to finish. MUST FAIL without the awaitCompletion
+// interleave (the old select-only awaitCompletion never consumed pendingSignal, so
+// the apply only fired AFTER completion).
+func TestSchedulerLanes_Case2_RuntimeSubsetAppliesDuringInFlightStructural(t *testing.T) {
 	s, scheduledCh, applied, cancel := newLaneScheduler(t, 0)
 	defer cancel()
 
 	_, _, structural := laneRenders(t)
 
 	// Dispatch a structural render first. Cold start (nil baseline) → structural,
-	// which the loop publishes and marks in-flight.
+	// which the loop publishes and marks in-flight (loop parks in awaitCompletion).
 	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
 		"structural-change", "corr-structural", nil, true, "")
 	sd := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
 	assert.Equal(t, "structural-config", sd.Config, "the structural deploy is published first")
 
-	// While it is in flight, schedule a runtime-eligible render. Its diff must be
-	// taken against the now-dispatched structural baseline (which added api2), so
-	// the runtime render keeps api2 and only changes SRV_1's address — a pure
-	// runtime-eligible diff. (The loop set lastDispatchedParsed = structural when
-	// it dispatched the structural deploy above.)
+	// While it is in flight, schedule a runtime-eligible render. Its diff is taken
+	// against the now-dispatched structural baseline (which added api2), so the
+	// render keeps api2 and only changes SRV_1's address — a pure runtime-eligible
+	// diff → laneRuntimeRaw. (The loop set lastDispatchedParsed = structural when it
+	// dispatched the structural deploy above.)
 	s.schedulerMutex.Lock()
 	require.True(t, s.state.deployInFlight, "the structural deploy must be in flight")
 	require.Equal(t, structural, s.lastDispatchedParsed, "the in-flight structural render is the diff baseline")
 	s.schedulerMutex.Unlock()
 	structuralPlusAddr := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.2:8080")+laneStructuralExtra)
 
+	start := time.Now()
 	s.scheduleOrQueue(context.Background(), "runtime-config", nil, structuralPlusAddr, oneEndpoint(),
 		"endpoint-change", "corr-runtime", nil, true, "")
 
-	// The pending render must be classified runtime-raw (diff vs structural
-	// baseline is the pure address change).
-	s.schedulerMutex.Lock()
-	require.NotNil(t, s.state.pending, "the runtime render must be enqueued behind the in-flight deploy")
-	require.Equal(t, laneRuntimeRaw, s.state.pending.lane, "diff vs the in-flight structural render is runtime-eligible")
-	s.schedulerMutex.Unlock()
-
-	// The runtime-raw apply MUST NOT have fired yet — it waits for the in-flight
-	// structural deploy to complete.
+	// The runtime subset must apply within ms WHILE the structural deploy is still
+	// in flight — BEFORE we signal its completion below. (Without the fix, nothing
+	// fires here and the test times out.)
 	select {
 	case <-applied:
-		t.Fatal("runtime-raw applied while a structural deploy was still in flight (must wait)")
-	case <-time.After(100 * time.Millisecond):
-		// Expected — still waiting.
+		assert.Less(t, time.Since(start), time.Second,
+			"the in-flight runtime subset must apply in ~ms, not wait for the structural deploy to complete")
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime subset was not applied while the structural deploy was in flight (the #55 gap)")
 	}
 
-	// Complete the in-flight structural deploy. The loop's awaitCompletion
-	// unblocks, it grabs the pending runtime-raw, and applies it inline.
+	// The partial apply must NOT have completed the structural deploy or published a
+	// second deploy: the in-flight structural deploy still owns completion + CR.
+	s.schedulerMutex.Lock()
+	assert.True(t, s.state.deployInFlight, "the partial in-flight apply must not clear deployInFlight")
+	require.NotNil(t, s.state.pending, "the runtime render stays pending — the partial apply does not consume it")
+	assert.Equal(t, laneRuntimeRaw, s.state.pending.lane, "diff vs the in-flight structural render is runtime-eligible")
+	s.schedulerMutex.Unlock()
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 100*time.Millisecond)
+
+	// Complete the in-flight structural deploy. awaitCompletion returns, the loop
+	// grabs the still-pending runtime-raw render and dispatches it authoritatively
+	// (a second, full applyRuntimeRaw).
 	s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
 		Total: 1, Succeeded: 1, DurationMs: 10,
 	}))
 
 	select {
 	case <-applied:
-		// Expected — runtime-raw fires AFTER the structural completion.
+		// Expected — the authoritative runtime-raw dispatch after completion.
 	case <-time.After(testutil.LongTimeout):
-		t.Fatal("runtime-raw apply did not fire after the in-flight structural deploy completed")
+		t.Fatal("the pending runtime-raw render did not dispatch after the structural deploy completed")
 	}
 
-	// No second DeploymentScheduledEvent (the runtime-raw lane does not publish).
+	// The runtime-raw lane never publishes a DeploymentScheduledEvent.
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 100*time.Millisecond)
 }
 
@@ -440,7 +453,7 @@ func TestSchedulerLanes_Case7_MidIntervalRuntimeChange_AppliesResponsively(t *te
 // Case 8 (the residual fix's non-gated half): the SAME structural+runtime render
 // as Case 6, but the last deploy ended long enough ago that no interval remains
 // (wait<=0). The runtime-eligible subset must STILL fast-apply via runtime-raw
-// here — this is the gap the fix closes. Before it, applyRuntimePreInterval ran
+// here — this is the gap the fix closes. Before it, the pre-interval apply ran
 // only on the wait>0 path (after the `if wait <= 0 { return true }` short-circuit),
 // so when the deploy was NOT interval-gated the pod-IP swap rode the structural
 // reload's worker-swap window instead of reaching the live worker first → the
@@ -493,14 +506,151 @@ func TestSchedulerLanes_Case8_StructuralWaitZero_AppliesRuntimeSubset(t *testing
 	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, time.Second)
 }
 
-// TestScheduler_ApplyRuntimePreInterval_NilPendingNoPanic guards the
-// leadership-loss race: handleLostLeadership clears s.state.pending to nil, but
-// waitDeployInterval's select can still pick a buffered pendingSignal before it
-// observes ctx.Done() and hand that nil pending to applyRuntimePreInterval. It
-// must no-op rather than dereference dep.lane (which panicked before the guard).
-func TestScheduler_ApplyRuntimePreInterval_NilPendingNoPanic(t *testing.T) {
+// TestScheduler_ApplyRuntimeSubset_NilOrZeroOpNoOp guards the two no-op paths of
+// the fast-track apply shared by both deploy-loop wait points (waitDeployInterval
+// and awaitCompletion): a nil pending (handleLostLeadership clears s.state.pending
+// concurrently with a buffered pendingSignal that the select can still pick before
+// it observes ctx.Done()) and a pending whose diff carries no runtime-eligible
+// server op (ServerOpCount 0, nil runtimeUpdates). Both must no-op rather than
+// panic or attempt a real apply.
+func TestScheduler_ApplyRuntimeSubset_NilOrZeroOpNoOp(t *testing.T) {
 	s := NewDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 5*time.Second, 30*time.Second)
 	require.NotPanics(t, func() {
-		s.applyRuntimePreInterval(context.Background(), nil)
+		s.applyRuntimeSubset(context.Background(), nil)
+		s.applyRuntimeSubset(context.Background(), &scheduledDeployment{}) // nil runtimeUpdates → ServerOpCount 0
 	})
+}
+
+// Case 9 (race guard for the awaitCompletion interleave): while the loop is parked
+// in awaitCompletion for an in-flight structural deploy, the completion signal and
+// a newer runtime render can land concurrently. Whichever the select picks, the
+// loop must converge — apply the runtime subset and dispatch the pending render —
+// without eating THIS deploy's completion (the reason awaitCompletion must NOT
+// drain s.completed in the pendingSignal branch) or deadlocking. Run -race -count.
+func TestSchedulerLanes_Case9_CompletionAndPendingRace(t *testing.T) {
+	s, scheduledCh, applied, cancel := newLaneScheduler(t, 0)
+	defer cancel()
+
+	_, _, structural := laneRenders(t)
+
+	// Dispatch a structural render; the loop marks it in-flight and parks in
+	// awaitCompletion.
+	s.scheduleOrQueue(context.Background(), "structural-config", nil, structural, oneEndpoint(),
+		"structural-change", "corr-structural", nil, true, "")
+	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
+	s.schedulerMutex.Lock()
+	require.True(t, s.state.deployInFlight, "the structural deploy must be in flight")
+	s.schedulerMutex.Unlock()
+
+	// A runtime-eligible render diffed against the in-flight structural baseline.
+	runtimeRender := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.2:8080")+laneStructuralExtra)
+
+	// Fire the completion and the new render from two goroutines released together,
+	// so the awaitCompletion select races them.
+	var wg sync.WaitGroup
+	startGate := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-startGate
+		s.handleDeploymentCompleted(events.NewDeploymentCompletedEvent(&events.DeploymentResult{
+			Total: 1, Succeeded: 1, DurationMs: 10,
+		}))
+	}()
+	go func() {
+		defer wg.Done()
+		<-startGate
+		s.scheduleOrQueue(context.Background(), "runtime-config", nil, runtimeRender, oneEndpoint(),
+			"endpoint-change", "corr-runtime", nil, true, "")
+	}()
+	close(startGate)
+	wg.Wait()
+
+	// Convergence: the runtime subset is applied at least once (partial in-flight
+	// and/or the authoritative post-completion dispatch)...
+	select {
+	case <-applied:
+	case <-time.After(testutil.LongTimeout):
+		t.Fatal("no runtime apply — the loop ate the completion or deadlocked in awaitCompletion")
+	}
+
+	// ...and the loop progresses past awaitCompletion and consumes the pending
+	// render (grab+clear → pending nil), proving the completion was not eaten.
+	require.Eventually(t, func() bool {
+		s.schedulerMutex.Lock()
+		defer s.schedulerMutex.Unlock()
+		return s.state.pending == nil && !s.state.deployInFlight
+	}, testutil.LongTimeout, 5*time.Millisecond,
+		"the loop must consume the pending render and finish the in-flight deploy")
+}
+
+// Case 10 (the residual rolling-restart fix the version-stress exposed): a
+// runtime-raw render that arrives WHILE the loop is sleeping out
+// minDeploymentInterval (entered for an earlier STRUCTURAL pending) must have its
+// server subset applied to the live workers IMMEDIATELY, not wait out the interval.
+//
+// This is the gap that produced ~1-in-4 rolling-restart 503s (worse on slower
+// HAProxy builds like the 3.0 image): once a cross-tenant structural deploy
+// completes, lastDispatchedParsed has advanced to it, so a newly-Ready pod's render
+// diffs PURELY runtime-eligible (laneRuntimeRaw). The prior pre-interval apply was
+// gated on laneStructural, so it SKIPPED that render during the interval sleep — the
+// new pod's slot fill only reached HAProxy when the interval elapsed (~1.4s late),
+// by which time the dying old slot had exhausted `option redispatch` → SC-- 503. The
+// shared applyRuntimeSubset is now lane-independent; this test times out without
+// that fix.
+func TestSchedulerLanes_Case10_RuntimeRawDuringStructuralInterval_AppliesImmediately(t *testing.T) {
+	const interval = 5 * time.Second
+	s, scheduledCh, applied, cancel := newLaneScheduler(t, interval)
+	defer cancel()
+
+	_, _, structural := laneRenders(t) // laneConfigBase(10.0.0.1) + api2
+
+	// Simulate "a structural deploy just completed": lastDispatchedParsed has
+	// advanced to the structural config and the interval window is open.
+	s.schedulerMutex.Lock()
+	s.lastDispatchedParsed = structural
+	s.state.lastDeploymentEndTime = time.Now()
+	s.schedulerMutex.Unlock()
+
+	// A NEW structural render (adds api3) becomes pending → diff vs the structural
+	// baseline is a brand-new backend → laneStructural → the loop enters
+	// waitDeployInterval and sleeps out the ~5s interval (NOT dispatched in-window).
+	structuralPlus := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.1:8080")+laneStructuralExtra+
+		"\nbackend api3\n  default-server check\n  server SRV_1 10.9.9.9:8080 enabled\n")
+	s.scheduleOrQueue(context.Background(), "structural-2", nil, structuralPlus, oneEndpoint(),
+		"structural-2", "corr-10a", nil, true, "")
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 200*time.Millisecond)
+	s.schedulerMutex.Lock()
+	require.NotNil(t, s.state.pending, "the structural render is pending")
+	require.Equal(t, laneStructural, s.state.pending.lane, "and gated (sleeping out the interval)")
+	s.schedulerMutex.Unlock()
+
+	// Now a newly-Ready pod arrives as a RUNTIME-RAW render (SRV_1 address change vs
+	// the advanced structural baseline — purely runtime-eligible). It overwrites
+	// pending (latest-wins) while the loop is still sleeping the structural interval.
+	runtimeRender := parseLaneConfig(t, fmt.Sprintf(laneConfigBase, "10.0.0.2:8080")+laneStructuralExtra)
+	upd, err := dataplane.ComputeRuntimeServerUpdates(structural, runtimeRender)
+	require.NoError(t, err)
+	require.True(t, upd.IsRuntimeEligible(), "the mid-interval render must classify runtime-raw vs the advanced baseline")
+
+	start := time.Now()
+	s.scheduleOrQueue(context.Background(), "runtime-config", nil, runtimeRender, oneEndpoint(),
+		"endpoint-change", "corr-10b", nil, true, "")
+	s.schedulerMutex.Lock()
+	require.Equal(t, laneRuntimeRaw, s.state.pending.lane, "the new-pod render is runtime-raw")
+	s.schedulerMutex.Unlock()
+
+	// Its server subset must reach the workers within ms — NOT wait out the ~5s
+	// interval the loop is sleeping for the structural pending.
+	select {
+	case <-applied:
+		assert.Less(t, time.Since(start), time.Second,
+			"a runtime-raw render arriving during the structural interval sleep must apply immediately")
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime-raw subset was trapped behind the structural interval sleep (the residual 503 gap)")
+	}
+
+	// The structural reload stays gated by the interval — no deploy published in-window
+	// (and the runtime-raw lane never publishes a DeploymentScheduledEvent).
+	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 100*time.Millisecond)
 }
