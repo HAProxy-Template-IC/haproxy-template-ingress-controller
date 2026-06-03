@@ -226,7 +226,7 @@ func (c *Component) handleValidationRequest(req *events.ProposalValidationReques
 	}
 
 	// Validation succeeded
-	c.logger.Info("proposal validation succeeded",
+	c.logger.Debug("proposal validation succeeded",
 		"request_id", req.ID,
 		"source", req.Source,
 		"duration_ms", time.Since(startTime).Milliseconds(),

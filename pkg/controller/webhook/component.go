@@ -475,7 +475,7 @@ func (c *Component) createResourceValidator(gvk string) webhook.ValidationFunc {
 			c.metrics.RecordWebhookValidation(gvk, resultStr)
 		}
 
-		c.logger.Info("Validation completed",
+		c.logger.Log(context.Background(), admissionLogLevel(allowed, len(warnings)), "Validation completed",
 			"gvk", gvk,
 			"operation", valCtx.Operation,
 			"namespace", valCtx.Namespace,
@@ -543,12 +543,13 @@ func (c *Component) createConfigValidator() webhook.ValidationFunc {
 			c.metrics.RecordWebhookValidation(HAProxyTemplateConfigGVK, resultStr)
 		}
 
-		c.logger.Info("HAProxyTemplateConfig validation completed",
+		c.logger.Log(context.Background(), admissionLogLevel(allowed, len(warnings)), "HAProxyTemplateConfig validation completed",
 			"operation", valCtx.Operation,
 			"namespace", valCtx.Namespace,
 			"name", valCtx.Name,
 			"allowed", allowed,
 			"reason", reason,
+			"warnings", len(warnings),
 			"duration_ms", time.Since(start).Milliseconds())
 
 		return allowed, reason, warnings, nil
@@ -578,4 +579,17 @@ func (c *Component) validateBasicStructure(object any) error {
 	}
 
 	return nil
+}
+
+// admissionLogLevel returns slog.LevelDebug for a clean allow (admitted with
+// no warnings) so steady-state successful admissions don't spam the log at
+// INFO, and slog.LevelInfo for denials or warning-bearing admissions — the
+// cases an operator actually wants to see. Mirrors the commentator's
+// "demote to DEBUG when nothing notable happened" rule (see
+// pkg/controller/commentator/log_levels.go).
+func admissionLogLevel(allowed bool, warnings int) slog.Level {
+	if allowed && warnings == 0 {
+		return slog.LevelDebug
+	}
+	return slog.LevelInfo
 }

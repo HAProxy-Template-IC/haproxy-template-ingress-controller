@@ -323,7 +323,7 @@ func (c *Component) handlePodTerminated(event *events.HAProxyPodTerminatedEvent)
 		return
 	}
 
-	c.logger.Info("cleaning up pod references after termination",
+	c.logger.Debug("cleaning up pod references after termination",
 		"pod_name", event.PodName,
 		"pod_namespace", event.PodNamespace,
 		"crd_namespace", namespace,

@@ -147,9 +147,9 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 
 	if len(runnableTests) == 0 {
 		if results.SkippedTests > 0 {
-			r.logger.Info("All tests skipped", "skipped", results.SkippedTests)
+			r.logger.Debug("All tests skipped", "skipped", results.SkippedTests)
 		} else {
-			r.logger.Info("No tests to run")
+			r.logger.Debug("No tests to run")
 		}
 		results.Duration = time.Since(startTime)
 		return results, nil
@@ -198,7 +198,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 
 	results.Duration = time.Since(startTime)
 
-	r.logger.Info("Test run completed",
+	r.logger.Debug("Test run completed",
 		"total", results.TotalTests,
 		"passed", results.PassedTests,
 		"failed", results.FailedTests,

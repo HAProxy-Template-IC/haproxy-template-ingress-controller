@@ -141,7 +141,7 @@ func compareSSLStorageFiles[T FileItem](
 ) (*FileDiffGeneric[T], error) {
 	// Check if storage is supported
 	if !config.isSupported() {
-		slog.Info(config.fileType+" storage not supported, skipping comparison",
+		slog.Debug(config.fileType+" storage not supported, skipping comparison",
 			"haproxy_version", config.detectedVersion())
 		return &FileDiffGeneric[T]{}, nil
 	}
