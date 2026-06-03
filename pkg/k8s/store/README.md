@@ -37,7 +37,7 @@ Implementation highlights (see `pkg/k8s/store/memory.go`):
 
 - Backing data is `map[string][]any` keyed by the composite-string form of the index. Multiple resources can share a key; `Get` returns them all.
 - `Get` with the full key count is an O(1) map lookup that returns the per-bucket slice as-is (zero-copy — see "Immutability Contract"). Per-bucket slices are kept sorted at insert time so reads are deterministic without runtime sorting; partial-prefix scans aggregate matching buckets and sort the result.
-- `List` rebuilds and sorts the full slice on every call — there's no memoised result. The optimisation is "buckets are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is cached". Caching layers should look at the `modCount` exposed via the optional `stores.ModCounter` interface and rebuild only when it changes.
+- `List` rebuilds and sorts the full slice on every call — there's no memoised result. The optimisation is "buckets are pre-sorted, so per-bucket reads are zero-copy", not "the whole list is cached". A consumer that needs a memoised `List` should cache at its own layer, not inside the store.
 - An `RWMutex` protects the data map; concurrent readers don't contend.
 
 ## CachedStore

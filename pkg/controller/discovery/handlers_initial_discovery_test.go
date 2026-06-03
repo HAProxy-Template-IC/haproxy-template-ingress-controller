@@ -74,7 +74,6 @@ func (fakePodStoreForGuard) Add(_ any, _ []string) error    { return nil }
 func (fakePodStoreForGuard) Update(_ any, _ []string) error { return nil }
 func (fakePodStoreForGuard) Delete(_ ...string) error       { return nil }
 func (fakePodStoreForGuard) Clear() error                   { return nil }
-func (fakePodStoreForGuard) ModCount() (uint64, bool)       { return 0, false }
 
 func TestComponent_TryInitialDiscovery_SkipsWhenAlreadyDone(t *testing.T) {
 	c := minimalComponentForGuardTest(t)
