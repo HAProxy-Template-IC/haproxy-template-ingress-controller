@@ -267,7 +267,7 @@ func (s *HTTPStore) RefreshURL(ctx context.Context, url string) (changed bool, e
 	}
 	s.mu.Unlock()
 
-	s.logger.Info("Content changed, stored as pending",
+	s.logger.Debug("Content changed, stored as pending",
 		"url", url,
 		"old_checksum", acceptedChecksum[:min(16, len(acceptedChecksum))]+"...",
 		"new_checksum", newChecksum[:16]+"...",

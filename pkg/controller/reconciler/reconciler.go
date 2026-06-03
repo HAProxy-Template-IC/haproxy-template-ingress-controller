@@ -231,7 +231,7 @@ func (r *Reconciler) handleHTTPResourceChange(event *events.HTTPResourceUpdatedE
 // succeeds), trigger reconciliation to re-render the production configuration
 // with the new accepted content.
 func (r *Reconciler) handleHTTPResourceAccepted(event *events.HTTPResourceAcceptedEvent) {
-	r.logger.Info("HTTP resource accepted, triggering immediate reconciliation",
+	r.logger.Debug("HTTP resource accepted, triggering immediate reconciliation",
 		"url", event.URL,
 		"content_size", event.ContentSize)
 	r.triggerReconciliation(reasonHTTPResourceAccepted)

@@ -172,7 +172,7 @@ func (b *runtimeBypass) applyToEndpoint(parentCtx context.Context, dep *schedule
 	b.publishConfigApplied(dep, ep, result, partial)
 	successes.Add(1)
 	if ops > 0 {
-		b.logger.Info("bypass applied runtime server changes ahead of scheduled deploy",
+		b.logger.Debug("bypass applied runtime server changes ahead of scheduled deploy",
 			"endpoint", ep.URL,
 			"ops", ops,
 			"duration_ms", result.Duration.Milliseconds())

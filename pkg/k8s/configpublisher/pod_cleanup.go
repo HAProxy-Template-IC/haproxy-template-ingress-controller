@@ -136,7 +136,7 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		return nil
 	}
 
-	p.logger.Info("removing stale pod entries from HAProxyCfg status",
+	p.logger.Debug("removing stale pod entries from HAProxyCfg status",
 		"name", cfg.Name,
 		"namespace", cfg.Namespace,
 		"stale_pods", stalePods,

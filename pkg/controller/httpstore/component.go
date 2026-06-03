@@ -190,7 +190,7 @@ func (c *Component) handleValidationSuccess() {
 		return
 	}
 
-	c.logger.Info("HTTP content validation succeeded, promoting pending content",
+	c.logger.Debug("HTTP content validation succeeded, promoting pending content",
 		"url_count", len(pendingURLs))
 
 	for _, url := range pendingURLs {
@@ -330,7 +330,7 @@ func (c *Component) triggerProposalValidation(changedURL string) {
 		return
 	}
 
-	c.logger.Info("HTTP content changed, triggering proposal validation",
+	c.logger.Debug("HTTP content changed, triggering proposal validation",
 		"url", changedURL,
 		"new_checksum", entry.PendingChecksum[:min(16, len(entry.PendingChecksum))]+"...")
 

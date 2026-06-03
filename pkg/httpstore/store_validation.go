@@ -43,7 +43,7 @@ func (s *HTTPStore) finalizePending(url string, promote bool) bool {
 	}
 
 	if promote {
-		s.logger.Info("Promoting pending content to accepted",
+		s.logger.Debug("Promoting pending content to accepted",
 			"url", url,
 			"old_checksum", checksumPrefix(entry.AcceptedChecksum),
 			"new_checksum", checksumPrefix(entry.PendingChecksum))
@@ -112,7 +112,7 @@ func (s *HTTPStore) EvictUnused() []string {
 
 		// Evict if last access time is before cutoff
 		if entry.LastAccessTime.Before(cutoff) {
-			s.logger.Info("Evicting unused HTTP cache entry",
+			s.logger.Debug("Evicting unused HTTP cache entry",
 				"url", url,
 				"last_access", entry.LastAccessTime,
 				"age", now.Sub(entry.LastAccessTime))
@@ -122,7 +122,7 @@ func (s *HTTPStore) EvictUnused() []string {
 	}
 
 	if len(evictedURLs) > 0 {
-		s.logger.Info("HTTP store eviction complete",
+		s.logger.Debug("HTTP store eviction complete",
 			"evicted", len(evictedURLs),
 			"remaining", len(s.cache))
 	}

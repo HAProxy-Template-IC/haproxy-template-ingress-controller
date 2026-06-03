@@ -77,7 +77,7 @@ func (o *orchestrator) deleteUnreferencedAuxFiles(ctx context.Context, toDelete 
 		o.logger.Warn("Failed to delete unreferenced "+label, "error", err, logField, toDelete)
 		return
 	}
-	o.logger.Info("Unreferenced " + label + " deleted successfully")
+	o.logger.Debug("Unreferenced " + label + " deleted successfully")
 }
 
 // auxiliaryFileSyncParams contains parameters for auxiliary file synchronization.
