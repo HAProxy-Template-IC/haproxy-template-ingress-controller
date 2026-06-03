@@ -420,25 +420,6 @@ func TestMetrics_RecordEventDrop(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(reconcilerConfig))
 }
 
-func TestMetrics_RecordValidationTests(t *testing.T) {
-	registry := prometheus.NewRegistry()
-	metrics := NewMetrics(registry)
-
-	// Record test results
-	metrics.RecordValidationTests(10, 8, 2, 1.5)
-
-	assert.Equal(t, 10.0, testutil.ToFloat64(metrics.ValidationTestsTotal))
-	assert.Equal(t, 8.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
-
-	// Record more test results
-	metrics.RecordValidationTests(5, 5, 0, 0.5)
-
-	assert.Equal(t, 15.0, testutil.ToFloat64(metrics.ValidationTestsTotal))
-	assert.Equal(t, 13.0, testutil.ToFloat64(metrics.ValidationTestsPassTotal))
-	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ValidationTestsFailTotal))
-}
-
 func TestMetrics_UpdateParserCacheStats(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)

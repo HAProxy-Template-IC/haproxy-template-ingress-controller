@@ -101,8 +101,7 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 	}
 }
 
-// validationInsight handles ValidationCompleted, ValidationFailed,
-// ValidationTestsStarted, ValidationTestsCompleted, and ValidationTestsFailed events.
+// validationInsight handles ValidationCompleted and ValidationFailed events.
 func (ec *EventCommentator) validationInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
 	case *events.ValidationCompletedEvent:
@@ -125,27 +124,6 @@ func (ec *EventCommentator) validationInsight(event busevents.Event, attrs []any
 		return fmt.Sprintf("HAProxy configuration validation failed with %d errors (%dms)%s",
 				len(e.Errors), e.DurationMs, triggerInfo),
 			append(attrs, "error_count", len(e.Errors), "duration_ms", e.DurationMs, "trigger_reason", e.TriggerReason)
-
-	// Validation Test Events
-	case *events.ValidationTestsStartedEvent:
-		return fmt.Sprintf("Starting validation tests (%d tests)", e.TestCount),
-			append(attrs, "test_count", e.TestCount)
-
-	case *events.ValidationTestsCompletedEvent:
-		return fmt.Sprintf("Validation tests completed: %d passed, %d failed (%dms)",
-				e.PassedTests, e.FailedTests, e.DurationMs),
-			append(attrs,
-				"total_tests", e.TotalTests,
-				"passed_tests", e.PassedTests,
-				"failed_tests", e.FailedTests,
-				"duration_ms", e.DurationMs)
-
-	case *events.ValidationTestsFailedEvent:
-		return fmt.Sprintf("Validation tests failed: %d tests",
-				len(e.FailedTests)),
-			append(attrs,
-				"failed_count", len(e.FailedTests),
-				"failed_tests", e.FailedTests)
 
 	default:
 		return "", attrs

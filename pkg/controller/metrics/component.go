@@ -75,7 +75,6 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeRuntimeFastPathResult,
 		events.EventTypeValidationCompleted,
 		events.EventTypeValidationFailed,
-		events.EventTypeValidationTestsCompleted,
 		events.EventTypeIndexSynchronized,
 		events.EventTypeResourceIndexUpdated,
 		events.EventTypeBecameLeader,
@@ -153,8 +152,6 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.metrics.RecordValidation(true)
 	case *events.ValidationFailedEvent:
 		c.metrics.RecordValidation(false)
-	case *events.ValidationTestsCompletedEvent:
-		c.metrics.RecordValidationTests(e.TotalTests, e.PassedTests, e.FailedTests, msToSeconds(e.DurationMs))
 	case *events.IndexSynchronizedEvent:
 		c.handleIndexSynchronized(e)
 	case *events.ResourceIndexUpdatedEvent:

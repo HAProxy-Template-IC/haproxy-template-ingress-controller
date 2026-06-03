@@ -262,17 +262,6 @@ sum by (gvk) (rate(haptic_webhook_validation_total{result="rejected"}[5m]))
 histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]))
 ```
 
-### Validation Test Metrics
-
-Exposed when validation tests run (CRD-embedded tests, executed by the controller and webhook).
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `haptic_validation_tests_total` | Counter | Tests executed |
-| `haptic_validation_tests_pass_total` | Counter | Tests that passed |
-| `haptic_validation_tests_fail_total` | Counter | Tests that failed |
-| `haptic_validation_test_duration_seconds` | Histogram | Time spent running each test |
-
 ### Reconciliation Queue & Parser Cache
 
 | Metric | Type | Description |

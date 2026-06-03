@@ -69,9 +69,7 @@ func (ec *EventCommentator) generateInsight(event busevents.Event) (insight stri
 		return ec.templateInsight(event, attrs)
 
 	// Validation Events
-	case *events.ValidationCompletedEvent, *events.ValidationFailedEvent,
-		*events.ValidationTestsStartedEvent, *events.ValidationTestsCompletedEvent,
-		*events.ValidationTestsFailedEvent:
+	case *events.ValidationCompletedEvent, *events.ValidationFailedEvent:
 		return ec.validationInsight(event, attrs)
 
 	// Deployment Events

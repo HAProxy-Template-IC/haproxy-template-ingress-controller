@@ -29,11 +29,9 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/proposalvalidator"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
@@ -194,148 +192,6 @@ func TestMapGVKToResourceType(t *testing.T) {
 	}
 }
 
-func TestBuildTestFailureError(t *testing.T) {
-	tests := []struct {
-		name           string
-		testResults    *testrunner.TestResults
-		expectedSubstr []string
-	}{
-		{
-			name: "single failed test with render error",
-			testResults: &testrunner.TestResults{
-				TotalTests:  1,
-				PassedTests: 0,
-				FailedTests: 1,
-				TestResults: []testrunner.TestResult{
-					{
-						TestName:    "test-render-failure",
-						Passed:      false,
-						RenderError: "template 'missing.cfg' not found",
-						Assertions:  []testrunner.AssertionResult{},
-					},
-				},
-			},
-			expectedSubstr: []string{
-				"1/1 tests failed",
-				"test-render-failure",
-				"Rendering failed",
-				"missing.cfg",
-			},
-		},
-		{
-			name: "single failed test with assertion failure",
-			testResults: &testrunner.TestResults{
-				TotalTests:  1,
-				PassedTests: 0,
-				FailedTests: 1,
-				TestResults: []testrunner.TestResult{
-					{
-						TestName:    "test-assertion-failure",
-						Passed:      false,
-						RenderError: "",
-						Assertions: []testrunner.AssertionResult{
-							{
-								Description: "check backend exists",
-								Passed:      false,
-								Error:       "backend 'api' not found",
-							},
-						},
-					},
-				},
-			},
-			expectedSubstr: []string{
-				"1/1 tests failed",
-				"test-assertion-failure",
-				"Assertion failed",
-				"check backend exists",
-				"backend 'api' not found",
-			},
-		},
-		{
-			name: "multiple failed tests",
-			testResults: &testrunner.TestResults{
-				TotalTests:  3,
-				PassedTests: 1,
-				FailedTests: 2,
-				TestResults: []testrunner.TestResult{
-					{
-						TestName: "test-pass",
-						Passed:   true,
-					},
-					{
-						TestName:    "test-fail-1",
-						Passed:      false,
-						RenderError: "error 1",
-					},
-					{
-						TestName:    "test-fail-2",
-						Passed:      false,
-						RenderError: "error 2",
-					},
-				},
-			},
-			expectedSubstr: []string{
-				"2/3 tests failed",
-				"test-fail-1",
-				"test-fail-2",
-				"error 1",
-				"error 2",
-			},
-		},
-		{
-			name: "test with multiple assertion failures",
-			testResults: &testrunner.TestResults{
-				TotalTests:  1,
-				PassedTests: 0,
-				FailedTests: 1,
-				TestResults: []testrunner.TestResult{
-					{
-						TestName: "multi-assert-test",
-						Passed:   false,
-						Assertions: []testrunner.AssertionResult{
-							{
-								Description: "check 1",
-								Passed:      true,
-							},
-							{
-								Description: "check 2",
-								Passed:      false,
-								Error:       "assertion 2 failed",
-							},
-							{
-								Description: "check 3",
-								Passed:      false,
-								Error:       "assertion 3 failed",
-							},
-						},
-					},
-				},
-			},
-			expectedSubstr: []string{
-				"multi-assert-test",
-				"check 2",
-				"check 3",
-				"assertion 2 failed",
-				"assertion 3 failed",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := &Component{}
-
-			err := c.buildTestFailureError(tt.testResults)
-			require.Error(t, err)
-
-			errStr := err.Error()
-			for _, substr := range tt.expectedSubstr {
-				assert.Contains(t, errStr, substr)
-			}
-		})
-	}
-}
-
 func TestCreateOverlay(t *testing.T) {
 	c := &Component{
 		logger: slog.Default(),
@@ -440,43 +296,16 @@ func TestSimplifyError(t *testing.T) {
 func TestNew(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
-	validationPaths := &dataplane.ValidationPaths{
-		MapsDir:     "/etc/haproxy/maps",
-		SSLCertsDir: "/etc/haproxy/ssl",
-		ConfigFile:  "/etc/haproxy/haproxy.cfg",
-	}
-
-	capabilities := dataplane.Capabilities{}
-
-	// Create minimal engine for test
-	engine, err := templating.New(
-		map[string]string{"test.cfg": "test content"},
-		nil, // customFilters
-		nil, // customFunctions
-		nil, // postProcessorConfigs
-	)
-	require.NoError(t, err)
-
 	// Create mock ProposalValidator
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   validationPaths,
-		Capabilities:      capabilities,
 		Logger:            logger,
 	})
 
 	require.NotNil(t, component)
-	assert.Equal(t, cfg, component.config)
 	assert.NotNil(t, component.logger)
 }
 
@@ -484,27 +313,12 @@ func TestNew(t *testing.T) {
 func TestValidateDirect_UpdateSuccess(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine: func() templating.Engine {
-			e, _ := templating.New(
-				map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-				nil, nil, nil,
-			)
-			return e
-		}(),
-		ValidationPaths: &dataplane.ValidationPaths{},
-		Capabilities:    dataplane.Capabilities{},
-		Logger:          logger,
+		Logger:            logger,
 	})
 
 	bus.Start()
@@ -526,27 +340,12 @@ func TestValidateDirect_UpdateSuccess(t *testing.T) {
 func TestValidateDirect_DeleteSuccess(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine: func() templating.Engine {
-			e, _ := templating.New(
-				map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-				nil, nil, nil,
-			)
-			return e
-		}(),
-		ValidationPaths: &dataplane.ValidationPaths{},
-		Capabilities:    dataplane.Capabilities{},
-		Logger:          logger,
+		Logger:            logger,
 	})
 
 	bus.Start()
@@ -568,11 +367,6 @@ func TestValidateDirect_DeleteSuccess(t *testing.T) {
 // referencing non-existent stores produce a denial.
 func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
 
 	// Create proposal validator with store provider that has NO stores
 	engine, err := templating.New(
@@ -611,10 +405,6 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: noStoreProposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   &dataplane.ValidationPaths{},
-		Capabilities:      dataplane.Capabilities{},
 		Logger:            logger,
 	})
 
@@ -637,26 +427,11 @@ func TestValidateDirect_OverlayReferencesInvalidStore(t *testing.T) {
 func TestValidateDirect_Success(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
-
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   &dataplane.ValidationPaths{},
-		Capabilities:      dataplane.Capabilities{},
 		Logger:            logger,
 	})
 
@@ -679,25 +454,11 @@ func TestValidateDirect_Success(t *testing.T) {
 func TestValidateDirect_InvalidGVK(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	cfg := &config.Config{
-		ValidationTests: map[string]config.ValidationTest{},
-	}
-
-	engine, err := templating.New(
-		map[string]string{"haproxy.cfg": testutil.ValidHAProxyConfigTemplate},
-		nil, nil, nil,
-	)
-	require.NoError(t, err)
-
 	proposalValidator := createMockProposalValidator(bus, logger)
 
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: proposalValidator,
-		Config:            cfg,
-		Engine:            engine,
-		ValidationPaths:   &dataplane.ValidationPaths{},
-		Capabilities:      dataplane.Capabilities{},
 		Logger:            logger,
 	})
 
@@ -733,11 +494,6 @@ func TestValidateDirect_InvalidGVK(t *testing.T) {
 // an operator fixing the pre-existing failure first.
 func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
-
-	cfg := &config.Config{
-		TemplateSnippets: map[string]config.TemplateSnippet{},
-		ValidationTests:  map[string]config.ValidationTest{},
-	}
 
 	failingEngine, err := templating.New(
 		map[string]string{"haproxy.cfg": `{{ fail("invalid config") }}`},
@@ -776,10 +532,6 @@ func TestValidateDirect_AlwaysFailingTemplate_AdmitsBecauseBaselineFails(t *test
 	component := New(&ComponentConfig{
 		RESTMapper:        newTestRESTMapper(),
 		ProposalValidator: failingProposalValidator,
-		Config:            cfg,
-		Engine:            failingEngine,
-		ValidationPaths:   &dataplane.ValidationPaths{},
-		Capabilities:      dataplane.Capabilities{},
 		Logger:            logger,
 	})
 

@@ -46,15 +46,6 @@ All names are listed exactly as exported. `metrics.go` contains the authoritativ
 | `haptic_validation_total` | counter | — | Controller-side validations (`haproxy -c` + parser) |
 | `haptic_validation_errors_total` | counter | — | Controller-side validation failures |
 
-### Embedded validation tests (the `validationTests` suite)
-
-| Metric | Type | Labels | What it tracks |
-|--------|------|--------|----------------|
-| `haptic_validation_tests_total` | counter | — | Test runs kicked off (webhook + CLI) |
-| `haptic_validation_tests_pass_total` | counter | — | Passing test runs |
-| `haptic_validation_tests_fail_total` | counter | — | Failing test runs |
-| `haptic_validation_test_duration_seconds` | histogram | — | Per-test duration |
-
 ### Watched resources
 
 | Metric | Type | Labels | What it tracks |
