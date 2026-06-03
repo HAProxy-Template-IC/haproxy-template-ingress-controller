@@ -37,7 +37,6 @@ Key features:
 ```
 Registry (instance-based)
     ├── Var interface (extensible)
-    │   ├── Simple types (IntVar, StringVar, MapVar)
     │   ├── Computed values (Func)
     │   └── Custom implementations
     ├── JSONPath field selection
@@ -84,8 +83,8 @@ type Var interface {
 
 Built-in implementations:
 
-- `IntVar`, `StringVar`, `FloatVar`, `MapVar` - Simple atomic types
 - `Func` - Computed on-demand values
+- Custom `Var` implementations (any type with a `Get() (any, error)` method)
 
 ### Server
 
@@ -110,11 +109,6 @@ Features:
 ```go
 // Create instance-based registry
 registry := introspection.NewRegistry()
-
-// Publish simple variables
-counter := &introspection.IntVar{}
-counter.Add(1)
-registry.Publish("request_count", counter)
 
 // Publish computed variables
 startTime := time.Now()

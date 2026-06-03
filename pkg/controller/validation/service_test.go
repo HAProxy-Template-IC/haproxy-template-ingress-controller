@@ -219,38 +219,6 @@ backend http_back
 	assert.Nil(t, result.Error)
 }
 
-func TestValidationService_ValidateWithStrictDNS(t *testing.T) {
-	// Create service with permissive DNS
-	svc := NewValidationService(&ValidationServiceConfig{
-		Logger:            slog.Default(),
-		SkipDNSValidation: true,
-	})
-
-	// Valid config with localhost server
-	config := `global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 50s
-    timeout server 50s
-
-frontend http_front
-    bind *:8080
-    default_backend http_back
-
-backend http_back
-    server srv1 127.0.0.1:80
-`
-
-	// Strict validation should still pass for localhost
-	result := svc.ValidateWithStrictDNS(context.Background(), config, nil)
-
-	require.NotNil(t, result)
-	assert.True(t, result.Valid, "expected valid config, got error: %v", result.Error)
-}
-
 func TestValidationService_Validate_TempDirCleanup(t *testing.T) {
 	svc := NewValidationService(&ValidationServiceConfig{
 		Logger:            slog.Default(),

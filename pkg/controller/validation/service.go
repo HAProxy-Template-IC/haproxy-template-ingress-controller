@@ -375,20 +375,3 @@ func (s *ValidationService) cacheResult(checksum string, parsedConfig *parser.St
 	s.cachedChecksum = checksum
 	s.cachedParsedConfig = parsedConfig
 }
-
-// ValidateWithStrictDNS validates configuration with strict DNS checking.
-// This is a convenience method that temporarily overrides SkipDNSValidation.
-// Use this for webhook validation where DNS failures should be caught early.
-func (s *ValidationService) ValidateWithStrictDNS(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles) *ValidationResult {
-	// Create a copy with strict DNS
-	strictService := &ValidationService{
-		logger:            s.logger,
-		version:           s.version,
-		skipDNSValidation: false,
-		baseDir:           s.baseDir,
-		mapsDir:           s.mapsDir,
-		sslCertsDir:       s.sslCertsDir,
-		generalDir:        s.generalDir,
-	}
-	return strictService.Validate(ctx, config, auxFiles)
-}

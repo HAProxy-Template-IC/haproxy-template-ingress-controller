@@ -87,7 +87,7 @@ func NewDefaultsDelete(defaults *models.Defaults) Operation { return defaultsOps
 
 // NewGlobalUpdate creates an operation to update the global section.
 func NewGlobalUpdate(_ *models.Global) Operation {
-	return NewSingletonOp[*models.Global](
+	return newOp(
 		OperationUpdate,
 		"global",
 		func() string { return "Update global section" },

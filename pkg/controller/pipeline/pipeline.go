@@ -266,31 +266,3 @@ func (p *Pipeline) ExecuteWithResult(ctx context.Context, provider stores.StoreP
 
 	return result, validationResult, nil
 }
-
-// RenderOnly renders configuration without validation.
-// Use this when you need to inspect the rendered output without validation.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - provider: StoreProvider for accessing resource stores
-//
-// Returns:
-//   - RenderResult from the render service
-//   - Error if rendering fails
-func (p *Pipeline) RenderOnly(ctx context.Context, provider stores.StoreProvider) (*renderer.RenderResult, error) {
-	return p.renderer.Render(ctx, provider)
-}
-
-// ValidateConfig validates a pre-rendered configuration.
-// Use this when you already have rendered config and just need validation.
-//
-// Parameters:
-//   - ctx: Context for cancellation
-//   - config: The HAProxy configuration content
-//   - auxFiles: Auxiliary files for the configuration
-//
-// Returns:
-//   - ValidationResult with validation details
-func (p *Pipeline) ValidateConfig(ctx context.Context, config string, auxFiles *dataplane.AuxiliaryFiles) *validation.ValidationResult {
-	return p.validator.Validate(ctx, config, auxFiles)
-}

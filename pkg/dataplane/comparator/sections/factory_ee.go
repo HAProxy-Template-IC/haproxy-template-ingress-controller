@@ -63,7 +63,7 @@ func NewWAFProfileDelete(profile *v32ee.WafProfile) Operation {
 // NewWAFGlobalCreate creates an operation to create the WAF global configuration.
 // WAF global is a singleton section (only one per configuration).
 func NewWAFGlobalCreate(_ *v32ee.WafGlobal) Operation {
-	return NewSingletonOp[*v32ee.WafGlobal](
+	return newOp(
 		OperationCreate, "waf-global",
 		DescribeSingleton(OperationCreate, "waf-global"),
 	)
@@ -71,7 +71,7 @@ func NewWAFGlobalCreate(_ *v32ee.WafGlobal) Operation {
 
 // NewWAFGlobalUpdate creates an operation to update the WAF global configuration.
 func NewWAFGlobalUpdate(_ *v32ee.WafGlobal) Operation {
-	return NewSingletonOp[*v32ee.WafGlobal](
+	return newOp(
 		OperationUpdate, "waf-global",
 		DescribeSingleton(OperationUpdate, "waf-global"),
 	)
@@ -79,7 +79,7 @@ func NewWAFGlobalUpdate(_ *v32ee.WafGlobal) Operation {
 
 // NewWAFGlobalDelete creates an operation to delete the WAF global configuration.
 func NewWAFGlobalDelete(_ *v32ee.WafGlobal) Operation {
-	return NewSingletonOp[*v32ee.WafGlobal](
+	return newOp(
 		OperationDelete, "waf-global",
 		DescribeSingleton(OperationDelete, "waf-global"),
 	)

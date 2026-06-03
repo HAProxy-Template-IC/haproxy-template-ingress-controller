@@ -22,19 +22,19 @@ type TopLevelCRUD[T any] struct {
 func NewTopLevelCRUD[T any](section, displayName string, nameFn func(T) string) TopLevelCRUD[T] {
 	return TopLevelCRUD[T]{
 		Create: func(model T) Operation {
-			return NewTopLevelOp[T](
+			return newOp(
 				OperationCreate, section,
 				DescribeTopLevel(OperationCreate, displayName, nameFn(model)),
 			)
 		},
 		Update: func(model T) Operation {
-			return NewTopLevelOp[T](
+			return newOp(
 				OperationUpdate, section,
 				DescribeTopLevel(OperationUpdate, displayName, nameFn(model)),
 			)
 		},
 		Delete: func(model T) Operation {
-			return NewTopLevelOp[T](
+			return newOp(
 				OperationDelete, section,
 				DescribeTopLevel(OperationDelete, displayName, nameFn(model)),
 			)
@@ -54,19 +54,19 @@ type ContainerChildCRUD[T any] struct {
 func NewContainerChildCRUD[T any](section, displayName, containerType string, nameFn func(T) string) ContainerChildCRUD[T] {
 	return ContainerChildCRUD[T]{
 		Create: func(containerName string, model T) Operation {
-			return NewContainerChildOp[T](
+			return newOp(
 				OperationCreate, section,
 				DescribeNamedChild(OperationCreate, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 		Update: func(containerName string, model T) Operation {
-			return NewContainerChildOp[T](
+			return newOp(
 				OperationUpdate, section,
 				DescribeNamedChild(OperationUpdate, displayName, nameFn(model), containerType, containerName),
 			)
 		},
 		Delete: func(containerName string, model T) Operation {
-			return NewContainerChildOp[T](
+			return newOp(
 				OperationDelete, section,
 				DescribeNamedChild(OperationDelete, displayName, nameFn(model), containerType, containerName),
 			)
@@ -101,13 +101,13 @@ func NewIndexChildCRUDWithDescriber[T any](
 ) IndexChildCRUD[T] {
 	return IndexChildCRUD[T]{
 		Create: func(parentName string, model T, index int) Operation {
-			return NewIndexChildOp[T](OperationCreate, section, describer(OperationCreate, model, parentName, index))
+			return newOp(OperationCreate, section, describer(OperationCreate, model, parentName, index))
 		},
 		Update: func(parentName string, model T, index int) Operation {
-			return NewIndexChildOp[T](OperationUpdate, section, describer(OperationUpdate, model, parentName, index))
+			return newOp(OperationUpdate, section, describer(OperationUpdate, model, parentName, index))
 		},
 		Delete: func(parentName string, model T, index int) Operation {
-			return NewIndexChildOp[T](OperationDelete, section, describer(OperationDelete, model, parentName, index))
+			return newOp(OperationDelete, section, describer(OperationDelete, model, parentName, index))
 		},
 	}
 }
@@ -127,13 +127,13 @@ func NewNameChildCRUD[T any](section, displayType, parentType string, descNameFn
 	}
 	return NameChildCRUD[T]{
 		Create: func(parentName, childName string, model T) Operation {
-			return NewNameChildOp[T](OperationCreate, section, describe(OperationCreate, model, parentName, childName))
+			return newOp(OperationCreate, section, describe(OperationCreate, model, parentName, childName))
 		},
 		Update: func(parentName, childName string, model T) Operation {
-			return NewNameChildOp[T](OperationUpdate, section, describe(OperationUpdate, model, parentName, childName))
+			return newOp(OperationUpdate, section, describe(OperationUpdate, model, parentName, childName))
 		},
 		Delete: func(parentName, childName string, model T) Operation {
-			return NewNameChildOp[T](OperationDelete, section, describe(OperationDelete, model, parentName, childName))
+			return newOp(OperationDelete, section, describe(OperationDelete, model, parentName, childName))
 		},
 	}
 }

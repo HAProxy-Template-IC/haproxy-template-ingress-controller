@@ -566,17 +566,9 @@ comparators["mycustomsection"] = &MyCustomSectionComparator{}
 
 **Comparator Section Implementation:**
 
-All section operations (Create, Delete, Update) use generic operation types defined in `operations_generic.go` and section-specific factories in `factory_*.go`. The current generation does **not** generate one struct per `(section, op)` pair — there is no `CreateBackendOperation` type. Instead each section's factory wires up the right generic type with closures that supply the section-specific dispatch.
+All section operations (Create, Delete, Update) use a single generic operation descriptor defined in `operations_generic.go` and section-specific factories in `factory_*.go`. The current generation does **not** generate one struct per `(section, op)` pair — there is no `CreateBackendOperation` type. Instead each section's factory builds a `genericOp` with closures that supply the section-specific description.
 
-The five operation types (all pure descriptors, no execute closure):
-
-| Type | Use for | Wiring |
-|------|---------|--------|
-| `TopLevelOp[TModel]` | Single-name resources: backend, frontend, defaults, peer, resolver, mailers, ... | pure descriptor — `opType`, `sectionName`, `describeFn`; no execute closure |
-| `SingletonOp[TModel]` | Unnamed singleton sections (global, traces, waf_global, ...) | pure descriptor |
-| `IndexChildOp[TModel]` | Index-keyed children inside a parent: ACLs, HTTP/TCP rules, filters, QUIC rules, ... | pure descriptor |
-| `NameChildOp[TModel]` | Named children inside a parent (binds, servers, server templates) | pure descriptor |
-| `ContainerChildOp[TModel]` | Named children inside a container (user, mailer entries, peer entries, nameservers) | pure descriptor |
+Every operation except the data-carrying `ServerUpdateOp` is one `genericOp` (`opType`, `sectionName`, `describeFn`; no execute closure), built via `newOp(...)`. The distinction between section shapes lives only in the factories: the four CRUD builders in `crud_builders.go` (`TopLevelCRUD` / `ContainerChildCRUD` / `IndexChildCRUD` / `NameChildCRUD`) differ in call arity and the `nameFn`/describer they take, while singletons (global, traces, waf_global) call `newOp(...)` directly. None of them produces a distinct operation type.
 
 Each section file (`factory_backend.go`-equivalent inside `factory_sections.go`, plus `factory_acl.go`, `factory_bind.go`, `factory_server.go`, `factory_http_rules.go`, `factory_filter_log.go`, `factory_switching.go`, `factory_tcp.go`, `factory_quic.go`, `factory_ee.go`) calls one of the generic constructors with:
 

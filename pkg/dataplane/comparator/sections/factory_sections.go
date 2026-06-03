@@ -258,7 +258,7 @@ func NewLogProfileDelete(logProfile *models.LogProfile) Operation {
 // The traces section is a singleton - it can be created or replaced.
 // Traces configuration is only available in HAProxy DataPlane API v3.1+.
 func NewTracesUpdate(_ *models.Traces) Operation {
-	return NewSingletonOp[*models.Traces](
+	return newOp(
 		OperationUpdate,
 		"traces",
 		func() string { return "Update traces section" },
