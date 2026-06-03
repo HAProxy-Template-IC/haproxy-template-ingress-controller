@@ -29,7 +29,7 @@ RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 # renovate: datasource=docker depName=docker
 ARG DOCKER_VERSION=29
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-ARG KIND_VERSION=0.31.0
+ARG KIND_VERSION=0.32.0
 # renovate: datasource=github-releases depName=helm/chart-testing
 ARG CT_VERSION=3.14.0
 # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
