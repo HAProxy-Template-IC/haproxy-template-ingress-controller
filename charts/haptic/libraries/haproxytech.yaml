@@ -457,7 +457,12 @@ templateSnippets:
           {%- var status = ingress.Metadata.Annotations["haproxy.org/rate-limit-status-code"] %}
           {%- if status == "" %}{%- status = "403" %}{%- end %}
       # haproxytech/backend-directives-haproxytech-rate-limiting
-      stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }})
+      {#- `peers localinstance` (base.yaml global-top-050-peers) replicates the -#}
+      {#- per-source counter from the old worker to the new one on reload, so a -#}
+      {#- client's accumulated rate survives config churn instead of resetting -#}
+      {#- to zero and handing every client a fresh budget. Local-only: stays -#}
+      {#- per-pod, matching haproxytech/kubernetes-ingress. -#}
+      stick-table type ip size {{ size }} expire {{ period }} store http_req_rate({{ period }}) peers localinstance
       http-request track-sc0 src
       http-request deny deny_status {{ status }} if { sc_http_req_rate(0) gt {{ rateReq }} }
         {%- end %}
