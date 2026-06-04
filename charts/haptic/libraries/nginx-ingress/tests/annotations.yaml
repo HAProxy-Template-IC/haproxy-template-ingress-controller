@@ -593,6 +593,155 @@ validationTests:
         target: haproxy.cfg
         pattern: "Warning:.*session-cookie-hash"
 
+  test-nginx-ingress-session-cookie-domain-maxage:
+    description: session-cookie-domain and session-cookie-max-age map to the cookie domain / Max-Age attributes
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: sc-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sc-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-name: "SRVID"
+              nginx.ingress.kubernetes.io/session-cookie-domain: "example.com"
+              nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sc.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: sc-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie SRVID insert.* domain example.com"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie SRVID insert.* attr Max-Age=3600"
+
+  test-nginx-ingress-session-cookie-expires:
+    description: legacy session-cookie-expires maps to attr Max-Age when session-cookie-max-age is absent
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: sce-service}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sce-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-name: "SRVID"
+              nginx.ingress.kubernetes.io/session-cookie-expires: "7200"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sce.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: sce-service, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie SRVID insert.* attr Max-Age=7200"
+
+  test-nginx-ingress-session-cookie-maxage-precedence:
+    description: session-cookie-max-age takes precedence over session-cookie-expires when both are set
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: scp-service}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: scp-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-name: "SRVID"
+              nginx.ingress.kubernetes.io/session-cookie-max-age: "100"
+              nginx.ingress.kubernetes.io/session-cookie-expires: "999"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: scp.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: scp-service, port: {number: 80}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie SRVID insert.* attr Max-Age=100"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "Max-Age=999"
+
+  test-nginx-ingress-session-cookie-maxage-invalid:
+    description: a non-integer session-cookie-max-age aborts the render
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: sci-service}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: sci-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-max-age: "abc"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: sci.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: sci-service, port: {number: 80}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Must be a non-negative integer"
+
   test-nginx-ingress-session-cookie-secure-samesite:
     description: session-cookie-secure and session-cookie-samesite add Secure / SameSite cookie attrs
     fixtures:

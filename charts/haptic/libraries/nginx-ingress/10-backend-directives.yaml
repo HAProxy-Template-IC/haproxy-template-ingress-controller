@@ -28,6 +28,7 @@ templateSnippets:
           cookie <name> insert indirect nocache dynamic [attr Path=<p>] [attr Secure] [attr SameSite=<v>]
           dynamic-cookie-key <sha256-of-ns/name>
       -#}
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
       {%- if ingress != nil %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -62,6 +63,31 @@ templateSnippets:
               {{- fail("Invalid value '" + cookieSameSite + "' for annotation 'nginx.ingress.kubernetes.io/session-cookie-samesite' on Ingress '" + key + "'. Valid values: Strict, Lax, None") -}}
             {%- end %}
             {%- cookieDir = cookieDir + " attr SameSite=" + cookieSameSite %}
+          {%- end %}
+          {#- session-cookie-domain -> native `domain` cookie keyword (HAProxy
+              adds Domain=<d> to the Set-Cookie it inserts). -#}
+          {%- var cookieDomain = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-domain"] %}
+          {%- if cookieDomain != "" %}
+            {%- cookieDir = cookieDir + " domain " + ValidateConfigValue(cookieDomain, "nginx.ingress.kubernetes.io/session-cookie-domain", key, false) %}
+          {%- end %}
+          {#- session-cookie-max-age (preferred) / session-cookie-expires (legacy)
+              -> `attr Max-Age=<seconds>` on the inserted Set-Cookie, i.e. the
+              BROWSER cookie lifetime nginx's Max-Age/Expires controls (not
+              HAProxy's internal `maxlife` stickiness window). HAProxy can't
+              compute an absolute Expires date, so both map to Max-Age. -#}
+          {%- var cookieMaxAge = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-max-age"] %}
+          {%- var cookieExpires = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-expires"] %}
+          {%- var cookieLife = cookieMaxAge %}
+          {%- var cookieLifeKey = "nginx.ingress.kubernetes.io/session-cookie-max-age" %}
+          {%- if cookieLife == "" %}
+            {%- cookieLife = cookieExpires %}
+            {%- cookieLifeKey = "nginx.ingress.kubernetes.io/session-cookie-expires" %}
+          {%- end %}
+          {%- if cookieLife != "" %}
+            {%- if !regex_search(cookieLife, "^[0-9]+$") %}
+              {{- fail("Invalid value '" + cookieLife + "' for annotation '" + cookieLifeKey + "' on Ingress '" + key + "'. Must be a non-negative integer (seconds).") -}}
+            {%- end %}
+            {%- cookieDir = cookieDir + " attr Max-Age=" + cookieLife %}
           {%- end %}
           {#- session-cookie-hash selects the cookie-value hashing algorithm in
               nginx (md5|sha1|index). HAProxy uses `dynamic` cookies (the server

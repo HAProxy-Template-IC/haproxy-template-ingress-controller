@@ -41,8 +41,10 @@
 #
 # Session Affinity:
 #   - affinity: cookie
-#   - session-cookie-name, session-cookie-path
+#   - session-cookie-name, session-cookie-path, session-cookie-domain
 #   - session-cookie-secure, session-cookie-samesite
+#   - session-cookie-max-age / session-cookie-expires (-> cookie `attr Max-Age=<s>`,
+#     the browser cookie lifetime; not HAProxy's internal maxlife stickiness window)
 #   (session-cookie-hash is accepted but NOT configurable in HAProxy — it emits a
 #    warning; dynamic cookies always hash via dynamic-cookie-key)
 #
