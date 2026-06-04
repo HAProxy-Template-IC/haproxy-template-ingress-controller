@@ -1,0 +1,4 @@
+apiVersion: v2
+name: nginx-ingress
+description: HAPTIC template library (nginx-ingress) — split-library fragments merged into the HAProxyTemplateConfig by the parent. Carries no templates of its own.
+version: 0.1.0

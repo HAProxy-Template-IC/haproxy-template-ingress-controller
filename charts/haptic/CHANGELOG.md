@@ -9,6 +9,10 @@ For controller changes, see [Controller CHANGELOG](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Template libraries (`gateway`, `nginx-ingress`, `haproxy-ingress`, `haproxytech`) are now packaged as conditional **subcharts** instead of files bundled into the parent. A release stores only the source of the libraries it enables — disabled libraries are pruned from the Helm release Secret — so an install with all libraries enabled no longer exceeds the Kubernetes 1 MiB Secret limit (it previously did, breaking `helm install`). No values changes: the same `controller.templateLibraries.<x>.enabled` flags gate subchart inclusion, and the rendered `HAProxyTemplateConfig` is byte-identical. `base`/`ssl`/`ingress`/`ingress-annotations-compat`/`spoa-hub` remain in the parent.
+
 ### Added
 
 - nginx-ingress library: `mirror-target` — fire-and-forget request mirroring via the spoa-hub mirror plugin (reuses the Gateway RequestMirror machinery; each mirror-target Ingress gets its own mirror slot — capped at `spoaHub.mirrorStaticMinSlots` — host-gated, with `option http-buffer-request` so request bodies reach the plugin). Only the URL authority of the nginx template is used as the mirror target; `mirror-host` and `mirror-request-body: off` need a mirror-plugin change and are unsupported. Requires `spoaHub.plugins.mirror` enabled (else the render fails with an actionable message).

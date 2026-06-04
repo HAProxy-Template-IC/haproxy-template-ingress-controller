@@ -137,20 +137,63 @@ Each entry in `$libraryFiles` is either:
 {{- define "haptic.mergeLibraries" -}}
 {{- $merged := dict }}
 {{- $context := . }}
+{{- /* Each entry is a core path under the parent's libraries/ (base, ssl,
+       ingress — always present) or "subchart:<name>" — a conditional subchart
+       whose library YAML the parent reads via .Subcharts.<name>.Files. A
+       disabled subchart is pruned from the release Secret, so .Subcharts.<name>
+       is absent and the entry is skipped. A subchart with a single library.yaml
+       is read directly; one with an _index.yaml is a split-library (fragments
+       merged in lexicographic order, same as the old split-dir convention). */ -}}
 {{- $libraryFiles := list
     "libraries/base.yaml"
     "libraries/ssl.yaml"
     "libraries/ingress.yaml"
-    "libraries/gateway/"
+    "subchart:gateway"
     "libraries/ingress-annotations-compat.yaml"
-    "libraries/haproxytech.yaml"
-    "libraries/haproxy-ingress/"
-    "libraries/nginx-ingress/"
+    "subchart:haproxytech"
+    "subchart:haproxy-ingress"
+    "subchart:nginx-ingress"
     "libraries/spoa-hub/"
 }}
 {{- range $file := $libraryFiles }}
   {{- $library := dict }}
-  {{- if hasSuffix "/" $file }}
+  {{- $skip := false }}
+  {{- if hasPrefix "subchart:" $file }}
+    {{- $name := trimPrefix "subchart:" $file }}
+    {{- $sub := index $context.Subcharts $name }}
+    {{- if not $sub }}
+      {{- /* subchart disabled (its condition is false) → pruned from the
+             release; nothing to read or merge. */ -}}
+      {{- $skip = true }}
+    {{- else if $sub.Files.Get "_index.yaml" }}
+      {{- /* split-library subchart: _index.yaml + fragments */ -}}
+      {{- $library = $sub.Files.Get "_index.yaml" | fromYaml }}
+      {{- $fragmentPaths := list }}
+      {{- range $path, $_ := $sub.Files.Glob "*.yaml" }}
+        {{- /* exclude _index.yaml (the load authority, already read) and the
+               subchart's own Chart.yaml/values.yaml metadata */ -}}
+        {{- if not (or (eq $path "_index.yaml") (eq $path "Chart.yaml") (eq $path "values.yaml")) }}
+          {{- $fragmentPaths = append $fragmentPaths $path }}
+        {{- end }}
+      {{- end }}
+      {{- range $path, $_ := $sub.Files.Glob "*/*.yaml" }}
+        {{- $fragmentPaths = append $fragmentPaths $path }}
+      {{- end }}
+      {{- range $fragmentPath := sortAlpha $fragmentPaths }}
+        {{- $fragment := $sub.Files.Get $fragmentPath | fromYaml }}
+        {{- if $fragment._helm_load }}
+          {{- fail (printf "split-library fragment %q must not declare _helm_load (only _index.yaml does)" $fragmentPath) }}
+        {{- end }}
+        {{- $library = mustMergeOverwrite $library $fragment }}
+      {{- end }}
+    {{- else }}
+      {{- /* single-file subchart */ -}}
+      {{- $library = $sub.Files.Get "library.yaml" | fromYaml }}
+      {{- if not $library }}
+        {{- fail (printf "subchart %q has neither _index.yaml nor library.yaml" $name) }}
+      {{- end }}
+    {{- end }}
+  {{- else if hasSuffix "/" $file }}
     {{- /* Split library: read _index.yaml as the load-rule authority, */ -}}
     {{- /* then merge fragments in lexicographic order: top-level YAML */ -}}
     {{- /* files plus any one-level-deep YAML files under subdirs.     */ -}}

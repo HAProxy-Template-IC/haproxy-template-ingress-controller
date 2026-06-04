@@ -4,6 +4,25 @@ description: HAPTIC - HAProxy Template Ingress Controller
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+# Template libraries are packaged as conditional subcharts so a release only
+# carries the source of the libraries it enables — disabled subcharts are
+# pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
+# parent merges each enabled subchart's library YAML into the
+# HAProxyTemplateConfig (templates/_libraries.tpl). base/ssl/ingress are core
+# (always present, in the parent's libraries/).
+dependencies:
+  - name: gateway
+    version: 0.1.0
+    condition: controller.templateLibraries.gateway.enabled
+  - name: haproxytech
+    version: 0.1.0
+    condition: controller.templateLibraries.haproxytech.enabled
+  - name: haproxy-ingress
+    version: 0.1.0
+    condition: controller.templateLibraries.haproxyIngress.enabled
+  - name: nginx-ingress
+    version: 0.1.0
+    condition: controller.templateLibraries.nginxIngress.enabled
 keywords:
   - haproxy
   - ingress
