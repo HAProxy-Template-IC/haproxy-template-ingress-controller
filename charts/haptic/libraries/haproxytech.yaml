@@ -59,14 +59,26 @@ templateSnippets:
 
   frontend-filters-200-haproxytech-access-control:
     template: |
-      {#- HAProxy IP allowlist/denylist via the shared ingress-annotations-compat scaffold. -#}
+      {#- HAProxy IP allow-list/deny-list via the shared ingress-annotations-compat
+          scaffold. Upstream haproxytech spells these `allow-list`/`deny-list`;
+          `whitelist`/`blacklist` are the deprecated aliases. Honour the canonical
+          key per Ingress, falling back to the deprecated alias only when the
+          canonical key is absent. -#}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var allowKey = "haproxy.org/allow-list" %}
+        {%- if ingress.Metadata.Annotations["haproxy.org/allow-list"] == "" && ingress.Metadata.Annotations["haproxy.org/whitelist"] != "" %}
+          {%- allowKey = "haproxy.org/whitelist" %}
+        {%- end %}
+        {%- var denyKey = "haproxy.org/deny-list" %}
+        {%- if ingress.Metadata.Annotations["haproxy.org/deny-list"] == "" && ingress.Metadata.Annotations["haproxy.org/blacklist"] != "" %}
+          {%- denyKey = "haproxy.org/blacklist" %}
+        {%- end %}
         {{ EmitAnnotationAccessControl(ingress,
-            "haproxy.org/allowlist", "haproxy.org/denylist",
+            allowKey, denyKey,
             "haproxytech",
-            "haproxytech/frontend-filters-haproxytech-access-control (allowlist for {KEY})",
-            "haproxytech/frontend-filters-haproxytech-access-control (denylist for {KEY})") }}
+            "haproxytech/frontend-filters-haproxytech-access-control (allow-list for {KEY})",
+            "haproxytech/frontend-filters-haproxytech-access-control (deny-list for {KEY})") }}
       {%- end -%}
 
   frontend-filters-300-haproxytech-cors:
@@ -1626,6 +1638,127 @@ validationTests:
       - type: not_contains
         target: haproxy.cfg
         pattern: "gt 10 \\} !\\{ src"
+
+  test-haproxytech-access-control-allow-list:
+    description: >-
+      haproxy.org/allow-list (the canonical upstream key) emits a src allow ACL.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: ac-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ac-allow
+            annotations:
+              haproxy.org/allow-list: "10.0.0.0/8"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ac-allow.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ac-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl haproxytech_allowlist_default_ac-allow src 10.0.0.0/8"
+
+  test-haproxytech-access-control-deny-list:
+    description: >-
+      haproxy.org/deny-list (the canonical upstream key) emits a src deny ACL.
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: ac-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ac-deny
+            annotations:
+              haproxy.org/deny-list: "192.168.0.0/16"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ac-deny.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ac-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl haproxytech_denylist_default_ac-deny src 192.168.0.0/16"
+
+  test-haproxytech-access-control-deprecated-alias:
+    description: >-
+      The deprecated haproxy.org/whitelist alias still emits a src allow ACL when
+      the canonical allow-list is absent (upstream parity).
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: ac-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ac-wl
+            annotations:
+              haproxy.org/whitelist: "172.16.0.0/12"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: ac-wl.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: ac-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl haproxytech_allowlist_default_ac-wl src 172.16.0.0/12"
 
   test-haproxytech-ssl-redirect-port:
     description: >-

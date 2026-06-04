@@ -103,14 +103,14 @@ templateSnippets:
           {%- if val <= 0 %}
             {{- fail("Invalid value '" + maxconn + "' for annotation 'haproxy-ingress.github.io/maxconn-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
           {%- end %}
-          {%- serverOpts["maxconnValue"] = val %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "maxconn " + tostring(val)) %}
         {%- end %}
         {%- if maxqueue != "" %}
           {%- var val = toint(maxqueue) %}
           {%- if val <= 0 %}
             {{- fail("Invalid value '" + maxqueue + "' for annotation 'haproxy-ingress.github.io/maxqueue-server' on Ingress '" + key + "'. Must be a positive integer.") -}}
           {%- end %}
-          {%- serverOpts["maxqueueValue"] = val %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "maxqueue " + tostring(val)) %}
         {%- end %}
         {%- if limitConn != "" %}
           {%- var val = toint(limitConn) %}
@@ -153,28 +153,28 @@ templateSnippets:
       option httpchk GET {{ checkUri }}
         {%- end %}
         {%- if checkInterval != "" %}
-          {%- serverOpts["checkIntervalValue"] = checkInterval %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "inter " + checkInterval) %}
         {%- end %}
         {%- if checkPort != "" %}
           {%- var val = toint(checkPort) %}
           {%- if val <= 0 || val > 65535 %}
             {{- fail("Invalid value '" + checkPort + "' for annotation 'haproxy-ingress.github.io/health-check-port' on Ingress '" + key + "'. Must be 1-65535.") -}}
           {%- end %}
-          {%- serverOpts["checkPortValue"] = val %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "port " + tostring(val)) %}
         {%- end %}
         {%- if fallCount != "" %}
           {%- var val = toint(fallCount) %}
           {%- if val <= 0 %}
             {{- fail("Invalid value '" + fallCount + "' for annotation 'haproxy-ingress.github.io/health-check-fall-count' on Ingress '" + key + "'. Must be a positive integer.") -}}
           {%- end %}
-          {%- serverOpts["fallCountValue"] = val %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "fall " + tostring(val)) %}
         {%- end %}
         {%- if riseCount != "" %}
           {%- var val = toint(riseCount) %}
           {%- if val <= 0 %}
             {{- fail("Invalid value '" + riseCount + "' for annotation 'haproxy-ingress.github.io/health-check-rise-count' on Ingress '" + key + "'. Must be a positive integer.") -}}
           {%- end %}
-          {%- serverOpts["riseCountValue"] = val %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "rise " + tostring(val)) %}
         {%- end %}
       {%- end -%}
 
@@ -367,7 +367,7 @@ templateSnippets:
           {%- if val < 0 || val > 256 %}
             {{- fail("Invalid value '" + weight + "' for annotation 'haproxy-ingress.github.io/initial-weight' on Ingress '" + key + "'. Must be 0-256.") -}}
           {%- end %}
-          {%- serverOpts["weightValue"] = val %}
+          {%- serverOpts["flags"] = append(serverOpts | dig("flags") | toSlice(), "weight " + tostring(val)) %}
         {%- end %}
       {%- end -%}
 
@@ -514,7 +514,7 @@ templateSnippets:
         listed source CIDRs from the deny (they are still tracked, never denied).
 
         Generated HAProxy config (limit-rps: 10, whitelist 10.0.0.0/8):
-          stick-table type ip size 100k expire 1s store http_req_rate(1s)
+          stick-table type ip size 100k expire 1s store http_req_rate(1s) peers localinstance
           http-request track-sc0 src
           http-request deny deny_status 429 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 }
       -#}
@@ -550,7 +550,11 @@ templateSnippets:
           {%- else %}
       # haproxy-ingress/rate-limiting ({{ key }})
           {%- end %}
-      stick-table type ip size 100k expire {{ window }} store http_req_rate({{ window }})
+      {#- `peers localinstance` (base.yaml global-top-050-peers) carries the -#}
+      {#- per-source counter from the old worker to the new one on reload, so a -#}
+      {#- client's accumulated rate survives config churn instead of resetting to -#}
+      {#- zero (matches haproxytech/nginx-ingress). Local-only: stays per-pod. -#}
+      stick-table type ip size 100k expire {{ window }} store http_req_rate({{ window }}) peers localinstance
       http-request track-sc0 src
       http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
         {%- end %}
