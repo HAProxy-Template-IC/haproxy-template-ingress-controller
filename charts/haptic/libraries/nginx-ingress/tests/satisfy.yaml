@@ -1,0 +1,143 @@
+# nginx-ingress library — satisfy ("any"/"all") validation tests.
+# Controls whether an IP allow-list (whitelist-source-range) and basic auth
+# combine with AND (default, "all") or OR ("any").
+validationTests:
+  test-nginx-ingress-satisfy-any:
+    description: satisfy=any combines whitelist + auth with OR — auth is only challenged when the source IP is not in the allow-list, and the standalone whitelist deny is suppressed
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: satisfy-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: satisfy-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: satisfy-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.1"]
+          ports:
+            - port: 8080
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: satisfy-auth
+          data:
+            # htpasswd: user:$apr1$... (one entry). Value is base64 of "user:hash".
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: satisfy-any-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,192.168.0.0/16"
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "satisfy-auth"
+              nginx.ingress.kubernetes.io/auth-realm: "Protected"
+              nginx.ingress.kubernetes.io/satisfy: "any"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: satisfy.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: satisfy-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "acl ni_satisfy_ip_default_satisfy-any-ingress src 10\\.0\\.0\\.0/8 192\\.168\\.0\\.0/16"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request auth realm \"Protected\" if !ni_satisfy_ip_default_satisfy-any-ingress !\\{ http_auth\\(ni_auth_default_satisfy-auth\\) \\}"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http-request deny if .* !ni_allowlist_default_satisfy-any-ingress"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "http-request auth realm \"Protected\" unless \\{ http_auth\\(ni_auth_default_satisfy-auth\\) \\}"
+
+  test-nginx-ingress-satisfy-all-default:
+    description: satisfy=all (the default) keeps the independent whitelist deny and unconditional auth challenge (AND semantics)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: satall-service
+          spec:
+            ports:
+              - port: 80
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: satall-service-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: satall-service
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.2"]
+          ports:
+            - port: 8080
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: satall-auth
+          data:
+            auth: YWRtaW46JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtXCg==
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: satall-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "satall-auth"
+              nginx.ingress.kubernetes.io/auth-realm: "Restricted"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: satall.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: satall-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny if .* !ni_allowlist_default_satall-ingress"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request auth realm \"Restricted\" unless \\{ http_auth\\(ni_auth_default_satall-auth\\) \\}"

@@ -51,19 +51,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "userlist hi_auth_default_hi-auth-secret"
-        description: Must generate userlist from secret
       - type: contains
         target: haproxy.cfg
         pattern: "user admin password"
-        description: Userlist must contain credentials
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request auth realm "ProtectedArea"'
-        description: Must require auth with custom realm
 
   test-haproxy-ingress-basic-auth-missing-secret:
     description: >-
@@ -109,15 +105,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: render must succeed (auth cleanly skipped), NOT panic on the absent Secret
       - type: not_contains
         target: haproxy.cfg
         pattern: "userlist hi_auth_default_absent-secret"
-        description: no userlist is emitted when the referenced Secret is absent
       - type: not_contains
         target: haproxy.cfg
         pattern: "http_auth(hi_auth_default_absent-secret)"
-        description: no http_auth ACL ref is emitted when the referenced Secret is absent
 
   test-haproxy-ingress-auth-password-hash-validation-reject:
     description: Password hash validation rejects non-matching hashes (haproxy-ingress)
@@ -168,11 +161,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "Bcrypt hashes not allowed"
-        description: Must reject bcrypt hash with custom error message
       - type: contains
         target: rendering_error
         pattern: "admin"
-        description: Error must include username
 
   test-haproxy-ingress-auth-password-hash-validation-allow:
     description: Password hash validation allows matching hashes (haproxy-ingress)
@@ -220,11 +211,9 @@ validationTests:
               - port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "user admin password"
-        description: User must be in config
 
   test-haproxy-ingress-auth-tls-secret:
     description: haproxy-ingress.github.io/auth-tls-secret references a Secret whose `ca.crt` is written to the general file dir (not ssl/ — Dataplane validates ssl/ uploads as cert+key) and used in the crt-list line...
@@ -286,19 +275,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with the auth-tls-* annotation set
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: "ca-file [^ ]*general/default-client-ca-client-ca\\.pem verify required\\] api\\.example\\.com"
-        description: crt-list line carries the per-host ca-file path (general/, not ssl/ — Dataplane SSL endpoint validates ssl/ uploads as cert+key), verify mode, and SNI
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location https://login\\.example\\.com/cert-required code 302 if \\{ ssl_c_verify gt 0 \\}"
-        description: auth-tls-error-page emits a 302 redirect gated on the cert-verify-failure ACL
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-SSL-Client-Cert %\\[ssl_c_der,base64\\] if \\{ ssl_fc_has_crt \\}"
-        description: auth-tls-cert-header forwards the client cert (base64 DER) on requests that presented a cert
 
   test-haproxy-ingress-auth-tls-error-page-injection-rejected:
     description: An auth-tls-error-page value containing whitespace (or newlines, tabs, etc.) must fail loudly — without validation, the value would be interpolated into a `http-request redirect location <url>` direct...
@@ -338,11 +323,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "Invalid URL"
-        description: Render must fail loudly when the URL contains whitespace
       - type: contains
         target: rendering_error
         pattern: "default/bad-redirect"
-        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-external-auth:
     # The auth-url.map and SPOE wiring this test asserts on are
@@ -397,23 +380,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with auth-url annotation
       - type: contains
         target: map:auth-url.map
         pattern: "default/hi-protected https://auth.example/check"
-        description: auth-url.map must contain the <ns>/<name> → URL entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_url\\).*auth-url\\.map"
-        description: Frontend looks up auth_url from the map after routing
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-auth-group"
-        description: Frontend triggers the SPOE check when auth_url is found
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 401"
-        description: Frontend denies on auth failure
 
   test-haproxy-ingress-external-auth-signin:
     # Same prerequisite as the other external-auth tests — needs the
@@ -466,23 +444,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with auth-signin annotation
       - type: contains
         target: map:auth-signin.map
         pattern: "default/hi-protected https://login.example/oauth2/start"
-        description: auth-signin.map must contain the <ns>/<name> → URL entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_signin\\).*auth-signin\\.map"
-        description: Frontend looks up auth_signin from the map
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location %\\[var\\(txn.auth_signin\\)\\] code 302"
-        description: Frontend redirects to auth-signin URL on auth failure (browser flow)
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 401"
-        description: Deny rule still emits as fallback for ingresses without auth-signin
 
   test-haproxy-ingress-external-auth-method:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -533,19 +506,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with auth-method annotation
       - type: contains
         target: map:auth-method.map
         pattern: "default/protected POST"
-        description: auth-method.map must contain the <ns>/<name> → method entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_method\\).*auth-method\\.map"
-        description: Frontend looks up auth_method from the map
       - type: contains
         target: file:spoe.conf
         pattern: "method=var\\(txn.auth_method\\)"
-        description: SPOE message body threads txn.auth_method into the plugin's method arg
 
   test-haproxy-ingress-external-auth-headers-request:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -596,19 +565,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with auth-headers-request annotation
       - type: contains
         target: map:auth-forward-headers.map
         pattern: "default/protected Authorization, X-Forwarded-For"
-        description: auth-forward-headers.map must contain the <ns>/<name> → comma-list entry
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.auth_forward_headers\\).*auth-forward-headers\\.map"
-        description: Frontend looks up auth_forward_headers from the map
       - type: contains
         target: file:spoe.conf
         pattern: "forward_headers=var\\(txn.auth_forward_headers\\)"
-        description: SPOE message body threads txn.auth_forward_headers into the plugin's forward_headers arg
 
   test-haproxy-ingress-external-auth-headers-request-extends-spoe-message:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -682,27 +647,21 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with custom auth-headers-request entries
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
-        description: Custom header X-Tenant-ID is captured as an SPOE arg
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_request_id=req\\.hdr\\(X-Request-ID\\)"
-        description: Custom header X-Request-ID from tenant-a is captured
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_trace_id=req\\.hdr\\(X-Trace-Id\\)"
-        description: Custom header X-Trace-Id from tenant-b is captured
       - type: not_contains
         target: file:spoe.conf
         pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\) .*hdr_x_tenant_id=req\\.hdr\\(X-Tenant-ID\\)"
-        description: Duplicate X-Tenant-ID across ingresses must collapse to one capture
       - type: not_contains
         target: file:spoe.conf
         pattern: "hdr_authorization=req\\.hdr\\(Authorization\\) .*hdr_authorization=req\\.hdr"
-        description: Hardcoded Authorization header must not be re-emitted by the auto-extend snippet
 
   test-haproxy-ingress-external-auth-headers-fail-both-frontends:
     # Regression for issue #49 — TestIngressAuthHeadersFail in the e2e
@@ -768,29 +727,24 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       # Both frontends must carry the deny 401 directive.
       - type: contains
         target: haproxy.cfg
         pattern: '(?s)frontend http_frontend\b.*?http-request deny deny_status 401 if \{ var\(txn\.auth_url\) -m found \} !\{ var\(txn\.hub\.external_auth\.allowed\) -m bool \}.*?frontend http_frontend_h2c'
-        description: http_frontend (HTTP/1.1) emits the auth deny 401 rule
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?s)frontend http_frontend_h2c\b.*?http-request deny deny_status 401 if \{ var\(txn\.auth_url\) -m found \} !\{ var\(txn\.hub\.external_auth\.allowed\) -m bool \}'
-        description: http_frontend_h2c (HTTP/2 cleartext) emits the auth deny 401 rule
 
       # Both frontends must carry the http-after-response set-header
       # directives for WWW-Authenticate.
       - type: contains
         target: haproxy.cfg
         pattern: '(?s)frontend http_frontend\b.*?http-after-response set-header WWW-Authenticate.*?frontend http_frontend_h2c'
-        description: http_frontend (HTTP/1.1) emits the WWW-Authenticate set-header
       - type: contains
         target: haproxy.cfg
         pattern: '(?s)frontend http_frontend_h2c\b.*?http-after-response set-header WWW-Authenticate'
-        description: http_frontend_h2c emits the WWW-Authenticate set-header
 
   test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -862,11 +816,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid even when both spellings appear
       - type: not_contains
         target: file:spoe.conf
         pattern: "hdr_x_request_id=req\\.hdr\\([^)]+\\) .*hdr_x_request_id=req\\.hdr"
-        description: Only one hdr_x_request_id capture must appear on the SPOE args line; first writer wins
 
   test-haproxy-ingress-external-auth-headers-request-overlaps-builtin:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -916,15 +868,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid
       - type: not_contains
         target: file:spoe.conf
         pattern: "hdr_x_forwarded_uri=req\\.hdr\\(X-Forwarded-Uri\\).*hdr_x_forwarded_uri=req\\.hdr"
-        description: "The built-in `hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri)` arg must not be re-emitted by the auto-extend snippet — duplicate arg names trip HAProxy 3.0's SPOE frame parser."
       - type: contains
         target: file:spoe.conf
         pattern: "hdr_x_forwarded_uri=req\\.hdr\\(X-Forwarded-Uri\\)"
-        description: The built-in arg must still appear (sanity check on the negative above)
 
   test-haproxy-ingress-external-auth-headers-succeed-fail:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -976,31 +925,24 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with auth-headers-succeed and auth-headers-fail annotations
       - type: contains
         target: map:auth-extract-headers.map
         pattern: "default/protected X-Auth-User, X-Auth-Roles, WWW-Authenticate, X-Error-Reason"
-        description: auth-extract-headers.map must hold the union of pass and fail headers per ingress (with consistent comma+space spacing)
       - type: contains
         target: file:spoe.conf
         pattern: "extract_headers=var\\(txn.auth_extract_headers\\)"
-        description: SPOE message body threads txn.auth_extract_headers into the plugin's extract_headers arg
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\] if \\{ var\\(txn.hub.external_auth.x_auth_user\\) -m found \\} \\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\}"
-        description: First pass header gets a set-header line gated on allowed=true and var found
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-Roles %\\[var\\(txn.hub.external_auth.x_auth_roles\\)\\]"
-        description: Second pass header gets its own set-header line
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header WWW-Authenticate %\\[var\\(txn.hub.external_auth.www_authenticate\\)\\] if \\{ var\\(txn.auth_url\\) -m found \\} !\\{ var\\(txn.hub.external_auth.allowed\\) -m bool \\} \\{ var\\(txn.hub.external_auth.www_authenticate\\) -m found \\}"
-        description: First fail header uses http-after-response (fires on deny-generated responses, unlike http-response which only runs on backend responses)
       - type: contains
         target: haproxy.cfg
         pattern: "http-after-response set-header X-Error-Reason %\\[var\\(txn.hub.external_auth.x_error_reason\\)\\]"
-        description: Second fail header gets its own http-after-response set-header line
 
   test-haproxy-ingress-external-auth-bad-header-name-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -1054,11 +996,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "Invalid HTTP header name"
-        description: Render must fail loudly when a header name violates RFC 7230 token grammar
       - type: contains
         target: rendering_error
         pattern: "default/bad-header"
-        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-external-auth-hostless-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -1107,8 +1047,6 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
         target: map:auth-url.map
         pattern: '(?m)^default/hi-hostless https://auth\.example/check$'
-        description: "auth-url.map must contain the host-less Ingress keyed by <ns>/<name>."

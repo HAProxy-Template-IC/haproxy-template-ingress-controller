@@ -44,19 +44,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "timeout server 60s"
-        description: Must set timeout server
       - type: contains
         target: haproxy.cfg
         pattern: "timeout connect 10s"
-        description: Must set timeout connect
       - type: contains
         target: haproxy.cfg
         pattern: "timeout queue 30s"
-        description: Must set timeout queue
 
   test-haproxy-ingress-balance-algorithm:
     description: HAProxy-Ingress balance-algorithm annotation works
@@ -93,11 +89,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "balance leastconn"
-        description: Must set balance algorithm
 
   test-haproxy-ingress-health-check:
     description: HAProxy-Ingress health check annotations work
@@ -134,11 +128,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "option httpchk GET /healthz"
-        description: Must set HTTP health check
 
   test-haproxy-ingress-secure-backends:
     description: HAProxy-Ingress secure-backends annotation enables SSL
@@ -175,11 +167,9 @@ validationTests:
                             number: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "ssl verify none"
-        description: Must enable SSL to backend
 
   test-haproxy-ingress-backend-protocol-h2:
     description: HAProxy-Ingress backend-protocol h2 annotation works
@@ -216,11 +206,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "proto h2"
-        description: Must set HTTP/2 protocol
 
   test-haproxy-ingress-config-backend-snippet:
     description: HAProxy-Ingress config-backend annotation injects directives
@@ -259,15 +247,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "X-Custom-Header"
-        description: Must inject custom header from snippet
       - type: contains
         target: haproxy.cfg
         pattern: "option httplog"
-        description: Must inject httplog option from snippet
 
   # ==========================================================================
   # Phase 2: Frontend Filter Tests
@@ -309,11 +294,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect scheme https code 301"
-        description: Must generate SSL redirect with code 301
 
   test-haproxy-ingress-hsts:
     description: HAProxy-Ingress HSTS annotations generate correct headers
@@ -353,23 +336,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "Strict-Transport-Security"
-        description: Must set HSTS header
       - type: contains
         target: haproxy.cfg
         pattern: "max-age=31536000"
-        description: Must include max-age
       - type: contains
         target: haproxy.cfg
         pattern: "includeSubDomains"
-        description: Must include subdomains flag
       - type: contains
         target: haproxy.cfg
         pattern: "preload"
-        description: Must include preload flag
 
   test-haproxy-ingress-allowlist:
     description: HAProxy-Ingress allowlist-source-range creates ACL
@@ -419,19 +397,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "acl hi_allowlist_default_allow-ingress src"
-        description: Must create allowlist ACL
       - type: contains
         target: haproxy.cfg
         pattern: "10.0.0.0/8"
-        description: Must include first CIDR
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny"
-        description: Must deny non-matching requests
 
   test-haproxy-ingress-cors:
     description: HAProxy-Ingress CORS annotations generate correct headers
@@ -470,19 +444,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Origin"
-        description: Must set CORS origin header
       - type: contains
         target: haproxy.cfg
         pattern: "https://example.com"
-        description: Must use specified origin
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Credentials"
-        description: Must set credentials header
 
   test-haproxy-ingress-app-root:
     description: HAProxy-Ingress app-root annotation generates redirect
@@ -519,11 +489,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location /dashboard"
-        description: Must redirect root to app-root path
 
   # ============================================================================
   # Phase 3: Path Type Tests
@@ -564,11 +532,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: "map:path-exact.map"
         pattern: '(?m)^exact\.example\.com/api/users BACKEND:default_exact-ingress_svc_exact-service_80$'
-        description: "Map entry must carry the `BACKEND:<backend_name>` qualifier prefix so base.yaml's frontend-routing-logic can decode the qualifier (`field(1,:)`) and dispatch to the named backend. Asserting on the value (not just the key) is the assertion that would have caught the historical breakage where the renderer omitted the `BACKEND:` prefix and routing silently fell through to default_backend."
   test-haproxy-ingress-path-type-prefix:
     description: HAProxy-Ingress path-type prefix annotation uses prefix map
     fixtures:
@@ -604,11 +570,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: "map:path-prefix.map"
         pattern: '(?m)^prefix\.example\.com/api/ BACKEND:default_prefix-ingress_svc_prefix-service_80$'
-        description: Map entry must carry the `BACKEND:<backend_name>` qualifier prefix; trailing slash for prefix matching.
 
   test-haproxy-ingress-path-type-begin:
     description: HAProxy-Ingress path-type begin annotation uses prefix-exact map
@@ -645,11 +609,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: "map:path-prefix-exact.map"
         pattern: '(?m)^begin\.example\.com/static BACKEND:default_begin-ingress_svc_begin-service_80$'
-        description: Map entry must carry the `BACKEND:<backend_name>` qualifier prefix.
 
   test-haproxy-ingress-path-type-regex:
     description: "HAProxy-Ingress path-type=regex annotation produces a path-regex.map row keyed by the literal regex pattern with a `BACKEND:<backend_name>` qualifier value. base."
@@ -686,11 +648,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid (regex must parse cleanly)
       - type: contains
         target: "map:path-regex.map"
         pattern: '(?m)^regex\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_regex-ingress_svc_regex-service_80$'
-        description: "Map entry must carry the literal regex pattern as the key AND the `BACKEND:<backend_name>` qualifier value. The historical renderer wrote the row as `<host><pathRegex> ` (trailing space, no backend name) because it used `render \"util-backend-name-ingress\"` — which only defines the BackendNameIngress macro without calling it. With the fix the renderer imports the macro and calls it, so the row is well-formed."
   test-haproxy-ingress-path-type-regex-wildcard-host:
     description: HAProxy-Ingress path-type=regex annotation on a wildcard-host Ingress produces a valid regex (no leading literal `*`). The historical renderer used the raw rule.
     fixtures:
@@ -726,15 +686,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: "HAProxy must parse the rendered config (in particular, path-regex.map) without error. Catches the wildcard-`*` regex bug — without MapKeyForHost the key would start with `*.example.com` and HAProxy would reject the regex."
       - type: contains
         target: "map:path-regex.map"
         pattern: '(?m)^\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_wild-regex-ingress_svc_wild-regex-service_80$'
-        description: "Wildcard host normalisation: `*.example.com` → `.example.com` (leading `*` stripped via MapKeyForHost). The result is a valid regex pattern that matches concrete subdomains via base.yaml's regsub fallback at request time."
       - type: not_contains
         target: "map:path-regex.map"
         pattern: '\*\.example\.com'
-        description: "The leading `*` from the wildcard host MUST NOT appear in the regex pattern (would make it an invalid regex)."
   test-haproxy-ingress-path-type-regex-rule-without-http:
     description: "HAProxy-Ingress path-type=regex with a rule that has no `http` block must not panic or emit any map row for that rule. Regression test for the typed-traversal migration (!1017) — `rule.Http.Paths` is accessed directly, and an absent `http:` in the source YAML must surface as an empty slice (loop emits nothing), not a nil-deref panic."
     fixtures:
@@ -773,15 +730,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid (no panic during render)
       - type: contains
         target: "map:path-regex.map"
         pattern: '(?m)^hashttp\.example\.com/api/v\[0-9\]\+/\.\* BACKEND:default_mixed-ingress_svc_mixed-service_80$'
-        description: "The rule with an http block must still emit its row even when a sibling rule has no http block."
       - type: not_contains
         target: "map:path-regex.map"
         pattern: 'nohttp\.example\.com'
-        description: "The rule without an http block must not contribute any map entry (its empty Paths slice produces zero iterations)."
   # ============================================================================
   # Phase 4: Session Affinity Tests
   # ============================================================================
@@ -821,11 +775,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "cookie INGRESSCOOKIE insert indirect nocache dynamic"
-        description: Must generate default cookie directive with dynamic
 
   test-haproxy-ingress-session-affinity-custom:
     description: HAProxy-Ingress cookie affinity with custom options
@@ -865,19 +817,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "cookie MYSESSION insert"
-        description: Must use custom cookie name
       - type: contains
         target: haproxy.cfg
         pattern: "domain .example.com"
-        description: Must set cookie domain
       - type: contains
         target: haproxy.cfg
         pattern: 'attr "SameSite=Strict"'
-        description: Must set SameSite attribute
 
   # ============================================================================
   # Phase 5: SSL Features Tests
@@ -918,16 +866,593 @@ validationTests:
                             number: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend ssl-passthrough-hi-default-passthrough-ingress"
-        description: Must generate SSL passthrough backend
       - type: contains
         target: haproxy.cfg
         pattern: "mode tcp"
-        description: Backend must be in TCP mode
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend ssl-passthrough-hi-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
-        description: TCP frontend must route by SNI
+
+  # ==========================================================================
+  # Rate limiting (limit-rps / limit-rpm / limit-whitelist)
+  # ==========================================================================
+
+  test-haproxy-ingress-limit-rps:
+    description: limit-rps generates a per-source request-rate stick-table and 429 deny
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rps-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rps-ingress
+            annotations:
+              haproxy-ingress.github.io/limit-rps: "10"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rps.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rps-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
+
+  test-haproxy-ingress-limit-rpm:
+    description: limit-rpm generates a per-minute request-rate stick-table
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rpm-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rpm-ingress
+            annotations:
+              haproxy-ingress.github.io/limit-rpm: "120"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rpm.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rpm-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 100k expire 60s store http_req_rate\\(60s\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 120 \\}"
+
+  test-haproxy-ingress-limit-whitelist:
+    description: limit-whitelist exempts listed CIDRs from the rate limit
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: wl-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: wl-ingress
+            annotations:
+              haproxy-ingress.github.io/limit-rps: "10"
+              haproxy-ingress.github.io/limit-whitelist: "10.0.0.0/8, 192.168.1.1"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: wl.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: wl-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10.0.0.0/8 192.168.1.1 \\}"
+
+  # ==========================================================================
+  # Path rewriting (rewrite-target)
+  # ==========================================================================
+
+  test-haproxy-ingress-rewrite-target:
+    description: rewrite-target emits replace-path and translates $N capture groups to \N
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rw-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rw-ingress
+            annotations:
+              haproxy-ingress.github.io/rewrite-target: "/api/$1"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rw.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rw-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request replace-path \\(\\.\\*\\) /api/"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "/api/\\$1"
+
+
+  test-haproxy-ingress-proxy-body-size:
+    description: HAProxy-Ingress proxy-body-size caps request body size with a 413
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: body-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: body-ingress
+            annotations:
+              haproxy-ingress.github.io/proxy-body-size: "8m"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: body.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: body-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request deny deny_status 413 if \\{ req.body_size gt 8388608 \\}"
+
+  test-haproxy-ingress-proxy-body-size-unlimited:
+    description: HAProxy-Ingress proxy-body-size "0" emits no deny directive
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: body0-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: body0-ingress
+            annotations:
+              haproxy-ingress.github.io/proxy-body-size: "0"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: body0.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: body0-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "req.body_size gt"
+
+  test-haproxy-ingress-ssl-ciphers-backend:
+    description: HAProxy-Ingress ssl-ciphers-backend/ssl-cipher-suites-backend add ciphers to default-server when backend SSL is on
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cipher-service
+          spec:
+            ports:
+              - port: 443
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cipher-ingress
+            annotations:
+              haproxy-ingress.github.io/secure-backends: "true"
+              haproxy-ingress.github.io/ssl-ciphers-backend: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+              haproxy-ingress.github.io/ssl-cipher-suites-backend: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cipher.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cipher-service
+                          port:
+                            number: 443
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
+
+  test-haproxy-ingress-ssl-ciphers-backend-ignored-without-ssl:
+    description: ssl-ciphers-backend is ignored when backend SSL is not enabled
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cipher-nossl-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cipher-nossl-ingress
+            annotations:
+              haproxy-ingress.github.io/ssl-ciphers-backend: "ECDHE-RSA-AES128-GCM-SHA256"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cipher-nossl.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cipher-nossl-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "ciphers ECDHE-RSA-AES128-GCM-SHA256"
+
+  test-haproxy-ingress-agent-check:
+    description: HAProxy-Ingress agent-check annotations add agent-check server params to default-server
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: agent-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: agent-ingress
+            annotations:
+              haproxy-ingress.github.io/agent-check-port: "9999"
+              haproxy-ingress.github.io/agent-check-interval: "5s"
+              haproxy-ingress.github.io/agent-check-send: "ping\n"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: agent.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: agent-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "agent-check agent-port 9999 agent-inter 5s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "agent-send ping"
+
+  test-haproxy-ingress-agent-check-addr:
+    description: HAProxy-Ingress agent-check-addr is appended alongside the required agent-check-port
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: agentaddr-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: agentaddr-ingress
+            annotations:
+              haproxy-ingress.github.io/agent-check-port: "9876"
+              haproxy-ingress.github.io/agent-check-addr: "10.0.0.5"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: agentaddr.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: agentaddr-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "agent-check agent-port 9876 agent-addr 10.0.0.5"
+
+  test-haproxy-ingress-agent-check-addr-without-port-rejected:
+    description: HAProxy-Ingress agent-check-addr without agent-check-port fails the render
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: agentnoport-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: agentnoport-ingress
+            annotations:
+              haproxy-ingress.github.io/agent-check-addr: "10.0.0.5"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: agentnoport.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: agentnoport-service
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Annotation 'haproxy-ingress\\.github\\.io/agent-check-port' is required to enable the agent check on Ingress 'default/agentnoport-ingress'"
+
+  test-haproxy-ingress-default-backend-redirect:
+    description: HAProxy-Ingress default-backend-redirect redirects unmatched requests for the Ingress host
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: dbr-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: dbr-ingress
+            annotations:
+              haproxy-ingress.github.io/default-backend-redirect: "https://fallback.example.com/"
+              haproxy-ingress.github.io/default-backend-redirect-code: "301"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: dbr.example.com
+                http:
+                  paths:
+                    - path: /app
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: dbr-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location https://fallback.example.com/ code 301 if \\{ var\\(txn.host\\) -m str dbr.example.com \\} !\\{ var\\(txn.backend_name\\) -m found \\}"
+
+  test-haproxy-ingress-default-backend-redirect-default-code:
+    description: HAProxy-Ingress default-backend-redirect defaults to code 302
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: dbr2-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: dbr2-ingress
+            annotations:
+              haproxy-ingress.github.io/default-backend-redirect: "https://fallback2.example.com/"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: dbr2.example.com
+                http:
+                  paths:
+                    - path: /app
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: dbr2-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request redirect location https://fallback2.example.com/ code 302 if \\{ var\\(txn.host\\) -m str dbr2.example.com \\} !\\{ var\\(txn.backend_name\\) -m found \\}"
+
+  # ==========================================================================
+  # Security: CIDR-list config-injection guard (ValidateCidrList)
+  # ==========================================================================
+
+  test-haproxy-ingress-allowlist-cidr-injection-rejected:
+    description: An allowlist-source-range token that is not a bare IP/CIDR aborts the render (config-injection guard)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: inj-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: inj-ingress
+            annotations:
+              # The second token is not an IP/CIDR — a crafted value could
+              # otherwise smuggle an HAProxy directive into the src ACL line.
+              haproxy-ingress.github.io/allowlist-source-range: "10.0.0.0/8, http-request deny"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: inj.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: inj-service
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Invalid CIDR/IP 'http-request deny'"

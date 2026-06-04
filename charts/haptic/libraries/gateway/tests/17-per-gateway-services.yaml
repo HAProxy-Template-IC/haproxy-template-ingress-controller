@@ -98,17 +98,14 @@ validationTests:
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must validate alongside the per-Gateway Services.
 
       # gw-https: per-Gateway Service emitted with both listener ports.
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: 'name: gw-default-gw-https\b'
-        description: "Per-Gateway Service exists for `gw-https` (HTTPS listener, no spec.addresses)."
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: 'app\.kubernetes\.io/name: haptic'
-        description: "Per-Gateway Service selector includes the haproxy pod selector so traffic flows to the chart's HAProxy deployment."
       # Both listener ports map to allocated pod ports. With ONE Gateway
       # producing the only HTTPS allocations, sort order gives:
       #   default/gw-https:https:443 → 18000
@@ -117,29 +114,24 @@ validationTests:
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: '(?s)name: gw-default-gw-https.*?targetPort: 18000'
-        description: "gw-https' port 443 entry maps to allocated pod port 18000 (first in the alphabetical sort)."
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: '(?s)name: gw-default-gw-https.*?targetPort: 18001'
-        description: "gw-https' port 8443 entry maps to allocated pod port 18001."
       # gw-http-only: NO per-Gateway Service.
       - type: not_contains
         target: "k8s:gateway-static-addresses"
         pattern: 'name: gw-default-gw-http-only'
-        description: "HTTP-only Gateway gets NO per-Gateway Service — there's no HTTPS bind to scope."
       # gw-pinned: NO per-Gateway Service from THIS path. The
       # static-addresses path emits per-IP Services instead.
       - type: not_contains
         target: "k8s:gateway-static-addresses"
         pattern: '(?m)^  name: gw-default-gw-pinned$'
-        description: "Pinned Gateway (spec.addresses set) does NOT get a per-Gateway Service from this path. The existing static-addresses path emits per-IP Services instead."
       # The static-addresses path's per-IP Service for gw-pinned still
       # appears, just keyed by the IP suffix. (This pattern asserts
       # the pinned path remains untouched by phase 3.)
       - type: contains
         target: "k8s:gateway-static-addresses"
         pattern: 'name: gw-default-gw-pinned-192-0-2-10'
-        description: "Pinned Gateway gets the existing per-IP Service from the static-addresses path, untouched by phase 3."
   test-k8s-haproxy-service-gateway-listener-ports:
     description: "Gateway listeners on non-default ports must add corresponding `gw-<port>-<proto>` port entries to the haproxy-service Service. Without these, kube-proxy doesn't route LoadBalancer-IP traffic on those ports to the haproxy pod — the upstream `HTTPRouteListenerPortMatching` conformance test failed in CI precisely because port 80 worked (default Service port) but 8080/8090 timed out (no Service port → no kube-proxy DNAT). Lives in the gateway library (not base) because the assertion fixtures reference Gateway / GatewayClass watchedResources — those only exist when the gateway library is loaded. base.yaml's `k8sResources.haproxy-service` template is what produces the rendered Service; this test exercises the cross-library interaction with gateway-supplied listener metadata."
     fixtures:
@@ -200,23 +192,18 @@ validationTests:
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: http\n"
-        description: Default http port (80) still emitted
 
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: gw-8080-h"
-        description: "Gateway listener on port 8080 (HTTP) adds gw-8080-h port entry. Without this kube-proxy can't DNAT LB-IP:8080 → haproxy-pod:8080 and the conformance suite's HTTPRouteListenerPortMatching test fails with `context deadline exceeded`."
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "name: gw-8090-h"
-        description: Gateway listener on port 8090 (HTTP) adds gw-8090-h port entry
 
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "(?ms)name: gw-8080-h.*\\n.*port: 8080"
-        description: gw-8080-h Service port maps to port 8080
 
       - type: contains
         target: "k8s:haproxy-service"
         pattern: "(?ms)name: gw-8090-h.*\\n.*port: 8090"
-        description: gw-8090-h Service port maps to port 8090

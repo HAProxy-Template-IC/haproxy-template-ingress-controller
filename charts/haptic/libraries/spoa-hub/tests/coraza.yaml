@@ -63,19 +63,15 @@ validationTests:
                           port: { number: 80 }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid with snippet inlined
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '# nginx-ingress modsecurity-snippet from default/protected'
-        description: Snippet is preceded by a comment marker identifying the source Ingress
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'SecRule REQUEST_URI "@beginsWith /admin" "id:1001,phase:1,deny,status:403"'
-        description: Snippet content is inlined verbatim
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'SecRuleEngine On'
-        description: Base directives are still present alongside the snippet
 
   test-spoa-hub-config-render-modsecurity-snippet-multi-deterministic:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
@@ -140,11 +136,9 @@ validationTests:
           spec: { ingressClassName: haproxy, rules: [{ host: m.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: e, port: { number: 80 } } } }] } }] }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid with three Ingresses' snippets inlined
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '# nginx-ingress modsecurity-snippet from zone-a/alpha[\s\S]*# nginx-ingress modsecurity-snippet from zone-m/middle[\s\S]*# nginx-ingress modsecurity-snippet from zone-z/zeta'
-        description: Snippets are inlined sorted by namespace/name (alpha < middle < zeta)
 
   # ============================================================================
   # Multi-tenant per-app WAF tests (rules don't bleed across Ingresses)
@@ -204,34 +198,27 @@ validationTests:
           spec: { ingressClassName: haproxy, rules: [{ host: b.example.com, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: echo, port: { number: 80 } } } }] } }] }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid
       # Each Ingress gets its OWN [plugins.params.applications] block
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\]'
-        description: tenant-a/alpha gets its own per-app block
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[plugins\.params\.applications\."tenant-b/bravo"\]'
-        description: tenant-b/bravo gets its own per-app block
       # Within tenant-a/alpha's block: alpha's rule appears, bravo's does NOT
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\][\s\S]*?5001[\s\S]*?"""[\s\S]*?\[plugins\.params\.applications\."tenant-b/bravo"\]'
-        description: alpha's rule (id:5001) appears inside alpha's app block (and the block ends with """ before bravo's block opens)
       - type: not_contains
         target: file:spoa-hub-config.toml
         pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\][\s\S]*?5002[\s\S]*?"""[\s\S]*?\[plugins\.params\.applications\."tenant-b/bravo"\]'
-        description: bravo's rule (id:5002) does NOT bleed into alpha's app block
       # The base ruleset (SecRuleEngine On) IS shared — appears in both blocks
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[plugins\.params\.applications\."tenant-a/alpha"\][\s\S]*?SecRuleEngine On[\s\S]*?\[plugins\.params\.applications\."tenant-b/bravo"\]'
-        description: Base ruleset (SecRuleEngine On) appears inside alpha's app block (shared base)
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[plugins\.params\.applications\."tenant-b/bravo"\][\s\S]*?SecRuleEngine On'
-        description: Base ruleset (SecRuleEngine On) appears inside bravo's app block (shared base)
 
   test-spoa-hub-coraza-app-map-routes-by-resource-id:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -292,19 +279,15 @@ validationTests:
                       backend: { service: { name: echo, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: map:coraza-app.map
         pattern: '(?m)^default/protected default/protected$'
-        description: "One identity row per ingress: key=value=<ns>/<name>. There's no per-path fan-out — the routing chain has already resolved which Ingress owns the request by the time coraza-app.map is consulted via var(txn.resource_id)."
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn.coraza_app\).*coraza-app\.map'
-        description: Frontend filter looks up coraza_app from the per-path map
       - type: contains
         target: file:spoe.conf
         pattern: 'app=var\(txn.coraza_app\)'
-        description: SPOE check-request message passes app= per-request (lives in spoe.conf, not haproxy.cfg)
 
   test-spoa-hub-config-render-modsecurity-snippet-host-less-accepted:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -349,11 +332,9 @@ validationTests:
                       backend: { service: { name: any, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
         target: map:coraza-app.map
         pattern: '(?m)^default/hostless-modsec default/hostless-modsec$'
-        description: "coraza-app.map carries the host-less Ingress as an identity row keyed by <ns>/<name>."
   test-spoa-hub-config-render-modsecurity-snippet-rejects-toml-triple-quote:
     description: "An Ingress whose modsecurity-snippet contains a TOML triple-quote delimiter (\"\"\") is rejected at render time. The annotation value lands inside `directives = \"\"\"..."
     extraContext:
@@ -401,7 +382,6 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "default/injector annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' contains a TOML triple-quote"
-        description: Render must fail with explicit triple-quote-rejection error
 
   test-spoa-hub-config-render-modsecurity-without-coraza-fails:
     description: "An Ingress carrying nginx.ingress.kubernetes.io/modsecurity-snippet while the spoaHub coraza plugin is NOT enabled fails the render with an explicit error. Silent ignore would hide a real misconfiguration; the operator wrote a per-Ingress WAF rule and nothing enforces it."
@@ -445,7 +425,6 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "default/orphan-rule sets annotation 'nginx.ingress.kubernetes.io/modsecurity-snippet' but the spoaHub coraza plugin is not enabled"
-        description: Render must fail with explicit annotation-without-coraza error
 
   test-spoa-hub-config-render-multiple-plugins:
     # Skip on HAProxy <3.1: fixture pins haproxyVersion=3.2 so the
@@ -510,23 +489,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'name = "coraza"'
-        description: Coraza plugin block is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'name = "fingerprinting"'
-        description: Fingerprinting plugin block is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'library = "libfingerprinting_plugin.so"'
-        description: Fingerprinting library filename is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'ja4 = true'
-        description: Fingerprinting params blob is spliced
 
   # =============================================================================
   # Coraza dispatch mode (controller.templatingSettings.extraContext.coraza.dispatch)
@@ -591,19 +565,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid in opt-in mode
       - type: contains
         target: haproxy.cfg
         pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
-        description: Conditional dispatch line is emitted (per-Ingress gated)
       - type: not_contains
         target: haproxy.cfg
         pattern: 'coraza-disabled\.map'
-        description: coraza-disabled.map lookup is NOT emitted in opt-in mode
       - type: not_contains
         target: haproxy.cfg
         pattern: 'set-var\(txn\.coraza_mode\) str\('
-        description: str(deny|detect) fallback is NOT emitted in opt-in mode
 
   test-coraza-dispatch-default-on-no-annotations:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -667,23 +637,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid in default-on mode
       - type: contains
         target: haproxy.cfg
         pattern: 'set-var\(txn\.coraza_disabled\).*coraza-disabled\.map'
-        description: coraza-disabled.map lookup is emitted
       - type: contains
         target: haproxy.cfg
         pattern: 'set-var\(txn\.coraza_mode\) str\(deny\) unless \{ var\(txn\.coraza_mode\) -m found \}'
-        description: str(deny) fallback for coraza_mode is emitted
       - type: contains
         target: haproxy.cfg
         pattern: 'send-spoe-group spoa-hub check-request-group unless \{ var\(txn\.coraza_disabled\) -m found \}'
-        description: Unconditional dispatch line is emitted (gated only on opt-out)
       - type: not_contains
         target: haproxy.cfg
         pattern: 'send-spoe-group spoa-hub check-request-group if \{ var\(txn\.coraza_app\)'
-        description: Old per-Ingress-gated dispatch line is NOT emitted in default-on mode
 
   test-coraza-dispatch-default-on-detect:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -745,15 +710,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid in default-on detect mode
       - type: contains
         target: haproxy.cfg
         pattern: 'set-var\(txn\.coraza_mode\) str\(detect\) unless \{ var\(txn\.coraza_mode\) -m found \}'
-        description: str(detect) fallback is emitted
       - type: contains
         target: haproxy.cfg
         pattern: '!\{ var\(txn\.coraza_mode\) -m str detect \}'
-        description: Existing deny-rule short-circuit predicate is preserved
 
   test-coraza-dispatch-default-on-with-opt-out:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -812,11 +774,9 @@ validationTests:
                           port: { number: 80 }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid with opt-out
       - type: contains
         target: map:coraza-disabled.map
         pattern: '(?m)^default/opted-out 1$'
-        description: coraza-disabled.map carries the opt-out entry keyed by <ns>/<name>
 
   test-coraza-dispatch-enable-modsecurity-bogus-rejected:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -848,11 +808,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: 'allowed values are "true" or "false"'
-        description: Render fails with a message listing valid values
       - type: contains
         target: rendering_error
         pattern: 'default/bogus'
-        description: Error identifies the offending Ingress
 
   test-coraza-dispatch-enable-modsecurity-host-less-accepted:
     _helm_skip_test: '{{ if semverCompare "<3.1" .Values.haproxyVersion }}true{{ else }}false{{ end }}'
@@ -885,8 +843,6 @@ validationTests:
                           port: { number: 80 }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
         target: map:coraza-disabled.map
         pattern: '(?m)^default/host-less 1$'
-        description: "coraza-disabled.map carries the host-less Ingress as a resource-id-keyed entry; the routing chain still resolves it to a stable resource_id so the WAF skip applies correctly."

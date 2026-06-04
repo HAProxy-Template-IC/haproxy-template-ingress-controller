@@ -1,0 +1,117 @@
+# nginx-ingress library — default-backend annotation.
+#
+# nginx.ingress.kubernetes.io/default-backend names a Service that serves
+# requests hitting this Ingress's host(s) but matching none of its rule paths.
+# We mirror the spec.defaultBackend machinery in ingress.yaml: a dedicated
+# backend pool plus a per-host catch-all entry in path-prefix.map.
+templateSnippets:
+  # Shared helper: resolve the default-backend annotation into the parts both
+  # the backends-* and map-path-prefix-* snippets need. Populates `result` with
+  # the resolved fields and sets result["ok"]=true; leaves result["ok"]=false
+  # when the annotation is absent / the Service can't be resolved.
+  util-nginx-ingress-default-backend:
+    template: |
+      {%- macro ResolveDefaultBackend(ingress *resources.ingresses.T, result map[string]any) %}
+        {%%
+          result["ok"] = false
+          var ann = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/default-backend"]
+          if ann == "" {
+            return
+          }
+          var ns = ingress.Metadata.Namespace
+          var svcNs = ns
+          var svcName = ann
+          if strings_contains(ann, "/") {
+            var parts = split(ann, "/")
+            svcNs = parts[0]
+            svcName = parts[1]
+          }
+          // nginx's default-backend names only a Service (no port). Resolve the
+          // Service's first port number; the pool can't be built without it.
+          var svc = resources.services.GetSingle(svcNs, svcName)
+          if svc == nil {
+            return
+          }
+          var port = 0
+          var portName = ""
+          for _, sp := range svc.Spec.Ports {
+            port = toint(sp.Port)
+            portName = sp.Name
+            break
+          }
+          if port <= 0 {
+            return
+          }
+          // Backend name is Ingress-scoped so two Ingresses pointing different
+          // hosts at the same error Service still get distinct, stable pools.
+          result["svcNs"] = svcNs
+          result["svcName"] = svcName
+          result["port"] = port
+          result["portName"] = portName
+          result["backendName"] = ns + "_" + ingress.Metadata.Name + "_default-backend_" + svcName
+          result["ok"] = true
+        %%}
+      {%- end macro -%}
+
+  backends-510-nginx-ingress-default-backend:
+    template: |
+      {#-
+        Nginx Ingress default-backend pools.
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#default-backend
+
+        Emits one backend pool per Ingress carrying the default-backend
+        annotation. The map-path-prefix-510 sibling adds the catch-all path
+        entries that route unmatched requests here.
+      -#}
+      {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
+      {%- import "util-backend-servers" for BackendServers -%}
+      {%- import "util-backend-servers-helpers" for BuildServerOptions -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var info = map[string]any{} -%}
+        {{- ResolveDefaultBackend(ingress, info) -}}
+        {%- if info["ok"] == true -%}
+          {%- var svcNs = tostring(info["svcNs"]) -%}
+          {%- var svcName = tostring(info["svcName"]) -%}
+          {%- var port = toint(info["port"]) -%}
+          {%- var portName = tostring(info["portName"]) -%}
+          {%- var backendName = tostring(info["backendName"]) -%}
+          {%- if first_seen("nginx_default_backend", backendName) -%}
+      {{ "\n" }}# nginx-ingress/default-backend: Ingress {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} → Service {{ svcNs }}/{{ svcName }}:{{ port }}
+      backend {{ backendName }}
+          guid {{ make_guid("be", backendName) }}
+          {%- var serverOpts = map[string]any{"flags": []any{}} -%}
+          {{- render_glob "backend-directives-*" inherit_context }}
+        default-server check{{ BuildServerOptions(serverOpts) }}
+        {{ BackendServers(svcName, 0, port, nil, portName, backendName, svcNs) | indent(2, true) }}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}
+
+  map-path-prefix-510-nginx-ingress-default-backend:
+    template: |
+      {#-
+        Nginx Ingress default-backend catch-all path entries.
+
+        For each host on an Ingress carrying the default-backend annotation,
+        emit a "<host>/" prefix entry pointing at the default-backend pool. The
+        map_beg longest-prefix match in path-prefix.map naturally prefers the
+        Ingress's own rule paths and falls through to this catch-all only when
+        no rule path matched — exactly nginx's "default-backend handles requests
+        that match no path" semantics.
+      -#}
+      {%- import "util-nginx-ingress-default-backend" for ResolveDefaultBackend -%}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- for _, ingress := range resources.ingresses.List() -%}
+        {%- var info = map[string]any{} -%}
+        {{- ResolveDefaultBackend(ingress, info) -}}
+        {%- if info["ok"] == true -%}
+          {%- var backendName = tostring(info["backendName"]) -%}
+          {%- for _, rule := range ingress.Spec.Rules -%}
+            {%- if rule.Host != "" -%}
+              {%- var hostKey = MapKeyForHost(rule.Host) -%}
+      {{ "\n" }}# nginx-ingress/default-backend ({{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}){{ "\n" }}{{ hostKey }}/ BACKEND:{{ backendName }}
+            {%- end -%}
+          {%- end -%}
+        {%- end -%}
+      {%- end -%}

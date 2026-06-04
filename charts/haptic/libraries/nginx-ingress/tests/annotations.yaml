@@ -55,15 +55,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "timeout connect 10s"
-        description: Must set timeout connect with s suffix
       - type: contains
         target: haproxy.cfg
         pattern: "timeout server 60s"
-        description: Must set timeout server from proxy-read-timeout
 
   test-nginx-ingress-load-balance:
     description: Nginx Ingress load-balance annotation maps to HAProxy algorithm
@@ -113,11 +110,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "balance leastconn"
-        description: Must map least_conn to leastconn
 
   test-nginx-ingress-ssl-redirect:
     description: Nginx Ingress ssl-redirect annotation generates 301 redirect
@@ -167,11 +162,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "redirect scheme https code 301"
-        description: Must generate SSL redirect with code 301
 
   test-nginx-ingress-force-ssl-redirect:
     description: Nginx Ingress force-ssl-redirect annotation generates 308 redirect
@@ -221,11 +214,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "redirect scheme https code 308"
-        description: Must generate SSL redirect with code 308
 
   test-nginx-ingress-cors:
     description: Nginx Ingress CORS annotations generate correct headers
@@ -276,15 +267,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "Access-Control-Allow-Origin"
-        description: Must set CORS origin header
       - type: contains
         target: haproxy.cfg
         pattern: "https://example.com"
-        description: Must use specified origin
 
   test-nginx-ingress-access-control:
     description: Nginx Ingress whitelist-source-range creates ACL and deny rule
@@ -334,19 +322,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "acl ni_allowlist_default_allow-ingress src"
-        description: Must create allowlist ACL with ni_ prefix
       - type: contains
         target: haproxy.cfg
         pattern: "10.0.0.0/8"
-        description: Must include first CIDR
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny"
-        description: Must deny non-matching requests
 
   test-nginx-ingress-hsts:
     description: Nginx Ingress HSTS annotations generate correct header
@@ -399,23 +383,18 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "Strict-Transport-Security"
-        description: Must set HSTS header
       - type: contains
         target: haproxy.cfg
         pattern: "max-age=31536000"
-        description: Must include max-age
       - type: contains
         target: haproxy.cfg
         pattern: "includeSubDomains"
-        description: Must include subdomains flag
       - type: contains
         target: haproxy.cfg
         pattern: "preload"
-        description: Must include preload flag
 
   test-nginx-ingress-backend-protocol-https:
     description: Nginx Ingress backend-protocol HTTPS adds ssl to server options
@@ -465,11 +444,9 @@ validationTests:
                             number: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "ssl verify none"
-        description: Must enable SSL to backend
 
   test-nginx-ingress-backend-protocol-grpc:
     description: Nginx Ingress backend-protocol GRPC adds proto h2 to server options
@@ -519,11 +496,9 @@ validationTests:
                             number: 50051
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "proto h2"
-        description: Must set HTTP/2 protocol for gRPC
 
   test-nginx-ingress-session-affinity:
     description: Nginx Ingress cookie affinity generates cookie directive
@@ -574,11 +549,51 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "cookie SERVERID insert indirect nocache dynamic"
-        description: Must generate cookie directive with custom name
+
+  test-nginx-ingress-session-cookie-secure-samesite:
+    description: session-cookie-secure and session-cookie-samesite add Secure / SameSite cookie attrs
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cookieattr-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cookieattr-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/affinity: "cookie"
+              nginx.ingress.kubernetes.io/session-cookie-name: "AFFINITY"
+              nginx.ingress.kubernetes.io/session-cookie-secure: "true"
+              nginx.ingress.kubernetes.io/session-cookie-samesite: "Strict"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cookieattr.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cookieattr-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "cookie AFFINITY insert indirect nocache dynamic attr Secure attr SameSite=Strict"
 
   test-nginx-ingress-auth-basic-missing-secret:
     description: >-
@@ -635,15 +650,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: render must succeed (auth cleanly skipped), NOT panic on the absent Secret
       - type: not_contains
         target: haproxy.cfg
         pattern: "userlist ni_auth_default_absent-secret"
-        description: no userlist is emitted when the referenced Secret is absent
       - type: not_contains
         target: haproxy.cfg
         pattern: "http_auth(ni_auth_default_absent-secret)"
-        description: no http_auth ACL ref is emitted when the referenced Secret is absent
 
   test-nginx-ingress-auth-basic:
     description: Nginx Ingress basic auth generates userlist and auth directive
@@ -703,19 +715,15 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "userlist ni_auth_default_my-auth"
-        description: Must generate userlist from secret
       - type: contains
         target: haproxy.cfg
         pattern: "user admin password"
-        description: Userlist must contain credentials
       - type: contains
         target: haproxy.cfg
         pattern: "http-request auth"
-        description: Must require auth
 
   test-nginx-ingress-rate-limit-rps:
     description: Nginx Ingress limit-rps annotation generates stick-table and deny 429
@@ -765,15 +773,143 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
-        description: Must create stick-table for rate limiting
       - type: contains
         target: haproxy.cfg
         pattern: "deny_status 429"
-        description: Must deny with 429 status
+
+  test-nginx-ingress-rate-limit-rpm:
+    description: Nginx Ingress limit-rpm annotation generates per-minute stick-table and deny 429
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rpm-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rpm-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rpm: "120"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rpm.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rpm-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 100k expire 60s store http_req_rate\\(60s\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 120 \\}"
+
+  test-nginx-ingress-rate-limit-rps-and-rpm:
+    description: limit-rps takes precedence over limit-rpm (HAProxy stores http_req_rate once per table)
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rpsrpm-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rpsrpm-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10"
+              nginx.ingress.kubernetes.io/limit-rpm: "300"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rpsrpm.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rpsrpm-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: "gt 300"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "limit-rpm ignored"
+
+  test-nginx-ingress-rate-limit-whitelist:
+    description: Nginx Ingress limit-whitelist exempts CIDRs from rate limiting
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: rlwl-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: rlwl-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rps: "10"
+              nginx.ingress.kubernetes.io/limit-whitelist: "10.0.0.0/8, 192.168.1.0/24"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: rlwl.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: rlwl-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\} !\\{ src 10\\.0\\.0\\.0/8 192\\.168\\.1\\.0/24 \\}"
 
   test-nginx-ingress-config-snippet:
     description: Nginx Ingress configuration-snippet injects raw directives
@@ -824,11 +960,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "option httpchk GET /healthz"
-        description: Must inject raw snippet into backend
 
   test-nginx-ingress-rewrite-target:
     description: Nginx Ingress rewrite-target translates capture groups
@@ -878,11 +1012,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "replace-path"
-        description: Must generate replace-path directive
 
   test-nginx-ingress-app-root:
     description: Nginx Ingress app-root redirects root path
@@ -932,15 +1064,12 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "http-request redirect location /dashboard"
-        description: Must redirect root to app-root path
       - type: contains
         target: haproxy.cfg
         pattern: "{ path / }"
-        description: Must match root path only
 
   test-nginx-ingress-proxy-body-size:
     description: Nginx Ingress proxy-body-size limits request body
@@ -990,11 +1119,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "req.body_size gt 10485760"
-        description: Must convert 10m to bytes (10485760)
 
   test-nginx-ingress-ssl-passthrough:
     description: Nginx Ingress ssl-passthrough creates TCP backend and SNI routing
@@ -1044,19 +1171,15 @@ validationTests:
                             number: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend ssl-passthrough-ni-default-passthrough-ingress"
-        description: Must generate SSL passthrough backend with ni prefix
       - type: contains
         target: haproxy.cfg
         pattern: "mode tcp"
-        description: Backend must be in TCP mode
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend ssl-passthrough-ni-default-passthrough-ingress if { req_ssl_sni -m str passthrough.example.com }"
-        description: TCP frontend must route by SNI
 
   test-nginx-ingress-ssl-passthrough-skips-ingress-without-paths:
     description: "Regression test for the dry-run race that flaked TestIngressAnnotations/nginx-ssl-passthrough on !893. Pre-fix shape: BuildAnnotationSSLPassthrough added an entry to gf[\"sslPassthroughBackends\"] for any (host, ingress) pair where the annotation was truthy. The use_backend in ssl-tcp was emitted from that list. The corresponding `backend X` block came from a separate `resources.ingresses.GetSingle` lookup that walked spec.rules to find a service. If the ingress had a host but no spec.rules[*].http.paths (or those paths had no backend.service), the use_backend was emitted without a matching backend block — `haproxy -c` rejected the config and the webhook denied the unrelated dry-run as collateral damage. Post-fix: the macro itself extracts svcName/svcPort up front and refuses to add an entry without them. This fixture's ingress has the annotation + a host but no http.paths, so neither use_backend nor backend should appear in the rendered config."
@@ -1076,11 +1199,9 @@ validationTests:
                 # Note: no `http:` block, so no paths.
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid (no use_backend without backend block)
       - type: not_contains
         target: haproxy.cfg
         pattern: "ssl-passthrough-ni-default-passthrough-ingress-no-paths"
-        description: "Neither use_backend nor backend block must mention the path-less ingress. If a use_backend slipped through without a matching backend block, haproxy_valid would also fail with 'unable to find required use_backend' — but assert on the string explicitly so a test failure points at the right cause."
   test-nginx-ingress-ssl-passthrough-named-port:
     description: nginx-ingress SSL passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port (regression guard for the silent fallback-to-not-rendered bug in BuildAnnotationSSLPassthrough)
     fixtures:
@@ -1139,8 +1260,57 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.50:8443 "
-        description: nginx-ingress SSL passthrough must use the resolved port for named-port references
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.50:80 "
-        description: Must not regress to port-80 fallback for nginx-ingress SSL passthrough
+
+  # ==========================================================================
+  # Upstream request headers (upstream-vhost / x-forwarded-prefix / connection-proxy-header)
+  # ==========================================================================
+
+  test-nginx-ingress-upstream-headers:
+    description: upstream-vhost, x-forwarded-prefix, and connection-proxy-header set upstream request headers
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: uh-svc
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: uh-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/upstream-vhost: "internal.example.com"
+              nginx.ingress.kubernetes.io/x-forwarded-prefix: "/app"
+              nginx.ingress.kubernetes.io/connection-proxy-header: "keep-alive"
+          spec:
+            ingressClassName: nginx
+            rules:
+              - host: uh.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: uh-svc
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header Host internal.example.com"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Forwarded-Prefix /app"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header Connection keep-alive"

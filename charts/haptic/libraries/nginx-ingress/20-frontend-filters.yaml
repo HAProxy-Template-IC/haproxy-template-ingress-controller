@@ -23,9 +23,17 @@ templateSnippets:
           http-request deny if <host-match> <acl>     (for denylist)
       -#}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
+      {%- import "util-nginx-ingress-satisfy" for SatisfyAnyMode -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- Under satisfy=any the standalone whitelist deny would block a
+            non-allow-listed IP before auth could rescue it, so suppress just
+            the allow-list arm (pass an empty allow-annotation name) while
+            keeping the deny-list arm intact. backend-directives-765 emits the
+            combined IP-or-auth gate for these Ingresses instead. -#}
+        {%- var allowAnn = "nginx.ingress.kubernetes.io/whitelist-source-range" -%}
+        {%- if SatisfyAnyMode(ingress) != "" -%}{%- allowAnn = "" -%}{%- end -%}
         {{ EmitAnnotationAccessControl(ingress,
-            "nginx.ingress.kubernetes.io/whitelist-source-range",
+            allowAnn,
             "nginx.ingress.kubernetes.io/denylist-source-range",
             "ni",
             "nginx-ingress/whitelist-source-range ({KEY})",
@@ -219,12 +227,14 @@ templateSnippets:
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#permanent-redirect
 
-        Annotation: nginx.ingress.kubernetes.io/permanent-redirect
+        Annotations:
+          - nginx.ingress.kubernetes.io/permanent-redirect: "<url>"
+          - nginx.ingress.kubernetes.io/permanent-redirect-code: "<status>" (default: 301)
 
-        Redirects all requests to the specified URL with code 301.
+        Redirects all requests to the specified URL with code 301 (overridable).
 
         Generated HAProxy Config:
-          http-request redirect location <url> code 301 if <host-match>
+          http-request redirect location <url> code <code> if <host-match>
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -233,13 +243,15 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect"] %}
           {%- if url != "" %}
+            {%- var code = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/permanent-redirect-code"] %}
+            {%- if code == "" %}{%- code = "301" %}{%- end %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # nginx-ingress/permanent-redirect ({{ key }})
-      http-request redirect location {{ url }} code 301 if {{ HostMatchCondition(hosts) }}
+      http-request redirect location {{ url }} code {{ code }} if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
       {%- end -%}
@@ -251,12 +263,14 @@ templateSnippets:
 
         Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#temporal-redirect
 
-        Annotation: nginx.ingress.kubernetes.io/temporal-redirect
+        Annotations:
+          - nginx.ingress.kubernetes.io/temporal-redirect: "<url>"
+          - nginx.ingress.kubernetes.io/temporal-redirect-code: "<status>" (default: 302)
 
-        Redirects all requests to the specified URL with code 302.
+        Redirects all requests to the specified URL with code 302 (overridable).
 
         Generated HAProxy Config:
-          http-request redirect location <url> code 302 if <host-match>
+          http-request redirect location <url> code <code> if <host-match>
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition -%}
       {%- for _, ingress := range resources.ingresses.List() %}
@@ -265,15 +279,63 @@ templateSnippets:
         {%- var key = ns + "/" + name %}
           {%- var url = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect"] %}
           {%- if url != "" %}
+            {%- var code = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/temporal-redirect-code"] %}
+            {%- if code == "" %}{%- code = "302" %}{%- end %}
             {%- var hosts = []string{} %}
             {%- for _, rule := range ingress.Spec.Rules %}
               {%- if rule.Host != "" %}{%- hosts = append(hosts, rule.Host) %}{%- end %}
             {%- end %}
             {%- if len(hosts) > 0 %}
       # nginx-ingress/temporal-redirect ({{ key }})
-      http-request redirect location {{ url }} code 302 if {{ HostMatchCondition(hosts) }}
+      http-request redirect location {{ url }} code {{ code }} if {{ HostMatchCondition(hosts) }}
             {%- end %}
           {%- end %}
+      {%- end -%}
+
+  frontend-filters-775-nginx-ingress-from-to-www-redirect:
+    template: |
+      {#-
+        Nginx Ingress From-to-WWW Redirect
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#redirect-fromto-www
+
+        Annotation: nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+
+        Redirects between the apex host and its www. counterpart with a 301:
+          - host `example.com`     -> `www.example.com`
+          - host `www.example.com` -> `example.com`
+
+        Emitted in the HTTP frontend (post-routing, pre-backend) as a true
+        client redirect — it sets the Location header via `redirect prefix`,
+        never the Host header, so request routing is not corrupted. The
+        original request path is preserved by `redirect prefix`, and the
+        request scheme is preserved by gating on `ssl_fc` (two rules per host).
+
+        Generated HAProxy Config (per matching host):
+          http-request redirect prefix https://<target> code 301 if { var(txn.host) -m str <source> } { ssl_fc }
+          http-request redirect prefix http://<target> code 301 if { var(txn.host) -m str <source> } !{ ssl_fc }
+      -#}
+      {%- for _, ingress := range resources.ingresses.List() %}
+        {%- var enabled = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/from-to-www-redirect"] %}
+        {%- if enabled == "true" %}
+          {%- var ns = ingress.Metadata.Namespace %}
+          {%- var name = ingress.Metadata.Name %}
+          {%- var key = ns + "/" + name %}
+          {%- for _, rule := range ingress.Spec.Rules %}
+            {%- var srcHost = rule.Host %}
+            {%- if srcHost != "" %}
+              {%- var targetHost = "" %}
+              {%- if hasPrefix(srcHost, "www.") %}
+                {%- targetHost = srcHost[4:] %}
+              {%- else %}
+                {%- targetHost = "www." + srcHost %}
+              {%- end %}
+      # nginx-ingress/from-to-www-redirect ({{ key }}) {{ srcHost }} -> {{ targetHost }}
+      http-request redirect prefix https://{{ targetHost }} code 301 if { var(txn.host) -m str {{ srcHost }} } { ssl_fc }
+      http-request redirect prefix http://{{ targetHost }} code 301 if { var(txn.host) -m str {{ srcHost }} } !{ ssl_fc }
+            {%- end %}
+          {%- end %}
+        {%- end %}
       {%- end -%}
 
   frontend-filters-780-nginx-ingress-canary:

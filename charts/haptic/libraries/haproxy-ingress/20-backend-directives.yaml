@@ -227,11 +227,16 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
+        {#- Tracks whether SSL to the upstream is enabled. ciphers/ciphersuites
+            are only valid on an `ssl`-enabled server line, so they are gated
+            on this below. -#}
+        {%- var sslEnabled = false %}
 
         {#- secure-backends -#}
         {%- var secureBackends = ingress.Metadata.Annotations["haproxy-ingress.github.io/secure-backends"] %}
         {%- if secureBackends == "true" %}
           {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+          {%- sslEnabled = true %}
         {%- end %}
 
         {#- backend-protocol -#}
@@ -243,8 +248,10 @@ templateSnippets:
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "proto h2") %}
           {%- else if backendProto == "h1-ssl" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none") %}
+            {%- sslEnabled = true %}
           {%- else if backendProto == "h2-ssl" %}
             {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ssl verify none proto h2") %}
+            {%- sslEnabled = true %}
           {%- else %}
             {{- fail("Invalid value '" + backendProto + "' for annotation 'haproxy-ingress.github.io/backend-protocol' on Ingress '" + key + "'. Valid values: h1, h2, h1-ssl, h2-ssl") -}}
           {%- end %}
@@ -318,6 +325,24 @@ templateSnippets:
             {%- end %}
           {%- else %}
             # Warning: Secret {{ crtNs }}/{{ crtName }} referenced by haproxy-ingress.github.io/secure-crt-secret not found
+          {%- end %}
+        {%- end %}
+
+        {#- ssl-ciphers-backend / ssl-cipher-suites-backend -#}
+        {#- Per-backend cipher control for SSL to the upstream. ciphers picks
+            the TLS<=1.2 cipher list; ciphersuites picks the TLS1.3 suite list.
+            Both are only valid on an ssl-enabled server line — emitting them
+            on a plaintext server is a parse error — so they are gated on
+            sslEnabled (secure-backends true / backend-protocol h1-ssl|h2-ssl).
+            Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#ssl-cipher-suites-backend -#}
+        {%- var sslCiphers = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-ciphers-backend"] %}
+        {%- var sslCipherSuites = ingress.Metadata.Annotations["haproxy-ingress.github.io/ssl-cipher-suites-backend"] %}
+        {%- if sslEnabled %}
+          {%- if sslCiphers != "" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphers " + sslCiphers) %}
+          {%- end %}
+          {%- if sslCipherSuites != "" %}
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), "ciphersuites " + sslCipherSuites) %}
           {%- end %}
         {%- end %}
       {%- end -%}
@@ -429,6 +454,191 @@ templateSnippets:
           {%- end %}
       # haproxy-ingress/session-affinity ({{ key }})
       {{ cookieDir }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-680-haproxy-ingress-proxy-body-size:
+    template: |
+      {#-
+        HAProxy-Ingress Proxy Body Size Limit
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#proxy-body-size
+
+        Annotation: proxy-body-size
+        Values: plain number (bytes), or with k/K, m/M, g/G suffix.
+        Value "0" (the upstream default) means unlimited — no directive emitted.
+
+        Generated HAProxy Config:
+          http-request deny deny_status 413 if { req.body_size gt <bytes> }
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var bodySize = ingress.Metadata.Annotations["haproxy-ingress.github.io/proxy-body-size"] %}
+        {%- if bodySize != "" %}
+          {%- var bytes = 0 %}
+          {%- var sizeLen = len(bodySize) %}
+          {%- var lastChar = bodySize[sizeLen-1:] %}
+          {%- if lastChar == "k" || lastChar == "K" %}
+            {%- bytes = toint(bodySize[:sizeLen-1]) * 1024 %}
+          {%- else if lastChar == "m" || lastChar == "M" %}
+            {%- bytes = toint(bodySize[:sizeLen-1]) * 1048576 %}
+          {%- else if lastChar == "g" || lastChar == "G" %}
+            {%- bytes = toint(bodySize[:sizeLen-1]) * 1073741824 %}
+          {%- else %}
+            {%- bytes = toint(bodySize) %}
+          {%- end %}
+          {%- if bytes > 0 %}
+      # haproxy-ingress/proxy-body-size ({{ key }})
+      http-request deny deny_status 413 if { req.body_size gt {{ bytes }} }
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-685-haproxy-ingress-rate-limiting:
+    template: |
+      {%- import "util-validate-cidr-list" for ValidateCidrList -%}
+      {#-
+        HAProxy-Ingress Rate Limiting
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#limit
+
+        Annotations:
+          - haproxy-ingress.github.io/limit-rps: "<requests-per-second>" (optional)
+          - haproxy-ingress.github.io/limit-rpm: "<requests-per-minute>" (optional)
+          - haproxy-ingress.github.io/limit-whitelist: "<cidr>,<cidr>,..." (optional)
+
+        HAProxy supports one stick-table per backend, so limit-rps takes
+        precedence over limit-rpm when both are set. limit-whitelist exempts the
+        listed source CIDRs from the deny (they are still tracked, never denied).
+
+        Generated HAProxy config (limit-rps: 10, whitelist 10.0.0.0/8):
+          stick-table type ip size 100k expire 1s store http_req_rate(1s)
+          http-request track-sc0 src
+          http-request deny deny_status 429 if { sc_http_req_rate(0) gt 10 } !{ src 10.0.0.0/8 }
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var limitRps = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-rps"] %}
+        {%- var limitRpm = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-rpm"] %}
+        {%- var whitelist = ingress.Metadata.Annotations["haproxy-ingress.github.io/limit-whitelist"] %}
+        {%- var rate = "" %}
+        {%- var window = "" %}
+        {%- var bothSet = false %}
+        {%- if limitRps != "" %}
+          {%- rate = limitRps %}
+          {%- window = "1s" %}
+          {%- if limitRpm != "" %}{%- bothSet = true %}{%- end %}
+        {%- else if limitRpm != "" %}
+          {%- rate = limitRpm %}
+          {%- window = "60s" %}
+        {%- end %}
+        {%- if rate != "" %}
+          {%- if toint(rate) <= 0 %}
+            {{- fail("Invalid rate-limit value '" + rate + "' on Ingress '" + key + "'. Must be a positive integer.") -}}
+          {%- end %}
+          {%- var guard = "" %}
+          {%- if whitelist != "" %}
+            {%- var validated = ValidateCidrList(whitelist, "haproxy-ingress.github.io/limit-whitelist", key) %}
+            {%- if validated != "" %}{%- guard = " !{ src " + validated + " }" %}{%- end %}
+          {%- end %}
+          {%- if bothSet %}
+      # haproxy-ingress/rate-limiting ({{ key }}) - limit-rps takes precedence; limit-rpm ignored (HAProxy supports one stick-table per backend)
+          {%- else %}
+      # haproxy-ingress/rate-limiting ({{ key }})
+          {%- end %}
+      stick-table type ip size 100k expire {{ window }} store http_req_rate({{ window }})
+      http-request track-sc0 src
+      http-request deny deny_status 429 if { sc_http_req_rate(0) gt {{ rate }} }{{ guard }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-690-haproxy-ingress-rewrite-target:
+    template: |
+      {#-
+        HAProxy-Ingress Rewrite Target
+
+        Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#rewrite-target
+
+        Annotation: haproxy-ingress.github.io/rewrite-target
+
+        Rewrites the request path before forwarding to the backend. Capture
+        groups written in the nginx-compatible `$N` form are translated to
+        HAProxy's `\N` backreference syntax, mirroring the nginx-ingress
+        implementation.
+
+        Generated HAProxy Config:
+          http-request replace-path (.*) <translated-value>
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var rewrite = ingress.Metadata.Annotations["haproxy-ingress.github.io/rewrite-target"] %}
+        {%- if rewrite != "" %}
+          {#- Translate $1..$9 capture groups to \1..\9 -#}
+          {%- rewrite = replace(rewrite, "$1", "\\1") %}
+          {%- rewrite = replace(rewrite, "$2", "\\2") %}
+          {%- rewrite = replace(rewrite, "$3", "\\3") %}
+          {%- rewrite = replace(rewrite, "$4", "\\4") %}
+          {%- rewrite = replace(rewrite, "$5", "\\5") %}
+          {%- rewrite = replace(rewrite, "$6", "\\6") %}
+          {%- rewrite = replace(rewrite, "$7", "\\7") %}
+          {%- rewrite = replace(rewrite, "$8", "\\8") %}
+          {%- rewrite = replace(rewrite, "$9", "\\9") %}
+      # haproxy-ingress/rewrite-target ({{ key }})
+      http-request replace-path (.*) {{ rewrite }}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-695-haproxy-ingress-agent-check:
+    template: |
+      {#-
+        HAProxy-Ingress Agent Check
+
+        Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#agent-check
+
+        Annotations:
+          - agent-check-port: port the agent listens on (REQUIRED to enable)
+          - agent-check-addr: agent address (optional; defaults to the server addr)
+          - agent-check-interval: interval between agent checks (default 2s)
+          - agent-check-send: string to send to the agent on connect (optional)
+
+        The agent check is auxiliary to the regular health check. HAProxy
+        requires an agent port for the check, so agent-check-port is the
+        enabler — agent-check-addr/-interval/-send are no-ops without it, and
+        agent-check-addr set on its own is rejected (HAProxy disables the agent
+        check and ALERTs "server does not have agent port"). These map to the
+        `agent-check`, `agent-port`, `agent-addr`, `agent-inter`, `agent-send`
+        server parameters, appended to the backend's default-server line. All
+        are runtime-safe options.
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var aPort = ingress.Metadata.Annotations["haproxy-ingress.github.io/agent-check-port"] %}
+        {%- var aAddr = ingress.Metadata.Annotations["haproxy-ingress.github.io/agent-check-addr"] %}
+        {%- var aInter = ingress.Metadata.Annotations["haproxy-ingress.github.io/agent-check-interval"] %}
+        {%- var aSend = ingress.Metadata.Annotations["haproxy-ingress.github.io/agent-check-send"] %}
+        {%- if aPort == "" && (aAddr != "" || aInter != "" || aSend != "") %}
+          {{- fail("Annotation 'haproxy-ingress.github.io/agent-check-port' is required to enable the agent check on Ingress '" + key + "'; agent-check-addr/-interval/-send have no effect without it.") -}}
+        {%- end %}
+        {%- if aPort != "" %}
+          {%- var agentFlags = "agent-check agent-port " + aPort %}
+          {%- if aAddr != "" %}
+            {%- agentFlags = agentFlags + " agent-addr " + aAddr %}
+          {%- end %}
+          {%- if aInter != "" %}
+            {%- agentFlags = agentFlags + " agent-inter " + aInter %}
+          {%- end %}
+          {%- if aSend != "" %}
+            {%- agentFlags = agentFlags + " agent-send " + strip(aSend) %}
+          {%- end %}
+          {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), agentFlags) %}
         {%- end %}
       {%- end -%}
 

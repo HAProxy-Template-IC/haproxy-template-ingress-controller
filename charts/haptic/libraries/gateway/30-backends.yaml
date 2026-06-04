@@ -83,6 +83,16 @@ templateSnippets:
           up the resulting `ssl ca-file ... verify required sni ...`. -#}
       {%- var btlsCaPath = "" -%}
       {%- var btlsHostname = "" -%}
+      {#- btlsVerifyHost is the value passed to HAProxy `verifyhost`.
+          Per Gateway API spec (BackendTLSPolicy validation), when
+          `subjectAltNames` is set the served cert must carry at least
+          one SAN matching one of the listed entries, and `hostname`
+          is then used ONLY for SNI / cert selection — not for the cert
+          identity check. So SNI continues to come from `hostname`,
+          but verifyhost comes from the first Hostname-type SAN when
+          SANs are present (falling back to `hostname` when no SANs are
+          declared, matching the pre-SAN behaviour). -#}
+      {%- var btlsVerifyHost = "" -%}
       {%- var btlsConflictedReason = "" -%}
       {%- var btlsBroken = false -%}
       {#- gw client-cert: per Gateway API spec, when the route's parent
@@ -147,6 +157,19 @@ templateSnippets:
         if winningPolicy != nil {
           var validation = winningPolicy.Spec.Validation
           btlsHostname = validation.Hostname
+          // Default verifyhost to hostname (pre-SAN behaviour). When
+          // subjectAltNames carries a Hostname-type entry, that entry
+          // drives the cert-identity check instead. HAProxy `verifyhost`
+          // is single-valued, so we take the FIRST Hostname SAN; a
+          // multi-Hostname OR-list and URI-type SANs are deferred (no
+          // HAProxy verifyhost equivalent — see the snippet comment).
+          btlsVerifyHost = validation.Hostname
+          for _, san := range validation.SubjectAltNames {
+            if san.Type == "Hostname" && san.Hostname != "" {
+              btlsVerifyHost = san.Hostname
+              break
+            }
+          }
           var caBundleParts = []any{}
           for _, ref := range validation.CaCertificateRefs {
             var refGroup = ref.Group
@@ -289,8 +312,8 @@ templateSnippets:
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
         default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
-      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
-      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
+      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
       {%- else if gwClientCertPath != "" %} ssl verify none
       {%- end -%}
       {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
@@ -301,6 +324,122 @@ templateSnippets:
           # fallback). Refuse all traffic per Gateway API spec —
           # silently downgrading to plaintext would defeat the policy.
           http-request return status 503
+      {%- end %}
+      {#- HTTPRoute retry (spec.rules[].retry — experimental, GEP-1731).
+          Maps to backend-scoped `retries <attempts>` + `retry-on
+          <codes>`. Unlike per-rule timeouts (which use the gateable
+          `set-timeout server`), `retries`/`retry-on` are NOT
+          conditional directives, so they cannot be scoped per
+          gw_rule_id. The chart dedups one backend per (route, service,
+          port); when several rules share the backend we take the FIRST
+          rule (by rule index) whose backendRefs reference this
+          (backendName, backendPort) and carry a retry block. The retry
+          config of a later rule sharing the same backend is dropped —
+          mirroring how a single HAProxy backend can carry only one
+          retries/retry-on directive set.
+
+          Mappable:  attempts -> `retries N`; codes -> `retry-on <c>...`
+                     (HAProxy accepts bare status tokens like 503).
+          Defaults:  no codes -> spec-mandated retriable 5xx
+                     (500 502 503 504, all MUST-support per GEP-1731).
+          DEFERRED:  retry.backoff (exponential/min-wait backoff) — HAProxy
+                     has no per-retry backoff knob; emitting nothing here
+                     keeps the directive set valid. Only emit for
+                     HTTPRoute (protoFlag == ""), not GRPCRoute. -#}
+      {%- if protoFlag == "" %}
+        {%- var retryAttempts = 0 %}
+        {%- var retryCodes = "" %}
+        {%- var retryFound = false %}
+        {%- for _, rl := range route.Spec.Rules %}
+          {%- if !retryFound %}
+            {%- var rlReferencesBackend = false %}
+            {%- for _, bRef := range rl.BackendRefs %}
+              {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
+                {%- rlReferencesBackend = true %}
+              {%- end %}
+            {%- end %}
+            {%- if rlReferencesBackend %}
+              {#- `retry` is an Experimental-channel HTTPRoute field (GEP-1731):
+                  it is absent from the Standard-channel HTTPRoute CRD, so the
+                  typed rule struct has no Retry field on a Standard install and
+                  `rl.Retry` would not compile. Access via dig() — it returns nil
+                  when the field is absent (no Standard route can carry it), and
+                  the value when the Experimental schema is present. -#}
+              {%- var rt = dig(rl, "retry") %}
+              {%- var attempts = toint(dig(rt, "attempts")) %}
+              {%- if attempts > 0 %}
+                {%- retryAttempts = attempts %}
+                {%- retryFound = true %}
+                {%- var codeParts = []any{} %}
+                {%- for _, c := range toSlice(dig(rt, "codes")) %}
+                  {%- codeParts = append(codeParts, tostring(toint(c))) %}
+                {%- end %}
+                {%- if len(codeParts) > 0 %}
+                  {%- retryCodes = join(codeParts, " ") %}
+                {%- else %}
+                  {%- retryCodes = "500 502 503 504" %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+        {%- if retryFound %}
+          retries {{ retryAttempts }}
+          retry-on {{ retryCodes }}
+        {%- end %}
+      {%- end %}
+      {#- GEP-1619 session persistence (type Cookie / unset).
+          A rule's spec.sessionPersistence maps to HAProxy cookie-insert
+          persistence on the backend(s) the rule references. Backends are
+          deduplicated per (route, service, port), so we look across ALL
+          rules of this route for the FIRST one that both (a) declares
+          sessionPersistence of type Cookie (or unset → Cookie) and (b)
+          references this (service, port) backend, then emit the cookie
+          directive once at backend scope.
+
+          Note: HAProxy cookie persistence is PER-POD (the dynamic cookie
+          encodes the chosen server). That is the correct GEP-1619 mapping
+          — the persistent session pins a client to one backend pod.
+
+          `dynamic-cookie-key` seeds HAProxy's per-server cookie hash so
+          the cookie value can't be guessed/forged and stays stable across
+          reloads; we derive it from the backend key (sha256) so each
+          backend gets a distinct, deterministic seed.
+
+          Type: Header persistence is NOT implemented (it would require a
+          stick-table keyed on the named request header, which HAProxy
+          can't drive from a dynamically-named header the way GEP-1619
+          intends); such rules fall through with no cookie emitted. -#}
+      {%- var spCookieEmitted = false %}
+      {%- for _, rl := range route.Spec.Rules %}
+        {%- if !spCookieEmitted %}
+          {%- var sp = dig(rl, "sessionPersistence") %}
+          {%- if sp != nil %}
+            {%- var spType = tostring(dig(sp, "type") | fallback("Cookie")) %}
+            {%- if spType == "Cookie" %}
+              {#- Does this rule reference the current (service, port) backend? -#}
+              {%- var refsThis = false %}
+              {%- for _, bRef := range rl.BackendRefs %}
+                {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
+                  {%- refsThis = true %}
+                {%- end %}
+              {%- end %}
+              {%- if refsThis %}
+                {%- var cookieName = tostring(dig(sp, "sessionName") | fallback("")) %}
+                {%- if cookieName == "" %}{%- cookieName = "SESSION" %}{%- end %}
+                {%- var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback("")) %}
+                {%- var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback("")) %}
+                {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
+                {%- if absTimeout != "" %}{%- cookieDir = cookieDir + " maxlife " + absTimeout %}{%- end %}
+                {%- if idleTimeout != "" %}{%- cookieDir = cookieDir + " maxidle " + idleTimeout %}{%- end %}
+          # GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity
+          {{ cookieDir }}
+          dynamic-cookie-key {{ sha256(beKey) }}
+                {%- spCookieEmitted = true %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
       {%- end %}
       {#- Per-rule HTTPRoute timeouts: applied here in the backend
           (HAProxy doesn't allow `set-timeout server` in the frontend
@@ -458,6 +597,16 @@ templateSnippets:
           up the resulting `ssl ca-file ... verify required sni ...`. -#}
       {%- var btlsCaPath = "" -%}
       {%- var btlsHostname = "" -%}
+      {#- btlsVerifyHost is the value passed to HAProxy `verifyhost`.
+          Per Gateway API spec (BackendTLSPolicy validation), when
+          `subjectAltNames` is set the served cert must carry at least
+          one SAN matching one of the listed entries, and `hostname`
+          is then used ONLY for SNI / cert selection — not for the cert
+          identity check. So SNI continues to come from `hostname`,
+          but verifyhost comes from the first Hostname-type SAN when
+          SANs are present (falling back to `hostname` when no SANs are
+          declared, matching the pre-SAN behaviour). -#}
+      {%- var btlsVerifyHost = "" -%}
       {%- var btlsConflictedReason = "" -%}
       {%- var btlsBroken = false -%}
       {#- gw client-cert: per Gateway API spec, when the route's parent
@@ -522,6 +671,19 @@ templateSnippets:
         if winningPolicy != nil {
           var validation = winningPolicy.Spec.Validation
           btlsHostname = validation.Hostname
+          // Default verifyhost to hostname (pre-SAN behaviour). When
+          // subjectAltNames carries a Hostname-type entry, that entry
+          // drives the cert-identity check instead. HAProxy `verifyhost`
+          // is single-valued, so we take the FIRST Hostname SAN; a
+          // multi-Hostname OR-list and URI-type SANs are deferred (no
+          // HAProxy verifyhost equivalent — see the snippet comment).
+          btlsVerifyHost = validation.Hostname
+          for _, san := range validation.SubjectAltNames {
+            if san.Type == "Hostname" && san.Hostname != "" {
+              btlsVerifyHost = san.Hostname
+              break
+            }
+          }
           var caBundleParts = []any{}
           for _, ref := range validation.CaCertificateRefs {
             var refGroup = ref.Group
@@ -664,8 +826,8 @@ templateSnippets:
       backend {{ beKey }}
           guid {{ make_guid("be", beKey) }}
         default-server check{%- if resolvedProtoFlag != "" %} proto {{ resolvedProtoFlag }}{%- end -%}
-      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
-      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}) verifyhost {{ btlsHostname }}{%- end -%}
+      {%- if btlsCaPath != "" && btlsCaPath != "@system-ca" %} ssl ca-file {{ btlsCaPath }} verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
+      {%- else if btlsCaPath == "@system-ca" %} ssl verify required{%- if btlsHostname != "" %} sni str({{ btlsHostname }}){%- end %}{%- if btlsVerifyHost != "" %} verifyhost {{ btlsVerifyHost }}{%- end -%}
       {%- else if gwClientCertPath != "" %} ssl verify none
       {%- end -%}
       {%- if gwClientCertPath != "" %} crt {{ gwClientCertPath }}
@@ -676,6 +838,43 @@ templateSnippets:
           # fallback). Refuse all traffic per Gateway API spec —
           # silently downgrading to plaintext would defeat the policy.
           http-request return status 503
+      {%- end %}
+      {#- GEP-1619 session persistence (type Cookie / unset) — see the
+          HTTPRoute backend block above for the full rationale. Backends
+          are deduplicated per (route, service, port); find the first rule
+          that declares Cookie sessionPersistence AND references this
+          (service, port) backend, then emit one backend-scoped cookie
+          directive. Per-pod cookie-insert affinity is the correct
+          GEP-1619 mapping. type: Header is not implemented. -#}
+      {%- var spCookieEmitted = false %}
+      {%- for _, rl := range route.Spec.Rules %}
+        {%- if !spCookieEmitted %}
+          {%- var sp = dig(rl, "sessionPersistence") %}
+          {%- if sp != nil %}
+            {%- var spType = tostring(dig(sp, "type") | fallback("Cookie")) %}
+            {%- if spType == "Cookie" %}
+              {%- var refsThis = false %}
+              {%- for _, bRef := range rl.BackendRefs %}
+                {%- if bRef.Name == backendName && toint(bRef.Port) == toint(backendPort) %}
+                  {%- refsThis = true %}
+                {%- end %}
+              {%- end %}
+              {%- if refsThis %}
+                {%- var cookieName = tostring(dig(sp, "sessionName") | fallback("")) %}
+                {%- if cookieName == "" %}{%- cookieName = "SESSION" %}{%- end %}
+                {%- var absTimeout = tostring(dig(sp, "absoluteTimeout") | fallback("")) %}
+                {%- var idleTimeout = tostring(dig(sp, "idleTimeout") | fallback("")) %}
+                {%- var cookieDir = "cookie " + cookieName + " insert indirect nocache dynamic" %}
+                {%- if absTimeout != "" %}{%- cookieDir = cookieDir + " maxlife " + absTimeout %}{%- end %}
+                {%- if idleTimeout != "" %}{%- cookieDir = cookieDir + " maxidle " + idleTimeout %}{%- end %}
+          # GEP-1619 session persistence (Cookie) — per-pod cookie-insert affinity
+          {{ cookieDir }}
+          dynamic-cookie-key {{ sha256(beKey) }}
+                {%- spCookieEmitted = true %}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
       {%- end %}
         {{ BackendServers(backendName, 10, backendPort, nil, nil, beKey, backendNs) | indent(2, true) -}}
       {%- end -%}

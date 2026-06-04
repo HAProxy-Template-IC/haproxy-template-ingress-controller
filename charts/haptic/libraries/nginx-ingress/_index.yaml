@@ -7,11 +7,13 @@
 #
 # Split library (ADR-0008): this _index.yaml is the load-rule authority
 # (_helm_load + watchedResources). Production templateSnippets live in the
-# sibling fragments by concern — 10-backend-directives, 20-frontend-filters,
+# sibling fragments by concern — 10-backend-directives, 15-proxy-ssl-cookie,
+# 16-server-alias, 17-default-backend, 18-satisfy, 20-frontend-filters,
 # 30-features, 40-auth-spoe — and validationTests live under tests/
-# (annotations, redirects-canary, auth-mtls). All fragments merge into one
-# library at chart-render time; the merge order is lexicographic, but since
-# each snippet/test name is unique the source file it lives in is purely
+# (annotations, redirects-canary, auth-mtls, proxy-ssl-cookie, server-alias,
+# default-backend, satisfy). All fragments merge into one library at
+# chart-render time; the merge order is lexicographic, but since each
+# snippet/test name is unique the source file it lives in is purely
 # organisational.
 #
 # Supported annotations (see each section for details):
@@ -25,16 +27,28 @@
 #   - rewrite-target
 #   - upstream-hash-by
 #   - configuration-snippet
+#   - default-backend (annotation; per-host catch-all Service)
+#
+# Backend TLS to upstream (only when backend-protocol HTTPS/GRPCS):
+#   - proxy-ssl-secret (client cert + CA from a kubernetes.io/tls Secret)
+#   - proxy-ssl-verify, proxy-ssl-name/proxy-ssl-server-name
+#   - proxy-ssl-ciphers, proxy-ssl-protocols
+#   (proxy-ssl-verify-depth has no per-server HAProxy keyword — surfaced as a
+#    warning comment, not emitted)
+#
+# Upstream Set-Cookie rewriting:
+#   - proxy-cookie-domain, proxy-cookie-path
 #
 # Session Affinity:
 #   - affinity: cookie
 #   - session-cookie-name, session-cookie-hash, session-cookie-path
+#   - session-cookie-secure, session-cookie-samesite
 #
 # Authentication:
 #   - auth-type, auth-secret, auth-realm
 #
 # Rate Limiting:
-#   - limit-rps, limit-connections
+#   - limit-rps, limit-rpm, limit-connections, limit-whitelist
 #
 # Frontend Filters:
 #   - whitelist-source-range, denylist-source-range
@@ -44,7 +58,11 @@
 #   - cors-allow-credentials, cors-max-age, cors-expose-headers
 #   - custom-request-headers, custom-response-headers
 #   - app-root
-#   - permanent-redirect, temporal-redirect
+#   - permanent-redirect, permanent-redirect-code
+#   - temporal-redirect, temporal-redirect-code
+#   - from-to-www-redirect
+#   - server-alias (alias hostnames routed to the same backends)
+#   - satisfy ("any" → OR-combine whitelist-source-range with basic auth)
 #
 # Canary:
 #   - canary, canary-by-header, canary-by-header-value, canary-by-header-pattern

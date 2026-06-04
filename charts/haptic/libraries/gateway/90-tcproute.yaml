@@ -1,0 +1,426 @@
+# Gateway API TCPRoute (L4 TCP routing)
+#
+# A Gateway listener with `protocol: TCP` forwards raw TCP on its port to
+# the backend Service(s) referenced by a TCPRoute attached to that
+# listener. Unlike TLSRoute, there is NO SNI / TLS inspection — the
+# connection is a straight `default_backend` forward in `mode tcp`.
+#
+# Shape (one TCP listener -> one tcp frontend -> its TCPRoute's backend):
+#
+#   frontend gateway-tcp-port-<port>
+#       mode tcp
+#       bind *:<port>
+#       default_backend gtw_tcp_<routeNs>_<routeName>_<ruleIdx>
+#
+#   backend gtw_tcp_<routeNs>_<routeName>_<ruleIdx>
+#       mode tcp
+#       server SRV_1 <pod-ip>:<pod-port> ...
+#
+# Layout mirrors the TLSRoute passthrough path (22-ssl-passthrough.yaml +
+# backends-501-gateway-ssl-passthrough + frontends-600-gateway-tls-
+# listener) but without the SNI allowlist / use_backend dispatch.
+#
+# Attachment (which TCPRoute attaches to which TCP listener) reuses the
+# same listener-attachment filters as the passthrough path: protocol
+# (TCP), allowedRoutes.kinds (default TCPRoute), allowedRoutes.namespaces
+# (Same / All / Selector), parentRef sectionName + port. TCP has no
+# hostname, so there is no hostname-intersection step.
+#
+# Single-backendRef routing is implemented. Weighted multi-backendRef
+# TCP splitting and full TCPRoute status conditions are DEFERRED (see the
+# repo task notes) — the first valid backendRef of the first attached
+# rule wins per listener port.
+templateSnippets:
+  # util-gateway-tcproute-analysis
+  #
+  # Caches the per-port TCP routing plan in
+  # shared["gateway_tcproute"].byPort. Race-free via ComputeIfAbsent so
+  # the parallel backends-/frontends- renderers see a consistent view.
+  #
+  # Schema (shared["gateway_tcproute"]):
+  #   {
+  #     "byPort": map[int]any{                 # keyed by listener port
+  #        <port>: map[string]any{
+  #          "backendName": "gtw_tcp_<ns>_<name>_<ruleIdx>",
+  #          "routeNs":     <route namespace>,
+  #          "routeName":   <route name>,
+  #          "ruleIdx":     <int>,
+  #          "refName":     <Service name>,
+  #          "refPort":     <Service port int>,
+  #          "refNs":       <Service namespace>,
+  #        }
+  #     }
+  #   }
+  #
+  # A port is claimed by the FIRST attached (TCPRoute, rule, valid
+  # backendRef) tuple encountered (TCP can't multiplex a single port by
+  # any L7 selector). Routes are walked in resources.tcproutes.List()
+  # order, which the store keeps stable.
+  util-gateway-tcproute-analysis:
+    template: |
+      {%- import "util-resource-helpers" for ListenerName, ListenerProtocol %}
+      {%%
+        var _, _ = shared.ComputeIfAbsent("gateway_tcproute", func() any {
+          var byPort = map[int]any{}
+
+          for _, route := range resources.tcproutes.List() {
+            var nsStr = route.Metadata.Namespace
+            var nameStr = route.Metadata.Name
+
+            for ruleIdx, rule := range route.Spec.Rules {
+              // First valid backendRef of the rule wins. Per Gateway API
+              // spec only core/v1 Service refs are routable; anything
+              // else is skipped (an all-invalid rule simply contributes
+              // no backend — the listener port stays unclaimed and its
+              // frontend rejects, mirroring the TLSRoute invalid-ref
+              // contract).
+              var refName = ""
+              var refPort = 0
+              var refNs = ""
+              for _, br := range rule.BackendRefs {
+                var brGroup = br.Group
+                var brKind = br.Kind
+                if brKind == "" { brKind = "Service" }
+                if (brGroup != "" && brGroup != "core") || brKind != "Service" {
+                  continue
+                }
+                var brNs = br.Namespace
+                if brNs == "" { brNs = nsStr }
+                if resources.services.GetSingle(brNs, br.Name) == nil {
+                  continue
+                }
+                refName = br.Name
+                refPort = toint(br.Port)
+                if refPort == 0 { refPort = 80 }
+                refNs = brNs
+                break
+              }
+              if refName == "" {
+                continue
+              }
+
+              // Walk parentRefs and find every accepted TCP listener.
+              for _, parentRef := range route.Spec.ParentRefs {
+                var prGroup = parentRef.Group
+                if prGroup == "" { prGroup = "gateway.networking.k8s.io" }
+                var prKind = parentRef.Kind
+                if prKind == "" { prKind = "Gateway" }
+                if prGroup != "gateway.networking.k8s.io" || prKind != "Gateway" {
+                  continue
+                }
+                var prNs = parentRef.Namespace
+                if prNs == "" { prNs = nsStr }
+                var prName = parentRef.Name
+                var prSection = parentRef.SectionName
+                var prPort = toint(parentRef.Port)
+
+                var gw = resources.gateways.GetSingle(prNs, prName)
+                if gw == nil {
+                  continue
+                }
+
+                for _, listener := range gw.Spec.Listeners {
+                  var lName = ListenerName(listener)
+                  var lProto = ListenerProtocol(listener)
+                  var lPort = toint(listener.Port)
+
+                  if lProto != "TCP" || lPort <= 0 {
+                    continue
+                  }
+                  if prSection != "" && prSection != lName {
+                    continue
+                  }
+                  if prPort != 0 && prPort != lPort {
+                    continue
+                  }
+
+                  // allowedRoutes.kinds intersection: when omitted, the
+                  // protocol-default kind applies (TCP -> TCPRoute).
+                  var kindOk = true
+                  if len(listener.AllowedRoutes.Kinds) > 0 {
+                    kindOk = false
+                    for _, ak := range listener.AllowedRoutes.Kinds {
+                      var akG = ak.Group
+                      if akG == "" { akG = "gateway.networking.k8s.io" }
+                      if akG == "gateway.networking.k8s.io" && ak.Kind == "TCPRoute" {
+                        kindOk = true
+                        break
+                      }
+                    }
+                  }
+                  if !kindOk {
+                    continue
+                  }
+
+                  // allowedRoutes.namespaces gating.
+                  var nsOk = false
+                  var fromMode = listener.AllowedRoutes.Namespaces.From
+                  if fromMode == "" { fromMode = "Same" }
+                  switch fromMode {
+                  case "Same":
+                    nsOk = (nsStr == prNs)
+                  case "All":
+                    nsOk = true
+                  case "Selector":
+                    var selectorMap = listener.AllowedRoutes.Namespaces.Selector.MatchLabels
+                    if selectorMap != nil {
+                      var nsObj = resources.namespaces.GetSingle(nsStr)
+                      if nsObj != nil {
+                        var allMatch = true
+                        for k, v := range selectorMap {
+                          var actual, ok = nsObj.Metadata.Labels[k]
+                          if !ok || actual != v { allMatch = false; break }
+                        }
+                        nsOk = allMatch
+                      }
+                    }
+                  }
+                  if !nsOk {
+                    continue
+                  }
+
+                  // First-claim wins: TCP forwards a whole port to one
+                  // backend, so a second route claiming the same port is
+                  // ignored (no L7 key to disambiguate by).
+                  if _, taken := byPort[lPort]; taken {
+                    continue
+                  }
+                  byPort[lPort] = map[string]any{
+                    "backendName": "gtw_tcp_" + nsStr + "_" + nameStr + "_" + sprintf("%d", ruleIdx),
+                    "routeNs":     nsStr,
+                    "routeName":   nameStr,
+                    "ruleIdx":     ruleIdx,
+                    "refName":     refName,
+                    "refPort":     refPort,
+                    "refNs":       refNs,
+                  }
+                }
+              }
+            }
+          }
+
+          return map[string]any{"byPort": byPort}
+        })
+      %%}
+
+  # backends-502-gateway-tcproute
+  #
+  # Emits one `mode tcp` backend per claimed TCP listener port. Hooks
+  # into base.yaml's `render_glob "backends-*"` extension point. The
+  # `502` ordinal keeps it after the ssl-passthrough TCP backends (501)
+  # for stable output ordering.
+  backends-502-gateway-tcproute:
+    template: |
+      {%- import "util-backend-servers" for BackendServers %}
+      {{ render "util-gateway-tcproute-analysis" }}
+      {%- var dataRaw = shared.Get("gateway_tcproute") %}
+      {%- if dataRaw != nil %}
+        {%- var byPort = dataRaw.(map[string]any)["byPort"].(map[int]any) %}
+        {#- Deterministic output: sort the claimed ports numerically. -#}
+        {%- var portKeysRaw = []any{} %}
+        {%- for k, _ := range byPort %}
+          {%- portKeysRaw = append(portKeysRaw, k) %}
+        {%- end %}
+        {%- var portKeys = sort_ints(portKeysRaw) %}
+        {%- for _, port := range portKeys %}
+          {%- var info = byPort[port].(map[string]any) %}
+          {%- var beName = tostring(info["backendName"]) %}
+          {%- var refName = tostring(info["refName"]) %}
+          {%- var refPort = toint(info["refPort"]) %}
+          {%- var refNs = tostring(info["refNs"]) %}
+      # gateway/backends-502-gateway-tcproute: {{ info["routeNs"] }}/{{ info["routeName"] }} rule {{ info["ruleIdx"] }} (port {{ port }})
+
+      backend {{ beName }}
+          guid {{ make_guid("be", beName) }}
+          mode tcp
+          {{ BackendServers(refName, 10, refPort, nil, nil, beName, refNs) | indent(4, false) }}
+        {%- end %}
+      {%- end %}
+
+  # frontends-700-gateway-tcp-listener
+  #
+  # Emits one `mode tcp` frontend per claimed TCP listener port, bound to
+  # that port and forwarding straight to the route's backend. Hooks into
+  # base.yaml's `render_glob "frontends-*"` extension point (same point
+  # frontends-600-gateway-tls-listener uses).
+  #
+  # Port-collision guard: a TCP listener declared on a port the chart-
+  # static HTTP / HTTPS frontends already bind (httpPort / httpsPort)
+  # would produce a duplicate `bind *:<port>` and a config parse error.
+  # We drop such listeners silently here (the spec surfaces the conflict
+  # via the Gateway listener status; the data plane just stays
+  # parseable). Ports claimed by the per-port TLS frontends
+  # (frontends-600) cannot collide because a port is single-protocol in
+  # a Gateway, so a TCP listener and a TLS listener never share a port.
+  frontends-700-gateway-tcp-listener:
+    template: |
+      {{ render "util-gateway-tcproute-analysis" }}
+      {%- var dataRaw = shared.Get("gateway_tcproute") %}
+      {%- if dataRaw != nil %}
+        {%- var byPort = dataRaw.(map[string]any)["byPort"].(map[int]any) %}
+        {%- var httpPort = toint(extraContext | dig("httpPort") | fallback(8080)) %}
+        {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
+        {%- var portKeysRaw = []any{} %}
+        {%- for k, _ := range byPort %}
+          {%- portKeysRaw = append(portKeysRaw, k) %}
+        {%- end %}
+        {%- var portKeys = sort_ints(portKeysRaw) %}
+        {%- for _, port := range portKeys %}
+          {%- if port != httpPort && port != httpsPort %}
+            {%- var info = byPort[port].(map[string]any) %}
+            {%- var beName = tostring(info["backendName"]) %}
+
+      # gateway/frontends-700-gateway-tcp-listener: port {{ port }}
+
+      frontend gateway-tcp-port-{{ port }}
+          guid fe:gateway-tcp-port-{{ port }}
+          mode tcp
+          bind *:{{ port }}
+          default_backend {{ beName }}
+          {%- end %}
+        {%- end %}
+      {%- end %}
+
+validationTests:
+  test-tcproute-basic-l4-forward:
+    description: "Gateway API TCPRoute (L4): a Gateway listener with protocol TCP on port 9100 has a TCPRoute attached whose single backendRef points at a Service. The chart must emit a mode-tcp frontend bound to 9100 with default_backend to a mode-tcp backend carrying the Service's endpoint as a server line."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tcp
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tcp
+                protocol: TCP
+                port: 9100
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TCPRoute
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1alpha2
+          kind: TCPRoute
+          metadata:
+            name: tcp-app
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              - name: gw-tcp
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 9100
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 9100
+                targetPort: 9100
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata:
+            name: tcp-backend-abc
+            namespace: default
+            labels:
+              kubernetes.io/service-name: tcp-backend
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.0.0.42"]
+              targetRef:
+                kind: Pod
+                name: tcp-backend-pod-1
+          ports:
+            - port: 9100
+              protocol: TCP
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tcp-port-9100$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+bind \*:9100$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^\s+default_backend gtw_tcp_default_tcp-app_0$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?m)^backend gtw_tcp_default_tcp-app_0$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: '(?ms)^backend gtw_tcp_default_tcp-app_0$.*?^\s+mode tcp$'
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'server SRV_1 10\.0\.0\.42:9100'
+
+  test-tcproute-unattached-no-frontend:
+    description: "A TCPRoute whose parentRef points at a Gateway with no matching TCP listener (wrong port) produces no tcp frontend/backend — attachment gating must hold."
+    extraContext:
+      controllerName: "haproxy-haptic.org/controller"
+    fixtures:
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: gw-tcp-mismatch
+            namespace: default
+            generation: 1
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - name: tcp
+                protocol: TCP
+                port: 9200
+                allowedRoutes:
+                  namespaces:
+                    from: Same
+                  kinds:
+                    - kind: TCPRoute
+      tcproutes:
+        - apiVersion: gateway.networking.k8s.io/v1alpha2
+          kind: TCPRoute
+          metadata:
+            name: tcp-app-mismatch
+            namespace: default
+            generation: 1
+          spec:
+            parentRefs:
+              # sectionName targets a listener name that does not exist
+              - name: gw-tcp-mismatch
+                sectionName: nonexistent
+            rules:
+              - backendRefs:
+                  - name: tcp-backend
+                    port: 9200
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            name: tcp-backend
+            namespace: default
+          spec:
+            ports:
+              - port: 9200
+                targetPort: 9200
+    assertions:
+      - type: haproxy_valid
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^frontend gateway-tcp-port-9200$'
+      - type: not_contains
+        target: haproxy.cfg
+        pattern: '(?m)^backend gtw_tcp_default_tcp-app-mismatch_0$'

@@ -1,0 +1,83 @@
+# haproxy-ingress library — raw directive injection into the http frontend,
+# global, and defaults sections.
+#
+# Complements the existing config-backend snippet (backend-directives-900).
+# Each annotation injects raw, operator-authored HAProxy directives verbatim
+# into the corresponding section via base.yaml's extension points:
+#
+#   config-frontend → frontend-extra-*    (http frontend, before routing logic)
+#   config-global   → global-settings-*   (global section)
+#   config-defaults → defaults-settings-* (defaults section)
+#
+# Every snippet scans ALL Ingresses (resources.ingresses.List()) because these
+# sections are not per-Ingress — they are process-wide. Multiple Ingresses
+# carrying the same annotation each contribute their block (deduplication is the
+# operator's responsibility, matching haproxy-ingress upstream which emits each
+# config snippet once per source).
+#
+# Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#configuration-snippet
+templateSnippets:
+  frontend-extra-650-haproxy-ingress-config-frontend:
+    template: |
+      {#-
+        config-frontend → raw directives in the http frontend.
+
+        Runs at the frontend-extra-* extension point (BEFORE routing logic),
+        so captures, ACLs and early http-request rules an operator injects are
+        in scope for the routing that follows. Emitted into both the h1 and h2c
+        frontends (base.yaml renders frontend-extra-* in each).
+
+        Extension Point: frontend-extra-* (priority 650 - compatibility layer)
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-frontend"] %}
+      {%- if strip(snippet) != "" %}
+      {%- if isFirst %}
+      # haproxy-ingress/config-frontend
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}
+      {{ strip(snippet) }}
+      {%- end %}
+      {%- end %}
+
+  global-settings-650-haproxy-ingress-config-global:
+    template: |
+      {#-
+        config-global → raw directives in the global section.
+
+        Extension Point: global-settings-* (priority 650 - compatibility layer)
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-global"] %}
+      {%- if strip(snippet) != "" %}
+      {%- if isFirst %}
+      # haproxy-ingress/config-global
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}
+      {{ strip(snippet) }}
+      {%- end %}
+      {%- end %}
+
+  defaults-settings-650-haproxy-ingress-config-defaults:
+    template: |
+      {#-
+        config-defaults → raw directives in the defaults section.
+
+        Extension Point: defaults-settings-* (priority 650 - compatibility layer)
+      -#}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var snippet = ingress.Metadata.Annotations["haproxy-ingress.github.io/config-defaults"] %}
+      {%- if strip(snippet) != "" %}
+      {%- if isFirst %}
+      # haproxy-ingress/config-defaults
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }}
+      {{ strip(snippet) }}
+      {%- end %}
+      {%- end %}

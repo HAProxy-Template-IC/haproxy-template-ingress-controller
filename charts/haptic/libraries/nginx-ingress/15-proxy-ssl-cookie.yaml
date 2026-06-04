@@ -1,0 +1,250 @@
+# nginx-ingress library — backend-directives-* for backend TLS to upstream
+# (proxy-ssl-*) and upstream Set-Cookie rewriting (proxy-cookie-domain/path).
+#
+# These run as backend-directives-* (inherit_context: ingress + serverOpts).
+# proxy-ssl-* mutates the server-line flags (serverOpts["flags"]); the cookie
+# rewrites emit http-response replace-header lines directly into the backend.
+templateSnippets:
+  # ============================================================================
+  # Backend TLS to upstream (proxy-ssl-*)
+  # ============================================================================
+
+  backend-directives-760-nginx-ingress-proxy-ssl:
+    template: |
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {#-
+        Nginx Ingress Backend TLS (proxy-ssl-*)
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#backend-certificate-authentication
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/proxy-ssl-secret: "<name>" or "<ns>/<name>"
+            (kubernetes.io/tls Secret; tls.crt+tls.key become the client cert
+            presented to the upstream, ca.crt becomes the CA the upstream cert
+            is verified against)
+          - nginx.ingress.kubernetes.io/proxy-ssl-verify: "on" | "off"
+          - nginx.ingress.kubernetes.io/proxy-ssl-name: "<sni-host>"
+          - nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on" (alias of proxy-ssl-name source)
+          - nginx.ingress.kubernetes.io/proxy-ssl-ciphers: "<cipher-list>"
+          - nginx.ingress.kubernetes.io/proxy-ssl-protocols: "TLSv1.2 TLSv1.3 ..."
+
+        These only take effect when backend SSL is enabled (backend-protocol
+        HTTPS or GRPCS). When that is the case, backend-directives-730 has
+        already appended `ssl verify none` (or `ssl verify none proto h2`) to
+        serverOpts["flags"]; this snippet rebuilds those flags to carry the
+        real CA / client cert / verify mode and SSL tuning.
+
+        Generated HAProxy server flags (on default-server):
+          ssl verify required ca-file <f> crt <f> verify-depth <n>
+              sni str(<name>) verifyhost <name> ciphers <l>
+              ssl-min-ver <v> ssl-max-ver <v>
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var proto = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/backend-protocol"] %}
+        {#- Backend SSL must be on for any proxy-ssl-* directive to apply. -#}
+        {%- if proto == "HTTPS" || proto == "GRPCS" %}
+          {%- var sslSecret = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-secret"] %}
+          {%- var sslVerify = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify"] %}
+          {%- var sslVerifyDepth = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify-depth"] %}
+          {%- var sslName = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-name"] %}
+          {%- var sslCiphers = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-ciphers"] %}
+          {%- var sslProtocols = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-protocols"] %}
+
+          {#- proxy-ssl-verify-depth has no per-server HAProxy equivalent:
+              the verification depth keyword (`verifydepth`) exists only on
+              `bind` lines, not on `server`/`default-server`. We surface the
+              limitation as a comment rather than emitting an invalid keyword. -#}
+          {%- if sslVerifyDepth != "" %}
+          # Warning: nginx.ingress.kubernetes.io/proxy-ssl-verify-depth on Ingress {{ key }} is not supported — HAProxy has no per-server chain-depth keyword (it is a bind-line-only option). The CA bundle scope bounds the accepted chain instead.
+          {%- end %}
+
+          {#- Anything to do? Only rebuild the SSL flags if at least one
+              supported proxy-ssl-* annotation is present. With none of them set
+              the backend-protocol default (`ssl verify none`) stands as-is. -#}
+          {%- var hasProxySsl = sslSecret != "" || sslVerify != "" || sslName != "" || sslCiphers != "" || sslProtocols != "" %}
+          {%- if hasProxySsl %}
+            {#- Strip the SSL portion that backend-protocol-730 added so we can
+                re-emit a single, coherent SSL flag set. We keep any non-SSL
+                flags (e.g. `proto h2` for GRPCS) and the bare `ssl` token. -#}
+            {%- var keptFlags = []any{} %}
+            {%- var hadProtoH2 = false %}
+            {%- for _, f := range serverOpts["flags"].([]any) %}
+              {%- var fs = tostring(f) %}
+              {%- if fs == "ssl verify none" %}
+                {#- drop — replaced below -#}
+              {%- else if fs == "ssl verify none proto h2" %}
+                {%- hadProtoH2 = true %}
+              {%- else %}
+                {%- keptFlags = append(keptFlags, f) %}
+              {%- end %}
+            {%- end %}
+            {%- serverOpts["flags"] = keptFlags %}
+
+            {#- Begin assembling the SSL flag string. -#}
+            {%- var sslFlag = "ssl" %}
+
+            {#- CA bundle + client cert from the referenced Secret. Resolve this
+                FIRST: HAProxy rejects `verify required` without a `ca-file`, so
+                the verify mode below depends on whether a CA was actually
+                registered (caAdded). -#}
+            {%- var caFilePart = "" %}
+            {%- var crtPart = "" %}
+            {%- var caAdded = false %}
+            {%- var secretFound = false %}
+            {%- if sslSecret != "" %}
+              {%- var secNs = ns %}
+              {%- var secName = sslSecret %}
+              {%- if strings_contains(sslSecret, "/") %}
+                {%- var parts = split(sslSecret, "/") %}
+                {%- secNs = parts[0] %}
+                {%- secName = parts[1] %}
+              {%- end %}
+              {%- var secret = resources.secrets.GetSingle(secNs, secName) %}
+              {%- if secret != nil %}
+                {%- secretFound = true %}
+                {%- var caContent = secret.Data["ca.crt"] | b64decode() %}
+                {%- if caContent != "" %}
+                  {%- var caFilename = secNs + "-" + secName + "-proxy-ssl-ca.pem" %}
+                  {%- var caPath, caRegErr = fileRegistry.Register("file", caFilename, caContent) -%}
+                  {%- if caRegErr != nil -%}{{ fail("failed to register proxy-ssl CA file " + caFilename + ": " + tostring(caRegErr)) }}{%- end -%}
+                  {%- caFilePart = " ca-file " + caPath %}
+                  {%- caAdded = true %}
+                {%- end %}
+                {%- var tlsCrt = secret.Data["tls.crt"] | b64decode() %}
+                {%- var tlsKey = secret.Data["tls.key"] | b64decode() %}
+                {%- if tlsCrt != "" && tlsKey != "" %}
+                  {%- var combinedPem = tlsCrt + "\n" + tlsKey %}
+                  {%- var crtFilename = secNs + "-" + secName + "-proxy-ssl-client.pem" %}
+                  {%- var crtPath, crtRegErr = fileRegistry.Register("cert", crtFilename, combinedPem) -%}
+                  {%- if crtRegErr != nil -%}{{ fail("failed to register proxy-ssl client cert " + crtFilename + ": " + tostring(crtRegErr)) }}{%- end -%}
+                  {%- crtPart = " crt " + crtPath %}
+                {%- end %}
+              {%- end %}
+            {%- end %}
+
+            {#- Verify mode. nginx defaults proxy-ssl-verify to "off"; upstream
+                certificate verification is requested by an affirmative value.
+                We match case-insensitively and accept the common truthy spellings
+                (on/true/yes/1) so a "On"/"true" typo doesn't SILENTLY disable
+                verification (fail-open). When verification IS requested but no CA
+                is available we FAIL-CLOSED — aborting the render rather than
+                downgrading to `verify none`, which would leave the operator
+                believing the upstream cert is checked when it is not. -#}
+            {%- var effVerify = "none" %}
+            {%- var verifyNorm = toLower(trimSpace(sslVerify)) %}
+            {%- if verifyNorm == "on" || verifyNorm == "true" || verifyNorm == "yes" || verifyNorm == "1" %}
+              {%- if sslSecret == "" %}
+                {{- fail("nginx.ingress.kubernetes.io/proxy-ssl-verify: on on Ingress '" + key + "' requires nginx.ingress.kubernetes.io/proxy-ssl-secret pointing at a Secret containing ca.crt; otherwise set proxy-ssl-verify: off.") -}}
+              {%- else if !secretFound %}
+                {{- fail("Secret '" + sslSecret + "' referenced by nginx.ingress.kubernetes.io/proxy-ssl-secret on Ingress '" + key + "' was not found, but proxy-ssl-verify: on requires its ca.crt to verify the upstream certificate.") -}}
+              {%- else if !caAdded %}
+                {{- fail("Secret '" + sslSecret + "' on Ingress '" + key + "' has no ca.crt, but nginx.ingress.kubernetes.io/proxy-ssl-verify: on requires a CA to verify the upstream certificate.") -}}
+              {%- end %}
+              {%- effVerify = "required" %}
+            {%- end %}
+            {#- ca-file only matters when verifying; the client cert (crt) is
+                presented to the upstream regardless of verify mode. -#}
+            {%- sslFlag = sslFlag + " verify " + effVerify %}
+            {%- if effVerify == "required" %}{%- sslFlag = sslFlag + caFilePart %}{%- end %}
+            {%- sslFlag = sslFlag + crtPart %}
+
+            {#- proxy-ssl-name → SNI (valid in any verify mode). verifyhost is
+                emitted only when verify is `required`. Both are
+                config-injection-guarded (single host token). -#}
+            {%- if sslName != "" %}
+              {%- var nameTok = ValidateConfigValue(sslName, "nginx.ingress.kubernetes.io/proxy-ssl-name", key, false) %}
+              {%- sslFlag = sslFlag + " sni str(" + nameTok + ")" %}
+              {%- if effVerify == "required" %}
+                {%- sslFlag = sslFlag + " verifyhost " + nameTok %}
+              {%- end %}
+            {%- end %}
+
+            {#- ciphers (single token; injection-guarded) -#}
+            {%- if sslCiphers != "" %}
+              {%- sslFlag = sslFlag + " ciphers " + ValidateConfigValue(sslCiphers, "nginx.ingress.kubernetes.io/proxy-ssl-ciphers", key, false) %}
+            {%- end %}
+
+            {#- proxy-ssl-protocols → ssl-min-ver / ssl-max-ver. nginx accepts a
+                space-separated list of enabled protocol versions; HAProxy
+                expresses the same span as a min/max bound. We take the lowest
+                listed version as the floor and the highest as the ceiling. -#}
+            {%- if sslProtocols != "" %}
+              {%- var minVer = "" %}
+              {%- var maxVer = "" %}
+              {%- for _, p := range split(sslProtocols, " ") %}
+                {%- var pv = trimSpace(p) %}
+                {%- if pv != "" %}
+                  {#- Normalise nginx's `TLSv1.2` form (already HAProxy's form);
+                      injection-guard each token (single ssl-min/max-ver value). -#}
+                  {%- pv = ValidateConfigValue(pv, "nginx.ingress.kubernetes.io/proxy-ssl-protocols", key, false) %}
+                  {%- if minVer == "" || pv < minVer %}{%- minVer = pv %}{%- end %}
+                  {%- if maxVer == "" || pv > maxVer %}{%- maxVer = pv %}{%- end %}
+                {%- end %}
+              {%- end %}
+              {%- if minVer != "" %}
+                {%- sslFlag = sslFlag + " ssl-min-ver " + minVer %}
+              {%- end %}
+              {%- if maxVer != "" %}
+                {%- sslFlag = sslFlag + " ssl-max-ver " + maxVer %}
+              {%- end %}
+            {%- end %}
+
+            {%- serverOpts["flags"] = append(serverOpts["flags"].([]any), sslFlag) %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  # ============================================================================
+  # Upstream Set-Cookie rewriting (proxy-cookie-domain / proxy-cookie-path)
+  # ============================================================================
+
+  backend-directives-790-nginx-ingress-proxy-cookie:
+    template: |
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {#-
+        Nginx Ingress Proxy Cookie Domain / Path Rewriting
+
+        Documentation:
+          https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-cookie-domain
+          https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-cookie-path
+
+        Annotations:
+          - nginx.ingress.kubernetes.io/proxy-cookie-domain: "<from> <to>"
+          - nginx.ingress.kubernetes.io/proxy-cookie-path: "<from> <to>"
+
+        nginx's two-argument form rewrites the Domain= / Path= attribute of
+        the upstream Set-Cookie header from <from> to <to>. HAProxy expresses
+        the same with a regex replace-header that preserves the rest of the
+        cookie string:
+
+          http-response replace-header Set-Cookie (.*)Domain=<from>(.*) \1Domain=<to>\2
+          http-response replace-header Set-Cookie (.*)Path=<from>(.*) \1Path=<to>\2
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var cookieDomain = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-cookie-domain"] %}
+        {%- var cookiePath = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-cookie-path"] %}
+        {%- if cookieDomain != "" %}
+          {%- var parts = split(strip(cookieDomain), " ") %}
+          {%- if len(parts) == 2 %}
+      # nginx-ingress/proxy-cookie-domain ({{ key }})
+      http-response replace-header Set-Cookie (.*)Domain={{ ValidateConfigValue(parts[0], "nginx.ingress.kubernetes.io/proxy-cookie-domain", key, false) }}(.*) \1Domain={{ ValidateConfigValue(parts[1], "nginx.ingress.kubernetes.io/proxy-cookie-domain", key, false) }}\2
+          {%- else %}
+            {{- fail("Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-domain' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookieDomain + "'.") -}}
+          {%- end %}
+        {%- end %}
+        {%- if cookiePath != "" %}
+          {%- var parts = split(strip(cookiePath), " ") %}
+          {%- if len(parts) == 2 %}
+      # nginx-ingress/proxy-cookie-path ({{ key }})
+      http-response replace-header Set-Cookie (.*)Path={{ ValidateConfigValue(parts[0], "nginx.ingress.kubernetes.io/proxy-cookie-path", key, false) }}(.*) \1Path={{ ValidateConfigValue(parts[1], "nginx.ingress.kubernetes.io/proxy-cookie-path", key, false) }}\2
+          {%- else %}
+            {{- fail("Annotation 'nginx.ingress.kubernetes.io/proxy-cookie-path' on Ingress '" + key + "' must be two space-separated values '<from> <to>'; got '" + cookiePath + "'.") -}}
+          {%- end %}
+        {%- end %}
+      {%- end -%}

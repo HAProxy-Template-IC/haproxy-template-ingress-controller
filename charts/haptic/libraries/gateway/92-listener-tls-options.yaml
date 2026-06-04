@@ -1,0 +1,86 @@
+templateSnippets:
+  # ============================================================================
+  # Per-listener TLS options (GEP-2907)
+  #
+  # A Gateway HTTPS/TLS listener may carry `spec.tls.options`, a
+  # string→string map of implementation-extended TLS knobs. GEP-2907
+  # standardises four domain-prefixed keys under the
+  # `gateway.networking.k8s.io/` prefix:
+  #
+  #   gateway.networking.k8s.io/tls-min-version    e.g. "1.2" / "1.3"
+  #   gateway.networking.k8s.io/tls-max-version    e.g. "1.3"
+  #   gateway.networking.k8s.io/tls-cipher-suites  comma-separated list
+  #   gateway.networking.k8s.io/tls-alpn-protocols comma-separated list
+  #
+  # These map onto HAProxy per-bind keywords:
+  #   ssl-min-ver <TLSvX.Y>   ssl-max-ver <TLSvX.Y>
+  #   ciphers <list>          (TLS ≤1.2 cipher list)
+  #   ciphersuites <list>     (TLS 1.3 cipher suites)
+  #
+  # Version strings are normalised: a bare "1.2"/"1.3" becomes
+  # "TLSv1.2"/"TLSv1.3" (HAProxy's token form). An already-prefixed
+  # value ("TLSv1.3") is passed through unchanged.
+  #
+  # The `TLSOptionsSuffix` macro returns a leading-space-prefixed
+  # string suitable for appending to a `bind` line. It returns the
+  # empty string when the listener carries no recognised options, so
+  # call sites can append it unconditionally.
+  #
+  # DEFERRED: tls-alpn-protocols. The per-listener HTTPS bind emitted by
+  # phase 4 (`https-bind-extra-100-per-gateway`) and the chart-static
+  # HTTPS bind both carry a hardcoded `alpn h2,http/1.1` baked in by the
+  # shared `util-ssl-bind-options[-for-crtlist]` macro. HAProxy rejects a
+  # second `alpn` keyword on the same bind line, so a per-listener ALPN
+  # override cannot be appended without restructuring that shared SSL
+  # macro (outside the gateway library, and shared with Ingress TLS).
+  # The min/max-version + cipher knobs ARE additive on the bind line and
+  # are emitted here.
+  #
+  # cipher-suites split: TLS 1.3 suite names (TLS_AES_*, TLS_CHACHA20_*)
+  # go to `ciphersuites`; everything else (ECDHE-*, AES*, etc.) goes to
+  # `ciphers`. A single `tls-cipher-suites` option value can list both
+  # families; we partition it so HAProxy gets each on the right keyword.
+  # ============================================================================
+  util-gateway-listener-tls-options:
+    template: |
+      {%- macro NormalizeTLSVersion(v string) string -%}
+        {%- if v == "1.0" %}TLSv1.0
+        {%- else if v == "1.1" %}TLSv1.1
+        {%- else if v == "1.2" %}TLSv1.2
+        {%- else if v == "1.3" %}TLSv1.3
+        {%- else %}{{ v }}
+        {%- end -%}
+      {%- end macro -%}
+
+      {%- macro TLSOptionsSuffix(listener any) string -%}
+        {#- dig() navigates the typed Gateway listener struct the same
+            way it navigates an untyped map, so the macro stays
+            resource-shape-agnostic. tls.options is a string→string
+            map (CRD additionalProperties). -#}
+        {%- var opts = dig(listener, "tls", "options") -%}
+        {%- var out = "" -%}
+        {%- if opts != nil -%}
+          {%- var minV = tostring(dig(opts, "gateway.networking.k8s.io/tls-min-version") | fallback("")) -%}
+          {%- var maxV = tostring(dig(opts, "gateway.networking.k8s.io/tls-max-version") | fallback("")) -%}
+          {%- var ciphersOpt = tostring(dig(opts, "gateway.networking.k8s.io/tls-cipher-suites") | fallback("")) -%}
+          {%- if minV != "" -%}{%- out = out + " ssl-min-ver " + NormalizeTLSVersion(minV) -%}{%- end -%}
+          {%- if maxV != "" -%}{%- out = out + " ssl-max-ver " + NormalizeTLSVersion(maxV) -%}{%- end -%}
+          {%- if ciphersOpt != "" -%}
+            {%- var tls12 = []any{} -%}
+            {%- var tls13 = []any{} -%}
+            {%- for _, c := range split(ciphersOpt, ",") -%}
+              {%- var cc = strip(c) -%}
+              {%- if cc != "" -%}
+                {%- if hasPrefix(cc, "TLS_") -%}
+                  {%- tls13 = append(tls13, cc) -%}
+                {%- else -%}
+                  {%- tls12 = append(tls12, cc) -%}
+                {%- end -%}
+              {%- end -%}
+            {%- end -%}
+            {%- if len(tls12) > 0 -%}{%- out = out + " ciphers " + join(tls12, ":") -%}{%- end -%}
+            {%- if len(tls13) > 0 -%}{%- out = out + " ciphersuites " + join(tls13, ":") -%}{%- end -%}
+          {%- end -%}
+        {%- end -%}
+        {{- out -}}
+      {%- end macro -%}

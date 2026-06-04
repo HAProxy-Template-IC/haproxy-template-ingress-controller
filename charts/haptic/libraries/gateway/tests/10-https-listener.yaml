@@ -40,15 +40,12 @@ validationTests:
             tls.key: bm90LWFjdHVhbGx5LXBlbQ==
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must validate even with no HTTPS frontend
       - type: not_contains
         target: haproxy.cfg
         pattern: "frontend https"
-        description: HTTPS frontend MUST NOT render when no listener has a usable cert
       - type: not_contains
         target: haproxy.cfg
         pattern: "bind .*:443.*ssl crt"
-        description: Chart-static `bind *:443 ssl crt-list` MUST be omitted
 
   test-gateway-https-listener-mtls-unresolved-ca-no-bind:
     description: "Closes the GatewayFrontendInvalidDefaultClientCertificateValidation conformance gap on the chart side: a Gateway HTTPS listener with a valid server cert AND `spec.tls.frontend.default."
@@ -109,15 +106,12 @@ validationTests:
         # whole point of this test.
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must validate
       - type: not_contains
         target: haproxy.cfg
         pattern: "frontend https"
-        description: HTTPS frontend MUST NOT render — the lone listener is mTLS-blocked
       - type: not_contains
         target: haproxy.cfg
         pattern: "bind .*:443.*ssl crt"
-        description: "Chart-static `bind *:443 ssl crt-list` MUST be omitted — HAProxy must not answer TLS handshakes when no listener accepts traffic on this port (the conformance contract)."
   test-gateway-https-listener-mtls-unresolved-ca-status-conditions:
     description: "Status-side companion of test-gateway-https-listener-mtls- unresolved-ca-no-bind. The chart-side fix for GatewayFrontendInvalidDefaultClientCertificateValidation requires BOTH:"
     fixtures:
@@ -170,19 +164,15 @@ validationTests:
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"reason":"InvalidCACertificateRef"'
-        description: "Listener's ResolvedRefs condition must surface InvalidCACertificateRef as the failure reason."
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"reason":"NoValidCACertificate"'
-        description: "Listener's Accepted condition must surface NoValidCACertificate so attached routes know the listener is unusable."
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"status":"False"'
-        description: "At least one listener-level condition flipped to False (covers both ResolvedRefs and Accepted)."
       - type: contains
         target: "status:default/mtls-bad-ca-gw:rendered"
         pattern: '"name":"https"'
-        description: The status entry targets the offending listener by name
 
   test-gateway-https-listener-with-valid-cert-binds:
     description: "The companion test to the invalid-cert case: a Gateway HTTPS listener at httpsPort with a resolvable cert sets gf [\"bindHTTPSDefault\"]=true via features-150-gateway-bind, the chart-static `bind *:443 ssl crt-list ...` renders normally, and `frontend https` exists."
@@ -229,15 +219,12 @@ validationTests:
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must validate
       - type: contains
         target: haproxy.cfg
         pattern: "frontend https"
-        description: HTTPS frontend must render
       - type: contains
         target: haproxy.cfg
         pattern: "bind .*:443.*ssl crt-list"
-        description: Chart-static `bind *:443 ssl crt-list` must render
 
   test-gateway-https-misdirected-listener-claim-maps:
     description: HTTPS listener hostnames are emitted as listener-claim maps and the misdirected directive references them
@@ -293,27 +280,22 @@ validationTests:
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: map:listener-hostname-claim.map
         pattern: "(?m)^second-example\\.org second-example\\.org$"
-        description: Exact-hostname HTTPS listener appears in claim map
 
       - type: contains
         target: map:listener-hostname-claim-regex.map
         pattern: "(?m)^\\^\\[\\^\\.\\]\\+\\\\\\.wildcard\\\\\\.org\\$ \\*\\.wildcard\\.org$"
-        description: Wildcard-hostname HTTPS listener appears as regex entry
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_sni_listener\\) ssl_fc_sni,lower,map\\("
-        description: Misdirected directive looks up SNI in claim map
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 421 if .* var\\(txn\\.gw_sni_listener\\),strcmp\\(txn\\.gw_host_listener\\) eq 0"
-        description: 421 logic compares SNI vs Host listener identities
   test-backendtlspolicy-compiles:
     description: BackendTLSPolicy is watched and the chart compiles when one is present
     fixtures:
@@ -405,12 +387,10 @@ validationTests:
               hostname: backend.example.com
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with a BackendTLSPolicy in the watch set
 
       - type: contains
         target: haproxy.cfg
         pattern: "default-server check ssl ca-file [^\\s]+ verify required sni str\\(backend\\.example\\.com\\) verifyhost backend\\.example\\.com"
-        description: Targeted backend default-server gets ssl/ca-file/verify/sni from the policy
 
   test-backendtlspolicy-invalid-ca-cert-ref-rejects:
     description: "BackendTLSPolicy with caCertificateRefs that don't resolve (no matching ConfigMap or Secret in the cluster) and no wellKnownCACertificates: System fallback marks the targeted backend as broken."
@@ -476,17 +456,14 @@ validationTests:
               hostname: backend.example.com
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid when a BackendTLSPolicy points at a missing CA ConfigMap
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 503"
-        description: Backend with unresolvable BackendTLSPolicy refuses traffic (5xx)
 
       - type: not_contains
         target: haproxy.cfg
         pattern: "default-server check ssl ca-file"
-        description: No ssl ca-file is emitted when caCertificateRefs failed to resolve
 
   test-gateway-insecure-frontend-validation-mode-default:
     description: Gateway with spec.tls.frontend.default.mode=AllowInsecureFallback compiles cleanly. The status patch (verified end-to-end by the GatewayInsecureFrontendValidationMode conformance test) appends Insecur...
@@ -515,7 +492,6 @@ validationTests:
                   mode: AllowInsecureFallback
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with frontend.default.mode=AllowInsecureFallback
 
   test-gateway-insecure-frontend-validation-mode-per-port:
     description: "Gateway with spec.tls.frontend.perPort[*].tls.validation.mode=AllowInsecureFallback compiles cleanly (GEP-91 perPort override path)."
@@ -549,7 +525,6 @@ validationTests:
                         mode: AllowInsecureFallback
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with perPort AllowInsecureFallback override
 
   test-gateway-frontend-client-cert-default-line-verify:
     description: "Mirrors the upstream Gateway API GatewayFrontendClientCertificateValidation conformance fixture: a Gateway with two HTTPS listeners on different ports — one with no hostname (port 443, default fronten."
@@ -681,18 +656,15 @@ validationTests:
               -----END CERTIFICATE-----
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with two-listener mTLS-per-port shape
 
       # Default crt-list line carries the default-validation CA + verify.
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: '\[ocsp-update on ca-file [^ ]+ verify required\]'
-        description: "Default crt-list line includes ca-file + verify directives drawn from the gateway-level frontend.default.validation config — covers TLS handshakes whose SNI doesn't match a specific SNI line."
       # SNI line for second-example.org carries the per-port override CA.
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'verify required\] second-example\.org'
-        description: "The SNI line for `second-example.org` (the only listener with a hostname) carries the per-port override CA's verify clause."
   test-gateway-frontend-client-cert-insecure-fallback-default-line:
     description: "Variant of the previous test with mode: AllowInsecureFallback. Same Gateway shape (two listeners, one per port; default vs. perPort validation), but with InsecureFallback set on both."
     fixtures:
@@ -825,16 +797,13 @@ validationTests:
               -----END CERTIFICATE-----
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with InsecureFallback two-listener shape
 
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: '\[ocsp-update on ca-file [^ ]+ verify optional\]'
-        description: "Default crt-list line uses `verify optional` for AllowInsecureFallback (HAProxy still asks for a cert but accepts handshakes without one)."
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: 'verify optional\] second-example\.org'
-        description: "Per-port SNI line also carries `verify optional` when the per-port override mode is AllowInsecureFallback."
   test-gateway-backend-client-cert-shape:
     description: "Mirrors the upstream Gateway API GatewayBackendClientCertificateFeature conformance fixture: a Gateway with HTTP listener (port 80), an HTTPRoute pointing at a Service, a BackendTLSPolicy validating t."
     fixtures:
@@ -964,17 +933,13 @@ validationTests:
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid for backend client-cert + BackendTLSPolicy shape
 
       - type: contains
         target: haproxy.cfg
         pattern: 'ssl ca-file [^ ]+ verify required sni str\(abc\.example\.com\) verifyhost abc\.example\.com'
-        description: "Backend default-server line carries the BackendTLSPolicy CA + verify required + SNI + verifyhost (the upstream-side TLS)."
       - type: contains
         target: haproxy.cfg
         pattern: 'crt gw-clientcert-gateway-conformance-infra-gateway-tls-backend-client-certificate\.pem'
-        description: "Backend default-server line also carries the Gateway-level client cert (`crt /path/to/gw-clientcert-<gw>.pem`) so HAProxy presents that cert when connecting upstream — closes the GatewayBackendClientCertificateFeature conformance test's \"configured client certificate should be presented\" assertion."
       - type: contains
         target: "status:gateway-conformance-infra/gateway-tls-backend-client-certificate:rendered"
         pattern: '"reason":"ResolvedRefs","status":"True","type":"ResolvedRefs"'
-        description: "Gateway top-level ResolvedRefs=True/ResolvedRefs (the backend clientCertificateRef Secret resolved cleanly)."

@@ -1,0 +1,91 @@
+# haproxy-ingress library — server-alias / server-alias-regex contributions.
+#
+# These annotations make extra hostnames route to the SAME backends as the
+# Ingress's primary host. The chart's routing keys every path-map entry on the
+# normalised host key (`txn.host_match`, produced by host.map / host-regex.map
+# lookups), so an alias only needs to resolve to the SAME host key as the
+# primary host — then every existing path-map entry for that host applies to the
+# alias unchanged. No backend duplication, no path-map duplication.
+#
+#   server-alias:       comma-separated list of extra EXACT hostnames.
+#                       → host.map entry  `<alias> <primary-host-key>`
+#   server-alias-regex: a regular expression matching extra hostnames.
+#                       → host-regex.map entry  `<regex> <primary-host-key>`
+#
+# Reference: https://haproxy-ingress.github.io/docs/configuration/keys/#server-alias
+templateSnippets:
+  map-host-650-haproxy-ingress-alias:
+    template: |
+      {#-
+        server-alias → host.map entries.
+
+        For each Ingress carrying haproxy-ingress.github.io/server-alias, emit
+        one host.map entry per listed hostname, all pointing at the primary
+        host's normalised key. The primary host key is MapKeyForHost(rule.Host)
+        — the SAME normalisation map-host-500-ingress uses for the primary
+        entry, so the alias lands on identical downstream path-map lookups.
+
+        Aliases attach to the FIRST rule's host (haproxy-ingress's model: the
+        alias is an Ingress-level alternative name for the resource's host).
+
+        Extension Point: map-host-* (priority 650 - compatibility layer)
+      -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var aliasAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/server-alias"] %}
+      {%- if aliasAnnotation != "" %}
+      {%- var rules = ingress.Spec.Rules %}
+      {%- if len(rules) > 0 %}
+      {%- var primaryKey = MapKeyForHost(rules[0] | dig("host")) %}
+      {%- if primaryKey != "" %}
+      {%- if isFirst %}
+      # haproxy-ingress/map-host-alias
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} server-alias
+      {%- for _, rawAlias := range split(aliasAnnotation, ",") %}
+      {%- var alias = strip(rawAlias) %}
+      {%- if alias != "" %}
+      {{ MapKeyForHost(alias) }} {{ primaryKey }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+
+  map-host-regex-650-haproxy-ingress-alias:
+    template: |
+      {#-
+        server-alias-regex → host-regex.map entries.
+
+        The annotation value is a regular expression matching extra hostnames.
+        host-regex.map is consulted by base.yaml's routing cascade via
+        `map_reg(host-regex.map)` after the exact host.map miss, so a single
+        regex entry routes every matching hostname to the primary host key.
+
+        The value is emitted verbatim (it is already a HAProxy-compatible PCRE),
+        mapped to the primary host's normalised key.
+
+        Extension Point: map-host-regex-* (priority 650 - compatibility layer)
+      -#}
+      {%- import "util-ingress-host-key" for MapKeyForHost -%}
+      {%- var isFirst = true %}
+      {%- for _, ingress := range resources.ingresses.List() %}
+      {%- var regexAnnotation = ingress.Metadata.Annotations["haproxy-ingress.github.io/server-alias-regex"] %}
+      {%- if regexAnnotation != "" %}
+      {%- var rules = ingress.Spec.Rules %}
+      {%- if len(rules) > 0 %}
+      {%- var primaryKey = MapKeyForHost(rules[0] | dig("host")) %}
+      {%- if primaryKey != "" %}
+      {%- if isFirst %}
+      # haproxy-ingress/map-host-regex-alias
+      {%- isFirst = false %}
+      {%- end %}
+      # Ingress: {{ ingress.Metadata.Namespace }}/{{ ingress.Metadata.Name }} server-alias-regex
+      {{ strip(regexAnnotation) }} {{ primaryKey }}
+      {%- end %}
+      {%- end %}
+      {%- end %}
+      {%- end %}

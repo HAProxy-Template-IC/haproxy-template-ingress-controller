@@ -41,22 +41,18 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request add-header X-Custom-Header 'custom-value' if"
-        description: Must generate add-header directive for RequestHeaderModifier filter
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header X-Replace-Header 'new-value' if"
-        description: Must generate set-header directive for RequestHeaderModifier filter
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request del-header X-Remove-Header if'
-        description: Must generate del-header directive for RequestHeaderModifier filter
 
   test-httproute-response-header-modifier:
     description: HTTPRoute with ResponseHeaderModifier filter (add, set, remove response headers)
@@ -100,22 +96,18 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-response add-header X-Response-Header 'response-value' if"
-        description: Must generate add-header directive for ResponseHeaderModifier filter
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-response set-header X-Replace-Response 'new-response' if"
-        description: Must generate set-header directive for ResponseHeaderModifier filter
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-response del-header X-Remove-Response if'
-        description: Must generate del-header directive for ResponseHeaderModifier filter
 
   test-httproute-request-redirect:
     description: HTTPRoute with RequestRedirect filter (scheme, path, status code)
@@ -157,17 +149,14 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_redirect_path\) path,regsub\("\^/old","/new"\) if'
-        description: Must compute rewritten path via regsub on the matched prefix
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request redirect location "https://new\.example\.com%\[var\(txn\.gw_redirect_path\)\]" code 301 if'
-        description: Must emit redirect with full Location URL referencing the rewritten path
 
   test-httproute-request-redirect-default-port-omission:
     description: "RequestRedirect MUST NOT include the port in Location when the resulting (scheme, port) pair is the scheme's default ((http, 80) or (https, 443)) per Gateway API spec."
@@ -219,20 +208,16 @@ validationTests:
                       statusCode: 302
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: not_contains
         target: haproxy.cfg
         pattern: 'http://example\.org:80(?:[^0-9]|$)'
-        description: "(http, 80) is the http scheme's default port — Location must omit it. Detects the unconditional-append regression. Anchor with non-digit lookahead so `:80` doesn't match `:8080`."
       - type: not_contains
         target: haproxy.cfg
         pattern: 'https://example\.org:443(?:[^0-9]|$)'
-        description: "(https, 443) is the https scheme's default port — Location must omit it."
       - type: contains
         target: haproxy.cfg
         pattern: 'http://example\.org:8080'
-        description: Non-default ports remain in Location (sanity check)
 
   test-httproute-url-rewrite:
     description: HTTPRoute with URLRewrite filter (hostname and path rewrite)
@@ -272,22 +257,18 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-header Host 'internal.example.com' if"
-        description: Must generate hostname rewrite directive
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request replace-path'
-        description: Must generate path prefix replacement directive
 
       - type: contains
         target: haproxy.cfg
         pattern: '"/api/v2'
-        description: Must rewrite to new path prefix
 
   test-httproute-cors-filter:
     description: HTTPRoute CORS filter generates set-var, return 200, and response headers
@@ -353,32 +334,26 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_cors_origin\\) req\\.fhdr\\(Origin\\)"
-        description: Must emit gw_cors_origin set-var
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 200 hdr access-control-allow-origin .* if METH_OPTIONS \\{ var\\(txn\\.gw_cors_origin\\) -m found \\} \\{ req\\.fhdr\\(Access-Control-Request-Method\\) -m found \\}"
-        description: Inline return status 200 carries CORS preflight headers (synthetic responses skip http-response phase)
 
       - type: contains
         target: haproxy.cfg
         pattern: "hdr access-control-allow-methods \"GET, POST\""
-        description: Preflight return includes allow-methods header
 
       - type: contains
         target: haproxy.cfg
         pattern: "hdr access-control-allow-headers \"X-Custom-Header\""
-        description: Preflight return includes allow-headers header
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-response set-header \"access-control-allow-origin\" \"%\\[var\\(txn\\.gw_cors_origin\\)\\]\""
-        description: Simple cross-origin (backend-served) responses emit allow-origin via http-response set-header
 
   test-httproute-cors-wildcard-methods-echo:
     description: "Closes the chart-side gap on the HTTPRouteCORS conformance test sub-cases that send `allowMethods: [\"*\"]`."
@@ -440,22 +415,18 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_cors_acrm\\) req\\.fhdr\\(Access-Control-Request-Method\\)"
-        description: Preflight set-var captures the requested method into txn.gw_cors_acrm
 
       - type: contains
         target: haproxy.cfg
         pattern: 'hdr access-control-allow-methods "%\[var\(txn\.gw_cors_acrm\)\]"'
-        description: Preflight return echoes the requested method dynamically
 
       - type: not_contains
         target: haproxy.cfg
         pattern: 'hdr access-control-allow-methods "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"'
-        description: "Old chart behaviour (expanding `*` to a fixed method list) is gone — that response is incompatible with the Gateway API conformance test's ValidHeaderValues check, which accepts only the requested method or a literal `*`."
   test-httproute-backend-request-header-modifier:
     description: HTTPRoute with per-backendRef RequestHeaderModifier emits set-header in correct backend
     fixtures:
@@ -530,22 +501,18 @@ validationTests:
                               value: backend-v2
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "(?s)backend gtw_default_br-route_backend-v1_8080.*?http-request set-header Backend 'backend-v1'.*?backend gtw_default_br-route_backend-v2_8080"
-        description: backend-v1 must have its own Backend header
 
       - type: contains
         target: haproxy.cfg
         pattern: "(?s)backend gtw_default_br-route_backend-v2_8080.*?http-request set-header Backend 'backend-v2'"
-        description: backend-v2 must have its own Backend header
 
       - type: contains
         target: haproxy.cfg
         pattern: "backend gtw_default_br-route_backend-v1_8080[^a-zA-Z]+[^\\n]*\\n([^\\n]+\\n){0,5}[^\\n]*http-request set-header Backend 'backend-v1'"
-        description: backend-v1 must have its own Backend header within first few lines (not v2's)
 
   test-httproute-cors-no-hostname:
     description: HTTPRoute CORS filter on catch-all route (no hostnames) routes correctly
@@ -605,22 +572,18 @@ validationTests:
                     port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^/cors-wildcard-origin/?\\s+GW_ROUTE_ID"
-        description: Path map must have entry for /cors-wildcard-origin (catch-all host)
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_cors_origin\\) req\\.fhdr\\(Origin\\)"
-        description: CORS template must emit gw_cors_origin set-var
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request return status 200 hdr access-control-allow-origin .* if METH_OPTIONS \\{ var\\(txn\\.gw_cors_origin\\) -m found \\}"
-        description: CORS template must emit inline-hdr return 200 for preflight
 
   test-httproute-redirect-preserves-request-scheme:
     description: RequestRedirect without spec.scheme preserves the request's scheme via txn.gw_request_scheme
@@ -689,36 +652,29 @@ validationTests:
                     port: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy config compiles
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_request_scheme\\) str\\(http\\) if !\\{ ssl_fc \\}"
-        description: Sets gw_request_scheme=http for non-SSL requests (uses `if !` rather than `unless` because the dataplane API silently drops the latter)
 
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn\\.gw_request_scheme\\) str\\(https\\) if \\{ ssl_fc \\}"
-        description: Sets gw_request_scheme=https for SSL requests
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request redirect location "%\[var\(txn\.gw_request_scheme\)\]://example\.org%\[var\(txn\.gw_redir_port_part\)\]%\[path\]" code 302'
-        description: "Redirect URL uses gw_request_scheme when spec.scheme is unset, and appends a runtime-resolved port-part (txn.gw_redir_port_part) so the Gateway listener port survives — per Gateway API spec for RequestRedirect, when both spec.scheme and spec.port are unspecified the redirect MUST use the Gateway listener port."
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(\) if .* \{ var\(txn\.listener_port\) -m int \d+ \} !\{ ssl_fc \}'
-        description: Empty port-part when (request scheme=http, listener_port=chart-static-http) — well-known omit case. Uses txn.listener_port (set by frontend-routing-logic from dst_port through pod-listener-port.map) so per-Gateway-IP binds (pod port → user-facing listener port) still produce the right omit decision.
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_redir_port_part\) str\(:\),concat\(,txn\.listener_port,\) if .* !\{ var\(txn\.gw_redir_port_part\) -m found \}'
-        description: Otherwise port-part = ":<listener_port>" so a non-default Gateway listener port is preserved in the Location URL — using the translated listener port survives the per-Gateway pod-port hop.
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request redirect location "https://example\.org%\[path\]" code 302'
-        description: Redirect URL uses literal scheme when spec.scheme=https
 
   test-httproute-request-mirror-single:
     description: "HTTPRoute with a single RequestMirror filter at full traffic (no percent / fraction): emits set-var(gw_mirror_target_1) + send-spoe-group spoa-hub mirror-1-group, plus option http-buffer-request on the frontend (without which req.body would be empty at the plugin)."
@@ -766,50 +722,40 @@ validationTests:
                     port: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: 'option http-buffer-request'
-        description: Frontend must force option http-buffer-request so req.body reaches the mirror plugin (the entire mirror flow is silently body-less without it)
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_target_1\) str\(mirror-backend\.default\.svc\.cluster\.local:8080\) if'
-        description: Mirror target resolved to the Kubernetes Service DNS name + port; index 1 because the route has one mirror filter
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_scheme_1\) str\(http\) if'
-        description: Mirror scheme defaults to http (HTTPS is a v0.2 plugin feature)
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_timeout_ms_1\) int\(50000\) if'
-        description: "Per-dispatch timeout (`arg_timeout_ms` plugin v0.5.0+) derived from the chart-wide `timeout server` (default 50000ms). Without this set-var a mirror dispatch falls back to the plugin's uniform default — that shape silently dropped mirrors against in-cluster Services that were still cold-starting (DNS / kube-proxy propagation race), which is what `HTTPRouteRequestMultipleMirrors` conformance flakes turned out to be in haproxy-haptic CI (the failing dispatches all hit exactly the prior 200ms uniform timeout boundary)."
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_retries_1\) int\(3\) if'
-        description: "Per-dispatch retry budget (`arg_retries` plugin v0.5.0+) matches HAProxy's built-in `retries 3` default, so a mirror dispatch absorbs the same transient connection failures (TCP RST / connection refused) a primary backend request would. The plugin retries only on `is_connect()` / `is_timeout()` — never on HTTP 4xx/5xx, which come back as Ok(resp)."
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if'
-        description: send-spoe-group fires the mirror-1 NOTIFY after the set-var pair (per-index group name; SPOE only processes each group once per stream)
 
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-1'
-        description: spoe.conf carries the per-index mirror-1 message body wired to var(txn.gw_mirror_target_1)
 
       - type: contains
         target: file:spoe.conf
         pattern: 'arg_target=var\(txn\.gw_mirror_target_1\)'
-        description: spoe-message arg_target reads from the indexed var the frontend filter sets
 
       - type: contains
         target: file:spoe.conf
         pattern: 'arg_timeout_ms=var\(txn\.gw_mirror_timeout_ms_1\) arg_retries=var\(txn\.gw_mirror_retries_1\)'
-        description: "spoe-message body wires the new v0.5.0 plugin args from the per-index frontend-filter set-vars. Without this pair the mirror plugin (v0.5.0+) falls back to its plugin-config defaults — defeating the per-route customisation the chart-side filter just computed. Older plugin versions (≤ v0.4.0) ignore unknown args, so emitting this pair is safe across rolling upgrades."
   test-httproute-request-mirror-percent:
     description: "HTTPRoute with a RequestMirror filter at 20% sampling: the set-var + send-spoe-group directives are gated by a uniform rand(100) lt 20 ACL on top of the route-id condition."
     fixtures:
@@ -846,17 +792,14 @@ validationTests:
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_sample_1\) rand\(100\) if'
-        description: Random sample drawn ONCE per request into txn.gw_mirror_sample (not per-directive — bug Gitar review caught)
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if .* \{ var\(txn\.gw_mirror_sample_1\) -m int lt 20 \}'
-        description: send-spoe-group gated on the pre-drawn sample (not re-rolling rand() per-directive)
 
   test-httproute-request-mirror-fraction:
     description: "HTTPRoute with a RequestMirror filter using a fraction (numerator=25, denominator=50 — 50%) instead of percent. The chart normalises both forms to a percent-of-100 integer so the rand() ACL shape is uniform across config styles."
@@ -896,12 +839,10 @@ validationTests:
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if .* \{ var\(txn\.gw_mirror_sample_1\) -m int lt 50 \}'
-        description: 25/50 fraction is normalised to percent=50 in the gated ACL
 
   test-httproute-request-mirror-multiple:
     description: "HTTPRoute with two RequestMirror filters on the same rule (SupportHTTPRouteRequestMultipleMirrors). Each filter emits its own (set-var, send-spoe-group) triple; mirrors fire in sequence so each one's var(txn.gw_mirror_target_<i>) is read by its OWN indexed mirror-<i>-group NOTIFY. Single group name across both calls is a no-op on the second invocation — HAProxy SPOE only processes each group once per stream — so the chart MUST emit distinct group names per mirror index."
@@ -948,27 +889,22 @@ validationTests:
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_target_1\) str\(mirror-a\.default\.svc\.cluster\.local:8081\) if'
-        description: First mirror's indexed set-var points at backend A
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_target_2\) str\(mirror-b\.default\.svc\.cluster\.local:8082\) if'
-        description: Second mirror's indexed set-var points at backend B (distinct group name → SPOE actually fires the second NOTIFY; single shared `mirror-group` was dropped by HAProxy's per-stream group dedup)
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-1-group if'
-        description: First mirror's send-spoe-group references its own indexed group
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request send-spoe-group spoa-hub mirror-2-group if'
-        description: Second mirror's send-spoe-group references a different indexed group (the bug being fixed — same group name across multiple send-spoe-group calls in the same stream are silently no-ops)
 
   test-httproute-request-mirror-https-scheme:
     description: "HTTPRoute with a RequestMirror filter pointing at a Service whose target port carries appProtocol=https. The chart must emit arg_scheme=str(https) (not str(http)) so the mirror plugin dispatches over TLS rather than silently downgrading."
@@ -1008,17 +944,14 @@ validationTests:
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_scheme_1\) str\(https\) if'
-        description: arg_scheme is https when the mirror Service port declares appProtocol=https
 
       - type: contains
         target: haproxy.cfg
         pattern: 'http-request set-var\(txn\.gw_mirror_target_1\) str\(mirror-tls\.default\.svc\.cluster\.local:443\) if'
-        description: Target carries the resolved DNS:port
 
   test-httproute-request-mirror-dynamic-max:
     description: "Cluster with two routes carrying 1 and 3 mirror filters respectively. The chart's spoa-hub library must register at least the dynamic max (mirror-1..mirror-3) AND the static floor (mirror-1..mirror-mirrorStaticMinSlots, default 4) — so with mirrorFanout=3 and the default floor of 4, slots 1 through 4 are emitted. The floor exists because the SPOA hub reloads plugin handler state on every TOML file change; any transient render that emits messages=[] (between two conformance subtests, mid-reconciliation race, etc.) makes the mirror plugin drop in-flight SPOE NOTIFYs (issue #47). Keeping a static minimum means the empty-messages window never opens. Beyond the floor, the chart still extends dynamically — a route with 12 mirror filters renders mirror-1..mirror-12. The shrink-on-reload race remains for slots beyond mirrorStaticMinSlots until SPOA hub plugin-config reload is reworked to never unregister already-registered messages."
@@ -1073,37 +1006,29 @@ validationTests:
                 backendRefs: [{name: api-service, port: 80}]
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-1'
-        description: mirror-1 message emitted
 
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-2'
-        description: mirror-2 message emitted
 
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-3'
-        description: mirror-3 message emitted (dynamic max-mirrors-per-route = 3)
 
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-4'
-        description: "mirror-4 emitted — static floor of mirrorStaticMinSlots (default 4) extends past the dynamic max-mirrors-per-route of 3. See issue #47 for the reload race this floor closes."
       - type: not_contains
         target: file:spoe.conf
         pattern: 'spoe-message mirror-5'
-        description: "mirror-5 NOT emitted — beyond both the dynamic max (3) and the static floor (4). Bump mirrorStaticMinSlots if a real workload regularly exceeds 4 mirrors per rule."
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-group mirror-3-group'
-        description: matching group for the max-index mirror
 
       - type: contains
         target: file:spoe.conf
         pattern: 'spoe-group mirror-4-group'
-        description: matching group for the static-floor slot

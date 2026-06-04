@@ -66,20 +66,16 @@ validationTests:
               - port: 8443
     assertions:
       - type: haproxy_valid
-        description: "HAProxy config must be valid (the chart-static + new TLS frontend must coexist without conflicting on port 8443)."
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^frontend gateway-tls-port-8443$'
-        description: "New TLS frontend claims port 8443 because the chart-static frontends decline (no HTTPS listener, no passthrough backends)."
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:8443 ssl crt-list '
-        description: "New TLS frontend's bind terminates TLS on 8443 (this is what the upstream TLSRouteTerminateSimpleSameNamespace fixture exercises)."
       - type: match_count
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:8443'
         expected: "1"
-        description: "Exactly one frontend binds 8443 — the new TLS frontend. The chart-static HTTPS frontend and ssl-tcp do not also bind 8443 (they bind their own httpsPort, which the chart-test framework defaults to 443; even if they DID try, the chart-static-bind gate in frontends-600-gateway-tls-listener would skip the new TLS frontend on a colliding port)."
   test-tlsroute-invalid-backend-rejects-on-frontend:
     description: "Mirror of the upstream TLSRouteInvalidBackendRefUnknownKind conformance fixture's chart-side contract: a TLS Passthrough listener has a TLSRoute attached whose backendRef points at an unknown kind."
     extraContext:
@@ -125,21 +121,17 @@ validationTests:
                     port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with invalid-backend TLSRoute
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^frontend gateway-tls-port-9445$'
-        description: Per-port frontend exists even when no route survives.
 
       - type: not_contains
         target: haproxy.cfg
         pattern: 'use_backend .* req_ssl_sni -m str example\.com'
-        description: "No use_backend rule for example.com — the TLSRoute was filtered at Pass 2's ResolvedRefs gate (backend group/kind mismatch), so its SNI never enters the allowlist."
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+tcp-request content reject$'
-        description: "Frontend ends with `tcp-request content reject` — connections whose SNI doesn't match a claimed route get a TCP RST. When ALL routes are filtered (every TLSRoute has invalid / unresolvable refs), the chart emits an unconditional reject (no allowed_sni ACL to gate on). Upstream conformance asserts this via MakeTLSConnectionAndExpectEventuallyConnectionRejection."
   test-tlsroute-invalid-backend-rejects-on-chart-static:
     description: "Mirrors the upstream TLSRouteInvalidBackendRefNonexistent / TLSRouteInvalidBackendRefUnknownKind conformance scenario at chart-static httpsPort (443/8443): a TLS Passthrough listener on the chart-static port has a TLSRoute attached whose backendRef points at a non-existent Service. The route is recorded in sslPassthroughBackends with `invalid: true`; this lights bindHTTPSDefault so chart-static `frontend ssl-tcp` renders, and the route's claimed SNI joins listener_sni so connections to that SNI hit the reject path (not the ssl-loopback fallback)."
     extraContext:
@@ -183,24 +175,19 @@ validationTests:
                     port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with invalid-backend TLSRoute on chart-static port
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^frontend ssl-tcp$'
-        description: "Chart-static ssl-tcp renders even when the only Gateway attachment has invalid backends — the `invalid: true` entry still contributes to sslPassthroughBackends, which sets bindHTTPSDefault and gates the ssl-tcp render."
       - type: not_contains
         target: haproxy.cfg
         pattern: 'use_backend .* req_ssl_sni -m str example\.com'
-        description: "No use_backend for example.com — the entry is flagged invalid in the SSL passthrough store, so the use_backend loop in ssl-tcp skips it (would point at a non-existent backend block)."
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)acl gw_default_gw_tlsroute_invalid_default_invalid_sni req_ssl_sni -m str example\.com'
-        description: "The route's claimed SNI lands in the per-Gateway `<gw>_invalid_sni` ACL. (The listener has no hostname so there is no listener_sni pattern; the invalid-route SNI alone drives the reject below.)"
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+tcp-request content reject if gw_default_gw_tlsroute_invalid_default_invalid_sni$'
-        description: "The Gateway has zero valid Passthrough routes, so the chart emits a `reject if <gw>_invalid_sni` rule that fires only for the SNIs the broken route claimed (other SNIs are not THIS Gateway's concern under per-Gateway routing isolation). Closes the upstream TLSRouteInvalidBackendRef* contract: connections whose SNI matches the claimed (but invalid) route are rejected."
   test-tlsroute-hostname-intersection-multi-gateway:
     description: "Mirrors the upstream TLSRouteHostnameIntersection conformance fixture: four Gateways on port 443 (chart-static httpsPort), each with a different listener-hostname pattern (exact / *.example.com / *.com / empty). Each Gateway has TLSRoutes whose hostnames intersect with the parent listener pattern. Per Gateway-API spec, a SNI matching one Gateway's listener pattern but not claimed by any of THAT Gateway's routes must be rejected — even if a sibling Gateway on the same port has routes that would accept the SNI under a wider pattern. Without per-Gateway routing isolation the chart's union-style route_sni ACL would let `non.matching.com` reach G4's `*.com` backend via G3's `*.com` listener, breaking the spec contract."
     extraContext:
@@ -354,26 +341,22 @@ validationTests:
               - port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid for the 4-Gateway hostname intersection fixture.
 
       # Each Gateway's listener_sni pattern is emitted as its OWN ACL
       # (per-Gateway isolation). G1 (exact abc.example.com):
       - type: contains
         target: haproxy.cfg
         pattern: 'acl gw_default_gw_tlsroute_exact_hostname_x_1_listener_sni req_ssl_sni -m str abc\.example\.com'
-        description: G1's exact listener pattern lands in its own listener_sni ACL.
 
       # G2 (more-specific wildcard *.example.com):
       - type: contains
         target: haproxy.cfg
         pattern: 'acl gw_default_gw_tlsroute_more_specific_wc_hostname_x_2_listener_sni req_ssl_sni -m end \.example\.com'
-        description: G2's *.example.com pattern emits as `-m end .example.com`.
 
       # G3 (less-specific wildcard *.com):
       - type: contains
         target: haproxy.cfg
         pattern: 'acl gw_default_gw_tlsroute_less_specific_wc_hostname_x_3_listener_sni req_ssl_sni -m end \.com'
-        description: G3's *.com pattern emits as `-m end .com`.
 
       # G3's reject rule fires when its listener (`*.com`) matches but
       # no G3 route claims the SNI (covers the test case where
@@ -382,13 +365,11 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: 'tcp-request content reject if gw_default_gw_tlsroute_less_specific_wc_hostname_x_3_listener_sni !gw_default_gw_tlsroute_less_specific_wc_hostname_x_3_route_sni'
-        description: "G3 rejects SNIs matching its `*.com` listener pattern but not claimed by any G3 route.  Without per-Gateway isolation this would have leaked through to G4's `*.com` route."
       # G4 (empty listener) has no listener_sni ACL (catchall) — the
       # reject just gates on its own route_sni:
       - type: contains
         target: haproxy.cfg
         pattern: 'tcp-request content reject if !gw_default_gw_tlsroute_empty_hostname_x_4_route_sni'
-        description: "G4 (empty listener) rejects every SNI not claimed by one of G4's own routes. `non.matching.org` (the upstream test case for empty listeners) is not in G4's route_sni → reject fires."
   test-tlsroute-terminate-nondefault-port-frontend:
     description: TLSRoute attached to a TLS Terminate listener on a non-chart- static port renders a per-port mode-tcp frontend with TLS termination on the bind.
     extraContext:
@@ -456,25 +437,20 @@ validationTests:
               - port: 8443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with Terminate per-port frontend
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^frontend gateway-tls-port-9444$'
-        description: Per-port TLS frontend exists for Terminate listener on 9444.
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:9444 ssl crt-list '
-        description: "Bind carries `ssl crt-list ...` — Terminate mode terminates the TLS handshake; the crt-list lookup picks the cert by SNI."
       - type: contains
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ ssl_fc_sni -m str tls\.example\.com \}'
-        description: "Routing uses `ssl_fc_sni` (post-handshake SNI) — the handshake completed on the bind, so we can read the SNI HAProxy negotiated rather than re-parsing the bytes."
       - type: not_contains
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if .*req_ssl_sni'
-        description: "Terminate-mode frontend MUST NOT use `req_ssl_sni` (which reads the buffered ClientHello before termination — wrong for a frontend that already terminated TLS)."
   test-tlsroute-passthrough-nondefault-port-frontend:
     description: "TLSRoute attached to a TLS Passthrough listener on a port OTHER than the chart-static httpsPort lands on the new `frontends-600-gateway-tls-listener` per-port frontend, not on the chart's static ssl-t."
     extraContext:
@@ -528,34 +504,27 @@ validationTests:
               - port: 8443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with per-port TLS frontend
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^frontend gateway-tls-port-9443$'
-        description: Per-port TLS frontend exists for non-default port 9443.
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+mode tcp$'
-        description: Frontend uses mode tcp (TLSRoute is L4).
 
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+bind \*:9443$'
-        description: "Plain bind (no `ssl ...`) for Passthrough mode — TLS bytes flow through HAProxy unmodified."
       - type: contains
         target: haproxy.cfg
         pattern: 'tcp-request inspect-delay 5s'
-        description: "Passthrough preamble: inspect-delay lets req_ssl_sni read SNI from the buffered ClientHello without terminating."
       - type: contains
         target: haproxy.cfg
         pattern: 'use_backend gtw_tls_default_tls-app_0 if \{ req_ssl_sni -m str abc\.example\.com \}'
-        description: "SNI-based use_backend rule routes the TLSRoute's claimed hostname to its TCP backend."
       - type: contains
         target: haproxy.cfg
         pattern: '(?m)^\s+tcp-request content reject if !allowed_sni$'
-        description: "Reject-default at end of frontend: SNIs that no route claims get a TCP RST (closes TLSRouteInvalidBackendRefNonexistent / TLSRouteInvalidBackendRefUnknownKind, where the unresolvable backend filters the route out at Pass 2's ResolvedRefs gate so the SNI never enters the allowlist)."
   test-tlsroute-passthrough-basic:
     description: "TLSRoute attached to a TLS Passthrough listener emits a TCP-mode backend named gtw_tls_<ns>_<route>_<rule> and a SNI-keyed use_backend rule on the ssl-tcp frontend."
     extraContext:
@@ -609,23 +578,18 @@ validationTests:
               - port: 8443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with TLSRoute passthrough
       - type: contains
         target: haproxy.cfg
         pattern: "backend gtw_tls_default_tls-app_0"
-        description: TLSRoute backend uses gtw_tls_<ns>_<name>_<ruleIdx> naming
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend gtw_tls_default_tls-app_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
-        description: ssl-tcp frontend dispatches by SNI to the TLSRoute backend
       - type: contains
         target: haproxy.cfg
         pattern: "frontend ssl-tcp"
-        description: ssl-tcp frontend exists when TLSRoute passthrough is configured
       - type: not_contains
         target: haproxy.cfg
         pattern: "use_backend gtw_tls_default_tls-app_0 if .*ssl_fc_sni"
-        description: SSL passthrough must use req_ssl_sni (TCP mode) NOT ssl_fc_sni (HTTPS mode)
 
   test-tlsroute-no-tls-listener:
     description: "TLSRoute parented to an HTTP-only Gateway (no TLS listener) must NOT produce a TLSRoute backend. Mirrors conformance tlsroute-invalid-no-matching-listener for the HTTP / HTTPS case."
@@ -674,11 +638,9 @@ validationTests:
               - port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config valid even when TLSRoute has no matching listener
       - type: not_contains
         target: haproxy.cfg
         pattern: "backend gtw_tls_default_tls-app"
-        description: TLSRoute attached to HTTP-only Gateway must not produce a backend
 
   test-tlsroute-hostname-mismatch:
     description: "TLSRoute hostname not intersecting the listener hostname does NOT produce a passthrough backend. Mirrors conformance tlsroute-invalid-no-matching-listener-hostname."
@@ -732,11 +694,9 @@ validationTests:
               - port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config valid when TLSRoute hostname doesn't intersect
       - type: not_contains
         target: haproxy.cfg
         pattern: "backend gtw_tls_default_tls-mismatch"
-        description: TLSRoute with non-intersecting hostname produces no backend
 
   test-tlsroute-wildcard-listener-exact-route:
     description: "Wildcard listener \"*.example.com\" + exact route \"abc.example.com\" produces a backend keyed on the exact route hostname (per Gateway API HostnameSinglePairIntersection)."
@@ -790,11 +750,9 @@ validationTests:
               - port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config valid when listener wildcard intersects route exact
       - type: contains
         target: haproxy.cfg
         pattern: "use_backend gtw_tls_default_tls-exact_0 if \\{ req_ssl_sni -m str abc\\.example\\.com \\}"
-        description: SNI uses the exact route hostname (intersection result)
 
   test-tlsroute-section-name-no-match:
     description: "TLSRoute parentRef.sectionName referencing a nonexistent listener must not attach (NoMatchingParent on status side; backend not emitted on data plane). Mirrors conformance test case tlsroute-no-matching-section-name."
@@ -846,11 +804,9 @@ validationTests:
               - port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config valid when sectionName doesn't match
       - type: not_contains
         target: haproxy.cfg
         pattern: "backend gtw_tls_default_tls-bad-section"
-        description: TLSRoute with mismatched sectionName produces no backend
 
   test-tlsroute-invalid-backend-kind-no-attach:
     description: "TLSRoute backendRef with non-Service kind must not produce a backend (status side reports ResolvedRefs=False/InvalidKind)."
@@ -894,11 +850,9 @@ validationTests:
                     port: 443
     assertions:
       - type: haproxy_valid
-        description: HAProxy config valid when TLSRoute has non-Service backend
       - type: not_contains
         target: haproxy.cfg
         pattern: "backend gtw_tls_default_tls-bad-kind"
-        description: TLSRoute with non-Service backendRef produces no backend
 
   test-tlsroute-mixed-termination-protocol-conflict:
     description: "Mirrors the upstream Gateway API TLSRouteListenerMixedTerminationNotSupported conformance fixture: a Gateway with two TLS listeners on the same port, one in `tls."
@@ -962,21 +916,17 @@ validationTests:
             tls.key: LS0tLS1CRUdJTiBFQyBQUklWQVRFIEtFWS0tLS0tCk1IY0NBUUVFSUc4R2ZxNnd4aUY4aU9BakxqWnA3dXlJQ1RuY1JnMGtLOFVqR1VNc1BROGNvQW9HQ0NxR1NNNDkKQXdFSG9VUURRZ0FFSUVJQTlGWVFQcWQ1RHZOV2NFYnFOdDZ5bFhsSUFLNEw5SURvWlNUWXh0KzJMT2E4WWJGaQpUbnBKdk9UZDZ3aWw1aFlnT1k3UlVpekthNzE0MGJnMzBBPT0KLS0tLS1FTkQgRUMgUFJJVkFURSBLRVktLS0tLQo=
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid for mixed-termination Gateway shape
 
       # Both listeners' status: Accepted=False/ProtocolConflict.
       - type: match_count
         target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
         pattern: '"reason":"ProtocolConflict","status":"False","type":"Accepted"'
         expected: "2"
-        description: "Both listeners must show Accepted=False/ProtocolConflict — conformance test asserts: \"Listener with unsupported mixed Terminate/Passthrough must have Accepted=False with Reason=ProtocolConflict\"."
       - type: match_count
         target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
         pattern: '"attachedRoutes":0'
         expected: "2"
-        description: "Both listeners must show attachedRoutes=0 (the conformance test asserts this directly via GatewayStatusMustHaveListeners)."
       - type: match_count
         target: "status:gateway-conformance-infra/gateway-tlsroute-mixed-termination-not-supported:rendered"
         pattern: '"supportedKinds":\[\]'
         expected: "2"
-        description: "Both ProtocolConflict listeners must report empty supportedKinds. The conformance helper GatewayStatusMustHaveListeners (helpers.go:917) compares actual SupportedKinds against the expected slice — when the test passes empty SupportedKinds (because the listener can't accept any routes), the chart must match by also reporting an empty list. Reporting [TLSRoute] (the protocol's default-kinds set) is misleading once the listener has been rejected via Accepted=False/ProtocolConflict and breaks the upstream assertion."

@@ -58,23 +58,18 @@ validationTests:
                           port: { number: 80 }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with the /waf annotation
       - type: contains
         target: map:haproxy-ingress-waf.map
         pattern: "default/hi-waf deny"
-        description: waf.map must contain the <ns>/<name> with default mode "deny"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request set-var\\(txn.coraza_mode\\).*haproxy-ingress-waf\\.map"
-        description: Frontend looks up coraza_mode from the map after routing
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_app\\) -m found \\} \\|\\| \\{ var\\(txn.coraza_mode\\) -m found \\}"
-        description: Dispatch fires when EITHER coraza-app.map or haproxy-ingress-waf.map matches the request's resource_id
       - type: contains
         target: haproxy.cfg
         pattern: "!\\{ var\\(txn.coraza_mode\\) -m str detect \\}"
-        description: Deny rule respects detect mode
 
   test-haproxy-ingress-waf-detect-mode:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -128,11 +123,9 @@ validationTests:
                           port: { number: 80 }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with detect-mode WAF
       - type: contains
         target: map:haproxy-ingress-waf.map
         pattern: "default/hi-shadow detect"
-        description: waf.map must contain the <ns>/<name> with mode "detect"
 
   test-haproxy-ingress-waf-invalid-value-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -181,11 +174,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "Invalid value 'bogus' for annotation 'haproxy-ingress\\.github\\.io/waf'"
-        description: Render must fail with the unsupported-value diagnostic
       - type: contains
         target: rendering_error
         pattern: "default/hi-bad-waf"
-        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-waf-mode-invalid-value-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -235,11 +226,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "Invalid value 'detec' for annotation 'haproxy-ingress\\.github\\.io/waf-mode'"
-        description: Render must fail with the unsupported-mode diagnostic
       - type: contains
         target: rendering_error
         pattern: "default/hi-bad-mode"
-        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-waf-mode-without-waf-rejected:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -288,11 +277,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "sets 'haproxy-ingress\\.github\\.io/waf-mode' but not 'haproxy-ingress\\.github\\.io/waf'"
-        description: Render must fail with the mode-without-waf diagnostic
       - type: contains
         target: rendering_error
         pattern: "default/hi-mode-only"
-        description: Error must identify the offending Ingress
 
   test-haproxy-ingress-waf-host-less-accepted:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -338,11 +325,9 @@ validationTests:
                           port: { number: 80 }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid even with a host-less Ingress
       - type: contains
         target: map:haproxy-ingress-waf.map
         pattern: '(?m)^default/hi-waf-hostless deny$'
-        description: "haproxy-ingress-waf.map must contain the host-less Ingress keyed by <ns>/<name> with the default deny mode."
   test-haproxy-ingress-waf-coexist-with-nginx-modsec-snippet:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "When BOTH nginx.ingress.kubernetes.io/modsecurity-snippet and haproxy-ingress.github.io/waf are present in the cluster, nginx's \"global rules + always dispatch\" wins for dispatch (the send-spoe-group..."
@@ -409,23 +394,18 @@ validationTests:
                       backend: { service: { name: coexist-svc, port: { number: 80 } } }
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with both annotation flavours
       - type: contains
         target: map:haproxy-ingress-waf.map
         pattern: "default/haproxy-shadow detect"
-        description: waf-map carries the haproxy-ingress detect-mode entry keyed by <ns>/<name>
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: "# nginx-ingress modsecurity-snippet from default/nginx-modsec"
-        description: nginx-ingress modsec-snippet is still inlined
       - type: not_contains
         target: haproxy.cfg
         pattern: "send-spoe-group spoa-hub check-request-group if \\{ var\\(txn.coraza_mode\\) -m found \\}"
-        description: Dispatch is unconditional (nginx wins) — no per-path gate
       - type: contains
         target: haproxy.cfg
         pattern: "!\\{ var\\(txn.coraza_mode\\) -m str detect \\}"
-        description: Deny rule still respects detect mode under unconditional dispatch
 
   test-haproxy-ingress-waf-without-coraza-fails:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -464,7 +444,6 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "default/orphan-waf sets annotation 'haproxy-ingress\\.github\\.io/waf' but the spoaHub coraza plugin is not enabled"
-        description: Render must fail with explicit annotation-without-coraza error
 
   test-haproxy-ingress-ssl-passthrough-named-port:
     description: haproxy-ingress.github.io/ssl-passthrough annotation must resolve a backend referenced by port.name to the correct numeric pod port
@@ -524,8 +503,6 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.60:9443 "
-        description: haproxy-ingress SSL passthrough must use the resolved port for named-port references
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.60:80 "
-        description: Must not regress to port-80 fallback

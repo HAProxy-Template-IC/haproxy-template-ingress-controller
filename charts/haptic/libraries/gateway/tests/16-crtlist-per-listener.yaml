@@ -146,23 +146,19 @@ validationTests:
               -----END CERTIFICATE-----
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid alongside the new per-listener crt-lists.
 
       # Catchall + AllowValidOnly: verify required, no SNI filter.
       - type: contains
         target: 'crt-list:gw-default-gw-mixed-https-default-crtlist.txt'
         pattern: '^default_tls-cert\.pem \[ocsp-update on ca-file [^ ]+ verify required\]\n$'
-        description: "Per-listener crt-list file is registered for the catchall + AllowValidOnly listener (gw-mixed/https-default), and its single line carries cert filename + ocsp-update + ca-file + verify required (no SNI filter, no ignore-err flags)."
       # Hostnamed + AllowInsecureFallback per-port.
       - type: contains
         target: 'crt-list:gw-default-gw-mixed-https-perport-crtlist.txt'
         pattern: '^default_tls-cert\.pem \[ocsp-update on ca-file [^ ]+ verify optional\] second-example\.org\n$'
-        description: "Per-listener crt-list file for hostnamed + AllowInsecureFallback per-port listener carries `verify optional` and the listener's hostname as the SNI filter. The `ca-ignore-err all crt-ignore-err all` flags that complete the AllowInsecureFallback contract are BIND-scope (HAProxy rejects them as a keyword inside a crt-list line), so phase 4's per-listener bind line picks them up via `gatewayListenerMTLSConfig.verify_mode == \"optional\"`."
       # Catchall + no mTLS → just ocsp-update on, no verify, no SNI.
       - type: contains
         target: 'crt-list:gw-default-gw-bare-https-crtlist.txt'
         pattern: '^default_tls-cert\.pem \[ocsp-update on\]\n$'
-        description: "No-mTLS catchall listener's crt-list line: just the cert file with `ocsp-update on`. No verify clause, no SNI filter, no ignore-err flags."
       # mTLS-blocked listener: file MUST NOT be emitted. The
       # `contains` against an absent file resolves the target to the
       # empty string, so any non-empty pattern's `not_contains`
@@ -171,4 +167,3 @@ validationTests:
       - type: not_contains
         target: 'crt-list:gw-default-gw-broken-ca-https-crtlist.txt'
         pattern: 'default_tls-cert\.pem'
-        description: "mTLS-blocked listener (CA refs unresolvable) skips per-listener crt-list emission. Phase 4's bind path checks for the file and drops the bind when missing, which is what the GatewayFrontendInvalidDefaultClientCertificateValidation conformance contract requires."

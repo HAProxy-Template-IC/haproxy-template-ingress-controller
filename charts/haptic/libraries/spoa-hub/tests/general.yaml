@@ -14,15 +14,12 @@ validationTests:
     fixtures: {}
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid when spoaHub is disabled
       - type: not_contains
         target: haproxy.cfg
         pattern: "backend spoa-hub"
-        description: spoa-hub backend must not appear when spoaHub.enabled is false
       - type: not_contains
         target: haproxy.cfg
         pattern: "filter spoe engine spoa-hub"
-        description: SPOE filter must not appear when spoaHub.enabled is false
 
   test-spoa-hub-rendering:
     # The fixture below pins haproxyVersion=3.2 so the rendered backend
@@ -81,51 +78,39 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with spoaHub enabled
       - type: contains
         target: haproxy.cfg
         pattern: "backend spoa-hub"
-        description: spoa-hub backend must appear when spoaHub is enabled
       - type: contains
         target: haproxy.cfg
         pattern: "mode spop"
-        description: Backend uses native SPOP mode by default
       - type: contains
         target: haproxy.cfg
         pattern: "server hub /run/spoa/hub.sock"
-        description: Server points at the hub's Unix-domain socket
       - type: contains
         target: haproxy.cfg
         pattern: "filter spoe engine spoa-hub config"
-        description: Frontends include the SPOE filter directive
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub check-auth-group"
-        description: Frontend explicitly triggers the auth group when auth_url is set
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 401"
-        description: Frontend denies on auth failure
       - type: contains
         target: file:spoe.conf
         pattern: "spoe-agent spoa-hub-agent"
-        description: spoe.conf declares the spoa-hub agent
       - type: contains
         target: file:spoe.conf
         pattern: "groups check-auth-group"
-        description: Agent's groups line references the auth group
       - type: contains
         target: file:spoe.conf
         pattern: "spoe-message check-auth"
-        description: Canonical spoe-message check-auth body is emitted
       - type: contains
         target: file:spoe.conf
         pattern: "args auth_url=var\\(txn.auth_url\\)"
-        description: Message args include the auth_url binding
       - type: contains
         target: file:spoe.conf
         pattern: "spoe-group check-auth-group"
-        description: Group definition references the message
 
   # Regression: an Ingress with haproxy.org/forwarded-for=true triggers
   # the haproxytech library to emit `option forwardfor` in the frontend
@@ -184,11 +169,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy must validate (the concat bug produces invalid syntax)
       - type: not_contains
         target: haproxy.cfg
         pattern: "forwardforfilter"
-        description: option forwardfor and filter spoe must not concatenate
 
   test-spoa-hub-mode-tcp-on-haproxy-3-0:
     description: "On HAProxy 3.0 the `spop` proxy mode doesn't exist (introduced in 3.1). The chart must auto-fall-back the spoa-hub backend to `mode tcp` — both transports work with the SPOE filter; mode spop is just..."
@@ -208,19 +191,15 @@ validationTests:
     fixtures: {}
     assertions:
       - type: haproxy_valid
-        description: Rendered config must validate (mode tcp is valid on 3.0)
       - type: contains
         target: haproxy.cfg
         pattern: "backend spoa-hub"
-        description: spoa-hub backend present
       - type: contains
         target: haproxy.cfg
         pattern: "mode tcp"
-        description: Backend uses mode tcp on HAProxy 3.0
       - type: not_contains
         target: haproxy.cfg
         pattern: "backend spoa-hub\\n    mode spop"
-        description: Backend must NOT use mode spop on HAProxy 3.0
 
   # ============================================================================
   # spoa-hub-config.toml rendering (ADR-0007 / MR3)
@@ -264,52 +243,39 @@ validationTests:
     fixtures: {}
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must remain valid
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'plugin_dir = "/etc/haproxy-spoa-hub/plugins"'
-        description: Top-level plugin_dir is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'log_level = "info"'
-        description: Top-level log_level is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'max_connections = 1000'
-        description: Top-level max_connections is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[\[listeners\]\]'
-        description: Listeners block is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'address = "/run/spoa/hub.sock"'
-        description: Listener address points at the configured socketPath
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: '\[\[plugins\]\]'
-        description: Coraza [[plugins]] block is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'name = "coraza"'
-        description: Plugin name is set
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'library = "libcoraza_plugin.so"'
-        description: Plugin library filename is set
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'timeout_ms = 15'
-        description: Plugin timeout_ms is rendered
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'SecRuleEngine On'
-        description: Base coraza directives are inlined into directives = """..."""
       - type: contains
         target: file:spoa-hub-config.toml
         pattern: 'request_body_limit = 131072'
-        description: Free-form params blob is spliced under [plugins.params]
       - type: not_contains
         target: file:spoa-hub-config.toml
         pattern: '# nginx-ingress modsecurity-snippet from'
-        description: No snippet markers appear when no Ingress carries the annotation

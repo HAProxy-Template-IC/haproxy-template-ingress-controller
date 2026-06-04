@@ -315,8 +315,8 @@ templateSnippets:
           guid {{ make_guid("be", backendKey) }}
                   {%- var serverOpts = map[string]any{"flags": []any{}} -%}
                   {{- render_glob "backend-directives-*" inherit_context }}
-        default-server check{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(svcName, 0, port, nil, portName, backendKey, ns) | indent(2, true) }}
+        default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
+        {{ BackendServers(svcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
                 {%- end -%}
               {%- end -%}
             {%- end -%}
@@ -342,8 +342,8 @@ templateSnippets:
           guid {{ make_guid("be", backendKey) }}
               {%- var serverOpts = map[string]any{"flags": []any{}} -%}
               {{- render_glob "backend-directives-*" inherit_context }}
-        default-server check{{ BuildServerOptions(serverOpts) }}
-        {{ BackendServers(dbSvcName, 0, port, nil, portName, backendKey, ns) | indent(2, true) }}
+        default-server {{ serverOpts | dig("checkDirective") | fallback("check") | tostring() }}{{ BuildServerOptions(serverOpts) }}
+        {{ BackendServers(dbSvcName, 0, port, serverOpts, portName, backendKey, ns) | indent(2, true) }}
             {%- end -%}
           {%- end -%}
         {%- end %}
@@ -681,84 +681,68 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_multi-port_svc_api-svc_http"
-        description: Must generate backend for port 80
 
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_multi-port_svc_api-svc_admin"
-        description: Must generate backend for port 81
 
       - type: match_count
         target: haproxy.cfg
         pattern: "backend default_multi-port_svc_api-svc_"
         expected: "2"
-        description: Must generate exactly 2 backends (deduplication test)
 
       - type: contains
         target: map:path-prefix.map
         pattern: "example.com/api/ BACKEND:default_multi-port_svc_api-svc_http"
-        description: Path prefix map must use BACKEND qualifier for /api
 
       - type: contains
         target: map:path-prefix.map
         pattern: "example.com/admin/ BACKEND:default_multi-port_svc_api-svc_admin"
-        description: Path prefix map must use BACKEND qualifier for /admin
 
       - type: contains
         target: map:path-prefix.map
         pattern: "example.com/app/ BACKEND:default_multi-port_svc_api-svc_http"
-        description: Path prefix map must use BACKEND qualifier for /app
 
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "example.com/api BACKEND:default_multi-port_svc_api-svc_http"
-        description: Path prefix-exact map must use BACKEND qualifier for /api
 
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "example.com/admin BACKEND:default_multi-port_svc_api-svc_admin"
-        description: Path prefix-exact map must use BACKEND qualifier for /admin
 
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "example.com/app BACKEND:default_multi-port_svc_api-svc_http"
-        description: Path prefix-exact map must use BACKEND qualifier for /app
 
       # Map Formatting Tests - Ensure proper line separation
       - type: not_contains
         target: map:host.map
         pattern: "hosts\\)\\S"
-        description: Host map comments must not concatenate with entries (no non-whitespace immediately after comment)
 
       - type: not_contains
         target: map:path-prefix.map
         pattern: "paths\\)\\S"
-        description: Path prefix map comments must not concatenate with entries
 
       - type: not_contains
         target: map:path-prefix-exact.map
         pattern: "paths\\)\\S"
-        description: Path prefix-exact map comments must not concatenate with entries
 
       - type: contains
         target: map:host.map
         pattern: "(?m)^example\\.com example\\.com$"
-        description: Host map entries must start at beginning of line and be properly formatted
 
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/api/ BACKEND:"
-        description: Path prefix map entries must start at beginning of line
 
       - type: contains
         target: map:path-prefix-exact.map
         pattern: "(?m)^example\\.com/api BACKEND:"
-        description: Path prefix-exact map entries must start at beginning of line
 
   test-ingress-tls-basic:
     description: Ingress with spec.tls should register TLS certificates
@@ -810,17 +794,14 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with Ingress TLS
 
       - type: contains
         target: crt-list:certificate-list.txt
         pattern: "default_example-tls\\.pem \\[ocsp-update on\\] example\\.com www\\.example\\.com"
-        description: CRT-list must include Ingress TLS certificate with SNI patterns
 
       - type: contains
         target: cert:default_example-tls.pem
         pattern: "BEGIN CERTIFICATE"
-        description: TLS certificate file must be generated from Secret
 
   test-ingress-slot-preservation:
     description: |
@@ -896,33 +877,26 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with slot preservation
 
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_slot-test_svc_slot-svc_80"
-        description: Backend must be generated
 
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_3 10\\.0\\.0\\.1:8080"
-        description: Existing pod keeps SRV_3 (not re-allocated)
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10\\.0\\.0\\.1:8080"
-        description: Existing pod must NOT shift to SRV_1
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
-        description: Vacated SRV_4 stays placeholder (no rotation)
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_5 10\\.0\\.0\\.3:8080"
-        description: New pod lands in SRV_5 (highestUsedSlot+1)
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_[12] 10\\.0\\.0\\.3:8080"
-        description: New pod must NOT land in low placeholder slots
 
   test-ingress-slot-preservation-lower-ip:
     description: |
@@ -996,24 +970,19 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_3 10\\.0\\.0\\.5:8080"
-        description: Existing pod keeps SRV_3 regardless of new pod IP
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_[12] 10\\.0\\.0\\.2:8080"
-        description: Lower-IP new pod must NOT sort into low slots
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_4 192\\.0\\.2\\.1:1 .*disabled"
-        description: Vacated SRV_4 stays placeholder
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_5 10\\.0\\.0\\.2:8080"
-        description: New pod lands in SRV_5 (highestUsedSlot+1)
 
   test-ingress-endpoint-conditions-filter:
     description: |
@@ -1094,36 +1063,22 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10\\.0\\.0\\.1:8080 .*enabled"
-        description: Healthy ready pod (10.0.0.1) must be enabled
 
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_2 10\\.0\\.0\\.4:8080 .*enabled"
-        description: |
-          Pod without a conditions block (10.0.0.4) defaults to ready per
-          the EndpointSlice spec and must be enabled.
 
       - type: not_contains
         target: haproxy.cfg
         pattern: "10\\.0\\.0\\.2:8080"
-        description: |
-          Not-yet-ready pod (10.0.0.2, conditions.ready=false) must NOT
-          appear in the backend — including it causes 503 SC-- during
-          pod startup.
 
       - type: not_contains
         target: haproxy.cfg
         pattern: "10\\.0\\.0\\.3:8080"
-        description: |
-          Terminating pod (10.0.0.3, conditions.terminating=true) must
-          NOT appear — including it causes 503 SC-- during the rolling-
-          restart drain window when the pod has already stopped
-          accepting connections.
 
   test-ingress-status-patches:
     description: Ingress status patches register LoadBalancer addresses from controller service
@@ -1173,11 +1128,9 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy config must be valid with status patch registration
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_web-ingress_svc_web-svc_80"
-        description: Must generate backend for ingress
 
   test-ingress-named-port:
     description: Ingress backend referencing the service port by name (port.name) must resolve to the correct numeric pod port, not fall back to 80
@@ -1238,22 +1191,18 @@ validationTests:
                             name: https-gui
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
 
       - type: contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.42:8443 "
-        description: Server line must use the resolved numeric pod port (8443), not the previous :80 fallback
 
       - type: contains
         target: haproxy.cfg
         pattern: "# Backend for: Ingress default/unifi → Service unifi:8443"
-        description: Backend comment must show the resolved numeric port, not the misleading :80
 
       - type: not_contains
         target: haproxy.cfg
         pattern: "server SRV_1 10.0.0.42:80 "
-        description: Must not regress to the port-80 fallback
 
   test-ingress-named-port-typo-fails:
     description: Ingress referencing a non-existent port name must fail rendering loudly with a clear message
@@ -1307,11 +1256,9 @@ validationTests:
       - type: contains
         target: rendering_error
         pattern: "ResolveServicePort: Service default/unifi has no port named 'nonexistent-port-name'"
-        description: Rendering must fail with a message naming the offending port and the service
       - type: contains
         target: rendering_error
         pattern: "https-gui\\(8443\\)"
-        description: Error message must list the service's actual port names to aid debugging
 
   test-ingress-default-backend-rules-less:
     description: "Ingress with only spec.defaultBackend (no rules) emits a \"/\" catch-all entry in path-prefix.map pointing at the default backend pool, and the backend pool itself gets generated. Routes any request that didn't match a more-specific rule to that backend."
@@ -1342,20 +1289,16 @@ validationTests:
                   number: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_only-default_svc_fallback-svc_http"
-        description: Backend pool for the default backend service is emitted
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^/ BACKEND:default_only-default_svc_fallback-svc_http$"
-        description: Catch-all "/" entry points at the default backend
       - type: match_count
         target: map:path-prefix.map
         pattern: "(?m)^/ BACKEND:"
         expected: "1"
-        description: Exactly one catch-all "/" entry (no duplicates)
 
   test-ingress-default-backend-with-rules-per-host:
     description: "Ingress with both spec.rules (host: example.com) and spec.defaultBackend emits a per-host catch-all \"example.com/\" entry in path-prefix.map alongside the rule's entries. K8s spec: requests matching the Ingress's host but no rule path go to defaultBackend; requests to OTHER hosts must NOT be caught."
@@ -1407,27 +1350,21 @@ validationTests:
                             number: 80
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_with-default_svc_rule-svc_http"
-        description: Backend pool for the rule path is emitted
       - type: contains
         target: haproxy.cfg
         pattern: "backend default_with-default_svc_fallback-svc_http"
-        description: Backend pool for the default backend is emitted
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/api/ BACKEND:default_with-default_svc_rule-svc_http$"
-        description: Rule path /api keeps its specific entry
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/ BACKEND:default_with-default_svc_fallback-svc_http$"
-        description: Per-host catch-all "example.com/" points at default backend
       - type: not_contains
         target: map:path-prefix.map
         pattern: "(?m)^/ BACKEND:default_with-default_svc_fallback-svc_http$"
-        description: No global "/" catch-all (defaultBackend is scoped to the Ingress's host, not all hosts)
 
   test-ingress-default-backend-newest-wins-per-host:
     description: "Two Ingresses in different namespaces both declare defaultBackend for the same host. HAProxy maps keep only one entry per key, so we MUST pick deterministically; the newest Ingress wins per host (matches operator intent on rollout + avoids stale-Ingress 503s during scenario churn)."
@@ -1504,17 +1441,13 @@ validationTests:
                             number: 8080
     assertions:
       - type: haproxy_valid
-        description: HAProxy configuration must be syntactically valid
       - type: contains
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/ BACKEND:ns-new_newer_svc_new-svc_http$"
-        description: Per-host catch-all points at the newer Ingress's backend
       - type: not_contains
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/ BACKEND:ns-old_older_svc_old-svc_http$"
-        description: Older Ingress's defaultBackend does NOT claim the host catch-all
       - type: match_count
         target: map:path-prefix.map
         pattern: "(?m)^example\\.com/ BACKEND:"
         expected: "1"
-        description: Exactly one catch-all entry for example.com (no duplicate-key collision)

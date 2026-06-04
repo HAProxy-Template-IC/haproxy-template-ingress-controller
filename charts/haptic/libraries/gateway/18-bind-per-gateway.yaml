@@ -59,6 +59,7 @@ templateSnippets:
   https-bind-extra-100-per-gateway:
     template: |
       {%- import "util-ssl-bind-options-for-crtlist" for SSLBindOptionsForCrtlist %}
+      {%- import "util-gateway-listener-tls-options" for TLSOptionsSuffix %}
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName %}
       {%- import "util-resource-helpers" for
           ResourceNamespace, ResourceName,
@@ -132,7 +133,7 @@ templateSnippets:
                       {%- ignoreErrSuffix = " ca-ignore-err all crt-ignore-err all" %}
                     {%- end %}
                   {%- end %}
-      bind *:{{ podPort }}{{ SSLBindOptionsForCrtlist(crtlist) }}{{ ignoreErrSuffix }}
+      bind *:{{ podPort }}{{ SSLBindOptionsForCrtlist(crtlist) }}{{ ignoreErrSuffix }}{{ TLSOptionsSuffix(listener) }}
                 {%- end %}
               {%- end %}
             {%- end %}

@@ -1,0 +1,144 @@
+# haproxy-ingress library — config-frontend / config-global / config-defaults tests.
+# Raw HAProxy directive injection into the http frontend / global / defaults
+# sections (complements the existing config-backend snippet).
+validationTests:
+  # ==========================================================================
+  # config-frontend: raw directives into the HTTP frontend
+  # ==========================================================================
+
+  test-haproxy-ingress-config-frontend:
+    description: config-frontend injects raw directives into the http frontend
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cf-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cf-ingress
+            annotations:
+              haproxy-ingress.github.io/config-frontend: |
+                http-request set-header X-Config-Frontend injected
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cf.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cf-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Config-Frontend injected"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "haproxy-ingress/config-frontend"
+
+  # ==========================================================================
+  # config-global: raw directives into the global section
+  # ==========================================================================
+
+  test-haproxy-ingress-config-global:
+    description: config-global injects raw directives into the global section
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cg-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cg-ingress
+            annotations:
+              haproxy-ingress.github.io/config-global: |
+                tune.bufsize 32768
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cg.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cg-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "tune\\.bufsize 32768"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "haproxy-ingress/config-global"
+
+  # ==========================================================================
+  # config-defaults: raw directives into the defaults section
+  # ==========================================================================
+
+  test-haproxy-ingress-config-defaults:
+    description: config-defaults injects raw directives into the defaults section
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: cd-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: cd-ingress
+            annotations:
+              haproxy-ingress.github.io/config-defaults: |
+                retries 5
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: cd.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: cd-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "(?m)^\\s+retries 5$"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "haproxy-ingress/config-defaults"

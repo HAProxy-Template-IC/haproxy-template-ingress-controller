@@ -288,6 +288,7 @@ templateSnippets:
         No-op when the ingress has no hosts or neither annotation is set.
       -#}
       {%- import "util-ingress-helpers" for HostMatchCondition %}
+      {%- import "util-validate-cidr-list" for ValidateCidrList %}
       {%- macro EmitAnnotationAccessControl(ingress *resources.ingresses.T, allowAnnotation string, denyAnnotation string, aclPrefix string, allowCommentFmt string, denyCommentFmt string) %}
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
@@ -301,15 +302,73 @@ templateSnippets:
         {%- if allowlist != "" && len(hosts) > 0 %}
           {%- var aclName = aclPrefix + "_allowlist_" + ns + "_" + name %}
       # {{ replace(allowCommentFmt, "{KEY}", key) }}
-      acl {{ aclName }} src{% for _, ip := range split(allowlist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
+      acl {{ aclName }} src {{ ValidateCidrList(allowlist, allowAnnotation, key) }}
 
       http-request deny if {{ HostMatchCondition(hosts) }} !{{ aclName }}
         {%- end %}
         {%- if denylist != "" && len(hosts) > 0 %}
           {%- var aclName = aclPrefix + "_denylist_" + ns + "_" + name %}
       # {{ replace(denyCommentFmt, "{KEY}", key) }}
-      acl {{ aclName }} src{% for _, ip := range split(denylist, ",") %}{% var t = trimSpace(ip) %}{% if t != "" %} {{ t }}{% end %}{% end %}
+      acl {{ aclName }} src {{ ValidateCidrList(denylist, denyAnnotation, key) }}
 
       http-request deny if {{ HostMatchCondition(hosts) }} {{ aclName }}
         {%- end %}
+      {%- end macro %}
+
+  # Security: operator-controlled CIDR-list annotations are interpolated into
+  # HAProxy `src` ACLs. Without validation a value bearing a newline/space could
+  # smuggle arbitrary HAProxy directives into the rendered config (config
+  # injection — the injected directive passes `haproxy -c` and deploys). Every
+  # site that interpolates a comma-separated CIDR annotation MUST route it
+  # through ValidateCidrList first.
+  util-validate-cidr-list:
+    template: |
+      {#-
+        Macro: ValidateCidrList(raw, annotation, key) string
+
+        Splits a comma-separated IP/CIDR annotation value, validates each token
+        against a strict IPv4/IPv6(/mask) charset regex, and returns the
+        space-joined list ready to interpolate after `src`. fail()s the whole
+        render on any token containing characters outside the IP/CIDR set
+        (whitespace, newlines, `{`, `;`, letters, …) — this is the guard against
+        config injection. Malformed-but-charset-clean values (e.g. 999.0.0.0/8)
+        are left for `haproxy -c` to reject; the regex only blocks injection.
+      -#}
+      {%- macro ValidateCidrList(rawList string, annotation string, key string) %}
+        {%- var out = []string{} %}
+        {%- for _, c := range split(rawList, ",") %}
+          {%- var t = trimSpace(c) %}
+          {%- if t != "" %}
+            {%- if !regex_search(t, "^([0-9]{1,3}\\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^[0-9a-fA-F:]+(/[0-9]{1,3})?$") %}
+              {{- fail("Invalid CIDR/IP '" + t + "' in annotation '" + annotation + "' on Ingress '" + key + "'. Only comma-separated IPv4/IPv6 addresses or CIDR ranges are permitted (config-injection guard).") -}}
+            {%- end %}
+            {%- out = append(out, t) %}
+          {%- end %}
+        {%- end %}
+        {{- join(out, " ") -}}
+      {%- end macro %}
+
+  # Security: a single annotation value interpolated onto an HAProxy config line
+  # (a header value, SNI/verifyhost host, cipher string, cookie domain/path, …)
+  # must not carry a control character — a newline would split the line and
+  # smuggle a second directive into the rendered config (config injection that
+  # passes `haproxy -c`). ValidateConfigValue rejects control characters (and,
+  # when allowSpaces is false, embedded spaces that would break a single-token
+  # field) and returns the value unchanged.
+  util-validate-config-value:
+    template: |
+      {#-
+        Macro: ValidateConfigValue(value, annotation, key, allowSpaces) string
+        Rejects control characters (newlines/tabs/CR) always; rejects spaces when
+        allowSpaces is false. fail()s the render on violation; otherwise returns
+        the value verbatim for safe interpolation onto a config line.
+      -#}
+      {%- macro ValidateConfigValue(value string, annotation string, key string, allowSpaces bool) %}
+        {%- if regex_search(value, "[[:cntrl:]]") %}
+          {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "': must not contain control characters (newlines/tabs) — config-injection guard.") -}}
+        {%- end %}
+        {%- if !allowSpaces && strings_contains(value, " ") %}
+          {{- fail("Invalid value for annotation '" + annotation + "' on Ingress '" + key + "': must not contain spaces.") -}}
+        {%- end %}
+        {{- value -}}
       {%- end macro %}
