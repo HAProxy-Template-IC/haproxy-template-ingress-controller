@@ -95,6 +95,12 @@ controller:
     ingress:
       enabled: true
     # gateway.networking.k8s.io/v1 support (HTTPRoute, GRPCRoute, TLSRoute).
+    # Packaged as a conditional subchart (the biggest library). On a cluster
+    # WITHOUT the Gateway API CRDs the library is never merged (its load
+    # predicate also checks for the GatewayClass CRD), but this flag still
+    # governs whether the subchart source ships in the Helm release Secret —
+    # set it false on Standard-channel clusters to prune the gateway source
+    # for a leaner install.
     gateway:
       enabled: true
     # Shared Ingress-scoped macros for the vendor annotation libraries

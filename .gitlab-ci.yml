@@ -674,11 +674,11 @@ publish-chart-snapshot:
         - charts/haptic/libraries/base.yaml
         - charts/haptic/libraries/ssl.yaml
         - charts/haptic/libraries/ingress.yaml
-        - charts/haptic/libraries/gateway.yaml
-        - charts/haptic/libraries/haproxytech.yaml
-        - charts/haptic/libraries/haproxy-ingress.yaml
-        - charts/haptic/libraries/nginx-ingress.yaml
-        - charts/haptic/libraries/spoa-hub.yaml
+        - charts/haptic/charts/gateway/**/*
+        - charts/haptic/charts/haproxytech/**/*
+        - charts/haptic/charts/haproxy-ingress/**/*
+        - charts/haptic/charts/nginx-ingress/**/*
+        - charts/haptic/libraries/spoa-hub/**/*
         - charts/haptic/values.yaml
         - charts/haptic/templates/_helpers.tpl
         - charts/haptic/templates/haproxytemplateconfig.yaml
@@ -713,11 +713,11 @@ publish-chart-snapshot:
         # every fragment and any future tests/ subdir, so chart-only
         # MRs that touch the gateway library trigger the SPOA build
         # that `test-e2e` / conformance hard-`needs:`.
-        - charts/haptic/libraries/gateway/**/*
-        - charts/haptic/libraries/haproxytech.yaml
-        - charts/haptic/libraries/haproxy-ingress.yaml
-        - charts/haptic/libraries/nginx-ingress.yaml
-        - charts/haptic/libraries/spoa-hub.yaml
+        - charts/haptic/charts/gateway/**/*
+        - charts/haptic/charts/haproxytech/**/*
+        - charts/haptic/charts/haproxy-ingress/**/*
+        - charts/haptic/charts/nginx-ingress/**/*
+        - charts/haptic/libraries/spoa-hub/**/*
         - charts/haptic/values.yaml
         - charts/haptic/templates/_helpers.tpl
         - charts/haptic/templates/haproxytemplateconfig.yaml
