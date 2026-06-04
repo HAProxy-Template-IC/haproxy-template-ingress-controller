@@ -1,13 +1,31 @@
 # Gateway API Template Library
 #
-# Provides Kubernetes Gateway API v1.2.0 support (HTTPRoute, GRPCRoute).
+# Provides Kubernetes Gateway API v1 (Standard channel) support, plus TLSRoute
+# (Standard as of v1.5) and TCPRoute (Experimental channel, wired only when its
+# CRD is served — see the _helm_load.unset block below).
 # Documentation: ../docs/libraries/gateway.md
 #
+# Resources: GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute,
+#   ReferenceGrant, BackendTLSPolicy, ListenerSet (GEP-1713).
+#
 # Features:
-#   - Path matching: Exact, PathPrefix, RegularExpression
-#   - Advanced matching: Method, headers, query params (HTTPRoute), gRPC method (GRPCRoute)
-#   - Filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite
-#   - Traffic splitting: Weighted backends via MULTIBACKEND qualifier
+#   - HTTPRoute matching: path (Exact/PathPrefix/RegularExpression), header
+#     (Exact/RegularExpression), query param, method
+#   - GRPCRoute matching: service/method (Exact/RegularExpression), headers
+#   - Filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect,
+#     URLRewrite (ReplaceFullPath/ReplacePrefixMatch), RequestMirror (via the
+#     SPOA-hub mirror plugin), CORS (GEP-1767), ExtensionRef
+#   - Traffic splitting: weighted backends
+#   - Timeouts (GEP-1742: request + backendRequest), retries (GEP-1731:
+#     attempts + retry-on codes), session persistence (GEP-1619, type Cookie)
+#   - TLS: listener Terminate + Passthrough (TLSRoute SNI), per-listener TLS
+#     options (GEP-2907: min/max version, ciphers), BackendTLSPolicy (CA refs
+#     via Secret/ConfigMap, hostname + SAN verification, well-known/system CAs)
+#   - Cross-namespace refs via ReferenceGrant; allowedRoutes kinds + namespaces
+#     (incl. namespace Selector); Gateway spec.addresses (static-IP binds) and
+#     spec.infrastructure metadata propagation
+#   - Status conditions for Gateway, *Route, GatewayClass, BackendTLSPolicy,
+#     ListenerSet
 #
 # Architecture:
 #   - util-gateway-analysis: Central cached analysis of all routes

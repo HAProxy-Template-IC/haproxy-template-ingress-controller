@@ -54,6 +54,8 @@ templateSnippets:
 
         Annotations:
           - haproxy-ingress.github.io/allowlist-source-range: "CIDR,CIDR,..." (optional)
+          - haproxy-ingress.github.io/whitelist-source-range: deprecated alias of
+            allowlist-source-range; ignored when allowlist-source-range is set
           - haproxy-ingress.github.io/denylist-source-range: "CIDR,CIDR,..." (optional)
 
         Generated HAProxy Config:
@@ -63,8 +65,14 @@ templateSnippets:
       -#}
       {%- import "util-emit-annotation-access-control" for EmitAnnotationAccessControl -%}
       {%- for _, ingress := range resources.ingresses.List() -%}
+        {#- whitelist-source-range is the deprecated alias of allowlist-source-range;
+            upstream ignores it when allowlist-source-range is declared. -#}
+        {%- var allowKey = "haproxy-ingress.github.io/allowlist-source-range" %}
+        {%- if ingress.Metadata.Annotations["haproxy-ingress.github.io/allowlist-source-range"] == "" && ingress.Metadata.Annotations["haproxy-ingress.github.io/whitelist-source-range"] != "" %}
+          {%- allowKey = "haproxy-ingress.github.io/whitelist-source-range" %}
+        {%- end %}
         {{ EmitAnnotationAccessControl(ingress,
-            "haproxy-ingress.github.io/allowlist-source-range",
+            allowKey,
             "haproxy-ingress.github.io/denylist-source-range",
             "hi",
             "haproxy-ingress/allowlist-source-range ({KEY})",

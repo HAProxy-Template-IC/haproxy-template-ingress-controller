@@ -18,7 +18,8 @@ templateSnippets:
         Annotations:
           - nginx.ingress.kubernetes.io/affinity: "cookie" (required to enable)
           - nginx.ingress.kubernetes.io/session-cookie-name: "<name>" (default: INGRESSCOOKIE)
-          - nginx.ingress.kubernetes.io/session-cookie-hash: "md5|sha1|index" (optional)
+          - nginx.ingress.kubernetes.io/session-cookie-hash: accepted but NOT configurable in
+            HAProxy (md5/sha1/index cannot be honoured); emits a warning, does not change hashing
           - nginx.ingress.kubernetes.io/session-cookie-path: "<path>" (optional)
           - nginx.ingress.kubernetes.io/session-cookie-secure: "true" (optional -> attr Secure)
           - nginx.ingress.kubernetes.io/session-cookie-samesite: "Strict|Lax|None" (optional -> attr SameSite=<v>)
@@ -61,6 +62,15 @@ templateSnippets:
               {{- fail("Invalid value '" + cookieSameSite + "' for annotation 'nginx.ingress.kubernetes.io/session-cookie-samesite' on Ingress '" + key + "'. Valid values: Strict, Lax, None") -}}
             {%- end %}
             {%- cookieDir = cookieDir + " attr SameSite=" + cookieSameSite %}
+          {%- end %}
+          {#- session-cookie-hash selects the cookie-value hashing algorithm in
+              nginx (md5|sha1|index). HAProxy uses `dynamic` cookies (the server
+              name hashed via dynamic-cookie-key) and that algorithm is not
+              operator-selectable, so the value cannot be honoured — surface a
+              warning rather than silently ignore it (cf. proxy-ssl-verify-depth). -#}
+          {%- var cookieHash = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/session-cookie-hash"] %}
+          {%- if cookieHash != "" %}
+      # Warning: nginx.ingress.kubernetes.io/session-cookie-hash={{ cookieHash }} on Ingress {{ key }} is not configurable in HAProxy — dynamic cookies always hash via dynamic-cookie-key.
           {%- end %}
       # nginx-ingress/session-affinity ({{ key }})
       {{ cookieDir }}
