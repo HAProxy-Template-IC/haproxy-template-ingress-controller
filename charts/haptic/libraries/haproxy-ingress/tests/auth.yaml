@@ -393,6 +393,227 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request deny deny_status 401"
 
+  test-haproxy-ingress-oauth-oauth2-proxy:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "oauth: oauth2_proxy desugars onto external-auth — derives the oauth2-proxy address from the Ingress's own /oauth2 path backend; sets auth-url (/oauth2/auth), auth-signin (/oauth2/start), auth-method HEAD, extract-headers, and forwards X-Auth-Request-Email on success."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages:
+          - check-auth
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: oauth-app-svc
+          spec:
+            ports:
+              - port: 80
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: oauth2-proxy
+          spec:
+            ports:
+              - port: 4180
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oauthapp
+            annotations:
+              haproxy-ingress.github.io/oauth: "oauth2_proxy"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: oauthapp.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: oauth-app-svc
+                          port:
+                            number: 80
+                    - path: /oauth2
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: oauth2-proxy
+                          port:
+                            number: 4180
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: "default/oauthapp http://oauth2-proxy.default.svc:4180/oauth2/auth"
+      - type: contains
+        target: map:auth-signin.map
+        pattern: "default/oauthapp /oauth2/start\\?rd=%\\[path\\]"
+      - type: contains
+        target: map:auth-method.map
+        pattern: "default/oauthapp HEAD"
+      - type: contains
+        target: map:auth-extract-headers.map
+        pattern: "default/oauthapp X-Auth-Request-Email"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-request set-header X-Auth-Request-Email %\\[var\\(txn.hub.external_auth.x_auth_request_email\\)\\]"
+
+  test-haproxy-ingress-oauth-invalid-value:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "oauth with an unsupported value aborts the render with a clear error naming both accepted spellings."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: [check-auth]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth-bad-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oauthbad
+            annotations:
+              haproxy-ingress.github.io/oauth: "google"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: oauthbad.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: oauth-bad-svc, port: {number: 80}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Only 'oauth2_proxy' \\(or 'oauth2-proxy'\\) is supported"
+
+  test-haproxy-ingress-oauth-no-prefix-path:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "oauth set but no Ingress path matches oauth-uri-prefix aborts the render (the oauth2-proxy backend cannot be derived)."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: [check-auth]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth-np-svc}
+          spec:
+            ports: [{port: 80}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oauthnp
+            annotations:
+              haproxy-ingress.github.io/oauth: "oauth2_proxy"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: oauthnp.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: oauth-np-svc, port: {number: 80}}}
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "has no Ingress path '/oauth2'"
+
+  test-haproxy-ingress-oauth-auth-url-precedence:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: "an explicit auth-url on the same Ingress as oauth takes precedence — the oauth desugaring contributes no auth-url.map entry."
+    extraContext:
+      spoaHub:
+        enabled: true
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: [check-auth]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth-pr-svc}
+          spec:
+            ports: [{port: 80}]
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: oauth2-proxy}
+          spec:
+            ports: [{port: 4180}]
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: oauthpr
+            annotations:
+              haproxy-ingress.github.io/oauth: "oauth2_proxy"
+              haproxy-ingress.github.io/auth-url: "https://explicit.example/check"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: oauthpr.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: oauth-pr-svc, port: {number: 80}}}
+                    - path: /oauth2
+                      pathType: Prefix
+                      backend: {service: {name: oauth2-proxy, port: {number: 4180}}}
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: map:auth-url.map
+        pattern: "default/oauthpr https://explicit.example/check"
+      - type: not_contains
+        target: map:auth-url.map
+        pattern: "default/oauthpr http://oauth2-proxy"
+
   test-haproxy-ingress-external-auth-signin:
     # Same prerequisite as the other external-auth tests — needs the
     # spoa-hub library loaded so auth-signin.map is defined.
