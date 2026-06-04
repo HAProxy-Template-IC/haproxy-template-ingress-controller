@@ -113,6 +113,10 @@ validationTests:
             name: health-ingress
             annotations:
               haproxy-ingress.github.io/health-check-uri: "/healthz"
+              haproxy-ingress.github.io/backend-check-interval: "7s"
+              haproxy-ingress.github.io/health-check-port: "8082"
+              haproxy-ingress.github.io/health-check-fall-count: "4"
+              haproxy-ingress.github.io/health-check-rise-count: "5"
           spec:
             ingressClassName: haproxy
             rules:
@@ -131,6 +135,103 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "option httpchk GET /healthz"
+      # backend-check-interval / health-check-port / -fall-count / -rise-count
+      # land on the default-server line (runtime-static check tuning), not on
+      # individual server lines.
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* inter 7s"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* port 8082"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* fall 4"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* rise 5"
+
+  test-haproxy-ingress-maxconn-server:
+    description: maxconn-server and maxqueue-server land on the default-server line
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: maxconn-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: maxconn-ingress
+            annotations:
+              haproxy-ingress.github.io/maxconn-server: "55"
+              haproxy-ingress.github.io/maxqueue-server: "105"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: maxconn.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: maxconn-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* maxconn 55"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* maxqueue 105"
+
+  test-haproxy-ingress-initial-weight:
+    description: initial-weight sets the default-server weight
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: weight-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: weight-ingress
+            annotations:
+              haproxy-ingress.github.io/initial-weight: "7"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: weight.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: weight-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "default-server check.* weight 7"
 
   test-haproxy-ingress-secure-backends:
     description: HAProxy-Ingress secure-backends annotation enables SSL
@@ -917,7 +1018,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\)"
+        pattern: "stick-table type ip size 100k expire 1s store http_req_rate\\(1s\\) peers localinstance"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 10 \\}"
@@ -959,7 +1060,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "stick-table type ip size 100k expire 60s store http_req_rate\\(60s\\)"
+        pattern: "stick-table type ip size 100k expire 60s store http_req_rate\\(60s\\) peers localinstance"
       - type: contains
         target: haproxy.cfg
         pattern: "http-request deny deny_status 429 if \\{ sc_http_req_rate\\(0\\) gt 120 \\}"
