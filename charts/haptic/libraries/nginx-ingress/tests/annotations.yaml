@@ -765,6 +765,272 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request auth"
 
+  test-nginx-ingress-auth-secret-type-map:
+    description: auth-secret-type=auth-map reads usernames from Secret data keys (values = password hashes)
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: authmap-secret
+          type: Opaque
+          data:
+            admin: JDJ5JDA1JG1PMVdWazVRbmJnNFF3ZEFkWGJmei44YjNjZUg2UTVLT1ZDS3hSMklrTkFmSmdMaTVwSUtX
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: authmap-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: authmap-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "authmap-secret"
+              nginx.ingress.kubernetes.io/auth-secret-type: "auth-map"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: authmap.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: authmap-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "userlist ni_auth_default_authmap-secret"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "user admin password"
+
+  test-nginx-ingress-auth-secret-type-map-invalid-hash:
+    description: auth-map rejects a Secret value outside the htpasswd-hash charset (config-injection guard)
+    fixtures:
+      secrets:
+        - apiVersion: v1
+          kind: Secret
+          metadata:
+            namespace: default
+            name: badmap-secret
+          type: Opaque
+          data:
+            admin: ZXZpbCd2YWw=
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: badmap-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: badmap-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/auth-type: "basic"
+              nginx.ingress.kubernetes.io/auth-secret: "badmap-secret"
+              nginx.ingress.kubernetes.io/auth-secret-type: "auth-map"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: badmap.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: badmap-service
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "invalid password hash for user 'admin'"
+
+  test-nginx-ingress-proxy-next-upstream-invalid-tries:
+    description: a non-integer proxy-next-upstream-tries aborts the render instead of being silently dropped
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: nut-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nut-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "abc"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: nut.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: nut-service
+                          port:
+                            number: 80
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Must be a non-negative integer"
+
+  test-nginx-ingress-proxy-next-upstream:
+    description: proxy-next-upstream maps nginx retry conditions to HAProxy retry-on + retries
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: nu-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nu-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout http_502 http_503"
+              nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "2"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: nu.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: nu-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "retry-on conn-failure response-timeout 502 503"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "retries 2"
+
+  test-nginx-ingress-limit-rate:
+    description: limit-rate / limit-rate-after map to a per-stream bwlim-out download throttle
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: lr-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lr-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/limit-rate: "100k"
+              nginx.ingress.kubernetes.io/limit-rate-after: "1m"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lr.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: lr-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "filter bwlim-out ni_limitrate_default_lr-ingress default-limit 100k default-period 1s min-size 1m"
+      - type: contains
+        target: haproxy.cfg
+        pattern: "set-bandwidth-limit ni_limitrate_default_lr-ingress"
+
+  test-nginx-ingress-proxy-redirect:
+    description: proxy-redirect-from/-to rewrites the upstream Location response header
+    fixtures:
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: pr-service
+          spec:
+            ports:
+              - port: 80
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: pr-ingress
+            annotations:
+              nginx.ingress.kubernetes.io/proxy-redirect-from: "http://backend.local"
+              nginx.ingress.kubernetes.io/proxy-redirect-to: "https://public.example.com"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: pr.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend:
+                        service:
+                          name: pr-service
+                          port:
+                            number: 80
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: haproxy.cfg
+        pattern: "http-response replace-header Location .* https://public.example.com"
+
   test-nginx-ingress-rate-limit-rps:
     description: Nginx Ingress limit-rps annotation generates stick-table and deny 429
     fixtures:

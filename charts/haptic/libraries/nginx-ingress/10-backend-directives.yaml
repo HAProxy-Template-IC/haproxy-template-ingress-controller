@@ -170,6 +170,83 @@ templateSnippets:
         {%- end %}
       {%- end -%}
 
+  backend-directives-715-nginx-ingress-next-upstream:
+    template: |
+      {#-
+        Nginx Ingress proxy-next-upstream — when to retry against the next server.
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-next-upstream
+
+        Annotations:
+          - proxy-next-upstream: space-separated conditions (error, timeout,
+              invalid_header, http_500/502/503/504/403/404/429, non_idempotent, off)
+          - proxy-next-upstream-tries: max attempts (0 = unlimited in nginx)
+
+        HAProxy mapping (backend-level):
+          error -> conn-failure ; timeout -> response-timeout ;
+          invalid_header -> junk-response ; http_<NNN> -> <NNN> ;
+          off -> `retries 0` ; tries N(>0) -> `retries N`.
+        `option redispatch` is already set in defaults so a retry lands on a
+        different server. Ignored (no HAProxy CE equivalent): non_idempotent and
+        proxy-next-upstream-timeout.
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var nu = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-next-upstream"] %}
+        {%- var tries = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-next-upstream-tries"] %}
+        {%- if nu != "" || tries != "" %}
+          {%- var off = false %}
+          {%- var conds = []string{} %}
+          {%- var seen = map[string]bool{} %}
+          {%- for _, tok := range split(nu, " ") %}
+            {%- var t = trimSpace(tok) %}
+            {%- var mapped = "" %}
+            {%- if t == "off" %}
+              {%- off = true %}
+            {%- else if t == "error" %}
+              {%- mapped = "conn-failure" %}
+            {%- else if t == "timeout" %}
+              {%- mapped = "response-timeout" %}
+            {%- else if t == "invalid_header" %}
+              {%- mapped = "junk-response" %}
+            {%- else if hasPrefix(t, "http_") %}
+              {%- var code = t[5:] %}
+              {%- if !regex_search(code, "^[1-5][0-9][0-9]$") %}
+                {{- fail("Invalid status '" + code + "' in 'nginx.ingress.kubernetes.io/proxy-next-upstream' on Ingress '" + key + "'. Use http_<3-digit-status>.") -}}
+              {%- end %}
+              {%- mapped = code %}
+            {%- end %}
+            {%- if mapped != "" && !seen[mapped] %}
+              {%- seen[mapped] = true %}
+              {%- conds = append(conds, mapped) %}
+            {%- end %}
+          {%- end %}
+          {%- if off %}
+      # nginx-ingress/proxy-next-upstream ({{ key }}) - disabled
+      retries 0
+          {%- else %}
+            {%- if len(conds) > 0 %}
+      # nginx-ingress/proxy-next-upstream ({{ key }})
+      retry-on {{ join(conds, " ") }}
+            {%- end %}
+            {%- if tries != "" %}
+              {#- Reject non-integer values up front: toint() returns 0 for junk
+                  like "abc"/"2.5", which would otherwise be silently dropped and
+                  hide an operator typo. -#}
+              {%- if !regex_search(tries, "^[0-9]+$") %}
+                {{- fail("Invalid value '" + tries + "' for 'nginx.ingress.kubernetes.io/proxy-next-upstream-tries' on Ingress '" + key + "'. Must be a non-negative integer.") -}}
+              {%- end %}
+              {%- var n = toint(tries) %}
+              {%- if n > 0 %}
+      retries {{ n }}
+              {%- end %}
+            {%- end %}
+          {%- end %}
+        {%- end %}
+      {%- end -%}
+
   backend-directives-720-nginx-ingress-proxy-body-size:
     template: |
       {#-
@@ -206,6 +283,47 @@ templateSnippets:
       # nginx-ingress/backend-directives-proxy-body-size ({{ key }})
       http-request deny deny_status 413 if { req.body_size gt {{ bytes }} }
           {%- end %}
+        {%- end %}
+      {%- end -%}
+
+  backend-directives-725-nginx-ingress-limit-rate:
+    template: |
+      {#-
+        Nginx Ingress limit-rate / limit-rate-after — per-connection download throttle.
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#limit-rate
+
+        Annotations:
+          - limit-rate: max bytes/sec sent to a single client connection (e.g. "100k")
+          - limit-rate-after: bytes transferred before throttling kicks in (e.g. "1m")
+
+        HAProxy mapping (per-stream bandwidth limit, HAProxy CE >= 2.7):
+          filter bwlim-out <name> default-limit <rate> default-period 1s [min-size <after>]
+          http-request set-bandwidth-limit <name>
+        bwlim-out limits data sent toward the client; min-size is the offset before
+        the limit applies (= limit-rate-after).
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var rate = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rate"] %}
+        {%- var after = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/limit-rate-after"] %}
+        {%- if rate != "" %}
+          {%- if !regex_search(rate, "^[0-9]+[kKmMgG]?$") %}
+            {{- fail("Invalid value '" + rate + "' for 'nginx.ingress.kubernetes.io/limit-rate' on Ingress '" + key + "'. Expected a byte size like '100k', '1m'.") -}}
+          {%- end %}
+          {%- var fname = "ni_limitrate_" + ns + "_" + name %}
+          {%- var filterLine = "filter bwlim-out " + fname + " default-limit " + rate + " default-period 1s" %}
+          {%- if after != "" %}
+            {%- if !regex_search(after, "^[0-9]+[kKmMgG]?$") %}
+              {{- fail("Invalid value '" + after + "' for 'nginx.ingress.kubernetes.io/limit-rate-after' on Ingress '" + key + "'. Expected a byte size like '1m'.") -}}
+            {%- end %}
+            {%- filterLine = filterLine + " min-size " + after %}
+          {%- end %}
+      # nginx-ingress/limit-rate ({{ key }})
+      {{ filterLine }}
+      http-request set-bandwidth-limit {{ fname }}
         {%- end %}
       {%- end -%}
 
