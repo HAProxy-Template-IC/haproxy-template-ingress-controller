@@ -280,6 +280,15 @@ templateSnippets:
               {%- secretNs = parts[0] %}
               {%- secretName = parts[1] %}
             {%- end %}
+            {#- auth-secret-type selects how the Secret encodes credentials:
+                auth-file (default) = a single `auth` key holding an htpasswd file
+                (username:hash lines); auth-map = each Secret data key is a username
+                and its value is that user's password hash. -#}
+            {%- var secretType = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/auth-secret-type"] %}
+            {%- if secretType == "" %}{%- secretType = "auth-file" %}{%- end %}
+            {%- if secretType != "auth-file" && secretType != "auth-map" %}
+              {{- fail("Invalid value '" + secretType + "' for annotation 'nginx.ingress.kubernetes.io/auth-secret-type' on Ingress '" + key + "'. Valid values: 'auth-file', 'auth-map'.") -}}
+            {%- end %}
             {%- var userlistName = "ni_auth_" + secretNs + "_" + secretName %}
             {%- if first_seen("ni_userlist", userlistName) %}
               {#-
@@ -304,6 +313,7 @@ templateSnippets:
                   access below would dereference a nil pointer. -#}
               {%- var secret, _ = secretAny.(*resources.secrets.T) %}
               {%- if secret != nil %}
+                {%- if secretType == "auth-file" %}
                 {%- var authData = secret.Data["auth"] | b64decode() | tostring() %}
                 {%- if authData != "" %}
       # nginx-ingress/global-top-auth ({{ key }})
@@ -316,12 +326,37 @@ templateSnippets:
                       {%- if colonIdx > 0 %}
                         {%- var username = lineTrimmed[:colonIdx] %}
                         {%- var passwordHash = lineTrimmed[colonIdx+1:] %}
+                        {#- The hash is emitted inside single quotes; reject any
+                            value outside the htpasswd-hash charset (quote, space,
+                            newline, control char) so a hostile Secret value cannot
+                            break out of the line or inject a directive. -#}
+                        {%- if !regex_search(passwordHash, "^[A-Za-z0-9$./{}=+_-]+$") %}
+                          {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has an invalid password hash for user '" + username + "' (only htpasswd-hash characters are permitted).") -}}
+                        {%- end %}
         user {{ username }} password '{{ passwordHash }}'
                       {%- end %}
                     {%- end %}
                   {%- end %}
                 {%- else %}
                   {{- fail("Secret '" + secretNs + "/" + secretName + "' referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has empty 'auth' key.") -}}
+                {%- end %}
+                {%- else %}
+                {#- auth-map: each Secret data key is a username, its value the password hash. -#}
+      # nginx-ingress/global-top-auth ({{ key }})
+      userlist {{ userlistName }}
+                  {%- for _, username := range keys(secret.Data) %}
+                    {%- var passwordHash = secret.Data[username] | b64decode() | tostring() %}
+                    {%- if username == "" || passwordHash == "" %}
+                      {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has an empty username or hash.") -}}
+                    {%- end %}
+                    {#- Same config-injection guard as the auth-file branch: the
+                        decoded value is operator-controlled and emitted inside
+                        single quotes. -#}
+                    {%- if !regex_search(passwordHash, "^[A-Za-z0-9$./{}=+_-]+$") %}
+                      {{- fail("Secret '" + secretNs + "/" + secretName + "' (auth-map) referenced by annotation 'nginx.ingress.kubernetes.io/auth-secret' on Ingress '" + key + "' has an invalid password hash for user '" + username + "' (only htpasswd-hash characters are permitted).") -}}
+                    {%- end %}
+        user {{ username }} password '{{ passwordHash }}'
+                  {%- end %}
                 {%- end %}
               {%- end %}
             {%- end %}

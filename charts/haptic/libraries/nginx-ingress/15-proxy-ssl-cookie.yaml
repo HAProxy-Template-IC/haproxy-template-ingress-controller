@@ -248,3 +248,42 @@ templateSnippets:
           {%- end %}
         {%- end %}
       {%- end -%}
+
+  backend-directives-795-nginx-ingress-proxy-redirect:
+    template: |
+      {%- import "util-validate-config-value" for ValidateConfigValue -%}
+      {#-
+        Nginx Ingress proxy-redirect-from / proxy-redirect-to — rewrite the
+        Location and Refresh response headers coming from the upstream.
+
+        Documentation: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#proxy-redirect-from
+
+        Annotations:
+          - proxy-redirect-from: text to replace (default "off"; "default" mode
+              derives from proxy_pass and has no HAProxy equivalent → warning)
+          - proxy-redirect-to: replacement text
+        Both are required together; each must be a string without spaces.
+
+        HAProxy mapping (the `from` literal is regex-escaped):
+          http-response replace-header Location <from> <to>
+          http-response replace-header Refresh  <from> <to>
+      -#}
+      {%- if ingress != nil %}
+        {%- var ns = ingress.Metadata.Namespace %}
+        {%- var name = ingress.Metadata.Name %}
+        {%- var key = ns + "/" + name %}
+        {%- var from = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-redirect-from"] %}
+        {%- var to = ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-redirect-to"] %}
+        {%- if from == "default" %}
+      # Warning: nginx.ingress.kubernetes.io/proxy-redirect-from=default on Ingress {{ key }} is not supported — HAProxy has no proxy_pass-derived rewrite; specify an explicit from/to pair.
+        {%- else if from != "" && from != "off" %}
+          {%- if to == "" %}
+            {{- fail("Annotation 'nginx.ingress.kubernetes.io/proxy-redirect-from' on Ingress '" + key + "' requires 'nginx.ingress.kubernetes.io/proxy-redirect-to'.") -}}
+          {%- end %}
+          {%- var fromRe = sanitize_regex(ValidateConfigValue(from, "nginx.ingress.kubernetes.io/proxy-redirect-from", key, false)) %}
+          {%- var toV = ValidateConfigValue(to, "nginx.ingress.kubernetes.io/proxy-redirect-to", key, false) %}
+      # nginx-ingress/proxy-redirect ({{ key }})
+      http-response replace-header Location {{ fromRe }} {{ toV }}
+      http-response replace-header Refresh {{ fromRe }} {{ toV }}
+        {%- end %}
+      {%- end -%}
